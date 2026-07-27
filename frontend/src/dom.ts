@@ -36,6 +36,31 @@ export function clear(node: Element): void {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+/* A panel is rebuilt wholesale when a version arrives, so the control the user is in has
+ * to be found again afterwards. Its address is its position in the tree: the structure is
+ * generated from the document, so the same path lands on the same control, and when it
+ * does not (the structure changed) the caller simply leaves focus alone. */
+export function pathOf(root: Element, node: Element): number[] | null {
+  const path: number[] = [];
+  let cur: Element | null = node;
+  while (cur && cur !== root) {
+    const parent: Element | null = cur.parentElement;
+    if (!parent) return null;
+    path.unshift(Array.prototype.indexOf.call(parent.children, cur));
+    cur = parent;
+  }
+  return cur === root ? path : null;
+}
+
+export function nodeAt(root: Element, path: number[]): Element | null {
+  let cur: Element | null = root;
+  for (const index of path) {
+    if (!cur) return null;
+    cur = cur.children[index] ?? null;
+  }
+  return cur;
+}
+
 export function mark(name: string, size = 10, cls = ""): HTMLElement {
   return el("span", { class: cls || "mark", html: iconMarkup(name, size) });
 }

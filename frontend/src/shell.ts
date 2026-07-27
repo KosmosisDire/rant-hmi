@@ -9,7 +9,7 @@
 
 import { bboxOf, cellSize, hitTest, renderArtboard, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
-import { clear, el, svg } from "./dom.js";
+import { clear, el, nodeAt, pathOf, svg } from "./dom.js";
 import { Editor } from "./editor.js";
 import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
@@ -47,7 +47,6 @@ export class App implements Editor {
   };
   private drag: Json = null;
   private frame = 0;
-  private railsPending = false;
 
   constructor(private root: HTMLElement, url: string) {
     this.build();
@@ -93,11 +92,11 @@ export class App implements Editor {
   select(ids: number[]): void {
     this.view.selection = ids;
     this.queueCanvas();
-    this.renderRails(true);
+    this.renderRails();
   }
 
   refresh(): void {
-    this.renderRails(true);
+    this.renderRails();
   }
 
   /* ---- protocol ---- */
@@ -164,24 +163,49 @@ export class App implements Editor {
     this.nodes.art.innerHTML = renderArtboard(doc, page, this.registry, this.live, this.view);
   }
 
-  /* A rail holding the caret is left alone until focus leaves it: a document broadcast
-   * must never eat half-typed text (spec 4.2). */
-  private renderRails(force = false): void {
-    const focused = document.activeElement as HTMLElement | null;
-    const busy = !force && focused ? focused.closest(".rail") : null;
-    if (busy && !this.railsPending) {
-      this.railsPending = true;
-      busy.addEventListener(
-        "focusout",
-        () => {
-          this.railsPending = false;
-          window.setTimeout(() => this.renderRails(), 0);
-        },
-        { once: true },
-      );
+  /* Both rails are rebuilt on every version, then the control the user was in is found
+   * again and its caret restored. Text the user had typed but not committed outlives the
+   * rebuild: the document has not seen it yet, so the fresh field would otherwise throw it
+   * away (spec 4.2, until node-busy markers land). */
+  private renderRails(): void {
+    const keep = this.captureFocus();
+    renderLeftRail(this.nodes.left, this);
+    renderInspector(this.nodes.inspector, this);
+    this.restoreFocus(keep);
+  }
+
+  private captureFocus(): Json {
+    const node = document.activeElement as HTMLElement | null;
+    const rail = node?.closest?.(".rail");
+    if (!node || !rail) return null;
+    const path = pathOf(rail, node);
+    if (!path) return null;
+    const field = node as HTMLInputElement;
+    const text = field.type === "text" || field.type === "number";
+    return {
+      rail,
+      path,
+      tag: node.tagName,
+      type: field.type ?? "",
+      value: typeof field.value === "string" ? field.value : null,
+      start: text ? field.selectionStart : null,
+      end: text ? field.selectionEnd : null,
+    };
+  }
+
+  private restoreFocus(keep: Json): void {
+    if (!keep) return;
+    const node = nodeAt(keep.rail, keep.path) as HTMLInputElement | null;
+    if (!node || node.tagName !== keep.tag || (node.type ?? "") !== keep.type) return;
+    node.focus();
+    if (keep.value !== null && typeof node.value === "string" && node.value !== keep.value)
+      node.value = keep.value;
+    if (keep.start === null || !node.setSelectionRange) return;
+    try {
+      node.setSelectionRange(keep.start, keep.end);
+    } catch {
+      /* a number input refuses a selection range in some browsers; the focus is enough */
     }
-    if (busy !== this.nodes.left) renderLeftRail(this.nodes.left, this);
-    if (busy !== this.nodes.inspector) renderInspector(this.nodes.inspector, this);
   }
 
   /* ---- shell construction ---- */
