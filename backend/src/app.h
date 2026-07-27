@@ -5,9 +5,13 @@
 #pragma once
 
 #include "doc/doc.h"
+#include "mesh/fake.h"
+#include "sched/scheduler.h"
 #include "sync/server.h"
 
+#include <chrono>
 #include <deque>
+#include <memory>
 #include <string>
 #include <unordered_map>
 
@@ -49,6 +53,9 @@ class App {
     void on_frame(uint64_t session, const Json& frame);
     void on_hello(uint64_t session, const Json& frame);
     void on_apply_ops(uint64_t session, const Json& frame);
+    void on_input(uint64_t session, const Json& frame);
+    void compile_runtime();
+    void publish_live();
 
     Json snapshot() const;
     Json live() const;
@@ -67,6 +74,10 @@ class App {
     std::vector<Inbound> batch_;
     uint64_t edits_ = 0;
     uint64_t epoch_ = 1;
+    FakeMesh mesh_;
+    std::unique_ptr<Scheduler> scheduler_;
+    std::chrono::steady_clock::time_point next_tick_;
+    uint64_t last_live_tick_ = 0;
 };
 
 } // namespace hmi

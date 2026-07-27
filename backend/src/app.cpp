@@ -1,5 +1,6 @@
 #include "app.h"
 
+#include "compile/compiler.h"
 #include "doc/ops.h"
 #include "registry/registry.h"
 
@@ -27,6 +28,17 @@ std::string str_or(const Json& value, const char* fallback) {
 
 std::string frame_type(const Json& frame) { return str_or(field(frame, "type"), ""); }
 
+Value input_value(const Json& value) {
+    if (value.is_boolean()) return Value::boolean(value.get<bool>());
+    if (value.is_number()) return Value::number(value.get<double>());
+    if (value.is_string()) {
+        bool ok = false;
+        const uint32_t color = parse_color(value.get<std::string>(), ok);
+        if (ok) return Value::color(color);
+    }
+    return Value::nil();
+}
+
 /* the nodes an op batch touches, as the client asked for them */
 void op_targets(const Json& ops, std::vector<uint64_t>& out) {
     if (!ops.is_array()) return;
@@ -52,6 +64,8 @@ bool App::start(std::string& err) {
         doc_ = Document::make_default();
         if (opts_.persist && !doc_.to_file(opts_.doc_path, err)) return false;
     }
+    compile_runtime();
+    next_tick_ = std::chrono::steady_clock::now();
     return server_.start(err);
 }
 
@@ -71,12 +85,26 @@ size_t App::poll() {
                 on_frame(in.session, in.frame);
                 break;
             case Inbound::What::Gone:
+                if (scheduler_) scheduler_->release_session(in.session);
                 sessions_.erase(in.session);
                 if (opts_.verbose)
                     std::printf("hmi: session %llu gone\n",
                                 static_cast<unsigned long long>(in.session));
                 break;
         }
+    }
+    if (scheduler_) {
+        const auto now = std::chrono::steady_clock::now();
+        size_t catchup = 0;
+        while (next_tick_ <= now && catchup++ < 100) {
+            std::string fault;
+            if (!scheduler_->tick(fault) && opts_.verbose)
+                std::printf("hmi: effect fault: %s\n", fault.c_str());
+            next_tick_ += std::chrono::milliseconds(1);
+        }
+        if (next_tick_ + std::chrono::milliseconds(100) < now)
+            next_tick_ = now;
+        if (scheduler_->state().tick - last_live_tick_ >= 33) publish_live();
     }
     return batch_.size();
 }
@@ -107,10 +135,7 @@ void App::on_frame(uint64_t session, const Json& frame) {
         return;
     }
     if (type == "input") {
-        /* behavior runs at build-order stage 4; the frame shape is already the one the
-         * scheduler will consume, so the frontend can be written against it now */
-        if (opts_.verbose)
-            std::printf("hmi: input %s\n", frame.dump().c_str());
+        on_input(session, frame);
         return;
     }
     reject(session, "unknown frame '" + type + "'");
@@ -151,6 +176,7 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
     if (opts_.persist && !doc_.to_file(opts_.doc_path, err))
         std::printf("hmi: cannot save %s: %s\n", opts_.doc_path.c_str(), err.c_str());
 
+    compile_runtime();
     server_.broadcast(Json{{"type", "ops_applied"},
                            {"version", applied.version},
                            {"ops", applied.ops},
@@ -158,8 +184,72 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
 }
 
 Json App::live() const {
-    /* one map over the cell table; empty until the runtime owns cells (stage 4) */
-    return Json{{"epoch", epoch_}, {"values", Json::object()}};
+    Json values = Json::object();
+    if (!scheduler_) return Json{{"epoch", epoch_}, {"values", values}};
+    const Program& program = scheduler_->program();
+    const RuntimeState& state = scheduler_->state();
+    for (uint32_t i = 0; i < program.cells.size(); ++i) {
+        const CellDef& cell = program.cells[i];
+        const Value& value = state.values[i];
+        const std::string key =
+            cell.kind == CellKind::Slot
+                ? std::to_string(cell.owner_widget) + "." + cell.name
+                : "v" + std::to_string(cell.node_id);
+        switch (value.tag) {
+            case ValueTag::Num: values[key] = value.data.num; break;
+            case ValueTag::Bool: values[key] = value.data.boolean; break;
+            case ValueTag::Text: values[key] = std::string(state.text(program, value)); break;
+            case ValueTag::Color: values[key] = format_color(value.data.rgba); break;
+            default: break;
+        }
+    }
+    for (uint32_t i = 0; i < program.timers.size(); ++i) {
+        const TimerDef& def = program.timers[i];
+        const TimerState& timer = state.timers[i];
+        values["v" + std::to_string(def.node_id)] =
+            Json{{"running", timer.running},
+                 {"remaining", static_cast<double>(timer.remaining) / 1000.0},
+                 {"duration", static_cast<double>(def.duration_ticks) / 1000.0}};
+    }
+    return Json{{"epoch", epoch_}, {"values", std::move(values)}};
+}
+
+void App::on_input(uint64_t session, const Json& frame) {
+    if (!scheduler_) return;
+    const uint64_t widget = json_u64_or(field(frame, "widget_id"), 0);
+    const uint64_t sequence = json_u64_or(field(frame, "seq"), 0);
+    const std::string event = str_or(field(frame, "event"), "");
+    if (!widget || event.empty()) {
+        reject(session, "input needs widget_id and event");
+        return;
+    }
+    scheduler_->post(
+        InputEvent{session, widget, event, input_value(field(frame, "value")), sequence});
+}
+
+void App::compile_runtime() {
+    CompileResult compiled = compile_document(doc_, registry(), mesh_);
+    auto next = std::make_unique<Scheduler>(std::move(compiled.program), mesh_);
+    if (scheduler_)
+        next->state() = migrate_state(scheduler_->program(), scheduler_->state(),
+                                      next->program());
+    scheduler_ = std::move(next);
+    ++epoch_;
+    Json rows = Json::array();
+    for (const Diag& diag : scheduler_->program().diagnostics)
+        rows.push_back(Json{{"node", diag.node_id},
+                            {"grade", diag.grade == DiagGrade::Error ? "error" : "warning"},
+                            {"code", diag.code},
+                            {"message", diag.message}});
+    if (server_.sessions()) server_.broadcast(Json{{"type", "diag"}, {"compile", rows}});
+}
+
+void App::publish_live() {
+    if (!scheduler_) return;
+    last_live_tick_ = scheduler_->state().tick;
+    Json frame = live();
+    frame["type"] = "live";
+    server_.broadcast(frame);
 }
 
 Json App::snapshot() const {

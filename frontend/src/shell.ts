@@ -15,8 +15,10 @@ import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { renderInspector, renderLeftRail } from "./inspector/panel.js";
 import { Connection, Status } from "./protocol.js";
+import { run } from "./program.js";
+import { cellsFor, fedSlots, resolveSlot, typeOf } from "./slots.js";
 import { Rect } from "./template.js";
-import { Doc, Json, Live, Op, Page, Registry, Widget } from "./types.js";
+import { Doc, Interact, Json, Live, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 
 type Mode = "edit" | "run" | "operate";
@@ -47,6 +49,8 @@ export class App implements Editor {
     palette: HTMLElement;
   };
   private drag: Json = null;
+  private control: Json = null;
+  private inputSequence = 0;
   private frame = 0;
   private contentDirty = true;
   private lastContent = "";
@@ -305,6 +309,11 @@ export class App implements Editor {
     stage.addEventListener("contextmenu", (ev) => this.onContextMenu(ev as MouseEvent));
     window.addEventListener("pointermove", (ev) => this.onStageMove(ev as PointerEvent));
     window.addEventListener("pointerup", (ev) => this.onStageUp(ev as PointerEvent));
+    window.addEventListener("pointercancel", (ev) => this.onControlUp(ev as PointerEvent, true));
+    window.addEventListener("blur", () => this.cancelControl());
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) this.cancelControl();
+    });
     window.addEventListener("keydown", (ev) => this.onKey(ev));
   }
 
@@ -355,8 +364,8 @@ export class App implements Editor {
   /* ---- selection and direct manipulation ---- */
 
   private grabbable(ev: PointerEvent): boolean {
-    if (this.view.mode !== "edit") return false;
     const target = ev.target as Element | null;
+    if (this.view.mode !== "edit") return Boolean(target?.closest?.("[data-id]"));
     return Boolean(target?.closest?.("[data-id], [data-handle]"));
   }
 
@@ -387,7 +396,11 @@ export class App implements Editor {
   }
 
   private onStageDown(ev: PointerEvent): void {
-    if (this.view.mode !== "edit" || ev.button !== 0 || !this.viewport) return;
+    if (this.view.mode !== "edit") {
+      this.onControlDown(ev);
+      return;
+    }
+    if (ev.button !== 0 || !this.viewport) return;
     const target = ev.target as HTMLElement | null;
     const handle = target?.closest?.("[data-handle]") as HTMLElement | null;
     const widgetNode = target?.closest?.("[data-id]") as HTMLElement | null;
@@ -421,6 +434,10 @@ export class App implements Editor {
   }
 
   private onStageMove(ev: PointerEvent): void {
+    if (this.control) {
+      this.onControlMove(ev);
+      return;
+    }
     if (!this.drag || !this.viewport) return;
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     const dx = at.x - this.drag.x0;
@@ -432,6 +449,10 @@ export class App implements Editor {
   }
 
   private onStageUp(ev: PointerEvent): void {
+    if (this.control) {
+      this.onControlUp(ev, false);
+      return;
+    }
     if (!this.drag) return;
     const drag = this.drag;
     this.drag = null;
@@ -463,6 +484,131 @@ export class App implements Editor {
     });
     this.apply(ops);
     this.queueCanvas();
+  }
+
+  private interaction(type: WidgetType | null): Interact | null {
+    const walk = (node: Json): Interact | null => {
+      if (!node) return null;
+      if (node.interact) return node.interact as Interact;
+      for (const child of node.children ?? []) {
+        const found = walk(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    return type ? walk(type.template) : null;
+  }
+
+  private controlCells(widget: Widget, type: WidgetType): (cell: string) => Json {
+    return cellsFor(widget, type, this.live, this.view.state[widget.id] ?? {});
+  }
+
+  private eventValue(widget: Widget, type: WidgetType, event: string, down: boolean): Json {
+    const shape = type.events.find((row) => row.name === event)?.x ?? "bool";
+    const fed = fedSlots(widget);
+    const value = resolveSlot(widget, type, this.live, fed, "value");
+    if (shape === "num") return typeof value === "number" ? value : null;
+    if (shape === "text" || shape === "enum") return typeof value === "string" ? value : null;
+    if (shape === "bool") return down;
+    return down;
+  }
+
+  private emitInput(widget: Widget, event: string | undefined, value: Json): void {
+    if (!event) return;
+    this.conn.input(widget.id, event, value, ++this.inputSequence);
+  }
+
+  private onControlDown(ev: PointerEvent): void {
+    if (ev.button !== 0 || !this.viewport) return;
+    const page = this.page();
+    if (!page) return;
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
+    const widget = this.store.widget(hitTest(page, at.x, at.y));
+    if (!widget) return;
+    const type = typeOf(this.registry, widget.type);
+    const interact = this.interaction(type);
+    if (!type || !interact) return;
+    const fed = fedSlots(widget);
+    if (resolveSlot(widget, type, this.live, fed, "enabled") !== true) return;
+    this.control = {
+      pointer: ev.pointerId,
+      widget,
+      type,
+      interact,
+      started: performance.now(),
+    };
+    this.view.state[widget.id] = {
+      ...(this.view.state[widget.id] ?? {}),
+      pressed: interact.primitive === "press",
+      dragging: interact.primitive === "drag1d",
+      open: interact.primitive === "pick",
+    };
+    if (interact.primitive === "press")
+      this.emitInput(widget, interact.emits.press,
+        this.eventValue(widget, type, interact.emits.press, true));
+    else if (interact.primitive === "pick")
+      this.emitInput(widget, interact.emits.open,
+        this.eventValue(widget, type, interact.emits.open, true));
+    this.queueCanvas(true);
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+
+  private onControlMove(ev: PointerEvent): void {
+    const control = this.control;
+    if (!control || control.pointer !== ev.pointerId || !this.viewport) return;
+    if (control.interact.primitive !== "drag1d") return;
+    const widget = control.widget as Widget;
+    const type = control.type as WidgetType;
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
+    const cells = this.controlCells(widget, type);
+    const axis = String(run(control.interact.params.axis, cells) ?? "x");
+    const lo = Number(run(control.interact.params.min, cells) ?? 0);
+    const hi = Number(run(control.interact.params.max, cells) ?? 1);
+    const step = Math.max(0, Number(run(control.interact.params.step, cells) ?? 0));
+    const fraction = axis === "y"
+      ? 1 - (at.y - widget.geom.y) / widget.geom.h
+      : (at.x - widget.geom.x) / widget.geom.w;
+    let value = lo + Math.max(0, Math.min(1, fraction)) * (hi - lo);
+    if (step > 0) value = lo + Math.round((value - lo) / step) * step;
+    control.value = value;
+    this.emitInput(widget, control.interact.emits.input, value);
+    ev.preventDefault();
+  }
+
+  private onControlUp(ev: PointerEvent, cancelled: boolean): void {
+    const control = this.control;
+    if (!control || (ev.pointerId !== undefined && control.pointer !== ev.pointerId)) return;
+    this.control = null;
+    const widget = control.widget as Widget;
+    const type = control.type as WidgetType;
+    const interact = control.interact as Interact;
+    const state = this.view.state[widget.id] ?? {};
+    state.pressed = state.dragging = state.open = false;
+    if (interact.primitive === "press") {
+      this.emitInput(widget, interact.emits.release,
+        this.eventValue(widget, type, interact.emits.release, false));
+      const hold = Number(run(interact.params.hold_ms, this.controlCells(widget, type)) ?? 600);
+      if (!cancelled && performance.now() - control.started < hold)
+        this.emitInput(widget, interact.emits.tap,
+          this.eventValue(widget, type, interact.emits.tap, true));
+    } else if (interact.primitive === "drag1d") {
+      if (!cancelled && control.value !== undefined)
+        this.emitInput(widget, interact.emits.commit, control.value);
+    } else if (interact.primitive === "pick" && !cancelled) {
+      const options = run(interact.params.options, this.controlCells(widget, type));
+      if (Array.isArray(options) && options.length) {
+        const current = this.eventValue(widget, type, interact.emits.select, true);
+        const at = Math.max(-1, options.indexOf(current));
+        this.emitInput(widget, interact.emits.select, options[(at + 1) % options.length]);
+      }
+    }
+    this.queueCanvas(true);
+  }
+
+  private cancelControl(): void {
+    if (!this.control) return;
+    this.onControlUp({ pointerId: this.control.pointer } as PointerEvent, true);
   }
 
   /* Where the selection bbox lands: snapped to the cell grid unless Alt frees it. The drag

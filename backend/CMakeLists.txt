@@ -55,6 +55,7 @@ add_library(hmi_core STATIC
   src/mesh/fake.cpp
   src/compile/expression.cpp
   src/compile/compiler.cpp
+  src/sched/scheduler.cpp
   src/registry/registry.cpp
   src/sync/server.cpp
   src/app.cpp
@@ -76,7 +77,7 @@ add_executable(hmi_designer src/main.cpp)
 target_link_libraries(hmi_designer PRIVATE hmi_core)
 
 enable_testing()
-foreach(_test doc_test sync_test runtime_test)
+foreach(_test doc_test sync_test runtime_test scheduler_test)
   add_executable(hmi_${_test} tests/${_test}.cpp)
   target_link_libraries(hmi_${_test} PRIVATE hmi_core)
   add_test(NAME ${_test} COMMAND hmi_${_test})

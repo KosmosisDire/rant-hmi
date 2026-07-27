@@ -80,6 +80,13 @@ ws.send(JSON.stringify({ type: "hello", proto: 1, client_name: "render_test" }))
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 8, "eight widget types");
+const interactionOf = (node) =>
+  node?.interact ?? (node?.children ?? []).map(interactionOf).find(Boolean) ?? null;
+check(
+  interactionOf(snapshot.registry.types.find((type) => type.name === "Slider")?.template)?.primitive ===
+    "drag1d",
+  "the slider exposes the generic drag primitive",
+);
 
 const store = new DocStore();
 store.load(snapshot.doc);
@@ -108,8 +115,8 @@ const width = (color) => {
 };
 const fraction = width("#4e8ef7") / (width("#242424") || 1);
 check(Math.abs(fraction - 0.62) < 0.01, "the slider bar is 62 percent of its track, got " + fraction);
-/* the readout's value slot has a feed and no live value: UNKNOWN, never a number */
-has(svg, "--", "the fed readout renders UNKNOWN");
+/* the local feed is now evaluated by the scheduler before this view joins */
+has(svg, ">0.0<", "the fed readout renders the runtime value");
 check(!svg.includes("42.5"), "a fed slot never shows its authored value");
 
 /* an edit round trip: insert an unfed Readout and watch TO_FIXED format it */
@@ -173,6 +180,10 @@ check(run({ code: [{ op: "CONST", v: null }, { op: "CONST", v: 2 }, { op: "MUL" 
 check(run({ code: [{ op: "CONST", v: 1 }, { op: "CONST", v: 0 }, { op: "DIV" }] }, () => null) === null,
       "division by zero is Nil");
 check(run({ code: [{ op: "LOAD", cell: "slot:x" }] }, () => 5) === 5, "LOAD reads a cell");
+check(run({ code: [{ op: "CONST", v: -3 }, { op: "ABS" }] }, () => null) === 3,
+      "the full scalar interpreter runs ABS");
+check(run({ code: [{ op: "CONST", v: 7 }, { op: "CONST", v: 3 }, { op: "MOD" }] }, () => null) === 1,
+      "the full scalar interpreter runs MOD");
 check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is UNKNOWN");
 
 ws.close();

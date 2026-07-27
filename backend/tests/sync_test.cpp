@@ -69,7 +69,12 @@ std::vector<Json> pump(App& app, Client& client, size_t want, int timeout_ms = 3
     while (std::chrono::steady_clock::now() < deadline) {
         app.poll();
         for (Json& frame : client.take()) got.push_back(std::move(frame));
-        if (got.size() >= want) break;
+        size_t control = 0;
+        for (const Json& frame : got) {
+            const std::string type = frame.value("type", std::string());
+            if (type != "live" && type != "diag") ++control;
+        }
+        if (control >= want) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return got;
@@ -257,6 +262,43 @@ int main() {
     a.send(Json{{"type", "resync"}});
     frames = pump(app, a, 1);
     CHECK(frame_of(frames, "snapshot") != nullptr);
+
+    /* stage 4: an input runs once in the backend and the live cell reaches the view */
+    const Json& reset = widget_of(app.document().root, 6);
+    const uint64_t reset_id = reset["id"].get<uint64_t>();
+    const uint64_t reset_step = reset["flows"][0]["do"][0]["id"].get<uint64_t>();
+    uint64_t flow_var = 0;
+    for (const Json& var : app.document().root["globals"])
+        if (var["name"] == "flow") flow_var = var["id"].get<uint64_t>();
+    a.take();
+    a.send(Json{{"type", "apply_ops"},
+                {"base_version", app.document().version()},
+                {"ops", Json::array({Json{{"op", "set_prop"},
+                                          {"node", reset_step},
+                                          {"key", "a"},
+                                          {"value", "5"}}})}});
+    frames = pump(app, a, 1);
+    CHECK(frame_of(frames, "ops_applied") != nullptr);
+    a.take();
+    a.send(Json{{"type", "input"},
+                {"widget_id", reset_id},
+                {"event", "press"},
+                {"value", true},
+                {"seq", 1}});
+    bool saw_live = false;
+    const auto live_deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (!saw_live && std::chrono::steady_clock::now() < live_deadline) {
+        app.poll();
+        for (const Json& frame : a.take()) {
+            if (frame.value("type", std::string()) != "live") continue;
+            const std::string key = "v" + std::to_string(flow_var);
+            if (frame["values"].contains(key) && frame["values"][key] == 5)
+                saw_live = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(saw_live);
 
     /* the document on disk carries the edits */
     Document saved;
