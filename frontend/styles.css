@@ -822,6 +822,10 @@ select.field {
   color: var(--ink-2);
 }
 
+.icon-btn.on {
+  color: var(--acc);
+}
+
 .icon-btn.framed {
   border-color: var(--line-in);
 }

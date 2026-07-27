@@ -207,11 +207,12 @@ function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolea
     ? feedCard(editor, widget, type, feed)
     : el("span", { class: "value-cell" }, [valueEditor(spec, spec.shape, value, commit)]);
 
+  /* one link icon, two states: bound shows it lit and unbinds, unbound offers the feed */
   const bind = bound
-    ? iconButton("x", "unbind " + spec.name, () => {
+    ? iconButton("unlink", "unbind " + spec.name, () => {
         if (feed) editor.apply([{ op: "remove", node: feed.id }]);
       })
-    : iconButton("kind-T", "feed " + spec.name + " from the mesh", () =>
+    : iconButton("link", "feed " + spec.name + " from the mesh", () =>
         editor.apply([
           {
             op: "insert",
@@ -221,12 +222,11 @@ function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolea
           },
         ]),
       );
+  if (bound) bind.classList.add("on");
 
-  return [
-    el("label", { text: spec.name, title: spec.shape }),
-    control,
-    el("span", { class: "value-cell" }, [el("span", { class: "shape", text: spec.shape }), bind]),
-  ];
+  /* the shape is what the editor and the compiler enforce, so the row does not spell it
+     out; it is on the label's tooltip for when the user wants to know */
+  return [el("label", { text: spec.name, title: spec.name + ": " + spec.shape }), control, bind];
 }
 
 /* The Code panel: a readable chained form of the same document, generated. It is a view,
