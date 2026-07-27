@@ -1,0 +1,7 @@
+build/
+bin/
+node_modules/
+frontend/dist/
+*.pdb
+hmi.json
+hmi.state.json
