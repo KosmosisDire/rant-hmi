@@ -381,7 +381,7 @@ export class App implements Editor {
     const dy = at.y - this.drag.y0;
     if (!this.drag.moved && Math.hypot(dx, dy) * this.view.scale < 4) return;
     this.drag.moved = true;
-    this.view.ghost = this.targetBox(dx, dy, ev.altKey);
+    this.view.ghost = this.targetBox(this.drag, dx, dy, ev.altKey);
     this.queueCanvas();
   }
 
@@ -395,7 +395,7 @@ export class App implements Editor {
       return;
     }
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const box = this.targetBox(at.x - drag.x0, at.y - drag.y0, ev.altKey);
+    const box = this.targetBox(drag, at.x - drag.x0, at.y - drag.y0, ev.altKey);
     const from: Rect = drag.start;
     const scaleX = from.w ? box.w / from.w : 1;
     const scaleY = from.h ? box.h / from.h : 1;
@@ -419,13 +419,14 @@ export class App implements Editor {
     this.queueCanvas();
   }
 
-  /* where the selection bbox lands: snapped to the cell grid unless Alt frees it */
-  private targetBox(dx: number, dy: number, free: boolean): Rect {
+  /* Where the selection bbox lands: snapped to the cell grid unless Alt frees it. The drag
+   * is passed in, never read from the field: the release path clears the field first. */
+  private targetBox(drag: Json, dx: number, dy: number, free: boolean): Rect {
     const doc = this.store.doc;
     const cell = doc ? cellSize(doc.canvas) : 30;
     const snap = (v: number) => (free ? Math.round(v) : Math.round(v / cell) * cell);
-    const from: Rect = this.drag.start;
-    const mode: string = this.drag.mode;
+    const from: Rect = drag.start;
+    const mode: string = drag.mode;
     if (mode === "move")
       return { x: snap(from.x + dx), y: snap(from.y + dy), w: from.w, h: from.h };
 
