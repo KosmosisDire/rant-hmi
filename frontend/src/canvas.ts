@@ -9,7 +9,7 @@
  * Everything in it is divided by the view scale, so grips stay the same size on screen at
  * any zoom. */
 
-import { dividerPath, gridPath, unionPath } from "./islands.js";
+import { dividerPath, unionPath } from "./islands.js";
 import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.js";
 import { escapeXml, Rect, renderNode } from "./template.js";
 import { Canvas, Doc, Json, Live, Page, Registry, Widget } from "./types.js";
@@ -215,7 +215,7 @@ function overlay(page: Page, view: ViewState): string {
 
 /* ---- the page ---- */
 
-export function renderArtboard(
+export function renderContent(
   doc: Doc,
   page: Page,
   registry: Registry | null,
@@ -227,19 +227,28 @@ export function renderArtboard(
   const out: string[] = [];
   const editing = view.mode !== "operate";
 
-  /* the artboard's depth cue rides on its own background rect: a CSS filter on the whole
-     SVG would re-introduce the clipping this deliberately avoids */
+  /* The artboard's depth cue rides on its own background rect: a CSS filter on the whole
+     SVG would re-introduce the clipping this deliberately avoids. The grid is one tiled
+     pattern, so it costs one rect however many cells the canvas has. */
+  const half = cell / 2;
   out.push(
     `<defs><filter id="artboard-shadow" x="-10%" y="-10%" width="120%" height="130%">` +
       `<feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.5"/>` +
-      `</filter></defs>`,
+      `</filter>` +
+      `<pattern id="cell-grid" x="${num(-half)}" y="${num(-half)}" width="${num(cell)}" ` +
+      `height="${num(cell)}" patternUnits="userSpaceOnUse">` +
+      `<path class="grid" d="M${num(half - 3)} ${num(half)}h6M${num(half)} ${num(half - 3)}v6"/>` +
+      `</pattern></defs>`,
   );
   out.push(
     `<rect x="0" y="0" width="${canvas.unit_w}" height="${canvas.unit_h}" rx="4" ` +
       `class="artboard-bg" filter="url(#artboard-shadow)"/>`,
   );
   if (view.mode === "edit")
-    out.push(`<path d="${gridPath(canvas.rows, canvas.cols, cell)}" class="grid"/>`);
+    out.push(
+      `<rect x="${num(half)}" y="${num(half)}" width="${num(canvas.unit_w - cell)}" ` +
+        `height="${num(canvas.unit_h - cell)}" fill="url(#cell-grid)"/>`,
+    );
 
   /* The fused surface: every visible widget whose `merge` slot is on, wherever it sits.
      Grid snapping is a placement aid, not a condition for merging: the outline is the exact
@@ -310,8 +319,13 @@ export function renderArtboard(
     out.push(`</g>`);
   }
 
-  if (editing) out.push(overlay(page, view));
   return out.join("");
+}
+
+/* The editing overlay is its own layer: it is the only thing that depends on the view
+ * scale, so a pan or a zoom redraws these few shapes instead of the whole artboard. */
+export function renderOverlay(page: Page, view: ViewState): string {
+  return view.mode === "operate" ? "" : overlay(page, view);
 }
 
 /* the topmost widget under an artboard point, or 0 */

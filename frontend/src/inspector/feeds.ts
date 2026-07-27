@@ -98,25 +98,3 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
   );
   return card;
 }
-
-/* one feed per slot, so the button offers the first slot that has none */
-export function addFeedButton(editor: Editor, widget: Widget, type: WidgetType | null): HTMLElement | null {
-  const slots = (type?.slots ?? []).filter((s) => s.group === "value");
-  const used = new Set((widget.feeds ?? []).map((f) => f.slot));
-  const free = slots.find((s) => !used.has(s.name));
-  if (!free) return null;
-  return el("button", {
-    class: "dashed-btn",
-    text: "+ Source",
-    onclick: () => {
-      editor.apply([
-        {
-          op: "insert",
-          parent: widget.id,
-          list: "feeds",
-          node: { slot: free.name, src: { kind: "V", name: "" }, path: "", xf: "" },
-        },
-      ]);
-    },
-  });
-}

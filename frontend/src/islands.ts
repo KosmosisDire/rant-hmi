@@ -163,15 +163,3 @@ export function dividerPath(rects: Rect[]): string {
     }
   return d;
 }
-
-/* the faint edit-mode grid: a cross at every cell intersection */
-export function gridPath(rows: number, cols: number, cell: number): string {
-  let d = "";
-  for (let c = 1; c < cols; c++)
-    for (let r = 1; r < rows; r++) {
-      const x = c * cell;
-      const y = r * cell;
-      d += `M${x - 3} ${y}h6M${x} ${y - 3}v6`;
-    }
-  return d;
-}

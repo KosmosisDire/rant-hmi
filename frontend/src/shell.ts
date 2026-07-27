@@ -7,7 +7,7 @@
  * moves the whole selection, the grips resize its bbox, and a dashed ghost shows where it
  * will land. The document is only touched on release, by one op. */
 
-import { bboxOf, cellSize, hitTest, renderArtboard, ViewState } from "./canvas.js";
+import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { clear, el, nodeAt, pathOf, svg } from "./dom.js";
 import { Editor } from "./editor.js";
@@ -40,6 +40,7 @@ export class App implements Editor {
     stage: HTMLElement;
     layer: HTMLElement;
     art: SVGSVGElement;
+    overlay: SVGSVGElement;
     banner: HTMLElement;
     version: HTMLElement;
     pill: HTMLElement;
@@ -47,6 +48,9 @@ export class App implements Editor {
   };
   private drag: Json = null;
   private frame = 0;
+  private contentDirty = true;
+  private lastContent = "";
+  private lastOverlay = "";
 
   constructor(private root: HTMLElement, url: string) {
     this.build();
@@ -55,7 +59,7 @@ export class App implements Editor {
       ops: (version, ops) => this.onOps(version, ops),
       live: (live) => {
         this.live = live;
-        this.queueCanvas();
+        this.queueCanvas(true);
         this.renderRails();
       },
       diag: () => undefined,
@@ -93,6 +97,17 @@ export class App implements Editor {
     this.view.selection = ids;
     this.queueCanvas();
     this.renderRails();
+  }
+
+  /* the artboard and its editing overlay are separate layers: only the overlay depends on
+     the view transform, so panning and zooming redraw a handful of shapes */
+  private queueCanvas(content = false): void {
+    this.contentDirty = this.contentDirty || content;
+    if (this.frame) return;
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      this.renderCanvas();
+    });
   }
 
   refresh(): void {
@@ -138,17 +153,8 @@ export class App implements Editor {
 
   private renderAll(): void {
     this.nodes.version.textContent = "v" + this.store.version();
-    this.queueCanvas();
+    this.queueCanvas(true);
     this.renderRails();
-  }
-
-  /* one canvas render per frame: pan, zoom and drag all ask for it continuously */
-  private queueCanvas(): void {
-    if (this.frame) return;
-    this.frame = requestAnimationFrame(() => {
-      this.frame = 0;
-      this.renderCanvas();
-    });
   }
 
   private renderCanvas(): void {
@@ -156,11 +162,26 @@ export class App implements Editor {
     const page = this.page();
     if (!doc || !page) {
       this.nodes.art.innerHTML = "";
+      this.nodes.overlay.innerHTML = "";
+      this.lastContent = this.lastOverlay = "";
       return;
     }
     this.view.scale = this.viewport?.scale() ?? 1;
-    this.nodes.art.setAttribute("viewBox", `0 0 ${doc.canvas.unit_w} ${doc.canvas.unit_h}`);
-    this.nodes.art.innerHTML = renderArtboard(doc, page, this.registry, this.live, this.view);
+    const viewBox = `0 0 ${doc.canvas.unit_w} ${doc.canvas.unit_h}`;
+    if (this.contentDirty) {
+      this.contentDirty = false;
+      const content = renderContent(doc, page, this.registry, this.live, this.view);
+      if (content !== this.lastContent) {
+        this.lastContent = content;
+        this.nodes.art.setAttribute("viewBox", viewBox);
+        this.nodes.art.innerHTML = content;
+      }
+    }
+    const overlay = renderOverlay(page, this.view);
+    if (overlay === this.lastOverlay) return;
+    this.lastOverlay = overlay;
+    this.nodes.overlay.setAttribute("viewBox", viewBox);
+    this.nodes.overlay.innerHTML = overlay;
   }
 
   /* Both rails are rebuilt on every version, then the control the user was in is found
@@ -218,7 +239,8 @@ export class App implements Editor {
     const left = el("aside", { class: "rail left" });
     const inspector = el("aside", { class: "rail right" });
     const art = svg("svg", { class: "artboard", width: "100%", height: "100%" }) as SVGSVGElement;
-    const layer = el("div", { class: "layer" }, [art as unknown as Node]);
+    const overlay = svg("svg", { class: "artboard overlay", width: "100%", height: "100%" }) as SVGSVGElement;
+    const layer = el("div", { class: "layer" }, [art as unknown as Node, overlay as unknown as Node]);
     const stage = el("section", { class: "stage" }, [layer]);
     const banner = el("div", { class: "banner" });
 
@@ -257,7 +279,7 @@ export class App implements Editor {
     );
     this.root.appendChild(banner);
 
-    this.nodes = { left, inspector, stage, layer, art, banner, version, pill, palette };
+    this.nodes = { left, inspector, stage, layer, art, overlay, banner, version, pill, palette };
     this.restoreRailWidths();
 
     this.viewport = new Viewport(stage, layer, {

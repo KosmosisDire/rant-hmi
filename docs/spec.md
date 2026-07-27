@@ -99,27 +99,41 @@ else the type's default. `group` (value / appearance / config) drives inspector
 sectioning only; `editor` is a UI hint (color, multiline). So a status-driven
 panel color is not a feature, it is just a feed on an appearance slot.
 
-**The base slots.** Every type composes in one universal slot set before its own;
-a type overrides a base slot BY NAME in its own data (Panel redeclares `surface`
-with an opaque default) but cannot remove one, so every widget answers the same
-questions the same way:
+**The base slots.** There are two base SETS, and a type composes in the ones it
+uses before its own slots. A property a widget does not use must not appear in its
+inspector, so what a type composes is a decision in the registry data, not a fixed
+universal list. A type overrides a base slot BY NAME (Button redeclares `surface`
+with the blue of a button face), keeping its position.
+
+STATE, composed by anything that renders at all:
 
 | Slot | Shape | Default | Semantics |
 |---|---|---|---|
 | `visible` | bool | true | false or Nil: not rendered, not interactive |
 | `enabled` | bool | true | false or Nil: interaction primitives emit NOTHING, rendered dimmed. An UNKNOWN interlock disables: Nil-poisoning as fail-safe |
+
+FRAME, composed by anything that lives in a tile:
+
+| Slot | Shape | Default | Semantics |
+|---|---|---|---|
 | `merge` | bool | true | join the fused island surface (3.1) |
 | `surface` | color | transparent | the widget's own panel fill |
 | `border` | color | transparent | panel border color |
-| `radius` | num | 6 | panel corner radius |
-| `aspect` | text | "" | content aspect lock ("1", "16/9") |
-| `justify` | enum | center | 3x3 placement, aspect-locked only |
+| `radius` | num | 3 | panel corner radius |
 | `panel_pad` | num | -1 | tile-to-panel padding; -1 = auto |
 | `pad` | num | -1 | panel-to-content padding; -1 = auto |
+| `aspect` | text | "" | content aspect lock ("1", "16/9") |
+| `justify` | enum | center | 3x3 placement, aspect-locked only |
 
-The FRAME (island merge, surface, border, radius, paddings, aspect box) is
-rendered once by the shared tile machinery, reading exactly these slots; a type's
-template renders only the content inside it and never re-implements frame anatomy.
+The FRAME is rendered once by the shared tile machinery, reading exactly these
+slots; a type's template renders only the content inside it and never re-implements
+frame anatomy. Where a control's body IS a panel, the type says so by redeclaring
+the frame slots instead of inventing its own: a Button's face, a Dropdown's field
+and a Panel's card are all `surface` + `border` + `radius`, so those three do
+exactly what the user expects on every type that has them. A control whose body is
+a shape rather than a panel (a toggle's pill, a slider's bar, an indicator's lamp)
+names that shape's colours as its own slots, and its frame stays the optional
+background behind it.
 
 **Behavior-driven appearance goes through a variable.** Flows writing slots
 directly was considered and rejected: it would put a second writer on a slot,

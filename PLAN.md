@@ -63,8 +63,9 @@ runtime are all driven by declarative tables, never by per-type code branches:
 
 - **Widget types** are pure data records (spec 2.3): ONE slots table (every input,
   process value or corner radius alike, feedable or instance-set, grouped for the
-  inspector) composed over a universal BASE slot set (visible, enabled, frame
-  styling; overridable per type by name, never removable), an events table, and a
+  inspector) composed over the BASE slot sets the type uses (STATE: visible, enabled;
+  FRAME: merge, surface, border, radius, paddings, aspect box), overridable per type
+  by name and omitted where a type has no such part, an events table, and a
   visual TEMPLATE (proportional layout boxes +
   draw parts + interaction primitives; every attribute ships as a compiled
   program). Layout is scale-to-fit by construction (weights, auto-flip by aspect,

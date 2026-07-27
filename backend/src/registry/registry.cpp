@@ -85,30 +85,49 @@ Json slot_enum(const char* name, std::vector<std::string> variants, const char* 
 
 Json event(const char* name, const char* x) { return Json{{"name", name}, {"x", x}}; }
 
-/* The universal slot set every type composes in (spec 2.3). The shared tile machinery
- * renders the frame from exactly these; a template draws only the content inside it. */
-Json base_slots() {
+/* Two base sets, composed per type rather than forced on every one: a property a widget
+ * does not use must not appear in its inspector, and that is a decision in this data.
+ *
+ * STATE applies to anything that renders at all. FRAME is the tile the shared machinery
+ * paints (island merge, surface, border, radius, paddings, aspect box), so declaring it
+ * gives the type a settable body: for a Button the surface IS the button face, for a
+ * Dropdown the field, for a Panel the card. A type whose control is a shape drawn inside
+ * the tile (a pill, a bar, a lamp) still declares FRAME for its optional background and
+ * names that shape's colours as its own slots. */
+Json state_slots() {
     return Json::array({
         slot("visible", "bool", true, "config"),
         slot("enabled", "bool", true, "config"),
+    });
+}
+
+Json frame_slots() {
+    return Json::array({
         slot("merge", "bool", true, "appearance"),
         slot("surface", "color", "#00000000", "appearance", "color"),
         slot("border", "color", "#00000000", "appearance", "color"),
         slot("radius", "num", 3, "appearance"),
+        slot("panel_pad", "num", -1, "appearance"),
+        slot("pad", "num", -1, "appearance"),
         slot("aspect", "text", "", "config"),
         slot_enum("justify",
                   {"top-left", "top", "top-right", "left", "center", "right", "bottom-left",
                    "bottom", "bottom-right"},
                   "center", "config"),
-        slot("panel_pad", "num", -1, "appearance"),
-        slot("pad", "num", -1, "appearance"),
     });
 }
 
-/* base slots, then the type's own; a type overrides a base slot BY NAME (keeping its
- * position) and can never remove one */
-Json compose_slots(std::initializer_list<Json> own) {
-    Json slots = base_slots();
+/* every base set a widget that lives in a tile uses */
+Json tile_base() {
+    Json out = state_slots();
+    for (const Json& s : frame_slots()) out.push_back(s);
+    return out;
+}
+
+/* the base set, then the type's own; a type overrides a base slot BY NAME, keeping its
+ * position, and simply omits a base set it does not use */
+Json compose_slots(Json base, std::initializer_list<Json> own) {
+    Json slots = std::move(base);
     for (const Json& s : own) {
         bool overridden = false;
         for (Json& b : slots) {
@@ -137,9 +156,11 @@ Json press_interact() {
 
 Json button_type() {
     return type("Button",
-                compose_slots({
-                    slot("caption", "text", "", "value"),
-                    slot("face", "color", "#4e8ef7", "appearance", "color"),
+                compose_slots(tile_base(), {
+                    /* the button's face IS its frame: surface, border and radius all
+                     * land on the thing the user presses */
+                    slot("surface", "color", "#4e8ef7", "appearance", "color"),
+                    slot("caption", "text", "", "appearance"),
                     slot("text_color", "color", "#0d0d0d", "appearance", "color"),
                 }),
                 Json::array({event("press", "bool"), event("release", "bool"),
@@ -147,8 +168,6 @@ Json button_type() {
                              event("held", "bool")}),
                 box("stack", Json::object(),
                     Json::array({
-                        part("rect", Json{{"fill", ref("slot:face")},
-                                          {"radius", ref("slot:radius")}}),
                         part("text", Json{{"text", ref("slot:caption")},
                                           {"fill", ref("slot:text_color")},
                                           {"align", lit("center")},
@@ -160,7 +179,7 @@ Json button_type() {
 Json toggle_type() {
     Json on = ref("slot:value");
     return type("Toggle",
-                compose_slots({
+                compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
                     slot("on_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("off_color", "color", "#2a2a2a", "appearance", "color"),
@@ -192,7 +211,7 @@ Json toggle_type() {
 Json slider_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
     return type("Slider",
-                compose_slots({
+                compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
@@ -230,9 +249,9 @@ Json slider_type() {
 
 Json readout_type() {
     return type("Readout",
-                compose_slots({
+                compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
-                    slot("units", "text", "", "value"),
+                    slot("units", "text", "", "appearance"),
                     slot("decimals", "num", 1, "config"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("units_color", "color", "#8a8a8a", "appearance", "color"),
@@ -258,11 +277,11 @@ Json readout_type() {
 
 Json indicator_type() {
     return type("Indicator",
-                compose_slots({
+                compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
                     slot("on_color", "color", "#e0857c", "appearance", "color"),
                     slot("off_color", "color", "#2a2a2a", "appearance", "color"),
-                    slot("caption", "text", "", "value"),
+                    slot("caption", "text", "", "appearance"),
                 }),
                 Json::array({event("press", "num"), event("tap", "num")}),
                 box("col", Json::object(),
@@ -286,19 +305,17 @@ Json indicator_type() {
 
 Json dropdown_type() {
     return type("Dropdown",
-                compose_slots({
+                compose_slots(tile_base(), {
                     slot("options", "list", Json::array(), "value"),
                     slot("value", "text", "", "value"),
-                    slot("face", "color", "#141414", "appearance", "color"),
+                    /* the field itself is the frame */
+                    slot("surface", "color", "#141414", "appearance", "color"),
+                    slot("border", "color", "#2e2e2e", "appearance", "color"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                 }),
                 Json::array({event("select", "text"), event("open", "text")}),
                 box("stack", Json::object(),
                     Json::array({
-                        part("rect", Json{{"fill", ref("slot:face")},
-                                          {"radius", ref("slot:radius")},
-                                          {"stroke", lit("#2e2e2e")},
-                                          {"stroke_w", lit(1)}}),
                         box("row", Json{{"pad", lit(0.18)}},
                             Json::array({
                                 part("text", Json{{"text", ref("slot:value")},
@@ -316,7 +333,7 @@ Json dropdown_type() {
 
 Json label_type() {
     return type("Label",
-                compose_slots({
+                compose_slots(tile_base(), {
                     slot("text", "text", "", "value"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot_enum("align", {"start", "center", "end"}, "start", "appearance"),
@@ -333,7 +350,7 @@ Json panel_type() {
     /* a Panel is frame only: it redeclares the base surface and border, and its
      * template draws nothing */
     return type("Panel",
-                compose_slots({
+                compose_slots(tile_base(), {
                     slot("surface", "color", "#1d1d1d", "appearance", "color"),
                     slot("border", "color", "#2a2a2a", "appearance", "color"),
                 }),

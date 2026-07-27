@@ -7,7 +7,7 @@ import { Editor, section } from "../editor.js";
 import { fedSlots, resolveSlot, typeOf } from "../slots.js";
 import { Json, SlotSpec, Widget } from "../types.js";
 import { valueEditor } from "./editors.js";
-import { addFeedButton, feedCard } from "./feeds.js";
+import { feedCard } from "./feeds.js";
 import { addFlowButton, flowCard } from "./flows.js";
 import { newVariable, varCard } from "./vars.js";
 
@@ -103,20 +103,20 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
-  /* 1. Data in: a fed value slot is a card, an unfed one is a row */
-  body.append(
-    ...section("data-in", "Data in", String(feeds.length), () => {
-      const rows: (HTMLElement | null)[] = [];
-      for (const feed of feeds.filter((f) => isValueSlot(valueSlots, f.slot)))
-        rows.push(feedCard(editor, widget, type, feed));
-      for (const spec of valueSlots.filter((s) => !fed.has(s.name)))
-        rows.push(slotRow(editor, widget, spec, false));
-      rows.push(addFeedButton(editor, widget, type));
-      if (!valueSlots.length && !feeds.length)
-        rows.push(el("p", { class: "empty", text: "this type consumes no values" }));
-      return rows;
-    }),
-  );
+  /* 1. Data in, and ONLY where the type takes values: what a widget consumes is its
+   *    value-group slots, so a Button (which consumes nothing) shows no such section.
+   *    A fed slot is a card, an unfed one a row with a bind button. */
+  if (valueSlots.length)
+    body.append(
+      ...section("data-in", "Data in", String(feeds.length), () => {
+        const rows: (HTMLElement | null)[] = [];
+        for (const spec of valueSlots) {
+          const feed = feeds.find((f) => f.slot === spec.name);
+          rows.push(feed ? feedCard(editor, widget, type, feed) : slotRow(editor, widget, spec, false));
+        }
+        return rows;
+      }),
+    );
 
   /* 2. Behavior */
   body.append(
@@ -150,7 +150,10 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       el(
         "div",
         { class: "prop-grid" },
-        otherSlots.flatMap((spec) => slotCells(editor, widget, spec, fed.has(spec.name))),
+        otherSlots
+          .filter((s) => s.group === "appearance")
+          .concat(otherSlots.filter((s) => s.group === "config"))
+          .flatMap((spec) => slotCells(editor, widget, spec, fed.has(spec.name))),
       ),
     ]),
   );
@@ -161,10 +164,6 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       el("pre", { class: "code", text: codeFor(widget) }),
     ]),
   );
-}
-
-function isValueSlot(valueSlots: SlotSpec[], name: string): boolean {
-  return valueSlots.some((s) => s.name === name);
 }
 
 function geomRow(editor: Editor, widget: Widget): HTMLElement {

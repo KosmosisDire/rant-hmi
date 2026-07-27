@@ -17,7 +17,7 @@ const DOC = join(here, "render_test.tmp.json");
 
 const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
-const { renderArtboard } = await import(mod("canvas.js"));
+const { renderContent } = await import(mod("canvas.js"));
 const { run } = await import(mod("program.js"));
 const { unionPath } = await import(mod("islands.js"));
 
@@ -85,7 +85,7 @@ const store = new DocStore();
 store.load(snapshot.doc);
 const view = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {} };
 const page = store.pages()[0];
-let svg = renderArtboard(store.doc, page, snapshot.registry, snapshot.live, view);
+let svg = renderContent(store.doc, page, snapshot.registry, snapshot.live, view);
 
 has(svg, 'class="island"', "the fused island surface");
 has(svg, 'class="grid"', "the edit-mode grid");
@@ -137,7 +137,7 @@ check(applied.version === snapshot.version + 1, "the version advanced by one");
 store.apply(applied.version, applied.ops);
 check(store.pages()[0].widgets.length === 8, "the insert reached the mirror");
 
-svg = renderArtboard(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 has(svg, ">12.3<", "TO_FIXED formatted an unfed value");
 has(svg, ">bar<", "the units part rendered");
 
@@ -152,7 +152,7 @@ ws.send(
 );
 const second = await next("ops_applied");
 store.apply(second.version, second.ops);
-svg = renderArtboard(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 has(svg, ">12<", "decimals 0 rounded the value");
 check(!svg.includes(">bar<"), "an empty units slot sheds its part");
 

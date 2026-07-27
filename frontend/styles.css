@@ -281,6 +281,18 @@ button:focus-visible {
   will-change: transform;
 }
 
+/* the two layers stack: content below, editing overlay above */
+.layer > .artboard {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* the overlay only takes pointer events on its grips, so a click reaches the artboard */
+.overlay {
+  pointer-events: none;
+}
+
 /* The artboard does NOT clip: a widget may sit off-grid or fully outside it on the
    pasteboard while editing (spec 3.1), and a selection ring on a boundary widget is drawn
    outside the widget. Operate mode renders the artboard rect only, so it clips. */
@@ -288,6 +300,10 @@ button:focus-visible {
   display: block;
   font-family: var(--mono);
   overflow: visible;
+  /* an HMI's text is display, not a document: it never highlights, in any mode, so a drag
+     never turns into a text selection */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 [data-mode="operate"] .artboard {
