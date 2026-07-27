@@ -47,6 +47,14 @@ add_library(hmi_core STATIC
   src/doc/ops.cpp
   src/doc/refs.cpp
   src/doc/store.cpp
+  src/vm/value.cpp
+  src/vm/program.cpp
+  src/vm/state.cpp
+  src/vm/vm.cpp
+  src/mesh/port.cpp
+  src/mesh/fake.cpp
+  src/compile/expression.cpp
+  src/compile/compiler.cpp
   src/registry/registry.cpp
   src/sync/server.cpp
   src/app.cpp
@@ -68,7 +76,7 @@ add_executable(hmi_designer src/main.cpp)
 target_link_libraries(hmi_designer PRIVATE hmi_core)
 
 enable_testing()
-foreach(_test doc_test sync_test)
+foreach(_test doc_test sync_test runtime_test)
   add_executable(hmi_${_test} tests/${_test}.cpp)
   target_link_libraries(hmi_${_test} PRIVATE hmi_core)
   add_test(NAME ${_test} COMMAND hmi_${_test})

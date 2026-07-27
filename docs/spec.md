@@ -972,9 +972,11 @@ is accepted.
 
 ### 6.2 Grammar
 
-One line, pure, total, no statements, no assignment, no side effects. The only free
-variable is `x`; everything else is a named variable, an open message field, or an
-enum variant.
+One line, pure, total, no statements, no assignment, no side effects. `x` is always
+the triggering event value or feed value. A flow reads the owning widget's current
+slots explicitly as `widget.<slot>`, so every event gets the same state vocabulary
+without colliding with HMI variable names. Everything else is a named HMI variable,
+an open message field such as `msg.speed`, or an enum variant.
 
 ```
 expr    := or

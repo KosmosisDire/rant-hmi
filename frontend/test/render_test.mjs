@@ -177,6 +177,11 @@ check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is
 
 ws.close();
 backend.kill();
+if (backend.exitCode === null)
+  await new Promise((resolve) => {
+    backend.once("exit", resolve);
+    setTimeout(resolve, 1000);
+  });
 rmSync(DOC, { force: true });
 console.log(`render_test: ${checks} checks, ${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);
