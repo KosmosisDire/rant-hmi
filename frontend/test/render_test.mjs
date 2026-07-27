@@ -82,23 +82,30 @@ check(snapshot.registry.types.length === 8, "eight widget types");
 
 const store = new DocStore();
 store.load(snapshot.doc);
-const view = { mode: "edit", selection: [], state: {} };
+const view = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {} };
 const page = store.pages()[0];
 let svg = renderArtboard(store.doc, page, snapshot.registry, snapshot.live, view);
 
 has(svg, 'class="island"', "the fused island surface");
 has(svg, 'class="grid"', "the edit-mode grid");
 has(svg, "Line 1 Overview", "the label's text part");
-check((svg.match(/class="widget/g) ?? []).length === 7, "seven widget groups");
+check((svg.match(/<g class="widget/g) ?? []).length === 7, "seven widget groups");
 
 /* the toggle is on, so PICK resolved its fill to the on colour */
-has(svg, "#2ea86b", "the toggle's on colour from a PICK program");
-/* the slider's bar is 62% of its track: norm() and CLAMP01 ran over three slots */
+has(svg, "#4e8ef7", "the toggle's on colour from a PICK program");
+/* the slider's bar is 62% of its track: norm() and CLAMP01 ran over three slots. Scope the
+   search to the slider's own group: the accent colour is on several widgets. */
+const groupOf = (id) => {
+  const at = svg.indexOf('data-id="' + id + '"');
+  return at < 0 ? "" : svg.slice(at, svg.indexOf("</g>", at));
+};
+const slider = page.widgets.find((w) => w.type === "Slider");
+const sliderSvg = groupOf(slider.id);
 const width = (color) => {
-  const found = svg.match(new RegExp('<rect [^>]*width="([0-9.]+)"[^>]*fill="' + color + '"'));
+  const found = sliderSvg.match(new RegExp('<rect [^>]*width="([0-9.]+)"[^>]*fill="' + color + '"'));
   return found ? Number(found[1]) : 0;
 };
-const fraction = width("#3d7eff") / (width("#2b3040") || 1);
+const fraction = width("#4e8ef7") / (width("#242424") || 1);
 check(Math.abs(fraction - 0.62) < 0.01, "the slider bar is 62 percent of its track, got " + fraction);
 /* the readout's value slot has a feed and no live value: UNKNOWN, never a number */
 has(svg, "--", "the fed readout renders UNKNOWN");

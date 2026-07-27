@@ -4,6 +4,8 @@
  * desktop, so an accidental zoom on a wall panel cannot happen. Pan and zoom are one
  * CSS transform, so they never repaint the artboard. */
 
+import { armSwallow } from "./menu.js";
+
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
 const MARGIN = 28;
@@ -12,7 +14,13 @@ export interface ViewportHooks {
   /* may this pointerdown start a pan? (a widget keeps its own drag) */
   canPan(ev: PointerEvent): boolean;
   onTap(x: number, y: number, ev: PointerEvent): void;
+  /* the transform changed: anything drawn in screen-constant sizes must redraw */
+  onViewChange(): void;
+  /* touch stand-in for right-click */
+  onLongPress(x: number, y: number, ev: PointerEvent): void;
 }
+
+const LONG_PRESS_MS = 480;
 
 export class Viewport {
   private fitScale = 1;
@@ -24,6 +32,7 @@ export class Viewport {
   private locked = false;
   private pointers = new Map<number, { x: number; y: number }>();
   private gesture: any = null;
+  private longPress: any = null;
 
   constructor(private stage: HTMLElement, private layer: HTMLElement, private hooks: ViewportHooks) {
     stage.addEventListener("wheel", (ev) => this.onWheel(ev as WheelEvent), { passive: false });
@@ -34,6 +43,7 @@ export class Viewport {
     window.addEventListener("blur", () => {
       this.pointers.clear();
       this.gesture = null;
+      this.cancelLongPress();
     });
     new ResizeObserver(() => this.fit(false)).observe(stage);
   }
@@ -89,6 +99,7 @@ export class Viewport {
   }
 
   private apply(): void {
+    this.hooks.onViewChange();
     this.layer.style.transform =
       `translate(${this.panX.toFixed(1)}px,${this.panY.toFixed(1)}px) scale(${this.scale().toFixed(4)})`;
   }
@@ -115,6 +126,7 @@ export class Viewport {
 
   private onDown(ev: PointerEvent): void {
     this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    this.startLongPress(ev);
     if (this.locked) return;
     if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
@@ -150,6 +162,8 @@ export class Viewport {
 
   private onMove(ev: PointerEvent): void {
     if (this.pointers.has(ev.pointerId)) this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (this.longPress && Math.hypot(ev.clientX - this.longPress.x, ev.clientY - this.longPress.y) > 8)
+      this.cancelLongPress();
     if (!this.gesture) return;
     const box = this.stage.getBoundingClientRect();
     if (this.gesture.mode === "pinch") {
@@ -178,11 +192,35 @@ export class Viewport {
 
   private onUp(ev: PointerEvent): void {
     this.pointers.delete(ev.pointerId);
+    this.cancelLongPress();
     if (!this.gesture) return;
     if (this.gesture.mode === "pan" && !this.gesture.moved) {
       const point = this.toArtboard(ev.clientX, ev.clientY);
       this.hooks.onTap(point.x, point.y, ev);
     }
     if (this.pointers.size === 0) this.gesture = null;
+  }
+
+  /* a long press is the touch stand-in for right-click; a mouse uses contextmenu */
+  private startLongPress(ev: PointerEvent): void {
+    this.cancelLongPress();
+    if (ev.pointerType === "mouse" || this.pointers.size !== 1) return;
+    const point = this.toArtboard(ev.clientX, ev.clientY);
+    this.longPress = {
+      x: ev.clientX,
+      y: ev.clientY,
+      timer: window.setTimeout(() => {
+        this.longPress = null;
+        this.gesture = null;
+        armSwallow();
+        this.hooks.onLongPress(point.x, point.y, ev);
+      }, LONG_PRESS_MS),
+    };
+  }
+
+  private cancelLongPress(): void {
+    if (!this.longPress) return;
+    window.clearTimeout(this.longPress.timer);
+    this.longPress = null;
   }
 }

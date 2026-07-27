@@ -1,32 +1,40 @@
 /* The application shell: three columns, the mode switch, and the wiring between the
  * connection, the document mirror and the rails. The shell holds only view state
- * (selection, mode, fold, rail widths); every edit leaves as an op and comes back as a
- * broadcast, so two windows are always looking at the same document. */
+ * (selection, hover, mode, rail widths); every edit leaves as an op and comes back as a
+ * broadcast, so two windows are always looking at the same document.
+ *
+ * Direct manipulation follows the old designer: click selects, shift-click extends, drag
+ * moves the whole selection, the grips resize its bbox, and a dashed ghost shows where it
+ * will land. The document is only touched on release, by one op. */
 
-import { hitTest, renderArtboard, ViewState } from "./canvas.js";
+import { bboxOf, cellSize, hitTest, renderArtboard, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
-import { clear, el, select, svg } from "./dom.js";
+import { clear, el, svg } from "./dom.js";
+import { Editor } from "./editor.js";
+import { iconMarkup } from "./icons.js";
+import { closeMenu, openMenu } from "./menu.js";
+import { renderInspector, renderLeftRail } from "./inspector/panel.js";
 import { Connection, Status } from "./protocol.js";
-import { renderInspector, renderLeftRail } from "./rails.js";
-import { Viewport } from "./viewport.js";
+import { Rect } from "./template.js";
 import { Doc, Json, Live, Op, Page, Registry, Widget } from "./types.js";
+import { Viewport } from "./viewport.js";
 
 type Mode = "edit" | "run" | "operate";
 
 const RAIL_MIN = 200;
-const RAIL_MAX = 560;
+const RAIL_MAX = 640;
+const MIN_SIZE = 20;
 
-export class App {
+export class App implements Editor {
   store = new DocStore();
   registry: Registry | null = null;
   live: Live | null = null;
-  view: ViewState = { mode: "edit", selection: [], state: {} };
+  view: ViewState = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {} };
 
   private conn: Connection;
   private viewport: Viewport | null = null;
   private pageId = 0;
   private nodes!: {
-    root: HTMLElement;
     left: HTMLElement;
     inspector: HTMLElement;
     stage: HTMLElement;
@@ -38,7 +46,8 @@ export class App {
     palette: HTMLElement;
   };
   private drag: Json = null;
-  private pendingRails = false;
+  private frame = 0;
+  private railsPending = false;
 
   constructor(private root: HTMLElement, url: string) {
     this.build();
@@ -47,7 +56,7 @@ export class App {
       ops: (version, ops) => this.onOps(version, ops),
       live: (live) => {
         this.live = live;
-        this.renderCanvas();
+        this.queueCanvas();
         this.renderRails();
       },
       diag: () => undefined,
@@ -59,7 +68,7 @@ export class App {
     this.conn.connect();
   }
 
-  /* ---- Editor interface (rails.ts) ---- */
+  /* ---- Editor interface ---- */
 
   page(): Page | null {
     return this.store.page(this.pageId) ?? this.store.pages()[0] ?? null;
@@ -83,7 +92,11 @@ export class App {
 
   select(ids: number[]): void {
     this.view.selection = ids;
-    this.renderCanvas();
+    this.queueCanvas();
+    this.renderRails(true);
+  }
+
+  refresh(): void {
     this.renderRails(true);
   }
 
@@ -126,8 +139,17 @@ export class App {
 
   private renderAll(): void {
     this.nodes.version.textContent = "v" + this.store.version();
-    this.renderCanvas();
+    this.queueCanvas();
     this.renderRails();
+  }
+
+  /* one canvas render per frame: pan, zoom and drag all ask for it continuously */
+  private queueCanvas(): void {
+    if (this.frame) return;
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      this.renderCanvas();
+    });
   }
 
   private renderCanvas(): void {
@@ -137,6 +159,7 @@ export class App {
       this.nodes.art.innerHTML = "";
       return;
     }
+    this.view.scale = this.viewport?.scale() ?? 1;
     this.nodes.art.setAttribute("viewBox", `0 0 ${doc.canvas.unit_w} ${doc.canvas.unit_h}`);
     this.nodes.art.innerHTML = renderArtboard(doc, page, this.registry, this.live, this.view);
   }
@@ -146,12 +169,12 @@ export class App {
   private renderRails(force = false): void {
     const focused = document.activeElement as HTMLElement | null;
     const busy = !force && focused ? focused.closest(".rail") : null;
-    if (busy && !this.pendingRails) {
-      this.pendingRails = true;
+    if (busy && !this.railsPending) {
+      this.railsPending = true;
       busy.addEventListener(
         "focusout",
         () => {
-          this.pendingRails = false;
+          this.railsPending = false;
           window.setTimeout(() => this.renderRails(), 0);
         },
         { once: true },
@@ -167,7 +190,7 @@ export class App {
     clear(this.root);
     const pill = el("span", { class: "pill connecting", text: "connecting" });
     const version = el("span", { class: "version", text: "v0" });
-    const palette = el("div", { class: "palette" });
+    const palette = el("div", { class: "tools" });
     const left = el("aside", { class: "rail left" });
     const inspector = el("aside", { class: "rail right" });
     const art = svg("svg", { class: "artboard", width: "100%", height: "100%" }) as SVGSVGElement;
@@ -177,24 +200,16 @@ export class App {
 
     const modes = el(
       "div",
-      { class: "modes" },
+      { class: "seg" },
       (["edit", "run", "operate"] as Mode[]).map((mode) =>
         el("button", {
-          class: "mode" + (mode === this.view.mode ? " on" : ""),
-          text: mode === "run" ? "debug run" : mode,
+          class: mode === this.view.mode ? "on" : "",
+          text: mode === "run" ? "debug" : mode,
           "data-mode": mode,
           onclick: () => this.setMode(mode),
         }),
       ),
     );
-
-    const workspace = el("main", { class: "workspace" }, [
-      left,
-      this.gutter("left"),
-      stage,
-      this.gutter("right"),
-      inspector,
-    ]);
 
     this.root.appendChild(
       el("header", { class: "topbar" }, [
@@ -207,22 +222,41 @@ export class App {
         el("div", { class: "status" }, [version, pill]),
       ]),
     );
-    this.root.appendChild(workspace);
+    this.root.appendChild(
+      el("main", { class: "workspace" }, [
+        left,
+        this.gutter("left"),
+        stage,
+        this.gutter("right"),
+        inspector,
+      ]),
+    );
     this.root.appendChild(banner);
 
-    this.nodes = { root: this.root, left, inspector, stage, layer, art, banner, version, pill, palette };
+    this.nodes = { left, inspector, stage, layer, art, banner, version, pill, palette };
     this.restoreRailWidths();
 
     this.viewport = new Viewport(stage, layer, {
-      canPan: (ev) => !(ev.target as Element)?.closest?.("[data-id]"),
-      onTap: (x, y) => {
+      canPan: (ev) => !this.grabbable(ev),
+      onTap: (x, y, ev) => {
+        if (this.view.mode !== "edit") return;
         const page = this.page();
-        if (!page || this.view.mode !== "edit") return;
-        this.select(hitTest(page, x, y) ? [hitTest(page, x, y)] : []);
+        const id = page ? hitTest(page, x, y) : 0;
+        this.clickSelect(id, ev.shiftKey);
       },
+      onViewChange: () => this.queueCanvas(),
+      onLongPress: (x, y, ev) => this.openContextAt(x, y, ev.clientX, ev.clientY),
     });
 
     stage.addEventListener("pointerdown", (ev) => this.onStageDown(ev as PointerEvent), true);
+    stage.addEventListener("pointermove", (ev) => this.onStageHover(ev as PointerEvent));
+    stage.addEventListener("pointerleave", () => {
+      if (this.view.hover) {
+        this.view.hover = 0;
+        this.queueCanvas();
+      }
+    });
+    stage.addEventListener("contextmenu", (ev) => this.onContextMenu(ev as MouseEvent));
     window.addEventListener("pointermove", (ev) => this.onStageMove(ev as PointerEvent));
     window.addEventListener("pointerup", (ev) => this.onStageUp(ev as PointerEvent));
     window.addEventListener("keydown", (ev) => this.onKey(ev));
@@ -263,31 +297,77 @@ export class App {
 
   private setMode(mode: Mode): void {
     this.view.mode = mode;
+    this.view.ghost = null;
     this.root.setAttribute("data-mode", mode);
-    for (const button of Array.from(this.root.querySelectorAll(".mode")))
+    for (const button of Array.from(this.root.querySelectorAll(".seg button[data-mode]")))
       button.classList.toggle("on", (button as HTMLElement).dataset.mode === mode);
     /* an operator surface stays still; editing wants pan and zoom everywhere */
-    if (this.viewport) this.viewport.setLocked(mode === "operate" && window.innerWidth > 900);
+    this.viewport?.setLocked(mode === "operate" && window.innerWidth > 900);
     this.renderAll();
   }
 
-  /* ---- direct manipulation: move and resize a widget, one op on release ---- */
+  /* ---- selection and direct manipulation ---- */
+
+  private grabbable(ev: PointerEvent): boolean {
+    if (this.view.mode !== "edit") return false;
+    const target = ev.target as Element | null;
+    return Boolean(target?.closest?.("[data-id], [data-handle]"));
+  }
+
+  private clickSelect(id: number, extend: boolean): void {
+    if (!id) {
+      this.select([]);
+      return;
+    }
+    if (!extend) {
+      this.select([id]);
+      return;
+    }
+    const at = this.view.selection.indexOf(id);
+    this.select(at >= 0
+      ? this.view.selection.filter((other) => other !== id)
+      : this.view.selection.concat([id]));
+  }
+
+  private onStageHover(ev: PointerEvent): void {
+    if (this.view.mode !== "edit" || this.drag) return;
+    const page = this.page();
+    if (!page || !this.viewport) return;
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
+    const id = hitTest(page, at.x, at.y);
+    if (id === this.view.hover) return;
+    this.view.hover = id;
+    this.queueCanvas();
+  }
 
   private onStageDown(ev: PointerEvent): void {
-    if (this.view.mode !== "edit" || ev.button !== 0) return;
-    const target = (ev.target as Element)?.closest?.("[data-id]") as HTMLElement | null;
-    if (!target) return;
-    const id = Number(target.dataset.id);
-    const widget = this.store.widget(id);
-    if (!widget) return;
-    this.select([id]);
-    const at = this.viewport!.toArtboard(ev.clientX, ev.clientY);
+    if (this.view.mode !== "edit" || ev.button !== 0 || !this.viewport) return;
+    const target = ev.target as HTMLElement | null;
+    const handle = target?.closest?.("[data-handle]") as HTMLElement | null;
+    const widgetNode = target?.closest?.("[data-id]") as HTMLElement | null;
+    if (!handle && !widgetNode) return;
+
+    let selection = this.view.selection.slice();
+    if (!handle && widgetNode) {
+      const id = Number(widgetNode.dataset.id);
+      if (selection.indexOf(id) < 0) {
+        this.clickSelect(id, ev.shiftKey);
+        selection = this.view.selection.slice();
+      }
+    }
+    const widgets = selection
+      .map((id) => this.store.widget(id))
+      .filter(Boolean) as Widget[];
+    if (!widgets.length) return;
+
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     this.drag = {
-      id,
-      mode: target.dataset.handle ? "resize" : "move",
+      mode: handle?.dataset.handle ?? "move",
+      widgets,
+      start: bboxOf(widgets),
+      geoms: widgets.map((w) => ({ ...w.geom })),
       x0: at.x,
       y0: at.y,
-      geom: { ...widget.geom },
       moved: false,
     };
     ev.stopPropagation();
@@ -295,95 +375,192 @@ export class App {
   }
 
   private onStageMove(ev: PointerEvent): void {
-    if (!this.drag) return;
-    const widget = this.store.widget(this.drag.id);
-    if (!widget) return;
-    const at = this.viewport!.toArtboard(ev.clientX, ev.clientY);
+    if (!this.drag || !this.viewport) return;
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     const dx = at.x - this.drag.x0;
     const dy = at.y - this.drag.y0;
-    if (!this.drag.moved && Math.hypot(dx, dy) < 3) return;
+    if (!this.drag.moved && Math.hypot(dx, dy) * this.view.scale < 4) return;
     this.drag.moved = true;
-    const g = this.drag.geom;
-    /* the local doc carries the preview; the op on release is what makes it true */
-    if (this.drag.mode === "move") {
-      widget.geom = { ...g, x: g.x + dx, y: g.y + dy };
-    } else {
-      widget.geom = { ...g, w: Math.max(20, g.w + dx), h: Math.max(20, g.h + dy) };
-    }
-    this.renderCanvas();
+    this.view.ghost = this.targetBox(dx, dy, ev.altKey);
+    this.queueCanvas();
   }
 
   private onStageUp(ev: PointerEvent): void {
     if (!this.drag) return;
     const drag = this.drag;
     this.drag = null;
-    const widget = this.store.widget(drag.id);
-    if (!widget || !drag.moved) return;
-    const cell = this.store.doc ? this.store.doc.canvas.unit_w / this.store.doc.canvas.cols : 30;
-    const snap = (v: number) => (ev.altKey ? Math.round(v) : Math.round(v / cell) * cell);
-    const geom = {
-      x: snap(widget.geom.x),
-      y: snap(widget.geom.y),
-      w: Math.max(cell, snap(widget.geom.w)),
-      h: Math.max(cell, snap(widget.geom.h)),
-    };
-    widget.geom = geom;
-    this.renderCanvas();
-    this.apply([{ op: "set_prop", node: drag.id, key: "geom", value: geom }]);
+    this.view.ghost = null;
+    if (!drag.moved || !this.viewport) {
+      this.queueCanvas();
+      return;
+    }
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
+    const box = this.targetBox(at.x - drag.x0, at.y - drag.y0, ev.altKey);
+    const from: Rect = drag.start;
+    const scaleX = from.w ? box.w / from.w : 1;
+    const scaleY = from.h ? box.h / from.h : 1;
+    /* a group resize maps each widget through the bbox transform, so relative placement
+       survives; for a single widget it is just the new rect */
+    const ops: Op[] = drag.widgets.map((widget: Widget, index: number) => {
+      const geom = drag.geoms[index];
+      return {
+        op: "set_prop",
+        node: widget.id,
+        key: "geom",
+        value: {
+          x: Math.round(box.x + (geom.x - from.x) * scaleX),
+          y: Math.round(box.y + (geom.y - from.y) * scaleY),
+          w: Math.max(MIN_SIZE, Math.round(geom.w * scaleX)),
+          h: Math.max(MIN_SIZE, Math.round(geom.h * scaleY)),
+        },
+      };
+    });
+    this.apply(ops);
+    this.queueCanvas();
+  }
+
+  /* where the selection bbox lands: snapped to the cell grid unless Alt frees it */
+  private targetBox(dx: number, dy: number, free: boolean): Rect {
+    const doc = this.store.doc;
+    const cell = doc ? cellSize(doc.canvas) : 30;
+    const snap = (v: number) => (free ? Math.round(v) : Math.round(v / cell) * cell);
+    const from: Rect = this.drag.start;
+    const mode: string = this.drag.mode;
+    if (mode === "move")
+      return { x: snap(from.x + dx), y: snap(from.y + dy), w: from.w, h: from.h };
+
+    let { x, y, w, h } = from;
+    if (mode.includes("L")) {
+      const right = x + w;
+      x = Math.min(snap(x + dx), right - MIN_SIZE);
+      w = right - x;
+    }
+    if (mode.includes("R")) w = Math.max(MIN_SIZE, snap(x + w + dx) - x);
+    if (mode.includes("T")) {
+      const bottom = y + h;
+      y = Math.min(snap(y + dy), bottom - MIN_SIZE);
+      h = bottom - y;
+    }
+    if (mode.includes("B")) h = Math.max(MIN_SIZE, snap(y + h + dy) - y);
+    return { x, y, w, h };
   }
 
   private onKey(ev: KeyboardEvent): void {
     const typing = (ev.target as HTMLElement)?.matches?.("input, select, textarea");
-    if (typing || this.view.mode !== "edit") return;
+    if (typing) return;
+    if (ev.key === "Escape") {
+      closeMenu();
+      this.select([]);
+    }
+    if (this.view.mode !== "edit") return;
     if (ev.key === "Delete" || ev.key === "Backspace") {
       this.removeSelection();
       ev.preventDefault();
     }
-    if (ev.key === "Escape") this.select([]);
+    if (ev.key === "d" && (ev.ctrlKey || ev.metaKey)) {
+      this.duplicate();
+      ev.preventDefault();
+    }
   }
 
-  /* ---- palette actions ---- */
+  /* ---- context menu (right-click, or long-press on touch) ---- */
+
+  private onContextMenu(ev: MouseEvent): void {
+    if (this.view.mode !== "edit" || !this.viewport) return;
+    ev.preventDefault();
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
+    this.openContextAt(at.x, at.y, ev.clientX, ev.clientY);
+  }
+
+  /* right-click on the desktop, long-press on touch: the same menu either way */
+  private openContextAt(x: number, y: number, clientX: number, clientY: number): void {
+    const page = this.page();
+    if (!page || this.view.mode !== "edit") return;
+    const ev = { clientX, clientY };
+    const at = { x, y };
+    const id = hitTest(page, at.x, at.y);
+    if (id) {
+      if (this.view.selection.indexOf(id) < 0) this.select([id]);
+      const widget = this.store.widget(id);
+      openMenu(ev.clientX, ev.clientY, widget ? widget.type : "Widget", [
+        { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
+        { label: "Delete", icon: "trash", danger: true, run: () => this.removeSelection() },
+      ]);
+      return;
+    }
+    this.select([]);
+    openMenu(
+      ev.clientX,
+      ev.clientY,
+      "Add widget",
+      (this.registry?.types ?? []).map((type) => ({
+        label: type.name,
+        icon: type.name,
+        run: () => this.addWidget(type.name, at.x, at.y),
+      })),
+    );
+  }
 
   private buildPalette(): void {
     const palette = this.nodes.palette;
     clear(palette);
     const names = (this.registry?.types ?? []).map((t) => t.name);
     if (!names.length) return;
-    let choice = names[0];
-    palette.appendChild(select(names, choice, (name) => (choice = name)));
     palette.appendChild(
-      el("button", { class: "btn primary", text: "+ widget", onclick: () => this.addWidget(choice) }),
+      el("button", {
+        class: "btn primary",
+        html: iconMarkup("plus", 11, 2) + "<span>widget</span>",
+        onclick: (ev: MouseEvent) =>
+          openMenu(
+            ev.clientX,
+            ev.clientY + 8,
+            "Add widget",
+            names.map((name) => ({
+              label: name,
+              icon: name,
+              run: () => this.addWidget(name),
+            })),
+          ),
+      }),
     );
     palette.appendChild(
-      el("button", { class: "btn", text: "duplicate", onclick: () => this.duplicate() }),
+      el("button", {
+        class: "btn",
+        html: iconMarkup("copy", 11, 1.6) + "<span>duplicate</span>",
+        onclick: () => this.duplicate(),
+      }),
     );
     palette.appendChild(
-      el("button", { class: "btn", text: "delete", onclick: () => this.removeSelection() }),
+      el("button", {
+        class: "btn",
+        html: iconMarkup("trash", 11, 1.6) + "<span>delete</span>",
+        onclick: () => this.removeSelection(),
+      }),
     );
   }
 
-  private addWidget(type: string): void {
+  private addWidget(type: string, atX?: number, atY?: number): void {
     const page = this.page();
     const doc = this.store.doc;
     if (!page || !doc) return;
-    const cell = doc.canvas.unit_w / doc.canvas.cols;
-    /* first free spot on the grid, scanning in reading order */
+    const cell = cellSize(doc.canvas);
     const w = 6 * cell;
     const h = 3 * cell;
-    let x = cell;
-    let y = cell;
     const clash = (px: number, py: number) =>
       (page.widgets ?? []).some(
         (other) =>
           !(px + w <= other.geom.x || other.geom.x + other.geom.w <= px ||
             py + h <= other.geom.y || other.geom.y + other.geom.h <= py),
       );
-    for (let row = 1; row < doc.canvas.rows - 3 && clash(x, y); row++)
-      for (let col = 1; col < doc.canvas.cols - 6; col++) {
-        x = col * cell;
-        y = row * cell;
-        if (!clash(x, y)) break;
-      }
+    let x = atX === undefined ? cell : Math.round(atX / cell) * cell;
+    let y = atY === undefined ? cell : Math.round(atY / cell) * cell;
+    if (atX === undefined)
+      for (let row = 1; row < doc.canvas.rows - 3 && clash(x, y); row++)
+        for (let col = 1; col < doc.canvas.cols - 6; col++) {
+          x = col * cell;
+          y = row * cell;
+          if (!clash(x, y)) break;
+        }
     this.apply([
       {
         op: "insert",
@@ -395,14 +572,19 @@ export class App {
   }
 
   private duplicate(): void {
-    const widget = this.selectedWidget();
     const page = this.page();
     const doc = this.store.doc;
-    if (!widget || !page || !doc) return;
-    const cell = doc.canvas.unit_w / doc.canvas.cols;
-    const copy = stripIds(JSON.parse(JSON.stringify(widget)));
-    copy.geom = { ...widget.geom, x: widget.geom.x + cell, y: widget.geom.y + cell };
-    this.apply([{ op: "insert", parent: page.id, list: "widgets", node: copy }]);
+    if (!page || !doc) return;
+    const cell = cellSize(doc.canvas);
+    const ops: Op[] = [];
+    for (const id of this.view.selection) {
+      const widget = this.store.widget(id);
+      if (!widget) continue;
+      const copy = stripIds(JSON.parse(JSON.stringify(widget)));
+      copy.geom = { ...widget.geom, x: widget.geom.x + cell, y: widget.geom.y + cell };
+      ops.push({ op: "insert", parent: page.id, list: "widgets", node: copy });
+    }
+    if (ops.length) this.apply(ops);
   }
 
   private removeSelection(): void {

@@ -1,17 +1,20 @@
-/* The whole "framework": element construction, event binding and a couple of input
- * helpers. There is no virtual DOM and no reactivity here on purpose. The document
- * lives on the backend, so a view re-renders a panel when a version arrives, and that
- * is cheap enough for a document a human authored. */
+/* The whole "framework": element construction, the small set of controls the rails are
+ * built from, and nothing else. No virtual DOM and no reactivity on purpose: the document
+ * lives on the backend, so a panel re-renders when a version arrives. */
+
+import { iconMarkup } from "./icons.js";
 
 export type Attrs = Record<string, string | number | boolean | ((ev: any) => void) | undefined>;
+export type Kids = (Node | string | null)[];
 
-export function el(tag: string, attrs: Attrs = {}, children: (Node | string | null)[] = []): HTMLElement {
+export function el(tag: string, attrs: Attrs = {}, children: Kids = []): HTMLElement {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
     if (value === undefined || value === false) continue;
     if (typeof value === "function") node.addEventListener(key.replace(/^on/, ""), value as any);
     else if (key === "class") node.className = String(value);
     else if (key === "text") node.textContent = String(value);
+    else if (key === "html") node.innerHTML = String(value);
     else if (key === "value") (node as HTMLInputElement).value = String(value);
     else if (key === "checked") (node as HTMLInputElement).checked = Boolean(value);
     else node.setAttribute(key, String(value));
@@ -33,6 +36,24 @@ export function clear(node: Element): void {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+export function mark(name: string, size = 10, cls = ""): HTMLElement {
+  return el("span", { class: cls || "mark", html: iconMarkup(name, size) });
+}
+
+export function iconButton(
+  name: string,
+  title: string,
+  onclick: () => void,
+  framed = false,
+): HTMLElement {
+  return el("button", {
+    class: "icon-btn" + (framed ? " framed" : ""),
+    title,
+    html: iconMarkup(name, 11),
+    onclick,
+  });
+}
+
 /* a text input that commits on Enter or blur, never per keystroke: an op stream of
  * half-typed text would fight other views for the caret (spec 4.2) */
 export function commitInput(
@@ -40,21 +61,21 @@ export function commitInput(
   commit: (text: string) => void,
   attrs: Attrs = {},
 ): HTMLInputElement {
-  const input = el("input", {
+  return el("input", {
     class: "field",
     type: "text",
     value,
     ...attrs,
     onkeydown: (ev: KeyboardEvent) => {
-      if (ev.key === "Enter") (ev.target as HTMLInputElement).blur();
+      const input = ev.target as HTMLInputElement;
+      if (ev.key === "Enter") input.blur();
       if (ev.key === "Escape") {
-        (ev.target as HTMLInputElement).value = value;
-        (ev.target as HTMLInputElement).blur();
+        input.value = value;
+        input.blur();
       }
     },
     onchange: (ev: Event) => commit((ev.target as HTMLInputElement).value),
   }) as HTMLInputElement;
-  return input;
 }
 
 export function numberInput(
@@ -74,16 +95,45 @@ export function numberInput(
   }) as HTMLInputElement;
 }
 
-export function select(
-  options: string[],
+/* a select carries its own caret mark: the native arrow is not part of the language */
+export function selectField(
+  options: { value: string; label?: string }[],
   value: string,
   commit: (choice: string) => void,
+  cls = "",
 ): HTMLElement {
-  const node = el(
+  const picker = el(
     "select",
     { class: "field", onchange: (ev: Event) => commit((ev.target as HTMLSelectElement).value) },
-    options.map((option) => el("option", { value: option, text: option, selected: option === value })),
+    options.map((option) =>
+      el("option", {
+        value: option.value,
+        text: option.label ?? option.value,
+        selected: option.value === value,
+      }),
+    ),
   );
-  (node as HTMLSelectElement).value = value;
-  return node;
+  (picker as HTMLSelectElement).value = value;
+  return el("span", { class: "select-wrap " + cls }, [
+    picker,
+    el("span", { class: "caret-mark", html: iconMarkup("chevron-down", 9, 2) }),
+  ]);
+}
+
+export function chip(text: string, cls = "", title = ""): HTMLElement {
+  return el("span", { class: "chip " + cls, text, title: title || undefined });
+}
+
+/* a bool as a two-state pair, matching every other two-state control */
+export function boolPair(value: boolean, commit: (v: boolean) => void): HTMLElement {
+  const off = el("button", { text: "off", class: value ? "" : "on", onclick: () => commit(false) });
+  const on = el("button", { text: "on", class: value ? "on" : "", onclick: () => commit(true) });
+  return el("div", { class: "bool-pair" }, [off, on]);
+}
+
+export function arrow(direction: "left" | "right"): HTMLElement {
+  return el("span", {
+    class: "arrow",
+    html: iconMarkup(direction === "left" ? "arrow-left" : "arrow-right", 10, 1.5),
+  });
 }

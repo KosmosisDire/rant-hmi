@@ -1,7 +1,13 @@
-/* The artboard: one SVG in canvas units, so scale-to-fit is the viewBox and nothing in
- * here ever deals in pixels. It draws, in order, the artboard, the edit grid, the fused
- * island surface, then each widget's frame (from the base slots, once, shared by every
- * type) and its template content, then the selection. */
+/* The artboard: one SVG in canvas units, so scale-to-fit is the viewBox and nothing here
+ * deals in pixels. Draw order is artboard, edit grid, fused island surface, then each
+ * widget's frame (from the base slots, once, shared by every type) and its template
+ * content, then the editing overlay.
+ *
+ * The overlay is the old designer's: a hover ring, one selection box over the whole
+ * selection bbox (solid for one widget, dashed for a group) at the island's corner radius,
+ * carrying four edge pills and four corner brackets that trace the ring's centreline.
+ * Everything in it is divided by the view scale, so grips stay the same size on screen at
+ * any zoom. */
 
 import { dividerPath, gridPath, Tile, tracePath } from "./islands.js";
 import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.js";
@@ -13,7 +19,10 @@ export type Mode = "edit" | "run" | "operate";
 export interface ViewState {
   mode: Mode;
   selection: number[];
-  state: Record<number, Record<string, Json>>; /* per-widget interaction state */
+  hover: number;
+  scale: number;                                /* px per canvas unit */
+  ghost: Rect | null;                           /* drag/resize preview */
+  state: Record<number, Record<string, Json>>;  /* per-widget interaction state */
 }
 
 const ISLAND_RADIUS = 16;
@@ -37,6 +46,26 @@ function tileOf(widget: Widget, cell: number): Tile | null {
 
 function num(v: number): string {
   return v.toFixed(2);
+}
+
+function parseAspect(text: string): number {
+  if (!text) return 0;
+  const parts = text.split("/");
+  const a = Number(parts[0]);
+  const b = parts.length > 1 ? Number(parts[1]) : 1;
+  return Number.isFinite(a) && Number.isFinite(b) && b !== 0 && a > 0 ? a / b : 0;
+}
+
+function justifyFactors(justify: string): [number, number] {
+  const h = justify.includes("left") ? 0 : justify.includes("right") ? 1 : 0.5;
+  const v = justify.includes("top") ? 0 : justify.includes("bottom") ? 1 : 0.5;
+  return [h, v];
+}
+
+function panelRect(widget: Widget, panelPad: number): Rect {
+  const g = widget.geom;
+  const p = panelPad < 0 ? 5 : panelPad;
+  return { x: g.x + p, y: g.y + p, w: Math.max(1, g.w - 2 * p), h: Math.max(1, g.h - 2 * p) };
 }
 
 /* the content box: tile, less the tile-to-panel and panel-to-content paddings, then
@@ -66,25 +95,138 @@ function contentRect(widget: Widget, panelPad: number, pad: number, aspect: stri
   return rect;
 }
 
-function parseAspect(text: string): number {
-  if (!text) return 0;
-  const parts = text.split("/");
-  const a = Number(parts[0]);
-  const b = parts.length > 1 ? Number(parts[1]) : 1;
-  return Number.isFinite(a) && Number.isFinite(b) && b !== 0 && a > 0 ? a / b : 0;
+export function bboxOf(widgets: Widget[]): Rect {
+  const x = Math.min(...widgets.map((w) => w.geom.x));
+  const y = Math.min(...widgets.map((w) => w.geom.y));
+  const right = Math.max(...widgets.map((w) => w.geom.x + w.geom.w));
+  const bottom = Math.max(...widgets.map((w) => w.geom.y + w.geom.h));
+  return { x, y, w: right - x, h: bottom - y };
 }
 
-function justifyFactors(justify: string): [number, number] {
-  const h = justify.includes("left") ? 0 : justify.includes("right") ? 1 : 0.5;
-  const v = justify.includes("top") ? 0 : justify.includes("bottom") ? 1 : 0.5;
-  return [h, v];
+/* ---- the editing overlay ---- */
+
+/* the ring radius: the island's rounding, capped so a tiny selection rounds fully */
+function ringRadius(rect: Rect): number {
+  return Math.min(ISLAND_RADIUS, rect.w / 2, rect.h / 2);
 }
 
-function panelRect(widget: Widget, panelPad: number): Rect {
-  const g = widget.geom;
-  const p = panelPad < 0 ? 5 : panelPad;
-  return { x: g.x + p, y: g.y + p, w: Math.max(1, g.w - 2 * p), h: Math.max(1, g.h - 2 * p) };
+function hitRect(rect: Rect, handle: string, cursor: string): string {
+  return (
+    `<rect class="sel-hit" data-handle="${handle}" x="${num(rect.x)}" y="${num(rect.y)}" ` +
+    `width="${num(rect.w)}" height="${num(rect.h)}" fill="rgba(0,0,0,0)" ` +
+    `style="cursor:${cursor}"/>`
+  );
 }
+
+/* Edge pills and corner brackets, generated to straddle the ring's centreline exactly as
+ * the old designer did: the bracket path traces the ring, so a grip never floats. */
+function grips(box: Rect, radius: number, unit: number): string {
+  const out: string[] = [];
+  const line = 2 * unit;
+  const off = line / 2;
+  const pill = 4 * unit;
+  const grab = 12 * unit;
+  const vlen = Math.min(28 * unit, Math.max(8 * unit, box.h - 2 * radius - 6 * unit));
+  const hlen = Math.min(28 * unit, Math.max(8 * unit, box.w - 2 * radius - 6 * unit));
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+
+  const bar = (handle: string, cursor: string, x: number, y: number, w: number, h: number) => {
+    const hw = Math.max(w, grab);
+    const hh = Math.max(h, grab);
+    out.push(
+      `<rect class="sel-grip" x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" ` +
+        `rx="${num(Math.min(w, h) / 2)}"/>`,
+    );
+    out.push(
+      hitRect({ x: x + w / 2 - hw / 2, y: y + h / 2 - hh / 2, w: hw, h: hh }, handle, cursor),
+    );
+  };
+  bar("L", "ew-resize", box.x - off - pill / 2, cy - vlen / 2, pill, vlen);
+  bar("R", "ew-resize", box.x + box.w - off - pill / 2 + line, cy - vlen / 2, pill, vlen);
+  bar("T", "ns-resize", cx - hlen / 2, box.y - off - pill / 2, hlen, pill);
+  bar("B", "ns-resize", cx - hlen / 2, box.y + box.h - off - pill / 2 + line, hlen, pill);
+
+  /* corner brackets: an L that follows the ring's arc, then a short straight arm */
+  const arm = 5 * unit;
+  const rc = radius + off;
+  const corner = (handle: string, cursor: string, sx: number, sy: number, dx: number, dy: number) => {
+    /* start on the horizontal run, arc through the corner, end on the vertical run */
+    const hx = sx + dx * (radius + arm);
+    const hy = sy - dy * off;
+    const ax = sx + dx * radius;
+    const ay = sy - dy * off;
+    const bx = sx - dx * off;
+    const by = sy + dy * radius;
+    const vx = sx - dx * off;
+    const vy = sy + dy * (radius + arm);
+    const sweep = dx * dy > 0 ? 0 : 1;
+    out.push(
+      `<path class="sel-arc" stroke-width="${num(4 * unit)}" d="M${num(hx)} ${num(hy)} ` +
+        `L${num(ax)} ${num(ay)} A${num(rc)} ${num(rc)} 0 0 ${sweep} ${num(bx)} ${num(by)} ` +
+        `L${num(vx)} ${num(vy)}"/>`,
+    );
+    out.push(
+      hitRect(
+        {
+          x: Math.min(hx, vx, sx) - grab / 2,
+          y: Math.min(hy, vy, sy) - grab / 2,
+          w: Math.abs(hx - vx) + grab,
+          h: Math.abs(hy - vy) + grab,
+        },
+        handle,
+        cursor,
+      ),
+    );
+  };
+  corner("TL", "nwse-resize", box.x, box.y, 1, 1);
+  corner("TR", "nesw-resize", box.x + box.w, box.y, -1, 1);
+  corner("BL", "nesw-resize", box.x, box.y + box.h, 1, -1);
+  corner("BR", "nwse-resize", box.x + box.w, box.y + box.h, -1, -1);
+  return out.join("");
+}
+
+function overlay(page: Page, view: ViewState): string {
+  const unit = 1 / Math.max(0.05, view.scale);   /* one screen pixel, in canvas units */
+  const out: string[] = [];
+
+  if (view.hover && view.selection.indexOf(view.hover) < 0) {
+    const widget = (page.widgets ?? []).find((w) => w.id === view.hover);
+    if (widget) {
+      const g = widget.geom;
+      const inset = -2 * unit;
+      out.push(
+        `<rect class="hover-ring" stroke-width="${num(unit)}" x="${num(g.x + inset)}" ` +
+          `y="${num(g.y + inset)}" width="${num(g.w - 2 * inset)}" height="${num(g.h - 2 * inset)}" ` +
+          `rx="${num(ringRadius(g))}"/>`,
+      );
+    }
+  }
+
+  const selected = (page.widgets ?? []).filter((w) => view.selection.indexOf(w.id) >= 0);
+  if (selected.length) {
+    const box = bboxOf(selected);
+    const radius = ringRadius(box);
+    const dash = selected.length > 1 ? ` stroke-dasharray="${num(6 * unit)} ${num(4 * unit)}"` : "";
+    out.push(
+      `<rect class="sel-ring" stroke-width="${num(2 * unit)}"${dash} x="${num(box.x)}" ` +
+        `y="${num(box.y)}" width="${num(box.w)}" height="${num(box.h)}" rx="${num(radius)}"/>`,
+    );
+    out.push(grips(box, radius, unit));
+  }
+
+  if (view.ghost) {
+    const g = view.ghost;
+    out.push(
+      `<rect class="ghost" stroke-width="${num(2 * unit)}" ` +
+        `stroke-dasharray="${num(7 * unit)} ${num(5 * unit)}" x="${num(g.x)}" y="${num(g.y)}" ` +
+        `width="${num(g.w)}" height="${num(g.h)}" rx="${num(ringRadius(g))}"/>`,
+    );
+  }
+  return out.join("");
+}
+
+/* ---- the page ---- */
 
 export function renderArtboard(
   doc: Doc,
@@ -96,14 +238,13 @@ export function renderArtboard(
   const canvas = doc.canvas;
   const cell = cellSize(canvas);
   const out: string[] = [];
-  const editing = view.mode === "edit";
+  const editing = view.mode !== "operate";
 
   out.push(
-    `<rect x="0" y="0" width="${canvas.unit_w}" height="${canvas.unit_h}" ` +
-      `rx="10" class="artboard-bg"/>`,
+    `<rect x="0" y="0" width="${canvas.unit_w}" height="${canvas.unit_h}" rx="4" class="artboard-bg"/>`,
   );
-
-  if (editing) out.push(`<path d="${gridPath(canvas.rows, canvas.cols, cell)}" class="grid"/>`);
+  if (view.mode === "edit")
+    out.push(`<path d="${gridPath(canvas.rows, canvas.cols, cell)}" class="grid"/>`);
 
   /* the fused surface: every visible, mergeable, snapped tile */
   const tiles: Tile[] = [];
@@ -144,6 +285,13 @@ export function renderArtboard(
     const radius = Number(slot("radius") ?? 8);
 
     out.push(`<g class="widget${enabled ? "" : " disabled"}" data-id="${widget.id}">`);
+    if (editing) {
+      const g = widget.geom;
+      out.push(
+        `<rect class="widget-hit" x="${num(g.x)}" y="${num(g.y)}" width="${num(g.w)}" ` +
+          `height="${num(g.h)}" fill="rgba(0,0,0,0)"/>`,
+      );
+    }
     const frame = panelRect(widget, panelPad);
     const surface = opaqueEnough(slot("surface"));
     const border = opaqueEnough(slot("border"));
@@ -174,19 +322,7 @@ export function renderArtboard(
     out.push(`</g>`);
   }
 
-  if (editing)
-    for (const id of view.selection) {
-      const widget = (page.widgets ?? []).find((w) => w.id === id);
-      if (!widget) continue;
-      const g = widget.geom;
-      out.push(
-        `<rect class="selection" x="${num(g.x)}" y="${num(g.y)}" width="${num(g.w)}" ` +
-          `height="${num(g.h)}" rx="4"/>` +
-          `<rect class="handle" data-handle="se" data-id="${id}" x="${num(g.x + g.w - 9)}" ` +
-          `y="${num(g.y + g.h - 9)}" width="18" height="18" rx="4"/>`,
-      );
-    }
-
+  if (editing) out.push(overlay(page, view));
   return out.join("");
 }
 
