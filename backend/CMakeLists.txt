@@ -22,13 +22,22 @@ endforeach()
 
 include(FetchContent)
 
+# IXWebSocket: thread-per-connection WS server; through ix::HttpServer the same port
+# also serves the frontend's files. TLS and zlib off = zero transitive dependencies.
+set(USE_TLS  OFF CACHE BOOL "" FORCE)
+set(USE_ZLIB OFF CACHE BOOL "" FORCE)
+set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(ixwebsocket
+  URL https://github.com/machinezone/IXWebSocket/archive/refs/tags/v12.0.1.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+
 # nlohmann/json, header-only: the document and the control plane (never the tick).
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install    OFF CACHE INTERNAL "")
 FetchContent_Declare(nlohmann_json
   URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-FetchContent_MakeAvailable(nlohmann_json)
+FetchContent_MakeAvailable(ixwebsocket nlohmann_json)
 
 # One static lib holds every module: the modules are separate translation units and
 # the dependency direction is enforced by what each file includes (PLAN.md).
@@ -38,9 +47,12 @@ add_library(hmi_core STATIC
   src/doc/ops.cpp
   src/doc/refs.cpp
   src/doc/store.cpp
+  src/registry/registry.cpp
+  src/sync/server.cpp
+  src/app.cpp
 )
 target_include_directories(hmi_core PUBLIC src)
-target_link_libraries(hmi_core PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(hmi_core PUBLIC nlohmann_json::nlohmann_json ixwebsocket::ixwebsocket)
 
 find_package(Threads REQUIRED)
 target_link_libraries(hmi_core PUBLIC Threads::Threads)
@@ -52,7 +64,12 @@ else()
   target_compile_options(hmi_core PUBLIC -ffp-contract=off -Wall -Wextra)
 endif()
 
+add_executable(hmi_designer src/main.cpp)
+target_link_libraries(hmi_designer PRIVATE hmi_core)
+
 enable_testing()
-add_executable(hmi_doc_test tests/doc_test.cpp)
-target_link_libraries(hmi_doc_test PRIVATE hmi_core)
-add_test(NAME doc_test COMMAND hmi_doc_test)
+foreach(_test doc_test sync_test)
+  add_executable(hmi_${_test} tests/${_test}.cpp)
+  target_link_libraries(hmi_${_test} PRIVATE hmi_core)
+  add_test(NAME ${_test} COMMAND hmi_${_test})
+endforeach()
