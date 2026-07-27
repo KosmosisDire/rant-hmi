@@ -240,8 +240,16 @@ export function renderArtboard(
   const out: string[] = [];
   const editing = view.mode !== "operate";
 
+  /* the artboard's depth cue rides on its own background rect: a CSS filter on the whole
+     SVG would re-introduce the clipping this deliberately avoids */
   out.push(
-    `<rect x="0" y="0" width="${canvas.unit_w}" height="${canvas.unit_h}" rx="4" class="artboard-bg"/>`,
+    `<defs><filter id="artboard-shadow" x="-10%" y="-10%" width="120%" height="130%">` +
+      `<feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.5"/>` +
+      `</filter></defs>`,
+  );
+  out.push(
+    `<rect x="0" y="0" width="${canvas.unit_w}" height="${canvas.unit_h}" rx="4" ` +
+      `class="artboard-bg" filter="url(#artboard-shadow)"/>`,
   );
   if (view.mode === "edit")
     out.push(`<path d="${gridPath(canvas.rows, canvas.cols, cell)}" class="grid"/>`);
