@@ -29,6 +29,7 @@ export class Viewport {
   private panY = 0;
   private unitW = 1440;
   private unitH = 810;
+  private artboardSet = false;
   private locked = false;
   private pointers = new Map<number, { x: number; y: number }>();
   private gesture: any = null;
@@ -48,7 +49,11 @@ export class Viewport {
     new ResizeObserver(() => this.fit(false)).observe(stage);
   }
 
+  /* every snapshot re-announces the artboard (including the one that follows a
+     rejected edit): only a real size change may yank the camera back to fit */
   setArtboard(w: number, h: number): void {
+    if (this.artboardSet && w === this.unitW && h === this.unitH) return;
+    this.artboardSet = true;
     this.unitW = w;
     this.unitH = h;
     this.layer.style.width = w + "px";

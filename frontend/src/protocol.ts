@@ -23,6 +23,8 @@ export class Connection {
   private session = 0;
   private retry = 0;
   private timer = 0;
+  private inflight = false;
+  private pending: Op[] = [];
 
   constructor(private url: string, private handlers: Handlers) {}
 
@@ -51,9 +53,42 @@ export class Connection {
   /* Edits go out as a batch against the version this client last saw. There is no
    * optimistic apply: the backend's echo is the only thing that mutates the document,
    * so a view can never diverge. Text inputs commit on blur/Enter, so the round trip
-   * is never in the way of typing. */
+   * is never in the way of typing.
+   *
+   * ONE batch in flight at a time: a commit issued before the previous echo lands is
+   * queued and sent against the echoed version, so a rapid committer (a color-picker
+   * drag) can never self-inflict a stale base and the reject it brings. */
   apply(ops: Op[]): void {
     if (!ops.length) return;
+    if (this.inflight) {
+      for (const op of ops) this.enqueue(op);
+      return;
+    }
+    this.inflight = true;
+    this.send({ type: "apply_ops", base_version: this.version, ops });
+  }
+
+  /* the newest set_prop to a (node, key) replaces a queued one: a drag coalesces to
+     whatever is current when the echo lands, never a backlog of stale frames */
+  private enqueue(op: Op): void {
+    if (op.op === "set_prop") {
+      const at = this.pending.findIndex(
+        (queued) => queued.op === "set_prop" && queued.node === op.node && queued.key === op.key,
+      );
+      if (at >= 0) {
+        this.pending[at] = op;
+        return;
+      }
+    }
+    this.pending.push(op);
+  }
+
+  private flush(): void {
+    this.inflight = false;
+    if (!this.pending.length) return;
+    const ops = this.pending;
+    this.pending = [];
+    this.inflight = true;
     this.send({ type: "apply_ops", base_version: this.version, ops });
   }
 
@@ -82,8 +117,11 @@ export class Connection {
         this.handlers.status("live", "session " + frame.session_id);
         return;
       case "snapshot":
+        /* a snapshot settles everything outstanding (it follows every reject and
+           resync), so anything queued goes out against its fresh version */
         this.version = frame.version;
         this.handlers.snapshot(frame.doc, frame.registry, frame.live);
+        this.flush();
         return;
       case "ops_applied":
         if (frame.version !== this.version + 1) {
@@ -93,6 +131,8 @@ export class Connection {
         }
         this.version = frame.version;
         this.handlers.ops(frame.version, frame.ops, frame.origin_session);
+        /* our own echo: the in-flight batch landed, the queue may go out */
+        if (frame.origin_session === this.session) this.flush();
         return;
       case "live":
         this.handlers.live(frame);
@@ -116,6 +156,9 @@ export class Connection {
     }
     if (this.timer) return;
     this.version = 0;
+    /* no optimism: edits that never reached the old session are dropped, not replayed */
+    this.inflight = false;
+    this.pending = [];
     this.handlers.status("offline", why);
     const delay = Math.min(4000, 250 * Math.pow(2, this.retry++));
     this.timer = window.setTimeout(() => {

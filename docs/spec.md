@@ -119,11 +119,12 @@ FRAME, composed by anything that lives in a tile:
 | `merge` | bool | true | join the fused island surface (3.1) |
 | `surface` | color | transparent | the widget's own panel fill |
 | `border` | color | transparent | panel border color |
-| `radius` | num | 3 | panel corner radius |
+| `radius` | num | -1 | panel corner radius; -1 = auto (nests concentrically inside the island corner at this inset) |
+| `text_scale` | num | 1 | multiplier on the self-fitting text size (autoscaling preserved); consumed by the template's text parts, hidden where the type has none |
 | `panel_pad` | num | -1 | tile-to-panel padding; -1 = auto |
 | `pad` | num | -1 | panel-to-content padding; -1 = auto |
-| `aspect` | text | "" | content aspect lock ("1", "16/9") |
-| `justify` | enum | center | 3x3 placement, aspect-locked only |
+| `aspect` | text | "" | frame aspect lock ("1", "16/9"): shapes the styleable box itself, content nests inside |
+| `align` | enum | center | content alignment, both axes (3x3 grid editor); places the aspect-locked frame, and any text part that names it follows it. Hidden in the inspector where nothing consumes it |
 
 The FRAME is rendered once by the shared tile machinery, reading exactly these
 slots; a type's template renders only the content inside it and never re-implements
@@ -143,7 +144,7 @@ from that variable (`L` is an ordinary feed source). One writer per slot, no new
 mechanism, and the indirection is visible state a card in the rail shows live.
 
 The built-in set (value-group slots shown; every type also carries its
-appearance/config slots: colors, min/max/step where relevant, a caption only where
+appearance/config slots: colors, min/max/step where relevant, a `text` slot only where
 text is integral to the control):
 
 | Type | Value slots (shape) | Events | `x` is |
@@ -188,7 +189,7 @@ and stays legible at every size the grid allows, so the user's job is composing
 the UI, never fitting it.
 
 **Text belongs to the user.** Built-in templates carry text only where it is
-integral to the control: a button's caption, a dropdown's selected value, and the
+integral to the control: a button's `text`, a dropdown's selected value, and the
 text widgets themselves (Label, Readout). Nothing else ships a built-in label or
 value readout: the user places a Label or Readout next to (or on) the control, fed
 from the same source, and scale-to-fit makes the composition natural. Every piece

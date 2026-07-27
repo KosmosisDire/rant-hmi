@@ -2,7 +2,8 @@
  * on a widget type or a slot name: the registry says what shape a slot is and this maps a
  * shape to a control. */
 
-import { boolPair, chip, commitInput, el, numberInput, selectField } from "../dom.js";
+import { colorField } from "../colorpicker.js";
+import { alignGrid, boolPair, chip, commitInput, el, numberInput, selectField } from "../dom.js";
 import { kindMark } from "../icons.js";
 import { Json, SlotSpec } from "../types.js";
 
@@ -12,13 +13,16 @@ export function valueEditor(
   value: Json,
   commit: (v: Json) => void,
 ): HTMLElement {
+  /* an editor hint outranks the shape: the align enum edits as a 3x3 grid */
+  if (spec?.editor === "align")
+    return alignGrid(typeof value === "string" ? value : "center", commit);
   switch (shape) {
     case "bool":
       return boolPair(value === true, commit);
     case "num":
       return numberInput(typeof value === "number" ? value : 0, commit, { class: "field grow" });
     case "color":
-      return colorEditor(value, commit);
+      return colorField(typeof value === "string" ? value : "", commit);
     case "enum":
       return selectField(
         (spec?.variants ?? []).map((v) => ({ value: v })),
@@ -30,19 +34,6 @@ export function valueEditor(
     default:
       return el("code", { class: "empty", text: JSON.stringify(value ?? null) });
   }
-}
-
-function colorEditor(value: Json, commit: (v: Json) => void): HTMLElement {
-  const hex = typeof value === "string" && value.startsWith("#") ? value : "#000000";
-  return el("div", { class: "value-cell" }, [
-    el("input", {
-      class: "swatch",
-      type: "color",
-      value: hex.slice(0, 7),
-      onchange: (ev: Event) => commit((ev.target as HTMLInputElement).value + hex.slice(7)),
-    }),
-    commitInput(hex, commit, { class: "field grow" }),
-  ]);
 }
 
 /* An expression cell. The tier (display vs wire) and the autocomplete arrive with the

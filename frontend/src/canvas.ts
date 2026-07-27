@@ -43,31 +43,19 @@ function parseAspect(text: string): number {
   return Number.isFinite(a) && Number.isFinite(b) && b !== 0 && a > 0 ? a / b : 0;
 }
 
-function justifyFactors(justify: string): [number, number] {
-  const h = justify.includes("left") ? 0 : justify.includes("right") ? 1 : 0.5;
-  const v = justify.includes("top") ? 0 : justify.includes("bottom") ? 1 : 0.5;
+function alignFactors(align: string): [number, number] {
+  const h = align.includes("left") ? 0 : align.includes("right") ? 1 : 0.5;
+  const v = align.includes("top") ? 0 : align.includes("bottom") ? 1 : 0.5;
   return [h, v];
 }
 
-function panelRect(widget: Widget, panelPad: number): Rect {
+/* The FRAME: the widget's styleable box. Tile less the tile-to-panel padding, then
+ * aspect-locked and placed by `align`, so aspect visibly shapes the thing surface and
+ * border paint (a Panel's card, a Button's face), not just an invisible content box. */
+function frameRect(widget: Widget, panelPad: number, aspect: string, align: string): Rect {
   const g = widget.geom;
   const p = panelPad < 0 ? 5 : panelPad;
-  return { x: g.x + p, y: g.y + p, w: Math.max(1, g.w - 2 * p), h: Math.max(1, g.h - 2 * p) };
-}
-
-/* the content box: tile, less the tile-to-panel and panel-to-content paddings, then
- * aspect-locked and placed by `justify` */
-function contentRect(widget: Widget, panelPad: number, pad: number, aspect: string, justify: string): Rect {
-  const g = widget.geom;
-  const auto = Math.max(4, Math.min(g.w, g.h) * 0.08);
-  const p1 = panelPad < 0 ? 5 : panelPad;
-  const p2 = pad < 0 ? auto : pad;
-  let rect: Rect = {
-    x: g.x + p1 + p2,
-    y: g.y + p1 + p2,
-    w: Math.max(1, g.w - 2 * (p1 + p2)),
-    h: Math.max(1, g.h - 2 * (p1 + p2)),
-  };
+  let rect: Rect = { x: g.x + p, y: g.y + p, w: Math.max(1, g.w - 2 * p), h: Math.max(1, g.h - 2 * p) };
   const ratio = parseAspect(aspect);
   if (ratio > 0) {
     let w = rect.w;
@@ -76,10 +64,22 @@ function contentRect(widget: Widget, panelPad: number, pad: number, aspect: stri
       h = rect.h;
       w = h * ratio;
     }
-    const [hx, vy] = justifyFactors(justify);
+    const [hx, vy] = alignFactors(align);
     rect = { x: rect.x + (rect.w - w) * hx, y: rect.y + (rect.h - h) * vy, w, h };
   }
   return rect;
+}
+
+/* the content box: the frame less the panel-to-content padding */
+function contentRect(frame: Rect, pad: number): Rect {
+  const auto = Math.max(4, Math.min(frame.w, frame.h) * 0.08);
+  const p = pad < 0 ? auto : pad;
+  return {
+    x: frame.x + p,
+    y: frame.y + p,
+    w: Math.max(1, frame.w - 2 * p),
+    h: Math.max(1, frame.h - 2 * p),
+  };
 }
 
 export function bboxOf(widgets: Widget[]): Rect {
@@ -279,7 +279,10 @@ export function renderContent(
     const enabled = slot("enabled") !== false && slot("enabled") !== null;
     const panelPad = Number(slot("panel_pad") ?? -1);
     const pad = Number(slot("pad") ?? -1);
-    const radius = Number(slot("radius") ?? 8);
+    /* radius < 0 = auto: nest concentrically inside the island's corner at this inset */
+    const rawRadius = Number(slot("radius") ?? -1);
+    const radius =
+      rawRadius < 0 ? Math.max(0, ISLAND_RADIUS - (panelPad < 0 ? 5 : panelPad)) : rawRadius;
 
     out.push(`<g class="widget${enabled ? "" : " disabled"}" data-id="${widget.id}">`);
     if (editing) {
@@ -289,7 +292,12 @@ export function renderContent(
           `height="${num(g.h)}" fill="rgba(0,0,0,0)"/>`,
       );
     }
-    const frame = panelRect(widget, panelPad);
+    const frame = frameRect(
+      widget,
+      panelPad,
+      String(slot("aspect") ?? ""),
+      String(slot("align") ?? "center"),
+    );
     const surface = opaqueEnough(slot("surface"));
     const border = opaqueEnough(slot("border"));
     if (surface || border)
@@ -301,13 +309,7 @@ export function renderContent(
       );
 
     if (type) {
-      const rect = contentRect(
-        widget,
-        panelPad,
-        pad,
-        String(slot("aspect") ?? ""),
-        String(slot("justify") ?? "center"),
-      );
+      const rect = contentRect(frame, pad);
       renderNode(type.template, rect, cellsFor(widget, type, live, view.state[widget.id] ?? {}), out);
     } else {
       out.push(

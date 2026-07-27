@@ -145,6 +145,26 @@ export function chip(text: string, cls = "", title = ""): HTMLElement {
   return el("span", { class: "chip " + cls, text, title: title || undefined });
 }
 
+/* the content-alignment control: a 3x3 grid picking both axes at once, instead of a
+ * nine-entry dropdown nobody can scan */
+const ALIGN_POSITIONS = [
+  "top-left", "top", "top-right",
+  "left", "center", "right",
+  "bottom-left", "bottom", "bottom-right",
+];
+
+export function alignGrid(value: string, commit: (v: string) => void): HTMLElement {
+  return el(
+    "div",
+    { class: "align-grid" },
+    ALIGN_POSITIONS.map((pos) =>
+      el("button", { class: pos === value ? "on" : "", title: pos, onclick: () => commit(pos) }, [
+        el("span", { class: "align-dot" }),
+      ]),
+    ),
+  );
+}
+
 /* a bool as a two-state pair, matching every other two-state control */
 export function boolPair(value: boolean, commit: (v: boolean) => void): HTMLElement {
   const off = el("button", { text: "off", class: value ? "" : "on", onclick: () => commit(false) });

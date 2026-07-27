@@ -1114,3 +1114,171 @@ select.field {
     display: none;
   }
 }
+
+/* ---------- color picker ---------- */
+
+.value-cell.grow {
+  flex: 1;
+}
+
+button.swatch {
+  display: inline-block;
+}
+
+#cpick {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: none;
+}
+
+#cpick.on {
+  display: block;
+}
+
+.cpick-pop {
+  position: fixed;
+  width: 196px;
+  padding: 8px;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  background: var(--menu);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+
+.cpick-sv {
+  position: relative;
+  height: 122px;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.cpick-bar {
+  position: relative;
+  height: 12px;
+  margin-top: 8px;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.cpick-hue {
+  background: linear-gradient(
+    to right,
+    #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%
+  );
+}
+
+.cpick-dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.cpick-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.field.cpick-hex {
+  text-transform: lowercase;
+}
+
+/* ---------- align grid ---------- */
+
+.align-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 16px);
+  grid-auto-rows: 16px;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  background: var(--input);
+  width: max-content;
+}
+
+.align-grid button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 1px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.align-grid button:hover {
+  background: var(--chip-2);
+}
+
+.align-grid .align-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--dim-2);
+}
+
+.align-grid button:hover .align-dot {
+  background: var(--ink-3);
+}
+
+.align-grid button.on {
+  background: var(--acc-bg);
+}
+
+.align-grid button.on .align-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--acc);
+}
+
+/* ---------- bound slots ---------- */
+
+/* a bound slot keeps its value editor as a live read-only view; the feed editor rides
+   a full-width row underneath */
+.prop-grid .feed-below {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.value-cell.bound input:disabled,
+.value-cell.bound select:disabled {
+  color: var(--acc-ink-2);
+  border-color: var(--line-2);
+  opacity: 1;
+  cursor: default;
+}
+
+.value-cell.bound .swatch:disabled,
+.value-cell.bound button:disabled {
+  cursor: default;
+}
+
+.value-cell.bound .bool-pair button:disabled.on {
+  background: var(--acc-deep);
+  color: var(--acc-ink-2);
+}
+
+.value-cell.bound .align-grid button:disabled.on {
+  background: var(--acc-deep);
+}
+
+.cpick-kw {
+  flex: none;
+  width: 30px;
+  font: 700 9px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}

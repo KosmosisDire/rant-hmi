@@ -102,16 +102,29 @@ function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const text = unknown ? UNKNOWN_TEXT : attrText(raw) ?? UNKNOWN_TEXT;
   if (!text.length) return;
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#e7ecf5";
+  /* either vocabulary: start/center/end, or the shared align slot's 9 positions
+     (top-left .. bottom-right), which place the line on both axes */
   const align = attrText(attr(attrs, "align", cells)) ?? "center";
   const strong = attrBool(attr(attrs, "strong", cells), false);
-  /* self-fitting text: size to the box, once, generically (no per-type sizing) */
+  /* self-fitting text: size to the box, once, generically (no per-type sizing); the
+     optional `scale` attr (the text_scale slot) multiplies the fitted size, so the
+     knob biases autoscaling instead of replacing it */
+  const scaleRaw = attrNum(attr(attrs, "scale", cells), 1);
+  const scale = scaleRaw > 0 ? scaleRaw : 1;
   const byHeight = rect.h * 0.66;
   const byWidth = rect.w / (0.58 * Math.max(1, text.length));
-  const size = Math.max(6, Math.min(byHeight, byWidth));
-  const anchor = align === "start" ? "start" : align === "end" ? "end" : "middle";
-  const x = align === "start" ? rect.x : align === "end" ? rect.x + rect.w : rect.x + rect.w / 2;
+  const size = Math.max(6, Math.min(byHeight, byWidth) * scale);
+  const left = align === "start" || align.includes("left");
+  const right = align === "end" || align.includes("right");
+  const anchor = left ? "start" : right ? "end" : "middle";
+  const x = left ? rect.x : right ? rect.x + rect.w : rect.x + rect.w / 2;
+  const y = align.includes("top")
+    ? rect.y + size * 0.55
+    : align.includes("bottom")
+      ? rect.y + rect.h - size * 0.55
+      : rect.y + rect.h / 2;
   out.push(
-    `<text x="${n(x)}" y="${n(rect.y + rect.h / 2)}" fill="${fill}" font-size="${n(size)}" ` +
+    `<text x="${n(x)}" y="${n(y)}" fill="${fill}" font-size="${n(size)}" ` +
       `text-anchor="${anchor}" dominant-baseline="central" ` +
       `font-weight="${strong ? 650 : 450}"` +
       (unknown ? ` opacity="0.45"` : "") +

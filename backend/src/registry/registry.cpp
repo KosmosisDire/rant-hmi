@@ -77,10 +77,19 @@ Json slot(const char* name, const char* shape, Json def, const char* group,
 
 /* an enum slot carries its variants, so the inspector generates the picker from data */
 Json slot_enum(const char* name, std::vector<std::string> variants, const char* def,
-               const char* group) {
-    Json s = slot(name, "enum", def, group);
+               const char* group, const char* editor = nullptr) {
+    Json s = slot(name, "enum", def, group, editor);
     s["variants"] = variants;
     return s;
+}
+
+/* the shared content-alignment slot: 9 positions, edited as a 3x3 grid. It places the
+ * aspect-locked content box in the tile, and any text part that names it follows it */
+Json align_slot(const char* def) {
+    return slot_enum("align",
+                     {"top-left", "top", "top-right", "left", "center", "right",
+                      "bottom-left", "bottom", "bottom-right"},
+                     def, "appearance", "align");
 }
 
 Json event(const char* name, const char* x) { return Json{{"name", name}, {"x", x}}; }
@@ -106,14 +115,16 @@ Json frame_slots() {
         slot("merge", "bool", true, "appearance"),
         slot("surface", "color", "#00000000", "appearance", "color"),
         slot("border", "color", "#00000000", "appearance", "color"),
-        slot("radius", "num", 3, "appearance"),
+        /* -1 = auto: the radius that nests concentrically inside the island's corner
+         * at this frame's inset (the view computes island radius minus panel_pad) */
+        slot("radius", "num", -1, "appearance"),
+        /* a multiplier on the self-fitting text size, so autoscaling is preserved;
+         * consumed by the template's text parts (hidden where the type has none) */
+        slot("text_scale", "num", 1, "appearance"),
         slot("panel_pad", "num", -1, "appearance"),
         slot("pad", "num", -1, "appearance"),
         slot("aspect", "text", "", "config"),
-        slot_enum("justify",
-                  {"top-left", "top", "top-right", "left", "center", "right", "bottom-left",
-                   "bottom", "bottom-right"},
-                  "center", "config"),
+        align_slot("center"),
     });
 }
 
@@ -160,7 +171,7 @@ Json button_type() {
                     /* the button's face IS its frame: surface, border and radius all
                      * land on the thing the user presses */
                     slot("surface", "color", "#4e8ef7", "appearance", "color"),
-                    slot("caption", "text", "", "appearance"),
+                    slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#0d0d0d", "appearance", "color"),
                 }),
                 Json::array({event("press", "bool"), event("release", "bool"),
@@ -168,9 +179,10 @@ Json button_type() {
                              event("held", "bool")}),
                 box("stack", Json::object(),
                     Json::array({
-                        part("text", Json{{"text", ref("slot:caption")},
+                        part("text", Json{{"text", ref("slot:text")},
                                           {"fill", ref("slot:text_color")},
-                                          {"align", lit("center")},
+                                          {"align", ref("slot:align")},
+                                          {"scale", ref("slot:text_scale")},
                                           {"strong", lit(true)}}),
                     }),
                     press_interact()));
@@ -263,12 +275,14 @@ Json readout_type() {
                         part("text", Json{{"text", to_fixed(ref("slot:value"),
                                                             ref("slot:decimals"))},
                                           {"fill", ref("slot:text_color")},
-                                          {"align", lit("center")},
+                                          {"align", ref("slot:align")},
+                                          {"scale", ref("slot:text_scale")},
                                           {"strong", lit(true)},
                                           {"weight", lit(1.0)}}),
                         part("text", Json{{"text", ref("slot:units")},
                                           {"fill", ref("slot:units_color")},
-                                          {"align", lit("center")},
+                                          {"align", ref("slot:align")},
+                                          {"scale", ref("slot:text_scale")},
                                           {"weight", lit(0.4)},
                                           {"show", ne(ref("slot:units"), lit(""))}}),
                     }),
@@ -281,7 +295,7 @@ Json indicator_type() {
                     slot("value", "bool", false, "value"),
                     slot("on_color", "color", "#e0857c", "appearance", "color"),
                     slot("off_color", "color", "#2a2a2a", "appearance", "color"),
-                    slot("caption", "text", "", "appearance"),
+                    slot("text", "text", "", "appearance"),
                 }),
                 Json::array({event("press", "num"), event("tap", "num")}),
                 box("col", Json::object(),
@@ -293,12 +307,13 @@ Json indicator_type() {
                                                                  ref("slot:off_color"))},
                                                    {"radius", lit(999)},
                                                    {"aspect", lit(1.0)}})})),
-                        part("text", Json{{"text", ref("slot:caption")},
+                        part("text", Json{{"text", ref("slot:text")},
                                           {"fill", lit("#8a8a8a")},
-                                          {"align", lit("center")},
+                                          {"align", ref("slot:align")},
+                                          {"scale", ref("slot:text_scale")},
                                           {"weight", lit(0.35)},
                                           {"min_px", lit(11)},
-                                          {"show", ne(ref("slot:caption"), lit(""))}}),
+                                          {"show", ne(ref("slot:text"), lit(""))}}),
                     }),
                     press_interact()));
 }
@@ -321,6 +336,7 @@ Json dropdown_type() {
                                 part("text", Json{{"text", ref("slot:value")},
                                                   {"fill", ref("slot:text_color")},
                                                   {"align", lit("start")},
+                                                  {"scale", ref("slot:text_scale")},
                                                   {"weight", lit(1.0)}}),
                                 part("icon", Json{{"name", lit("chevron-down")},
                                                   {"fill", lit("#8a8a8a")},
@@ -336,13 +352,15 @@ Json label_type() {
                 compose_slots(tile_base(), {
                     slot("text", "text", "", "value"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
-                    slot_enum("align", {"start", "center", "end"}, "start", "appearance"),
+                    /* a label reads like a line of text, so it starts left, not center */
+                    align_slot("left"),
                 }),
                 Json::array({event("press", "text"), event("tap", "text")}),
                 box("stack", Json::object(),
                     Json::array({part("text", Json{{"text", ref("slot:text")},
                                                    {"fill", ref("slot:text_color")},
-                                                   {"align", ref("slot:align")}})}),
+                                                   {"align", ref("slot:align")},
+                                                   {"scale", ref("slot:text_scale")}})}),
                     press_interact()));
 }
 

@@ -5,6 +5,7 @@
 import { clear, commitInput, el, iconButton, numberInput } from "../dom.js";
 import { Editor, section } from "../editor.js";
 import { fedSlots, resolveSlot, typeOf } from "../slots.js";
+import { UNKNOWN_TEXT } from "../template.js";
 import { Json, SlotSpec, Widget } from "../types.js";
 import { valueEditor } from "./editors.js";
 import { feedCard } from "./feeds.js";
@@ -112,7 +113,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
         const rows: (HTMLElement | null)[] = [];
         for (const spec of valueSlots) {
           const feed = feeds.find((f) => f.slot === spec.name);
-          rows.push(feed ? feedCard(editor, widget, type, feed) : slotRow(editor, widget, spec, false));
+          rows.push(slotRow(editor, widget, spec, !!feed));
         }
         return rows;
       }),
@@ -139,7 +140,13 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     ]),
   );
 
-  /* 4. Appearance: placement, then every appearance and config slot */
+  /* 4. Appearance: placement, then every appearance and config slot. A slot the
+   *    template consumes nowhere is hidden rather than shown dead: align also counts
+   *    the aspect-locked content box it places, so it stays once an aspect is set. */
+  const template = JSON.stringify(type?.template ?? null);
+  const usesAlign = template.includes("slot:align");
+  const usesTextScale = template.includes("slot:text_scale");
+  const hasAspect = String(resolveSlot(widget, type, editor.live, fed, "aspect") ?? "") !== "";
   body.append(
     ...section("appearance", "Appearance", String(fedSlots(widget).size ? fed.size : 0), () => [
       el("div", { class: "prop-grid" }, [
@@ -153,6 +160,8 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
         otherSlots
           .filter((s) => s.group === "appearance")
           .concat(otherSlots.filter((s) => s.group === "config"))
+          .filter((s) => s.name !== "align" || usesAlign || hasAspect)
+          .filter((s) => s.name !== "text_scale" || usesTextScale)
           .flatMap((spec) => slotCells(editor, widget, spec, fed.has(spec.name))),
       ),
     ]),
@@ -185,13 +194,21 @@ function geomRow(editor: Editor, widget: Widget): HTMLElement {
   ]);
 }
 
-/* one Data-in row for an unfed value slot */
+/* one Data-in row for a value slot, bound or not */
 function slotRow(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolean): HTMLElement {
   return el("div", { class: "prop-grid" }, slotCells(editor, widget, spec, bound));
 }
 
-/* label + (editor or the feed sentence) + the bind chip: which property you are binding is
- * answered by where you are standing (spec 3.3) */
+/* a bound editor stays visible but inert: every control inside stops taking input */
+function disableAll(node: HTMLElement): void {
+  for (const inner of node.querySelectorAll("input, select, button"))
+    (inner as HTMLInputElement).disabled = true;
+}
+
+/* label + editor + the bind chip: which property you are binding is answered by where
+ * you are standing (spec 3.3). A bound slot keeps its value editor, disabled, as a live
+ * view of what the feed delivers (the UNKNOWN "--" until something arrives), and the
+ * feed's own editor sits on a full-width row below it. */
 function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolean): HTMLElement[] {
   const type = typeOf(editor.registry, widget.type);
   const fed = fedSlots(widget);
@@ -203,9 +220,12 @@ function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolea
   };
   const feed = (widget.feeds ?? []).find((f) => f.slot === spec.name);
 
-  const control = bound && feed
-    ? feedCard(editor, widget, type, feed)
-    : el("span", { class: "value-cell" }, [valueEditor(spec, spec.shape, value, commit)]);
+  const control = el("span", { class: "value-cell" + (bound ? " bound" : "") }, [
+    bound && value === null
+      ? el("input", { class: "field grow", value: UNKNOWN_TEXT, disabled: true })
+      : valueEditor(spec, spec.shape, value, commit),
+  ]);
+  if (bound) disableAll(control);
 
   /* one link icon, two states: bound shows it lit and unbinds, unbound offers the feed */
   const bind = bound
@@ -226,7 +246,10 @@ function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolea
 
   /* the shape is what the editor and the compiler enforce, so the row does not spell it
      out; it is on the label's tooltip for when the user wants to know */
-  return [el("label", { text: spec.name, title: spec.name + ": " + spec.shape }), control, bind];
+  const cells = [el("label", { text: spec.name, title: spec.name + ": " + spec.shape }), control, bind];
+  if (bound && feed)
+    cells.push(el("div", { class: "feed-below" }, [feedCard(editor, widget, type, feed)]));
+  return cells;
 }
 
 /* The Code panel: a readable chained form of the same document, generated. It is a view,
