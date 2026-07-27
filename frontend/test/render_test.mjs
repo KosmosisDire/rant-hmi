@@ -19,6 +19,7 @@ const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
 const { renderArtboard } = await import(mod("canvas.js"));
 const { run } = await import(mod("program.js"));
+const { unionPath } = await import(mod("islands.js"));
 
 let failures = 0;
 let checks = 0;
@@ -154,6 +155,17 @@ store.apply(second.version, second.ops);
 svg = renderArtboard(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 has(svg, ">12<", "decimals 0 rounded the value");
 check(!svg.includes(">bar<"), "an empty units slot sheds its part");
+
+/* merging does not depend on the grid: two touching off-grid widgets are ONE island, and
+   two separated ones are two (one closed loop per island) */
+const loops = (path) => (path.match(/Z/g) ?? []).length;
+const offGridA = { x: 103, y: 57, w: 100, h: 60 };
+const offGridB = { x: 203, y: 57, w: 100, h: 60 };
+const fused = unionPath([offGridA, offGridB], 16);
+check(loops(fused) === 1, "two touching off-grid widgets fuse into one island, got " + loops(fused));
+check(fused.includes("303.0") && fused.includes("103.0"), "the fused outline spans both widgets");
+const apart = unionPath([offGridA, { ...offGridB, x: 260 }], 16);
+check(loops(apart) === 2, "two separated widgets stay two islands, got " + loops(apart));
 
 /* the interpreter's own rules: Nil poisons, division by zero is Nil, not a trap */
 check(run({ code: [{ op: "CONST", v: null }, { op: "CONST", v: 2 }, { op: "MUL" }] }, () => null) === null,

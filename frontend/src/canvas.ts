@@ -9,7 +9,7 @@
  * Everything in it is divided by the view scale, so grips stay the same size on screen at
  * any zoom. */
 
-import { dividerPath, gridPath, Tile, tracePath } from "./islands.js";
+import { dividerPath, gridPath, unionPath } from "./islands.js";
 import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.js";
 import { escapeXml, Rect, renderNode } from "./template.js";
 import { Canvas, Doc, Json, Live, Page, Registry, Widget } from "./types.js";
@@ -29,19 +29,6 @@ const ISLAND_RADIUS = 16;
 
 export function cellSize(canvas: Canvas): number {
   return canvas.unit_w / Math.max(1, canvas.cols);
-}
-
-/* a widget joins the fused island only when it is snapped to the grid (spec 3.1) */
-function tileOf(widget: Widget, cell: number): Tile | null {
-  const { x, y, w, h } = widget.geom;
-  const near = (v: number) => Math.abs(v - Math.round(v)) < 0.02;
-  const c = x / cell;
-  const r = y / cell;
-  const cw = w / cell;
-  const ch = h / cell;
-  if (!near(c) || !near(r) || !near(cw) || !near(ch)) return null;
-  if (cw < 1 || ch < 1) return null;
-  return { c: Math.round(c), r: Math.round(r), cw: Math.round(cw), ch: Math.round(ch) };
 }
 
 function num(v: number): string {
@@ -254,8 +241,10 @@ export function renderArtboard(
   if (view.mode === "edit")
     out.push(`<path d="${gridPath(canvas.rows, canvas.cols, cell)}" class="grid"/>`);
 
-  /* the fused surface: every visible, mergeable, snapped tile */
-  const tiles: Tile[] = [];
+  /* The fused surface: every visible widget whose `merge` slot is on, wherever it sits.
+     Grid snapping is a placement aid, not a condition for merging: the outline is the exact
+     union of the widgets' own rectangles. */
+  const merged: Rect[] = [];
   const visible: Widget[] = [];
   for (const widget of page.widgets ?? []) {
     const type = typeOf(registry, widget.type);
@@ -264,22 +253,13 @@ export function renderArtboard(
     if (shown === false || shown === null) continue;
     visible.push(widget);
     if (resolveSlot(widget, type, live, fed, "merge") === false) continue;
-    const tile = tileOf(widget, cell);
-    if (tile) tiles.push(tile);
+    /* the tile itself, not the inset panel: adjacent tiles touch, so they fuse */
+    merged.push({ ...widget.geom });
   }
-  if (tiles.length) {
-    const grid: boolean[][] = Array.from({ length: canvas.rows }, () =>
-      new Array(canvas.cols).fill(false),
-    );
-    for (const tile of tiles)
-      for (let r = tile.r; r < tile.r + tile.ch && r < canvas.rows; r++)
-        for (let c = tile.c; c < tile.c + tile.cw && c < canvas.cols; c++)
-          if (r >= 0 && c >= 0) grid[r][c] = true;
-    const occupied = (r: number, c: number) =>
-      r >= 0 && c >= 0 && r < canvas.rows && c < canvas.cols && grid[r][c];
-    const path = tracePath(occupied, canvas.rows, canvas.cols, cell, ISLAND_RADIUS);
+  if (merged.length) {
+    const path = unionPath(merged, ISLAND_RADIUS);
     if (path) out.push(`<path d="${path}" class="island"/>`);
-    const dividers = dividerPath(tiles, cell);
+    const dividers = dividerPath(merged);
     if (dividers) out.push(`<path d="${dividers}" class="divider"/>`);
   }
 
