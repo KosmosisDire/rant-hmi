@@ -71,6 +71,11 @@ export function run(program: Program | undefined, cells: Cells): Json {
       case "LT": case "LE": case "GT": case "GE":
         stack.push(arith(instr.op));
         break;
+      case "NEG": {
+        const a = num(pop());
+        stack.push(a === null ? NIL : -a);
+        break;
+      }
       case "EQ": case "NE": {
         const b = pop();
         const a = pop();
@@ -87,6 +92,29 @@ export function run(program: Program | undefined, cells: Cells): Json {
       case "CLAMP01": {
         const a = num(pop());
         stack.push(a === null ? NIL : a < 0 ? 0 : a > 1 ? 1 : a);
+        break;
+      }
+      case "ABS": case "ROUND": case "FLOOR": case "CEIL": case "SQRT": case "INT":
+      case "SIGN": {
+        const a = num(pop());
+        if (a === null) { stack.push(NIL); break; }
+        if (instr.op === "ABS") stack.push(Math.abs(a));
+        else if (instr.op === "ROUND") stack.push(Math.round(a));
+        else if (instr.op === "FLOOR") stack.push(Math.floor(a));
+        else if (instr.op === "CEIL") stack.push(Math.ceil(a));
+        else if (instr.op === "SQRT") stack.push(a < 0 ? NIL : Math.sqrt(a));
+        else if (instr.op === "INT") stack.push(Math.trunc(a));
+        else stack.push(Math.sign(a));
+        break;
+      }
+      case "POW": case "MIN": case "MAX": case "MOD": {
+        const b = num(pop());
+        const a = num(pop());
+        if (a === null || b === null) { stack.push(NIL); break; }
+        if (instr.op === "POW") stack.push(Math.pow(a, b));
+        else if (instr.op === "MIN") stack.push(Math.min(a, b));
+        else if (instr.op === "MAX") stack.push(Math.max(a, b));
+        else stack.push(b === 0 ? NIL : a % b);
         break;
       }
       case "TO_FIXED": {

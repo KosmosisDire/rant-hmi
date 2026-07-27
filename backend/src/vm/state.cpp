@@ -80,6 +80,20 @@ RuntimeState::RuntimeState(const Program& program) {
     for (uint32_t i = 0; i < program.entities.size(); ++i)
         last[i].fields.resize(program.entities[i].fields.size(), Value::nil());
 
+    deadband.resize(program.layout.deadband_slots, Value::nil());
+    throttle.resize(program.layout.throttle_slots, UINT64_MAX);
+    timers.resize(program.timers.size());
+    fired.resize(program.layout.fired_groups, 0);
+    pending.resize(program.layout.pending_slots);
+    for (PendingState& item : pending) {
+        item.buffers.resize(buffers.size());
+        for (uint32_t i = 0; i < buffers.size(); ++i) {
+            item.buffers[i].entity = buffers[i].entity;
+            item.buffers[i].fields.resize(buffers[i].fields.size(), Value::nil());
+            item.buffers[i].set.resize(buffers[i].set.size(), 0);
+        }
+    }
+
     stack.resize(std::max<uint32_t>(program.layout.stack_values, 1), Value::nil());
     effects.resize(std::max<uint32_t>(program.layout.effect_capacity, 1));
     for (EffectRecord& effect : effects) {

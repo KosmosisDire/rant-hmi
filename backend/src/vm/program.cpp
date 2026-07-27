@@ -64,14 +64,20 @@ const char* op_name(OpCode op) {
         case OpCode::Jmp: return "JMP";
         case OpCode::JmpFalse: return "JMP_FALSE";
         case OpCode::Call: return "CALL";
+        case OpCode::Method: return "METHOD";
         case OpCode::StoreX: return "STORE_X";
         case OpCode::Gate: return "GATE";
+        case OpCode::Deadband: return "DEADBAND";
+        case OpCode::Throttle: return "THROTTLE";
+        case OpCode::Suspend: return "SUSPEND";
         case OpCode::MsgNew: return "MSG_NEW";
         case OpCode::MsgSet: return "MSG_SET";
         case OpCode::SendMsg: return "SEND_MSG";
         case OpCode::SendX: return "SEND_X";
         case OpCode::Store: return "STORE";
         case OpCode::Unforce: return "UNFORCE";
+        case OpCode::TmrStart: return "TMR_START";
+        case OpCode::TmrCancel: return "TMR_CANCEL";
         case OpCode::Fault: return "FAULT";
         case OpCode::Halt: return "HALT";
     }

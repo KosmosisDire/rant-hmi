@@ -3,6 +3,7 @@
 #include "expression.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 
 namespace hmi {
@@ -74,6 +75,7 @@ struct WidgetInfo {
     const Json* type = nullptr;
     std::unordered_map<std::string, uint32_t> locals;
     std::unordered_map<std::string, uint32_t> slots;
+    std::unordered_map<std::string, uint32_t> timers;
 };
 
 class Compiler {
@@ -145,6 +147,20 @@ class Compiler {
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
 
+    uint32_t add_timer(uint64_t owner_widget, const Json& var) {
+        TimerDef timer;
+        timer.owner_widget = owner_widget;
+        timer.node_id = id_of(var);
+        timer.name = var.value("name", "");
+        timer.event = "timer:" + std::to_string(timer.node_id);
+        const Json& init = var["init"];
+        const double seconds = init.is_number() ? init.get<double>() : 0.0;
+        timer.duration_ticks =
+            static_cast<uint32_t>(std::max(1.0, std::round(std::max(0.0, seconds) * 1000.0)));
+        program_.timers.push_back(std::move(timer));
+        return static_cast<uint32_t>(program_.timers.size() - 1);
+    }
+
     void build_cells() {
         auto globals = document_.root.find("globals");
         if (globals != document_.root.end() && globals->is_array()) {
@@ -158,6 +174,7 @@ class Compiler {
                 globals_[name] =
                     add_cell(CellKind::Global, 0, id_of(var), name, shape,
                              var.value("init", Json()), var.value("persist", false));
+                if (shape == Shape::Struct) global_timers_[name] = add_timer(0, var);
             }
         }
 
@@ -188,6 +205,8 @@ class Compiler {
                         info.locals[name] =
                             add_cell(CellKind::Local, info.id, id_of(var), name, shape,
                                      var.value("init", Json()), var.value("persist", false));
+                        if (shape == Shape::Struct)
+                            info.timers[name] = add_timer(info.id, var);
                     }
                 }
 
@@ -329,6 +348,7 @@ class Compiler {
                     continue;
                 }
                 feed.cell = destination->second;
+                program_.cells[feed.cell].initial = Value::nil();
                 const Json& ref = node["src"];
                 const std::string kind = ref.value("kind", "");
                 ExpressionScope scope =
@@ -346,6 +366,7 @@ class Compiler {
                         continue;
                     }
                     feed.entity = UINT32_MAX;
+                    feed.source_cell = source;
                     scope.x_shape = program_.cells[source].shape;
                 } else {
                     const int entity = resolve_entity(ref, feed.feed_id);
@@ -392,6 +413,25 @@ class Compiler {
         flow.worst_steps = 2;
     }
 
+    uint32_t state_site(StateSiteKind kind, uint64_t flow, uint64_t row) {
+        uint32_t slot = 0;
+        if (kind == StateSiteKind::Deadband) slot = program_.layout.deadband_slots++;
+        else if (kind == StateSiteKind::Throttle) slot = program_.layout.throttle_slots++;
+        else slot = program_.layout.pending_slots++;
+        program_.state_sites.push_back(StateSite{kind, flow, row, slot});
+        return slot;
+    }
+
+    int resolve_timer(const WidgetInfo& widget, const std::string& name,
+                      uint64_t node) {
+        auto local = widget.timers.find(name);
+        if (local != widget.timers.end()) return static_cast<int>(local->second);
+        auto global = global_timers_.find(name);
+        if (global != global_timers_.end()) return static_cast<int>(global->second);
+        diag(node, "timer", "timer '" + name + "' is unresolved");
+        return -1;
+    }
+
     bool compile_steps(const WidgetInfo& widget, const Json& flow_node, FlowProgram& flow) {
         ExpressionScope scope = scope_for(widget, flow.event_shape);
         Shape current_x_shape = flow.event_shape;
@@ -413,11 +453,28 @@ class Compiler {
                                 Shape::Bool, flow.code, flow.max_stack))
                     return false;
                 flow.code.push_back(Instruction{OpCode::Gate});
-            } else if (kind == "deadband" || kind == "throttle" || kind == "debounce" ||
-                       kind == "delay") {
-                break_flow(flow, step_id, "timing_stage",
-                           "step '" + kind + "' is reserved for scheduler stage 4");
-                return true;
+            } else if (kind == "deadband") {
+                Instruction ins;
+                ins.op = OpCode::Deadband;
+                ins.a = state_site(StateSiteKind::Deadband, flow.flow_id, step_id);
+                ins.b = program_.add_constant(Value::number(step.value("a", 0.0)));
+                ins.c = fault_site(step_id, "deadband", "deadband needs a numeric value");
+                flow.code.push_back(ins);
+            } else if (kind == "throttle") {
+                Instruction ins;
+                ins.op = OpCode::Throttle;
+                ins.a = state_site(StateSiteKind::Throttle, flow.flow_id, step_id);
+                ins.b = static_cast<uint32_t>(std::max(0.0, step.value("a", 0.0)));
+                ins.c = fault_site(step_id, "throttle", "throttle state is invalid");
+                flow.code.push_back(ins);
+            } else if (kind == "debounce" || kind == "delay") {
+                Instruction ins;
+                ins.op = OpCode::Suspend;
+                ins.a = state_site(StateSiteKind::Suspend, flow.flow_id, step_id);
+                ins.b = static_cast<uint32_t>(std::max(0.0, step.value("a", 0.0)));
+                ins.small = kind == "debounce" ? 1 : 0;
+                ins.c = fault_site(step_id, "suspend", "suspension state is invalid");
+                flow.code.push_back(ins);
             } else if (kind == "build") {
                 const int entity = resolve_entity(step["target"], step_id);
                 if (entity < 0) return false;
@@ -567,9 +624,13 @@ class Compiler {
                 flow.code.push_back(ins);
                 ++program_.layout.effect_capacity;
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
-                break_flow(flow, step_id, "timer_stage",
-                           "timer steps are reserved for scheduler stage 4");
-                return true;
+                const int timer = resolve_timer(widget, step.value("timer", ""), step_id);
+                if (timer < 0) return false;
+                Instruction ins;
+                ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
+                ins.a = static_cast<uint32_t>(timer);
+                ins.c = fault_site(step_id, "timer", "timer state is invalid");
+                flow.code.push_back(ins);
             } else {
                 diag(step_id, "step_kind", "unknown step kind '" + kind + "'");
                 return false;
@@ -591,17 +652,33 @@ class Compiler {
                     diag(flow_id, "trigger", "flow has no trigger");
                     continue;
                 }
+                const uint32_t group = program_.layout.fired_groups++;
                 for (const Json& trigger : triggers) {
-                    if (trigger.value("kind", "") != "event") {
-                        diag(flow_id, "timer_stage",
-                             "timer triggers are reserved for scheduler stage 4");
-                        continue;
-                    }
                     FlowProgram flow;
                     flow.widget_id = widget.id;
                     flow.flow_id = flow_id;
-                    flow.event = trigger.value("name", "");
-                    flow.event_shape = event_shape(widget, flow.event, flow_id);
+                    flow.group = group;
+                    flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
+                    flow.first_only =
+                        triggers.size() > 1 && node.value("when_mode", "first") == "first";
+                    if (trigger.value("kind", "") == "timer") {
+                        const std::string name = trigger.value("var", "");
+                        const int timer = resolve_timer(widget, name, flow_id);
+                        if (timer < 0) continue;
+                        flow.event = program_.timers[timer].event;
+                        flow.event_shape = Shape::Struct;
+                        program_.timers[timer].rearm_groups.push_back(group);
+                    } else {
+                        flow.event = trigger.value("name", "");
+                        flow.event_shape = event_shape(widget, flow.event, flow_id);
+                        flow.hold_ticks =
+                            static_cast<uint32_t>(std::max(0.0, trigger.value("hold_ms", 600.0)));
+                        const Json every = trigger.value("every_ms", Json());
+                        flow.every_ticks =
+                            every.is_number()
+                                ? static_cast<uint32_t>(std::max(0.0, every.get<double>()))
+                                : 0;
+                    }
                     if (!compile_steps(widget, node, flow)) {
                         const std::string message = "flow could not be compiled";
                         flow.code.clear();
@@ -628,6 +705,7 @@ class Compiler {
     bool has_errors_ = false;
     Json empty_object_ = Json::object();
     std::unordered_map<std::string, uint32_t> globals_;
+    std::unordered_map<std::string, uint32_t> global_timers_;
     std::vector<WidgetInfo> widgets_;
 };
 

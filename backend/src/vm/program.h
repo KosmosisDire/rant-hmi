@@ -66,14 +66,20 @@ enum class OpCode : uint8_t {
     Jmp,
     JmpFalse,
     Call,
+    Method,
     StoreX,
     Gate,
+    Deadband,
+    Throttle,
+    Suspend,
     MsgNew,
     MsgSet,
     SendMsg,
     SendX,
     Store,
     Unforce,
+    TmrStart,
+    TmrCancel,
     Fault,
     Halt,
 };
@@ -93,6 +99,19 @@ enum class Builtin : uint16_t {
     Max,
     Int,
     Num,
+};
+
+enum class MethodId : uint16_t {
+    NumRound,
+    NumFloor,
+    NumCeil,
+    NumAbs,
+    NumClamp,
+    NumMapRange,
+    NumSign,
+    BoolInt,
+    BoolNot,
+    BoolPick,
 };
 
 struct Instruction {
@@ -116,9 +135,32 @@ struct FlowProgram {
     uint64_t flow_id = 0;
     std::string event;
     Shape event_shape = Shape::Unknown;
+    uint32_t group = 0;
+    uint32_t runtime_index = 0;
+    uint32_t hold_ticks = 0;
+    uint32_t every_ticks = 0;
+    bool first_only = false;
     std::vector<Instruction> code;
     uint32_t max_stack = 0;
     uint32_t worst_steps = 0;
+};
+
+struct TimerDef {
+    uint64_t owner_widget = 0;
+    uint64_t node_id = 0;
+    std::string name;
+    std::string event;
+    uint32_t duration_ticks = 0;
+    std::vector<uint32_t> rearm_groups;
+};
+
+enum class StateSiteKind : uint8_t { Deadband, Throttle, Suspend };
+
+struct StateSite {
+    StateSiteKind kind = StateSiteKind::Deadband;
+    uint64_t flow_id = 0;
+    uint64_t row_id = 0;
+    uint32_t slot = 0;
 };
 
 struct FeedProgram {
@@ -126,6 +168,7 @@ struct FeedProgram {
     uint64_t feed_id = 0;
     uint32_t entity = 0;
     uint32_t field = 0;
+    uint32_t source_cell = UINT32_MAX;
     uint32_t cell = 0;
     std::vector<Instruction> code;
     uint32_t max_stack = 0;
@@ -136,6 +179,10 @@ struct ProgramLayout {
     uint32_t stack_values = 1;
     uint32_t effect_capacity = 1;
     uint32_t max_entity_fields = 1;
+    uint32_t deadband_slots = 0;
+    uint32_t throttle_slots = 0;
+    uint32_t pending_slots = 0;
+    uint32_t fired_groups = 0;
 };
 
 struct Program {
@@ -147,6 +194,8 @@ struct Program {
     std::vector<BufferDef> buffers;
     std::vector<FlowProgram> flows;
     std::vector<FeedProgram> feeds;
+    std::vector<TimerDef> timers;
+    std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;
     std::vector<Diag> runtime_faults;
     ProgramLayout layout;

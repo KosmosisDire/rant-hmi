@@ -196,6 +196,30 @@ struct BuiltinSpec {
     Shape result;
 };
 
+struct MethodSpec {
+    Shape receiver;
+    const char* name;
+    MethodId method;
+    uint32_t args;
+    Shape result;
+};
+
+const std::vector<MethodSpec>& methods() {
+    static const std::vector<MethodSpec> table = {
+        {Shape::Num, "round", MethodId::NumRound, 1, Shape::Num},
+        {Shape::Num, "floor", MethodId::NumFloor, 0, Shape::Num},
+        {Shape::Num, "ceil", MethodId::NumCeil, 0, Shape::Num},
+        {Shape::Num, "abs", MethodId::NumAbs, 0, Shape::Num},
+        {Shape::Num, "clamp", MethodId::NumClamp, 2, Shape::Num},
+        {Shape::Num, "mapRange", MethodId::NumMapRange, 4, Shape::Num},
+        {Shape::Num, "sign", MethodId::NumSign, 0, Shape::Num},
+        {Shape::Bool, "int", MethodId::BoolInt, 0, Shape::Num},
+        {Shape::Bool, "not", MethodId::BoolNot, 0, Shape::Bool},
+        {Shape::Bool, "pick", MethodId::BoolPick, 2, Shape::Unknown},
+    };
+    return table;
+}
+
 const std::unordered_map<std::string, BuiltinSpec>& builtins() {
     static const std::unordered_map<std::string, BuiltinSpec> table = {
         {"clamp", {Builtin::Clamp, 3, 3, Shape::Num}},
@@ -387,7 +411,59 @@ class Parser {
             emit(OpCode::Not);
             return Shape::Bool;
         }
-        return parse_primary();
+        return parse_postfix();
+    }
+
+    Shape parse_postfix() {
+        Shape receiver = parse_primary();
+        while (error_.empty() && token_.kind == TokenKind::Dot) {
+            advance();
+            if (token_.kind != TokenKind::Ident) {
+                fail("expected a method after '.'");
+                return Shape::Unknown;
+            }
+            const std::string name = token_.text;
+            advance();
+            const MethodSpec* spec = nullptr;
+            for (const MethodSpec& row : methods())
+                if (row.receiver == receiver && name == row.name) {
+                    spec = &row;
+                    break;
+                }
+            if (!spec) {
+                fail("shape " + std::string(shape_name(receiver)) +
+                     " has no method '" + name + "'");
+                return Shape::Unknown;
+            }
+            uint32_t argc = 0;
+            if (token_.kind == TokenKind::LParen) {
+                advance();
+                if (token_.kind != TokenKind::RParen) {
+                    for (;;) {
+                        Shape argument = parse_or();
+                        if (receiver == Shape::Num) require(argument, Shape::Num, name.c_str());
+                        ++argc;
+                        if (token_.kind != TokenKind::Comma) break;
+                        advance();
+                    }
+                }
+                if (token_.kind != TokenKind::RParen) {
+                    fail("expected ')' after method arguments");
+                    return Shape::Unknown;
+                }
+                advance();
+            }
+            if (argc != spec->args) {
+                fail(name + " takes " + std::to_string(spec->args) + " arguments");
+                return Shape::Unknown;
+            }
+            emit(OpCode::Method, 0, argc, static_cast<uint16_t>(spec->method));
+            if (argc) depth_ -= argc;
+            receiver = spec->result == Shape::Unknown
+                           ? (argc ? Shape::Unknown : receiver)
+                           : spec->result;
+        }
+        return receiver;
     }
 
     Shape load_binding(const Binding& binding) {
@@ -451,6 +527,9 @@ class Parser {
         }
         if (token_.kind == TokenKind::LParen) return parse_call(name);
 
+        auto found = scope_.names.find(name);
+        if (found != scope_.names.end()) return load_binding(found->second);
+
         std::string qualified = name;
         while (token_.kind == TokenKind::Dot) {
             advance();
@@ -460,15 +539,13 @@ class Parser {
             }
             qualified += "." + token_.text;
             advance();
+            auto q = scope_.qualified.find(qualified);
+            if (q != scope_.qualified.end()) return load_binding(q->second);
         }
-        auto q = scope_.qualified.find(qualified);
-        if (q != scope_.qualified.end()) return load_binding(q->second);
         if (qualified != name) {
-            fail("unknown field '" + qualified + "'; methods arrive in compiler stage 3b");
+            fail("unknown field '" + qualified + "'");
             return Shape::Unknown;
         }
-        auto found = scope_.names.find(name);
-        if (found != scope_.names.end()) return load_binding(found->second);
         fail("unknown name '" + name + "'");
         return Shape::Unknown;
     }

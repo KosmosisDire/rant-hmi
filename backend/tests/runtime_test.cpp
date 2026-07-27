@@ -58,7 +58,7 @@ Document runtime_document() {
              Json{{"slot", "value"},
                   {"src", entity("V", "sensor")},
                   {"path", "value"},
-                  {"xf", "roundTo(x, 1)"}},
+                  {"xf", "x.round(1)"}},
          })},
         {"flows", Json::array()},
     };

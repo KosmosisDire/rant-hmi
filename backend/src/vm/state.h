@@ -48,6 +48,20 @@ struct RuntimeFault {
     uint32_t count = 0;
 };
 
+struct TimerState {
+    bool running = false;
+    uint32_t remaining = 0;
+};
+
+struct PendingState {
+    bool active = false;
+    uint64_t wake_tick = 0;
+    uint32_t flow = 0;
+    uint32_t resume_pc = 0;
+    Value x = Value::nil();
+    std::vector<MessageState> buffers;
+};
+
 class RuntimeState {
   public:
     explicit RuntimeState(const Program& program);
@@ -57,6 +71,11 @@ class RuntimeState {
     std::vector<FixedText> texts;
     std::vector<MessageState> buffers;
     std::vector<LastValueState> last;
+    std::vector<Value> deadband;
+    std::vector<uint64_t> throttle;
+    std::vector<PendingState> pending;
+    std::vector<TimerState> timers;
+    std::vector<uint8_t> fired;
     std::vector<Value> stack;
     std::vector<EffectRecord> effects;
     uint32_t effect_count = 0;

@@ -77,6 +77,65 @@ Value call(Builtin builtin, const Value* args, uint32_t n) noexcept {
     return Value::nil();
 }
 
+Value method(MethodId method, const Value& receiver, const Value* args,
+             uint32_t n) noexcept {
+    switch (method) {
+        case MethodId::NumRound:
+            if (receiver.tag == ValueTag::Num && n == 1 && args[0].tag == ValueTag::Num) {
+                const double scale = std::pow(10.0, args[0].data.num);
+                return scale == 0 || !std::isfinite(scale)
+                           ? Value::nil()
+                           : Value::number(std::round(receiver.data.num * scale) / scale);
+            }
+            break;
+        case MethodId::NumFloor:
+            if (receiver.tag == ValueTag::Num && n == 0)
+                return Value::number(std::floor(receiver.data.num));
+            break;
+        case MethodId::NumCeil:
+            if (receiver.tag == ValueTag::Num && n == 0)
+                return Value::number(std::ceil(receiver.data.num));
+            break;
+        case MethodId::NumAbs:
+            if (receiver.tag == ValueTag::Num && n == 0)
+                return Value::number(std::fabs(receiver.data.num));
+            break;
+        case MethodId::NumClamp:
+            if (receiver.tag == ValueTag::Num && n == 2 &&
+                args[0].tag == ValueTag::Num && args[1].tag == ValueTag::Num)
+                return Value::number(
+                    std::max(args[0].data.num, std::min(args[1].data.num, receiver.data.num)));
+            break;
+        case MethodId::NumMapRange:
+            if (receiver.tag == ValueTag::Num && n == 4 &&
+                args[0].tag == ValueTag::Num && args[1].tag == ValueTag::Num &&
+                args[2].tag == ValueTag::Num && args[3].tag == ValueTag::Num &&
+                args[1].data.num != args[0].data.num)
+                return Value::number(
+                    args[2].data.num + (receiver.data.num - args[0].data.num) *
+                    (args[3].data.num - args[2].data.num) /
+                    (args[1].data.num - args[0].data.num));
+            break;
+        case MethodId::NumSign:
+            if (receiver.tag == ValueTag::Num && n == 0)
+                return Value::number((receiver.data.num > 0) - (receiver.data.num < 0));
+            break;
+        case MethodId::BoolInt:
+            if (receiver.tag == ValueTag::Bool && n == 0)
+                return Value::number(receiver.data.boolean ? 1 : 0);
+            break;
+        case MethodId::BoolNot:
+            if (receiver.tag == ValueTag::Bool && n == 0)
+                return Value::boolean(!receiver.data.boolean);
+            break;
+        case MethodId::BoolPick:
+            if (receiver.tag == ValueTag::Bool && n == 2)
+                return receiver.data.boolean ? args[0] : args[1];
+            break;
+    }
+    return Value::nil();
+}
+
 bool copy_effect_text(const Program& program, RuntimeState& state, EffectRecord& effect,
                       Value value, uint32_t field) noexcept {
     if (value.tag != ValueTag::Text) return true;
@@ -121,11 +180,12 @@ bool emit_message(const Program& program, RuntimeState& state, Verb verb,
 } // namespace
 
 static RunResult run_code(const Program& program, const std::vector<Instruction>& code,
-                          RuntimeState& state, Value event_value) noexcept {
+                          const FlowProgram* flow, RuntimeState& state, Value event_value,
+                          uint32_t start_pc = 0) noexcept {
     RunResult result;
     Value x = event_value;
     uint32_t sp = 0;
-    uint32_t pc = 0;
+    uint32_t pc = start_pc;
     auto push = [&](Value value) {
         if (sp >= state.stack.size()) return false;
         state.stack[sp++] = value;
@@ -213,12 +273,77 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 if (!push(value)) fail(ins.c);
                 break;
             }
+            case OpCode::Method: {
+                const uint32_t argc = ins.b;
+                if (argc + 1 > sp) {
+                    fail(ins.c);
+                    break;
+                }
+                const uint32_t receiver_at = sp - argc - 1;
+                const Value value =
+                    method(static_cast<MethodId>(ins.small), state.stack[receiver_at],
+                           &state.stack[receiver_at + 1], argc);
+                sp = receiver_at;
+                if (!push(value)) fail(ins.c);
+                break;
+            }
             case OpCode::StoreX:
                 x = pop();
                 break;
             case OpCode::Gate: {
                 const Value value = pop();
                 if (value.tag != ValueTag::Bool || !value.data.boolean) result.halted = true;
+                break;
+            }
+            case OpCode::Deadband: {
+                if (ins.a >= state.deadband.size() || x.tag != ValueTag::Num) {
+                    fail(ins.c);
+                    break;
+                }
+                const Value threshold =
+                    ins.b < program.constants.size() ? program.constants[ins.b] : Value::nil();
+                if (threshold.tag != ValueTag::Num) {
+                    fail(ins.c);
+                    break;
+                }
+                Value& previous = state.deadband[ins.a];
+                if (previous.tag == ValueTag::Num &&
+                    std::fabs(x.data.num - previous.data.num) < threshold.data.num) {
+                    result.halted = true;
+                } else {
+                    previous = x;
+                }
+                break;
+            }
+            case OpCode::Throttle:
+                if (ins.a >= state.throttle.size()) {
+                    fail(ins.c);
+                } else if (state.throttle[ins.a] != UINT64_MAX &&
+                           state.tick - state.throttle[ins.a] < ins.b) {
+                    result.halted = true;
+                } else {
+                    state.throttle[ins.a] = state.tick;
+                }
+                break;
+            case OpCode::Suspend: {
+                if (!flow || ins.a >= state.pending.size()) {
+                    fail(ins.c);
+                    break;
+                }
+                PendingState& pending = state.pending[ins.a];
+                pending.active = true;
+                pending.wake_tick = state.tick + ins.b;
+                pending.flow = flow->runtime_index;
+                pending.resume_pc = pc;
+                pending.x = x;
+                for (uint32_t i = 0; i < state.buffers.size(); ++i) {
+                    pending.buffers[i].open = state.buffers[i].open;
+                    pending.buffers[i].entity = state.buffers[i].entity;
+                    pending.buffers[i].fields = state.buffers[i].fields;
+                    pending.buffers[i].set = state.buffers[i].set;
+                }
+                result.suspended = true;
+                result.halted = true;
                 break;
             }
             case OpCode::MsgNew: {
@@ -287,6 +412,21 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 effect.value = Value::nil();
                 break;
             }
+            case OpCode::TmrStart:
+            case OpCode::TmrCancel: {
+                if (ins.a >= state.timers.size() || ins.a >= program.timers.size()) {
+                    fail(ins.c);
+                    break;
+                }
+                TimerState& timer = state.timers[ins.a];
+                timer.running = ins.op == OpCode::TmrStart;
+                timer.remaining = timer.running ? program.timers[ins.a].duration_ticks : 0;
+                for (uint32_t group : program.timers[ins.a].rearm_groups) {
+                    if (flow && flow->first_only && group == flow->group) continue;
+                    if (group < state.fired.size()) state.fired[group] = 0;
+                }
+                break;
+            }
             case OpCode::Fault:
                 fail(ins.a);
                 break;
@@ -301,7 +441,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
 
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
                    Value event_value) noexcept {
-    return run_code(program, flow.code, state, event_value);
+    return run_code(program, flow.code, &flow, state, event_value);
 }
 
 RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget_id,
@@ -309,6 +449,9 @@ RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget
     RunResult total;
     for (const FlowProgram& flow : program.flows) {
         if (flow.widget_id != widget_id || flow.event != event) continue;
+        if (flow.first_only && flow.group < state.fired.size() && state.fired[flow.group])
+            continue;
+        if (flow.first_only && flow.group < state.fired.size()) state.fired[flow.group] = 1;
         RunResult one = run_flow(program, flow, state, event_value);
         total.halted = true;
         total.faulted = total.faulted || one.faulted;
@@ -319,7 +462,27 @@ RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget
 
 RunResult run_feed(const Program& program, const FeedProgram& feed, RuntimeState& state,
                    Value source_value) noexcept {
-    return run_code(program, feed.code, state, source_value);
+    return run_code(program, feed.code, nullptr, state, source_value);
+}
+
+RunResult resume_pending(const Program& program, RuntimeState& state,
+                         uint32_t pending_slot) noexcept {
+    if (pending_slot >= state.pending.size()) return RunResult{true, true, false, 0};
+    PendingState& pending = state.pending[pending_slot];
+    if (!pending.active || pending.flow >= program.flows.size())
+        return RunResult{true, true, false, 0};
+    for (uint32_t i = 0; i < state.buffers.size(); ++i) {
+        state.buffers[i].open = pending.buffers[i].open;
+        state.buffers[i].entity = pending.buffers[i].entity;
+        state.buffers[i].fields = pending.buffers[i].fields;
+        state.buffers[i].set = pending.buffers[i].set;
+    }
+    const uint32_t flow_index = pending.flow;
+    const uint32_t pc = pending.resume_pc;
+    const Value x = pending.x;
+    pending.active = false;
+    const FlowProgram& flow = program.flows[flow_index];
+    return run_code(program, flow.code, &flow, state, x, pc);
 }
 
 } // namespace hmi
