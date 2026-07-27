@@ -1,0 +1,199 @@
+#include "schema.h"
+
+namespace hmi {
+namespace {
+
+Prop text(std::string key, const char* def = "", Role role = Role::Plain) {
+    Prop p; p.key = std::move(key); p.type = PropType::Text; p.def = def; p.role = role; return p;
+}
+Prop num(std::string key, Json def) {
+    Prop p; p.key = std::move(key); p.type = PropType::Num; p.def = std::move(def); return p;
+}
+Prop boolean(std::string key, bool def) {
+    Prop p; p.key = std::move(key); p.type = PropType::Bool; p.def = def; return p;
+}
+Prop enumer(std::string key, std::vector<std::string> variants, const char* def) {
+    Prop p; p.key = std::move(key); p.type = PropType::Enum; p.variants = std::move(variants);
+    p.def = def; return p;
+}
+Prop object(std::string key, Json def, Role role = Role::Plain) {
+    Prop p; p.key = std::move(key); p.type = PropType::Object; p.def = std::move(def);
+    p.role = role; return p;
+}
+Prop array(std::string key, Role role = Role::Plain) {
+    Prop p; p.key = std::move(key); p.type = PropType::Array; p.def = Json::array();
+    p.role = role; return p;
+}
+Prop any(std::string key, Json def) {
+    Prop p; p.key = std::move(key); p.type = PropType::Any; p.def = std::move(def); return p;
+}
+
+Json entity_ref() { return Json{{"kind", "V"}, {"name", ""}}; }
+
+/* built once, in kind order */
+const std::vector<NodeSpec>& table() {
+    static const std::vector<NodeSpec> specs = [] {
+        std::vector<NodeSpec> t;
+
+        NodeSpec doc;
+        doc.kind = Kind::Doc;
+        doc.name = "doc";
+        doc.props = {
+            num("version", 0),
+            num("next_id", 1),
+            object("canvas", Json{{"unit_w", 1280}, {"unit_h", 720}, {"cols", 48}, {"rows", 27}}),
+        };
+        doc.lists = {{"globals", Kind::Var}, {"pages", Kind::Page}};
+        t.push_back(doc);
+
+        NodeSpec page;
+        page.kind = Kind::Page;
+        page.name = "page";
+        page.props = {text("name", "Page")};
+        page.lists = {{"widgets", Kind::Widget}};
+        t.push_back(page);
+
+        NodeSpec widget;
+        widget.kind = Kind::Widget;
+        widget.name = "widget";
+        widget.props = {
+            text("type", "Button"),
+            text("label", ""),
+            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 6}, {"h", 3}}),
+            object("slots", Json::object()),   /* unfed per-instance slot values */
+        };
+        widget.lists = {{"locals", Kind::Var}, {"feeds", Kind::Feed}, {"flows", Kind::Flow}};
+        t.push_back(widget);
+
+        NodeSpec var;
+        var.kind = Kind::Var;
+        var.name = "var";
+        var.props = {
+            text("name"),
+            enumer("type", {"f64", "bool", "str", "timer"}, "f64"),
+            any("init", 0),
+            boolean("persist", false),
+        };
+        t.push_back(var);
+
+        NodeSpec feed;
+        feed.kind = Kind::Feed;
+        feed.name = "feed";
+        feed.props = {
+            text("slot"),
+            object("src", entity_ref(), Role::EntityRef),
+            text("path"),
+            text("xf", "", Role::Expr),
+            num("poll_hz", nullptr),
+            num("stale_ms", nullptr),
+        };
+        t.push_back(feed);
+
+        NodeSpec flow;
+        flow.kind = Kind::Flow;
+        flow.name = "flow";
+        flow.props = {
+            array("when", Role::Triggers),
+            enumer("when_mode", {"first", "any"}, "first"),
+        };
+        flow.lists = {{"do", Kind::Step}};
+        t.push_back(flow);
+
+        /* One DO step per row; the common prop is `kind` and each kind adds its own
+         * fields (spec 2.6). The compiler and the inspector both read this. */
+        NodeSpec step;
+        step.kind = Kind::Step;
+        step.name = "step";
+        step.variant_key = "kind";
+        step.props = {enumer("kind",
+                             {"transform", "gate", "deadband", "throttle", "debounce", "delay",
+                              "build", "setf", "send", "assign", "unforce", "tmr_start",
+                              "tmr_cancel"},
+                             "transform")};
+        step.variants = {
+            {"transform", {text("a", "x", Role::Expr)}},
+            {"gate", {text("a", "", Role::Expr)}},
+            {"deadband", {num("a", 0)}},
+            {"throttle", {num("a", 0)}},
+            {"debounce", {num("a", 0)}},
+            {"delay", {num("a", 0)}},
+            {"build", {text("buf", "msg"), object("target", entity_ref(), Role::EntityRef),
+                       enumer("seed", {"last", "zero"}, "last")}},
+            {"setf", {text("path"), text("a", "", Role::Expr), text("variant")}},
+            {"send", {object("target", entity_ref(), Role::EntityRef),
+                      enumer("verb", {"write", "force", "publish", "call", "emit"}, "write"),
+                      text("buf")}},
+            {"assign", {text("var", "", Role::VarName), text("a", "x", Role::Expr)}},
+            {"unforce", {object("target", entity_ref(), Role::EntityRef)}},
+            {"tmr_start", {text("timer", "", Role::VarName)}},
+            {"tmr_cancel", {text("timer", "", Role::VarName)}},
+        };
+        t.push_back(step);
+
+        return t;
+    }();
+    return specs;
+}
+
+} // namespace
+
+bool json_u64(const Json& value, uint64_t& out) {
+    if (value.is_number_unsigned()) { out = value.get<uint64_t>(); return true; }
+    if (value.is_number_integer()) {
+        const int64_t v = value.get<int64_t>();
+        if (v < 0) return false;
+        out = static_cast<uint64_t>(v);
+        return true;
+    }
+    return false;
+}
+
+uint64_t json_u64_or(const Json& value, uint64_t fallback) {
+    uint64_t out = 0;
+    return json_u64(value, out) ? out : fallback;
+}
+
+const NodeSpec& node_spec(Kind kind) { return table()[static_cast<size_t>(kind)]; }
+
+const char* kind_name(Kind kind) { return node_spec(kind).name.c_str(); }
+
+std::string node_variant(const NodeSpec& spec, const Json& node) {
+    if (spec.variant_key.empty()) return "";
+    auto it = node.find(spec.variant_key);
+    if (it == node.end() || !it->is_string()) return "";
+    return it->get<std::string>();
+}
+
+std::vector<const Prop*> node_props(const NodeSpec& spec, const std::string& variant) {
+    std::vector<const Prop*> out;
+    for (const Prop& p : spec.props) out.push_back(&p);
+    for (const auto& v : spec.variants)
+        if (v.first == variant)
+            for (const Prop& p : v.second) out.push_back(&p);
+    return out;
+}
+
+const Prop* find_prop(const NodeSpec& spec, const std::string& variant, const std::string& key) {
+    for (const Prop* p : node_props(spec, variant))
+        if (p->key == key) return p;
+    return nullptr;
+}
+
+bool declares_key(const NodeSpec& spec, const std::string& key) {
+    for (const Prop& p : spec.props)
+        if (p.key == key) return true;
+    for (const auto& v : spec.variants)
+        for (const Prop& p : v.second)
+            if (p.key == key) return true;
+    for (const ChildList& l : spec.lists)
+        if (l.key == key) return true;
+    return false;
+}
+
+bool list_child(Kind parent, const std::string& list, Kind& out) {
+    for (const ChildList& l : node_spec(parent).lists)
+        if (l.key == list) { out = l.child; return true; }
+    return false;
+}
+
+} // namespace hmi
