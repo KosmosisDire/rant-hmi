@@ -59,12 +59,6 @@ export function iconMarkup(name: string, size = 11, width = 1.7): string {
   );
 }
 
-export function iconEl(name: string, size = 11, width = 1.7): SVGElement {
-  const holder = document.createElement("div");
-  holder.innerHTML = iconMarkup(name, size, width);
-  return holder.firstElementChild as SVGElement;
-}
-
 /* the kind mark in its tinted square: 15px, the colour carried by both glyph and tint */
 export function kindMark(kind: string, title?: string): HTMLElement {
   const span = document.createElement("span");

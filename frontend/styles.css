@@ -967,21 +967,11 @@ select.field {
   min-width: 0;
 }
 
-.mark {
-  display: inline-flex;
-  color: var(--dim);
-}
-
 .prop-grid > label {
   font: 600 10.5px var(--sans);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.prop-grid .shape {
-  font: 500 9.5px var(--mono);
-  color: var(--dim-2);
 }
 
 .geom-grid {

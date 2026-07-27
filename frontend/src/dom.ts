@@ -61,10 +61,6 @@ export function nodeAt(root: Element, path: number[]): Element | null {
   return cur;
 }
 
-export function mark(name: string, size = 10, cls = ""): HTMLElement {
-  return el("span", { class: cls || "mark", html: iconMarkup(name, size) });
-}
-
 export function iconButton(
   name: string,
   title: string,
@@ -154,11 +150,4 @@ export function boolPair(value: boolean, commit: (v: boolean) => void): HTMLElem
   const off = el("button", { text: "off", class: value ? "" : "on", onclick: () => commit(false) });
   const on = el("button", { text: "on", class: value ? "on" : "", onclick: () => commit(true) });
   return el("div", { class: "bool-pair" }, [off, on]);
-}
-
-export function arrow(direction: "left" | "right"): HTMLElement {
-  return el("span", {
-    class: "arrow",
-    html: iconMarkup(direction === "left" ? "arrow-left" : "arrow-right", 10, 1.5),
-  });
 }

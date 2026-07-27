@@ -72,7 +72,3 @@ export function openMenu(x: number, y: number, head: string, items: MenuItem[]):
 export function closeMenu(): void {
   overlay?.classList.remove("on");
 }
-
-export function menuIsOpen(): boolean {
-  return overlay?.classList.contains("on") ?? false;
-}
