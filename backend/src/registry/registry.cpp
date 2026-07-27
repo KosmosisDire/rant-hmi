@@ -75,6 +75,14 @@ Json slot(const char* name, const char* shape, Json def, const char* group,
     return s;
 }
 
+/* an enum slot carries its variants, so the inspector generates the picker from data */
+Json slot_enum(const char* name, std::vector<std::string> variants, const char* def,
+               const char* group) {
+    Json s = slot(name, "enum", def, group);
+    s["variants"] = variants;
+    return s;
+}
+
 Json event(const char* name, const char* x) { return Json{{"name", name}, {"x", x}}; }
 
 /* The universal slot set every type composes in (spec 2.3). The shared tile machinery
@@ -88,7 +96,10 @@ Json base_slots() {
         slot("border", "color", "#00000000", "appearance", "color"),
         slot("radius", "num", 8, "appearance"),
         slot("aspect", "text", "", "config"),
-        slot("justify", "enum", "center", "config"),
+        slot_enum("justify",
+                  {"top-left", "top", "top-right", "left", "center", "right", "bottom-left",
+                   "bottom", "bottom-right"},
+                  "center", "config"),
         slot("panel_pad", "num", -1, "appearance"),
         slot("pad", "num", -1, "appearance"),
     });
@@ -308,7 +319,7 @@ Json label_type() {
                 compose_slots({
                     slot("text", "text", "", "value"),
                     slot("text_color", "color", "#e7ecf5", "appearance", "color"),
-                    slot("align", "enum", "start", "appearance"),
+                    slot_enum("align", {"start", "center", "end"}, "start", "appearance"),
                 }),
                 Json::array({event("press", "text"), event("tap", "text")}),
                 box("stack", Json::object(),
@@ -337,10 +348,7 @@ const Json& registry() {
         Json types = Json::array({button_type(), toggle_type(), slider_type(), readout_type(),
                                   indicator_type(), dropdown_type(), label_type(),
                                   panel_type()});
-        return Json{{"version", 1},
-                    {"justify", Json::array({"top-left", "top", "top-right", "left", "center",
-                                             "right", "bottom-left", "bottom", "bottom-right"})},
-                    {"types", types}};
+        return Json{{"version", 1}, {"types", types}};
     }();
     return built;
 }

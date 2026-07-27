@@ -1,0 +1,14 @@
+{
+  "name": "hmi-designer-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The HMI Designer view: renders and collects input, holds no behaviour",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --project tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4"
+  }
+}

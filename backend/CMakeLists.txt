@@ -73,3 +73,15 @@ foreach(_test doc_test sync_test)
   target_link_libraries(hmi_${_test} PRIVATE hmi_core)
   add_test(NAME ${_test} COMMAND hmi_${_test})
 endforeach()
+
+# The view's pure half (document mirror, attribute interpreter, template renderer) is
+# checked headlessly against a real backend; it needs `node build.mjs` to have run.
+find_program(NODE_EXE node)
+if(NODE_EXE AND EXISTS "${HMI_ROOT}/frontend/dist/main.js")
+  add_test(NAME render_test COMMAND "${NODE_EXE}" test/render_test.mjs)
+  set_tests_properties(render_test PROPERTIES
+                       WORKING_DIRECTORY "${HMI_ROOT}/frontend"
+                       DEPENDS sync_test)
+else()
+  message(STATUS "frontend render_test skipped (build it with: cd frontend && npm install && node build.mjs)")
+endif()

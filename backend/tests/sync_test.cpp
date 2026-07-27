@@ -252,6 +252,12 @@ int main() {
     frames = pump(app, c, 1);
     CHECK(frame_of(frames, "reject") != nullptr);
 
+    /* a view that saw a version gap asks for a fresh snapshot */
+    a.take();
+    a.send(Json{{"type", "resync"}});
+    frames = pump(app, a, 1);
+    CHECK(frame_of(frames, "snapshot") != nullptr);
+
     /* the document on disk carries the edits */
     Document saved;
     CHECK_MSG(Document::from_file(kDocPath, saved, err), err);

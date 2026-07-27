@@ -10,10 +10,13 @@ uint64_t read_id(const Json& node) {
     return it == node.end() ? 0 : json_u64_or(*it, 0);
 }
 
-Json widget(const char* type, const char* label, int x, int y, int w, int h, Json slots) {
+/* geometry is continuous canvas units; the demo places on the 30-unit cell grid */
+Json widget(const char* type, const char* label, int cx, int cy, int cw, int ch, Json slots) {
+    const int cell = 30;
     return Json{{"type", type},
                 {"label", label},
-                {"geom", {{"x", x}, {"y", y}, {"w", w}, {"h", h}}},
+                {"geom", {{"x", cx * cell}, {"y", cy * cell},
+                          {"w", cw * cell}, {"h", ch * cell}}},
                 {"slots", std::move(slots)}};
 }
 

@@ -100,6 +100,12 @@ void App::on_frame(uint64_t session, const Json& frame) {
         return;
     }
     if (type == "apply_ops") { on_apply_ops(session, frame); return; }
+    if (type == "resync") {
+        /* a view that saw a version gap discards its state and reloads from here,
+         * rather than patching around the hole */
+        send_snapshot(session);
+        return;
+    }
     if (type == "input") {
         /* behavior runs at build-order stage 4; the frame shape is already the one the
          * scheduler will consume, so the frontend can be written against it now */

@@ -86,7 +86,7 @@ void test_round_trip() {
     CHECK(new_id != 0);
     CHECK(d.find(new_id) != nullptr);
     CHECK(first_widget(d)["label"] == "New");
-    CHECK(first_widget(d)["geom"]["w"] == 6);   /* default filled */
+    CHECK(first_widget(d)["geom"]["w"] == 180);   /* default filled, in canvas units */
 
     const char* path = "hmi_doc_test.tmp.json";
     CHECK_MSG(d.to_file(path, err), err);

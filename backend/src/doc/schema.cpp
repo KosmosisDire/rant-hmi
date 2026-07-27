@@ -41,7 +41,9 @@ const std::vector<NodeSpec>& table() {
         doc.props = {
             num("version", 0),
             num("next_id", 1),
-            object("canvas", Json{{"unit_w", 1280}, {"unit_h", 720}, {"cols", 48}, {"rows", 27}}),
+            /* one fixed artboard per HMI; 48 x 27 cells of exactly 30 units keeps
+             * snapped geometry readable in the file */
+            object("canvas", Json{{"unit_w", 1440}, {"unit_h", 810}, {"cols", 48}, {"rows", 27}}),
         };
         doc.lists = {{"globals", Kind::Var}, {"pages", Kind::Page}};
         t.push_back(doc);
@@ -59,7 +61,7 @@ const std::vector<NodeSpec>& table() {
         widget.props = {
             text("type", "Button"),
             text("label", ""),
-            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 6}, {"h", 3}}),
+            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 180}, {"h", 90}}),   /* canvas units */
             object("slots", Json::object()),   /* unfed per-instance slot values */
         };
         widget.lists = {{"locals", Kind::Var}, {"feeds", Kind::Feed}, {"flows", Kind::Flow}};
