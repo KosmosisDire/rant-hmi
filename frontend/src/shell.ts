@@ -195,9 +195,13 @@ export class App implements Editor {
    * away (spec 4.2, until node-busy markers land). */
   private renderRails(): void {
     const keep = this.captureFocus();
+    const leftScroll = this.nodes.left.scrollTop;
+    const inspectorScroll = this.nodes.inspector.scrollTop;
     renderLeftRail(this.nodes.left, this);
     renderInspector(this.nodes.inspector, this);
     this.restoreFocus(keep);
+    this.nodes.left.scrollTop = leftScroll;
+    this.nodes.inspector.scrollTop = inspectorScroll;
   }
 
   private captureFocus(): Json {
@@ -223,7 +227,7 @@ export class App implements Editor {
     if (!keep) return;
     const node = nodeAt(keep.rail, keep.path) as HTMLInputElement | null;
     if (!node || node.tagName !== keep.tag || (node.type ?? "") !== keep.type) return;
-    node.focus();
+    node.focus({ preventScroll: true });
     if (keep.value !== null && typeof node.value === "string" && node.value !== keep.value)
       node.value = keep.value;
     if (keep.start === null || !node.setSelectionRange) return;
