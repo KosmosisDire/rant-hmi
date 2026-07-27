@@ -22,6 +22,19 @@ export interface Editor {
 }
 
 const folded = new Map<string, boolean>();
+type LiveUpdater = (live: Live | null) => void;
+const liveUpdaters = new WeakMap<HTMLElement, LiveUpdater>();
+
+export function trackLive<T extends HTMLElement>(node: T, update: LiveUpdater): T {
+  node.setAttribute("data-live", "");
+  liveUpdaters.set(node, update);
+  return node;
+}
+
+export function refreshLive(root: HTMLElement, live: Live | null): void {
+  for (const node of root.querySelectorAll<HTMLElement>("[data-live]"))
+    liveUpdaters.get(node)?.(live);
+}
 
 /* the header is the whole row, the caret rotates rather than swapping glyph, and the state
  * is remembered per section key across selection changes (spec 3.2) */

@@ -2,7 +2,7 @@
  * same card; only the scope note differs (spec 3.9). */
 
 import { commitInput, el, iconButton, selectField } from "../dom.js";
-import { Editor, liveIsOn, liveText } from "../editor.js";
+import { Editor, liveIsOn, liveText, trackLive } from "../editor.js";
 import { kindMark } from "../icons.js";
 import { Json, Var } from "../types.js";
 import { valueEditor } from "./editors.js";
@@ -18,10 +18,16 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   const setProp = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: variable.id, key, value }]);
   const cell = "v" + variable.id;
-  const now = el("span", {
-    class: "now-value" + (liveIsOn(editor.live, cell) ? " on" : ""),
-    text: liveText(editor.live, cell),
-  });
+  const now = trackLive(
+    el("span", {
+      class: "now-value" + (liveIsOn(editor.live, cell) ? " on" : ""),
+      text: liveText(editor.live, cell),
+    }),
+    (live) => {
+      now.textContent = liveText(live, cell);
+      now.classList.toggle("on", liveIsOn(live, cell));
+    },
+  );
   const initShape =
     variable.type === "bool" ? "bool" : variable.type === "str" ? "text" : "num";
 

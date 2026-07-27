@@ -20,6 +20,8 @@ const { DocStore } = await import(mod("doc.js"));
 const { renderContent } = await import(mod("canvas.js"));
 const { run } = await import(mod("program.js"));
 const { unionPath } = await import(mod("islands.js"));
+const { syncUrl } = await import(mod("endpoint.js"));
+const { refreshLive, trackLive } = await import(mod("editor.js"));
 
 let failures = 0;
 let checks = 0;
@@ -30,6 +32,42 @@ function check(ok, what) {
     console.log("FAIL " + what);
   }
 }
+
+check(
+  syncUrl({
+    protocol: "http:",
+    hostname: "localhost",
+    port: "7500",
+    host: "localhost:7500",
+  }) === "ws://127.0.0.1:7500/sync",
+  "localhost sync uses the IPv4 listener",
+);
+check(
+  syncUrl({
+    protocol: "https:",
+    hostname: "hmi.example",
+    port: "",
+    host: "hmi.example",
+  }) === "wss://hmi.example/sync",
+  "remote sync keeps the page origin",
+);
+
+let patched = null;
+const liveNode = {
+  setAttribute() {},
+};
+const liveRoot = {
+  scrollTop: 91,
+  querySelectorAll() {
+    return [liveNode];
+  },
+};
+trackLive(liveNode, (live) => {
+  patched = live;
+});
+refreshLive(liveRoot, { epoch: 4, values: { v1: 7 } });
+check(patched?.values?.v1 === 7, "live rail nodes patch without a rebuild");
+check(liveRoot.scrollTop === 91, "live rail patch keeps scroll position");
 function has(svg, needle, what) {
   check(svg.includes(needle), what + " (looking for " + JSON.stringify(needle) + ")");
 }

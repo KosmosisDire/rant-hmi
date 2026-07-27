@@ -3,8 +3,8 @@
  * (spec 3.3), and every editor comes from the slot's shape. */
 
 import { clear, commitInput, el, iconButton, numberInput } from "../dom.js";
-import { Editor, section } from "../editor.js";
-import { fedSlots, resolveSlot, typeOf } from "../slots.js";
+import { Editor, section, trackLive } from "../editor.js";
+import { fedSlots, resolveSlot, slotCell, typeOf } from "../slots.js";
 import { UNKNOWN_TEXT } from "../template.js";
 import { Json, SlotSpec, Widget } from "../types.js";
 import { valueEditor } from "./editors.js";
@@ -220,12 +220,28 @@ function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolea
   };
   const feed = (widget.feeds ?? []).find((f) => f.slot === spec.name);
 
-  const control = el("span", { class: "value-cell" + (bound ? " bound" : "") }, [
-    bound && value === null
-      ? el("input", { class: "field grow", value: UNKNOWN_TEXT, disabled: true })
-      : valueEditor(spec, spec.shape, value, commit),
-  ]);
-  if (bound) disableAll(control);
+  const control = el("span", { class: "value-cell" + (bound ? " bound" : "") });
+  let shown = "";
+  const paint = (next: Json) => {
+    const key = JSON.stringify(next);
+    if (key === shown) return;
+    shown = key;
+    clear(control);
+    control.appendChild(
+      bound && next === null
+        ? el("input", { class: "field grow", value: UNKNOWN_TEXT, disabled: true })
+        : valueEditor(spec, spec.shape, next, commit),
+    );
+    if (bound) disableAll(control);
+  };
+  paint(value);
+  if (bound) {
+    const cell = slotCell(widget, spec.name);
+    trackLive(control, (live) => {
+      const next = live?.values?.[cell];
+      paint(next === undefined ? null : next);
+    });
+  }
 
   /* one link icon, two states: bound shows it lit and unbinds, unbound offers the feed */
   const bind = bound

@@ -10,7 +10,7 @@
 import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { clear, el, nodeAt, pathOf, svg } from "./dom.js";
-import { Editor } from "./editor.js";
+import { Editor, refreshLive } from "./editor.js";
 import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { renderInspector, renderLeftRail } from "./inspector/panel.js";
@@ -64,7 +64,8 @@ export class App implements Editor {
       live: (live) => {
         this.live = live;
         this.queueCanvas(true);
-        this.renderRails();
+        refreshLive(this.nodes.left, live);
+        refreshLive(this.nodes.inspector, live);
       },
       diag: () => undefined,
       status: (state, detail) => this.onStatus(state, detail),

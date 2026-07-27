@@ -4,7 +4,7 @@
  * from, so the seed is visible. */
 
 import { chip, commitInput, el, iconButton, numberInput, selectField } from "../dom.js";
-import { Editor, liveText, variablesInScope } from "../editor.js";
+import { Editor, liveText, trackLive, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { Flow, Json, Op, Widget, WidgetType } from "../types.js";
@@ -278,7 +278,7 @@ function doList(editor: Editor, widget: Widget, type: WidgetType | null, flow: F
       el("span", { class: "do-grip" }),
       el("span", { class: "row-num", text: "1" }),
       el("span", { class: "kw", title: "x starts as the widget output", text: "x =" }),
-      chip(liveText(editor.live, widget.id + ".value"), "live"),
+      liveChip(editor, widget.id + ".value"),
     ]),
   );
 
@@ -307,6 +307,13 @@ function doList(editor: Editor, widget: Widget, type: WidgetType | null, flow: F
     ]),
   );
   return list;
+}
+
+function liveChip(editor: Editor, cell: string): HTMLElement {
+  const node = chip(liveText(editor.live, cell), "live");
+  return trackLive(node, (live) => {
+    node.textContent = liveText(live, cell);
+  });
 }
 
 function stepRow(
