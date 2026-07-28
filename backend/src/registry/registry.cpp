@@ -398,9 +398,12 @@ Json indicator_type() {
                     slot("text", "text", "", "appearance"),
                 }),
                 /* the lamp's value is bool, so its events are: the shape a type reports
-                   has to be the shape it holds, or nothing downstream can check anything */
+                   has to be the shape it holds, or nothing downstream can check anything.
+                   No pressrelease: its raw down/up bool would give x a second meaning */
                 Json::array({event("tap", "bool", "widget.value"),
-                             event("press", "bool", "widget.value")}),
+                             event("release", "bool", "widget.value"),
+                             event("press", "bool", "widget.value"),
+                             event("held", "bool", "widget.value")}),
                 box("col", Json::object(),
                     Json::array({
                         box("stack", Json{{"weight", lit(1.0)}},
@@ -461,7 +464,9 @@ Json label_type() {
                     align_slot("left"),
                 }),
                 Json::array({event("tap", "text", "widget.text"),
-                             event("press", "text", "widget.text")}),
+                             event("release", "text", "widget.text"),
+                             event("press", "text", "widget.text"),
+                             event("held", "text", "widget.text")}),
                 box("stack", Json::object(),
                     Json::array({part("text", Json{{"text", ref("slot:text")},
                                                    {"fill", ref("slot:text_color")},
@@ -472,13 +477,16 @@ Json label_type() {
 
 Json panel_type() {
     /* a Panel is frame only: it redeclares the base surface and border, and its
-     * template draws nothing */
+     * template draws nothing. Its x is the bare gesture bool, so it reports the FULL
+     * press vocabulary, exactly like a Button */
     return type("Panel",
                 compose_slots(tile_base(), {
                     slot("surface", "color", "#1d1d1d", "appearance", "color"),
                     slot("border", "color", "#2a2a2a", "appearance", "color"),
                 }),
-                Json::array({event("tap", "bool"), event("press", "bool")}),
+                Json::array({event("tap", "bool"), event("release", "bool"),
+                             event("press", "bool"), event("pressrelease", "bool"),
+                             event("held", "bool")}),
                 box("stack", Json::object(), Json::array(), press_interact()));
 }
 
