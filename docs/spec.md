@@ -160,7 +160,12 @@ evaluates it ONCE per event before any flow on that event runs. A Toggle propose
 `!widget.value` on every one of its gestures, not only the `tap` that commits it; a
 Readout's `press` proposes the value it is displaying. A type declares the proposal
 for EVERY event it reports, so `x` never changes meaning between a press and a tap on
-the same control.
+the same control. The scheduler enforces that literally, by PINNING: the proposal is
+evaluated once at pointer-down and every event of the same gesture (press, release,
+tap, held) reuses the pinned value. Re-deriving per event would break the promise
+whenever the machine's echo moves the shown value mid-gesture: a press-authored flow
+would send `!value` to the plant, the echo would land before the finger lifts, and
+the tap would commit the opposite locally.
 Where the gesture already carries its proposal (a Slider's drag, a Dropdown's
 selection) the type declares nothing and the raw value stands.
 

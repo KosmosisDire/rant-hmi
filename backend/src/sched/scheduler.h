@@ -48,6 +48,15 @@ class Scheduler final : private MeshSink {
         uint64_t sequence = 0;
     };
 
+    /* A gesture's proposal, evaluated ONCE at pointer-down and reused by every event
+     * of that gesture (press, release, tap, held). Spec 2.3 promises x never changes
+     * meaning between a press and a tap on the same control; re-deriving it per event
+     * breaks that whenever the machine's echo moves the shown value mid-gesture. */
+    struct GesturePin {
+        uint64_t widget = 0;
+        Value x = Value::nil();
+    };
+
     bool accept_sequence(uint64_t session, uint64_t sequence);
     void dispatch(uint64_t widget, const std::string& event, Value raw);
     void run_one(uint32_t flow, Value value);
@@ -66,6 +75,7 @@ class Scheduler final : private MeshSink {
     std::vector<Pressed> pressed_;
     std::vector<Hold> holds_;
     std::vector<SessionSequence> sequences_;
+    std::vector<GesturePin> pins_;
     std::vector<uint32_t> ended_;
 };
 

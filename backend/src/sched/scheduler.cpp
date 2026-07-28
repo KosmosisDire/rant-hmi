@@ -4,12 +4,24 @@
 
 namespace hmi {
 
+namespace {
+
+/* does this (widget, event) declare a proposal? (the events table's `value`) */
+bool declares_value(const Program& program, uint64_t widget, const std::string& event) {
+    for (const EventValueProgram& source : program.event_values)
+        if (source.widget_id == widget && source.event == event) return true;
+    return false;
+}
+
+} // namespace
+
 Scheduler::Scheduler(Program program, MeshPort& mesh)
     : program_(std::move(program)), state_(program_), mesh_(mesh) {
     inbound_.reserve(256);
     pressed_.reserve(64);
     holds_.reserve(std::max<size_t>(64, program_.flows.size() * 16));
     sequences_.reserve(64);
+    pins_.reserve(64);
     ended_.reserve(program_.timers.size());
 }
 
@@ -40,9 +52,19 @@ void Scheduler::run_one(uint32_t index, Value value) {
 
 void Scheduler::dispatch(uint64_t widget, const std::string& event, Value raw) {
     /* what the widget PROPOSES, derived once so every flow on this event sees the same x
-     * (spec 2.3); the raw value stands where the type declares no derivation */
+     * (spec 2.3); the raw value stands where the type declares no derivation. A gesture
+     * pin (set at pointer-down) overrides the derivation: the tap that commits must
+     * commit the SAME x the press already sent to the plant, even when the machine's
+     * echo moved the shown value between the two. */
     state_.reset_scratch();
-    const Value value = event_x(program_, state_, widget, event, raw);
+    Value value;
+    const auto pin = std::find_if(pins_.begin(), pins_.end(), [&](const GesturePin& row) {
+        return row.widget == widget;
+    });
+    if (pin != pins_.end() && declares_value(program_, widget, event))
+        value = pin->x;
+    else
+        value = event_x(program_, state_, widget, event, raw);
     for (uint32_t i = 0; i < program_.flows.size(); ++i) {
         const FlowProgram& flow = program_.flows[i];
         if (flow.widget_id == widget && flow.event == event) run_one(i, value);
@@ -66,6 +88,20 @@ void Scheduler::on_press(const InputEvent& event) {
         if (flow.widget_id != event.widget || flow.event != "held") continue;
         holds_.push_back(
             Hold{event.session, i, state_.tick + flow.hold_ticks, flow.every_ticks});
+    }
+    /* pin the gesture's proposal at pointer-down; the release/tap that follow (tap
+       arrives after release, from the view) reuse it instead of re-deriving against a
+       shown value the machine may have moved mid-gesture. The pin lives until this
+       widget's next press, so the late tap still finds it. */
+    pins_.erase(std::remove_if(pins_.begin(), pins_.end(), [&](const GesturePin& row) {
+                    return row.widget == event.widget;
+                }),
+                pins_.end());
+    if (declares_value(program_, event.widget, "press")) {
+        state_.reset_scratch();
+        pins_.push_back(GesturePin{
+            event.widget,
+            event_x(program_, state_, event.widget, "press", Value::boolean(true))});
     }
     dispatch(event.widget, "press", Value::boolean(true));
     dispatch(event.widget, "pressrelease", Value::boolean(true));

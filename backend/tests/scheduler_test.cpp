@@ -336,6 +336,86 @@ void test_overlay_fallback() {
     CHECK(scheduler.state().values[slot].data.boolean == true);
 }
 
+/* THE GESTURE PIN: x is evaluated once at pointer-down and reused by the whole
+ * gesture. Without it, a press-authored flow commits `!value` to the plant, the
+ * machine's echo lands before the finger lifts, and the tap's re-derived proposal
+ * commits the OPPOSITE locally: one click, two contradicting toggles (the fed-toggle
+ * flicker). The pinned tap must agree with what the press already sent. */
+void test_gesture_pin() {
+    EntityDef sw;
+    sw.kind = EntityKind::Variable;
+    sw.name = "switch";
+    sw.readable = true;
+    sw.writable = true;
+    sw.fields = {FieldDef{"on", Shape::Bool}};
+    FakeMesh mesh({sw});
+
+    Json toggle = {{"type", "Toggle"},
+                   {"slots", Json::object()},
+                   {"feeds", Json::array({Json{{"slot", "value"},
+                                               {"src", Json{{"kind", "V"}, {"name", "switch"}}},
+                                               {"path", "on"},
+                                               {"xf", ""}}})},
+                   {"flows",
+                    Json::array({Json{
+                        {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+                        {"when_mode", "first"},
+                        {"do", Json::array({Json{{"kind", "build"},
+                                                 {"buf", "msg"},
+                                                 {"target", Json{{"kind", "V"}, {"name", "switch"}}},
+                                                 {"seed", "zero"}},
+                                            Json{{"kind", "setf"}, {"path", "on"}, {"a", "x"}},
+                                            Json{{"kind", "send"},
+                                                 {"buf", "msg"},
+                                                 {"verb", "write"}}})}}})}};
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages",
+                  Json::array({Json{{"name", "Main"}, {"widgets", Json::array({toggle})}}})}};
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const uint32_t slot = scheduler.program().feeds[0].cell;
+
+    mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(false)});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[slot].data.boolean == false);
+
+    /* pointer down: the press flow sends the proposal (true) to the machine */
+    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    tick(scheduler, 1);
+    CHECK(mesh.transcript().size() == 1);
+    CHECK(mesh.transcript()[0] == "write V:switch{on=true}");
+
+    /* the machine's echo lands MID-GESTURE: the toggle already shows true */
+    mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(true)});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[slot].data.boolean == true);
+
+    /* pointer up: release then tap. The tap commits the PINNED proposal (true), not a
+       re-derivation against the moved value, so the toggle stays true: no flicker,
+       and the pending write is already confirmed by the shadow at the next arrival */
+    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 2});
+    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 3});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[slot].data.boolean == true);
+    tick(scheduler, kOverlayTtlTicks + 1);
+    CHECK(scheduler.state().values[slot].data.boolean == true);
+
+    /* the NEXT click re-derives at its own pointer-down: the proposal flips */
+    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 4});
+    tick(scheduler, 1);
+    CHECK(mesh.transcript().size() == 2);
+    CHECK(mesh.transcript()[1] == "write V:switch{on=false}");
+}
+
 } // namespace
 
 int main() {
@@ -343,5 +423,6 @@ int main() {
     test_filters();
     test_first_of_rearm();
     test_overlay_fallback();
+    test_gesture_pin();
     return check::summary("scheduler_test");
 }
