@@ -168,24 +168,36 @@ void Server::drain(std::vector<Inbound>& out) {
     }
 }
 
-void Server::send_locked(const Session& s, const std::string& text) {
-    if (auto ws = s.ws.lock()) ws->send(text, false);
-}
-
+/* Sends run OUTSIDE sessions_mutex_, on a snapshot of the live sockets. A send to a
+ * peer that vanished fails INSIDE ix::WebSocket::send, which transitions the socket to
+ * CLOSED and re-enters our message callback synchronously on THIS thread; that callback
+ * queues the Gone and erases the session, both of which take sessions_mutex_. Holding
+ * the mutex across the send therefore relocks it on the same thread (std::system_error,
+ * terminate) and the erase would invalidate the loop's iterator besides. */
 void Server::send(uint64_t session, const Json& frame) {
     const std::string text = frame.dump();
-    std::lock_guard<std::mutex> lock(sessions_mutex_);
-    auto it = sessions_.find(session);
-    if (it != sessions_.end()) send_locked(it->second, text);
+    std::shared_ptr<ix::WebSocket> ws;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        auto it = sessions_.find(session);
+        if (it != sessions_.end()) ws = it->second.ws.lock();
+    }
+    if (ws) ws->send(text, false);
 }
 
 void Server::broadcast(const Json& frame) { broadcast_except(0, frame); }
 
 void Server::broadcast_except(uint64_t session, const Json& frame) {
     const std::string text = frame.dump();
-    std::lock_guard<std::mutex> lock(sessions_mutex_);
-    for (const auto& entry : sessions_)
-        if (entry.first != session) send_locked(entry.second, text);
+    std::vector<std::shared_ptr<ix::WebSocket>> targets;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        targets.reserve(sessions_.size());
+        for (const auto& entry : sessions_)
+            if (entry.first != session)
+                if (auto ws = entry.second.ws.lock()) targets.push_back(std::move(ws));
+    }
+    for (const auto& ws : targets) ws->send(text, false);
 }
 
 void Server::disconnect(uint64_t session) {

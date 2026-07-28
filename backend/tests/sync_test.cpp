@@ -18,6 +18,12 @@
 #include <thread>
 #include <vector>
 
+#ifndef _WIN32
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 using namespace hmi;
 
 namespace {
@@ -310,6 +316,61 @@ int main() {
     CHECK_MSG(Document::from_file(kDocPath, saved, err), err);
     CHECK(saved.version() == app.document().version());
     CHECK(widget_of(saved.root, 0)["label"] == "first");
+
+    /* CRASH REGRESSION: a peer that vanishes with no close handshake makes a later
+       broadcast's send FAIL, and ix closes that socket synchronously INSIDE the send,
+       re-entering the server's message callback on the broadcasting (logic) thread.
+       That callback needs sessions_mutex_, so the server must never hold it across a
+       send (it crashed with a same-thread relock before server.cpp snapshotted the
+       sockets first). The raw socket upgrades by hand and dies with an RST (SO_LINGER
+       0), so the server still holds its session when the broadcasts reach it. */
+    {
+#ifdef _WIN32
+        SOCKET raw = ::socket(AF_INET, SOCK_STREAM, 0);
+#else
+        int raw = ::socket(AF_INET, SOCK_STREAM, 0);
+#endif
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<unsigned short>(kPort));
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        CHECK(::connect(raw, reinterpret_cast<sockaddr*>(&addr), sizeof addr) == 0);
+        const std::string upgrade =
+            "GET /sync HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n"
+            "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n";
+        ::send(raw, upgrade.c_str(), static_cast<int>(upgrade.size()), 0);
+        char answer[256];
+        (void)::recv(raw, answer, sizeof answer, 0);   /* the 101: the session exists */
+        for (int i = 0; i < 25; ++i) {
+            app.poll();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        linger hard{};
+        hard.l_onoff = 1;
+        hard.l_linger = 0;
+        ::setsockopt(raw, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&hard),
+                     sizeof hard);
+#ifdef _WIN32
+        ::closesocket(raw);
+#else
+        ::close(raw);
+#endif
+        /* broadcast repeatedly before the server's reader notices the corpse; each
+           accepted op broadcasts ops_applied to every session, the dead one included */
+        a.take();
+        for (int i = 0; i < 8; ++i) {
+            a.send(Json{{"type", "apply_ops"},
+                        {"base_version", app.document().version()},
+                        {"ops", Json::array({Json{{"op", "set_prop"},
+                                                  {"node", widget},
+                                                  {"key", "label"},
+                                                  {"value", "alive " + std::to_string(i)}}})}});
+            frames = pump(app, a, 1);
+            CHECK(frame_of(frames, "ops_applied") != nullptr);
+            a.take();
+        }
+    }
 
     a.close();
     b.close();

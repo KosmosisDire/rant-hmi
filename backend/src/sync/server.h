@@ -62,11 +62,13 @@ class Server {
     };
 
     void queue(Inbound in);
-    void send_locked(const Session& s, const std::string& text);
 
     ServerOptions opts_;
     std::unique_ptr<ix::HttpServer> http_;
 
+    /* NEVER held across an ix:: call: a failed send closes the socket synchronously
+     * and re-enters the message callback on the calling thread, which needs this
+     * mutex (see the comment above Server::send). Snapshot, unlock, then send. */
     std::mutex sessions_mutex_;
     std::unordered_map<uint64_t, Session> sessions_;
     uint64_t next_session_ = 1;
