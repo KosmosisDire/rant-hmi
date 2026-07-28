@@ -53,14 +53,6 @@ struct TimerState {
     uint32_t remaining = 0;
 };
 
-/* runtime side of an OverlayDef: `shadow` is the latest FED value while `active`
- * says a local write is showing in the cell and holds until expire_tick */
-struct OverlayState {
-    bool active = false;
-    uint64_t expire_tick = 0;
-    Value shadow = Value::nil();
-};
-
 struct PendingState {
     bool active = false;
     uint64_t wake_tick = 0;
@@ -96,7 +88,6 @@ class RuntimeState {
     uint32_t elem_text_count = 0;
     std::vector<MessageState> buffers;
     std::vector<LastValueState> last;
-    std::vector<OverlayState> overlays;
     std::vector<Value> deadband;
     std::vector<uint64_t> throttle;
     std::vector<PendingState> pending;
@@ -109,14 +100,7 @@ class RuntimeState {
     uint32_t fault_count = 0;
 
     std::string_view text(const Program& program, const Value& value) const noexcept;
-    /* Write a cell. A LOCAL write (the default) to an overlaid cell shows immediately
-     * and starts the pending window; an AUTHORITATIVE write (a feed) lands in the
-     * overlay's shadow while a write is pending, confirms it on a match, and writes
-     * through otherwise. Non-overlaid cells ignore the distinction. */
-    bool store(const Program& program, uint32_t cell, const Value& value,
-               bool authoritative = false) noexcept;
-    /* fall pending overlays whose window has passed back to their fed shadow */
-    void expire_overlays(const Program& program) noexcept;
+    bool store(const Program& program, uint32_t cell, const Value& value) noexcept;
     void clear_outputs() noexcept;
     void fault(uint32_t site) noexcept;
 

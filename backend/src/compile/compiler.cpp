@@ -137,7 +137,6 @@ class Compiler {
          * event would be worse than either one. */
         build_type_behavior();
         build_flows();
-        build_overlays();
         program_.layout.stack_values = std::max<uint32_t>(program_.layout.stack_values, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
         CompileResult out;
@@ -552,7 +551,6 @@ class Compiler {
                 if (!ok) continue;
                 Instruction store;
                 store.op = OpCode::Store;
-                store.flags = 1;   /* authoritative: a feed writes the machine's truth */
                 store.a = feed.cell;
                 store.c = fault_site(feed.feed_id, "feed_store", "feed value could not be stored");
                 feed.code.push_back(store);
@@ -910,11 +908,20 @@ class Compiler {
         }
     }
 
-    /* The slots the widget's AUTHORED flows assign. An authored assign replaces the
-     * type default on the same slot (spec 2.3); a feed does NOT, since a fed slot with
-     * a local writer resolves through its pending overlay instead of by suppression. */
-    std::unordered_map<std::string, std::string> authored_slots(const WidgetInfo& widget) const {
+    /* Who already writes each of a widget's slots, and what to call it in a diagnostic.
+     * One writer per slot is the rule that keeps a slot deterministic (spec 2.3); this is
+     * where it is decided, once, at compile time. */
+    std::unordered_map<std::string, std::string> claimed_slots(const WidgetInfo& widget) const {
         std::unordered_map<std::string, std::string> out;
+        auto feeds = widget.node->find("feeds");
+        if (feeds != widget.node->end() && feeds->is_array())
+            for (const Json& feed : *feeds) {
+                const std::string slot = feed.value("slot", "");
+                const Json& src = feed.value("src", Json::object());
+                if (!slot.empty())
+                    out[slot] = "it is fed from " + src.value("kind", "?") + ":" +
+                                src.value("name", "?");
+            }
         auto flows = widget.node->find("flows");
         if (flows != widget.node->end() && flows->is_array())
             for (const Json& flow : *flows)
@@ -942,20 +949,18 @@ class Compiler {
      * compiled by this same compiler into the same programs, so there is no per-type code
      * and a custom component declares behavior the same way.
      *
-     * Precedence, resolved here: an authored flow that assigns the same slot replaces
-     * the default (the author overrode it), otherwise the default runs; suppression is
+     * Precedence, resolved here so exactly one writer survives: a feed on the slot wins
+     * (the control is a view of the machine), then an authored flow that assigns the same
+     * slot (the author overrode the default), otherwise the default runs. Suppression is
      * per slot WRITTEN, not per event, so "on tap, send to the PLC" coexists with the
-     * default local echo. A FEED no longer stands the default down: both compile, and
-     * the slot's pending overlay (build_overlays) arbitrates at runtime, so the control
-     * echoes the gesture immediately and the machine's value confirms or reverts it.
-     * Standing down for an authored flow stays deterministic and silent: the author
-     * asked for the writer that won, so there is nothing to report. */
+     * default local echo. Standing down is deterministic and silent: the author asked for
+     * the writer that won, so there is nothing to report. */
     void build_type_behavior() {
         for (WidgetInfo& widget : widgets_) {
             if (!widget.type) continue;
             const Json& behavior = widget.type->value("behavior", Json::array());
             if (!behavior.is_array() || behavior.empty()) continue;
-            const std::unordered_map<std::string, std::string> claimed = authored_slots(widget);
+            const std::unordered_map<std::string, std::string> claimed = claimed_slots(widget);
             for (const Json& node : behavior) {
                 bool suppressed = false;
                 for (const std::string& slot : behavior_targets(node)) {
@@ -980,33 +985,6 @@ class Compiler {
                     program_.flows.push_back(std::move(flow));
                 }
             }
-        }
-    }
-
-    /* THE PENDING OVERLAY (spec 2.3, proposed vs true). A slot both FED and locally
-     * WRITTEN keeps one cell holding what the panel shows: a local write (the type
-     * default's echo, or an authored assign) shows immediately and opens a bounded
-     * pending window; the feed's value lands in the overlay's shadow, confirms a
-     * matching pending write instantly, and takes the cell back when the window
-     * expires unconfirmed. Found by scanning the compiled flows for local stores, so
-     * authored and default writers are caught identically. */
-    void build_overlays() {
-        std::vector<uint8_t> fed(program_.cells.size(), 0);
-        for (const FeedProgram& feed : program_.feeds)
-            if (feed.cell < fed.size()) fed[feed.cell] = 1;
-        std::vector<uint8_t> written(program_.cells.size(), 0);
-        for (const FlowProgram& flow : program_.flows)
-            for (const Instruction& ins : flow.code)
-                if (ins.op == OpCode::Store && ins.flags == 0 && ins.a < written.size())
-                    written[ins.a] = 1;
-        for (uint32_t i = 0; i < program_.cells.size(); ++i) {
-            if (!fed[i] || !written[i]) continue;
-            CellDef& cell = program_.cells[i];
-            cell.overlay = static_cast<uint32_t>(program_.overlays.size());
-            OverlayDef overlay;
-            overlay.cell = i;
-            if (cell.shape == Shape::Text) overlay.shadow_text = program_.layout.text_slots++;
-            program_.overlays.push_back(overlay);
         }
     }
 

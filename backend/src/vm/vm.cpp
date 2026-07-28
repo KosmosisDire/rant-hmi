@@ -1092,9 +1092,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 break;
             case OpCode::Store: {
                 const Value value = pop();
-                /* flags = 1 on a feed's store: the value is the machine's, not a
-                   local write, so an overlaid cell routes it through its shadow */
-                if (!state.store(program, ins.a, value, ins.flags != 0)) fail(ins.c);
+                if (!state.store(program, ins.a, value)) fail(ins.c);
                 break;
             }
             case OpCode::Unforce: {

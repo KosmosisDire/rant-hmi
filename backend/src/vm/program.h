@@ -21,12 +21,6 @@ const char* verb_name(Verb verb);
 constexpr uint32_t kVarrCeiling = 512;
 constexpr uint32_t kSplitCeiling = 256;
 
-/* how long a local write to a FED slot stays on screen unconfirmed (1 ms ticks): the
- * pending window of the proposed-vs-true fallback (spec 2.3). Within it the panel
- * shows what the operator asked for; a matching fed value confirms it (seamless), and
- * expiry unconfirmed falls back to the fed truth, which is the rejection made visible */
-constexpr uint32_t kOverlayTtlTicks = 500;
-
 struct FieldDef {
     std::string path;
     Shape shape = Shape::Unknown;
@@ -67,17 +61,6 @@ struct CellDef {
     bool persistent = false;
     uint32_t text_slot = UINT32_MAX;
     uint32_t text_cap = 0;
-    /* index into Program.overlays for a slot both fed and locally written */
-    uint32_t overlay = UINT32_MAX;
-};
-
-/* A slot cell with BOTH a feed and a local writer (an assign, authored or a type
- * default). The cell holds what the panel SHOWS; the feed's value lands in the
- * overlay's shadow while a fresh local write is pending, and takes the cell back when
- * the write expires unconfirmed. Text shadows need their own retained slot. */
-struct OverlayDef {
-    uint32_t cell = 0;
-    uint32_t shadow_text = UINT32_MAX;
 };
 
 enum class OpCode : uint8_t {
@@ -305,7 +288,6 @@ struct Program {
      * between values from different entities with the same vocabulary holds */
     std::vector<std::vector<std::pair<std::string, int64_t>>> enum_types;
     std::vector<CellDef> cells;
-    std::vector<OverlayDef> overlays;
     std::vector<EntityDef> entities;
     std::vector<BufferDef> buffers;
     std::vector<FlowProgram> flows;

@@ -133,7 +133,7 @@ std::vector<EntityDef> reflection() {
     sensor.kind = EntityKind::Variable;
     sensor.name = "sensor";
     sensor.readable = true;
-    sensor.fields = {FieldDef{"value", Shape::Num}, FieldDef{"on", Shape::Bool}};
+    sensor.fields = {FieldDef{"value", Shape::Num}};
 
     EntityDef command;
     command.kind = EntityKind::Topic;
@@ -169,9 +169,7 @@ void test_compile_and_run() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    /* 4 authored flows plus the Slider's default echo (no longer suppressed by the
-       feed: the fed slot resolves through its pending overlay instead) */
-    CHECK(compiled.program.flows.size() == 5);
+    CHECK(compiled.program.flows.size() == 4);
     CHECK(compiled.program.feeds.size() == 1);
     CHECK(sizeof(Value) == 16);
     CHECK(compiled.program.disassembly().find("worst ") != std::string::npos);
@@ -214,12 +212,6 @@ void test_compile_and_run() {
     const uint64_t after_feed = allocation_count.load(std::memory_order_relaxed);
     CHECK(after_feed == before_feed);
     CHECK(!fed.faulted);
-    /* the input event's local echo (the default behavior) is still PENDING on this fed
-       slot, so the arrival lands in the overlay's shadow and the cell keeps showing
-       the proposal; when the window lapses unconfirmed it falls back to the fed truth */
-    CHECK(state.values[feed.cell].data.num == 3);
-    state.tick += kOverlayTtlTicks;
-    state.expire_overlays(compiled.program);
     CHECK(state.values[feed.cell].tag == ValueTag::Num);
     CHECK(state.values[feed.cell].data.num == 12.3);
 }
@@ -410,9 +402,7 @@ void test_default_behavior() {
     run_event(compiled.program, state, id, "tap", Value::boolean(true));
     CHECK(state.values[slot].data.boolean == false);
 
-    /* a feed on the slot does NOT stand the default down: both compile, and the slot
-       resolves through its PENDING OVERLAY. The tap's echo shows immediately; the fed
-       truth confirms it (a match) or takes the cell back when the window lapses. */
+    /* a feed on the slot takes it over: the control becomes a view of the machine */
     Document fed = widget_document(
         "Toggle", Json::object(),
         Json{{"feeds", Json::array({Json{{"slot", "value"},
@@ -420,47 +410,11 @@ void test_default_behavior() {
                                          {"path", "on"},
                                          {"xf", ""}}})}});
     CompileResult fed_compiled = compile_document(fed, registry(), mesh);
-    CHECK(fed_compiled.ok);
-    CHECK(fed_compiled.program.feeds.size() == 1);
-    const FeedProgram& fed_feed = fed_compiled.program.feeds[0];
-    const uint32_t fed_slot = fed_feed.cell;
-    const uint32_t overlay = fed_compiled.program.cells[fed_slot].overlay;
-    CHECK(overlay != UINT32_MAX);
+    /* standing down is deterministic and silent: the feed is what the author asked for */
+    CHECK(!has_diag(fed_compiled, "behavior_inactive"));
     RuntimeState fed_state(fed_compiled.program);
-    const uint64_t fed_id = only_widget(fed);
-
-    /* no pending write: the feed writes straight through */
-    run_feed(fed_compiled.program, fed_feed, fed_state, Value::boolean(false));
-    CHECK(fed_state.values[fed_slot].data.boolean == false);
-    CHECK(!fed_state.overlays[overlay].active);
-
-    /* tap: the proposal (!value) shows immediately as a pending write, no mesh effect */
-    run_event(fed_compiled.program, fed_state, fed_id, "tap", Value::boolean(true));
-    CHECK(fed_state.effect_count == 0);
-    CHECK(fed_state.values[fed_slot].data.boolean == true);
-    CHECK(fed_state.overlays[overlay].active);
-
-    /* a MISMATCHING arrival mid-window shadows, never takes the cell: a stale echo of
-       the pre-write state is indistinguishable from a refusal, so the window decides */
-    run_feed(fed_compiled.program, fed_feed, fed_state, Value::boolean(false));
-    CHECK(fed_state.values[fed_slot].data.boolean == true);
-    CHECK(fed_state.overlays[overlay].active);
-
-    /* a MATCHING arrival confirms: the pending write retires and the value stands */
-    run_feed(fed_compiled.program, fed_feed, fed_state, Value::boolean(true));
-    CHECK(!fed_state.overlays[overlay].active);
-    CHECK(fed_state.values[fed_slot].data.boolean == true);
-
-    /* tap again (proposal flips to false against the shown value) and let the window
-       lapse with the machine still saying true: the fallback IS the visible rejection */
-    run_event(fed_compiled.program, fed_state, fed_id, "tap", Value::boolean(true));
-    CHECK(fed_state.values[fed_slot].data.boolean == false);
-    run_feed(fed_compiled.program, fed_feed, fed_state, Value::boolean(true));
-    CHECK(fed_state.values[fed_slot].data.boolean == false);   /* still pending */
-    fed_state.tick += kOverlayTtlTicks;
-    fed_state.expire_overlays(fed_compiled.program);
-    CHECK(!fed_state.overlays[overlay].active);
-    CHECK(fed_state.values[fed_slot].data.boolean == true);
+    run_event(fed_compiled.program, fed_state, only_widget(fed), "tap", Value::boolean(true));
+    CHECK(fed_state.effect_count == 0);   /* nothing ran: the default stood down */
 
     /* an authored flow writing the same slot wins over the default, silently: the
        precedence is deterministic and the author asked for the winner */
