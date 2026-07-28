@@ -437,7 +437,7 @@ working end-to-end demo at every stage. Each stage lands with its tests.
 6. **inspector authoring**: full menus, pickers and autocomplete driven by the
    served tables; diagnostics + one-click fixes; round-trip check.
 7. **hot swap + migration** (wiring the stage-3 design: recompile on accepted edit,
-   migrate, log decisions), the Code panel as a generated view.
+   migrate, log decisions).
 
 ## Roadmap and open questions (deferred, not blocking)
 

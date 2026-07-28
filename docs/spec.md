@@ -683,18 +683,18 @@ operation (known helper return shapes, literals, comparisons, arithmetic), and w
 it cannot be inferred, say nothing. Silence beats crying wolf; a false warning on a
 correct expression destroys trust in every other diagnostic.
 
-### 3.9 Variable cards and the Code panel
+### 3.9 Variable cards
 
 A variable card shows name (editable, rename-refactors), NOW (its live value,
 visually distinct when true/running), TYPE, and INIT (or SECS for a timer, whose NOW
 reads "2.4s left" or "idle"). Global and local cards are identical except for scope;
 the local section sits inside the inspector, the global list in the left sidebar.
 
-The Code panel renders the selected widget's feeds and flows as a readable chained
-text form. It is a view, generated from the document: useful for review, diffing and
-support, and the honest answer to "what did I just build". Editing it is a separate
-project (7): it needs a parser with error recovery, and the document must remain the
-single source of truth.
+There is no generated code view. A one-way pretty print of the feeds and flows
+existed briefly and was removed: it could not be trusted (it dropped send targets,
+trigger hold and repeat times, and buffer names), and a text form that is not
+round-trippable is not worth showing. A text DSL is worth building only as a
+lossless codec, printer and parser together (7).
 
 ### 3.10 Invariants the UI must hold
 
@@ -1195,10 +1195,14 @@ unbounded loop inside a tick.
 
 ## 7. Build order
 
-Owned by `../PLAN.md` (the tracer-bullet staging). The Code panel as an editable
-input remains a separate, later project: round-tripping text needs a parser with
-error recovery, and the document must remain the single source of truth; design the
-generated text form so parsing it later is possible.
+Owned by `../PLAN.md` (the tracer-bullet staging). A text DSL for feeds and flows
+remains a separate, later project: it is a lossless codec or it is nothing, so the
+printer must be exact (every step field, trigger modifier and feed field) and the
+parser needs error recovery. Editing text would then go through the ordinary op
+path (parse, diff against the existing nodes, emit ops, keep ids where steps match),
+so the document stays the single source of truth and diagnostics stay node
+addressed. Storing flows as text in the file is a separate decision, cheap once the
+codec exists.
 
 ## 8. Open questions
 

@@ -1197,18 +1197,6 @@ select.field {
   color: var(--dim-2);
 }
 
-.code {
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--line-2);
-  border-radius: 3px;
-  background: #111;
-  color: #b0b8c2;
-  font: 10.5px/1.65 var(--mono);
-  overflow: auto;
-  white-space: pre-wrap;
-}
-
 /* ---------- context menu (ported from the old designer) ---------- */
 
 #ctx {

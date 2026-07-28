@@ -242,11 +242,6 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       ),
     ]),
   );
-
-  /* 5. Code: the generated view of what was built (read-only, spec 3.9) */
-  const code = el("pre", { class: "code" });
-  bindText(widget.id + ":code", code, () => codeFor(at()));
-  body.append(...section("code", "Code", null, () => [code]));
 }
 
 function geomRow(editor: Editor, widget: Widget): HTMLElement {
@@ -361,44 +356,5 @@ function slotCells(
   if (bound && feed)
     cells.push(el("div", { class: "feed-below" }, [feedCard(editor, widget, type, feed)]));
   return cells;
-}
-
-/* The Code panel: a readable chained form of the same document, generated. It is a view,
- * never an input (spec 3.9). */
-function codeFor(widget: Widget): string {
-  const lines: string[] = [];
-  const name = widget.label || widget.type.toLowerCase();
-  for (const feed of widget.feeds ?? []) {
-    const src = feed.src ?? { kind: "V", name: "" };
-    const base =
-      src.kind === "F"
-        ? `poll(F("${src.name}"), ${feed.poll_hz ?? 1})`
-        : `${src.kind}("${src.name}")`;
-    const path = feed.path ? `${base}.at("${feed.path}")` : base;
-    lines.push(`feed(${name}.${feed.slot}, ${path}${feed.xf ? `, x => ${feed.xf}` : ""});`);
-  }
-  for (const flow of widget.flows ?? []) {
-    const when = (flow.when ?? [])
-      .map((t: Json) => (t.kind === "timer" ? `timer("${t.var}")` : `${name}.${t.name}`))
-      .join(", ");
-    const entry = (flow.when ?? []).length > 1 ? `${flow.when_mode ?? "first"}(${when})` : when;
-    let chain = `flow(${entry})`;
-    for (const step of flow.do ?? []) {
-      switch (step.kind) {
-        case "transform": chain += `\n  .map(x => ${step.a})`; break;
-        case "gate": chain += `\n  .gate(x => ${step.a})`; break;
-        case "build": chain += `\n  .msg(${step.target?.kind}("${step.target?.name}"), { seed: "${step.seed}" })`; break;
-        case "setf": chain += `\n  .field("${step.path}", x => ${step.a})`; break;
-        case "send": chain += `\n  .${step.verb}(${step.buf || "x"})`; break;
-        case "assign": chain += `\n  .set(L("${step.var}"), x => ${step.a})`; break;
-        case "unforce": chain += `\n  .unforce(${step.target?.kind}("${step.target?.name}"))`; break;
-        case "tmr_start": chain += `\n  .start("${step.timer}")`; break;
-        case "tmr_cancel": chain += `\n  .cancel("${step.timer}")`; break;
-        default: chain += `\n  .${step.kind}(${step.a})`;
-      }
-    }
-    lines.push(chain + ";");
-  }
-  return lines.join("\n") || "// no sources or behavior on this widget";
 }
 
