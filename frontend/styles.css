@@ -1446,3 +1446,138 @@ button.swatch {
   text-transform: uppercase;
   color: var(--dim);
 }
+
+/* ---- the source picker tree (dart + hmi roots, explorer-style folders) ---- */
+
+#stree {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: none;
+}
+
+#stree.on {
+  display: block;
+}
+
+.stree-pop {
+  position: fixed;
+  width: 264px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  background: var(--menu);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.stree-search {
+  margin: 6px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  background: var(--input);
+  color: var(--ink);
+  font: inherit;
+  font-size: 10px;
+  outline: none;
+}
+
+.stree-search:focus {
+  border-color: var(--acc);
+}
+
+.stree-list {
+  overflow-y: auto;
+  padding-bottom: 4px;
+}
+
+.stree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 21px;
+  padding-right: 8px;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.stree-row:hover {
+  background: #232323;
+  color: var(--ink);
+}
+
+.stree-folder {
+  color: var(--muted);
+}
+
+.stree-caret {
+  flex: 0 0 10px;
+  display: inline-flex;
+  color: var(--dim);
+}
+
+.stree-foldicon {
+  display: inline-flex;
+  color: #8a8a8a;
+}
+
+.stree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stree-local {
+  padding: 0 4px;
+  border-radius: 2px;
+  background: #232323;
+  color: var(--dim);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.stree-shape {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 9px;
+}
+
+.stree-empty {
+  padding: 8px;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+/* the reference button in feed and step rows, and the type it resolved to */
+.source-chip {
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  color: var(--ink-2);
+}
+
+.source-chip:hover {
+  border-color: var(--acc);
+}
+
+.chip .shape,
+.source-chip .shape {
+  margin-left: 4px;
+  color: var(--dim);
+  font-size: 9px;
+}
+
+.chip .shape:empty,
+.source-chip .shape:empty {
+  display: none;
+}

@@ -14,10 +14,12 @@
 
 import { colorField } from "../colorpicker.js";
 import { alignGrid, boolPair, chip, commitInput, el, numberInput, pickerOf, selectField } from "../dom.js";
+import { Editor } from "../editor.js";
 import { kindMark } from "../icons.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { UNKNOWN_TEXT } from "../template.js";
-import { Json, SlotSpec } from "../types.js";
+import { Json, SlotSpec, Widget } from "../types.js";
+import { openSourceTree, resolveShape, SourcePick, SourceTreeOptions } from "./sourcetree.js";
 
 export function valueEditor(
   spec: SlotSpec | null,
@@ -82,38 +84,41 @@ export function valueEditor(
   }
 }
 
-export const ENTITY_KINDS = [
-  { value: "V", label: "V  variable" },
-  { value: "T", label: "T  topic" },
-  { value: "F", label: "F  function" },
-  { value: "S", label: "S  signal" },
-  { value: "L", label: "L  hmi variable" },
-];
-
-/* An entity reference: kind mark, then the name. Reflection turns the name into a picker
- * at the mesh stage; until then it is typed, which is what a deep path wants anyway. */
-export function entityRefEditor(
+/* An entity reference is PICKED, never typed: a button carrying the current reference
+ * that opens the hierarchical source tree (dart + hmi roots). The pick brings kind,
+ * name, path and value type along in one act, so no kind or type dropdown exists. The
+ * structure key of the row containing this must include the reference's kind, so a
+ * cross-kind repick rebuilds the kind mark. */
+export function sourceField(
   key: string,
-  read: () => { kind: string; name: string } | undefined,
-  commit: (ref: { kind: string; name: string }) => void,
+  editor: Editor,
+  widget: Widget | null,
+  opts: SourceTreeOptions,
+  read: () => { ref?: { kind: string; name: string }; path?: string },
+  onPick: (pick: SourcePick) => void,
 ): HTMLElement {
-  const current = () => {
-    const ref = read();
-    return { kind: ref?.kind ?? "V", name: ref?.name ?? "" };
-  };
-  const start = current();
-  const wrap = selectField(
-    ENTITY_KINDS.map((k) => ({ value: k.value, label: k.value })),
-    start.kind,
-    (kind) => commit({ ...current(), kind }),
-  );
-  bindChoice(key + ".kind", pickerOf(wrap), () => current().kind);
-  const name = commitInput(start.name, (text) => commit({ ...current(), name: text }), {
-    class: "field grow",
-    placeholder: "entity name",
+  const kind = read().ref?.kind ?? "?";
+  const node = el("button", { class: "chip pad-mark source-chip", title: "pick from the network" });
+  bindFlag(key + ".ghost", node, "ghost-chip", () => !read().ref?.name);
+  node.appendChild(kindMark(kind));
+  const name = el("span");
+  bindText(key + ".name", name, () => read().ref?.name || "pick source");
+  node.appendChild(name);
+  const sep = el("span", { class: "sep" });
+  bindText(key + ".sep", sep, () => (read().path ? " > " : ""));
+  node.appendChild(sep);
+  const path = el("span", { class: "path" });
+  bindText(key + ".path", path, () => read().path ?? "");
+  node.appendChild(path);
+  const shape = el("span", { class: "shape" });
+  bindText(key + ".shape", shape, () => {
+    const at = read();
+    const resolved = resolveShape(editor, widget, at.ref, at.path);
+    return resolved ? resolved : "";
   });
-  bindField(key + ".name", name, () => current().name);
-  return el("span", { class: "value-cell" }, [kindMark(start.kind, "entity kind"), wrap, name]);
+  node.appendChild(shape);
+  node.addEventListener("click", () => openSourceTree(node, editor, widget, opts, onPick));
+  return node;
 }
 
 /* the read-only form of the same thing, for a collapsed sentence. The kind mark is a glyph
@@ -121,6 +126,8 @@ export function entityRefEditor(
 export function entityChip(
   key: string,
   read: () => { ref?: { kind: string; name: string }; path?: string },
+  editor?: Editor,
+  widget?: Widget | null,
 ): HTMLElement {
   const kind = read().ref?.kind ?? "?";
   const node = chip("", "pad-mark");
@@ -135,5 +142,13 @@ export function entityChip(
   const path = el("span", { class: "path" });
   bindText(key + ".path", path, () => read().path ?? "");
   node.appendChild(path);
+  if (editor) {
+    const shape = el("span", { class: "shape" });
+    bindText(key + ".shape", shape, () => {
+      const at = read();
+      return resolveShape(editor, widget ?? null, at.ref, at.path);
+    });
+    node.appendChild(shape);
+  }
   return node;
 }

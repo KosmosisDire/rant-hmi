@@ -13,7 +13,7 @@ import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
 import { Feed, Json, Widget, WidgetType } from "../types.js";
-import { entityChip, entityRefEditor } from "./editors.js";
+import { entityChip, sourceField } from "./editors.js";
 
 const opened = new Set<number>();
 
@@ -21,7 +21,7 @@ export function feedShape(feed: Feed): Json {
   return [feed.id, feed.slot, opened.has(feed.id), feed.src?.kind ?? "V", Boolean(feed.xf)];
 }
 
-export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | null, feed: Feed): HTMLElement {
+export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null, feed: Feed): HTMLElement {
   const at = () => (editor.store.node(feed.id) as Feed | null) ?? feed;
   const open = opened.has(feed.id);
   const set = (key: string, value: Json) =>
@@ -63,7 +63,7 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
     el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }),
     xfChip,
     xfChip ? el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }) : null,
-    entityChip(feed.id + ":src.chip", () => ({ ref: at().src, path: at().path })),
+    entityChip(feed.id + ":src.chip", () => ({ ref: at().src, path: at().path }), editor, widget),
     rateChip,
   ]);
 
@@ -100,7 +100,20 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
   row("1", [
     diagIcon(editor.diagAt(feed.id, "src")),
     el("span", { class: "kw", text: "msg =" }),
-    entityRefEditor(feed.id + ":src", () => at().src, (src) => set("src", src)),
+    sourceField(
+      feed.id + ":src",
+      editor,
+      widget,
+      { fields: true, hmi: true },
+      () => ({ ref: at().src, path: at().path }),
+      /* one pick, one batch: the source and the field land together, and the value
+         type follows from what was picked rather than a dropdown */
+      (pick) =>
+        editor.apply([
+          { op: "set_prop", node: feed.id, key: "src", value: { kind: pick.kind, name: pick.name } },
+          { op: "set_prop", node: feed.id, key: "path", value: pick.path },
+        ]),
+    ),
     isFunction ? el("span", { class: "op", text: "polled at" }) : null,
     rate,
     isFunction ? el("span", { class: "op", text: "Hz" }) : null,

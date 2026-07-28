@@ -14,6 +14,7 @@ import { Editor } from "./editor.js";
 import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftRail } from "./inspector/panel.js";
+import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
@@ -72,6 +73,7 @@ export class App implements Editor {
       snapshot: (doc, registry, live, diag, mesh) => this.onSnapshot(doc, registry, live, diag, mesh),
       mesh: (mesh) => {
         this.mesh = mesh;
+        refreshSourceTree();
         this.queueRails();
       },
       ops: (version, ops) => this.onOps(version, ops),

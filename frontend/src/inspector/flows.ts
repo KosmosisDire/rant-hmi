@@ -15,7 +15,7 @@ import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { Flow, Json, Op, Widget, WidgetType } from "../types.js";
-import { entityRefEditor } from "./editors.js";
+import { sourceField } from "./editors.js";
 
 const opened = new Set<number>();
 
@@ -423,7 +423,11 @@ function stepRow(
       bindText(step.id + ":buf", buf, () => at().buf || "msg");
       cells.push(buf);
       cells.push(el("span", { class: "op", text: "=" }));
-      cells.push(entityRefEditor(step.id + ":target", () => at().target, (target) => set("target", target)));
+      cells.push(sourceField(
+        step.id + ":target", editor, widget, { fields: false, hmi: false, writableOnly: true },
+        () => ({ ref: at().target }),
+        (pick) => set("target", { kind: pick.kind, name: pick.name }),
+      ));
       const seg = el("div", { class: "seg" }, [
         el("button", {
           "data-value": "last",
@@ -487,7 +491,11 @@ function stepRow(
       bindText(step.id + ":buf", buf, () => at().buf || "x");
       cells.push(buf);
       cells.push(el("span", { class: "op", text: "to" }));
-      cells.push(entityRefEditor(step.id + ":target", () => at().target, (target) => set("target", target)));
+      cells.push(sourceField(
+        step.id + ":target", editor, widget, { fields: false, hmi: false, writableOnly: true },
+        () => ({ ref: at().target }),
+        (pick) => set("target", { kind: pick.kind, name: pick.name }),
+      ));
       break;
     }
     case "assign":
@@ -499,7 +507,11 @@ function stepRow(
       break;
     case "unforce":
       cells.push(unforceChip());
-      cells.push(entityRefEditor(step.id + ":target", () => at().target, (target) => set("target", target)));
+      cells.push(sourceField(
+        step.id + ":target", editor, widget, { fields: false, hmi: false, kinds: ["V"] },
+        () => ({ ref: at().target }),
+        (pick) => set("target", { kind: pick.kind, name: pick.name }),
+      ));
       break;
     case "tmr_start":
     case "tmr_cancel":
