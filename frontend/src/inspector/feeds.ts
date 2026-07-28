@@ -44,11 +44,21 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
       at().poll_hz ? at().poll_hz + " Hz" : "",
     );
 
+  /* Findings live on the LINE they name: the source row ("src"), the path row ("path"),
+     the transform row ("xf") and the slot picker ("slot"). Collapsed, those rows do not
+     exist, so the head carries the rollup; open, it keeps only what has no better row
+     (and the slot finding when the one-slot card shows no slot picker). */
+  const slotDiags = editor.diagAt(feed.id, "slot");
+  const slots = (type?.slots ?? []).filter((s) => s.group === "value");
+  const headDiags = open
+    ? editor.diagAt(feed.id).concat(slots.length > 1 ? [] : slotDiags)
+    : editor
+        .diagAt(feed.id)
+        .concat(slotDiags, editor.diagAt(feed.id, "src"), editor.diagAt(feed.id, "path"),
+                editor.diagAt(feed.id, "xf"));
   const head = el("div", { class: "card-head" }, [
     caret,
-    /* a finding about this feed (a bad slot, an unresolved source, a transform that did
-       not compile) sits on the feed's own sentence (spec 3.8) */
-    diagIcon(editor.diagAt(feed.id)),
+    diagIcon(headDiags),
     slotChip,
     el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }),
     xfChip,
@@ -66,7 +76,6 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
   });
   if (!open) return card;
 
-  const slots = (type?.slots ?? []).filter((s) => s.group === "value");
   const body = el("div", { class: "card-body" }, []);
   const row = (label: string, cells: (HTMLElement | null)[]) => {
     body.appendChild(el("span", { class: "row-num", text: label }));
@@ -80,7 +89,7 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
       (slot) => set("slot", slot),
     );
     bindChoice(feed.id + ":slot", pickerOf(picker), () => at().slot ?? "");
-    row("", [el("span", { class: "kw", text: "slot" }), picker]);
+    row("", [diagIcon(slotDiags), el("span", { class: "kw", text: "slot" }), picker]);
   }
 
   const rate = isFunction
@@ -89,6 +98,7 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
   if (rate) bindField(feed.id + ":poll_hz", rate, () => String(at().poll_hz ?? 2));
 
   row("1", [
+    diagIcon(editor.diagAt(feed.id, "src")),
     el("span", { class: "kw", text: "msg =" }),
     entityRefEditor(feed.id + ":src", () => at().src, (src) => set("src", src)),
     isFunction ? el("span", { class: "op", text: "polled at" }) : null,
@@ -103,6 +113,7 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
   });
   bindField(feed.id + ":path", path, () => at().path ?? "");
   row("2", [
+    diagIcon(editor.diagAt(feed.id, "path")),
     el("span", { class: "kw", html: 'x = <span style="color:#7fc4a0">msg.</span>' }),
     path,
   ]);
@@ -113,7 +124,12 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
     title: "Formatting expression, evaluated on the backend",
   });
   bindField(feed.id + ":xf", xf, () => at().xf ?? "");
-  row("3", [el("span", { class: "kw", text: "x =" }), el("span", { class: "op", text: "f" }), xf]);
+  row("3", [
+    diagIcon(editor.diagAt(feed.id, "xf")),
+    el("span", { class: "kw", text: "x =" }),
+    el("span", { class: "op", text: "f" }),
+    xf,
+  ]);
 
   card.appendChild(body);
   card.appendChild(

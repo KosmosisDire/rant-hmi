@@ -312,36 +312,44 @@ class Compiler {
         return -1;
     }
 
-    int resolve_entity(const Json& ref, uint64_t node) {
+    /* `where` narrows the diag to a field of the node (a feed's "src" / "path" row); a
+     * step passes nothing, the step row itself is the line */
+    int resolve_entity(const Json& ref, uint64_t node, const std::string& where = "") {
         if (!ref.is_object()) {
-            diag(node, "entity_ref", "entity reference is not an object");
+            diag(node, "entity_ref", "entity reference is not an object",
+                 DiagGrade::Error, where);
             return -1;
         }
         EntityKind kind;
         const std::string kind_text = ref.value("kind", "");
         const std::string name = ref.value("name", "");
         if (kind_text == "L") {
-            diag(node, "local_entity", "an HMI variable is not a mesh target");
+            diag(node, "local_entity", "an HMI variable is not a mesh target",
+                 DiagGrade::Error, where);
             return -1;
         }
         if (!entity_kind(kind_text, kind)) {
-            diag(node, "entity_kind", "entity kind '" + kind_text + "' is invalid");
+            diag(node, "entity_kind", "entity kind '" + kind_text + "' is invalid",
+                 DiagGrade::Error, where);
             return -1;
         }
         const int found = find_entity(kind, name);
         if (found < 0)
             diag(node, "unresolved_entity",
-                 "mesh entity " + kind_text + ":" + name + " is not reflected");
+                 "mesh entity " + kind_text + ":" + name + " is not reflected",
+                 DiagGrade::Error, where);
         return found;
     }
 
-    int find_field(uint32_t entity, const std::string& path, uint64_t node) {
+    int find_field(uint32_t entity, const std::string& path, uint64_t node,
+                   const std::string& where = "") {
         const EntityDef& def = program_.entities[entity];
         if (path.empty() && def.fields.size() == 1) return 0;
         for (uint32_t i = 0; i < def.fields.size(); ++i)
             if (def.fields[i].path == path) return static_cast<int>(i);
         diag(node, "unresolved_field",
-             "entity '" + def.name + "' has no field '" + path + "'");
+             "entity '" + def.name + "' has no field '" + path + "'",
+             DiagGrade::Error, where);
         return -1;
     }
 
@@ -367,18 +375,19 @@ class Compiler {
     bool expression(uint64_t node, const std::string& text, ExprTier tier,
                     const ExpressionScope& scope, Shape expected,
                     std::vector<Instruction>& code, uint32_t& max_stack,
-                    Shape* actual = nullptr) {
+                    Shape* actual = nullptr, const std::string& where = "") {
         ExpressionResult result;
         std::string error;
         if (!compile_expression(text, tier, scope, program_, code, result, error)) {
-            diag(node, "expression", error);
+            diag(node, "expression", error, DiagGrade::Error, where);
             return false;
         }
         if (expected != Shape::Unknown && result.shape != Shape::Unknown &&
             result.shape != Shape::Nil && result.shape != expected) {
             diag(node, "shape",
                  "expression yields " + std::string(shape_name(result.shape)) +
-                     ", but this row wants " + shape_name(expected));
+                     ", but this row wants " + shape_name(expected),
+                 DiagGrade::Error, where);
             return false;
         }
         if (actual) *actual = result.shape;
@@ -406,7 +415,8 @@ class Compiler {
                 const std::string slot = node.value("slot", "");
                 auto destination = widget.slots.find(slot);
                 if (destination == widget.slots.end()) {
-                    diag(feed.feed_id, "feed_slot", "widget has no slot '" + slot + "'");
+                    diag(feed.feed_id, "feed_slot", "widget has no slot '" + slot + "'",
+                         DiagGrade::Error, "slot");
                     continue;
                 }
                 feed.cell = destination->second;
@@ -424,17 +434,19 @@ class Compiler {
                     if (local != widget.locals.end()) source = local->second;
                     else if (global != globals_.end()) source = global->second;
                     else {
-                        diag(feed.feed_id, "feed_source", "HMI variable '" + name + "' is unresolved");
+                        diag(feed.feed_id, "feed_source", "HMI variable '" + name + "' is unresolved",
+                             DiagGrade::Error, "src");
                         continue;
                     }
                     feed.entity = UINT32_MAX;
                     feed.source_cell = source;
                     scope.x_shape = program_.cells[source].shape;
                 } else {
-                    const int entity = resolve_entity(ref, feed.feed_id);
+                    const int entity = resolve_entity(ref, feed.feed_id, "src");
                     if (entity < 0) continue;
                     feed.entity = static_cast<uint32_t>(entity);
-                    const int field = find_field(feed.entity, node.value("path", ""), feed.feed_id);
+                    const int field =
+                        find_field(feed.entity, node.value("path", ""), feed.feed_id, "path");
                     if (field < 0) continue;
                     feed.field = static_cast<uint32_t>(field);
                     scope.x_shape = program_.entities[feed.entity].fields[feed.field].shape;
@@ -446,7 +458,8 @@ class Compiler {
                     feed.max_stack = 1;
                 } else {
                     ok = expression(feed.feed_id, xf, ExprTier::Display, scope,
-                                    program_.cells[feed.cell].shape, feed.code, feed.max_stack);
+                                    program_.cells[feed.cell].shape, feed.code, feed.max_stack,
+                                    nullptr, "xf");
                 }
                 if (!ok) continue;
                 Instruction store;

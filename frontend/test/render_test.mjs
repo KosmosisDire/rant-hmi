@@ -511,6 +511,28 @@ check(
   "a step-level error rolls up on the collapsed flow card",
 );
 
+/* a feed finding is addressed to its row ("src", "path", "xf"); collapsed, the card's
+   head carries the rollup the same way a flow's does */
+const readoutW = store.pages()[0].widgets.find((w) => w.type === "Readout");
+const feedId = readoutW.feeds[0].id;
+const feedRows = [
+  { node: feedId, grade: "error", code: "feed_source", message: "HMI variable 'flow' is unresolved", where: "src" },
+];
+const feedEditor = {
+  ...editor,
+  selectedWidget: () => store.widget(readoutW.id),
+  diagFor: () => feedRows,
+  diagAt: (node, where) =>
+    feedRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
+};
+const feedPanel2 = new Panel(new Element("aside"));
+feedPanel2.render(inspectorShape(feedEditor), (host) => renderInspector(host, feedEditor));
+const feedHead = feedPanel2.host.querySelector(".card-head");
+check(
+  feedHead !== null && feedHead.querySelectorAll(".diag-dot.error").length === 1,
+  "a source-row error rolls up on the collapsed feed card",
+);
+
 view.faults = { [toggle.id]: "error" };
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 has(svg, 'class="fault error"', "the widget is marked on the canvas");
