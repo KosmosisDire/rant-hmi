@@ -265,6 +265,26 @@ void test_migration() {
     renamed.cells[setpoint].name = "other";
     RuntimeState reset = migrate_state(compiled.program, old_state, renamed);
     CHECK(reset.values[setpoint].data.num == 3);
+
+    /* A SLOT is the other case. A variable's init is not its value, so editing the init
+     * leaves a running variable alone (above). An unfed slot has no such separation: the
+     * authored constant IS the value, so re-authoring it has to reach the runtime, or the
+     * edit looks like it did nothing. A slot the run has written keeps what it wrote. */
+    int slot = -1;
+    for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+        if (compiled.program.cells[i].kind == CellKind::Slot &&
+            compiled.program.cells[i].shape == Shape::Num)
+            slot = static_cast<int>(i);
+    CHECK(slot >= 0);
+    old_state.store(compiled.program, static_cast<uint32_t>(slot), Value::number(41));
+
+    Program reslotted = compiled.program;
+    reslotted.cells[slot].initial = Value::number(9);
+    RuntimeState authored = migrate_state(compiled.program, old_state, reslotted);
+    CHECK(authored.values[slot].data.num == 9);
+
+    RuntimeState untouched = migrate_state(compiled.program, old_state, compiled.program);
+    CHECK(untouched.values[slot].data.num == 41);
 }
 
 void test_compile_fault() {

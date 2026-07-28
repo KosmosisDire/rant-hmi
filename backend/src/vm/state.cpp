@@ -14,6 +14,32 @@ bool same_cell(const CellDef& a, const CellDef& b) {
            a.shape == b.shape;
 }
 
+/* the literal a cell is compiled to start from, if it starts from one */
+std::string_view initial_text(const Program& program, const CellDef& cell) {
+    if (cell.initial.tag != ValueTag::Text || (cell.initial.ref & kConstantRef) == 0) return {};
+    const uint32_t at = cell.initial.ref & ~kConstantRef;
+    return at < program.texts.size() ? std::string_view(program.texts[at]) : std::string_view{};
+}
+
+/* Did the DOCUMENT move what this cell reads, such that carrying the old run forward would
+ * discard the edit?
+ *
+ * Only a SLOT can be in that position. A variable's `initial` is its INIT: the value a run
+ * STARTS from, which is a different thing from the value it currently holds, so editing the
+ * init must leave a running variable alone (test_migration pins this). A slot has no such
+ * separation. Where nothing feeds or writes it, the authored constant IS the slot's value,
+ * and an edit to it that did not survive the recompile would look like the edit did nothing.
+ *
+ * A slot the runtime does own still survives: a feed or flow writes it, and an edit
+ * elsewhere leaves this cell's compiled constant untouched, so there is nothing to restate. */
+bool authored_moved(const Program& old_program, const CellDef& before, const Program& new_program,
+                    const CellDef& after) {
+    if (after.kind != CellKind::Slot) return false;
+    if (before.shape == Shape::Text || after.shape == Shape::Text)
+        return initial_text(old_program, before) != initial_text(new_program, after);
+    return !value_same_scalar(before.initial, after.initial);
+}
+
 } // namespace
 
 FixedText::FixedText(uint32_t capacity) : bytes(std::max<uint32_t>(capacity, 1), '\0') {}
@@ -154,6 +180,9 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
         const CellDef& wanted = new_program.cells[n];
         for (uint32_t o = 0; o < old_program.cells.size(); ++o) {
             if (!same_cell(wanted, old_program.cells[o])) continue;
+            /* the author restated where this cell starts: keep what the new program
+               seeded rather than the value the old run had reached */
+            if (authored_moved(old_program, old_program.cells[o], new_program, wanted)) break;
             const Value& value = old_state.values[o];
             if (wanted.shape == Shape::Text && value.tag == ValueTag::Text) {
                 if (wanted.text_slot < next.texts.size()) {
