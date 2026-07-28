@@ -444,14 +444,16 @@ export function openSourceTree(
         else expanded.add(row.key);
         render();
       };
-      /* a row that both expands and picks splits the two: the caret opens it, the rest
-         of the row takes the whole value */
-      if (row.expandable && row.pick && !filter)
-        caret.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          toggle();
-        });
-      node.addEventListener("click", () => {
+      node.addEventListener("click", (ev) => {
+        /* a row that both expands and picks splits at its ICON: everything left of it
+           (the indent and the caret) folds, the name and what follows picks */
+        if (row.expandable && row.pick && !filter) {
+          const icon = node.children[1] as HTMLElement;
+          if (ev.clientX < icon.getBoundingClientRect().left) {
+            toggle();
+            return;
+          }
+        }
         if (row.pick) {
           closeSourceTree();
           onPick(row.pick);
