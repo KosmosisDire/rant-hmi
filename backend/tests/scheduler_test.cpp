@@ -360,6 +360,66 @@ void test_gesture_pin() {
     CHECK(mesh.transcript()[1] == "write V:switch{on=false}");
 }
 
+/* HOLD-TO-COMMIT: a Toggle whose only flow is on `held` (assign state = x), value fed
+ * back from that variable. The held firing must carry the gesture's proposal, pinned
+ * at pointer-down, never a bare `true`: the second hold has to write FALSE. */
+void test_held_proposal() {
+    Json toggle = {{"type", "Toggle"},
+                   {"slots", Json::object()},
+                   {"feeds", Json::array({Json{{"slot", "value"},
+                                               {"src", Json{{"kind", "L"}, {"name", "state"}}},
+                                               {"path", ""},
+                                               {"xf", ""}}})},
+                   {"flows",
+                    Json::array({Json{
+                        {"when", Json::array({Json{{"kind", "event"},
+                                                   {"name", "held"},
+                                                   {"hold_ms", 5}}})},
+                        {"when_mode", "first"},
+                        {"do", Json::array({Json{{"kind", "assign"},
+                                                 {"var", "state"},
+                                                 {"a", "x"}}})}}})}};
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({Json{{"name", "state"}, {"type", "bool"}, {"init", false}}})},
+                 {"pages",
+                  Json::array({Json{{"name", "Main"}, {"widgets", Json::array({toggle})}}})}};
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    uint32_t state_cell = UINT32_MAX;
+    for (uint32_t i = 0; i < scheduler.program().cells.size(); ++i)
+        if (scheduler.program().cells[i].name == "state") state_cell = i;
+    CHECK(state_cell != UINT32_MAX);
+
+    /* a press shorter than the hold commits nothing */
+    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    tick(scheduler, 2);
+    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 2});
+    tick(scheduler, 8);
+    CHECK(scheduler.state().values[state_cell].data.boolean == false);
+
+    /* held past the threshold commits the press-time proposal (!false = true) */
+    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 3});
+    tick(scheduler, 8);
+    CHECK(scheduler.state().values[state_cell].data.boolean == true);
+    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 4});
+    tick(scheduler, 1);
+
+    /* the second hold proposes against the new shown value: it writes FALSE */
+    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 5});
+    tick(scheduler, 8);
+    CHECK(scheduler.state().values[state_cell].data.boolean == false);
+}
+
 } // namespace
 
 int main() {
@@ -367,5 +427,6 @@ int main() {
     test_filters();
     test_first_of_rearm();
     test_gesture_pin();
+    test_held_proposal();
     return check::summary("scheduler_test");
 }

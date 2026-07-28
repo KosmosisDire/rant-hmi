@@ -58,6 +58,7 @@ class Scheduler final : private MeshSink {
     };
 
     bool accept_sequence(uint64_t session, uint64_t sequence);
+    Value proposed(uint64_t widget, const std::string& event, Value raw);
     void dispatch(uint64_t widget, const std::string& event, Value raw);
     void run_one(uint32_t flow, Value value);
     void on_press(const InputEvent& event);

@@ -50,21 +50,23 @@ void Scheduler::run_one(uint32_t index, Value value) {
     run_flow(program_, flow, state_, value);
 }
 
-void Scheduler::dispatch(uint64_t widget, const std::string& event, Value raw) {
-    /* what the widget PROPOSES, derived once so every flow on this event sees the same x
-     * (spec 2.3); the raw value stands where the type declares no derivation. A gesture
-     * pin (set at pointer-down) overrides the derivation: the tap that commits must
-     * commit the SAME x the press already sent to the plant, even when the machine's
-     * echo moved the shown value between the two. */
+/* What the widget PROPOSES for this event, derived once so every flow on it sees the
+ * same x (spec 2.3); the raw value stands where the type declares no derivation. A
+ * gesture pin (set at pointer-down) overrides the derivation: the tap, release or held
+ * that commits must commit the SAME x the press saw, even when the machine's echo
+ * moved the shown value mid-gesture. */
+Value Scheduler::proposed(uint64_t widget, const std::string& event, Value raw) {
     state_.reset_scratch();
-    Value value;
+    if (!declares_value(program_, widget, event)) return raw;
     const auto pin = std::find_if(pins_.begin(), pins_.end(), [&](const GesturePin& row) {
         return row.widget == widget;
     });
-    if (pin != pins_.end() && declares_value(program_, widget, event))
-        value = pin->x;
-    else
-        value = event_x(program_, state_, widget, event, raw);
+    if (pin != pins_.end()) return pin->x;
+    return event_x(program_, state_, widget, event, raw);
+}
+
+void Scheduler::dispatch(uint64_t widget, const std::string& event, Value raw) {
+    const Value value = proposed(widget, event, raw);
     for (uint32_t i = 0; i < program_.flows.size(); ++i) {
         const FlowProgram& flow = program_.flows[i];
         if (flow.widget_id == widget && flow.event == event) run_one(i, value);
@@ -273,7 +275,11 @@ bool Scheduler::tick(std::string& fault) {
             ++i;
             continue;
         }
-        run_one(hold.flow, Value::boolean(true));
+        /* a held firing carries the gesture's proposal like any other event of it (the
+           pin from its pointer-down), never a bare `true`: a hold-to-commit Toggle
+           must see the value it is trying to set */
+        run_one(hold.flow,
+                proposed(program_.flows[hold.flow].widget_id, "held", Value::boolean(true)));
         if (hold.repeat) {
             hold.next_tick += hold.repeat;
             ++i;
