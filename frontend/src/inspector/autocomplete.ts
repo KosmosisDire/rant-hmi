@@ -53,10 +53,23 @@ function close(): void {
   popFor = null;
 }
 
+/* accepting must LOOK LIKE TYPING to everyone else: the reconciler holds a field's
+ * uncommitted text back from the document sync only when an input event told it the
+ * user is editing, so a silent .value assignment would be overwritten by the next
+ * live frame. The dispatch is muted so it does not re-trigger our own refresh. */
+let muted = false;
+
+function announce(input: HTMLInputElement): void {
+  muted = true;
+  input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  muted = false;
+}
+
 function accept(input: HTMLInputElement, row: Row): void {
   if (wholeValue) {
     input.value = row.insert;
     input.setSelectionRange(row.insert.length, row.insert.length);
+    announce(input);
     close();
     input.focus();
     return;
@@ -66,6 +79,7 @@ function accept(input: HTMLInputElement, row: Row): void {
   input.value = value.slice(0, prefixStart) + row.insert + value.slice(caret);
   const at = prefixStart + row.insert.length;
   input.setSelectionRange(at, at);
+  announce(input);
   close();
   input.focus();
   /* arguments may still be wanted: re-offer immediately after an opening paren */
@@ -432,7 +446,9 @@ export function attachAutocomplete(input: HTMLInputElement, ctx: ExprContext): v
   contexts.set(input, ctx);
   input.autocomplete = "off";
   input.spellcheck = false;
-  input.addEventListener("input", () => refresh(input, ctx));
+  input.addEventListener("input", () => {
+    if (!muted) refresh(input, ctx);
+  });
   input.addEventListener("focus", () => refresh(input, ctx));
   input.addEventListener("blur", () => {
     close();
@@ -476,7 +492,9 @@ export function attachPathAutocomplete(
   };
   input.autocomplete = "off";
   input.spellcheck = false;
-  input.addEventListener("input", refreshPaths);
+  input.addEventListener("input", () => {
+    if (!muted) refreshPaths();
+  });
   input.addEventListener("focus", refreshPaths);
   input.addEventListener("blur", () => {
     close();
