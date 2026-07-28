@@ -514,8 +514,8 @@ check(
   "a step-level error rolls up on the collapsed flow card",
 );
 
-/* a feed finding is addressed to its row ("src", "path", "xf"); collapsed, the card's
-   head carries the rollup the same way a flow's does */
+/* a feed is ONE LINE under its slot, and a feed finding marks that line, whichever
+   field of the feed the compiler named */
 const readoutW = store.pages()[0].widgets.find((w) => w.type === "Readout");
 const feedId = readoutW.feeds[0].id;
 const feedRows = [
@@ -531,10 +531,10 @@ const feedEditor = {
 };
 const feedPanel2 = new Panel(new Element("aside"));
 feedPanel2.render(inspectorShape(feedEditor), (host) => renderInspector(host, feedEditor));
-const feedHead = feedPanel2.host.querySelector(".card-head");
+const feedLine = feedPanel2.host.querySelector(".feed-line");
 check(
-  feedHead !== null && feedHead.querySelectorAll(".diag-dot.error").length === 1,
-  "a source-row error rolls up on the collapsed feed card",
+  feedLine !== null && feedLine.querySelectorAll(".diag-dot.error").length === 1,
+  "a feed finding marks the feed's one line",
 );
 
 view.faults = { [toggle.id]: "error" };

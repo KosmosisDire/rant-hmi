@@ -76,7 +76,8 @@ export interface Geom {
 export interface Var {
   id: number;
   name: string;
-  type: "f64" | "bool" | "str" | "timer";
+  /* "f64" | "bool" | "str" | "timer", or any TypeRef from the mesh (spec 2.7) */
+  type: string;
   init: Json;
   persist: boolean;
 }

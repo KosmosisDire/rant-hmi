@@ -11,9 +11,10 @@ import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } fr
 import { DocStore } from "./doc.js";
 import { clear, el, svg } from "./dom.js";
 import { Editor } from "./editor.js";
-import { closeMenu, openMenu } from "./menu.js";
+import { armSwallow, closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
+import { variantNames } from "./inspector/typetree.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
@@ -670,11 +671,32 @@ export class App implements Editor {
       if (!cancelled && control.value !== undefined)
         this.emitInput(widget, interact.emits.commit, control.value);
     } else if (interact.primitive === "pick" && !cancelled) {
-      const options = run(interact.params.options, this.controlCells(widget, type));
-      if (Array.isArray(options) && options.length) {
-        const current = resolveSlot(widget, type, this.live, fedSlots(widget), "value");
-        const at = Math.max(-1, options.indexOf(current));
-        this.emitInput(widget, interact.emits.select, options[(at + 1) % options.length]);
+      /* a REAL menu: the options slot holds a TypeRef naming an enum (spec 6.2), and
+         the variant names come off the served type table, so the list can never drift
+         from the schema. Selection is an input event like any other. */
+      const raw = run(interact.params.options, this.controlCells(widget, type));
+      const options = Array.isArray(raw)
+        ? raw.map(String)
+        : typeof raw === "string" && raw
+          ? variantNames(this.mesh, raw)
+          : [];
+      if (options.length) {
+        const current = String(
+          resolveSlot(widget, type, this.live, fedSlots(widget), "value") ?? "");
+        const anchor = document.querySelector(
+          '[data-id="' + widget.id + '"]')?.getBoundingClientRect();
+        openMenu(
+          anchor?.left ?? ev.clientX,
+          anchor?.bottom ?? ev.clientY,
+          "",
+          options.map((option) => ({
+            label: option,
+            icon: option === current ? "check" : undefined,
+            run: () => this.emitInput(widget, interact.emits.select, option),
+          })),
+        );
+        /* the click that follows this pointerup must not dismiss what it just opened */
+        armSwallow();
       }
     }
     this.queueCanvas(true);

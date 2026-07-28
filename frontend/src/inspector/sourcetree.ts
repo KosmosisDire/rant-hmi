@@ -1,9 +1,11 @@
-/* The source picker: every place a feed or a flow names something on the network picks
- * it from ONE hierarchical tree, rendered like a folder listing (the explorer's idiom).
- * Two roots: `dart` (the reflected mesh: topics, functions, variables, signals, foldered
- * by the / segments of their names) and `hmi` (this widget's locals, then the globals).
- * Picking a node carries its kind, name, field path AND value type in one act, so the
- * user never chooses a kind or a type from a dropdown: the network already knows.
+/* THE picker: every place a feed or a flow names ANYTHING - a mesh entity, an HMI
+ * variable, a flow temporary, one of this widget's own slots - picks it from ONE
+ * hierarchical tree, rendered like a folder listing (the explorer's idiom). Two roots:
+ * `hmi` (this widget's names: the flow's locals in scope, then the variables, then the
+ * widget's own slots, then a fresh name) and `dart` (the reflected mesh, foldered by the
+ * / segments of entity names). Picking a node carries its family, kind, name, field path
+ * AND value type in one act, so the user never states where a thing lives: the pick
+ * already knows, and the caller maps it onto the document's key-discriminated side forms.
  *
  * Same interaction shell as the color picker: a full-screen dismiss overlay owning one
  * popover, wheel events re-dispatched beneath, expansion state kept per tree key across
@@ -12,20 +14,24 @@
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
-import { MeshEntity, MeshField, Var, Widget } from "../types.js";
+import { MeshEntity, MeshField, SlotSpec, Var, Widget } from "../types.js";
+import { FlowScope } from "./flowscope.js";
 
 export interface SourcePick {
-  kind: string;   /* V T F S on the mesh, L for an HMI variable */
-  name: string;
-  path: string;   /* the field within the entity; "" = the entity itself */
-  shape: string;  /* the resolved value type ("" when the mesh has not said) */
+  /* which side FORM the pick maps to: a mesh entity, a local/variable (by name), one of
+     this widget's own slots, or the expression escape */
+  family: "entity" | "local" | "slot" | "expr";
+  kind: string;   /* V T F S on the mesh, L for a variable or local, "" otherwise */
+  name: string;   /* entity/variable name; the slot's name; the expression's text */
+  path: string;   /* the field within the entity or struct value; "" = the whole thing */
+  shape: string;  /* the resolved value type ("" when nothing has said) */
 }
 
 export interface SourceTreeOptions {
   /* descend into an entity's fields (a feed picks a value); false picks entities (a
      send names a target and the message build owns the fields) */
   fields: boolean;
-  /* include the hmi root (local + global variables); mesh targets exclude it */
+  /* include the hmi root (locals, variables, slots); mesh-only pickers exclude it */
   hmi: boolean;
   /* keep entities a write cannot reach out of a target tree */
   writableOnly?: boolean;
@@ -34,6 +40,16 @@ export interface SourceTreeOptions {
   /* an entity that expands into fields is ALSO pickable whole (path ""), for a row that
      moves a whole value in or out. Its caret then toggles and the rest of the row picks. */
   wholeEntity?: boolean;
+  /* a flow row's scope: `x` and the locals standing at that row (temporaries first).
+     When present it REPLACES the plain variable listing, because it already contains the
+     declared variables and adds what the flow itself has made. */
+  scope?: FlowScope;
+  /* this widget's own slots (a move destination); the specs come from the registry */
+  slots?: SlotSpec[];
+  /* offer "+ new name" (a temporary, declared by being used; spec 2.7) */
+  newName?: boolean;
+  /* offer the "expression" escape at the top: the caller switches its side to {expr} */
+  expr?: boolean;
 }
 
 interface Row {
@@ -41,8 +57,9 @@ interface Row {
   key: string;         /* expansion identity */
   label: string;
   kind?: string;       /* kind mark on entity/variable rows */
+  icon?: string;       /* icon instead of a kind mark (folders, the expression escape) */
   shape?: string;      /* trailing type, auto-populated */
-  local?: boolean;
+  note?: string;       /* trailing note: "local", "temporary" */
   expandable: boolean;
   pick?: SourcePick;
 }
@@ -89,8 +106,17 @@ function fieldsOf(entity: MeshEntity): MeshField[] {
   return entity.kind === "F" ? (entity.returns ?? []) : entity.fields;
 }
 
+const SCALAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
+
 function varShape(type: string): string {
-  return type === "f64" ? "num" : type === "bool" ? "bool" : type === "str" ? "text" : type;
+  return SCALAR_SHAPE[type] ?? type;
+}
+
+/* a variable's struct fields, when its type names a struct ROOT (spec 2.7); a dotted
+ * TypeRef is an enum and holds no fields */
+function varFields(editor: Editor, type: string): MeshField[] {
+  if (!type || SCALAR_SHAPE[type] || type === "timer" || type.includes(".")) return [];
+  return editor.mesh.types.find((t) => t.name === type)?.fields ?? [];
 }
 
 /* what a src/path pair resolves to, for the type chips outside the tree */
@@ -104,7 +130,9 @@ export function resolveShape(
   if (ref.kind === "L") {
     const local = widget?.locals.find((v) => v.name === ref.name);
     const found = local ?? editor.store.globals().find((v) => v.name === ref.name);
-    return found ? varShape(found.type) : "";
+    if (!found) return "";
+    if (!path) return varShape(found.type);
+    return varFields(editor, found.type).find((f) => f.path === path)?.shape ?? "";
   }
   const entity = editor.mesh.entities.find((e) => e.kind === ref.kind && e.name === ref.name);
   if (!entity) return "";
@@ -150,7 +178,112 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
   const wanted = (kind: string) => !opts.kinds || opts.kinds.includes(kind);
   const searching = Boolean(filter);
   const openOr = (key: string) => searching || expanded.has(key);
+  const depth0 = searching ? 0 : 1;
 
+  /* the escape hatch first: it is not a name, it is the other way to fill the side */
+  if (opts.expr && !searching)
+    rows.push({
+      depth: 0,
+      key: "expr",
+      label: "expression",
+      icon: "pencil",
+      expandable: false,
+      pick: { family: "expr", kind: "", name: "x", path: "", shape: "" },
+    });
+
+  /* ---- hmi: the names this widget owns ---- */
+  if (opts.hmi) {
+    if (!searching) rows.push({ depth: 0, key: "hmi", label: "hmi", expandable: true });
+    if (openOr("hmi")) {
+      /* one variable or flow local, with its struct fields when it has them */
+      const name_rows = (name: string, shape: string, type: string | undefined,
+                         fields: MeshField[], note: string) => {
+        const key = "v:" + name;
+        const descend = fields.length > 0;
+        if (match(name)) {
+          rows.push({
+            depth: depth0,
+            key,
+            label: name,
+            kind: "L",
+            shape: type || shape,
+            note,
+            expandable: descend,
+            pick: { family: "local", kind: "L", name, path: "", shape: type || shape },
+          });
+          if (descend && openOr(key))
+            for (const field of fields)
+              rows.push({
+                depth: depth0 + 1,
+                key: key + "." + field.path,
+                label: field.path,
+                shape: field.shape,
+                expandable: false,
+                pick: { family: "local", kind: "L", name, path: field.path,
+                        shape: field.shape },
+              });
+        } else if (descend) {
+          for (const field of fields)
+            if (match(name + "." + field.path))
+              rows.push({
+                depth: depth0,
+                key: key + "." + field.path,
+                label: name + " . " + field.path,
+                kind: "L",
+                shape: field.shape,
+                expandable: false,
+                pick: { family: "local", kind: "L", name, path: field.path,
+                        shape: field.shape },
+              });
+        }
+      };
+
+      if (opts.scope) {
+        /* a flow row's vocabulary: x, then the locals standing at that row (the scope
+           already sorts temporaries first and folds the declared variables in) */
+        if (match("x"))
+          rows.push({
+            depth: depth0,
+            key: "v:x",
+            label: "x",
+            kind: "L",
+            shape: opts.scope.x?.shape ?? "",
+            expandable: false,
+            pick: { family: "local", kind: "L", name: "x", path: "",
+                    shape: opts.scope.x?.shape ?? "" },
+          });
+        for (const local of opts.scope.locals)
+          name_rows(local.name, local.shape, local.type, local.fields ?? [],
+                    local.note === "global" ? "" : local.note);
+      } else if (wanted("L")) {
+        const variable_row = (variable: Var, local: boolean) =>
+          name_rows(variable.name, varShape(variable.type),
+                    varFields(editor, variable.type).length ? variable.type : undefined,
+                    varFields(editor, variable.type), local ? "local" : "");
+        for (const variable of widget?.locals ?? []) variable_row(variable, true);
+        const shadowed = new Set((widget?.locals ?? []).map((v) => v.name));
+        for (const variable of editor.store.globals())
+          if (!shadowed.has(variable.name)) variable_row(variable, false);
+      }
+
+      /* the widget's own slots: a move destination, named the way expressions read them */
+      for (const spec of opts.slots ?? []) {
+        const label = "widget." + spec.name;
+        if (!match(label)) continue;
+        rows.push({
+          depth: depth0,
+          key: "s:" + spec.name,
+          label,
+          icon: "layers",
+          shape: spec.shape,
+          expandable: false,
+          pick: { family: "slot", kind: "", name: spec.name, path: "", shape: spec.shape },
+        });
+      }
+    }
+  }
+
+  /* ---- dart: the mesh ---- */
   const entity_rows = (entity: MeshEntity, depth: number) => {
     const fields = fieldsOf(entity);
     const key = "e:" + entity.kind + ":" + entity.name;
@@ -158,6 +291,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
     const label = searching ? entity.name : leaf_name(entity.name);
     const one = fields.length === 1 ? fields[0] : null;
     const whole: SourcePick = {
+      family: "entity",
       kind: entity.kind,
       name: entity.name,
       path: "",
@@ -181,8 +315,8 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
             label: field.path,
             shape: field.shape,
             expandable: false,
-            pick: { kind: entity.kind, name: entity.name, path: field.path,
-                    shape: field.shape },
+            pick: { family: "entity", kind: entity.kind, name: entity.name,
+                    path: field.path, shape: field.shape },
           });
     } else if (descend) {
       /* the entity itself misses the filter; its fields may still hit */
@@ -195,8 +329,8 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
             kind: entity.kind,
             shape: field.shape,
             expandable: false,
-            pick: { kind: entity.kind, name: entity.name, path: field.path,
-                    shape: field.shape },
+            pick: { family: "entity", kind: entity.kind, name: entity.name,
+                    path: field.path, shape: field.shape },
           });
     }
   };
@@ -223,30 +357,8 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
   );
   /* searching flattens to matching leaves; the root folders only frame a browse */
   if (!searching) rows.push({ depth: 0, key: "dart", label: "dart", expandable: true });
-  if (openOr("dart")) folder_rows(fold_entities(mesh_entities), "", searching ? 0 : 1);
+  if (openOr("dart")) folder_rows(fold_entities(mesh_entities), "", depth0);
 
-  if (opts.hmi && wanted("L")) {
-    if (!searching) rows.push({ depth: 0, key: "hmi", label: "hmi", expandable: true });
-    if (openOr("hmi")) {
-      const variable_row = (variable: Var, local: boolean) => {
-        if (!match(variable.name)) return;
-        rows.push({
-          depth: searching ? 0 : 1,
-          key: "v:" + variable.id,
-          label: variable.name,
-          kind: "L",
-          shape: varShape(variable.type),
-          local,
-          expandable: false,
-          pick: { kind: "L", name: variable.name, path: "", shape: varShape(variable.type) },
-        });
-      };
-      for (const variable of widget?.locals ?? []) variable_row(variable, true);
-      const shadowed = new Set((widget?.locals ?? []).map((v) => v.name));
-      for (const variable of editor.store.globals())
-        if (!shadowed.has(variable.name)) variable_row(variable, false);
-    }
-  }
   return rows;
 }
 
@@ -294,10 +406,10 @@ export function openSourceTree(
           caret,
           row.kind ? kindMark(row.kind) : el("span", {
             class: "stree-foldicon",
-            html: iconMarkup("folder", 11, 1.6),
+            html: iconMarkup(row.icon ?? "folder", 11, 1.6),
           }),
           el("span", { class: "stree-label", text: row.label }),
-          row.local ? el("span", { class: "stree-local", text: "local" }) : null,
+          row.note ? el("span", { class: "stree-local", text: row.note }) : null,
           row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
         ],
       );
@@ -323,7 +435,26 @@ export function openSourceTree(
       });
       list.appendChild(node);
     }
-    if (!rows.length)
+
+    /* a fresh temporary needs only a name (spec 2.7): a text row, nothing else */
+    if (opts.newName && !filter) {
+      const name = el("input", {
+        class: "stree-new",
+        placeholder: "+ new name",
+        spellcheck: "false",
+      }) as HTMLInputElement;
+      name.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        const text = name.value.trim();
+        if (!text) return;
+        closeSourceTree();
+        onPick({ family: "local", kind: "L", name: text, path: "", shape: "" });
+      });
+      name.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+      list.appendChild(name);
+    }
+
+    if (!rows.length && !opts.newName)
       list.appendChild(el("div", { class: "stree-empty", text: "nothing matches" }));
   };
   search.addEventListener("input", render);

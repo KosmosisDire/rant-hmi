@@ -20,6 +20,7 @@ import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconci
 import { UNKNOWN_TEXT } from "../template.js";
 import { Json, SlotSpec, Widget } from "../types.js";
 import { openSourceTree, resolveShape, SourcePick, SourceTreeOptions } from "./sourcetree.js";
+import { openTypeTree } from "./typetree.js";
 
 export function valueEditor(
   spec: SlotSpec | null,
@@ -28,6 +29,7 @@ export function valueEditor(
   read: () => Json,
   commit: (v: Json) => void,
   unknown = false,
+  editor: Editor | null = null,
 ): HTMLElement {
   const value = read();
   const text = (v: Json) => (typeof v === "string" ? v : "");
@@ -38,6 +40,19 @@ export function valueEditor(
     const grid = alignGrid(text(value) || "center", commit);
     bindGroup(key, grid, () => text(read()) || (unknown ? "" : "center"));
     return grid;
+  }
+  /* ... and a Dropdown's options hold a TypeRef naming an enum (spec 6.2), picked from
+     the type tree so the option list can never drift from the schema */
+  if (spec?.editor === "enum-type") {
+    const node = el("button", { class: "chip pad-mark source-chip", title: "pick an enum" });
+    bindFlag(key + ".ghost", node, "ghost-chip", () => !text(read()));
+    const name = el("span", { class: "name" });
+    bindText(key + ".name", name, () => text(read()) || "pick an enum");
+    node.appendChild(name);
+    node.addEventListener("click", () => {
+      if (editor) openTypeTree(node, editor, { enums: true }, (pick) => commit(pick.ref));
+    });
+    return node;
   }
   switch (shape) {
     case "bool": {

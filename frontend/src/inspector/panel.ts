@@ -318,7 +318,7 @@ function slotCells(
         ? spec.name + " is written at runtime; this is the value it starts from"
         : undefined,
     },
-    [valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, bound)],
+    [valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, bound, editor)],
   );
   if (bound) disableAll(control);
 

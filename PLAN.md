@@ -118,7 +118,7 @@ Feed     { id, slot, src: EntityRef, path, xf: Expr?, poll_hz? }
 Flow     { id, trig, tmr?, hold_ms?, or?, or_mode, every, every_ms, do: [Step] }
 Step     { id, kind: move|gate|deadband|throttle|debounce|delay
                  | tmr_start|tmr_cancel, ... }
-move     { from: Expr | EntityRef+Path | new TypeRef,
+move     { from: Expr | EntityRef+Path | Local+Path,
            to:   Local+Path | EntityRef+Path | widget.<slot>, mode? }
 EntityRef{ kind: V|T|F|S|L, name }
 TypeRef  { path: "ValveCmd" | "ValveCmd.mode" }   // root type name, then fields
@@ -458,11 +458,15 @@ working end-to-end demo at every stage. Each stage lands with its tests.
    6b. **the move rework** (the Decisions bullet above), landed in this order so the
    tree compiles at every step: the type table and TypeRef resolution in `compile/`;
    `Tag::Struct` and struct cells in `vm/`, with message buffers becoming locals;
-   the `move` node in `doc/`; lowering and the new opcodes; then the frontend's
-   summary-plus-form DO list, the served type table, and the pickers over it.
-   DONE except `variants()`. The additions this unlocks (`call` with a response,
-   struct-typed variables, enum-derived Dropdown options) land after the rework
-   compiles clean, not with it.
+   the `move` node in `doc/`; lowering and the new opcodes; then the frontend DO
+   list, the served type table, and the pickers over it. DONE, including the
+   simplification pass on top: one-line editable step rows (no summary/form split),
+   the two-word verb display, ONE unified picker tree for every reference,
+   struct- and enum-typed declared variables (`new T` removed as subsumed), the
+   type tree picker, enum-derived Dropdown options with a real open menu, and the
+   enum <-> text coercions at move/feed boundaries. Still open from this area:
+   `variants()` as an expression builtin, `call` with a response, the
+   derive-options-from-feed one-click fix, and the round-trip check.
 7. **hot swap + migration** (wiring the stage-3 design: recompile on accepted edit,
    migrate, log decisions).
 

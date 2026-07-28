@@ -3,23 +3,23 @@
  * INIT, KEEP). Global and widget-local cards are the same card; only the scope note differs
  * (spec 3.9). It folds like a feed or a flow card, same caret and same click.
  *
- * A variable's TYPE is structure (it picks the INIT editor and renames the row), and so is
- * whether the card is open; everything else is a value pushed into standing controls, so the
- * NOW readout tracking a 30 Hz timer never touches the card around it. */
+ * A variable's TYPE is any TypeRef from the mesh besides the four scalars (spec 2.7): the
+ * picker is the TYPE TREE, and a struct-typed variable is born zeroed, so it shows no INIT
+ * row (there is nothing scalar to seed) and its NOW readout names its type. The type is
+ * structure (it picks the INIT editor and renames the row); everything else is a value
+ * pushed into standing controls. */
 
-import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
+import { commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, liveIsOn, liveText } from "../editor.js";
-import { bind, bindChoice, bindField } from "../reconcile.js";
+import { bind, bindField, bindText } from "../reconcile.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { Json, Var } from "../types.js";
 import { valueEditor } from "./editors.js";
+import { openTypeTree } from "./typetree.js";
 
-const TYPES = [
-  { value: "f64", label: "number" },
-  { value: "bool", label: "bool" },
-  { value: "str", label: "text" },
-  { value: "timer", label: "timer" },
-];
+const SCALAR_LABEL: Record<string, string> = {
+  f64: "number", bool: "bool", str: "text", timer: "timer",
+};
 
 const opened = new Set<number>();
 
@@ -33,6 +33,7 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   const setProp = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: variable.id, key, value }]);
   const cell = "v" + variable.id;
+  const isStruct = !SCALAR_LABEL[variable.type];
 
   const caret = el("span", {
     class: "arrow",
@@ -48,24 +49,26 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   bindField(variable.id + ":name", name, () => at().name ?? "");
 
   /* the live value rides the name line: what the variable READS is the thing a card is
-     opened for, so it stays visible folded */
+     opened for, so it stays visible folded. An enum-typed variable reads as its variant
+     name; a struct variable has no one live scalar, so its type stands in. */
   const now = el("span", { class: "now-value" });
   bind(variable.id + ":now", now, () => {
-    const text = liveText(editor.live, cell);
+    const live = liveText(editor.live, cell);
+    const text = isStruct && live === "--" ? at().type : live;
     if (now.textContent !== text) now.textContent = text;
     now.classList.toggle("on", liveIsOn(editor.live, cell));
   });
 
-  /* the init finding lives on the INIT row; folded that row does not exist, so the head
-     carries it, like a feed's */
+  /* findings on rows the fold hides ride the head, like a feed's */
   const initDiags = editor.diagAt(variable.id, "init");
+  const typeDiags = editor.diagAt(variable.id, "type");
   const head = el("div", { class: "card-head" }, [
     caret,
     kindMark("L", scope === "local" ? "Only visible to this widget" : "Lives in the HMI"),
     name,
     now,
-    /* a finding about the variable itself (an unknown type) sits on its name row */
-    diagIcon(open ? editor.diagAt(variable.id) : editor.diagAt(variable.id).concat(initDiags)),
+    diagIcon(open ? editor.diagAt(variable.id)
+                  : editor.diagAt(variable.id).concat(initDiags, typeDiags)),
     iconButton("x", "remove this variable", () =>
       editor.apply([{ op: "remove", node: variable.id }]),
     ),
@@ -80,44 +83,55 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   });
   if (!open) return card;
 
-  const type = selectField(TYPES, variable.type, (next) => setProp("type", next));
-  bindChoice(variable.id + ":type", pickerOf(type), () => at().type);
+  /* the TYPE is picked from the type tree: the four scalars, then every struct root the
+     mesh serves. What the document stores is the TypeRef itself. */
+  const type = el("button", { class: "chip pad-mark source-chip", title: "pick a type" });
+  const typeText = el("span", { class: "name" });
+  bindText(variable.id + ":type", typeText, () => SCALAR_LABEL[at().type] ?? at().type);
+  type.appendChild(typeText);
+  type.addEventListener("click", () =>
+    openTypeTree(type, editor, { scalars: true, structs: true, enums: true },
+                 (pick) => setProp("type", pick.ref)),
+  );
 
   const initShape =
     variable.type === "bool" ? "bool" : variable.type === "str" ? "text" : "num";
 
   /* One label column, one setting per line, so the labels stack and every control starts
-     at the same x. A row's controls sit in a flex line rather than in the grid cell itself:
-     a bare control as a grid item would be stretched to the column, which is exactly not
-     what a picker or a two-state pair wants. */
+     at the same x. A struct variable shows no INIT: it is born zeroed (spec 2.7). */
   card.appendChild(
     el("div", { class: "card-body var-body" }, [
       el("div", { class: "var-grid" }, [
-        el("span", { class: "row-label", text: "TYPE" }),
+        el("span", { class: "row-label", text: "TYPE" }, [diagIcon(typeDiags)]),
         el("div", { class: "var-line" }, [type]),
-        el("span", { class: "row-label", text: variable.type === "timer" ? "SECS" : "INIT" }, [
-          diagIcon(initDiags),
-        ]),
-        el("div", { class: "var-line" }, [
-          valueEditor(
-            null,
-            initShape,
-            variable.id + ":init",
-            () => at().init,
-            (value) => setProp("init", value),
-          ),
-          variable.type === "timer" ? el("span", { class: "op", text: "s" }) : null,
-        ]),
-        el("span", { class: "row-label", text: "KEEP" }),
-        el("div", { class: "var-line" }, [
-          valueEditor(
-            null,
-            "bool",
-            variable.id + ":persist",
-            () => at().persist,
-            (value) => setProp("persist", value),
-          ),
-        ]),
+        ...(isStruct
+          ? []
+          : [
+              el("span", { class: "row-label",
+                           text: variable.type === "timer" ? "SECS" : "INIT" }, [
+                diagIcon(initDiags),
+              ]),
+              el("div", { class: "var-line" }, [
+                valueEditor(
+                  null,
+                  initShape,
+                  variable.id + ":init",
+                  () => at().init,
+                  (value) => setProp("init", value),
+                ),
+                variable.type === "timer" ? el("span", { class: "op", text: "s" }) : null,
+              ]),
+              el("span", { class: "row-label", text: "KEEP" }),
+              el("div", { class: "var-line" }, [
+                valueEditor(
+                  null,
+                  "bool",
+                  variable.id + ":persist",
+                  () => at().persist,
+                  (value) => setProp("persist", value),
+                ),
+              ]),
+            ]),
       ]),
     ]),
   );

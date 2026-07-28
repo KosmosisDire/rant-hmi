@@ -558,36 +558,3 @@ export function localPaths(
   };
 }
 
-/* The names a move side may write: this flow's locals above the row and the variables in
- * scope, each also offered field by field where it holds a struct, so `m.position` is one
- * pick rather than a name plus a path. Typing anything else declares a temporary, which
- * is the whole ceremony (spec 2.7), so this list never constrains the field. */
-export function localNames(
-  editor: Editor,
-  widget: Widget | null,
-  flow: () => Flow,
-  stepId: number,
-) {
-  return (): PathOption[] => {
-    const out: PathOption[] = [];
-    for (const local of scopeAt(editor, widget, flow(), stepId).locals) {
-      out.push({ path: local.name, shape: local.type || local.shape });
-      for (const field of local.fields ?? [])
-        if (field.shape !== "list" && field.shape !== "map")
-          out.push({ path: local.name + "." + field.path, shape: field.shape });
-    }
-    return out;
-  };
-}
-
-/* the root types the mesh knows, for a `new T` row. An unnamed root is listed but not
- * pickable by name (spec 2.2), so it is simply not offered. */
-export function typeNames(editor: Editor) {
-  return (): PathOption[] =>
-    editor.mesh.types
-      .filter((t) => t.name)
-      .map((t) => ({
-        path: t.name,
-        shape: t.entities.map((e) => e.name).join(", ") || "no entity carries it",
-      }));
-}

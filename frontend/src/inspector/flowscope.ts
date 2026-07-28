@@ -43,16 +43,26 @@ export function typeFields(editor: Editor, name: string): MeshField[] {
   return editor.mesh.types.find((t) => t.name === name)?.fields ?? [];
 }
 
-/* the declared variables a widget's flows can name, before any move adds to them */
+/* the declared variables a widget's flows can name, before any move adds to them. A type
+ * beyond the four scalars is a TypeRef (spec 2.7): a struct root holds a struct of it,
+ * and a dotted ref (`ValveCmd.mode`) holds that enum's value. */
 function declared(editor: Editor, widget: Widget | null): LocalInfo[] {
   const own = new Set((widget?.locals ?? []).map((v) => v.id));
   return variablesInScope(editor, widget)
     .filter((v) => v.type !== "timer")
-    .map((v) => ({
-      name: v.name,
-      shape: VAR_SHAPE[v.type] ?? "",
-      note: own.has(v.id) ? ("local" as const) : ("global" as const),
-    }));
+    .map((v) => {
+      const note = own.has(v.id) ? ("local" as const) : ("global" as const);
+      const scalar = VAR_SHAPE[v.type];
+      if (scalar) return { name: v.name, shape: scalar, note };
+      if (v.type.includes(".")) return { name: v.name, shape: "enum", type: v.type, note };
+      return {
+        name: v.name,
+        shape: "struct",
+        type: v.type,
+        fields: typeFields(editor, v.type),
+        note,
+      };
+    });
 }
 
 /* what one move SOURCE yields, given what is in scope at that row */
@@ -62,9 +72,6 @@ function sourceShape(
   scope: Map<string, LocalInfo>,
 ): { shape: string; elem?: string; type?: string; fields?: MeshField[] } | null {
   if (!from || typeof from !== "object") return null;
-
-  if (typeof from.type === "string")
-    return { shape: "struct", type: from.type, fields: typeFields(editor, from.type) };
 
   if (typeof from.local === "string") {
     const held = scope.get(from.local);
