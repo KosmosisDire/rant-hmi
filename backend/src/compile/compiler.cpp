@@ -131,8 +131,8 @@ class Compiler {
 
   private:
     void diag(uint64_t node, const std::string& code, const std::string& message,
-              DiagGrade grade = DiagGrade::Error) {
-        program_.diagnostics.push_back(Diag{node, grade, code, message});
+              DiagGrade grade = DiagGrade::Error, const std::string& where = "") {
+        program_.diagnostics.push_back(Diag{node, grade, code, message, where});
         if (grade == DiagGrade::Error) has_errors_ = true;
     }
 
@@ -173,7 +173,8 @@ class Compiler {
             diag(node_id, "value_shape",
                  std::string(kind == CellKind::Slot ? "slot '" : "variable '") + name +
                      "' is " + shape_name(shape) + ", but its value is " + json_brief(initial) +
-                     ": it starts UNKNOWN");
+                     ": it starts UNKNOWN",
+                 DiagGrade::Error, kind == CellKind::Slot ? name : "init");
         cell.persistent = persistent;
         if (shape == Shape::Text) {
             cell.text_slot = program_.layout.text_slots++;
@@ -286,7 +287,8 @@ class Compiler {
         for (const Json& variant : *variants)
             known += (known.empty() ? "" : ", ") + variant.get<std::string>();
         diag(widget_id, "slot_variant",
-             "slot '" + slot + "' is " + json_brief(value) + ", which is not one of: " + known);
+             "slot '" + slot + "' is " + json_brief(value) + ", which is not one of: " + known,
+             DiagGrade::Error, slot);
     }
 
     Shape var_shape(const std::string& type) const {
@@ -848,7 +850,8 @@ class Compiler {
      * (the control is a view of the machine), then an authored flow that assigns the same
      * slot (the author overrode the default), otherwise the default runs. Suppression is
      * per slot WRITTEN, not per event, so "on tap, send to the PLC" coexists with the
-     * default local echo. Every suppression is reported, so none of this is invisible. */
+     * default local echo. Standing down is deterministic and silent: the author asked for
+     * the writer that won, so there is nothing to report. */
     void build_type_behavior() {
         for (WidgetInfo& widget : widgets_) {
             if (!widget.type) continue;
@@ -858,12 +861,7 @@ class Compiler {
             for (const Json& node : behavior) {
                 bool suppressed = false;
                 for (const std::string& slot : behavior_targets(node)) {
-                    auto by = claimed.find(slot);
-                    if (by == claimed.end()) continue;
-                    diag(widget.id, "behavior_inactive",
-                         "the default " + widget.type->value("name", "") + " behavior on '" +
-                             slot + "' is inactive: " + by->second,
-                         DiagGrade::Info);
+                    if (claimed.find(slot) == claimed.end()) continue;
                     suppressed = true;
                     break;
                 }

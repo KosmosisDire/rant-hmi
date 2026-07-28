@@ -248,7 +248,8 @@ Json App::diagnostics() const {
                                       : diag.grade == DiagGrade::Warning ? "warning"
                                                                          : "info"},
                             {"code", diag.code},
-                            {"message", diag.message}});
+                            {"message", diag.message},
+                            {"where", diag.where}});
     return rows;
 }
 

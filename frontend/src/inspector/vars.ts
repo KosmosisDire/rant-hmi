@@ -6,7 +6,7 @@
  * 30 Hz timer never touches the card around it. */
 
 import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
-import { Editor, liveIsOn, liveText } from "../editor.js";
+import { diagIcon, Editor, liveIsOn, liveText } from "../editor.js";
 import { bind, bindChoice, bindField } from "../reconcile.js";
 import { kindMark } from "../icons.js";
 import { Json, Var } from "../types.js";
@@ -53,6 +53,8 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
     el("div", { class: "row", style: "margin-bottom:7px" }, [
       kindMark("L", scope === "local" ? "Only visible to this widget" : "Lives in the HMI"),
       name,
+      /* a finding about the variable itself (an unknown type) sits on its name row */
+      diagIcon(editor.diagAt(variable.id)),
       iconButton("x", "remove this variable", () =>
         editor.apply([{ op: "remove", node: variable.id }]),
       ),
@@ -61,7 +63,10 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
     el("div", { class: "var-grid" }, [
       el("span", { class: "row-label", text: "TYPE" }),
       type,
-      el("span", { class: "row-label", text: variable.type === "timer" ? "SECS" : "INIT" }),
+      el("span", { class: "row-label", text: variable.type === "timer" ? "SECS" : "INIT" }, [
+        /* an init that cannot be the variable's shape is pinned on the INIT row */
+        diagIcon(editor.diagAt(variable.id, "init")),
+      ]),
       el("span", { class: "value-cell" }, [
         valueEditor(
           null,

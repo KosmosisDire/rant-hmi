@@ -10,7 +10,7 @@
  * live seed chip ticks without touching anything. */
 
 import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
-import { Editor, liveText, variablesInScope } from "../editor.js";
+import { diagIcon, Editor, liveText, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
@@ -121,8 +121,16 @@ export function flowCard(editor: Editor, widget: Widget, type: WidgetType | null
       return (head?.every_ms ?? 0) + " ms";
     });
 
+  /* Findings live on the LINE they name: WHEN-level ones (no trigger, an unknown event)
+     ride the WHEN row and step-level ones their step row, so a problem traces to the
+     exact line. The head carries only a rollup, and only while the card is collapsed:
+     folded, those lines do not exist yet, and the card still has to signal. */
+  const rollup = open
+    ? []
+    : editor.diagAt(flow.id).concat((flow.do ?? []).flatMap((step: Json) => editor.diagAt(step.id)));
   const head = el("div", { class: "card-head" }, [
     caret,
+    diagIcon(rollup),
     el("span", { class: "kw", text: "when" }),
     trigger,
     timerEntry ? el("span", { class: "kw", text: "or" }) : null,
@@ -207,7 +215,8 @@ function whenRow(
     next[0] = { ...head(), ...patch };
     set("when", next.length ? next : [{ kind: "event", name: "press" }]);
   };
-  const row = el("div", { class: "row" }, []);
+  /* a finding addressed to the flow itself is about its trigger, so it sits here */
+  const row = el("div", { class: "row" }, [diagIcon(editor.diagAt(flow.id))]);
 
   if (when.length > 1) {
     const seg = el("div", { class: "seg" }, [
@@ -517,6 +526,8 @@ function stepRow(
   const row = el("div", { class: "do-row" + (indented ? " sub" : "") }, [
     grip(editor, step, index),
     el("span", { class: "row-num", text: number }),
+    /* a finding about this step sits on the step's own line (spec 3.8) */
+    diagIcon(editor.diagAt(step.id)),
     ...(cells.filter(Boolean) as HTMLElement[]),
   ]);
   return row;

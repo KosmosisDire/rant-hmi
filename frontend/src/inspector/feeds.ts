@@ -9,7 +9,7 @@
  * field never rebuilds the sentence above it. */
 
 import { chip, commitInput, el, numberInput, pickerOf, selectField } from "../dom.js";
-import { Editor } from "../editor.js";
+import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
 import { Feed, Json, Widget, WidgetType } from "../types.js";
@@ -46,6 +46,9 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
 
   const head = el("div", { class: "card-head" }, [
     caret,
+    /* a finding about this feed (a bad slot, an unresolved source, a transform that did
+       not compile) sits on the feed's own sentence (spec 3.8) */
+    diagIcon(editor.diagAt(feed.id)),
     slotChip,
     el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }),
     xfChip,

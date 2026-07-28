@@ -213,6 +213,7 @@ const editor = {
   select: () => undefined,
   refresh: () => undefined,
   diagFor: () => [],
+  diagAt: () => [],
 };
 const draw = () => panel.render(inspectorShape(editor), (host) => renderInspector(host, editor));
 /* a version arriving from another window, applied to the mirror exactly as onOps does */
@@ -406,17 +407,15 @@ check(
 );
 check(Array.isArray(snapshot.diag?.compile), "the snapshot carries the compile findings");
 
-/* the default rows render read-only in the inspector, with the detach action */
+/* the type's defaults are the control working as expected, so the inspector does not
+   list them: the Behavior section holds only what this instance authors */
 const toggle = store.pages()[0].widgets.find((w) => w.type === "Toggle");
 const togglePanel = new Panel(new Element("aside"));
 const toggleEditor = { ...editor, selectedWidget: () => store.widget(toggle.id) };
 togglePanel.render(inspectorShape(toggleEditor), (host) => renderInspector(host, toggleEditor));
-const defaults = togglePanel.host.querySelectorAll(".default-flow");
-check(defaults.length === 1, "the inspector shows the type's default flow, got " + defaults.length);
-has(defaults[0].textContent, "widget.value = x", "the default row reads as a flow");
 check(
-  defaults[0].querySelectorAll("button").length === 1,
-  "and offers exactly one action, detach",
+  togglePanel.host.querySelectorAll(".default-flow").length === 0,
+  "the inspector does not list the type's default flow",
 );
 
 /* A slot the RUNTIME writes reads live in the inspector too, not just on the artboard.
@@ -458,16 +457,59 @@ check(
 /* the Readout above is the other half of the rule, and still holds: nothing writes its
    value, so its field shows the document and typing into it is never fought */
 
-/* a finding lands on the widget it names, in the rail and on the canvas */
+/* a finding lands as a mark on the row it names, not in a list: one addressed to the
+   widget itself sits on the head, one narrowed to a slot sits on that slot's label */
+const findingRows = [
+  { node: toggle.id, grade: "error", code: "widget_type", message: "unknown type" },
+  { node: toggle.id, grade: "error", code: "value_shape", message: "slot 'value' is bool", where: "value" },
+];
 const findingEditor = {
   ...toggleEditor,
-  diagFor: () => [{ node: toggle.id, grade: "error", code: "expression", message: "unknown name 'msg'" }],
+  diagFor: () => findingRows,
+  diagAt: (node, where) =>
+    findingRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
 };
 const findingPanel = new Panel(new Element("aside"));
 findingPanel.render(inspectorShape(findingEditor), (host) => renderInspector(host, findingEditor));
-const finding = findingPanel.host.querySelectorAll(".finding.error");
-check(finding.length === 1, "an error shows in the inspector, got " + finding.length);
-has(finding[0].textContent, "unknown name", "with the compiler's own words");
+check(
+  findingPanel.host.querySelectorAll(".finding").length === 0,
+  "there is no findings list any more",
+);
+const findingHead = findingPanel.host.querySelector(".inspector-head");
+check(
+  findingHead !== null && findingHead.querySelectorAll(".diag-dot.error").length === 1,
+  "a widget-level error marks the inspector head",
+);
+const valueLabel = (() => {
+  for (const grid of findingPanel.host.querySelectorAll(".prop-grid"))
+    for (const kid of grid.children)
+      if (kid.tagName === "LABEL" && kid.textContent === "value") return kid;
+  return null;
+})();
+check(
+  valueLabel !== null && valueLabel.querySelectorAll(".diag-dot.error").length === 1,
+  "a slot-level error marks the slot's own label",
+);
+
+/* a finding inside a flow is addressed to the STEP, so it traces to the exact line; a
+   collapsed card cannot show that line yet, so its head carries the rollup */
+const reset = store.pages()[0].widgets.find((w) => w.label === "Reset");
+const stepId = reset.flows[0].do[0].id;
+const stepRows = [{ node: stepId, grade: "error", code: "expression", message: "unknown name" }];
+const stepEditor = {
+  ...editor,
+  selectedWidget: () => store.widget(reset.id),
+  diagFor: () => stepRows,
+  diagAt: (node, where) =>
+    stepRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
+};
+const stepPanel = new Panel(new Element("aside"));
+stepPanel.render(inspectorShape(stepEditor), (host) => renderInspector(host, stepEditor));
+const flowHead = stepPanel.host.querySelector(".card-head");
+check(
+  flowHead !== null && flowHead.querySelectorAll(".diag-dot.error").length === 1,
+  "a step-level error rolls up on the collapsed flow card",
+);
 
 view.faults = { [toggle.id]: "error" };
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);

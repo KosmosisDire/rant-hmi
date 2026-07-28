@@ -578,73 +578,62 @@ button:focus-visible {
   line-height: 20px;
 }
 
-/* ---------- findings and default behavior ---------- */
+/* ---------- inline findings: a mark on the offending row, details on hover ---------- */
 
-.finding {
-  display: flex;
-  gap: 8px;
-  padding: 7px 8px;
-  margin-bottom: 5px;
-  border: 1px solid var(--line-2);
-  border-left-width: 2px;
+.diag-dot {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -1px;
+  margin-left: 5px;
+  cursor: help;
+}
+
+.diag-dot.error {
+  color: var(--bad);
+}
+.diag-dot.warning {
+  color: var(--warn);
+}
+.diag-dot.info {
+  color: var(--acc-ink-2);
+}
+
+.diag-pop {
+  position: fixed;
+  z-index: 80;
+  max-width: 280px;
+  padding: 5px 0;
+  border: 1px solid var(--line);
   border-radius: 3px;
-  background: var(--card);
+  background: var(--menu);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
 }
 
-.finding.error {
-  border-left-color: var(--bad);
-}
-.finding.warning {
-  border-left-color: var(--warn);
-}
-.finding.info {
-  border-left-color: var(--line-in);
+.diag-pop-row {
+  display: flex;
+  gap: 7px;
+  padding: 3px 9px;
 }
 
-.finding .grade {
-  font: 600 9px/16px var(--mono);
+.diag-pop-row .grade {
+  flex: none;
+  font: 600 9px/15px var(--mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--dim);
 }
-.finding.error .grade {
+.diag-pop-row.error .grade {
   color: var(--bad);
 }
-.finding.warning .grade {
+.diag-pop-row.warning .grade {
   color: var(--warn);
 }
 
-.finding .message {
-  font: 400 10.5px/16px var(--mono);
+.diag-pop-row .message {
+  font: 400 10.5px/15px var(--mono);
   color: var(--ink-2);
   word-break: break-word;
-}
-
-/* a flow that belongs to the TYPE: same vocabulary as an authored one, dimmer, not edited */
-.default-flow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 5px 8px;
-  margin-bottom: 5px;
-  border: 1px dashed var(--line-3);
-  border-radius: 3px;
-  background: transparent;
-}
-
-.default-flow .tag {
-  font: 600 9px var(--mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--dim);
-}
-
-.default-flow .steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
 }
 
 .default-flow .step {

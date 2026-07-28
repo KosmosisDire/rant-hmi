@@ -363,13 +363,14 @@ void test_default_behavior() {
                                          {"path", "on"},
                                          {"xf", ""}}})}});
     CompileResult fed_compiled = compile_document(fed, registry(), mesh);
-    CHECK(has_diag(fed_compiled, "behavior_inactive"));
+    /* standing down is deterministic and silent: the feed is what the author asked for */
+    CHECK(!has_diag(fed_compiled, "behavior_inactive"));
     RuntimeState fed_state(fed_compiled.program);
     run_event(fed_compiled.program, fed_state, only_widget(fed), "tap", Value::boolean(true));
     CHECK(fed_state.effect_count == 0);   /* nothing ran: the default stood down */
 
-    /* an authored flow writing the same slot wins over the default, and the default is
-       reported inactive rather than silently dropped */
+    /* an authored flow writing the same slot wins over the default, silently: the
+       precedence is deterministic and the author asked for the winner */
     Document authored = widget_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
@@ -380,7 +381,7 @@ void test_default_behavior() {
                                            {"a", "true"}}})}}})}});
     CompileResult authored_compiled = compile_document(authored, registry(), mesh);
     CHECK(authored_compiled.ok);
-    CHECK(has_diag(authored_compiled, "behavior_inactive"));
+    CHECK(!has_diag(authored_compiled, "behavior_inactive"));
     RuntimeState authored_state(authored_compiled.program);
     const uint64_t authored_id = only_widget(authored);
     run_event(authored_compiled.program, authored_state, authored_id, "tap",

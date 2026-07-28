@@ -23,8 +23,57 @@ export interface Editor {
   select(ids: number[]): void;
   /* what the compiler said about this widget or anything inside it */
   diagFor(widget: number): Diag[];
+  /* the findings pinned to one node, or to one field of it (spec 3.8: a finding sits on
+     the row that is wrong). No `where` asks for the node's own findings only. */
+  diagAt(node: number, where?: string): Diag[];
   /* re-render the rails: a fold or a menu changed, not the document */
   refresh(): void;
+}
+
+/* The inline finding mark: a small icon on the offending row, its popover on hover. The
+ * popover is one shared element on the body, so a rail rebuild can never strand it. */
+let pop: HTMLElement | null = null;
+
+function showPop(anchor: HTMLElement, diags: Diag[]): void {
+  hidePop();
+  pop = el(
+    "div",
+    { class: "diag-pop" },
+    diags.map((row) =>
+      el("div", { class: "diag-pop-row " + row.grade }, [
+        el("span", { class: "grade", text: row.grade }),
+        el("span", { class: "message", text: row.message }),
+      ]),
+    ),
+  );
+  document.body.appendChild(pop);
+  const at = anchor.getBoundingClientRect();
+  const box = pop.getBoundingClientRect();
+  const left = Math.max(8, Math.min(at.left, window.innerWidth - box.width - 8));
+  const top = at.bottom + box.height + 8 > window.innerHeight ? at.top - box.height - 6 : at.bottom + 6;
+  pop.style.left = left + "px";
+  pop.style.top = top + "px";
+}
+
+function hidePop(): void {
+  pop?.remove();
+  pop = null;
+}
+
+export function diagIcon(diags: Diag[]): HTMLElement | null {
+  if (!diags.length) return null;
+  const worst = diags.some((d) => d.grade === "error")
+    ? "error"
+    : diags.some((d) => d.grade === "warning")
+      ? "warning"
+      : "info";
+  const dot = el("span", {
+    class: "diag-dot " + worst,
+    html: iconMarkup("alert", 11, 2),
+  });
+  dot.addEventListener("mouseenter", () => showPop(dot, diags));
+  dot.addEventListener("mouseleave", hidePop);
+  return dot;
 }
 
 const folded = new Map<string, boolean>();

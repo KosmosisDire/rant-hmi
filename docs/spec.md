@@ -201,10 +201,11 @@ order:
 
 Suppression is per slot WRITTEN, not per event, so "on tap, send to the PLC"
 coexists with the default local echo: the widget flips and the write goes out. Add
-a feed on the slot later and the machine becomes the truth. Every suppression is
-reported as an `info` finding naming what took the slot over, and the inspector
-shows a type's defaults as read-only rows with one action that copies them into
-the document as ordinary flows (3.10). Nothing is hidden behind a friendly label.
+a feed on the slot later and the machine becomes the truth. Standing down is
+deterministic and silent: the feed or flow that won is the one the author asked
+for, so there is nothing to report. The inspector does not list a type's defaults
+either; they are the control working as expected, not authored behavior, and
+authoring a flow on the same slot takes over automatically.
 
 **A value that cannot be its shape is a finding.** An authored slot value or
 variable init of the wrong JSON shape used to become Nil in silence, and Nil is
@@ -644,10 +645,12 @@ keyboard-navigable):
 
 ### 3.8 Diagnostics and one-click fixes
 
-Diagnostics are attached to the row that is wrong, never collected in a panel, and
-are graded: **error** (this cannot run), **warning** (this runs but does nothing
-useful) and **info** (this is fine, but you should know: a default that stood down).
-Where a mechanical repair exists, offer it as a button.
+Diagnostics are attached to the row that is wrong, never collected in a panel: a
+small mark sits on the offending line or field (a finding carries the node it names
+and, where it can, the field within it), and hovering the mark shows the message.
+They are graded: **error** (this cannot run), **warning** (this runs but does
+nothing useful) and **info** (this is fine, but you should know). Where a
+mechanical repair exists, offer it as a button.
 
 They must REACH the view that needs them. Compile findings are produced once per
 compile, usually before a given client existed, so they ride the snapshot as well as

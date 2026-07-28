@@ -217,6 +217,12 @@ export class App implements Editor {
     return this.diagnostics.filter((row) => this.owningWidget(row.node) === widget);
   }
 
+  diagAt(node: number, where?: string): Diag[] {
+    return this.diagnostics.filter(
+      (row) => row.node === node && (row.where ?? "") === (where ?? ""),
+    );
+  }
+
   private onStatus(state: Status, detail: string): void {
     this.nodes.pill.className = "pill " + state;
     this.nodes.pill.textContent = state === "live" ? "live" : state;
