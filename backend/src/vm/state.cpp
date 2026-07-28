@@ -107,6 +107,18 @@ RuntimeState::RuntimeState(const Program& program) {
             texts.emplace_back(kDefaultTextCap);
         }
     }
+    /* suspension deep-copy slots: a fixed run per pending site (x first, then every
+     * text-shaped field of every buffer, in table order; the Suspend op walks the
+     * same order) */
+    uint32_t per_pending = 1;
+    for (const BufferDef& buffer : program.buffers)
+        for (const FieldDef& field : program.entities[buffer.entity].fields)
+            if (field.shape == Shape::Text) ++per_pending;
+    pending_texts.resize(program.layout.pending_slots);
+    for (uint32_t i = 0; i < program.layout.pending_slots; ++i) {
+        pending_texts[i] = static_cast<uint32_t>(texts.size());
+        for (uint32_t k = 0; k < per_pending; ++k) texts.emplace_back(kDefaultTextCap);
+    }
 
     uint32_t max_fields = std::max<uint32_t>(program.layout.max_entity_fields, 1);
     buffers.resize(program.buffers.size());

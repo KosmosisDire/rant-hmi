@@ -1,10 +1,41 @@
 #include "vm.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
 namespace hmi {
 namespace {
+
+/* everything a builtin or method needs to touch text: the program's constant pool and
+ * the run's fixed text slots. Text-producing sites carry their own dedicated slot in
+ * the instruction (ins.a), so no allocation and no cursor exist at runtime. */
+struct ExecContext {
+    const Program& program;
+    RuntimeState& state;
+};
+
+std::string_view text_of(const ExecContext& ctx, const Value& value) noexcept {
+    return ctx.state.text(ctx.program, value);
+}
+
+Value text_result(const ExecContext& ctx, uint32_t site, std::string_view view) noexcept {
+    if (site >= ctx.state.texts.size()) return Value::nil();
+    ctx.state.texts[site].set(view);
+    return Value::text(site);
+}
+
+std::string_view enum_variant_name(const Program& program, uint16_t type,
+                                   int64_t value) noexcept {
+    if (type && type < program.enum_types.size())
+        for (const auto& row : program.enum_types[type])
+            if (row.second == value) return row.first;
+    return {};
+}
 
 Value numeric(OpCode op, const Value& left, const Value& right) noexcept {
     if (left.tag != ValueTag::Num || right.tag != ValueTag::Num) return Value::nil();
@@ -38,7 +69,129 @@ Value compare(OpCode op, const Value& left, const Value& right) noexcept {
     }
 }
 
-Value call(Builtin builtin, const Value* args, uint32_t n) noexcept {
+/* strtod over a bounded view without allocation: the view is copied into a stack
+ * buffer first because strtod needs a terminator */
+bool parse_number(std::string_view view, double& out) noexcept {
+    char buffer[64];
+    size_t start = 0, stop = view.size();
+    while (start < stop && std::isspace(static_cast<unsigned char>(view[start]))) ++start;
+    while (stop > start && std::isspace(static_cast<unsigned char>(view[stop - 1]))) --stop;
+    const size_t length = stop - start;
+    if (length == 0 || length >= sizeof(buffer)) return false;
+    std::memcpy(buffer, view.data() + start, length);
+    buffer[length] = '\0';
+    char* end = nullptr;
+    const double value = std::strtod(buffer, &end);
+    if (end != buffer + length) return false;
+    out = value;
+    return true;
+}
+
+Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* args,
+           uint32_t n) noexcept {
+    switch (builtin) {
+        case Builtin::Int: {
+            if (n != 1) return Value::nil();
+            const Value& v = args[0];
+            if (v.tag == ValueTag::Num) return Value::number(std::trunc(v.data.num));
+            if (v.tag == ValueTag::Bool) return Value::number(v.data.boolean ? 1 : 0);
+            if (v.tag == ValueTag::Enum)
+                return Value::number(static_cast<double>(v.data.integer));
+            if (v.tag == ValueTag::Text) {
+                double parsed = 0;
+                if (parse_number(text_of(ctx, v), parsed))
+                    return Value::number(std::trunc(parsed));
+            }
+            return Value::nil();
+        }
+        case Builtin::Num: {
+            if (n != 1) return Value::nil();
+            const Value& v = args[0];
+            if (v.tag == ValueTag::Num) return v;
+            if (v.tag == ValueTag::Bool) return Value::number(v.data.boolean ? 1 : 0);
+            if (v.tag == ValueTag::Enum)
+                return Value::number(static_cast<double>(v.data.integer));
+            if (v.tag == ValueTag::Text) {
+                double parsed = 0;
+                if (parse_number(text_of(ctx, v), parsed)) return Value::number(parsed);
+            }
+            return Value::nil();
+        }
+        case Builtin::Str: {
+            if (n != 1) return Value::nil();
+            const Value& v = args[0];
+            char buffer[64];
+            switch (v.tag) {
+                case ValueTag::Text: return v;
+                case ValueTag::Bool: return text_result(ctx, site, v.data.boolean ? "true" : "false");
+                case ValueTag::Num:
+                    std::snprintf(buffer, sizeof(buffer), "%.15g", v.data.num);
+                    return text_result(ctx, site, buffer);
+                case ValueTag::Enum: {
+                    const std::string_view name =
+                        enum_variant_name(ctx.program, v.enum_type, v.data.integer);
+                    if (!name.empty()) return text_result(ctx, site, name);
+                    std::snprintf(buffer, sizeof(buffer), "%lld",
+                                  static_cast<long long>(v.data.integer));
+                    return text_result(ctx, site, buffer);
+                }
+                case ValueTag::Color:
+                    if ((v.data.rgba & 0xffu) == 0xffu)
+                        std::snprintf(buffer, sizeof(buffer), "#%06x",
+                                      static_cast<unsigned>(v.data.rgba >> 8));
+                    else
+                        std::snprintf(buffer, sizeof(buffer), "#%08x",
+                                      static_cast<unsigned>(v.data.rgba));
+                    return text_result(ctx, site, buffer);
+                default: return Value::nil();
+            }
+        }
+        case Builtin::Name: {
+            if (n != 1 || args[0].tag != ValueTag::Enum) return Value::nil();
+            const std::string_view name =
+                enum_variant_name(ctx.program, args[0].enum_type, args[0].data.integer);
+            return name.empty() ? Value::nil() : text_result(ctx, site, name);
+        }
+        case Builtin::FmtTime: {
+            if (n != 1 || args[0].tag != ValueTag::Num) return Value::nil();
+            const double us = args[0].data.num;
+            if (!std::isfinite(us)) return Value::nil();
+            const time_t seconds = static_cast<time_t>(us / 1e6);
+            std::tm parts{};
+#if defined(_WIN32)
+            if (localtime_s(&parts, &seconds) != 0) return Value::nil();
+#else
+            if (!localtime_r(&seconds, &parts)) return Value::nil();
+#endif
+            char buffer[16];
+            std::snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", parts.tm_hour,
+                          parts.tm_min, parts.tm_sec);
+            return text_result(ctx, site, buffer);
+        }
+        case Builtin::FmtDuration: {
+            if (n != 1 || args[0].tag != ValueTag::Num) return Value::nil();
+            double total = args[0].data.num;
+            if (!std::isfinite(total)) return Value::nil();
+            const bool negative = total < 0;
+            if (negative) total = -total;
+            const long long whole = static_cast<long long>(total);
+            const long long hours = whole / 3600;
+            const long long minutes = (whole % 3600) / 60;
+            const long long seconds = whole % 60;
+            char buffer[48];
+            if (hours)
+                std::snprintf(buffer, sizeof(buffer), "%s%lldh %lldm",
+                              negative ? "-" : "", hours, minutes);
+            else if (minutes)
+                std::snprintf(buffer, sizeof(buffer), "%s%lldm %llds",
+                              negative ? "-" : "", minutes, seconds);
+            else
+                std::snprintf(buffer, sizeof(buffer), "%s%llds", negative ? "-" : "",
+                              seconds);
+            return text_result(ctx, site, buffer);
+        }
+        default: break;
+    }
     for (uint32_t i = 0; i < n; ++i)
         if (args[i].tag != ValueTag::Num) return Value::nil();
     auto number = [&](uint32_t i) { return args[i].data.num; };
@@ -71,8 +224,6 @@ Value call(Builtin builtin, const Value* args, uint32_t n) noexcept {
         case Builtin::Pow: if (n == 2) return Value::number(std::pow(number(0), number(1))); break;
         case Builtin::Min: if (n == 2) return Value::number(std::min(number(0), number(1))); break;
         case Builtin::Max: if (n == 2) return Value::number(std::max(number(0), number(1))); break;
-        case Builtin::Int: if (n == 1) return Value::number(std::trunc(number(0))); break;
-        case Builtin::Num: if (n == 1) return args[0]; break;
         case Builtin::Rgb:
             if (n == 3 || n == 4)
                 return Value::color(
@@ -101,12 +252,151 @@ Value call(Builtin builtin, const Value* args, uint32_t n) noexcept {
                                               (b + m) * 255.0, n == 4 ? number(3) : 1.0));
             }
             break;
+        default: break;
     }
     return Value::nil();
 }
 
-Value method(MethodId method, const Value& receiver, const Value* args,
-             uint32_t n) noexcept {
+Value method(const ExecContext& ctx, MethodId method, uint32_t site,
+             const Value& receiver, const Value* args, uint32_t n) noexcept {
+    switch (method) {
+        case MethodId::NumToFixed: {
+            if (receiver.tag != ValueTag::Num || n != 1 || args[0].tag != ValueTag::Num)
+                return Value::nil();
+            int places = static_cast<int>(args[0].data.num);
+            places = std::max(0, std::min(9, places));
+            char buffer[64];
+            std::snprintf(buffer, sizeof(buffer), "%.*f", places, receiver.data.num);
+            return text_result(ctx, site, buffer);
+        }
+        case MethodId::TextLength:
+            if (receiver.tag != ValueTag::Text || n != 0) return Value::nil();
+            return Value::number(static_cast<double>(text_of(ctx, receiver).size()));
+        case MethodId::TextUpper:
+        case MethodId::TextLower: {
+            if (receiver.tag != ValueTag::Text || n != 0) return Value::nil();
+            const std::string_view view = text_of(ctx, receiver);
+            char buffer[512];
+            const size_t length = std::min(view.size(), sizeof(buffer));
+            for (size_t i = 0; i < length; ++i) {
+                const unsigned char c = static_cast<unsigned char>(view[i]);
+                buffer[i] = static_cast<char>(method == MethodId::TextUpper
+                                                  ? std::toupper(c)
+                                                  : std::tolower(c));
+            }
+            return text_result(ctx, site, std::string_view(buffer, length));
+        }
+        case MethodId::TextTitle: {
+            if (receiver.tag != ValueTag::Text || n != 0) return Value::nil();
+            const std::string_view view = text_of(ctx, receiver);
+            char buffer[512];
+            const size_t length = std::min(view.size(), sizeof(buffer));
+            bool boundary = true;
+            for (size_t i = 0; i < length; ++i) {
+                const unsigned char c = static_cast<unsigned char>(view[i]);
+                if (std::isalpha(c)) {
+                    buffer[i] = static_cast<char>(boundary ? std::toupper(c)
+                                                           : std::tolower(c));
+                    boundary = false;
+                } else {
+                    buffer[i] = static_cast<char>(c);
+                    boundary = true;
+                }
+            }
+            return text_result(ctx, site, std::string_view(buffer, length));
+        }
+        case MethodId::TextTrim: {
+            if (receiver.tag != ValueTag::Text || n != 0) return Value::nil();
+            std::string_view view = text_of(ctx, receiver);
+            while (!view.empty() && std::isspace(static_cast<unsigned char>(view.front())))
+                view.remove_prefix(1);
+            while (!view.empty() && std::isspace(static_cast<unsigned char>(view.back())))
+                view.remove_suffix(1);
+            return text_result(ctx, site, view);
+        }
+        case MethodId::TextSlice: {
+            if (receiver.tag != ValueTag::Text || n != 2 ||
+                args[0].tag != ValueTag::Num || args[1].tag != ValueTag::Num)
+                return Value::nil();
+            const std::string_view view = text_of(ctx, receiver);
+            const int64_t length = static_cast<int64_t>(view.size());
+            int64_t from = static_cast<int64_t>(args[0].data.num);
+            int64_t to = static_cast<int64_t>(args[1].data.num);
+            if (from < 0) from += length;
+            if (to < 0) to += length;
+            from = std::max<int64_t>(0, std::min(length, from));
+            to = std::max<int64_t>(0, std::min(length, to));
+            if (from >= to) return text_result(ctx, site, {});
+            return text_result(ctx, site, view.substr(static_cast<size_t>(from),
+                                                      static_cast<size_t>(to - from)));
+        }
+        case MethodId::TextStartsWith:
+        case MethodId::TextEndsWith:
+        case MethodId::TextContains: {
+            if (receiver.tag != ValueTag::Text || n != 1 || args[0].tag != ValueTag::Text)
+                return Value::nil();
+            const std::string_view view = text_of(ctx, receiver);
+            const std::string_view needle = text_of(ctx, args[0]);
+            if (needle.size() > view.size())
+                return Value::boolean(false);
+            if (method == MethodId::TextStartsWith)
+                return Value::boolean(view.substr(0, needle.size()) == needle);
+            if (method == MethodId::TextEndsWith)
+                return Value::boolean(view.substr(view.size() - needle.size()) == needle);
+            return Value::boolean(view.find(needle) != std::string_view::npos);
+        }
+        case MethodId::TextReplace: {
+            if (receiver.tag != ValueTag::Text || n != 2 ||
+                args[0].tag != ValueTag::Text || args[1].tag != ValueTag::Text)
+                return Value::nil();
+            const std::string_view view = text_of(ctx, receiver);
+            const std::string_view what = text_of(ctx, args[0]);
+            const std::string_view with = text_of(ctx, args[1]);
+            if (what.empty()) return text_result(ctx, site, view);
+            char buffer[512];
+            size_t out = 0, at = 0;
+            while (at < view.size() && out < sizeof(buffer)) {
+                if (view.size() - at >= what.size() &&
+                    view.substr(at, what.size()) == what) {
+                    const size_t take = std::min(with.size(), sizeof(buffer) - out);
+                    std::memcpy(buffer + out, with.data(), take);
+                    out += take;
+                    at += what.size();
+                } else {
+                    buffer[out++] = view[at++];
+                }
+            }
+            return text_result(ctx, site, std::string_view(buffer, out));
+        }
+        case MethodId::TextPadStart: {
+            if (receiver.tag != ValueTag::Text || n != 2 ||
+                args[0].tag != ValueTag::Num || args[1].tag != ValueTag::Text)
+                return Value::nil();
+            const std::string_view view = text_of(ctx, receiver);
+            const std::string_view pad_text = text_of(ctx, args[1]);
+            const char pad = pad_text.empty() ? ' ' : pad_text.front();
+            char buffer[512];
+            size_t wanted = static_cast<size_t>(
+                std::max(0.0, std::min(args[0].data.num, 511.0)));
+            wanted = std::max(wanted, view.size());
+            const size_t length = std::min(wanted, sizeof(buffer));
+            const size_t lead = length > view.size() ? length - view.size() : 0;
+            std::memset(buffer, pad, lead);
+            const size_t take = std::min(view.size(), sizeof(buffer) - lead);
+            if (take) std::memcpy(buffer + lead, view.data(), take);
+            return text_result(ctx, site, std::string_view(buffer, lead + take));
+        }
+        case MethodId::EnumInt:
+            if (receiver.tag != ValueTag::Enum || n != 0) return Value::nil();
+            return Value::number(static_cast<double>(receiver.data.integer));
+        case MethodId::EnumName: {
+            if (receiver.tag != ValueTag::Enum || n != 0) return Value::nil();
+            const std::string_view name =
+                enum_variant_name(ctx.program, receiver.enum_type, receiver.data.integer);
+            return name.empty() ? Value::nil() : text_result(ctx, site, name);
+        }
+        default: break;
+    }
     switch (method) {
         case MethodId::NumRound:
             if (receiver.tag == ValueTag::Num && n == 1 && args[0].tag == ValueTag::Num) {
@@ -188,6 +478,7 @@ Value method(MethodId method, const Value& receiver, const Value* args,
                 return Value::color(
                     mix_rgba(receiver.data.rgba, args[0].data.rgba, args[1].data.num));
             break;
+        default: break;
     }
     return Value::nil();
 }
@@ -239,6 +530,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                           const FlowProgram* flow, RuntimeState& state, Value event_value,
                           uint32_t start_pc = 0, Value* out_x = nullptr) noexcept {
     RunResult result;
+    const ExecContext ctx{program, state};
     Value x = event_value;
     uint32_t sp = 0;
     uint32_t pc = start_pc;
@@ -324,7 +616,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
-                const Value value = call(static_cast<Builtin>(ins.small), &state.stack[sp - argc], argc);
+                const Value value = call(ctx, static_cast<Builtin>(ins.small), ins.a,
+                                         &state.stack[sp - argc], argc);
                 sp -= argc;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -337,8 +630,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 const uint32_t receiver_at = sp - argc - 1;
                 const Value value =
-                    method(static_cast<MethodId>(ins.small), state.stack[receiver_at],
-                           &state.stack[receiver_at + 1], argc);
+                    method(ctx, static_cast<MethodId>(ins.small), ins.a,
+                           state.stack[receiver_at], &state.stack[receiver_at + 1], argc);
                 sp = receiver_at;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -391,12 +684,35 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 pending.wake_tick = state.tick + ins.b;
                 pending.flow = flow->runtime_index;
                 pending.resume_pc = pc;
-                pending.x = x;
+                /* deep-copy held TEXT into this site's own fixed slots (the plan's
+                 * suspension rule): a scratch result must not be overwritten by a
+                 * later run before this one resumes. The slot layout is fixed: one
+                 * for x, then one per text-shaped buffer field, in table order. */
+                uint32_t cursor = ins.a < state.pending_texts.size()
+                                      ? state.pending_texts[ins.a]
+                                      : UINT32_MAX;
+                auto hold_text = [&](const Value& value) -> Value {
+                    if (cursor == UINT32_MAX || cursor >= state.texts.size()) return value;
+                    const uint32_t slot = cursor++;
+                    if (value.tag != ValueTag::Text) return value;
+                    if (value.ref != slot)
+                        state.texts[slot].set(state.text(program, value));
+                    return Value::text(slot);
+                };
+                pending.x = hold_text(x);
                 for (uint32_t i = 0; i < state.buffers.size(); ++i) {
                     pending.buffers[i].open = state.buffers[i].open;
                     pending.buffers[i].entity = state.buffers[i].entity;
                     pending.buffers[i].fields = state.buffers[i].fields;
                     pending.buffers[i].set = state.buffers[i].set;
+                    const uint32_t entity = state.buffers[i].entity;
+                    if (entity >= program.entities.size()) continue;
+                    const std::vector<FieldDef>& defs = program.entities[entity].fields;
+                    for (uint32_t f = 0; f < defs.size() &&
+                                         f < pending.buffers[i].fields.size(); ++f)
+                        if (defs[f].shape == Shape::Text)
+                            pending.buffers[i].fields[f] =
+                                hold_text(state.buffers[i].fields[f]);
                 }
                 result.suspended = true;
                 result.halted = true;

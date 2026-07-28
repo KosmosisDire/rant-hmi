@@ -75,6 +75,9 @@ class RuntimeState {
      * `seed: last` build must be able to re-send it) */
     uint32_t mesh_scratch = 0;
     std::vector<std::vector<uint32_t>> entity_texts;   /* [entity][field] -> text slot */
+    /* suspension deep-copy storage: each pending site owns a fixed run of text slots
+     * (one for x, one per text-shaped buffer field) so held text survives until resume */
+    std::vector<uint32_t> pending_texts;               /* [pending site] -> first slot */
     std::vector<MessageState> buffers;
     std::vector<LastValueState> last;
     std::vector<Value> deadband;

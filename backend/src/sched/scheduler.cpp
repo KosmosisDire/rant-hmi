@@ -127,6 +127,7 @@ void Scheduler::on_update(const MeshUpdate& update) {
         for (uint32_t i = 0; i < count && i < last.fields.size(); ++i) {
             Value value = update.fields[i];
             if (value.tag == ValueTag::Nil) continue;
+            if (value.tag == ValueTag::Enum) value.enum_type = fields[i].enum_type;
             if (value.tag == ValueTag::Text) {
                 const uint32_t slot = state_.entity_texts[entity][i];
                 if (slot >= state_.texts.size()) continue;
@@ -143,6 +144,7 @@ void Scheduler::on_update(const MeshUpdate& update) {
             continue;
         if (feed.field >= count) continue;
         Value x = update.fields[feed.field];
+        if (x.tag == ValueTag::Enum) x.enum_type = fields[feed.field].enum_type;
         if (x.tag == ValueTag::Text) {
             /* cached entities already hold the text in its retained slot; a function
              * response rides the one scratch slot, consumed by this run alone */

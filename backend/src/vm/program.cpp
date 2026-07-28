@@ -34,8 +34,12 @@ uint32_t Program::add_text(const std::string& text) {
 }
 
 uint32_t Program::add_constant(Value value) {
+    /* exact enum_type match: value equality treats type 0 as a wildcard, but merging
+     * constants across enum types would strip the stamp `.is()` compares against */
     for (uint32_t i = 0; i < constants.size(); ++i)
-        if (value_same_scalar(constants[i], value)) return i;
+        if (constants[i].enum_type == value.enum_type &&
+            value_same_scalar(constants[i], value))
+            return i;
     constants.push_back(value);
     return static_cast<uint32_t>(constants.size() - 1);
 }

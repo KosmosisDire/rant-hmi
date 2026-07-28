@@ -637,6 +637,193 @@ void test_colors() {
     CHECK(result.shape == Shape::Color);
 }
 
+/* Text and enums flow end to end: mesh enums resolve their variant names, text
+ * transforms build new text in fixed per-site slots (no allocation), and the
+ * conversions bridge shapes. */
+void test_text_and_enums() {
+    EntityDef machine;
+    machine.kind = EntityKind::Variable;
+    machine.name = "machine";
+    FieldDef mode{"mode", Shape::Enum};
+    mode.variants = {{"idle", 0}, {"running", 2}, {"fault", 7}};
+    machine.fields = {mode, FieldDef{"note", Shape::Text}};
+    EntityDef sensor;
+    sensor.kind = EntityKind::Variable;
+    sensor.name = "sensor";
+    sensor.fields = {FieldDef{"value", Shape::Num}};
+    FakeMesh mesh(std::vector<EntityDef>{machine, sensor});
+
+    Json widgets = Json::array();
+    widgets.push_back(Json{
+        {"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "units"}, {"src", entity("V", "machine")}, {"path", "mode"},
+                 {"xf", "x.name"}},
+            Json{{"slot", "decimals"}, {"src", entity("V", "machine")}, {"path", "mode"},
+                 {"xf", "x.is(running).pick(4, 1)"}},
+            Json{{"slot", "value"}, {"src", entity("V", "machine")}, {"path", "mode"},
+                 {"xf", "x.int"}},
+        })}});
+    widgets.push_back(Json{
+        {"type", "Readout"}, {"label", "b"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "units"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "x.toFixed(2)"}},
+            Json{{"slot", "value"}, {"src", entity("V", "machine")}, {"path", "note"},
+                 {"xf", "num(x.trim())"}},
+            Json{{"slot", "decimals"}, {"src", entity("V", "machine")}, {"path", "note"},
+                 {"xf", "x.length"}},
+        })}});
+    widgets.push_back(Json{
+        {"type", "Label"}, {"label", "c"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "text"}, {"src", entity("V", "machine")}, {"path", "note"},
+                 {"xf", "x.trim().title().replace(\"Ab\", \"Z\").padStart(4, \"_\")"}},
+        })}});
+    widgets.push_back(Json{
+        {"type", "Label"}, {"label", "d"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "text"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "fmtDuration(x)"}},
+        })}});
+    widgets.push_back(Json{
+        {"type", "Label"}, {"label", "e"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "text"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "str(x)"}},
+        })}});
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"}, {"widgets", std::move(widgets)}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("text compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+    if (!CHECK(compiled.program.feeds.size() == 9)) return;
+    RuntimeState state(compiled.program);
+
+    auto text_of = [&](const FeedProgram& feed) {
+        return std::string(state.text(compiled.program, state.values[feed.cell]));
+    };
+    auto num_of = [&](const FeedProgram& feed) {
+        return state.values[feed.cell].tag == ValueTag::Num
+                   ? state.values[feed.cell].data.num
+                   : -1e9;
+    };
+    auto text_x = [&](const char* value) {
+        state.texts[state.mesh_scratch].set(value);
+        return Value::text(state.mesh_scratch);
+    };
+    const Program& program = compiled.program;
+    const FieldDef& mode_field =
+        program.entities[program.feeds[0].entity].fields[program.feeds[0].field];
+    CHECK(mode_field.enum_type != 0);
+    const Value running = Value::enumeration(2, mode_field.enum_type);
+    const Value idle = Value::enumeration(0, mode_field.enum_type);
+
+    run_feed(program, program.feeds[0], state, running);
+    CHECK_EQ(text_of(program.feeds[0]), "running");
+    run_feed(program, program.feeds[1], state, running);
+    CHECK_EQ(num_of(program.feeds[1]), 4.0);
+    run_feed(program, program.feeds[1], state, idle);
+    CHECK_EQ(num_of(program.feeds[1]), 1.0);
+    run_feed(program, program.feeds[2], state, running);
+    CHECK_EQ(num_of(program.feeds[2]), 2.0);
+
+    run_feed(program, program.feeds[3], state, Value::number(3.14159));
+    CHECK_EQ(text_of(program.feeds[3]), "3.14");
+    run_feed(program, program.feeds[4], state, text_x("  42.5 "));
+    CHECK_EQ(num_of(program.feeds[4]), 42.5);
+    run_feed(program, program.feeds[5], state, text_x("abcd"));
+    CHECK_EQ(num_of(program.feeds[5]), 4.0);
+
+    const uint64_t before = allocation_count.load(std::memory_order_relaxed);
+    run_feed(program, program.feeds[6], state, text_x("  abc "));
+    CHECK(allocation_count.load(std::memory_order_relaxed) == before);
+    CHECK_EQ(text_of(program.feeds[6]), "__Zc");
+
+    run_feed(program, program.feeds[7], state, Value::number(3660));
+    CHECK_EQ(text_of(program.feeds[7]), "1h 1m");
+    run_feed(program, program.feeds[7], state, Value::number(42));
+    CHECK_EQ(text_of(program.feeds[7]), "42s");
+    run_feed(program, program.feeds[8], state, Value::number(42.5));
+    CHECK_EQ(text_of(program.feeds[8]), "42.5");
+
+    /* variant resolution is compile-time: a bogus variant is an expression error */
+    Program scratch;
+    scratch.enum_types = {{}, {{"idle", 0}, {"running", 2}}};
+    ExpressionScope scope;
+    scope.x_shape = Shape::Enum;
+    scope.x_enum = 1;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string error;
+    CHECK(!compile_expression("x.is(bogus)", ExprTier::Display, scope, scratch, code,
+                              result, error));
+    CHECK_MSG(error.find("variant") != std::string::npos, error);
+    error.clear();
+    code.clear();
+    CHECK(compile_expression("x.is(running)", ExprTier::Wire, scope, scratch, code,
+                             result, error));
+    CHECK(result.shape == Shape::Bool);
+}
+
+/* A suspension captures text BY VALUE: what was held at the delay is what resumes,
+ * even if the variable it came from moves meanwhile (the plan's deep-copy rule). */
+void test_suspend_holds_text() {
+    Json flow = Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+                     {"when_mode", "any"},
+                     {"do", Json::array({
+                          Json{{"kind", "transform"}, {"a", "note"}},
+                          Json{{"kind", "delay"}, {"a", 5}},
+                          Json{{"kind", "assign"}, {"var", "out"}, {"a", "x"}},
+                      })}};
+    Json widget = Json{{"type", "Button"}, {"label", "w"}, {"slots", Json::object()},
+                       {"flows", Json::array({std::move(flow)})}};
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array({
+                     Json{{"name", "note"}, {"type", "str"}, {"init", "first"}},
+                     Json{{"name", "out"}, {"type", "str"}, {"init", ""}},
+                 })},
+                 {"pages", Json::array({Json{{"name", "P"},
+                                             {"widgets", Json::array({std::move(widget)})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    FakeMesh mesh(std::vector<EntityDef>{});
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("suspend compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+    RuntimeState state(compiled.program);
+    const uint64_t widget_id = only_widget(document);
+
+    RunResult run = run_event(compiled.program, state, widget_id, "press",
+                              Value::boolean(true));
+    CHECK(!run.faulted);
+    if (!CHECK(!state.pending.empty() && state.pending[0].active)) return;
+
+    /* move the source variable while the run is parked */
+    const int note = cell_named(compiled.program, "note");
+    CHECK(note >= 0);
+    state.texts[state.mesh_scratch].set("second");
+    CHECK(state.store(compiled.program, static_cast<uint32_t>(note),
+                      Value::text(state.mesh_scratch)));
+
+    resume_pending(compiled.program, state, 0);
+    const int out = cell_named(compiled.program, "out");
+    CHECK(out >= 0);
+    CHECK_EQ(std::string(state.text(compiled.program, state.values[out])), "first");
+}
+
 /* The document holds values Json::value() would THROW on: optional numbers default to
  * null in the doc schema, so every unauthored function-feed rate is `"poll_hz": null`.
  * Reading it with value("poll_hz", 0.0) crashed the live backend the moment the
@@ -700,6 +887,8 @@ int main() {
     test_event_value();
     test_value_shape_diagnostics();
     test_colors();
+    test_text_and_enums();
+    test_suspend_holds_text();
     test_document_tolerance();
     return check::summary("runtime_test");
 }

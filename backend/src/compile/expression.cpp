@@ -235,6 +235,22 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false},
         {Shape::Color, "alpha", MethodId::ColorAlpha, 1, {NUM}, Shape::Color, true},
         {Shape::Color, "mix", MethodId::ColorMix, 2, {Shape::Color, NUM}, Shape::Color, true},
+        {Shape::Num, "toFixed", MethodId::NumToFixed, 1, {NUM}, Shape::Text, true},
+        /* text: the predicates and length are wire-legal (a gate may test an alarm
+         * code); everything text-PRODUCING is formatting and stays display-side */
+        {Shape::Text, "length", MethodId::TextLength, 0, {}, Shape::Num, false},
+        {Shape::Text, "upper", MethodId::TextUpper, 0, {}, Shape::Text, true},
+        {Shape::Text, "lower", MethodId::TextLower, 0, {}, Shape::Text, true},
+        {Shape::Text, "title", MethodId::TextTitle, 0, {}, Shape::Text, true},
+        {Shape::Text, "trim", MethodId::TextTrim, 0, {}, Shape::Text, true},
+        {Shape::Text, "slice", MethodId::TextSlice, 2, {NUM, NUM}, Shape::Text, true},
+        {Shape::Text, "startsWith", MethodId::TextStartsWith, 1, {Shape::Text}, Shape::Bool, false},
+        {Shape::Text, "endsWith", MethodId::TextEndsWith, 1, {Shape::Text}, Shape::Bool, false},
+        {Shape::Text, "contains", MethodId::TextContains, 1, {Shape::Text}, Shape::Bool, false},
+        {Shape::Text, "replace", MethodId::TextReplace, 2, {Shape::Text, Shape::Text}, Shape::Text, true},
+        {Shape::Text, "padStart", MethodId::TextPadStart, 2, {NUM, Shape::Text}, Shape::Text, true},
+        {Shape::Enum, "int", MethodId::EnumInt, 0, {}, Shape::Num, false},
+        {Shape::Enum, "name", MethodId::EnumName, 0, {}, Shape::Text, false},
     };
     return table;
 }
@@ -253,10 +269,14 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"pow", {Builtin::Pow, 2, 2, {NUM, NUM}, Shape::Num, false}},
         {"min", {Builtin::Min, 2, 2, {NUM, NUM}, Shape::Num, false}},
         {"max", {Builtin::Max, 2, 2, {NUM, NUM}, Shape::Num, false}},
-        {"int", {Builtin::Int, 1, 1, {NUM}, Shape::Num, false}},
-        {"num", {Builtin::Num, 1, 1, {NUM}, Shape::Num, false}},
+        {"int", {Builtin::Int, 1, 1, {ANY}, Shape::Num, false}},
+        {"num", {Builtin::Num, 1, 1, {ANY}, Shape::Num, false}},
         {"rgb", {Builtin::Rgb, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
         {"hsv", {Builtin::Hsv, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
+        {"str", {Builtin::Str, 1, 1, {ANY}, Shape::Text, false}},
+        {"name", {Builtin::Name, 1, 1, {ANY}, Shape::Text, false}},
+        {"fmtTime", {Builtin::FmtTime, 1, 1, {NUM}, Shape::Text, true}},
+        {"fmtDuration", {Builtin::FmtDuration, 1, 1, {NUM}, Shape::Text, true}},
     };
     return table;
 }
@@ -337,6 +357,7 @@ class Parser {
         if (token_.kind != TokenKind::End) return fail("unexpected '" + token_.text + "'");
         if (depth_ != 1) return fail("expression stack is unbalanced");
         result.shape = shape;
+        result.enum_type = shape == Shape::Enum ? enum_type_ : 0;
         result.max_stack = max_depth_;
         return true;
     }
@@ -499,6 +520,7 @@ class Parser {
     Shape parse_postfix() {
         Shape receiver = parse_primary();
         while (error_.empty() && token_.kind == TokenKind::Dot) {
+            const uint16_t receiver_enum = enum_type_;
             advance();
             if (token_.kind != TokenKind::Ident) {
                 fail("expected a method after '.'");
@@ -506,6 +528,14 @@ class Parser {
             }
             const std::string name = token_.text;
             advance();
+            /* `.is(variant)` resolves the variant against the RECEIVER's vocabulary at
+             * compile time and lowers to an ordinary equality; no method id exists */
+            if (receiver == Shape::Enum && name == "is") {
+                if (!parse_enum_is(receiver_enum)) return Shape::Unknown;
+                receiver = Shape::Bool;
+                enum_type_ = 0;
+                continue;
+            }
             const MethodSpec* spec = nullptr;
             for (const MethodSpec& row : methods())
                 if (row.receiver == receiver && name == row.name) {
@@ -547,22 +577,59 @@ class Parser {
                 fail(name + " takes " + std::to_string(spec->args) + " arguments");
                 return Shape::Unknown;
             }
-            emit(OpCode::Method, 0, argc, static_cast<uint16_t>(spec->method));
+            /* a text-producing site owns one fixed slot for its result, assigned here
+             * so runtime text costs no allocation and no cursor */
+            const uint32_t site =
+                spec->result == Shape::Text ? program_.layout.text_slots++ : 0;
+            emit(OpCode::Method, site, argc, static_cast<uint16_t>(spec->method));
             if (argc) depth_ -= argc;
             receiver = spec->result == Shape::Unknown
                            ? (argc ? Shape::Unknown : receiver)
                            : spec->result;
+            enum_type_ = 0;
         }
         return receiver;
+    }
+
+    bool parse_enum_is(uint16_t receiver_enum) {
+        if (token_.kind != TokenKind::LParen) return fail("is takes a variant name");
+        advance();
+        if (token_.kind != TokenKind::Ident) return fail("is takes a variant name");
+        const std::string variant = token_.text;
+        advance();
+        if (token_.kind != TokenKind::RParen)
+            return fail("expected ')' after the variant");
+        advance();
+        bool found = false;
+        int64_t value = 0;
+        if (receiver_enum && receiver_enum < program_.enum_types.size())
+            for (const auto& row : program_.enum_types[receiver_enum])
+                if (row.first == variant) {
+                    value = row.second;
+                    found = true;
+                    break;
+                }
+        if (!found)
+            return fail(receiver_enum
+                            ? "the enum has no variant '" + variant + "'"
+                            : "the enum's variants are not known here");
+        emit(OpCode::Const,
+             program_.add_constant(Value::enumeration(value, receiver_enum)));
+        pushed();
+        emit(OpCode::Eq);
+        --depth_;
+        return true;
     }
 
     Shape load_binding(const Binding& binding) {
         emit(binding.load, binding.a, binding.b);
         pushed();
+        enum_type_ = binding.shape == Shape::Enum ? binding.enum_type : 0;
         return binding.shape;
     }
 
     Shape parse_primary() {
+        enum_type_ = 0;
         if (token_.kind == TokenKind::Number) {
             emit(OpCode::Const, program_.add_constant(Value::number(token_.number)));
             pushed();
@@ -613,6 +680,7 @@ class Parser {
         if (name == "x") {
             emit(OpCode::LoadX);
             pushed();
+            enum_type_ = scope_.x_shape == Shape::Enum ? scope_.x_enum : 0;
             return scope_.x_shape;
         }
         if (token_.kind == TokenKind::LParen) return parse_call(name);
@@ -673,8 +741,11 @@ class Parser {
             fail(name + " takes " + std::to_string(spec.min_args) + " arguments");
             return Shape::Unknown;
         }
-        emit(OpCode::Call, 0, argc, static_cast<uint16_t>(spec.builtin));
+        const uint32_t site =
+            spec.result == Shape::Text ? program_.layout.text_slots++ : 0;
+        emit(OpCode::Call, site, argc, static_cast<uint16_t>(spec.builtin));
         if (argc) depth_ -= argc - 1;
+        enum_type_ = 0;
         return spec.result;
     }
 
@@ -687,6 +758,9 @@ class Parser {
     std::string& error_;
     uint32_t depth_ = 0;
     uint32_t max_depth_ = 0;
+    /* the enum vocabulary of the most recently parsed unit (0 = none): consumed by
+     * postfix `.is(...)` and reported on an enum-shaped result */
+    uint16_t enum_type_ = 0;
 };
 
 } // namespace

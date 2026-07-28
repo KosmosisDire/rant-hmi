@@ -84,7 +84,10 @@ bool value_same_scalar(const Value& a, const Value& b) {
         case ValueTag::Num: return a.data.num == b.data.num;
         case ValueTag::Bool: return a.data.boolean == b.data.boolean;
         case ValueTag::Enum:
-            return a.enum_type == b.enum_type && a.data.integer == b.data.integer;
+            /* type 0 is the untyped placeholder (a zero seed, a decode before the
+             * program stamped it): match on the integer alone rather than refusing */
+            return (a.enum_type == 0 || b.enum_type == 0 || a.enum_type == b.enum_type) &&
+                   a.data.integer == b.data.integer;
         case ValueTag::Color: return a.data.rgba == b.data.rgba;
         default: return a.ref == b.ref;
     }

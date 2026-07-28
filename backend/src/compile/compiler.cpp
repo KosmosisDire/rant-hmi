@@ -168,10 +168,27 @@ class Compiler {
 
     void copy_entities() {
         program_.entities = mesh_.reflection();
-        for (const EntityDef& entity : program_.entities)
+        /* assign every enum-shaped field its vocabulary id: entry 0 stays the untyped
+         * placeholder, identical variant lists share one id so equality across
+         * entities with the same vocabulary holds */
+        program_.enum_types.assign(1, {});
+        auto assign_enum = [&](FieldDef& field) {
+            if (field.variants.empty()) return;
+            for (uint32_t i = 1; i < program_.enum_types.size(); ++i)
+                if (program_.enum_types[i] == field.variants) {
+                    field.enum_type = static_cast<uint16_t>(i);
+                    return;
+                }
+            field.enum_type = static_cast<uint16_t>(program_.enum_types.size());
+            program_.enum_types.push_back(field.variants);
+        };
+        for (EntityDef& entity : program_.entities) {
+            for (FieldDef& field : entity.fields) assign_enum(field);
+            for (FieldDef& field : entity.rsp_fields) assign_enum(field);
             program_.layout.max_entity_fields =
                 std::max<uint32_t>(program_.layout.max_entity_fields,
                                    static_cast<uint32_t>(entity.fields.size()));
+        }
     }
 
     uint32_t add_cell(CellKind kind, uint64_t owner_widget, uint64_t node_id,
@@ -395,7 +412,8 @@ class Compiler {
     bool expression(uint64_t node, const std::string& text, ExprTier tier,
                     const ExpressionScope& scope, Shape expected,
                     std::vector<Instruction>& code, uint32_t& max_stack,
-                    Shape* actual = nullptr, const std::string& where = "") {
+                    Shape* actual = nullptr, const std::string& where = "",
+                    uint16_t* enum_out = nullptr) {
         ExpressionResult result;
         std::string error;
         if (!compile_expression(text, tier, scope, program_, code, result, error)) {
@@ -411,6 +429,7 @@ class Compiler {
             return false;
         }
         if (actual) *actual = result.shape;
+        if (enum_out) *enum_out = result.enum_type;
         max_stack = std::max(max_stack, result.max_stack);
         return true;
     }
@@ -470,7 +489,10 @@ class Compiler {
                                                  feed.feed_id, "path", /*response=*/true);
                     if (field < 0) continue;
                     feed.field = static_cast<uint32_t>(field);
-                    scope.x_shape = feed_fields(program_.entities[feed.entity])[feed.field].shape;
+                    const FieldDef& source_field =
+                        feed_fields(program_.entities[feed.entity])[feed.field];
+                    scope.x_shape = source_field.shape;
+                    scope.x_enum = source_field.enum_type;
                     if (program_.entities[feed.entity].kind == EntityKind::Function) {
                         const double hz = num_or(node, "poll_hz", 0.0);
                         feed.poll_ms = hz > 0.0
@@ -572,12 +594,15 @@ class Compiler {
             const std::string kind = step.value("kind", "");
             if (kind == "transform") {
                 Shape transformed = Shape::Unknown;
+                uint16_t transformed_enum = 0;
                 if (!expression(step_id, str_or(step, "a", "x"), ExprTier::Wire, scope,
-                                Shape::Unknown, flow.code, flow.max_stack, &transformed))
+                                Shape::Unknown, flow.code, flow.max_stack, &transformed,
+                                "", &transformed_enum))
                     return false;
                 flow.code.push_back(Instruction{OpCode::StoreX});
                 current_x_shape = transformed;
                 scope.x_shape = transformed;
+                scope.x_enum = transformed_enum;
             } else if (kind == "gate") {
                 if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
                                 Shape::Bool, flow.code, flow.max_stack))
@@ -625,7 +650,7 @@ class Compiler {
                 for (uint32_t i = 0; i < program_.entities[def.entity].fields.size(); ++i) {
                     const FieldDef& field = program_.entities[def.entity].fields[i];
                     scope.qualified[def.name + "." + field.path] =
-                        Binding{field.shape, OpCode::LoadMsgF, buffer, i};
+                        Binding{field.shape, OpCode::LoadMsgF, buffer, i, field.enum_type};
                 }
             } else if (kind == "setf") {
                 if (current_buffer < 0) {

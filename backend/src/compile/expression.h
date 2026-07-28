@@ -15,16 +15,19 @@ struct Binding {
     OpCode load = OpCode::Load;
     uint32_t a = 0;
     uint32_t b = 0;
+    uint16_t enum_type = 0;   /* Enum-shaped bindings: the Program.enum_types id */
 };
 
 struct ExpressionScope {
     Shape x_shape = Shape::Unknown;
+    uint16_t x_enum = 0;      /* when x_shape is Enum: its Program.enum_types id */
     std::unordered_map<std::string, Binding> names;
     std::unordered_map<std::string, Binding> qualified;
 };
 
 struct ExpressionResult {
     Shape shape = Shape::Unknown;
+    uint16_t enum_type = 0;   /* when shape is Enum: the id, so a chain can keep it */
     uint32_t max_stack = 0;
 };
 

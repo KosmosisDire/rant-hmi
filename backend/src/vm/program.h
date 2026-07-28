@@ -109,6 +109,11 @@ enum class Builtin : uint16_t {
     Num,
     Rgb,
     Hsv,
+    /* appended only: the frontend's attribute interpreter mirrors these ids */
+    Str,
+    Name,
+    FmtTime,
+    FmtDuration,
 };
 
 enum class MethodId : uint16_t {
@@ -128,6 +133,21 @@ enum class MethodId : uint16_t {
     ColorA,
     ColorAlpha,
     ColorMix,
+    /* appended only: the frontend's attribute interpreter mirrors these ids */
+    NumToFixed,
+    TextLength,
+    TextUpper,
+    TextLower,
+    TextTitle,
+    TextTrim,
+    TextSlice,
+    TextStartsWith,
+    TextEndsWith,
+    TextContains,
+    TextReplace,
+    TextPadStart,
+    EnumInt,
+    EnumName,
 };
 
 struct Instruction {
@@ -220,6 +240,10 @@ struct Program {
     uint64_t document_version = 0;
     std::vector<Value> constants;
     std::vector<std::string> texts;
+    /* enum vocabulary by Value.enum_type id: entry 0 is the untyped placeholder;
+     * identical variant lists share one id (assigned in copy_entities), so equality
+     * between values from different entities with the same vocabulary holds */
+    std::vector<std::vector<std::pair<std::string, int64_t>>> enum_types;
     std::vector<CellDef> cells;
     std::vector<EntityDef> entities;
     std::vector<BufferDef> buffers;
