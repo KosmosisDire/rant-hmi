@@ -122,30 +122,6 @@ button:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.brand .logo {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 2px;
-  background: var(--acc);
-  color: #0d0d0d;
-  font: 700 11px var(--mono);
-}
-
-.brand .name {
-  font: 700 10px var(--mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted-2);
-}
-
 /* a two-state control is one icon or one segmented pair: the active half carries the
    accent fill (Build Sheet), never a second label */
 .seg {
@@ -177,12 +153,6 @@ button:focus-visible {
 .seg > button.on {
   background: var(--acc);
   color: #0d0d0d;
-}
-
-.tools {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .status {
@@ -228,38 +198,16 @@ button:focus-visible {
   border-color: var(--line-in);
 }
 
+/* the connection is one light: green when live, red when not */
 .pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 20px;
-  padding: 0 8px;
-  border: 1px solid var(--line-3);
-  border-radius: 2px;
-  background: var(--input);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.pill::before {
-  content: "";
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--dim);
+  background: var(--bad);
 }
 
-.pill.live::before {
+.pill.live {
   background: var(--ok);
-  box-shadow: 0 0 7px var(--ok);
-}
-.pill.connecting::before {
-  background: var(--warn);
-}
-.pill.offline::before {
-  background: var(--bad);
 }
 
 /* ---------- workspace ---------- */
@@ -1032,31 +980,6 @@ select.field {
 .dashed-btn:hover {
   border-color: var(--acc);
   color: var(--ink-2);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 20px;
-  padding: 0 8px;
-  border: 1px solid var(--line-in);
-  border-radius: 2px;
-  background: transparent;
-  color: var(--muted);
-  font: 600 10.5px var(--mono);
-  cursor: pointer;
-}
-
-.btn:hover {
-  border-color: var(--acc);
-  color: var(--ink-2);
-}
-
-.btn.primary {
-  background: var(--acc);
-  border-color: var(--acc);
-  color: #0d0d0d;
 }
 
 /* ---------- left sidebar ---------- */

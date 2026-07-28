@@ -11,7 +11,6 @@ import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } fr
 import { DocStore } from "./doc.js";
 import { clear, el, svg } from "./dom.js";
 import { Editor } from "./editor.js";
-import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
@@ -54,10 +53,8 @@ export class App implements Editor {
     art: SVGSVGElement;
     overlay: SVGSVGElement;
     banner: HTMLElement;
-    version: HTMLElement;
     problems: HTMLElement;
     pill: HTMLElement;
-    palette: HTMLElement;
   };
   private sidebars!: { left: Panel; inspector: Panel };
   private drag: Json = null;
@@ -167,7 +164,6 @@ export class App implements Editor {
     const page = this.page();
     this.pageId = page ? page.id : 0;
     this.viewport?.setArtboard(doc.canvas.unit_w, doc.canvas.unit_h);
-    this.buildPalette();
     this.conn.view(this.pageId, true);
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
     this.renderAll();
@@ -240,7 +236,7 @@ export class App implements Editor {
 
   private onStatus(state: Status, detail: string): void {
     this.nodes.pill.className = "pill " + state;
-    this.nodes.pill.textContent = state === "live" ? "live" : state;
+    this.nodes.pill.title = state;
     if (state === "live" && detail.startsWith("edit refused")) this.flash(detail);
     else if (state !== "live") this.flash(detail + " (retrying)");
     else this.flash("");
@@ -254,7 +250,6 @@ export class App implements Editor {
   /* ---- rendering ---- */
 
   private renderAll(): void {
-    this.nodes.version.textContent = "v" + this.store.version();
     this.queueCanvas(true);
     this.queueSidebars();
   }
@@ -299,12 +294,9 @@ export class App implements Editor {
 
   private build(): void {
     clear(this.root);
-    const pill = el("span", { class: "pill connecting", text: "connecting" });
-    const version = el("span", { class: "version", text: "v0" });
-    /* compile findings live next to the version because that is what they are about: this
-       document at this version. Clicking one selects the widget it names. */
+    const pill = el("span", { class: "pill connecting", title: "connecting" });
+    /* clicking a compile finding selects the widget it names */
     const problems = el("button", { class: "problems", onclick: () => this.showProblem() });
-    const palette = el("div", { class: "tools" });
     const left = el("aside", { class: "sidebar left" });
     const inspector = el("aside", { class: "sidebar right" });
     const art = svg("svg", { class: "artboard", width: "100%", height: "100%" }) as SVGSVGElement;
@@ -328,13 +320,8 @@ export class App implements Editor {
 
     this.root.appendChild(
       el("header", { class: "topbar" }, [
-        el("div", { class: "brand" }, [
-          el("span", { class: "logo", text: "H" }),
-          el("span", { class: "name", text: "HMI Designer" }),
-        ]),
         modes,
-        palette,
-        el("div", { class: "status" }, [problems, version, pill]),
+        el("div", { class: "status" }, [problems, pill]),
       ]),
     );
     this.root.appendChild(
@@ -349,7 +336,7 @@ export class App implements Editor {
     this.root.appendChild(banner);
 
     this.nodes = {
-      left, inspector, stage, layer, art, overlay, banner, version, problems, pill, palette,
+      left, inspector, stage, layer, art, overlay, banner, problems, pill,
     };
     this.sidebars = { left: new Panel(left), inspector: new Panel(inspector) };
     this.restoreSidebarWidths();
@@ -764,44 +751,6 @@ export class App implements Editor {
         icon: type.name,
         run: () => this.addWidget(type.name, at.x, at.y),
       })),
-    );
-  }
-
-  private buildPalette(): void {
-    const palette = this.nodes.palette;
-    clear(palette);
-    const names = (this.registry?.types ?? []).map((t) => t.name);
-    if (!names.length) return;
-    palette.appendChild(
-      el("button", {
-        class: "btn primary",
-        html: iconMarkup("plus", 11, 2) + "<span>widget</span>",
-        onclick: (ev: MouseEvent) =>
-          openMenu(
-            ev.clientX,
-            ev.clientY + 8,
-            "Add widget",
-            names.map((name) => ({
-              label: name,
-              icon: name,
-              run: () => this.addWidget(name),
-            })),
-          ),
-      }),
-    );
-    palette.appendChild(
-      el("button", {
-        class: "btn",
-        html: iconMarkup("copy", 11, 1.6) + "<span>duplicate</span>",
-        onclick: () => this.duplicate(),
-      }),
-    );
-    palette.appendChild(
-      el("button", {
-        class: "btn",
-        html: iconMarkup("trash", 11, 1.6) + "<span>delete</span>",
-        onclick: () => this.removeSelection(),
-      }),
     );
   }
 
