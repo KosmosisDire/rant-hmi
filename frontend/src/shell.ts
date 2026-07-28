@@ -1,6 +1,6 @@
 /* The application shell: three columns, the mode switch, and the wiring between the
- * connection, the document mirror and the rails. The shell holds only view state
- * (selection, hover, mode, rail widths); every edit leaves as an op and comes back as a
+ * connection, the document mirror and the sidebars. The shell holds only view state
+ * (selection, hover, mode, sidebar widths); every edit leaves as an op and comes back as a
  * broadcast, so two windows are always looking at the same document.
  *
  * Direct manipulation follows the old designer: click selects, shift-click extends, drag
@@ -13,7 +13,7 @@ import { clear, el, svg } from "./dom.js";
 import { Editor } from "./editor.js";
 import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
-import { inspectorShape, leftShape, renderInspector, renderLeftRail } from "./inspector/panel.js";
+import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
@@ -25,8 +25,8 @@ import { Viewport } from "./viewport.js";
 
 type Mode = "edit" | "run" | "operate";
 
-const RAIL_MIN = 200;
-const RAIL_MAX = 640;
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 640;
 const MIN_SIZE = 20;
 
 export class App implements Editor {
@@ -59,13 +59,13 @@ export class App implements Editor {
     pill: HTMLElement;
     palette: HTMLElement;
   };
-  private rails!: { left: Panel; inspector: Panel };
+  private sidebars!: { left: Panel; inspector: Panel };
   private drag: Json = null;
   private control: Json = null;
   private inputSequence = 0;
   private frame = 0;
   private contentDirty = true;
-  private railsDirty = true;
+  private sidebarsDirty = true;
   private lastContent = "";
   private lastOverlay = "";
 
@@ -77,15 +77,15 @@ export class App implements Editor {
       mesh: (mesh) => {
         this.mesh = mesh;
         refreshSourceTree();
-        this.queueRails();
+        this.queueSidebars();
       },
       ops: (version, ops) => this.onOps(version, ops),
-      /* a live frame and a document echo are the same event to a rail: re-read and
-         assign. The rails decide for themselves whether anything structural moved. */
+      /* a live frame and a document echo are the same event to a sidebar: re-read and
+         assign. The sidebars decide for themselves whether anything structural moved. */
       live: (live) => {
         this.live = live;
         this.queueCanvas(true);
-        this.queueRails();
+        this.queueSidebars();
       },
       diag: (rows) => this.onDiag(rows),
       status: (state, detail) => this.onStatus(state, detail),
@@ -121,7 +121,7 @@ export class App implements Editor {
   select(ids: number[]): void {
     this.view.selection = ids;
     this.queueCanvas();
-    this.queueRails();
+    this.queueSidebars();
   }
 
   /* the artboard and its editing overlay are separate layers: only the overlay depends on
@@ -131,8 +131,8 @@ export class App implements Editor {
     this.schedule();
   }
 
-  private queueRails(): void {
-    this.railsDirty = true;
+  private queueSidebars(): void {
+    this.sidebarsDirty = true;
     this.schedule();
   }
 
@@ -142,16 +142,16 @@ export class App implements Editor {
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
-      if (this.railsDirty) {
-        this.railsDirty = false;
-        this.renderRails();
+      if (this.sidebarsDirty) {
+        this.sidebarsDirty = false;
+        this.renderSidebars();
       }
       this.renderCanvas();
     });
   }
 
   refresh(): void {
-    this.queueRails();
+    this.queueSidebars();
   }
 
   /* ---- protocol ---- */
@@ -256,7 +256,7 @@ export class App implements Editor {
   private renderAll(): void {
     this.nodes.version.textContent = "v" + this.store.version();
     this.queueCanvas(true);
-    this.queueRails();
+    this.queueSidebars();
   }
 
   private renderCanvas(): void {
@@ -286,13 +286,13 @@ export class App implements Editor {
     this.nodes.overlay.innerHTML = overlay;
   }
 
-  /* Each rail decides for itself. It is handed the shape of the document it draws from,
+  /* Each sidebar decides for itself. It is handed the shape of the document it draws from,
    * and rebuilds only if that shape moved; otherwise every control it already built
    * re-reads and assigns. So an arriving value does no layout, keeps focus, hover, open
    * dropdowns and scroll untouched, and needs nothing put back afterwards. */
-  private renderRails(): void {
-    this.rails.left.render(leftShape(this), (host) => renderLeftRail(host, this));
-    this.rails.inspector.render(inspectorShape(this), (host) => renderInspector(host, this));
+  private renderSidebars(): void {
+    this.sidebars.left.render(leftShape(this), (host) => renderLeftSidebar(host, this));
+    this.sidebars.inspector.render(inspectorShape(this), (host) => renderInspector(host, this));
   }
 
   /* ---- shell construction ---- */
@@ -305,8 +305,8 @@ export class App implements Editor {
        document at this version. Clicking one selects the widget it names. */
     const problems = el("button", { class: "problems", onclick: () => this.showProblem() });
     const palette = el("div", { class: "tools" });
-    const left = el("aside", { class: "rail left" });
-    const inspector = el("aside", { class: "rail right" });
+    const left = el("aside", { class: "sidebar left" });
+    const inspector = el("aside", { class: "sidebar right" });
     const art = svg("svg", { class: "artboard", width: "100%", height: "100%" }) as SVGSVGElement;
     const overlay = svg("svg", { class: "artboard overlay", width: "100%", height: "100%" }) as SVGSVGElement;
     const layer = el("div", { class: "layer" }, [art as unknown as Node, overlay as unknown as Node]);
@@ -351,8 +351,8 @@ export class App implements Editor {
     this.nodes = {
       left, inspector, stage, layer, art, overlay, banner, version, problems, pill, palette,
     };
-    this.rails = { left: new Panel(left), inspector: new Panel(inspector) };
-    this.restoreRailWidths();
+    this.sidebars = { left: new Panel(left), inspector: new Panel(inspector) };
+    this.restoreSidebarWidths();
 
     this.viewport = new Viewport(stage, layer, {
       canPan: (ev) => !this.grabbable(ev),
@@ -389,19 +389,19 @@ export class App implements Editor {
     const node = el("div", { class: "gutter", "data-side": side });
     node.addEventListener("pointerdown", (ev) => {
       const start = (ev as PointerEvent).clientX;
-      const rail = side === "left" ? this.nodes.left : this.nodes.inspector;
-      const from = rail.getBoundingClientRect().width;
+      const sidebar = side === "left" ? this.nodes.left : this.nodes.inspector;
+      const from = sidebar.getBoundingClientRect().width;
       const move = (m: PointerEvent) => {
         const delta = side === "left" ? m.clientX - start : start - m.clientX;
-        const width = Math.max(RAIL_MIN, Math.min(RAIL_MAX, from + delta));
-        document.documentElement.style.setProperty("--rail-" + side, width + "px");
+        const width = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, from + delta));
+        document.documentElement.style.setProperty("--sidebar-" + side, width + "px");
       };
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
         localStorage.setItem(
-          "rail-" + side,
-          document.documentElement.style.getPropertyValue("--rail-" + side),
+          "sidebar-" + side,
+          document.documentElement.style.getPropertyValue("--sidebar-" + side),
         );
       };
       window.addEventListener("pointermove", move);
@@ -411,10 +411,10 @@ export class App implements Editor {
     return node;
   }
 
-  private restoreRailWidths(): void {
+  private restoreSidebarWidths(): void {
     for (const side of ["left", "right"]) {
-      const saved = localStorage.getItem("rail-" + side);
-      if (saved) document.documentElement.style.setProperty("--rail-" + side, saved);
+      const saved = localStorage.getItem("sidebar-" + side);
+      if (saved) document.documentElement.style.setProperty("--sidebar-" + side, saved);
     }
   }
 

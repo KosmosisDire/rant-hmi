@@ -1,8 +1,8 @@
-/* What the rails need from the shell, plus the two things every panel shares: the fold
+/* What the sidebars need from the shell, plus the two things every panel shares: the fold
  * state (per view, never synced) and the section header.
  *
  * There is no separate "live" update path any more. A live frame and a document echo are
- * the same event to a rail: the shape is unchanged, so every binding re-reads and assigns.
+ * the same event to a sidebar: the shape is unchanged, so every binding re-reads and assigns.
  * One reconciliation path with two triggers (reconcile.ts). */
 
 import { ViewState } from "./canvas.js";
@@ -30,12 +30,12 @@ export interface Editor {
   /* the findings pinned to one node, or to one field of it (spec 3.8: a finding sits on
      the row that is wrong). No `where` asks for the node's own findings only. */
   diagAt(node: number, where?: string): Diag[];
-  /* re-render the rails: a fold or a menu changed, not the document */
+  /* re-render the sidebars: a fold or a menu changed, not the document */
   refresh(): void;
 }
 
 /* The inline finding mark: a small icon on the offending row, its popover on hover. The
- * popover is one shared element on the body, so a rail rebuild can never strand it. */
+ * popover is one shared element on the body, so a sidebar rebuild can never strand it. */
 let pop: HTMLElement | null = null;
 
 function showPop(anchor: HTMLElement, diags: Diag[]): void {

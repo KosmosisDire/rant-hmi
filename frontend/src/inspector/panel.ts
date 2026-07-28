@@ -1,10 +1,10 @@
-/* The two rails. Both are generated from the served tables: the section order is fixed
+/* The two sidebars. Both are generated from the served tables: the section order is fixed
  * (spec 3.2), a slot's group decides whether its row lives in Data in or Appearance
  * (spec 3.3), and every editor comes from the slot's shape.
  *
- * Each rail is declared twice, and the split is the point. `*Shape` projects the document
+ * Each sidebar is declared twice, and the split is the point. `*Shape` projects the document
  * down to what decides which controls EXIST; `render*` builds those controls once and binds
- * each one to a reader for what it SHOWS. A rail is rebuilt only when its shape string
+ * each one to a reader for what it SHOWS. A sidebar is rebuilt only when its shape string
  * changes, so an arriving value (a document echo, a live frame at 30 Hz) is an assignment
  * into standing nodes and nothing else (reconcile.ts).
  *
@@ -24,7 +24,7 @@ import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 
-/* ---- left rail ---- */
+/* ---- left sidebar ---- */
 
 export function leftShape(editor: Editor): string {
   const page = editor.page();
@@ -42,7 +42,7 @@ export function leftShape(editor: Editor): string {
   });
 }
 
-export function renderLeftRail(host: HTMLElement, editor: Editor): void {
+export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   clear(host);
   const store = editor.store;
   const page = editor.page();

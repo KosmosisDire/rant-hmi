@@ -38,7 +38,7 @@ reference material, not a dependency.
 - **Scope**: one backend process = one HMI. An HMI has multiple **pages** (the one
   structural addition over the spec, which is single-screen).
 - **No traffic log**: the Rev A design doc had a per-effect log (ring, sequence
-  numbers, left-rail panel); it is dropped from this project and from `docs/spec.md`.
+  numbers, left-sidebar panel); it is dropped from this project and from `docs/spec.md`.
   Live variable/slot values plus `diag` faults cover observability; faults still name
   their flow and row.
 

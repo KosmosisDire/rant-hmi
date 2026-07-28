@@ -6,7 +6,7 @@
  * vocabulary out of wire positions, so the boundary is discovered rather than
  * explained.
  *
- * One shared dropdown on the body (the diag-pop idiom): a rail rebuild can never
+ * One shared dropdown on the body (the diag-pop idiom): a sidebar rebuild can never
  * strand it, and rows insert on mousedown so the input's blur cannot race the pick. */
 
 import { el } from "../dom.js";

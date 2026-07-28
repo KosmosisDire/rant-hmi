@@ -143,7 +143,7 @@ widget's slot was considered and rejected: it would put a second writer on a slo
 racing its feed and breaking one-feed-per-slot determinism. The composition that
 already exists covers it: the flow assigns an HMI variable, and the slot feeds
 from that variable (`L` is an ordinary feed source). One writer per slot, no new
-mechanism, and the indirection is visible state a card in the rail shows live.
+mechanism, and the indirection is visible state a card in the sidebar shows live.
 
 **A widget writes its OWN slots.** The narrow case the rejection above does not
 cover is the control's own echo: a Toggle that does not toggle when tapped is a
@@ -448,9 +448,9 @@ Build Sheet mock, minus its traffic panel.
 ### 3.1 Window layout, the artboard, and modes
 
 Three columns, full height, no page scroll; each column scrolls independently.
-Both rails are resizable by drag handles (widths persisted per view):
+Both sidebars are resizable by drag handles (widths persisted per view):
 
-- **Left rail**, scrolling: **Global Variables**, one card per variable, always
+- **Left sidebar**, scrolling: **Global Variables**, one card per variable, always
   visible regardless of selection, because they are the HMI's state.
 - **Canvas**: the artboard and its surrounding pasteboard (below).
 - **Inspector** (right). A sticky header shows the widget's label and its type +
@@ -478,9 +478,9 @@ pasteboard content is staging, not deployment.
   Widgets still RENDER live values (the backend never stopped); they do not react
   to interaction.
 - **Debug run**: a toggle inside edit mode. Canvas editing locks, widgets become
-  interactive, rails and inspector stay up: author and observe side by side, with
+  interactive, sidebars and inspector stay up: author and observe side by side, with
   `x`, NOW and fault markers moving in place.
-- **Operate**: the deployed view. Artboard fitted to the window, no rails, no
+- **Operate**: the deployed view. Artboard fitted to the window, no sidebars, no
   selection outline, nothing editable.
 
 **Pan and zoom.** Edit mode has pan/zoom on every device (wheel/trackpad, pinch,
@@ -685,7 +685,7 @@ correct expression destroys trust in every other diagnostic.
 A variable card shows name (editable, rename-refactors), NOW (its live value,
 visually distinct when true/running), TYPE, and INIT (or SECS for a timer, whose NOW
 reads "2.4s left" or "idle"). Global and local cards are identical except for scope;
-the local section sits inside the inspector, the global list in the left rail.
+the local section sits inside the inspector, the global list in the left sidebar.
 
 The Code panel renders the selected widget's feeds and flows as a readable chained
 text form. It is a view, generated from the document: useful for review, diffing and

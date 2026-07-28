@@ -1,13 +1,13 @@
 /* Tokens taken from the Build Sheet mock (the inspector's visual reference) and the old
- * designer's editor chrome. Two type systems, deliberately: a system sans for chrome
- * prose, and a monospace for everything that names a value (slots, paths, expressions,
- * live readouts) so a name never shifts as its value changes. */
+ * designer's editor UI. Two type systems, deliberately: a system sans for the fixed
+ * UI text, and a monospace for everything that names a value (slots, paths,
+ * expressions, live readouts) so a name never shifts as its value changes. */
 
 :root {
   --bg: #161616;
   --shell: #191919;
-  --rail: #1b1b1b;
-  --rail-2: #171717;
+  --sidebar: #1b1b1b;
+  --sidebar-2: #171717;
   --card: #202020;
   --tile: #1d1d1d;
   --stage: #131313;
@@ -47,8 +47,8 @@
   --bad: #e0857c;
   --bad-bg: #3a2420;
 
-  --rail-left: 238px;
-  --rail-right: 334px;
+  --sidebar-left: 238px;
+  --sidebar-right: 334px;
 
   --sans: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
   --mono: ui-monospace, Consolas, "Cascadia Mono", "SF Mono", monospace;
@@ -69,7 +69,7 @@
 }
 ::-webkit-scrollbar-thumb {
   background: #333;
-  border: 2px solid var(--rail);
+  border: 2px solid var(--sidebar);
   border-radius: 5px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -118,7 +118,7 @@ button:focus-visible {
   height: 40px;
   flex: none;
   padding: 0 12px;
-  background: var(--rail-2);
+  background: var(--sidebar-2);
   border-bottom: 1px solid var(--line);
 }
 
@@ -268,21 +268,21 @@ button:focus-visible {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--rail-left) 5px 1fr 5px var(--rail-right);
+  grid-template-columns: var(--sidebar-left) 5px 1fr 5px var(--sidebar-right);
 }
 
-.rail {
+.sidebar {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  background: var(--rail);
+  background: var(--sidebar);
   padding: 2px 14px 24px;
 }
 
-.rail.left {
+.sidebar.left {
   border-right: 1px solid var(--line);
 }
-.rail.right {
+.sidebar.right {
   border-left: 1px solid var(--line);
   padding: 0 0 24px;
 }
@@ -341,7 +341,7 @@ button:focus-visible {
   overflow: hidden;
 }
 
-[data-mode="operate"] .rail,
+[data-mode="operate"] .sidebar,
 [data-mode="operate"] .gutter {
   display: none;
 }
@@ -1059,7 +1059,7 @@ select.field {
   color: #0d0d0d;
 }
 
-/* ---------- left rail ---------- */
+/* ---------- left sidebar ---------- */
 
 .pages {
   display: flex;
@@ -1142,7 +1142,7 @@ select.field {
   gap: 8px;
   padding: 9px 14px;
   border-bottom: 1px solid var(--line);
-  background: var(--rail);
+  background: var(--sidebar);
 }
 
 .inspector-head .type {
@@ -1306,7 +1306,7 @@ select.field {
   .workspace {
     grid-template-columns: 1fr;
   }
-  .rail,
+  .sidebar,
   .gutter {
     display: none;
   }

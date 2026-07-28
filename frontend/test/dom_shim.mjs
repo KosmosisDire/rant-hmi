@@ -1,10 +1,10 @@
-/* A DOM small enough to read and big enough to run the rails.
+/* A DOM small enough to read and big enough to run the sidebars.
  *
  * The reconciler's whole claim is about node identity: that a value echo assigns into the
  * control already standing there instead of replacing it. Asserting that needs real
  * elements with real object identity, real focus and real parent/child links, which is all
  * this provides. It is not a browser and does not try to be: no layout, no CSS, no
- * bubbling. Anything the rails do not reach for is missing on purpose. */
+ * bubbling. Anything the sidebars do not reach for is missing on purpose. */
 
 const SELF_PROPS = new Set(["type", "value", "placeholder", "title", "id", "name", "disabled"]);
 
@@ -52,7 +52,7 @@ class TextNode {
 
 /* one simple selector: "tag", ".class", "[attr]" or any concatenation of those. A comma
    list matches if any branch does; a descendant combinator is not supported and simply
-   does not match, which is what the rails' unsupported selectors should do here. */
+   does not match, which is what the sidebars' unsupported selectors should do here. */
 function matchesOne(node, selector) {
   const parts = selector.trim().match(/^([a-zA-Z]*)((?:[.#[][^.#[]+)*)$/);
   if (!parts) return false;
@@ -112,7 +112,7 @@ class Element {
   }
 
   /* markup is only ever an inlined icon here, so it is kept verbatim and counts as no
-     children: nothing in the rails reads back into it */
+     children: nothing in the sidebars reads back into it */
   set innerHTML(markup) {
     this.childNodes = [];
     this.markup = markup;

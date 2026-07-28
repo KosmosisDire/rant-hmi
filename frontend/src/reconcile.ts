@@ -1,6 +1,6 @@
-/* Rail reconciliation.
+/* Sidebar reconciliation.
  *
- * The rails are generated from the document, so the obvious view rebuilds them whenever a
+ * The sidebars are generated from the document, so the obvious view rebuilds them whenever a
  * version arrives. That destroys every input, listener and focus target in order to change
  * one number, and no amount of putting scroll offsets and carets back afterwards makes it
  * cheap or correct: what gets restored is by then a stale local copy of the value the echo

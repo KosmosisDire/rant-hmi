@@ -179,7 +179,7 @@ export interface Live {
 
 /* One compile finding, addressed to the document node it is about (spec 3.8). `node` may
  * be any node, so a view maps it to the widget that owns it before marking the canvas.
- * `where` narrows it to a field within that node (a slot name, "init") so the rails can
+ * `where` narrows it to a field within that node (a slot name, "init") so the sidebars can
  * pin it on the exact row; empty when the node itself is the line. */
 export interface Diag {
   node: number;

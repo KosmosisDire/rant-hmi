@@ -1,4 +1,4 @@
-/* The whole "framework": element construction, the small set of controls the rails are
+/* The whole "framework": element construction, the small set of controls the sidebars are
  * built from, and nothing else. No virtual DOM and no reactivity on purpose: the document
  * lives on the backend, and reconcile.ts pushes each arriving value into the control that
  * already shows it. These constructors stay pure, so a control can be built once and then

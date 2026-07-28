@@ -1,6 +1,6 @@
 /* Headless check of the view's pure half: it starts the real backend, joins over the
  * real protocol, and drives the document mirror, the attribute interpreter, the template
- * renderer (DOM-free: it returns SVG text) and the rail reconciler, which gets a DOM small
+ * renderer (DOM-free: it returns SVG text) and the sidebar reconciler, which gets a DOM small
  * enough to run in-process (dom_shim.mjs). What none of it covers is pixels and gestures;
  * that is what a browser is for.
  *
@@ -191,15 +191,15 @@ has(svg, ">12<", "decimals 0 rounded the value");
 check(!svg.includes(">bar<"), "an empty units slot sheds its part");
 
 /* ---- inspector reconciliation ----
-   The rails are generated from the document, so the question every echo asks is what it
+   The sidebars are generated from the document, so the question every echo asks is what it
    does to the DOM. An ordinary value must land in the control already standing there:
    same node, new value, no rebuild, and therefore nothing to put back afterwards. A
    structural edit may rebuild, and must then find the user again by document address
    rather than by position in the tree. */
 
-const rail = new Element("aside");
-rail.className = "rail right";
-const panel = new Panel(rail);
+const sidebar = new Element("aside");
+sidebar.className = "sidebar right";
+const panel = new Panel(sidebar);
 const readout = store.pages()[0].widgets[7];
 const editor = {
   store,
@@ -221,9 +221,9 @@ const echo = (ops) => {
   store.apply(store.version() + 1, ops);
   draw();
 };
-const geomField = (at) => rail.querySelector(".geom-grid").children[at];
+const geomField = (at) => sidebar.querySelector(".geom-grid").children[at];
 const slotControl = (name) => {
-  for (const grid of rail.querySelectorAll(".prop-grid")) {
+  for (const grid of sidebar.querySelectorAll(".prop-grid")) {
     const kids = grid.children;
     for (let i = 0; i + 1 < kids.length; i++)
       if (kids[i].tagName === "LABEL" && kids[i].textContent === name) return kids[i + 1];
@@ -232,17 +232,17 @@ const slotControl = (name) => {
 };
 
 draw();
-check(rail.querySelectorAll("input").length > 0, "the inspector built controls");
+check(sidebar.querySelectorAll("input").length > 0, "the inspector built controls");
 
 /* 1. a value echo moves the value and nothing else */
 const shapeBefore = inspectorShape(editor);
 const widthField = geomField(5);
-rail.scrollTop = 140;
+sidebar.scrollTop = 140;
 echo([{ op: "set_prop", node: readout.id, key: "geom", value: { ...readout.geom, w: 321 } }]);
 check(inspectorShape(editor) === shapeBefore, "a value echo does not move the inspector's shape");
 check(geomField(5) === widthField, "a value echo keeps the very same input node");
 check(widthField.value === "321", "a value echo assigns the new value, got " + widthField.value);
-check(rail.scrollTop === 140, "a value echo leaves scroll alone, got " + rail.scrollTop);
+check(sidebar.scrollTop === 140, "a value echo leaves scroll alone, got " + sidebar.scrollTop);
 
 /* 2. the bug the old focus restore caused: a remote change to the field you are standing
       in was overwritten by the stale local copy, so the inspector looked frozen */
@@ -293,7 +293,7 @@ check(fedInput.value === "4.25", "a live frame drives a fed slot, got " + fedInp
 
 /* 4. uncommitted text is held under the document address, so a rebuild caused by an edit
       somewhere else gives it back, and focus follows the key rather than the tree position */
-const labelField = rail.querySelector(".inspector-head").children[0];
+const labelField = sidebar.querySelector(".inspector-head").children[0];
 typeInto(labelField, "half typed");
 echo([
   {
@@ -303,7 +303,7 @@ echo([
     node: { id: 9001, name: "tmp", type: "f64", init: 0, persist: false },
   },
 ]);
-const rebuiltLabel = rail.querySelector(".inspector-head").children[0];
+const rebuiltLabel = sidebar.querySelector(".inspector-head").children[0];
 check(rebuiltLabel !== labelField, "a structural edit does rebuild the inspector");
 check(rebuiltLabel.value === "half typed", "uncommitted text survives it, got " + rebuiltLabel.value);
 check(document.activeElement === rebuiltLabel, "focus lands on the same control by key");
