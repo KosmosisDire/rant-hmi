@@ -11,7 +11,8 @@ import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } fr
 import { DocStore } from "./doc.js";
 import { clear, el, svg } from "./dom.js";
 import { Editor } from "./editor.js";
-import { armSwallow, closeMenu, openMenu } from "./menu.js";
+import { iconMarkup } from "./icons.js";
+import { closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { variantNames } from "./inspector/typetree.js";
@@ -683,23 +684,64 @@ export class App implements Editor {
       if (options.length) {
         const current = String(
           resolveSlot(widget, type, this.live, fedSlots(widget), "value") ?? "");
-        const anchor = document.querySelector(
-          '[data-id="' + widget.id + '"]')?.getBoundingClientRect();
-        openMenu(
-          anchor?.left ?? ev.clientX,
-          anchor?.bottom ?? ev.clientY,
-          "",
-          options.map((option) => ({
-            label: option,
-            icon: option === current ? "check" : undefined,
-            run: () => this.emitInput(widget, interact.emits.select, option),
-          })),
-        );
-        /* the click that follows this pointerup must not dismiss what it just opened */
-        armSwallow();
+        this.openPickTray(widget, type, options, current, (option) =>
+          this.emitInput(widget, interact.emits.select, option));
       }
     }
     this.queueCanvas(true);
+  }
+
+  /* The Dropdown's tray is WIDGET chrome, not editor chrome: it hangs under the field
+     at the field's own width and wears the widget's resolved surface, border, radius
+     and text colour, so the open control reads as one piece of the same widget. */
+  private openPickTray(widget: Widget, type: WidgetType, options: string[],
+                       current: string, pick: (option: string) => void): void {
+    const anchor = document.querySelector('[data-id="' + widget.id + '"]');
+    const rect = anchor?.getBoundingClientRect();
+    if (!rect || !rect.width) return;
+    const fed = fedSlots(widget);
+    const slot = (name: string) => resolveSlot(widget, type, this.live, fed, name);
+    /* the frame's radius rule (canvas.ts): auto nests inside the island's corner at
+       the panel inset; units become pixels at the widget's own on-screen scale */
+    const panelPad = Number(slot("panel_pad") ?? -1);
+    const inset = panelPad < 0 ? 5 : panelPad;
+    const rawRadius = Number(slot("radius") ?? -1);
+    const units = rawRadius < 0 ? Math.max(0, 16 - inset) : rawRadius;
+    const scale = rect.height / Math.max(1, widget.geom.h - 2 * inset);
+
+    const overlay = el("div", { class: "pick-shade" });
+    const tray = el("div", { class: "pick-tray", "data-input": "scroll" });
+    tray.style.left = rect.left + "px";
+    tray.style.top = rect.bottom + 4 + "px";
+    tray.style.width = rect.width + "px";
+    tray.style.maxHeight = Math.max(60, window.innerHeight - rect.bottom - 16) + "px";
+    tray.style.background = String(slot("surface") ?? "#141414");
+    tray.style.border = "1px solid " + String(slot("border") ?? "#2e2e2e");
+    tray.style.borderRadius = Math.round(units * scale) + "px";
+    tray.style.color = String(slot("text_color") ?? "#ececec");
+    const close = () => overlay.remove();
+    overlay.addEventListener("pointerdown", (pd) => {
+      if (pd.target === overlay) close();
+    });
+    for (const option of options) {
+      const row = el("button", { class: "pick-row" }, [
+        el("span", {
+          class: "pick-check",
+          html: option === current ? iconMarkup("check", 11, 2) : "",
+        }),
+        el("span", { text: option }),
+      ]);
+      row.addEventListener("click", () => {
+        close();
+        pick(option);
+      });
+      tray.appendChild(row);
+    }
+    overlay.appendChild(tray);
+    document.body.appendChild(overlay);
+    /* no room below: hang it above the field instead */
+    if (rect.bottom + 4 + tray.offsetHeight > window.innerHeight - 8)
+      tray.style.top = Math.max(8, rect.top - tray.offsetHeight - 4) + "px";
   }
 
   private cancelControl(): void {

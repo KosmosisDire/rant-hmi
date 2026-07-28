@@ -1741,6 +1741,50 @@ button.swatch {
   color: var(--dim);
 }
 
+/* ---- the Dropdown's open tray: WIDGET chrome. Width, surface, border, radius and ink
+   arrive inline from the widget's own resolved slots; only the anatomy lives here. ---- */
+
+.pick-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.pick-tray {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 0 12px;
+  height: 28px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: 500 12.5px var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pick-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.pick-check {
+  display: inline-flex;
+  width: 12px;
+  flex: none;
+}
+
 /* ---- the source picker tree (dart + hmi roots, explorer-style folders) and the type
    tree, which shares its whole anatomy ---- */
 
