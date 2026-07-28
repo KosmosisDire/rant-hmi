@@ -12,15 +12,20 @@
 #include <new>
 
 static std::atomic<uint64_t> allocation_count{0};
+static std::atomic<bool> allocation_trace{false};
 
 void* operator new(std::size_t size) {
     allocation_count.fetch_add(1, std::memory_order_relaxed);
+    if (allocation_trace.load(std::memory_order_relaxed))
+        std::printf("  alloc %zu bytes\n", size);
     if (void* memory = std::malloc(size)) return memory;
     throw std::bad_alloc();
 }
 
 void* operator new[](std::size_t size) {
     allocation_count.fetch_add(1, std::memory_order_relaxed);
+    if (allocation_trace.load(std::memory_order_relaxed))
+        std::printf("  alloc[] %zu bytes\n", size);
     if (void* memory = std::malloc(size)) return memory;
     throw std::bad_alloc();
 }
@@ -173,9 +178,12 @@ void test_compile_and_run() {
     const uint64_t widget = slider_id(document);
     const std::string input_event = "input";
     const uint64_t before_run = allocation_count.load(std::memory_order_relaxed);
+    allocation_trace = true;
     RunResult input =
         run_event(compiled.program, state, widget, input_event, Value::number(3));
-    CHECK(allocation_count.load(std::memory_order_relaxed) == before_run);
+    allocation_trace = false;
+    const uint64_t after_run = allocation_count.load(std::memory_order_relaxed);
+    CHECK(after_run == before_run);
     CHECK(!input.faulted);
     CHECK(state.effect_count == 1);
     const int setpoint = cell_named(compiled.program, "setpoint");
@@ -198,8 +206,11 @@ void test_compile_and_run() {
 
     const FeedProgram& feed = compiled.program.feeds[0];
     const uint64_t before_feed = allocation_count.load(std::memory_order_relaxed);
+    allocation_trace = true;
     RunResult fed = run_feed(compiled.program, feed, state, Value::number(12.34));
-    CHECK(allocation_count.load(std::memory_order_relaxed) == before_feed);
+    allocation_trace = false;
+    const uint64_t after_feed = allocation_count.load(std::memory_order_relaxed);
+    CHECK(after_feed == before_feed);
     CHECK(!fed.faulted);
     CHECK(state.values[feed.cell].tag == ValueTag::Num);
     CHECK(state.values[feed.cell].data.num == 12.3);
@@ -836,8 +847,11 @@ void test_text_and_enums() {
     CHECK_EQ(num_of(program.feeds[5]), 4.0);
 
     const uint64_t before = allocation_count.load(std::memory_order_relaxed);
+    allocation_trace = true;
     run_feed(program, program.feeds[6], state, text_x("  abc "));
-    CHECK(allocation_count.load(std::memory_order_relaxed) == before);
+    allocation_trace = false;
+    const uint64_t after = allocation_count.load(std::memory_order_relaxed);
+    CHECK(after == before);
     CHECK_EQ(text_of(program.feeds[6]), "__Zc");
 
     run_feed(program, program.feeds[7], state, Value::number(3660));

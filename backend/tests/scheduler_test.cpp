@@ -10,9 +10,12 @@
 #include <new>
 
 static std::atomic<uint64_t> allocation_count{0};
+static std::atomic<bool> allocation_trace{false};
 
 void* operator new(std::size_t size) {
     allocation_count.fetch_add(1, std::memory_order_relaxed);
+    if (allocation_trace.load(std::memory_order_relaxed))
+        std::printf("  alloc %zu bytes\n", size);
     if (void* memory = std::malloc(size)) return memory;
     throw std::bad_alloc();
 }
@@ -181,9 +184,13 @@ void test_timing() {
     const uint32_t cell = count_cell(scheduler.program());
     std::string idle_fault;
     const uint64_t before_idle = allocation_count.load(std::memory_order_relaxed);
+    allocation_trace = true;
     const bool idle_ok = scheduler.tick(idle_fault);
+    allocation_trace = false;
+    /* capture BEFORE any CHECK: reporting must never sit inside a counted window */
+    const uint64_t after_idle = allocation_count.load(std::memory_order_relaxed);
     CHECK(idle_ok);
-    CHECK(allocation_count.load(std::memory_order_relaxed) == before_idle);
+    CHECK(after_idle == before_idle);
 
     scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
     tick(scheduler, 1);

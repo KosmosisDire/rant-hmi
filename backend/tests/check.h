@@ -10,13 +10,23 @@ namespace check {
 inline int failures = 0;
 inline int checks = 0;
 
-inline bool report(bool ok, const char* expr, const char* file, int line, const std::string& note) {
+/* the plain form is ALLOCATION-FREE on the success path: tests count allocations
+ * across checked windows, and a std::string note temporary would be constructed
+ * before the checked expression even evaluates (MSVC argues right-to-left; a Debug
+ * std::string always allocates its container proxy) */
+inline bool report(bool ok, const char* expr, const char* file, int line,
+                   const char* note = nullptr) {
     ++checks;
     if (ok) return true;
     ++failures;
-    std::printf("FAIL %s:%d  %s%s%s\n", file, line, expr, note.empty() ? "" : "  ",
-                note.c_str());
+    std::printf("FAIL %s:%d  %s%s%s\n", file, line, expr, note && *note ? "  " : "",
+                note ? note : "");
     return false;
+}
+
+inline bool report(bool ok, const char* expr, const char* file, int line,
+                   const std::string& note) {
+    return report(ok, expr, file, line, note.c_str());
 }
 
 inline int summary(const char* name) {
@@ -26,7 +36,7 @@ inline int summary(const char* name) {
 
 } // namespace check
 
-#define CHECK(expr) check::report((expr), #expr, __FILE__, __LINE__, "")
+#define CHECK(expr) check::report((expr), #expr, __FILE__, __LINE__)
 #define CHECK_MSG(expr, note) check::report((expr), #expr, __FILE__, __LINE__, (note))
 #define CHECK_EQ(a, b)                                                                   \
     check::report((a) == (b), #a " == " #b, __FILE__, __LINE__,                          \
