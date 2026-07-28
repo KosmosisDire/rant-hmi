@@ -3,6 +3,11 @@
 
 import { App } from "./shell.js";
 import { syncUrl } from "./endpoint.js";
+import { installInputGuard } from "./input.js";
+
+/* before anything renders or binds: every native gesture is refused for the whole document
+   and the app opts back in where it means to (input.ts) */
+installInputGuard();
 
 const url = syncUrl(location);
 const app = new App(document.getElementById("app") as HTMLElement, url);

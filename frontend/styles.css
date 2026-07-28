@@ -89,6 +89,101 @@ body {
   color-scheme: dark;
   font: 13px/1.5 var(--sans);
   -webkit-font-smoothing: antialiased;
+  /* iOS inflates text in a narrow column on its own; an instrument's type is fixed */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* pinning the body kills the iOS rubber band and the pull to refresh that a plain
+   overflow:hidden still leaves reachable */
+body {
+  position: fixed;
+  inset: 0;
+}
+
+/* ---------- the input floor ---------- */
+
+/* Default deny. Every native gesture, menu, highlight and selection is off on EVERY
+   surface, so a panel added later is locked before it is written. Getting one back is an
+   explicit whitelist below, keyed on data-input="text" | "scroll" | "native", matching the
+   allowances input.ts uses for the event half of the same policy. This block sits early on
+   purpose: a component rule further down the file has the same specificity and wins, so a
+   widget that needs its own drag (sliders, the colour picker, the gutters) keeps saying so
+   where it is defined. */
+* {
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  /* the blue flash a tap paints over whatever it hit */
+  -webkit-tap-highlight-color: transparent;
+  /* the press and hold sheet on iOS (copy, share, open in new tab) */
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+img,
+svg {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Whitelist 1: the surfaces that may still pan natively, and their contents (touch-action
+   is read from the element the touch STARTED on, so a scroller's subtree needs it too). A
+   new scroll surface takes data-input="scroll" rather than a rule of its own. */
+.sidebar,
+.sidebar *,
+.ac-pop,
+.ac-pop *,
+#ctx .popover,
+#ctx .popover *,
+.stree-list,
+.stree-list *,
+textarea,
+[data-input~="scroll"],
+[data-input~="scroll"] * {
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+
+/* Whitelist 2: text entry. A caret with no selection, no callout and no paste is not a text
+   field, so these keep the native behaviour; input.ts allows their context menu too, for a
+   real right click only. */
+input,
+select,
+[contenteditable="true"],
+[data-input~="text"],
+[data-input~="text"] * {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+  touch-action: manipulation;
+}
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* iOS zooms the page when focusing a field under 16px, and user-scalable=no does not stop
+   it. Only touch devices pay the larger type. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Whitelist 3: the escape hatch, for a subtree that should behave like a plain web page */
+[data-input~="native"],
+[data-input~="native"] * {
+  touch-action: auto;
+  overscroll-behavior: auto;
+  user-select: auto;
+  -webkit-user-select: auto;
+  -webkit-touch-callout: default;
+  -webkit-user-drag: auto;
 }
 
 ::selection {

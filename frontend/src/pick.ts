@@ -420,6 +420,9 @@ function hideToast(): void {
 function showText(text: string): void {
   const panel = document.createElement("pre");
   panel.className = "hmi-pick-ui hmi-pick-fallback";
+  /* the picker is a dev tool, not part of the instrument: this readout opts out of the
+     input floor wholesale so it scrolls and its text selects and copies */
+  panel.setAttribute("data-input", "native");
   panel.textContent = text + "\n\n(copy failed: select this text, then click to dismiss)";
   panel.addEventListener("click", () => panel.remove());
   document.body.appendChild(panel);
