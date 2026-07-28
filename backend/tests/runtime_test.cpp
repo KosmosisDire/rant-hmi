@@ -501,6 +501,107 @@ void test_value_shape_diagnostics() {
     CHECK(has_diag(compile_document(typo, registry(), mesh), "slot_variant"));
 }
 
+/* Color bindings: a feed can DERIVE a color from data (a bool picking between two, a
+ * number sweeping a gradient, channels built from values), not just carry one. */
+void test_colors() {
+    EntityDef bit;
+    bit.kind = EntityKind::Variable;
+    bit.name = "bit";
+    bit.fields = {FieldDef{"on", Shape::Bool}};
+    EntityDef sensor;
+    sensor.kind = EntityKind::Variable;
+    sensor.name = "sensor";
+    sensor.fields = {FieldDef{"value", Shape::Num}};
+    FakeMesh mesh(std::vector<EntityDef>{bit, sensor});
+
+    Document document = widget_document(
+        "Readout", Json::object(),
+        Json{{"feeds",
+              Json::array({
+                  Json{{"slot", "text_color"},
+                       {"src", Json{{"kind", "V"}, {"name", "bit"}}},
+                       {"path", "on"},
+                       {"xf", "x.pick(#7fc4a0, #e0857c)"}},
+                  Json{{"slot", "units_color"},
+                       {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
+                       {"path", "value"},
+                       {"xf", "#000000.mix(#ffffff, x / 100).alpha(0.5)"}},
+                  Json{{"slot", "surface"},
+                       {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
+                       {"path", "value"},
+                       {"xf", "rgb(x, 0, 255 - x)"}},
+                  Json{{"slot", "border"},
+                       {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
+                       {"path", "value"},
+                       {"xf", "hsv(x, 1, 1)"}},
+                  Json{{"slot", "decimals"},
+                       {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
+                       {"path", "value"},
+                       {"xf", "#ff8040.g + #ffffff.a"}},
+              })}});
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("colors compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+    RuntimeState state(compiled.program);
+
+    auto rgba_of = [&](const FeedProgram& feed) {
+        const Value& value = state.values[feed.cell];
+        return value.tag == ValueTag::Color ? value.data.rgba : 0u;
+    };
+    if (!CHECK(compiled.program.feeds.size() == 5)) return;
+    const FeedProgram& picked = compiled.program.feeds[0];
+    const FeedProgram& mixed = compiled.program.feeds[1];
+    const FeedProgram& built = compiled.program.feeds[2];
+    const FeedProgram& swept = compiled.program.feeds[3];
+    const FeedProgram& channels = compiled.program.feeds[4];
+
+    run_feed(compiled.program, picked, state, Value::boolean(true));
+    CHECK_EQ(rgba_of(picked), 0x7fc4a0ffu);
+    run_feed(compiled.program, picked, state, Value::boolean(false));
+    CHECK_EQ(rgba_of(picked), 0xe0857cffu);
+
+    run_feed(compiled.program, mixed, state, Value::number(50));
+    CHECK_EQ(rgba_of(mixed), 0x80808080u);   /* halfway grey, half alpha */
+    run_feed(compiled.program, mixed, state, Value::number(1000));
+    CHECK_EQ(rgba_of(mixed), 0xffffff80u);   /* t clamps at 1 */
+
+    run_feed(compiled.program, built, state, Value::number(255));
+    CHECK_EQ(rgba_of(built), 0xff0000ffu);
+    run_feed(compiled.program, built, state, Value::number(0));
+    CHECK_EQ(rgba_of(built), 0x0000ffffu);
+
+    run_feed(compiled.program, swept, state, Value::number(240));
+    CHECK_EQ(rgba_of(swept), 0x0000ffffu);
+    run_feed(compiled.program, swept, state, Value::number(120));
+    CHECK_EQ(rgba_of(swept), 0x00ff00ffu);
+
+    run_feed(compiled.program, channels, state, Value::number(0));
+    CHECK(state.values[channels.cell].tag == ValueTag::Num);
+    CHECK_EQ(state.values[channels.cell].data.num, 129.0);   /* 0x80 + a of 1.0 */
+
+    /* a color where the slot wants one is fine; a number there is a shape diagnostic */
+    Document wrong = widget_document(
+        "Readout", Json::object(),
+        Json{{"feeds", Json::array({Json{{"slot", "text_color"},
+                                         {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
+                                         {"path", "value"}}})}});
+    CHECK(has_diag(compile_document(wrong, registry(), mesh), "shape"));
+
+    /* the chain type-checks end to end and yields a color */
+    Program program;
+    program.add_text("");
+    ExpressionScope scope;
+    scope.x_shape = Shape::Num;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string error;
+    CHECK(compile_expression("hsv(x, 1, 1).mix(rgb(0, 0, 0), 0.5).alpha(x / 360)",
+                             ExprTier::Display, scope, program, code, result, error));
+    CHECK(result.shape == Shape::Color);
+}
+
 } // namespace
 
 int main() {
@@ -512,5 +613,6 @@ int main() {
     test_default_behavior();
     test_event_value();
     test_value_shape_diagnostics();
+    test_colors();
     return check::summary("runtime_test");
 }

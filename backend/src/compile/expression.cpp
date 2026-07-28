@@ -216,6 +216,12 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Bool, "int", MethodId::BoolInt, 0, Shape::Num},
         {Shape::Bool, "not", MethodId::BoolNot, 0, Shape::Bool},
         {Shape::Bool, "pick", MethodId::BoolPick, 2, Shape::Unknown},
+        {Shape::Color, "r", MethodId::ColorR, 0, Shape::Num},
+        {Shape::Color, "g", MethodId::ColorG, 0, Shape::Num},
+        {Shape::Color, "b", MethodId::ColorB, 0, Shape::Num},
+        {Shape::Color, "a", MethodId::ColorA, 0, Shape::Num},
+        {Shape::Color, "alpha", MethodId::ColorAlpha, 1, Shape::Color},
+        {Shape::Color, "mix", MethodId::ColorMix, 2, Shape::Color},
     };
     return table;
 }
@@ -236,6 +242,8 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"max", {Builtin::Max, 2, 2, Shape::Num}},
         {"int", {Builtin::Int, 1, 1, Shape::Num}},
         {"num", {Builtin::Num, 1, 1, Shape::Num}},
+        {"rgb", {Builtin::Rgb, 3, 4, Shape::Color}},
+        {"hsv", {Builtin::Hsv, 3, 4, Shape::Color}},
     };
     return table;
 }

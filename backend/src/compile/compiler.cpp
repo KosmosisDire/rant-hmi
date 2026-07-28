@@ -466,6 +466,18 @@ class Compiler {
                 const std::string xf = node.value("xf", "");
                 bool ok = true;
                 if (xf.empty()) {
+                    /* no transform: the source value stores as-is, so the shapes must
+                     * already agree; anything else was a silent runtime store fault */
+                    const Shape wanted = program_.cells[feed.cell].shape;
+                    if (scope.x_shape != Shape::Unknown && wanted != Shape::Unknown &&
+                        scope.x_shape != wanted) {
+                        diag(feed.feed_id, "shape",
+                             "the source is " + std::string(shape_name(scope.x_shape)) +
+                                 " but the slot wants " + shape_name(wanted) +
+                                 "; add a transform",
+                             DiagGrade::Error, "xf");
+                        continue;
+                    }
                     feed.code.push_back(Instruction{OpCode::LoadX});
                     feed.max_stack = 1;
                 } else {

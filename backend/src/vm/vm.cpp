@@ -73,6 +73,34 @@ Value call(Builtin builtin, const Value* args, uint32_t n) noexcept {
         case Builtin::Max: if (n == 2) return Value::number(std::max(number(0), number(1))); break;
         case Builtin::Int: if (n == 1) return Value::number(std::trunc(number(0))); break;
         case Builtin::Num: if (n == 1) return args[0]; break;
+        case Builtin::Rgb:
+            if (n == 3 || n == 4)
+                return Value::color(
+                    pack_rgba(number(0), number(1), number(2), n == 4 ? number(3) : 1.0));
+            break;
+        case Builtin::Hsv:
+            if (n == 3 || n == 4) {
+                double h = std::fmod(number(0), 360.0);
+                if (h < 0) h += 360.0;
+                const double s = std::max(0.0, std::min(1.0, number(1)));
+                const double v = std::max(0.0, std::min(1.0, number(2)));
+                const double c = v * s;
+                const double m = v - c;
+                const double f = h / 60.0 - std::floor(h / 120.0) * 2.0;
+                const double x = c * (1.0 - std::fabs(f - 1.0));
+                double r = 0, g = 0, b = 0;
+                switch (static_cast<int>(h / 60.0)) {
+                    case 0: r = c; g = x; break;
+                    case 1: r = x; g = c; break;
+                    case 2: g = c; b = x; break;
+                    case 3: g = x; b = c; break;
+                    case 4: r = x; b = c; break;
+                    default: r = c; b = x; break;
+                }
+                return Value::color(pack_rgba((r + m) * 255.0, (g + m) * 255.0,
+                                              (b + m) * 255.0, n == 4 ? number(3) : 1.0));
+            }
+            break;
     }
     return Value::nil();
 }
@@ -131,6 +159,34 @@ Value method(MethodId method, const Value& receiver, const Value* args,
         case MethodId::BoolPick:
             if (receiver.tag == ValueTag::Bool && n == 2)
                 return receiver.data.boolean ? args[0] : args[1];
+            break;
+        case MethodId::ColorR:
+        case MethodId::ColorG:
+        case MethodId::ColorB:
+            if (receiver.tag == ValueTag::Color && n == 0) {
+                const int shift = method == MethodId::ColorR ? 24
+                                  : method == MethodId::ColorG ? 16 : 8;
+                return Value::number((receiver.data.rgba >> shift) & 0xffu);
+            }
+            break;
+        case MethodId::ColorA:
+            if (receiver.tag == ValueTag::Color && n == 0)
+                return Value::number((receiver.data.rgba & 0xffu) / 255.0);
+            break;
+        case MethodId::ColorAlpha:
+            if (receiver.tag == ValueTag::Color && n == 1 && args[0].tag == ValueTag::Num) {
+                double alpha = args[0].data.num;
+                if (!(alpha > 0.0)) alpha = 0.0;
+                if (alpha > 1.0) alpha = 1.0;
+                return Value::color((receiver.data.rgba & 0xffffff00u) |
+                                    static_cast<uint32_t>(std::lround(alpha * 255.0)));
+            }
+            break;
+        case MethodId::ColorMix:
+            if (receiver.tag == ValueTag::Color && n == 2 &&
+                args[0].tag == ValueTag::Color && args[1].tag == ValueTag::Num)
+                return Value::color(
+                    mix_rgba(receiver.data.rgba, args[0].data.rgba, args[1].data.num));
             break;
     }
     return Value::nil();

@@ -107,6 +107,8 @@ enum class Builtin : uint16_t {
     Max,
     Int,
     Num,
+    Rgb,
+    Hsv,
 };
 
 enum class MethodId : uint16_t {
@@ -120,6 +122,12 @@ enum class MethodId : uint16_t {
     BoolInt,
     BoolNot,
     BoolPick,
+    ColorR,
+    ColorG,
+    ColorB,
+    ColorA,
+    ColorAlpha,
+    ColorMix,
 };
 
 struct Instruction {

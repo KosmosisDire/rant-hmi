@@ -53,5 +53,9 @@ bool value_truth(const Value& value);
 bool value_same_scalar(const Value& a, const Value& b);
 uint32_t parse_color(const std::string& text, bool& ok);
 std::string format_color(uint32_t rgba);
+/* channels 0..255, alpha 0..1, everything clamped; layout 0xRRGGBBAA */
+uint32_t pack_rgba(double r, double g, double b, double a);
+/* per-channel linear blend from `from` to `to` by t in 0..1 (clamped), alpha included */
+uint32_t mix_rgba(uint32_t from, uint32_t to, double t);
 
 } // namespace hmi

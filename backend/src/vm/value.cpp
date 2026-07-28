@@ -125,6 +125,33 @@ uint32_t parse_color(const std::string& text, bool& ok) {
            (static_cast<uint32_t>(b) << 8) | static_cast<uint32_t>(a);
 }
 
+namespace {
+
+uint32_t channel_byte(double value) {
+    if (!(value > 0.0)) return 0;   /* NaN lands here too */
+    if (value >= 255.0) return 255;
+    return static_cast<uint32_t>(std::lround(value));
+}
+
+} // namespace
+
+uint32_t pack_rgba(double r, double g, double b, double a) {
+    return (channel_byte(r) << 24) | (channel_byte(g) << 16) | (channel_byte(b) << 8) |
+           channel_byte(a * 255.0);
+}
+
+uint32_t mix_rgba(uint32_t from, uint32_t to, double t) {
+    if (!(t > 0.0)) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    uint32_t out = 0;
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        const double a = static_cast<double>((from >> shift) & 0xffu);
+        const double b = static_cast<double>((to >> shift) & 0xffu);
+        out |= channel_byte(a + (b - a) * t) << shift;
+    }
+    return out;
+}
+
 std::string format_color(uint32_t rgba) {
     char text[10];
     if ((rgba & 0xffu) == 0xffu)
