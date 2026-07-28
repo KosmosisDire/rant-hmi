@@ -90,6 +90,13 @@ bool op_set_prop(Document& d, const Json& op, ApplyResult& r, std::string& err) 
     r.ops.push_back(Json{{"op", "set_prop"}, {"node", id}, {"key", key}, {"value", value}});
     r.touched.push_back(id);
 
+    /* A prop that owns another's shape settles it here (a variable's type over its init),
+     * echoed as its own set_prop so the client stays mechanical and both ends agree
+     * without either having to know the rule. */
+    for (const std::string& retyped : retype_props(spec, *e->node))
+        r.ops.push_back(Json{
+            {"op", "set_prop"}, {"node", id}, {"key", retyped}, {"value", (*e->node)[retyped]}});
+
     /* Changing the variant (a DO step's kind) brings the new variant's fields with it;
      * each default is echoed as its own set_prop so the client stays mechanical. */
     if (!spec.variant_key.empty() && key == spec.variant_key) {

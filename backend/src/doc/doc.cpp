@@ -91,6 +91,10 @@ bool Document::prepare(Kind kind, Json& node, std::string& err) {
         }
     }
 
+    /* a prop that owns another's shape settles it now, so a document read off disk is
+       normalized by exactly the rule an edit goes through (schema.h, Prop::retypes) */
+    retype_props(spec, node);
+
     for (const ChildList& l : spec.lists) {
         auto it = node.find(l.key);
         if (it == node.end()) { node[l.key] = Json::array(); continue; }

@@ -249,6 +249,54 @@ void test_expr_rewrite() {
     CHECK(expr_uses("clamp(flow, 0, 1)", "flow"));
 }
 
+/* A variable's type owns the shape of its init. Without this a bool variable keeps the
+ * number 0, compiles to UNKNOWN, and can never leave it: Nil poisons `!value`. */
+void test_retype() {
+    Document d = Document::make_default();
+    Json* pump = global_named(d, "pumpOn");
+    CHECK(pump != nullptr);
+    CHECK(pump && pump->at("init").is_boolean());   /* the default document is normalized */
+
+    Json* setpoint = global_named(d, "setpoint");
+    const uint64_t id = id_of(*setpoint);
+    std::string err;
+    ApplyResult r;
+    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+                                    {"value", "bool"}}}),
+                    r, err));
+    CHECK(global_named(d, "setpoint")->at("init") == true);   /* 42 is not zero */
+    /* the coercion is echoed as its own op, so a client applies it mechanically */
+    bool echoed = false;
+    for (const Json& op : r.ops)
+        if (op.value("key", "") == "init" && op.value("value", Json()) == true) echoed = true;
+    CHECK(echoed);
+
+    /* and back: a bool becomes a number again, so nothing is stuck in the wrong shape */
+    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+                                    {"value", "f64"}}}),
+                    r, err));
+    CHECK(global_named(d, "setpoint")->at("init") == 1.0);
+
+    /* a document read off disk with the wrong shape is normalized by the same rule */
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array({Json{{"name", "on"}, {"type", "bool"}, {"init", 0}}})},
+                 {"pages", Json::array()}};
+    Document loaded;
+    CHECK(loaded.adopt(std::move(root), err));
+    CHECK(global_named(loaded, "on")->at("init") == false);
+
+    /* an explicit null stays null: a deliberate UNKNOWN start is not a mistyped value */
+    Json with_null = {
+        {"version", 1},
+        {"next_id", 1},
+        {"globals", Json::array({Json{{"name", "on"}, {"type", "bool"}, {"init", nullptr}}})},
+        {"pages", Json::array()}};
+    Document kept;
+    CHECK(kept.adopt(std::move(with_null), err));
+    CHECK(global_named(kept, "on")->at("init").is_null());
+}
+
 } // namespace
 
 int main() {
@@ -258,5 +306,6 @@ int main() {
     test_structure_ops();
     test_rename();
     test_expr_rewrite();
+    test_retype();
     return check::summary("doc_test");
 }

@@ -1,5 +1,8 @@
 #include "schema.h"
 
+#include <stdexcept>
+#include <string>
+
 namespace hmi {
 namespace {
 
@@ -15,6 +18,15 @@ Prop boolean(std::string key, bool def) {
 Prop enumer(std::string key, std::vector<std::string> variants, const char* def) {
     Prop p; p.key = std::move(key); p.type = PropType::Enum; p.variants = std::move(variants);
     p.def = def; return p;
+}
+/* an enum prop that also decides the shape of another prop: one default per variant, and
+ * the default's JSON shape IS the target shape (no second table to keep in step) */
+Prop enumer_retyping(std::string key, std::vector<std::string> variants, const char* def,
+                     std::string retypes, std::vector<Json> defaults) {
+    Prop p = enumer(std::move(key), std::move(variants), def);
+    p.retypes = std::move(retypes);
+    p.variant_defaults = std::move(defaults);
+    return p;
 }
 Prop object(std::string key, Json def, Role role = Role::Plain) {
     Prop p; p.key = std::move(key); p.type = PropType::Object; p.def = std::move(def);
@@ -72,7 +84,10 @@ const std::vector<NodeSpec>& table() {
         var.name = "var";
         var.props = {
             text("name"),
-            enumer("type", {"f64", "bool", "str", "timer"}, "f64"),
+            /* the type owns the init's shape: a bool variable whose init stayed the
+             * number 0 would compile to UNKNOWN and never leave it (Nil poisons) */
+            enumer_retyping("type", {"f64", "bool", "str", "timer"}, "f64", "init",
+                            {Json(0.0), Json(false), Json(""), Json(1.0)}),
             any("init", 0),
             boolean("persist", false),
         };
@@ -190,6 +205,68 @@ bool declares_key(const NodeSpec& spec, const std::string& key) {
     for (const ChildList& l : spec.lists)
         if (l.key == key) return true;
     return false;
+}
+
+Json coerce_like(const Json& like, const Json& value) {
+    if (like.is_boolean()) {
+        if (value.is_boolean()) return value;
+        if (value.is_number()) return value.get<double>() != 0.0;
+        if (value.is_string()) {
+            const std::string text = value.get<std::string>();
+            if (text == "true" || text == "1") return true;
+            if (text == "false" || text == "0") return false;
+        }
+        return like;
+    }
+    if (like.is_number()) {
+        if (value.is_number()) return value;
+        if (value.is_boolean()) return value.get<bool>() ? 1.0 : 0.0;
+        if (value.is_string()) {
+            try {
+                size_t used = 0;
+                const std::string text = value.get<std::string>();
+                const double parsed = std::stod(text, &used);
+                if (used == text.size()) return parsed;
+            } catch (...) {
+            }
+        }
+        return like;
+    }
+    if (like.is_string()) {
+        if (value.is_string()) return value;
+        if (value.is_boolean()) return value.get<bool>() ? "true" : "false";
+        if (value.is_number()) {
+            Json out = value.dump();
+            return out;
+        }
+        return like;
+    }
+    return value.is_null() ? like : value;
+}
+
+std::vector<std::string> retype_props(const NodeSpec& spec, Json& node) {
+    std::vector<std::string> changed;
+    if (!node.is_object()) return changed;
+    for (const Prop& p : spec.props) {
+        if (p.retypes.empty() || p.variants.size() != p.variant_defaults.size()) continue;
+        auto selector = node.find(p.key);
+        if (selector == node.end() || !selector->is_string()) continue;
+        const std::string variant = selector->get<std::string>();
+        for (size_t i = 0; i < p.variants.size(); ++i) {
+            if (p.variants[i] != variant) continue;
+            auto target = node.find(p.retypes);
+            const Json before = target == node.end() ? Json(nullptr) : *target;
+            /* an explicit null is not a mistyped value, it is a deliberate UNKNOWN start */
+            if (target != node.end() && before.is_null()) break;
+            const Json after = coerce_like(p.variant_defaults[i], before);
+            if (after != before) {
+                node[p.retypes] = after;
+                changed.push_back(p.retypes);
+            }
+            break;
+        }
+    }
+    return changed;
 }
 
 bool list_child(Kind parent, const std::string& list, Kind& out) {

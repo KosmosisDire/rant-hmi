@@ -47,6 +47,12 @@ struct Prop {
     Json def = nullptr;                  /* filled in on insert when absent */
     std::vector<std::string> variants;   /* PropType::Enum only */
     Role role = Role::Plain;
+    /* An Enum prop may RETYPE another prop: each variant names the JSON shape that prop's
+     * value must take, so the two can never disagree. A variable's `type` retypes its
+     * `init` this way; without it a bool variable keeps the number 0 and compiles to
+     * UNKNOWN, which is indistinguishable on screen from a value that has not arrived. */
+    std::string retypes;
+    std::vector<Json> variant_defaults;  /* parallel to `variants`; the shape to coerce to */
 };
 
 struct ChildList {
@@ -77,6 +83,16 @@ const Prop* find_prop(const NodeSpec& spec, const std::string& variant, const st
 
 /* the child kind of `parent`.`list`, or false when that list does not exist */
 bool list_child(Kind parent, const std::string& list, Kind& out);
+
+/* `value` as the same JSON shape as `like`, converting where the meaning carries (a number
+ * to a bool by zero/non-zero, a bool to 0/1, a numeric string either way) and falling back
+ * to `like` where it does not. Total: it always returns something of `like`'s shape. */
+Json coerce_like(const Json& like, const Json& value);
+
+/* Apply every retyping prop of this node, in declaration order. Returns the keys whose
+ * value changed, so a caller that echoes ops can echo those too. Runs wherever the
+ * document is written: on load, on insert, and after a set_prop. */
+std::vector<std::string> retype_props(const NodeSpec& spec, Json& node);
 
 /* Does this kind declare `key` at all: a common prop, ANY variant's prop, or a child
  * list? Flipping a DO step's kind leaves the previous variant's fields in place (they
