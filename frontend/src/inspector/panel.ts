@@ -174,7 +174,6 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       /* a finding that names the widget itself and no field within it (an unknown type,
          say) has no better row to sit on than the head */
       diagIcon(editor.diagAt(widget.id)),
-      el("span", { class: "type", text: widget.type.toUpperCase() + " · #" + widget.id }),
     ]),
   );
 
@@ -225,21 +224,18 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const hasAspect = String(authoredSlot(widget, type, "aspect") ?? "") !== "";
   body.append(
     ...section("appearance", "Appearance", String(fed.size), () => [
+      /* placement shares the slots' grid so its row sits on the same rhythm */
       el("div", { class: "prop-grid" }, [
         el("label", { text: "Place" }),
         geomRow(editor, widget),
         el("span"),
-      ]),
-      el(
-        "div",
-        { class: "prop-grid" },
-        otherSlots
+        ...otherSlots
           .filter((s) => s.group === "appearance")
           .concat(otherSlots.filter((s) => s.group === "config"))
           .filter((s) => s.name !== "align" || usesAlign || hasAspect)
           .filter((s) => s.name !== "text_scale" || usesTextScale)
           .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
-      ),
+      ]),
     ]),
   );
 }

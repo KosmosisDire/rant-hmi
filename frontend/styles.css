@@ -1094,16 +1094,21 @@ select.field {
   text-overflow: ellipsis;
 }
 
+/* x y w h on ONE row: four label+field pairs sharing the value column evenly */
 .geom-grid {
   display: grid;
-  grid-template-columns: 10px 1fr 10px 1fr;
-  gap: 6px;
+  grid-template-columns: repeat(4, auto minmax(0, 1fr));
+  gap: 5px;
   align-items: center;
 }
 
 .geom-grid label {
   font: 700 9px var(--mono);
   color: var(--dim);
+}
+
+.geom-grid .field.num {
+  width: 100%;
 }
 
 .value-cell {
