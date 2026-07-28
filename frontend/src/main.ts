@@ -9,3 +9,8 @@ const app = new App(document.getElementById("app") as HTMLElement, url);
 app.start();
 /* exposed for headless drives and console debugging; nothing in the app reads it */
 (window as any).app = app;
+
+/* dev only: ?pick fetches the element picker, which turns a click on any part of the running
+   UI into a text handle for it. Never loaded otherwise, and the app never references it. */
+if (/[?&]pick(&|=|$)/.test(location.search))
+  import("./pick.js").then((mod) => mod.installPicker());
