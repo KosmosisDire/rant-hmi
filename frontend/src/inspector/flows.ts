@@ -15,6 +15,7 @@ import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { Flow, Json, Op, Widget, WidgetType } from "../types.js";
+import { attachAutocomplete, exprContext, flowX } from "./autocomplete.js";
 import { sourceField } from "./editors.js";
 
 const opened = new Set<number>();
@@ -400,6 +401,12 @@ function stepRow(
       ...attrs,
     });
     bindField(step.id + ":" + prop, field, () => String(at()[prop] ?? ""));
+    /* a step's expression is WIRE tier: the machine-value vocabulary only */
+    attachAutocomplete(
+      field,
+      exprContext(editor, widget, "wire",
+                  flowX(editor, widget, () => (editor.store.node(flow.id) as Flow) ?? flow)),
+    );
     return field;
   };
 

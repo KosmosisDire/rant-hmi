@@ -10,6 +10,7 @@ export const PROTO = 2;
 export interface MeshField {
   path: string;
   shape: string;
+  elem?: string; /* aggregate fields: the element shape (a map's value shape) */
   variants?: { name: string; value: number }[];
 }
 
@@ -24,6 +25,22 @@ export interface MeshEntity {
 
 export interface Mesh {
   entities: MeshEntity[];
+}
+
+/* ---- the expression language, as served tables (spec 3.7) ---- */
+
+export interface LangEntry {
+  name: string;
+  args: string[];      /* shape names; "any" = unchecked; entries past min_args optional */
+  min_args: number;
+  result: string;      /* result shape; "elem" = the receiver's element shape */
+  tier: "display" | "both";
+  receiver?: string;   /* method rows only */
+}
+
+export interface Lang {
+  builtins: LangEntry[];
+  methods: LangEntry[];
 }
 
 /* ---- document ---- */

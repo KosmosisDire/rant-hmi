@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "compile/compiler.h"
+#include "compile/expression.h"
 #include "doc/ops.h"
 #include "registry/registry.h"
 
@@ -286,6 +287,8 @@ Json App::mesh_json() const {
             Json rows = Json::array();
             for (const FieldDef& field : fields) {
                 Json row{{"path", field.path}, {"shape", shape_name(field.shape)}};
+                if (field.shape == Shape::List || field.shape == Shape::Map)
+                    row["elem"] = shape_name(field.elem);
                 if (!field.variants.empty()) {
                     Json variants = Json::array();
                     for (const auto& variant : field.variants)
@@ -307,6 +310,30 @@ Json App::mesh_json() const {
         entities.push_back(std::move(row));
     }
     return Json{{"entities", std::move(entities)}};
+}
+
+/* the expression language as data (spec 3.7): straight from the compiler's own
+ * tables, so what autocomplete offers and what compiles can never disagree */
+Json App::lang_json() {
+    Json builtins = Json::array();
+    Json methods = Json::array();
+    for (const LangRow& row : language_reference()) {
+        Json args = Json::array();
+        for (uint32_t i = 0; i < row.max_args && i < 5 && row.args[i]; ++i)
+            args.push_back(row.args[i]);
+        Json entry{{"name", row.name},
+                   {"args", std::move(args)},
+                   {"min_args", row.min_args},
+                   {"result", row.result},
+                   {"tier", row.display_only ? "display" : "both"}};
+        if (std::string(row.kind) == "method") {
+            entry["receiver"] = row.receiver;
+            methods.push_back(std::move(entry));
+        } else {
+            builtins.push_back(std::move(entry));
+        }
+    }
+    return Json{{"builtins", std::move(builtins)}, {"methods", std::move(methods)}};
 }
 
 Json App::diagnostics() const {
@@ -338,6 +365,7 @@ Json App::snapshot() const {
                 {"registry", registry()},
                 {"live", live()},
                 {"mesh", mesh_json()},
+                {"lang", lang_json()},
                 {"diag", Json{{"compile", diagnostics()}}}};
 }
 

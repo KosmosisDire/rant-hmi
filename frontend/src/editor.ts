@@ -9,7 +9,7 @@ import { ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
-import { Diag, Json, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
+import { Diag, Json, Lang, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
 
 export interface Editor {
   store: DocStore;
@@ -17,6 +17,8 @@ export interface Editor {
   live: Live | null;
   /* the reflected mesh (the "dart" root of the source picker); empty when offline */
   mesh: Mesh;
+  /* the served expression vocabulary (builtins + shape-scoped methods) */
+  lang: Lang | null;
   view: ViewState;
   page(): Page | null;
   selectedWidget(): Widget | null;

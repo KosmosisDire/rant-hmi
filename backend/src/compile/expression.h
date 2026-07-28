@@ -37,4 +37,21 @@ bool compile_expression(const std::string& text, ExprTier tier,
                         std::vector<Instruction>& code, ExpressionResult& result,
                         std::string& error);
 
+/* The language, as data (spec 3.7 / "everything is data"): one row per builtin and
+ * method, straight from the tables the parser compiles with, so autocomplete can
+ * never disagree with what compiles. args entries are shape names ("any" = unchecked);
+ * result "elem" marks the element-shape passthroughs (first/last/get/pick). */
+struct LangRow {
+    const char* kind;       /* "builtin" | "method" */
+    const char* receiver;   /* method rows: the receiver shape name; builtins: "" */
+    const char* name;
+    uint32_t min_args = 0;
+    uint32_t max_args = 0;
+    const char* args[5] = {};
+    const char* result = "";
+    bool display_only = false;
+};
+
+const std::vector<LangRow>& language_reference();
+
 } // namespace hmi

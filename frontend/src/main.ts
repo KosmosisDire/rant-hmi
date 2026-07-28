@@ -7,3 +7,5 @@ import { syncUrl } from "./endpoint.js";
 const url = syncUrl(location);
 const app = new App(document.getElementById("app") as HTMLElement, url);
 app.start();
+/* exposed for headless drives and console debugging; nothing in the app reads it */
+(window as any).app = app;

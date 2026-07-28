@@ -65,6 +65,8 @@ class App {
     Json snapshot() const;
     Json live() const;
     Json mesh_json() const;
+    /* the expression vocabulary (builtins + shape-scoped methods) for autocomplete */
+    static Json lang_json();
     /* the current compile's diagnostics, as the wire carries them. A joining client gets
      * them in its snapshot: they are computed once at startup, so a view that arrives
      * later would otherwise never learn why its widget is dead. */

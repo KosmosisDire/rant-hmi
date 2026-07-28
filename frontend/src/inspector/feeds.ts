@@ -13,6 +13,7 @@ import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
 import { Feed, Json, Widget, WidgetType } from "../types.js";
+import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
 import { entityChip, sourceField } from "./editors.js";
 
 const opened = new Set<number>();
@@ -137,6 +138,8 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     title: "Formatting expression, evaluated on the backend",
   });
   bindField(feed.id + ":xf", xf, () => at().xf ?? "");
+  /* a feed's transform is DISPLAY tier: the full formatting vocabulary */
+  attachAutocomplete(xf, exprContext(editor, widget, "display", feedX(editor, widget, at)));
   row("3", [
     diagIcon(editor.diagAt(feed.id, "xf")),
     el("span", { class: "kw", text: "x =" }),

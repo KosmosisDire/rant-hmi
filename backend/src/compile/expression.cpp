@@ -870,6 +870,58 @@ class Parser {
 
 } // namespace
 
+const std::vector<LangRow>& language_reference() {
+    static const std::vector<LangRow> table = [] {
+        auto doc_shape = [](Shape shape) {
+            return shape == Shape::Unknown ? "any" : shape_name(shape);
+        };
+        std::vector<LangRow> rows;
+        for (const auto& item : builtins()) {
+            const BuiltinSpec& spec = item.second;
+            LangRow row;
+            row.kind = "builtin";
+            row.receiver = "";
+            row.name = item.first.c_str();
+            row.min_args = spec.min_args;
+            row.max_args = spec.max_args;
+            for (uint32_t i = 0; i < spec.max_args && i < 5; ++i)
+                row.args[i] = doc_shape(spec.arg_shape[i]);
+            row.result = doc_shape(spec.result);
+            row.display_only = spec.display_only;
+            rows.push_back(row);
+        }
+        for (const MethodSpec& spec : methods()) {
+            LangRow row;
+            row.kind = "method";
+            row.receiver = shape_name(spec.receiver);
+            row.name = spec.name;
+            row.min_args = spec.args;
+            row.max_args = spec.args;
+            for (uint32_t i = 0; i < spec.args && i < 4; ++i)
+                row.args[i] = doc_shape(spec.arg_shape[i]);
+            /* the element-shape passthroughs read better as "elem" than "any" */
+            row.result = spec.method == MethodId::ListFirst ||
+                                 spec.method == MethodId::ListLast ||
+                                 spec.method == MethodId::MapGet
+                             ? "elem"
+                             : doc_shape(spec.result);
+            row.display_only = spec.display_only;
+            rows.push_back(row);
+        }
+        /* the one special form the tables do not carry: enum .is(variant) */
+        LangRow is_row;
+        is_row.kind = "method";
+        is_row.receiver = "enum";
+        is_row.name = "is";
+        is_row.min_args = is_row.max_args = 1;
+        is_row.args[0] = "variant";
+        is_row.result = "bool";
+        rows.push_back(is_row);
+        return rows;
+    }();
+    return table;
+}
+
 bool compile_expression(const std::string& text, ExprTier tier,
                         const ExpressionScope& scope, Program& program,
                         std::vector<Instruction>& code, ExpressionResult& result,

@@ -20,7 +20,7 @@ import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, typeOf } from "./slots.js";
 import { Rect } from "./template.js";
-import { Diag, Doc, Interact, Json, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
+import { Diag, Doc, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 
 type Mode = "edit" | "run" | "operate";
@@ -35,6 +35,8 @@ export class App implements Editor {
   /* the reflected entity tree, served by the backend: the "dart" root of the coming
      source picker (stage 6); the "hmi" root is the document's own variables */
   mesh: Mesh = { entities: [] };
+  /* the served expression vocabulary: autocomplete reads exactly what compiles */
+  lang: Lang | null = null;
   live: Live | null = null;
   diagnostics: Diag[] = [];
   view: ViewState = {
@@ -70,7 +72,8 @@ export class App implements Editor {
   constructor(private root: HTMLElement, url: string) {
     this.build();
     this.conn = new Connection(url, {
-      snapshot: (doc, registry, live, diag, mesh) => this.onSnapshot(doc, registry, live, diag, mesh),
+      snapshot: (doc, registry, live, diag, mesh, lang) =>
+        this.onSnapshot(doc, registry, live, diag, mesh, lang),
       mesh: (mesh) => {
         this.mesh = mesh;
         refreshSourceTree();
@@ -153,11 +156,13 @@ export class App implements Editor {
 
   /* ---- protocol ---- */
 
-  private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh): void {
+  private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
+                     lang: Lang): void {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
     this.mesh = mesh;
+    this.lang = lang;
     this.onDiag(diag, false);
     const page = this.page();
     this.pageId = page ? page.id : 0;
