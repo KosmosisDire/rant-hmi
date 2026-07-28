@@ -2,11 +2,17 @@
  * never to a fallback; a slot without one resolves to the instance value, else the type
  * default.
  *
- * There are two readers, because the canvas and the inspector want different things from an
- * unfed slot. `resolveSlot` is the canvas's: it DRAWS the runtime, so the runtime's cell
- * wins wherever it has one. `editedSlot` is the inspector's: a field EDITS the document, so
- * an unfed slot reads what the document says. They agree exactly where it matters, on a fed
- * slot, which neither can source anywhere but the feed. */
+ * There are two readers, because the canvas and the inspector want different things from a
+ * slot. `resolveSlot` is the canvas's: it DRAWS the runtime, so the runtime's cell wins
+ * wherever it has one. `editedSlot` is the inspector's, and what it shows depends on who
+ * OWNS the slot:
+ *
+ *   nobody writes it   the document IS the value, so the field shows the document. Reading
+ *                      the runtime's compiled copy back would fight what the user typed.
+ *   something writes it (a feed, an authored flow, or the type's own default behavior)
+ *                      the document is only where the runtime STARTED. The field shows the
+ *                      live value, because that is the thing the user is reasoning about
+ *                      (spec 3.10), and editing it restates where the runtime starts. */
 
 import { Cells } from "./program.js";
 import { Json, Live, Registry, SlotSpec, WidgetType, Widget } from "./types.js";
@@ -24,6 +30,24 @@ export function slotSpec(type: WidgetType | null, name: string): SlotSpec | null
 /* which slots this widget instance feeds from the mesh (at most one feed per slot) */
 export function fedSlots(widget: Widget): Set<string> {
   return new Set((widget.feeds ?? []).map((feed) => feed.slot));
+}
+
+/* Which slots the RUNTIME owns: a feed, an authored flow that assigns the slot, or the
+ * type's default behavior. This is a union, not a decision: WHICH of them wins is the
+ * backend's precedence rule (spec 2.3) and is not restated here. Whether the slot is
+ * written at all does not depend on that, and it is all a view needs to know. */
+export function runtimeSlots(widget: Widget, type: WidgetType | null): Set<string> {
+  const out = fedSlots(widget);
+  const assigned = (flows: Json[]) => {
+    for (const flow of flows ?? [])
+      for (const step of flow?.do ?? [])
+        if (step?.kind === "assign" && typeof step.var === "string" &&
+            step.var.startsWith("widget."))
+          out.add(step.var.slice("widget.".length));
+  };
+  assigned(widget.flows ?? []);
+  assigned((type?.behavior ?? []) as Json[]);
+  return out;
 }
 
 /* the live cell key for a widget slot; the backend owns this naming */
@@ -52,20 +76,18 @@ export function authoredSlot(widget: Widget, type: WidgetType | null, name: stri
   return spec ? spec.default : null;
 }
 
-/* What an INSPECTOR field shows, which is not what the canvas draws. The canvas renders the
- * runtime and so reads the live cell for every slot; a field is an INPUT, and an input must
- * show the thing it edits. So an unfed slot reads from the document: the runtime's cell for
- * it is a compiled copy, and reading that back would fight whatever the user just typed.
- * A fed slot has no authored value to show, so it is a read-only view of the feed: the live
- * value, or UNKNOWN until something arrives. */
+/* What an INSPECTOR field shows. `runtime` is the set of slots something writes
+ * (runtimeSlots): for those the field is a live view of the cell, and its authored value is
+ * only where that cell started. For the rest the document IS the value and the field shows
+ * it, so typing is never fought by a compiled copy of the old one. */
 export function editedSlot(
   widget: Widget,
   type: WidgetType | null,
   live: Live | null,
-  fed: Set<string>,
+  runtime: Set<string>,
   name: string,
 ): Json {
-  if (!fed.has(name)) return authoredSlot(widget, type, name);
+  if (!runtime.has(name)) return authoredSlot(widget, type, name);
   const value = live?.values?.[slotCell(widget, name)];
   return value === undefined ? null : value;
 }

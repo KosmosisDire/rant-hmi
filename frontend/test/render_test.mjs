@@ -419,6 +419,45 @@ check(
   "and offers exactly one action, detach",
 );
 
+/* A slot the RUNTIME writes reads live in the inspector too, not just on the artboard.
+   The document's value is only where that cell started, so a field showing it would sit
+   there saying `false` while the toggle on screen is plainly on. */
+const toggleValue = (host) => {
+  for (const grid of host.querySelectorAll(".prop-grid")) {
+    const kids = grid.children;
+    for (let i = 0; i + 1 < kids.length; i++)
+      if (kids[i].tagName === "LABEL" && kids[i].textContent === "value") return kids[i + 1];
+  }
+  return null;
+};
+const liveToggleEditor = {
+  ...toggleEditor,
+  /* the document seeds this toggle ON; the runtime has since been toggled OFF */
+  live: { epoch: 5, values: { [toggle.id + ".value"]: false } },
+};
+const livePanel = new Panel(new Element("aside"));
+livePanel.render(inspectorShape(liveToggleEditor), (host) =>
+  renderInspector(host, liveToggleEditor),
+);
+const valueCell = toggleValue(livePanel.host);
+check(valueCell !== null, "the toggle's value row exists");
+check(
+  valueCell.className.includes("driven"),
+  "a runtime-written slot is marked as such, got " + valueCell?.className,
+);
+const [offButton, onButton] = valueCell.querySelectorAll("button");
+check(
+  offButton.className.includes("on") && !onButton.className.includes("on"),
+  "and its field follows the live cell, not the document",
+);
+check(
+  store.widget(toggle.id).slots.value === true,
+  "while the document still holds the value the runtime started from",
+);
+
+/* the Readout above is the other half of the rule, and still holds: nothing writes its
+   value, so its field shows the document and typing into it is never fought */
+
 /* a finding lands on the widget it names, in the rail and on the canvas */
 const findingEditor = {
   ...toggleEditor,

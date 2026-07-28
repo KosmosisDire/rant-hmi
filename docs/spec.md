@@ -180,6 +180,16 @@ time an authored flow runs, the widget's state already reflects the gesture and
 `widget.<slot>` agrees with `x`. Two readings of one event would be worse than
 either.
 
+**The authored value of a WRITTEN slot is a seed, not the value.** Once anything
+writes a slot (a feed, an authored flow, or the type's default), what the document
+holds is only where the runtime cell STARTS, exactly as a variable's `init` is not
+its value. The distinction shows up in the inspector: a field for such a slot reads
+the LIVE cell, so a toggle flipped on screen moves the value shown beside it, and
+editing it restates where the runtime starts (the cell is reseeded on the recompile
+that edit triggers). A slot nothing writes has no such split: the document IS the
+value, and the field shows the document so that typing is never fought by a compiled
+copy of the value before it.
+
 One writer per slot survives by PRECEDENCE, resolved at compile time in this
 order:
 

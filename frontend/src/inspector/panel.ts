@@ -16,7 +16,7 @@
 import { clear, commitInput, el, iconButton, numberInput } from "../dom.js";
 import { Editor, section } from "../editor.js";
 import { bindField, bindFlag, bindText } from "../reconcile.js";
-import { authoredSlot, editedSlot, fedSlots, slotCell, typeOf } from "../slots.js";
+import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf } from "../slots.js";
 import { Json, Page, SlotSpec, Widget } from "../types.js";
 
 import { valueEditor } from "./editors.js";
@@ -163,6 +163,8 @@ export function inspectorShape(editor: Editor): string {
       s.name, s.shape, s.group, s.editor ?? "", (s.variants ?? []).join("|"),
     ]),
     fed: Array.from(fed).sort(),
+    /* which slots read live decides what each field IS, so it is structure */
+    runtime: Array.from(runtimeSlots(widget, type)).sort(),
     align: template.includes("slot:align"),
     textScale: template.includes("slot:text_scale"),
     /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
@@ -357,8 +359,12 @@ function slotCells(
   spec: SlotSpec,
 ): HTMLElement[] {
   const bound = fed.has(spec.name);
+  const runtime = runtimeSlots(widget, type);
+  /* a slot the runtime writes but no feed owns: the field is live, and editable as the
+     value the runtime starts from */
+  const driven = !bound && runtime.has(spec.name);
   const at = () => editor.store.widget(widget.id) ?? widget;
-  const read = () => editedSlot(at(), type, editor.live, fed, spec.name);
+  const read = () => editedSlot(at(), type, editor.live, runtime, spec.name);
   const commit = (next: Json) => {
     const slots = { ...(at().slots ?? {}) };
     slots[spec.name] = next;
@@ -366,9 +372,16 @@ function slotCells(
   };
   const feed = (widget.feeds ?? []).find((f) => f.slot === spec.name);
 
-  const control = el("span", { class: "value-cell" + (bound ? " bound" : "") }, [
-    valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, bound),
-  ]);
+  const control = el(
+    "span",
+    {
+      class: "value-cell" + (bound ? " bound" : "") + (driven ? " driven" : ""),
+      title: driven
+        ? spec.name + " is written at runtime; this is the value it starts from"
+        : undefined,
+    },
+    [valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, bound)],
+  );
   if (bound) disableAll(control);
 
   /* one link icon, two states: bound shows it lit and unbinds, unbound offers the feed */
