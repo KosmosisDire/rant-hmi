@@ -1091,7 +1091,9 @@ LAMBDA  := IDENT "=>" expr        // one parameter, one expression, no capture o
 
 Free functions are the whole of the wire tier's vocabulary: `clamp mapRange roundTo
 lerp abs round floor ceil sqrt pow min max` (numeric), `int num str name`
-(conversion), `values keys entries` (container). The display tier adds the color
+(conversion), `values keys` (container; `entries` waits on a pair shape). A wire
+expression may CARRY an aggregate mid-chain (`values(x).max`), but its RESULT is
+always one scalar: a list-shaped result is refused at compile. The display tier adds the color
 vocabulary (constructors with fixed ranges, never auto-detected): `rgb(r, g, b
 [, a])` (channels 0..255, alpha 0..1), `hsv(h, s, v [, a])` (h 0..360, s/v 0..1),
 `color(text)` (parses `#rgb`/`#rrggbb`/`#rrggbbaa`; a failed parse is Nil), and
@@ -1120,13 +1122,21 @@ not a reflex.
 
 | Receiver | Methods | Tier |
 |---|---|---|
-| text | `length upper lower title trim slice(a,b) split(sep) startsWith(s) endsWith(s) contains(s) replace(a,b) padStart(n,c)` | display |
-| list | `length first last sum avg max min count any(fn) all(fn) map(fn) filter(fn) join(sep) sort() sortBy(fn) reverse() slice(a,b) contains(v) indexOf(v)` | display; the scalar-returning ones also wire |
+| text | `length upper lower title trim slice(a,b) split(sep) startsWith(s) endsWith(s) contains(s) replace(a,b) padStart(n,c)` | predicates and `length` both (a gate may test an alarm code); the text-PRODUCING ones are formatting and stay display |
+| list | `length first last sum avg max min count any(fn) all(fn) map(fn) filter(fn) join(sep) sort() sortBy(fn) reverse() slice(a,b) contains(v) indexOf(v)` | both mid-expression (a wire value may reduce a list); `join` and the lambda-taking rows are display, and the lambda rows wait on 6.4's demand gate |
 | num | `round(dp) floor ceil abs clamp(lo,hi) mapRange(inLo,inHi,outLo,outHi) toFixed(dp) sign` | both (toFixed returns text -> display) |
 | bool | `int not pick(a,b)` | both |
-| enum | `int name is(variant)` | both |
-| map | `length keys values entries has(k) get(k)` | display |
+| enum | `int name is(variant)` | both; `is` resolves its variant against the receiver's vocabulary at compile time |
+| map | `length keys values has(k) get(k)` | both mid-expression; `entries` waits on a pair shape |
 | color | `r g b a` (nums: channels 0..255, alpha 0..1 -> wire-legal, the LED bridge) `alpha(a) mix(c,t)` | accessors both; the rest display |
+
+Semantics pinned by the implementation: `replace(a,b)` replaces EVERY occurrence (the
+common intent on a label; JS's first-only surprise is not kept), `slice` takes
+JS-style negative indices from the end, `split` yields at most one piece per input
+byte (the `kSplitCeiling` safety ceiling), and indexing `x[i]` / `x["key"]` is the
+postfix grammar's bracket form over lists and maps. Aggregate ELEMENTS are scalars:
+DART arrays are scalar/string-element by construction and a map's values decode
+per-entry, so no struct value ever exists inside the VM.
 
 The motivating cases read the way a JS user expects, and type-check:
 
