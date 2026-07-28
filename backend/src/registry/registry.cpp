@@ -235,10 +235,14 @@ Json toggle_type() {
                     slot("off_color", "color", "#2a2a2a", "appearance", "color"),
                     slot("knob_color", "color", "#ececec", "appearance", "color"),
                 }),
-                /* press/release/held are the gesture's own edges and stay raw; a TAP is
-                   the toggling act, and what it proposes is the opposite of the value */
-                Json::array({event("press", "bool"), event("release", "bool"),
-                             event("tap", "bool", "!widget.value"), event("held", "bool")}),
+                /* what a Toggle proposes is the opposite of its value, for EVERY gesture
+                   on it, not just the tap that commits: an author who gates a press on
+                   `x` must see the value the control is trying to set, the same as on a
+                   Readout or an Indicator, never the pointer's own true/false */
+                Json::array({event("press", "bool", "!widget.value"),
+                             event("release", "bool", "!widget.value"),
+                             event("tap", "bool", "!widget.value"),
+                             event("held", "bool", "!widget.value")}),
                 box("stack", Json{{"aspect", lit(2.0)}},
                     Json::array({
                         part("rect", Json{{"fill", pick(on, ref("slot:on_color"),

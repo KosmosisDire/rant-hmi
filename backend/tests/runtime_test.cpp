@@ -510,6 +510,21 @@ void test_event_value() {
         if (slider_compiled.program.cells[i].name == "value")
             CHECK(slider_state.values[i].data.num == 62.5);
 
+    /* EVERY gesture on a control proposes the same thing. A toggle gated on `x` in a
+       press flow (force here, unforce there) has to see the value it is trying to set,
+       not the pointer's own true on the way down and false on the way up. */
+    Document edges = widget_document("Toggle", Json{{"value", true}});
+    CompileResult edges_compiled = compile_document(edges, registry(), mesh);
+    CHECK(edges_compiled.ok);
+    RuntimeState edges_state(edges_compiled.program);
+    const uint64_t edges_id = only_widget(edges);
+    for (const char* gesture : {"press", "release", "tap", "held"}) {
+        const Value proposed = event_x(edges_compiled.program, edges_state, edges_id,
+                                       gesture, Value::boolean(true));
+        CHECK(proposed.tag == ValueTag::Bool);
+        CHECK_MSG(proposed.data.boolean == false, gesture);   /* value is true: propose false */
+    }
+
     /* a read-only control proposes what it is SHOWING, so the view never supplies it */
     Document readout = widget_document("Readout", Json{{"value", 7.5}});
     CompileResult readout_compiled = compile_document(readout, registry(), mesh);

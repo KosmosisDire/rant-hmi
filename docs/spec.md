@@ -156,8 +156,11 @@ rejected door shut in the first place.
 edge: a tap is `true` whichever way the toggle was pointing. The value that gesture
 proposes is the type's own logic, so the events table declares it as `value`, an
 expression over the widget's slots and the raw event value, and the backend
-evaluates it ONCE per event before any flow on that event runs. A Toggle's `tap`
-proposes `!widget.value`; a Readout's `press` proposes the value it is displaying.
+evaluates it ONCE per event before any flow on that event runs. A Toggle proposes
+`!widget.value` on every one of its gestures, not only the `tap` that commits it; a
+Readout's `press` proposes the value it is displaying. A type declares the proposal
+for EVERY event it reports, so `x` never changes meaning between a press and a tap on
+the same control.
 Where the gesture already carries its proposal (a Slider's drag, a Dropdown's
 selection) the type declares nothing and the raw value stands.
 
