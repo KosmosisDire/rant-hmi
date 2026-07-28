@@ -1,5 +1,6 @@
 #include "expression.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <unordered_map>
@@ -189,11 +190,18 @@ class Lexer {
     size_t at_ = 0;
 };
 
+/* One row per builtin / method: the signature, the result shape, and the TIER.
+ * display_only marks the formatting vocabulary (spec 6.2/6.3): legal in a feed's
+ * transform, refused where the result is for a machine. arg_shape entries gate each
+ * argument (Unknown = any shape). These tables are the single authority: the parser,
+ * the shape checker and the served autocomplete tables all read them. */
 struct BuiltinSpec {
     Builtin builtin;
     uint32_t min_args;
     uint32_t max_args;
+    Shape arg_shape[5];
     Shape result;
+    bool display_only;
 };
 
 struct MethodSpec {
@@ -201,51 +209,117 @@ struct MethodSpec {
     const char* name;
     MethodId method;
     uint32_t args;
+    Shape arg_shape[4];
     Shape result;
+    bool display_only;
 };
+
+constexpr Shape ANY = Shape::Unknown;
+constexpr Shape NUM = Shape::Num;
 
 const std::vector<MethodSpec>& methods() {
     static const std::vector<MethodSpec> table = {
-        {Shape::Num, "round", MethodId::NumRound, 1, Shape::Num},
-        {Shape::Num, "floor", MethodId::NumFloor, 0, Shape::Num},
-        {Shape::Num, "ceil", MethodId::NumCeil, 0, Shape::Num},
-        {Shape::Num, "abs", MethodId::NumAbs, 0, Shape::Num},
-        {Shape::Num, "clamp", MethodId::NumClamp, 2, Shape::Num},
-        {Shape::Num, "mapRange", MethodId::NumMapRange, 4, Shape::Num},
-        {Shape::Num, "sign", MethodId::NumSign, 0, Shape::Num},
-        {Shape::Bool, "int", MethodId::BoolInt, 0, Shape::Num},
-        {Shape::Bool, "not", MethodId::BoolNot, 0, Shape::Bool},
-        {Shape::Bool, "pick", MethodId::BoolPick, 2, Shape::Unknown},
-        {Shape::Color, "r", MethodId::ColorR, 0, Shape::Num},
-        {Shape::Color, "g", MethodId::ColorG, 0, Shape::Num},
-        {Shape::Color, "b", MethodId::ColorB, 0, Shape::Num},
-        {Shape::Color, "a", MethodId::ColorA, 0, Shape::Num},
-        {Shape::Color, "alpha", MethodId::ColorAlpha, 1, Shape::Color},
-        {Shape::Color, "mix", MethodId::ColorMix, 2, Shape::Color},
+        {Shape::Num, "round", MethodId::NumRound, 1, {NUM}, Shape::Num, false},
+        {Shape::Num, "floor", MethodId::NumFloor, 0, {}, Shape::Num, false},
+        {Shape::Num, "ceil", MethodId::NumCeil, 0, {}, Shape::Num, false},
+        {Shape::Num, "abs", MethodId::NumAbs, 0, {}, Shape::Num, false},
+        {Shape::Num, "clamp", MethodId::NumClamp, 2, {NUM, NUM}, Shape::Num, false},
+        {Shape::Num, "mapRange", MethodId::NumMapRange, 4, {NUM, NUM, NUM, NUM}, Shape::Num, false},
+        {Shape::Num, "sign", MethodId::NumSign, 0, {}, Shape::Num, false},
+        {Shape::Bool, "int", MethodId::BoolInt, 0, {}, Shape::Num, false},
+        {Shape::Bool, "not", MethodId::BoolNot, 0, {}, Shape::Bool, false},
+        {Shape::Bool, "pick", MethodId::BoolPick, 2, {ANY, ANY}, Shape::Unknown, false},
+        {Shape::Color, "r", MethodId::ColorR, 0, {}, Shape::Num, false},
+        {Shape::Color, "g", MethodId::ColorG, 0, {}, Shape::Num, false},
+        {Shape::Color, "b", MethodId::ColorB, 0, {}, Shape::Num, false},
+        {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false},
+        {Shape::Color, "alpha", MethodId::ColorAlpha, 1, {NUM}, Shape::Color, true},
+        {Shape::Color, "mix", MethodId::ColorMix, 2, {Shape::Color, NUM}, Shape::Color, true},
     };
     return table;
 }
 
 const std::unordered_map<std::string, BuiltinSpec>& builtins() {
     static const std::unordered_map<std::string, BuiltinSpec> table = {
-        {"clamp", {Builtin::Clamp, 3, 3, Shape::Num}},
-        {"mapRange", {Builtin::MapRange, 5, 5, Shape::Num}},
-        {"roundTo", {Builtin::RoundTo, 2, 2, Shape::Num}},
-        {"lerp", {Builtin::Lerp, 3, 3, Shape::Num}},
-        {"abs", {Builtin::Abs, 1, 1, Shape::Num}},
-        {"round", {Builtin::Round, 1, 1, Shape::Num}},
-        {"floor", {Builtin::Floor, 1, 1, Shape::Num}},
-        {"ceil", {Builtin::Ceil, 1, 1, Shape::Num}},
-        {"sqrt", {Builtin::Sqrt, 1, 1, Shape::Num}},
-        {"pow", {Builtin::Pow, 2, 2, Shape::Num}},
-        {"min", {Builtin::Min, 2, 2, Shape::Num}},
-        {"max", {Builtin::Max, 2, 2, Shape::Num}},
-        {"int", {Builtin::Int, 1, 1, Shape::Num}},
-        {"num", {Builtin::Num, 1, 1, Shape::Num}},
-        {"rgb", {Builtin::Rgb, 3, 4, Shape::Color}},
-        {"hsv", {Builtin::Hsv, 3, 4, Shape::Color}},
+        {"clamp", {Builtin::Clamp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false}},
+        {"mapRange", {Builtin::MapRange, 5, 5, {NUM, NUM, NUM, NUM, NUM}, Shape::Num, false}},
+        {"roundTo", {Builtin::RoundTo, 2, 2, {NUM, NUM}, Shape::Num, false}},
+        {"lerp", {Builtin::Lerp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false}},
+        {"abs", {Builtin::Abs, 1, 1, {NUM}, Shape::Num, false}},
+        {"round", {Builtin::Round, 1, 1, {NUM}, Shape::Num, false}},
+        {"floor", {Builtin::Floor, 1, 1, {NUM}, Shape::Num, false}},
+        {"ceil", {Builtin::Ceil, 1, 1, {NUM}, Shape::Num, false}},
+        {"sqrt", {Builtin::Sqrt, 1, 1, {NUM}, Shape::Num, false}},
+        {"pow", {Builtin::Pow, 2, 2, {NUM, NUM}, Shape::Num, false}},
+        {"min", {Builtin::Min, 2, 2, {NUM, NUM}, Shape::Num, false}},
+        {"max", {Builtin::Max, 2, 2, {NUM, NUM}, Shape::Num, false}},
+        {"int", {Builtin::Int, 1, 1, {NUM}, Shape::Num, false}},
+        {"num", {Builtin::Num, 1, 1, {NUM}, Shape::Num, false}},
+        {"rgb", {Builtin::Rgb, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
+        {"hsv", {Builtin::Hsv, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
     };
     return table;
+}
+
+/* JS habits and near-misses: an unknown method on a KNOWN shape suggests the
+ * neighbour instead of failing cold (spec 6.3's lint). */
+struct AliasRow {
+    Shape receiver;   /* Unknown = any receiver */
+    const char* typed;
+    const char* meant;
+};
+
+const AliasRow kAliases[] = {
+    {Shape::Text, "toUpperCase", "upper"},
+    {Shape::Text, "toLowerCase", "lower"},
+    {Shape::Text, "trimStart", "trim"},
+    {Shape::Text, "trimEnd", "trim"},
+    {Shape::Text, "substring", "slice"},
+    {Shape::Text, "substr", "slice"},
+    {Shape::Text, "includes", "contains"},
+    {Shape::Text, "charAt", "slice"},
+    {Shape::Num, "toPrecision", "toFixed"},
+    {Shape::Num, "trunc", "floor"},
+    {Shape::List, "includes", "contains"},
+    {Shape::List, "size", "length"},
+    {Shape::Map, "size", "length"},
+};
+
+size_t edit_distance(const std::string& a, const std::string& b) {
+    std::vector<size_t> row(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); ++j) row[j] = j;
+    for (size_t i = 1; i <= a.size(); ++i) {
+        size_t corner = row[0];
+        row[0] = i;
+        for (size_t j = 1; j <= b.size(); ++j) {
+            const size_t up = row[j];
+            row[j] = std::min({row[j] + 1, row[j - 1] + 1,
+                               corner + (std::tolower(static_cast<unsigned char>(a[i - 1])) ==
+                                                 std::tolower(static_cast<unsigned char>(b[j - 1]))
+                                             ? 0u
+                                             : 1u)});
+            corner = up;
+        }
+    }
+    return row[b.size()];
+}
+
+/* the best "did you mean" for an unknown method name on a known receiver, or empty */
+std::string method_suggestion(Shape receiver, const std::string& name) {
+    for (const AliasRow& row : kAliases)
+        if ((row.receiver == Shape::Unknown || row.receiver == receiver) && name == row.typed)
+            return row.meant;
+    std::string best;
+    size_t best_cost = 3;   /* suggest only near misses */
+    for (const MethodSpec& row : methods()) {
+        if (row.receiver != receiver) continue;
+        const size_t cost = edit_distance(name, row.name);
+        if (cost < best_cost) {
+            best_cost = cost;
+            best = row.name;
+        }
+    }
+    return best;
 }
 
 class Parser {
@@ -439,8 +513,15 @@ class Parser {
                     break;
                 }
             if (!spec) {
+                const std::string meant = method_suggestion(receiver, name);
                 fail("shape " + std::string(shape_name(receiver)) +
-                     " has no method '" + name + "'");
+                     " has no method '" + name + "'" +
+                     (meant.empty() ? "" : "; did you mean '" + meant + "'?"));
+                return Shape::Unknown;
+            }
+            if (tier_ == ExprTier::Wire && spec->display_only) {
+                fail("'" + name + "' is display vocabulary (formatting); this value is "
+                     "for a machine");
                 return Shape::Unknown;
             }
             uint32_t argc = 0;
@@ -449,7 +530,8 @@ class Parser {
                 if (token_.kind != TokenKind::RParen) {
                     for (;;) {
                         Shape argument = parse_or();
-                        if (receiver == Shape::Num) require(argument, Shape::Num, name.c_str());
+                        if (argc < spec->args && spec->arg_shape[argc] != Shape::Unknown)
+                            require(argument, spec->arg_shape[argc], name.c_str());
                         ++argc;
                         if (token_.kind != TokenKind::Comma) break;
                         advance();
@@ -564,12 +646,19 @@ class Parser {
             fail("unknown function '" + name + "'");
             return Shape::Unknown;
         }
+        const BuiltinSpec& spec = found->second;
+        if (tier_ == ExprTier::Wire && spec.display_only) {
+            fail("'" + name + "' is display vocabulary (formatting); this value is "
+                 "for a machine");
+            return Shape::Unknown;
+        }
         advance();
         uint32_t argc = 0;
         if (token_.kind != TokenKind::RParen) {
             for (;;) {
                 Shape arg = parse_or();
-                require(arg, Shape::Num, name.c_str());
+                if (argc < spec.max_args && spec.arg_shape[argc] != Shape::Unknown)
+                    require(arg, spec.arg_shape[argc], name.c_str());
                 ++argc;
                 if (token_.kind != TokenKind::Comma) break;
                 advance();
@@ -580,7 +669,6 @@ class Parser {
             return Shape::Unknown;
         }
         advance();
-        const BuiltinSpec& spec = found->second;
         if (argc < spec.min_args || argc > spec.max_args) {
             fail(name + " takes " + std::to_string(spec.min_args) + " arguments");
             return Shape::Unknown;
@@ -610,6 +698,15 @@ bool compile_expression(const std::string& text, ExprTier tier,
     const size_t start = code.size();
     Parser parser(text, tier, scope, program, code, error);
     if (!parser.parse(result)) {
+        code.resize(start);
+        return false;
+    }
+    /* a wire value is always one scalar (spec 6): aggregates may appear mid-expression
+     * (max over a list), never as what goes to the machine */
+    if (tier == ExprTier::Wire &&
+        (result.shape == Shape::List || result.shape == Shape::Map)) {
+        error = "a wire value is one scalar; this expression yields a " +
+                std::string(shape_name(result.shape));
         code.resize(start);
         return false;
     }

@@ -219,6 +219,41 @@ void test_expression_rejection() {
     CHECK(code.empty());
 }
 
+void test_tiers() {
+    Program program;
+    program.add_text("");
+    ExpressionScope scope;
+    scope.x_shape = Shape::Num;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string error;
+    /* the color constructors are display vocabulary: fine in a transform, refused
+     * where the result is for a machine */
+    CHECK(compile_expression("rgb(255, 0, 0)", ExprTier::Display, scope, program, code,
+                             result, error));
+    code.clear();
+    error.clear();
+    CHECK(!compile_expression("rgb(255, 0, 0)", ExprTier::Wire, scope, program, code,
+                              result, error));
+    CHECK_MSG(error.find("display") != std::string::npos, error);
+    CHECK(code.empty());
+    error.clear();
+    /* an unknown method on a known shape suggests the neighbour */
+    CHECK(!compile_expression("x.Round(1)", ExprTier::Display, scope, program, code,
+                              result, error));
+    CHECK_MSG(error.find("'round'") != std::string::npos, error);
+    error.clear();
+    scope.x_shape = Shape::Color;
+    CHECK(!compile_expression("x.mix(#fff, 0.5)", ExprTier::Wire, scope, program, code,
+                              result, error));
+    CHECK_MSG(error.find("display") != std::string::npos, error);
+    /* the accessors are the sanctioned wire bridge (an RGB LED takes channels) */
+    error.clear();
+    code.clear();
+    CHECK(compile_expression("x.r", ExprTier::Wire, scope, program, code, result, error));
+    CHECK(result.shape == Shape::Num);
+}
+
 void test_replay() {
     Document document = runtime_document();
     FakeMesh first_mesh(reflection());
@@ -660,6 +695,7 @@ int main() {
     test_migration();
     test_compile_fault();
     test_expression_rejection();
+    test_tiers();
     test_default_behavior();
     test_event_value();
     test_value_shape_diagnostics();
