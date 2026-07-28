@@ -95,7 +95,7 @@ Value json_value(Program& program, Shape shape, const Json& value, bool& ok) {
 
 /* A move's `from` / `to` is one object discriminated by the key it carries (spec 2.6),
  * so reading one is asking which key is there. */
-enum class SideKind { None, Expr, Local, Entity };
+enum class SideKind { None, Expr, Local, Entity, Init };
 
 SideKind side_kind(const Json& side) {
     if (!side.is_object()) return SideKind::None;
@@ -103,6 +103,7 @@ SideKind side_kind(const Json& side) {
     if (side.contains("local")) return SideKind::Local;
     if (side.contains("slot")) return SideKind::Local;
     if (side.contains("kind")) return SideKind::Entity;
+    if (side.contains("init")) return SideKind::Init;
     return SideKind::None;
 }
 
@@ -342,6 +343,7 @@ class Compiler {
                  DiagGrade::Error, "type");
             return UINT32_MAX;
         }
+        const Json init = var.contains("init") ? var["init"] : Json();
         if (program_.types[type_id].kind == TypeKind::Enum) {
             const uint32_t cell = add_cell(kind, owner, id_of(var), name, Shape::Enum,
                                            Json(), var.value("persist", false));
@@ -349,10 +351,69 @@ class Compiler {
             program_.cells[cell].type_id = static_cast<uint16_t>(type_id);
             program_.cells[cell].initial = Value::enumeration(
                 variants.empty() ? 0 : variants[0].second, static_cast<uint16_t>(type_id));
+            /* the default is a variant NAME; a name outside the vocabulary is a
+               finding, never a silent first-variant */
+            if (init.is_string() && !init.get<std::string>().empty()) {
+                const std::string wanted = init.get<std::string>();
+                bool matched = false;
+                for (const auto& row : variants)
+                    if (row.first == wanted) {
+                        program_.cells[cell].initial = Value::enumeration(
+                            row.second, static_cast<uint16_t>(type_id));
+                        matched = true;
+                        break;
+                    }
+                if (!matched)
+                    diag(id_of(var), "enum_name",
+                         "'" + wanted + "' is not one of this enum's variants",
+                         DiagGrade::Error, "init");
+            }
             return cell;
         }
-        return add_struct_cell(kind, owner, 0, id_of(var), name,
-                               static_cast<uint16_t>(type_id));
+        const uint32_t cell = add_struct_cell(kind, owner, 0, id_of(var), name,
+                                              static_cast<uint16_t>(type_id));
+        /* a struct variable's DEFAULTS: an object of field values over the type's
+           zero, applied at start and by a reset */
+        if (init.is_object()) {
+            const std::vector<FieldDef>& fields =
+                struct_fields(program_, static_cast<uint16_t>(type_id));
+            for (auto it = init.begin(); it != init.end(); ++it) {
+                int field = -1;
+                for (uint32_t i = 0; i < fields.size(); ++i)
+                    if (fields[i].path == it.key()) field = static_cast<int>(i);
+                if (field < 0) {
+                    diag(id_of(var), "unresolved_field",
+                         "'" + type_text + "' has no field '" + it.key() + "'",
+                         DiagGrade::Error, "init");
+                    continue;
+                }
+                Value value = Value::nil();
+                bool ok = true;
+                if (fields[field].shape == Shape::Enum && it->is_string()) {
+                    ok = false;
+                    for (const auto& row : fields[field].variants)
+                        if (row.first == it->get<std::string>()) {
+                            value = Value::enumeration(row.second, fields[field].type_id);
+                            ok = true;
+                            break;
+                        }
+                } else {
+                    value = json_value(program_, fields[field].shape, *it, ok);
+                }
+                if (!ok || value.tag == ValueTag::Nil) {
+                    if (!it->is_null())
+                        diag(id_of(var), "value_shape",
+                             "field '" + it.key() + "' is " +
+                                 shape_name(fields[field].shape) + ", but its default is " +
+                                 json_brief(*it),
+                             DiagGrade::Error, "init");
+                    continue;
+                }
+                program_.cells[cell].struct_init.push_back(
+                    {static_cast<uint32_t>(field), value});
+            }
+        }
+        return cell;
     }
 
     void build_cells() {
@@ -947,6 +1008,44 @@ class Compiler {
         if (name.empty()) {
             diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
             return false;
+        }
+
+        /* RESET (spec 2.6): the source `{init}` is the destination's own declared
+           start. A struct variable re-runs its New (zero + authored defaults); a
+           scalar or enum takes its init constant back. */
+        if (from.contains("init")) {
+            uint32_t cell = UINT32_MAX;
+            auto found = locals.find(name);
+            if (found != locals.end()) cell = found->second;
+            else cell = declared_cell(widget, name);
+            if (name == "x" || cell == UINT32_MAX) {
+                diag(step_id, "move_source",
+                     "'" + name + "' has no declared start to reset to",
+                     DiagGrade::Error, "to");
+                return false;
+            }
+            const CellDef& def = program_.cells[cell];
+            if (def.shape == Shape::Timer) {
+                diag(step_id, "move_source", "a timer is started and cancelled, not reset",
+                     DiagGrade::Error, "to");
+                return false;
+            }
+            if (def.shape == Shape::Struct) {
+                Instruction zero;
+                zero.op = OpCode::New;
+                zero.a = cell;
+                zero.b = def.type_id;
+                zero.c = fault_site(step_id, "move_new", "the value could not be created");
+                flow.code.push_back(zero);
+                return true;
+            }
+            Instruction constant;
+            constant.op = OpCode::Const;
+            constant.a = program_.add_constant(def.initial);
+            constant.c = fault_site(step_id, "move_source", "the default could not be read");
+            flow.code.push_back(constant);
+            flow.max_stack = std::max(flow.max_stack, 1u);
+            return emit_store(flow, step_id, cell);
         }
 
         /* A TYPED temporary (spec 2.7): the destination carries a TypeRef, so a FRESH

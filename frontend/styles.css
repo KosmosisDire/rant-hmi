@@ -1785,6 +1785,12 @@ button.swatch {
   flex: none;
 }
 
+/* a struct variable's per-field defaults, indented under INIT */
+.var-grid .row-label.init-field {
+  padding-left: 12px;
+  color: #5a5a5a;
+}
+
 /* ---- the source picker tree (dart + hmi roots, explorer-style folders) and the type
    tree, which shares its whole anatomy ---- */
 
@@ -1898,6 +1904,16 @@ button.swatch {
 .stree-row:hover {
   background: #232323;
   color: var(--ink);
+}
+
+/* the row holding the CURRENT reference: the tree opens revealed and landed on it */
+.stree-row.current {
+  background: rgba(78, 142, 247, 0.14);
+  color: var(--ink);
+}
+
+.stree-row.current:hover {
+  background: rgba(78, 142, 247, 0.2);
 }
 
 .stree-folder {

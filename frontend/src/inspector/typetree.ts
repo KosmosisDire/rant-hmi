@@ -190,10 +190,20 @@ export function openTypeTree(
   editor: Editor,
   opts: TypeTreeOptions,
   onPick: (pick: TypePick) => void,
+  current?: string,
 ): void {
   ensure();
   const box = popover as HTMLElement;
   box.innerHTML = "";
+  /* every open starts COLLAPSED to the two roots; the one exception is the path to
+     what the row already holds, revealed and landed on */
+  expanded.clear();
+  expanded.add("hmi");
+  expanded.add("dart");
+  if (current) {
+    const dot = current.indexOf(".");
+    if (dot > 0) expanded.add("t:" + current.slice(0, dot));
+  }
 
   const search = el("input", {
     class: "stree-search",
@@ -218,7 +228,8 @@ export function openTypeTree(
       const node = el(
         "button",
         {
-          class: "stree-row" + (row.pick ? "" : " stree-folder"),
+          class: "stree-row" + (row.pick ? "" : " stree-folder") +
+                 (current && row.pick?.ref === current ? " current" : ""),
           style: "padding-left:" + (8 + row.depth * 14) + "px",
         },
         [
@@ -261,6 +272,7 @@ export function openTypeTree(
   render();
 
   (overlay as HTMLElement).classList.add("on");
+  list.querySelector(".stree-row.current")?.scrollIntoView({ block: "center" });
   const at = anchor.getBoundingClientRect();
   const width = Math.max(box.offsetWidth || 240, 240);
   const height = box.offsetHeight || 200;

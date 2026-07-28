@@ -34,7 +34,7 @@ const opened = new Set<number>();
 /* ---- the derived verb (spec 2.6) ---- */
 
 /* which FORM a move's side takes, discriminated by key exactly as the backend does */
-type Side = "expr" | "local" | "entity" | "slot" | "";
+type Side = "expr" | "local" | "entity" | "slot" | "init" | "";
 
 function sideOf(side: Json): Side {
   if (!side || typeof side !== "object") return "";
@@ -42,6 +42,7 @@ function sideOf(side: Json): Side {
   if (typeof side.slot === "string") return "slot";
   if (typeof side.local === "string") return "local";
   if (typeof side.kind === "string") return "entity";
+  if (side.init !== undefined) return "init";
   return "";
 }
 
@@ -52,6 +53,7 @@ function verbOf(step: Json): string {
   switch (step?.kind) {
     case "move": {
       const to = step.to ?? {};
+      if (sideOf(step.from) === "init") return "reset";
       if (sideOf(to) === "entity") {
         if (to.kind === "V" && step.mode === "force") return "force";
         if (to.kind === "V" && step.mode === "unforce") return "unforce";
@@ -549,8 +551,18 @@ function stepCell(
 
     /* the source: a typed expression with the tree a small button away, or the picked
        thing as a chip whose click re-opens the tree (the tree's own "expression" row is
-       the way back) */
-    if (verbOf(step) !== "unforce") {
+       the way back). A reset's source IS the target's own declared start, so it renders
+       as the word rather than a pick. */
+    if (from === "init") {
+      const word = el("button", {
+        class: "chip pad-mark source-chip",
+        title: "the target's own declared start; pick something else to change the source",
+      }, [el("span", { class: "name", text: "default" })]);
+      word.addEventListener("click", () =>
+        openSourceTree(word, editor, widget, fromOpts, setFrom));
+      cell.appendChild(word);
+      cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
+    } else if (verbOf(step) !== "unforce") {
       if (from === "expr") {
         /* the browse button lives INSIDE the expression box: they are one control, and
            what the button browses for is exactly what the box would compute */
@@ -702,7 +714,8 @@ function sideChip(
     }
   });
   node.appendChild(shape);
-  node.addEventListener("click", () => openSourceTree(node, editor, widget, opts, onPick));
+  node.addEventListener("click", () =>
+    openSourceTree(node, editor, widget, opts, onPick, read()));
   return node;
 }
 
@@ -801,6 +814,11 @@ function stepMenu(
       label: "write",
       icon: "arrow-right",
       run: () => insert({ kind: "move", from: { expr: "x" }, to: { local: "", path: "" } }),
+    },
+    {
+      label: "reset",
+      icon: "reset",
+      run: () => insert({ kind: "move", from: { init: true }, to: { local: "", path: "" } }),
     },
     ...structs.map((held: LocalInfo) => ({
       label: "set next field of " + held.name,

@@ -88,6 +88,21 @@ bool same_value(const ExecContext& ctx, const Value& a, const Value& b) noexcept
     return value_same_scalar(a, b);
 }
 
+/* `==` across the vocabularies a comparison may legally mix (spec 6.2): an enum equals
+ * a number by its backing value and text by its variant name, so the author compares in
+ * whichever vocabulary the other side already is */
+bool equal_values(const ExecContext& ctx, const Value& a, const Value& b) noexcept {
+    if (a.tag == ValueTag::Enum && b.tag == ValueTag::Num)
+        return static_cast<double>(a.data.integer) == b.data.num;
+    if (a.tag == ValueTag::Num && b.tag == ValueTag::Enum)
+        return a.data.num == static_cast<double>(b.data.integer);
+    if (a.tag == ValueTag::Enum && b.tag == ValueTag::Text)
+        return enum_variant_name(ctx.program, a.type_id, a.data.integer) == text_of(ctx, b);
+    if (a.tag == ValueTag::Text && b.tag == ValueTag::Enum)
+        return text_of(ctx, a) == enum_variant_name(ctx.program, b.type_id, b.data.integer);
+    return same_value(ctx, a, b);
+}
+
 /* copy `count` values taken every `stride` entries from src into a fresh pool range */
 Value copied_list(const ExecContext& ctx, const Value* src, uint32_t count,
                   uint32_t stride, uint32_t first, ValueTag elem) noexcept {
@@ -936,7 +951,17 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 break;
             }
             case OpCode::Eq:
-            case OpCode::Ne:
+            case OpCode::Ne: {
+                const Value right = pop();
+                const Value left = pop();
+                if (left.tag == ValueTag::Nil || right.tag == ValueTag::Nil) {
+                    if (!push(Value::nil())) fail(ins.c);
+                    break;
+                }
+                const bool same = equal_values(ctx, left, right);
+                if (!push(Value::boolean(ins.op == OpCode::Eq ? same : !same))) fail(ins.c);
+                break;
+            }
             case OpCode::Lt:
             case OpCode::Le:
             case OpCode::Gt:
@@ -1072,8 +1097,9 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 result.halted = true;
                 break;
             }
-            /* `new T -> cell`: the type's zero, no bit set, so a move out of it writes
-             * only the fields the flow went on to set */
+            /* the cell's DECLARED START: the type's zero with no bit set, then the
+             * cell's authored defaults over it. A typed temporary's declaring row and a
+             * variable's reset are both this one instruction. */
             case OpCode::New: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
@@ -1086,6 +1112,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 std::fill(item.set.begin(), item.set.end(), uint8_t{0});
                 for (uint32_t i = 0; i < item.fields.size(); ++i)
                     item.fields[i] = zero_value(i < defs.size() ? defs[i].shape : Shape::Unknown);
+                if (ins.a < program.cells.size())
+                    for (const auto& start : program.cells[ins.a].struct_init) {
+                        if (start.first >= item.fields.size()) continue;
+                        item.fields[start.first] = start.second;
+                        item.set[start.first] = 1;
+                    }
                 break;
             }
             /* `read <entity> -> cell`: the cached last value, every bit set, which is

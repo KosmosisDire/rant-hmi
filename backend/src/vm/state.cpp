@@ -158,11 +158,17 @@ RuntimeState::RuntimeState(const Program& program) {
     }
     /* a struct-shaped cell POINTS at its slot: the Value is the handle, the fields live
      * in `structs`, so a cell read pushes something copyable and a field write lands in
-     * exactly one place */
+     * exactly one place. A declared variable's authored DEFAULTS land over the zero. */
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
         if (cell.shape != Shape::Struct || cell.struct_slot >= structs.size()) continue;
         values[i] = Value::structure(cell.struct_slot, cell.type_id);
+        StructState& item = structs[cell.struct_slot];
+        for (const auto& start : cell.struct_init) {
+            if (start.first >= item.fields.size()) continue;
+            item.fields[start.first] = start.second;
+            item.set[start.first] = 1;
+        }
     }
 
     last.resize(program.entities.size());

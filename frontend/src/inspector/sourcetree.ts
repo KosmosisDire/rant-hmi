@@ -14,7 +14,7 @@
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
-import { MeshEntity, MeshField, SlotSpec, Var, Widget } from "../types.js";
+import { Json, MeshEntity, MeshField, SlotSpec, Var, Widget } from "../types.js";
 import { FlowScope } from "./flowscope.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
@@ -66,6 +66,50 @@ interface Row {
   note?: string;       /* trailing note: "local", "temporary" */
   expandable: boolean;
   pick?: SourcePick;
+}
+
+/* one pick's identity, for finding the row that holds the CURRENT reference */
+function pickKey(pick: SourcePick): string {
+  return pick.family + ":" + pick.kind + ":" + pick.name + ":" + pick.path;
+}
+
+/* the same identity off a document SIDE ({kind,name,path} | {local,path} | {slot}) */
+function sideKey(side: Json | undefined): string | null {
+  if (!side || typeof side !== "object") return null;
+  if (typeof side.slot === "string" && side.slot) return "slot::" + side.slot + ":";
+  if (typeof side.local === "string" && side.local)
+    return "local:L:" + side.local + ":" + (side.path ?? "");
+  if (typeof side.kind === "string" && side.name) {
+    if (side.kind === "L") return "local:L:" + side.name + ":" + (side.path ?? "");
+    return "entity:" + side.kind + ":" + side.name + ":" + (side.path ?? "");
+  }
+  return null;
+}
+
+/* expand every folder on the way to the current reference, so the tree OPENS AT what
+ * the chip already holds; only ever opens, never collapses */
+function revealCurrent(side: Json | undefined): void {
+  if (!side || typeof side !== "object") return;
+  if (typeof side.kind === "string" && side.kind !== "L" && side.name) {
+    expanded.add("dart");
+    const segments = String(side.name).split("/");
+    let prefix = "";
+    for (let i = 0; i + 1 < segments.length; ++i) {
+      prefix += segments[i];
+      expanded.add("d:" + prefix);
+      prefix += "/";
+    }
+    if (side.path) expanded.add("e:" + side.kind + ":" + side.name);
+    return;
+  }
+  const local = typeof side.local === "string" ? side.local
+    : side.kind === "L" ? String(side.name ?? "") : "";
+  if (local) {
+    expanded.add("hmi");
+    if (side.path) expanded.add("v:" + local);
+  } else if (typeof side.slot === "string" && side.slot) {
+    expanded.add("hmi");
+  }
 }
 
 const expanded = new Set<string>(["dart", "hmi", "hmi/local", "hmi/global"]);
@@ -401,10 +445,20 @@ export function openSourceTree(
   widget: Widget | null,
   opts: SourceTreeOptions,
   onPick: (pick: SourcePick) => void,
+  current?: Json,
 ): void {
   ensure();
   const box = popover as HTMLElement;
   box.innerHTML = "";
+  /* every open starts COLLAPSED to the two worlds' top level; the one exception is
+     the path to what the chip already holds, revealed and landed on */
+  expanded.clear();
+  expanded.add("dart");
+  expanded.add("hmi");
+  expanded.add("hmi/local");
+  expanded.add("hmi/global");
+  revealCurrent(current);
+  const wanted = sideKey(current);
 
   const search = el("input", {
     class: "stree-search",
@@ -430,7 +484,8 @@ export function openSourceTree(
       const node = el(
         "button",
         {
-          class: "stree-row" + (row.pick ? "" : " stree-folder"),
+          class: "stree-row" + (row.pick ? "" : " stree-folder") +
+                 (wanted && row.pick && pickKey(row.pick) === wanted ? " current" : ""),
           style: "padding-left:" + (8 + row.depth * 14) + "px",
         },
         [
@@ -521,6 +576,8 @@ export function openSourceTree(
 
   (overlay as HTMLElement).classList.add("on");
   active = render;
+  /* land on what the chip already holds */
+  list.querySelector(".stree-row.current")?.scrollIntoView({ block: "center" });
   const at = anchor.getBoundingClientRect();
   const width = Math.max(box.offsetWidth || 240, 240);
   const height = box.offsetHeight || 200;

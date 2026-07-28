@@ -60,10 +60,11 @@ Document runtime_document() {
         {"type", "Slider"},
         {"label", "Command"},
         {"slots", Json{{"value", 1.0}}},
-        /* `msg` is a struct-typed local (spec 2.7): born zeroed, so the commit flow
-         * needs no conjuring step before filling its fields */
+        /* `msg` is a struct-typed local (spec 2.7): born at its DEFAULTS, an object of
+         * field values over the type's zero */
         {"locals",
-         Json::array({Json{{"name", "msg"}, {"type", "Motor"}, {"init", nullptr}}})},
+         Json::array({Json{{"name", "msg"}, {"type", "Motor"},
+                           {"init", Json{{"enabled", true}}}}})},
         {"feeds",
          Json::array({
              Json{{"slot", "value"},
@@ -112,6 +113,18 @@ Document runtime_document() {
               Json::array({
                   steps::gate("false && (1 / 0 > 0)"),
                   steps::write_field("T", "command", "", "x"),
+              })}});
+
+    /* a negative commit RESETS the staged message back to its declared start */
+    slider["flows"].push_back(
+        Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "commit"}}})},
+             {"when_mode", "any"},
+             {"do",
+              Json::array({
+                  steps::gate("x < 0"),
+                  Json{{"kind", "move"},
+                       {"from", {{"init", true}}},
+                       {"to", {{"local", "msg"}, {"path", ""}}}},
               })}});
 
     /* a COMPUTED binding: no source picked, the expression alone drives the slot */
@@ -193,7 +206,7 @@ void test_compile_and_run() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    CHECK(compiled.program.flows.size() == 4);
+    CHECK(compiled.program.flows.size() == 5);
     CHECK(compiled.program.feeds.size() == 2);
     CHECK(sizeof(Value) == 16);
     CHECK(compiled.program.disassembly().find("worst ") != std::string::npos);
@@ -374,9 +387,6 @@ void test_typed_variables() {
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
     const uint64_t widget = slider_id(document);
-    run_event(compiled.program, state, widget, "input", Value::number(3));
-    state.clear_outputs();
-    run_event(compiled.program, state, widget, "commit", Value::number(4));
 
     int msg = -1;
     for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
@@ -387,13 +397,32 @@ void test_typed_variables() {
     const CellDef& cell = compiled.program.cells[msg];
     CHECK(cell.shape == Shape::Struct);
     CHECK(cell.struct_slot < state.structs.size());
+
+    /* born at its DEFAULTS: enabled true (authored) and marked given, speed zero */
+    CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
+    CHECK(state.structs[cell.struct_slot].set[1] == 1);
+    CHECK(state.structs[cell.struct_slot].set[0] == 0);
+
+    run_event(compiled.program, state, widget, "input", Value::number(3));
+    state.clear_outputs();
+    run_event(compiled.program, state, widget, "commit", Value::number(4));
     CHECK(state.structs[cell.struct_slot].fields[0].data.num == 10);
     CHECK(state.structs[cell.struct_slot].set[0] == 1);
 
-    /* the staged value survives a recompile while the type still matches */
+    /* RESET: back to the declared start, not to bare zero */
+    state.clear_outputs();
+    run_event(compiled.program, state, widget, "commit", Value::number(-1));
+    CHECK(state.structs[cell.struct_slot].fields[0].data.num == 0);
+    CHECK(state.structs[cell.struct_slot].set[0] == 0);
+    CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
+    CHECK(state.structs[cell.struct_slot].set[1] == 1);
+
+    /* the value survives a recompile while the type still matches: here the post-reset
+       state, so the migrated copy holds the DEFAULTS, not bare zero */
     RuntimeState migrated = migrate_state(compiled.program, state, compiled.program);
-    CHECK(migrated.structs[cell.struct_slot].fields[0].data.num == 10);
-    CHECK(migrated.structs[cell.struct_slot].set[0] == 1);
+    CHECK(migrated.structs[cell.struct_slot].fields[0].data.num == 0);
+    CHECK(migrated.structs[cell.struct_slot].set[0] == 0);
+    CHECK(migrated.structs[cell.struct_slot].fields[1].data.boolean == true);
     CHECK(migrated.structs[cell.struct_slot].set[1] == 1);
 
     /* a TypeRef that resolves nothing is a finding on the variable, never a silent Nil */
@@ -465,10 +494,11 @@ void test_enum_names() {
         {"type", "Label"},
         {"label", "gear"},
         {"slots", Json::object()},
-        /* an ENUM-TYPED variable (spec 2.7): typed by the path to the enum, seeded at
-           the first variant, and taking text through the same coercion a field does */
+        /* an ENUM-TYPED variable (spec 2.7): typed by the path to the enum, its
+           DEFAULT a variant name, and taking text through the same coercion a field
+           does */
         {"locals", Json::array({
-             Json{{"name", "gearMode"}, {"type", "Gear.mode"}, {"init", nullptr}}})},
+             Json{{"name", "gearMode"}, {"type", "Gear.mode"}, {"init", "fast"}}})},
         {"feeds", Json::array({Json{{"slot", "text"},
                                     {"src", entity("V", "gear")},
                                     {"path", "mode"}}})},
@@ -491,7 +521,9 @@ void test_enum_names() {
                                            {"to", {{"slot", "text"}}}}})}},
          })},
     };
-    /* a second label formats with text JOINING: enum x rendered as its name */
+    /* a second label formats with text JOINING: enum x rendered as its name. Its
+       `enabled` compares the enum three ways: a leading-dot variant literal, a
+       variant NAME, and the backing integer. */
     Json fmt = {
         {"type", "Label"},
         {"label", "fmt"},
@@ -499,7 +531,11 @@ void test_enum_names() {
         {"feeds", Json::array({Json{{"slot", "text"},
                                     {"src", entity("V", "gear")},
                                     {"path", "mode"},
-                                    {"xf", "\"Run \" + x"}}})},
+                                    {"xf", "\"Run \" + x"}},
+                               Json{{"slot", "enabled"},
+                                    {"src", entity("V", "gear")},
+                                    {"path", "mode"},
+                                    {"xf", "x == .fast || x == \"stop\" || x == 1"}}})},
         {"flows", Json::array()},
     };
     root["pages"].push_back(
@@ -516,7 +552,7 @@ void test_enum_names() {
     RuntimeState state(compiled.program);
 
     /* the feed carries no authored transform; the compiler inserted x.name */
-    CHECK(compiled.program.feeds.size() == 2);
+    CHECK(compiled.program.feeds.size() == 3);
     const FeedProgram& feed = compiled.program.feeds[0];
     int gear = -1;
     for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
@@ -537,6 +573,35 @@ void test_enum_names() {
     CHECK_MSG(state.text(compiled.program, state.values[joined.cell]) == "Run run",
               std::string(state.text(compiled.program, state.values[joined.cell])));
 
+    /* enum equality three ways: `.fast` (2), the name "stop" (0), the integer 1 */
+    const FeedProgram& compared = compiled.program.feeds[2];
+    for (int64_t variant = 0; variant <= 2; ++variant) {
+        RunResult one = run_feed(compiled.program, compared, state,
+                                 Value::enumeration(variant, mode_type));
+        CHECK(!one.faulted);
+        CHECK(state.values[compared.cell].tag == ValueTag::Bool);
+        CHECK(state.values[compared.cell].data.boolean == true);
+    }
+
+    /* the vocabulary is checked at compile: an unknown variant is a finding, and a
+       dot literal with no enum beside it has nothing to resolve against */
+    std::vector<Instruction> bad;
+    ExpressionScope escope;
+    escope.x_shape = Shape::Enum;
+    escope.x_enum = mode_type;
+    ExpressionResult eresult;
+    std::string eerror;
+    CHECK(!compile_expression("x == .bogus", ExprTier::Display, escope, compiled.program,
+                              bad, eresult, eerror));
+    CHECK_MSG(eerror.find("no variant") != std::string::npos, eerror);
+    bad.clear();
+    eerror.clear();
+    escope.x_shape = Shape::Num;
+    escope.x_enum = 0;
+    CHECK(!compile_expression("x == .fast", ExprTier::Display, escope, compiled.program,
+                              bad, eresult, eerror));
+    CHECK_MSG(eerror.find("vocabulary") != std::string::npos, eerror);
+
     /* writing the name lands the value */
     state.clear_outputs();
     RunResult tap = run_event(compiled.program, state, widget, "tap", Value::nil());
@@ -553,8 +618,8 @@ void test_enum_names() {
     RunResult press = run_event(compiled.program, state, widget, "press", Value::nil());
     CHECK(press.faulted);
 
-    /* an enum-typed VARIABLE: seeded at the first variant, and text stores through the
-       same coercion */
+    /* an enum-typed VARIABLE: seeded at its DEFAULT variant by name, and text stores
+       through the same coercion */
     int gear_mode = -1;
     for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
         if (compiled.program.cells[i].kind == CellKind::Local &&
@@ -562,7 +627,7 @@ void test_enum_names() {
             gear_mode = static_cast<int>(i);
     CHECK(gear_mode >= 0);
     CHECK(state.values[gear_mode].tag == ValueTag::Enum);
-    CHECK(state.values[gear_mode].data.integer == 0);
+    CHECK(state.values[gear_mode].data.integer == 2);
     state.clear_outputs();
     RunResult release = run_event(compiled.program, state, widget, "release", Value::nil());
     CHECK(!release.faulted);

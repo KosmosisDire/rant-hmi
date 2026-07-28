@@ -473,14 +473,54 @@ class Parser {
 
     Shape parse_compare() {
         Shape left = parse_sum();
+        const uint16_t left_enum = left == Shape::Enum ? enum_type_ : 0;
         const TokenKind op = token_.kind;
         if (op != TokenKind::EqEq && op != TokenKind::Ne && op != TokenKind::Lt &&
             op != TokenKind::Le && op != TokenKind::Gt && op != TokenKind::Ge)
             return left;
         advance();
-        Shape right = parse_sum();
+        Shape right;
+        /* `.Variant` (spec 6.2): a leading-dot variant literal, resolved against the
+           LEFT side's enum vocabulary, so `x == .running` needs no type spelled out */
+        if ((op == TokenKind::EqEq || op == TokenKind::Ne) &&
+            token_.kind == TokenKind::Dot) {
+            advance();
+            if (token_.kind != TokenKind::Ident) {
+                fail("expected a variant name after '.'");
+                return Shape::Unknown;
+            }
+            const std::string variant = token_.text;
+            advance();
+            bool found = false;
+            int64_t value = 0;
+            if (left_enum && left_enum < program_.types.size())
+                for (const auto& row : program_.types[left_enum].variants)
+                    if (row.first == variant) {
+                        value = row.second;
+                        found = true;
+                        break;
+                    }
+            if (!found) {
+                fail(left_enum ? "the enum has no variant '" + variant + "'"
+                               : "'." + variant + "' needs an enum on the left to "
+                                 "take its vocabulary from");
+                return Shape::Unknown;
+            }
+            emit(OpCode::Const, program_.add_constant(Value::enumeration(value, left_enum)));
+            pushed();
+            right = Shape::Enum;
+        } else {
+            right = parse_sum();
+        }
         if (op == TokenKind::EqEq || op == TokenKind::Ne) {
-            if (left != Shape::Unknown && right != Shape::Unknown && left != right)
+            /* an enum side may meet a number (its backing value), text (its variant
+               name) or another enum; every other mix is still a mistake */
+            const bool enum_mix =
+                (left == Shape::Enum || right == Shape::Enum) &&
+                (left == Shape::Enum || left == Shape::Num || left == Shape::Text) &&
+                (right == Shape::Enum || right == Shape::Num || right == Shape::Text);
+            if (left != Shape::Unknown && right != Shape::Unknown && left != right &&
+                !enum_mix)
                 fail("comparison mixes " + std::string(shape_name(left)) + " and " +
                      shape_name(right));
         } else {
@@ -495,6 +535,7 @@ class Parser {
         else if (op == TokenKind::Ge) code = OpCode::Ge;
         emit(code);
         if (depth_) --depth_;
+        enum_type_ = 0;
         return Shape::Bool;
     }
 

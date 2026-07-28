@@ -104,6 +104,9 @@ struct CellDef {
      * this cell's fields */
     uint16_t type_id = 0;
     uint32_t struct_slot = UINT32_MAX;
+    /* a struct variable's authored DEFAULTS (spec 2.7): field index -> start value,
+     * applied over the type's zero at state construction and by New (reset) */
+    std::vector<std::pair<uint32_t, Value>> struct_init;
     /* Temp only: the flow it belongs to, so two flows may reuse a name */
     uint64_t owner_flow = 0;
 };

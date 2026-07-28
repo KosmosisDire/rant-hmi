@@ -136,7 +136,8 @@ const std::vector<NodeSpec>& table() {
                discriminated by which key they carry, so a source or destination gains a
                form without a new prop:
                  from  {"expr": "x"} | {"kind","name","path"} | {"local","path"}
-                 to    {"local","path"} | {"kind","name","path"} | {"slot"}
+                       | {"init": true}                  (reset: the dest's own start)
+                 to    {"local","path","type"?} | {"kind","name","path"} | {"slot"}
                `mode` applies to a V destination only; every other verb is derived. */
             {"move", {object("from", Json{{"expr", "x"}}, Role::MoveRef),
                       object("to", Json::object(), Role::MoveRef),

@@ -50,7 +50,9 @@ export function valueEditor(
     bindText(key + ".name", name, () => text(read()) || "pick an enum");
     node.appendChild(name);
     node.addEventListener("click", () => {
-      if (editor) openTypeTree(node, editor, { enums: true }, (pick) => commit(pick.ref));
+      if (editor)
+        openTypeTree(node, editor, { enums: true }, (pick) => commit(pick.ref),
+                     text(read()));
     });
     return node;
   }
@@ -138,7 +140,11 @@ export function sourceField(
     return resolved ? resolved : "";
   });
   node.appendChild(shape);
-  node.addEventListener("click", () => openSourceTree(node, editor, widget, opts, onPick));
+  node.addEventListener("click", () => {
+    const at = read();
+    openSourceTree(node, editor, widget, opts, onPick,
+                   at.ref ? { ...at.ref, path: at.path ?? "" } : undefined);
+  });
   return node;
 }
 

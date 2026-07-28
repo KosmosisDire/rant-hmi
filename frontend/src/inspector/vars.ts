@@ -9,13 +9,13 @@
  * structure (it picks the INIT editor and renames the row); everything else is a value
  * pushed into standing controls. */
 
-import { commitInput, el, iconButton } from "../dom.js";
+import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor, liveIsOn, liveText } from "../editor.js";
-import { bind, bindField, bindText } from "../reconcile.js";
+import { bind, bindChoice, bindField, bindText } from "../reconcile.js";
 import { iconMarkup, kindMark } from "../icons.js";
-import { Json, Var } from "../types.js";
+import { Json, MeshField, Var } from "../types.js";
 import { valueEditor } from "./editors.js";
-import { openTypeTree } from "./typetree.js";
+import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
 const SCALAR_LABEL: Record<string, string> = {
   f64: "number", bool: "bool", str: "text", timer: "timer",
@@ -92,47 +92,117 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   type.appendChild(typeText);
   type.addEventListener("click", () =>
     openTypeTree(type, editor, { scalars: true, structs: true, enums: true },
-                 (pick) => setProp("type", pick.ref)),
+                 (pick) => setProp("type", pick.ref), at().type),
   );
 
   const initShape =
     variable.type === "bool" ? "bool" : variable.type === "str" ? "text" : "num";
 
+  /* the INIT rows: a scalar edits one value; an enum picks its start VARIANT; a struct
+     edits a default per scalar field over the type's zero (spec 2.7) */
+  const initRows: (HTMLElement | null)[] = [];
+  const resolved = isStruct ? resolveTypeRef(editor.mesh, variable.type) : null;
+  if (!isStruct) {
+    initRows.push(
+      el("span", { class: "row-label",
+                   text: variable.type === "timer" ? "SECS" : "INIT" }, [
+        diagIcon(initDiags),
+      ]),
+      el("div", { class: "var-line" }, [
+        valueEditor(
+          null,
+          initShape,
+          variable.id + ":init",
+          () => at().init,
+          (value) => setProp("init", value),
+        ),
+        variable.type === "timer" ? el("span", { class: "op", text: "s" }) : null,
+      ]),
+    );
+  } else if (resolved?.kind === "enum") {
+    const names = (resolved.field?.variants ?? []).map((v) => ({ value: v.name }));
+    const start = selectField(names.length ? names : [{ value: "" }],
+                              typeof variable.init === "string" ? variable.init
+                                                                : names[0]?.value ?? "",
+                              (name) => setProp("init", name));
+    bindChoice(variable.id + ":init", pickerOf(start), () =>
+      typeof at().init === "string" ? String(at().init) : names[0]?.value ?? "");
+    initRows.push(
+      el("span", { class: "row-label", text: "INIT" }, [diagIcon(initDiags)]),
+      el("div", { class: "var-line" }, [start]),
+    );
+  } else if (resolved?.kind === "struct") {
+    /* one default per settable field, held in the init OBJECT; an untouched field
+       starts at the type's zero */
+    const fieldRow = (field: MeshField) => {
+      const read = () => {
+        const init = at().init;
+        return init && typeof init === "object" ? (init as Json)[field.path] : undefined;
+      };
+      const commit = (value: Json) => {
+        const init = at().init;
+        const next = init && typeof init === "object" ? { ...(init as Json) } : {};
+        next[field.path] = value;
+        setProp("init", next);
+      };
+      let control: HTMLElement;
+      if (field.variants?.length) {
+        const names = field.variants.map((v) => ({ value: v.name }));
+        const picker = selectField([{ value: "" }, ...names],
+                                   typeof read() === "string" ? String(read()) : "",
+                                   (name) => commit(name));
+        bindChoice(variable.id + ":init." + field.path, pickerOf(picker), () =>
+          typeof read() === "string" ? String(read()) : "");
+        control = picker;
+      } else if (field.shape === "num" || field.shape === "bool" ||
+                 field.shape === "text") {
+        control = valueEditor(
+          null,
+          field.shape,
+          variable.id + ":init." + field.path,
+          () => read() ?? null,
+          commit,
+          /*unknown=*/ true,
+        );
+      } else {
+        return null;
+      }
+      initRows.push(
+        el("span", { class: "row-label init-field", text: field.path }),
+        el("div", { class: "var-line" }, [control]),
+      );
+      return null;
+    };
+    if (resolved.type.fields.length) {
+      initRows.push(
+        el("span", { class: "row-label", text: "INIT" }, [diagIcon(initDiags)]),
+        el("div", { class: "var-line" }, [
+          el("span", { class: "op", text: "defaults over the type's zero" }),
+        ]),
+      );
+      for (const field of resolved.type.fields) fieldRow(field);
+    }
+  }
+
   /* One label column, one setting per line, so the labels stack and every control starts
-     at the same x. A struct variable shows no INIT: it is born zeroed (spec 2.7). */
+     at the same x. KEEP is offered for every type. (Runtime value persistence is not
+     wired up yet for ANY type; the document itself is what saves today.) */
   card.appendChild(
     el("div", { class: "card-body var-body" }, [
       el("div", { class: "var-grid" }, [
         el("span", { class: "row-label", text: "TYPE" }, [diagIcon(typeDiags)]),
         el("div", { class: "var-line" }, [type]),
-        ...(isStruct
-          ? []
-          : [
-              el("span", { class: "row-label",
-                           text: variable.type === "timer" ? "SECS" : "INIT" }, [
-                diagIcon(initDiags),
-              ]),
-              el("div", { class: "var-line" }, [
-                valueEditor(
-                  null,
-                  initShape,
-                  variable.id + ":init",
-                  () => at().init,
-                  (value) => setProp("init", value),
-                ),
-                variable.type === "timer" ? el("span", { class: "op", text: "s" }) : null,
-              ]),
-              el("span", { class: "row-label", text: "KEEP" }),
-              el("div", { class: "var-line" }, [
-                valueEditor(
-                  null,
-                  "bool",
-                  variable.id + ":persist",
-                  () => at().persist,
-                  (value) => setProp("persist", value),
-                ),
-              ]),
-            ]),
+        ...initRows,
+        el("span", { class: "row-label", text: "KEEP" }),
+        el("div", { class: "var-line" }, [
+          valueEditor(
+            null,
+            "bool",
+            variable.id + ":persist",
+            () => at().persist,
+            (value) => setProp("persist", value),
+          ),
+        ]),
       ]),
     ]),
   );
