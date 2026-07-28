@@ -114,8 +114,24 @@ Document runtime_document() {
                   steps::write_field("T", "command", "", "x"),
               })}});
 
-    root["pages"].push_back(
-        Json{{"name", "Main"}, {"widgets", Json::array({std::move(slider)})}});
+    /* a COMPUTED binding: no source picked, the expression alone drives the slot */
+    Json readout = {
+        {"type", "Readout"},
+        {"label", "Doubled"},
+        {"slots", Json::object()},
+        {"feeds",
+         Json::array({
+             Json{{"slot", "value"},
+                  {"src", entity("V", "")},
+                  {"path", ""},
+                  {"xf", "setpoint * 2"}},
+         })},
+        {"flows", Json::array()},
+    };
+
+    root["pages"].push_back(Json{
+        {"name", "Main"},
+        {"widgets", Json::array({std::move(slider), std::move(readout)})}});
 
     Document document;
     std::string error;
@@ -178,11 +194,18 @@ void test_compile_and_run() {
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
     CHECK(compiled.program.flows.size() == 4);
-    CHECK(compiled.program.feeds.size() == 1);
+    CHECK(compiled.program.feeds.size() == 2);
     CHECK(sizeof(Value) == 16);
     CHECK(compiled.program.disassembly().find("worst ") != std::string::npos);
 
     RuntimeState state(compiled.program);
+
+    /* the computed binding: no source, the expression over the scope, x is Nil */
+    const FeedProgram& computed = compiled.program.feeds[1];
+    CHECK(computed.entity == UINT32_MAX && computed.source_cell == UINT32_MAX);
+    RunResult stood = run_feed(compiled.program, computed, state, Value::nil());
+    CHECK(!stood.faulted);
+    CHECK(state.values[computed.cell].data.num == 20);
     const uint64_t widget = slider_id(document);
     const std::string input_event = "input";
     const uint64_t before_run = allocation_count.load(std::memory_order_relaxed);

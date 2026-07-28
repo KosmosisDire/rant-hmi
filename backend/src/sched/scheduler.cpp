@@ -138,9 +138,14 @@ void Scheduler::release_session(uint64_t session) {
 
 void Scheduler::apply_local_feeds() {
     for (const FeedProgram& feed : program_.feeds) {
-        if (feed.source_cell == UINT32_MAX || feed.source_cell >= state_.values.size()) continue;
-        state_.reset_scratch();
-        run_feed(program_, feed, state_, state_.values[feed.source_cell]);
+        if (feed.source_cell != UINT32_MAX && feed.source_cell < state_.values.size()) {
+            state_.reset_scratch();
+            run_feed(program_, feed, state_, state_.values[feed.source_cell]);
+        } else if (feed.source_cell == UINT32_MAX && feed.entity == UINT32_MAX) {
+            /* a COMPUTED binding (no source): the expression alone, every tick */
+            state_.reset_scratch();
+            run_feed(program_, feed, state_, Value::nil());
+        }
     }
 }
 

@@ -379,6 +379,11 @@ frame-age rule is this same rule applied to frames, not a separate mechanism.
 Feeds require a reflected schema; a RAW entity (2.2) is visible in pickers,
 marked, and not bindable until the reserved `bytes` shape lands.
 
+**A feed with NO source is a COMPUTED binding**: the transform stands alone, an
+expression over the widget's scope (variables, `widget.<slot>`), re-evaluated every
+tick; `x` is Nil, there being nothing for it to be. A binding with neither a source
+nor an expression is the finding "pick a source, or write an expression".
+
 ### 2.5 Flows (behavior)
 
 ```

@@ -601,6 +601,38 @@ class Compiler {
                 program_.cells[feed.cell].initial = Value::nil();
                 const Json& ref = node["src"];
                 const std::string kind = ref.value("kind", "");
+
+                /* NO SOURCE: the transform stands alone as a COMPUTED binding, an
+                 * expression over the widget's scope (variables, widget.<slot>)
+                 * re-evaluated every tick; x is Nil, there is nothing for it to be */
+                if (!ref.is_object() || ref.value("name", "").empty()) {
+                    const std::string xf = str_or(node, "xf", "");
+                    if (xf.empty()) {
+                        diag(feed.feed_id, "feed_source",
+                             "pick a source, or write an expression",
+                             DiagGrade::Error, "src");
+                        continue;
+                    }
+                    feed.entity = UINT32_MAX;
+                    feed.source_cell = UINT32_MAX;
+                    ExpressionScope scope = scope_for(widget, Shape::Unknown);
+                    if (!expression(feed.feed_id, xf, ExprTier::Display, scope,
+                                    program_.cells[feed.cell].shape, feed.code,
+                                    feed.max_stack, nullptr, "xf"))
+                        continue;
+                    Instruction store;
+                    store.op = OpCode::Store;
+                    store.a = feed.cell;
+                    store.c = fault_site(feed.feed_id, "feed_store",
+                                         "feed value could not be stored");
+                    feed.code.push_back(store);
+                    feed.code.push_back(Instruction{OpCode::Halt});
+                    program_.layout.stack_values =
+                        std::max(program_.layout.stack_values, feed.max_stack);
+                    program_.feeds.push_back(std::move(feed));
+                    continue;
+                }
+
                 ExpressionScope scope =
                     scope_for(widget, kind == "L" ? program_.cells[feed.cell].shape
                                                   : Shape::Unknown);
