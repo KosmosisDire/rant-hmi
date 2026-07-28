@@ -849,8 +849,17 @@ button:focus-visible {
 .do-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
   min-width: 0;
+}
+
+/* Alternate lines carry a faint tint. The list is scanned down two columns at once (the
+   verbs and the statements beside them), and at that width a row is easy to lose track of
+   halfway across; the stripe is the cheapest thing that keeps an eye on one line. It runs
+   edge to edge of the card, so the rows sit with NO gap between them: a gap would break
+   the tint into bars and stop reading as a banded list. An open step is tinted whole,
+   form included, which also says the form belongs to the line above it. */
+.do-list > .do-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.026);
 }
 
 /* ONE skeleton for every step: grip, number, verb, statement, then the trailing marks
@@ -864,6 +873,9 @@ button:focus-visible {
   gap: 5px;
   align-items: center;
   min-width: 0;
+  padding: 2px 5px;
+  margin: 0 -5px;
+  border-radius: 2px;
 }
 
 .do-row.dragging {
