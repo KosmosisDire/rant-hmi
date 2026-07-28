@@ -38,9 +38,9 @@ the only thing that syncs, and the only input to the compiler.
 
 ### 2.1 Entity references
 
-Every source and every target is an entity reference: a kind plus a name, optionally
-plus a dotted field path. Kind fixes the mechanics only; any kind may be a source or
-a target.
+Every source and every destination is an entity reference: a kind plus a name,
+optionally plus a dotted field path. Kind fixes the mechanics only; any kind may be a
+source or a destination.
 
 | Kind | Reads by | Writes by | Notes |
 |---|---|---|---|
@@ -50,7 +50,14 @@ a target.
 | `S` signal | edge | `emit` | no payload beyond its schema |
 | `L` HMI variable | direct read | `set` | lives in the backend, not on the mesh; global or widget-local |
 
-### 2.2 Schemas, paths and shapes
+**The verb is derived, never chosen.** A behavior step names a source and a
+destination (2.6); which mechanic that is follows from the destination's kind, so the
+document stores no verb and the user picks none. `V` is the only kind offering a
+choice, and it is a MODE on the one step (`write`, `force`, `unforce`), not a
+different step. Beside the five kinds a destination may also name `widget.<slot>`:
+not an entity, but the owning widget's own slot (2.3).
+
+### 2.2 Schemas, paths, shapes and types
 
 The HMI imposes no schema. A schema arrives by reflection as a flat, depth-first
 field table of dotted paths, and the inspector addresses fields through it. Three
@@ -71,6 +78,36 @@ Two states are modeled explicitly and never guessed around: **unreflected** (the
 owner has published no schema; field editing is blocked, not invented) and **raw**
 (genuinely schemaless bytes; no field paths exist). A widget with no live source
 shows UNKNOWN, never a fabricated or stale number.
+
+**Type references.** A shape is a vocabulary; a TYPE is one specific schema, and the
+document has to name a type where no entity is involved: constructing a zeroed value
+(2.6), declaring a variable that holds a struct (2.7), and filling a Dropdown's
+options from an enum (6.2). Reflection gives exactly one name to build a namespace
+from, the schema's ROOT type name, so that is the root and everything under it is
+addressed by the path to where it is used:
+
+```
+TypeRef := IDENT ( "." IDENT )*        // ValveCmd, ValveCmd.mode, AxisSet.head.state
+```
+
+`ValveCmd` is a root type. `ValveCmd.mode` is whatever type that field has, named by
+its position because DART names only the root: a nested struct field carries a member
+name and a kind, an enum field carries a variant table, and neither carries a type
+name of its own. Anonymous types are therefore addressable but not enumerable, which
+is exactly how the picker behaves (3.7): root types at the top level, drill into one
+to reach a nested struct or an enum.
+
+The TYPE TABLE is derived from the reflection snapshot on every compile: one entry per
+distinct schema hash keyed by its root name, plus one per distinct enum variant list
+reached through a path. Two entities carrying the same schema are ONE type, so
+`ValveCmd` appears once however many valves exist.
+
+Three states are explicit here, as everywhere else in this section. A schema with no
+root name is not pickable by name; its fields stay reachable through an entity, so
+only the shorthand is lost. A root name carried by two different schema hashes is
+AMBIGUOUS: a finding, and pickable only through an entity until the mesh is fixed. A
+TypeRef that stops resolving after a reflection change is a finding on the row holding
+it, never a silent Nil.
 
 ### 2.3 Widgets: the type registry
 
@@ -141,14 +178,14 @@ background behind it.
 **Behavior-driven appearance goes through a variable.** A flow writing ANOTHER
 widget's slot was considered and rejected: it would put a second writer on a slot,
 racing its feed and breaking one-feed-per-slot determinism. The composition that
-already exists covers it: the flow assigns an HMI variable, and the slot feeds
+already exists covers it: the flow writes an HMI variable, and the slot feeds
 from that variable (`L` is an ordinary feed source). One writer per slot, no new
 mechanism, and the indirection is visible state a card in the sidebar shows live.
 
 **A widget writes its OWN slots.** The narrow case the rejection above does not
 cover is the control's own echo: a Toggle that does not toggle when tapped is a
-picture of a toggle. So an `assign` step may target `widget.<slot>`, the same name
-the read side already uses, and its scope is the widget's own slots and nothing
+picture of a toggle. So a move may name `widget.<slot>` as its destination, the same
+name the read side already uses, and its scope is the widget's own slots and nothing
 else. Reaching across to another widget stays impossible, which is what kept the
 rejected door shut in the first place.
 
@@ -203,7 +240,7 @@ order:
 
 1. a feed on the slot: the control is a view of the machine, and the default
    stands down;
-2. an authored flow on the widget that assigns the same slot: the author
+2. an authored flow on the widget that writes the same slot: the author
    overrode the default;
 3. otherwise the default runs, and the slot is the widget's own state.
 
@@ -244,7 +281,7 @@ text is integral to the control):
 
 Every type additionally gets the synthetic trigger `timer <name> ends`. Everything a
 widget does BEYOND its own value echo is authored per instance as feeds and flows: a
-type's `behavior` reaches its own slots only (never a variable, a message or another
+type's `behavior` reaches its own slots only (never a variable, an entity or another
 widget), so nothing that touches the plant is ever implied by a type.
 
 **Templates.** A template is a tree of layout boxes and draw parts:
@@ -349,7 +386,7 @@ Flow {
   id: FlowId,                    // stable, never an array index
   when: [Trigger],               // 1..n entry conditions
   when_mode: "first" | "any",    // >1 entry: race-and-swallow, or run on each
-  do: [DoStep]                   // ordered; the whole behavior
+  do: [Step]                     // ordered; the whole behavior (2.6)
 }
 Trigger = event { name, hold_ms?, every_ms? }  // hold_ms for held (default 600);
                                                // every_ms repeats while held
@@ -370,39 +407,106 @@ rule). `"any"` runs on every arrival.
 
 ### 2.6 The DO list
 
-A flat, ordered list of steps executed as a pipeline over a single register `x`,
-seeded with the widget's output: the value the control PROPOSES for this event, per
-its type's `value` declaration (2.3), not the raw gesture. Flatness is the point: no
-nesting, no branches, no loops. Readable top to bottom, and trivially compilable.
+A flat, ordered list of steps run top to bottom. Flatness is the point: no nesting, no
+branches, no loops. Readable in order, and trivially compilable.
+
+There are two families, split by what a step does to the run, plus two timer verbs.
+
+**MOVE** is the only step that touches data, and there is exactly one of it:
+
+```
+move { from: Source, to: Dest, mode? }
+
+Source := Expr                       // over x, locals, variables, widget.<slot>
+        | EntityRef + Path           // a value from the mesh
+        | new TypeRef                // a zeroed value of that type (2.2)
+Dest   := Local + Path               // a whole local, or one field of it
+        | EntityRef + Path
+        | widget.<slot>              // this widget's own slot (2.3)
+mode   := write | force | unforce    // V destinations only; default write
+```
+
+The author picks a source and a destination. Everything else follows, including the
+word the row displays:
+
+| from | to | reads as |
+|---|---|---|
+| expression | a local, or one field of a local | `set` |
+| `V` / `T` / `L` entity | a local | `read` |
+| `new T` | a local | `new` |
+| local or expression | `V` | `write`, `force`, `unforce` |
+| local or expression | `T` | `publish` |
+| local or expression | `S` | `emit` |
+| local or expression | `F` | `call`, with an optional local for the response |
+| local or expression | `widget.<slot>` | `set` |
+
+`unforce` ignores its source: it hands the variable back to its owner. `call` is the
+one move that suspends (5.6), because a response is a round trip; a call with no
+destination local is fire and forget and does not suspend.
+
+**GUARD** steps stop or delay the run and move nothing. They read and write `x`
+implicitly, because they ARE the pipeline:
 
 | Step | Fields | Effect |
 |---|---|---|
-| step transform | `a: Expr` | `x = a` |
-| step gate | `a: Expr` | stop the flow unless `a` is true |
-| step deadband | `a: num` | stop unless `abs(x - last_passed) >= a` |
-| step throttle | `a: ms` | pass at most one per interval (first wins) |
-| step debounce | `a: ms` | suspend; restart the wait on re-entry; resume after a quiet gap |
-| step delay | `a: ms` | suspend, then resume unconditionally |
-| build | `target, seed` | open a message buffer (`msg`, `msg2`, ...) seeded from last or zero |
-| setf | `path, a: Expr \| Variant` | set one field of the open message |
-| send | `target?, verb` | put the open message (or bare `x`) on the wire; closes the message |
-| assign | `var, a: Expr` | set an HMI variable, or this widget's own slot as `widget.<slot>` (2.3) |
-| unforce | `target` | hand a forced variable back to its owner |
-| start / cancel | `timer` | arm / disarm a timer variable |
+| gate | `a: Expr` | stop the flow unless `a` is true |
+| deadband | `a: num` | stop unless `abs(x - last_passed) >= a` |
+| throttle | `a: ms` | pass at most one per interval (first wins) |
+| debounce | `a: ms` | suspend; restart the wait on re-entry; resume after a quiet gap |
+| delay | `a: ms` | suspend, then resume unconditionally |
 
-Ownership rule: rows after a `build` belong to that message until its `send`. Two
-builds in one flow are two independent messages, so one behavior can write two
-targets. The verb is derived from the target kind (`V -> write|force, T -> publish,
-F -> call, S -> emit`); the only verb the user chooses is write vs force. `send`
-targets mesh kinds only: the L-targeted write IS the `assign` step (HMI variables
-are scalars, so build/setf never apply to them), one mechanism per direction, and L
-appears in `send`/`build` pickers never, in sources always.
+**TIMER** steps are `start` and `cancel` over a timer variable (2.7).
+
+**`x` is not a register, it is the first local.** It is declared implicitly and seeded
+before the first step with the value the widget PROPOSES for this event, per its
+type's `value` declaration (2.3), never the raw gesture. So the old `transform` step
+is just `set x = ...` and every step reading `x` reads an ordinary local.
+
+**A message is a local.** There is no message buffer concept, no buffer names, and no
+seed toggle. Read-modify-write is a line you can see:
+
+```
+read  V valve/cmd  -> m                    read-modify-write, stated
+set   m.position = clamp(x, 0, 100)
+set   m.mode     = ValveMode.open
+write m            -> V valve/cmd
+```
+
+and starting from zeros is a different source, not a hidden mode:
+
+```
+new   ValveCmd     -> m
+set   m.position = clamp(x, 0, 100)
+write m            -> V valve/cmd
+```
+
+Four rules die with the buffer, and none of them is replaced: rows no longer belong
+to the step above them, a field write can no longer land after its send, two open
+messages are just two locals, and a reorder can no longer produce an invalid
+document. What the document holds is an ordered list of independent steps.
+
+**Entities enter a flow only as a move's source.** Expressions see locals, HMI
+variables and `widget.<slot>`, never an entity. Without that rule every expression is
+a potential subscription and no static answer exists to "what does this program
+consume". With it, the set of entities a program reads is the set of move sources,
+readable off the document.
+
+Reading a `V`, `T` or `L` costs nothing at run time: it is the last known value from
+the subscription cache (5.8), the same value the old `seed: last` copied. Reading an
+`F` is a `call`, which is why calls are moves TO a function with a destination, not
+reads FROM one.
 
 ### 2.7 Variables and timers
 
 HMI variables are declared, typed and initialized, and live in exactly two scopes:
 **global** (the whole HMI) and **widget-local** (visible only to one widget's flows).
-Types: `f64`, `bool`, `str`, `timer`. A timer is not a special mechanism: it is a
+Types: `f64`, `bool`, `str`, `timer`, or any TypeRef (2.2). A variable whose type is a
+TypeRef holds a STRUCT value: that is what "write a message to a variable" means, and
+it is how a behavior latches the last command it sent, or stages one across two
+flows. Its storage is sized from the schema at compile, like any other struct
+(5.8), and its `init` is an object coerced field by field against that type.
+
+A timer is not a special mechanism: it is a
 variable whose value is `{ running: bool, remaining: s, duration: s }`, readable in
 expressions as `t.running` and `t.remaining`. That one decision removes hidden timer
 objects from the model: users manage them like any other variable, and there is
@@ -416,12 +520,28 @@ hold a bool variable whose init is the number 0: that compiles to UNKNOWN, Nil
 poisons, and the variable could then never be toggled out of it. An explicit `null`
 init is left alone: it means a deliberate UNKNOWN start.
 
-Names are unique within their scope (one namespace across all four types); a
-widget-local shadows a same-named global inside that widget's flows and feeds.
-Renaming a variable rewrites every reference (targets, timer references, assignment
-left-hand sides, feed sources and identifiers inside expressions) in one document
+**Locals, the third scope, declared by use.** A move's destination may name a local
+that does not exist; that names a TEMPORARY, and it is the whole ceremony. A
+temporary is scoped to one flow, lives for one run of it, is never persisted, never
+appears in a variable section, and takes its TYPE from what is first moved into it (a
+`read` gives it the source's type, a `new T` gives it `T`, an expression gives it the
+expression's shape). Storage is per site and fixed at compile like everything else,
+so "declared by use" is an authoring convenience and not a dynamic environment.
+
+That is the split the two flavors are for: a temporary is inferred and cheap, so the
+common case costs one click; a declared variable is typed by its author, so moving a
+`ValveCmd` into an `f64` variable is a finding rather than a coercion. `x` is a
+temporary the runtime declares for you.
+
+Names are unique within their scope (one namespace across all types); a
+widget-local shadows a same-named global inside that widget's flows and feeds, and a
+temporary may not shadow either: a name already in scope is rejected at compile, so
+no row ever reads as one thing and resolves as another.
+Renaming a variable rewrites every reference (move sources and destinations, timer
+references, feed sources and identifiers inside expressions) in one document
 transaction, server-side; a rename that would create a collision or capture a
-shadowed name is rejected as an invalid op.
+shadowed name is rejected as an invalid op. Renaming a temporary is the same
+transaction over one flow.
 
 ### 2.8 Structure and stable ids
 
@@ -530,6 +650,14 @@ expanded:   SLOT    value            (only when the type has >1 slot)
             round trip OK: value matches setpoint/temp.value across 0 to 100
 ```
 
+**Prose is for reading, a grid is for editing, and no row does both.** That is the
+rule behind the two forms, and it governs the flow card as well (3.6). Collapsed, a
+row is text: it wraps nothing, aligns nothing, and states identity. Open, it is a
+grid with one label column and one editor column, every editor starting at the same x
+and holding the same width. A row that mixes a sentence with the controls that edit
+it aligns in neither direction and is what this spec is written against: the labels
+above are labels, not keywords, and the editors under them are a column, not a line.
+
 Details that carry weight: the source chip shows the entity-kind mark, so kind is
 legible without reading text; the field chip is an editable text input WITH a
 dropdown of reflected candidates (typing beats picking for deep paths, picking beats
@@ -540,7 +668,7 @@ needs to see why they cannot proceed.
 
 The **round-trip check** is a distinguishing feature: when a widget both reads and
 writes the same entity + path, sample the control's range at five points, run the
-write path (transform steps and the field expression) then the read path (the feed's
+write path (the guards and the move's expression) then the read path (the feed's
 transform), and report whether the value comes back. It catches the classic x10 /
 div10 mismatch before commissioning does.
 
@@ -567,89 +695,163 @@ and what it ends up writing. Not its steps.
 > when [pressed]                  -> nothing written        (dead flow)
 ```
 
-Target chips are de-duplicated and listed in DO order. If a flow writes nothing to
-the wire, fall back to its most important other effect (a timer start/cancel); if it
-has steps but no effects at all, say "nothing written". A visible dead end beats a
-silent one.
+Destination chips are de-duplicated and listed in DO order, and they are the
+destinations of the flow's moves that leave the flow: entities and `widget.<slot>`.
+A move into a local is working, not writing, so it never appears here. If a flow
+leaves nothing behind, fall back to its most important other effect (a timer start or
+cancel); if it has steps but no effects at all, say "nothing written". A visible dead
+end beats a silent one.
 
 ### 3.5 Flow rows, the WHEN row
 
-One wrapping line, two label columns (WHEN / DO) down the left. Controls appear only
-when they apply:
+A labelled grid, never a wrapping line. Rows appear only when they apply, and each is
+one label plus one editor in the same two columns the rest of the inspector uses:
 
-- **Event select**: the widget's event list, in past tense (pressed, released,
-  changed, committed, opened), plus "timer ... ends".
-- **Hold time** input: only for `held`.
-- **Timer chip**: only for the timer trigger; picked from a menu that also offers
-  "+ new timer", which creates the variable and wires it in one click.
-- **+ OR**: adds a second entry condition; once present, a two-state icon pair
-  chooses "first of" (race and swallow) vs "any of".
-- **Once / repeat** icon pair: only for `held`; repeat reveals an interval input and
-  clears any OR.
+```
+WHEN   trigger   [held            v]
+       for       [600] ms
+       repeat    [x] every [250] ms
+       also      [timer t1 ends   v]  x
+       mode      [first of        v]      (only with more than one condition)
+```
 
-Two-state controls are one icon, not two labels: the icon shows the current state,
-the tooltip names it, clicking switches. The WHEN row can hold five controls at
-once, so this discipline keeps it legible.
+- **trigger**: the widget's event list, in past tense (pressed, released, changed,
+  committed, opened), plus "timer ... ends".
+- **for**: only for `held`.
+- **repeat**: only for `held`; ticking it reveals the interval and clears any `also`.
+- **also**: a second entry condition, picked from a menu that also offers "+ new
+  timer", which creates the variable and wires it in one click.
+- **mode**: "first of" (race and swallow) vs "any of", and only once a second
+  condition exists.
+
+The earlier design put these five controls on one wrapping line with icon pairs for
+the two-state choices. It is a grid now for the reason 3.3 gives: a control that
+appears mid-line moves every control after it, and in a sidebar the line then wraps
+under its own label. A two-state choice is a checkbox or a two-item dropdown with the
+states NAMED. Icon pairs whose meaning lives in a tooltip are not used: the WHEN row
+is authored once and read many times, and reading it must not require hovering.
 
 ### 3.6 Flow rows, the DO list
 
-A numbered vertical list. Row 1 is not editable: it states `x = <live widget
-value>`, so the pipeline's seed is visible and the user can watch it move. Numbering
-then counts real steps; field rows carry no number: they are part of their message,
-indented under it with a left rule, reading `msg.position = clamp(x, 0, 100)`.
+A numbered list of one-line SUMMARIES, where a step being edited opens a labelled
+form under its own line. The list is what you read; the form is what you fill in.
+
+Every summary occupies the same skeleton, whatever the step is, and it never wraps:
 
 ```
-    1  x = 62.0                                  (live, read-only)
-::  2  deadband [0.5]
-::  3  [msg] = [V valve/cmd] [ValveCmd] (last|zero) [+ field]
-::       [position] [f32]     = [clamp(x, 0, 100)]
-::       [mode]     [enum<u8>] = [open, 1]
-::  4  (write|force) [msg] to [V valve/cmd]
-       + menu
+grip | n | verb | statement | (!) | x
 ```
+
+```
+    1    x =  widget value                    62.0      (live, read-only)
+::  2    x =  clamp(x, 0, 100)
+::  3   gate  x > 0
+::  4   wait  200 ms quiet
+::  5   read  V valve/cmd           ->  m
+::  6    set  m.position = clamp(x, 0, 100)
+::  7    set  m.mode     = ValveMode.open
+::  8  write  m                     ->  V valve/cmd
+::  9    set  x                     ->  L lastSetpoint             (!)
+        + menu
+```
+
+The verb column is fixed width and right-aligned, so verbs align down one edge and
+statements down the other, and the `->` of a move sits in one column for the whole
+list. Verbs are single words for that reason: `gate` rather than "only if", `wait`
+rather than "debounce for", with the step's precise kind in the form below. A guard
+has no destination and its ragged right edge means something: it is the family that
+moves no data. The verb is DERIVED from the step (2.6), never chosen: the author picks
+a source and a destination and the row says what that is.
+
+Row 1 is not editable: it states `x = <live widget value>`, so the pipeline's seed is
+visible and the user can watch it move.
+
+Statements are text, not controls. An expression too long for the width truncates with
+its full text in the title; nothing reflows, nothing changes width as you type, and the
+column of verbs stays scannable while a value is being edited three rows down.
+
+**The form.** Opening a step reveals every one of its parameters, labelled, in the two
+columns of 3.3, and they are ALL present whether set or not:
+
+```
+::  8  write  m                     ->  V valve/cmd            ^  x
+       from   [m                  v]
+       to     [V v] [valve/cmd                ]
+       mode   [write              v]
+```
+
+That is the guidance mechanism, and it is why the form does not hide inapplicable
+rows behind a toggle: an unfilled required cell is a HOLE IN A COLUMN, obvious at a
+glance and marked with its finding (3.8), where the same gap on a prose line is just
+one more chip. Parameters that genuinely do not exist for a step are absent, not
+disabled: `mode` appears only for a `V` destination, because for a topic there is
+nothing to choose.
 
 Interaction requirements:
 
 - **Drag to reorder**, from a grip handle only (armed drag: pointer-down on the grip
   enables dragging, so a normal click never starts one). Reorder is live as you
-  cross a row.
+  cross a row. Every order is now a valid document (2.6), so a reorder can fail to be
+  what the author meant but can never be rejected.
 - **One menu at a time.** Any open picker closes on the next outside click; elements
   that belong to a menu are marked so clicks inside do not dismiss it.
-- **The + menu is intent-first**, not primitive-first: "Publish value" comes first
-  and brings its own build + first field + send along, so publishing is one choice
-  rather than three. Then "msg = ..." (a second target), unforce, set variable, then
-  the shaping steps (x = ..., gate, deadband, debounce, throttle, delay), then start
-  timer / cancel timer. Deadband is offered only for continuous widgets, derived
-  from the registry (an event whose `x` is num), never from a type name.
-- **+ field** inserts after the message's last field and never past its send.
+- **The + menu is intent-first**, not primitive-first. "Publish a value" comes first
+  and inserts the read, the first field and the write together, so publishing is one
+  choice rather than four rows typed by hand. Then "start from an empty value"
+  (`new T`), "read something", "set a variable", "call a function"; then the guards
+  (gate, deadband, debounce, throttle, delay); then start / cancel timer. Deadband is
+  offered only for continuous widgets, derived from the registry (an event whose `x`
+  is num), never from a type name.
+- **+ field** on a struct-valued local inserts a `set` for the next unset field of its
+  type, so filling a message out is one click per field with the path pre-picked.
 - Every value input that takes an expression has an autocomplete menu (3.7) and
   every row can be removed from its right edge.
-- **Seed control** on a build row: "from last values" (read-modify-write, the safe
-  default) vs "start zeroed", as a two-state icon pair.
+
+**One control vocabulary.** Four editors exist: an expression or text field, a number
+field, a dropdown, and a reference chip (entity, type, local, or slot, carrying its
+kind mark). Everything is one height and one border. Colour is spent on exactly two
+jobs, the kind marks and live values; a step's category is carried by its verb, which
+is a word, so it needs no colour of its own. Segmented icon pairs are not used
+anywhere in a flow card, for the reason 3.5 gives.
 
 ### 3.7 Pickers and autocomplete
 
-Four menu families, all the same shape (a list under the control, scrollable,
+Six menu families, all the same shape (a list under the control, scrollable,
 keyboard-navigable):
 
 - **Entity picker**: kind mark, name, type name. Sourced from live reflection, never
-  a hand-maintained list. Feeds exclude signals; assignment targets are HMI
-  variables only, with "+ new local" / "+ new global" at the bottom.
+  a hand-maintained list. Feeds exclude signals.
 - **Path picker**: every candidate path of the chosen entity with the kind it
   resolves to; array fields offer both `[0]` and `[*]`, maps offer `["key"]`.
-  Structs are containers and are not offered.
-- **Variant picker**: for an enum field, the variant names with their backing
-  integers. An expression escape switches the field to a free expression.
+  A struct path IS offered where a struct value is what the row wants (a move whose
+  destination is a struct-typed local), and not offered where a scalar is.
+- **Local picker**: the flow's locals with their inferred types, then the HMI
+  variables in scope, with "+ new temporary" / "+ new local" / "+ new global" at the
+  bottom. A move destination that names a fresh temporary needs only a name, so "+ new
+  temporary" is a text field and nothing else (2.7).
+- **Type picker**: the root types of the type table (2.2) by name, each with the
+  entities carrying it as a subtitle so an unfamiliar name is identifiable; picking a
+  root drills into its fields to reach a nested struct or an enum, and the picked
+  entry reads `ValveCmd.mode`. Filtered to what the row can accept: `new` offers
+  struct types, `variants()` offers enum types, a variable's type offers both plus the
+  four scalars. Ambiguous and unnamed roots are listed but marked and not pickable by
+  name, per 2.2.
+- **Variant picker**: for an enum-typed row, the variant names with their backing
+  integers, scoped by the ENUM TYPE rather than by the field that led to it, so the
+  same picker serves a message field, a comparison and a Dropdown's options. An
+  expression escape switches the row to a free expression.
 - **Expression autocomplete**: context-aware, in this order: `x` (annotated with its
   shape); the methods that exist on the receiver's shape (6.3): typing `.` after any
   value offers exactly its vocabulary and nothing else, which is how the user learns
   the language instead of guessing at it; shape-specific aggregates when `x` is a
   list or map (`max, min, avg, any, count, x[0], values, keys`); enum helpers
   (`int(x)`, `name(x)`); the general helpers (`clamp, mapRange, roundTo, lerp`); the
-  fields of every message open in this flow (so one field can be computed from
-  another); enum variants in scope; then every HMI variable, with timers expanded to
-  `.remaining` and `.running`. Picking appends rather than replaces unless the box
-  is empty or bare `x`.
+  locals of this flow declared ABOVE this row, struct-valued ones expanded to their
+  fields (so one field can be computed from another); enum variants in scope; then
+  every HMI variable, with timers expanded to `.remaining` and `.running`. Picking
+  appends rather than replaces unless the box is empty or bare `x`. A local declared
+  below this row is not offered: a flow reads top to bottom and the completion list
+  says so.
 
 ### 3.8 Diagnostics and one-click fixes
 
@@ -669,16 +871,19 @@ exactly like a value that has not arrived yet.
 
 | Condition | Message | Fix |
 |---|---|---|
-| build with no target | pick a target | opens the picker |
-| target unreflected / raw | no schema for name; raw bytes, no field paths | blocked, explained |
-| build never sent | msg is never sent | add send |
-| field row with no open message | no message yet | none |
+| move with no source or no destination | pick a source; pick a destination | opens the picker |
+| entity unreflected / raw | no schema for name; raw bytes, no field paths | blocked, explained |
+| local written and never read | m is never used | none |
+| local read before it is written | m has no value yet at this row | none |
+| temporary shadows a variable in scope | m is already a variable | rename |
 | path not in the field table | path is not a field of Type | none |
-| path resolves to a struct | path is a struct | none |
 | shape mismatch | e.g. enum here, number expected | wrap in `int(x)` / `num(x)` / `name(x)` / `str(x)` / `x != 0` / `max(x)` / `[x]` / `values(x)` |
-| field set after its send | set after the publish | move up |
-| step after the last effect | kind has nothing after it | move up |
-| bare send to a multi-field entity | Type has n fields | build a message (aimed at the field `x` actually fits) |
+| type mismatch on a move | ValveCmd does not fit an f64 variable | none |
+| struct moved to a scalar destination without a path | Type has n fields | pick a field (aimed at the one `x` actually fits) |
+| struct local never written out | m is never written anywhere | add a write |
+| TypeRef no longer resolves | Type is not in the mesh any more | opens the picker |
+| ambiguous root type name | two schemas are both called Type | pick through an entity |
+| step after the last move | kind has nothing after it | move up |
 | empty gate / non-numeric timing arg | condition required; number required | none |
 | feed transform that ignores `x` | the expression must use x | none |
 | read/write scaling mismatch | round trip failed: 50 writes 500 but reads back 5000 | none |
@@ -696,8 +901,8 @@ reads "2.4s left" or "idle"). Global and local cards are identical except for sc
 the local section sits inside the inspector, the global list in the left sidebar.
 
 There is no generated code view. A one-way pretty print of the feeds and flows
-existed briefly and was removed: it could not be trusted (it dropped send targets,
-trigger hold and repeat times, and buffer names), and a text form that is not
+existed briefly and was removed: it could not be trusted (it dropped move
+destinations, trigger hold and repeat times, and local names), and a text form that is not
 round-trippable is not worth showing. A text DSL is worth building only as a
 lossless codec, printer and parser together (7).
 
@@ -792,13 +997,13 @@ the HMI.
 ### 5.2 Value model
 
 ```cpp
-enum class Tag : uint8_t { Nil, Num, Bool, Text, Enum, List, Map, Color };
+enum class Tag : uint8_t { Nil, Num, Bool, Text, Enum, List, Map, Struct, Color };
 
 struct Value {                 // 16 bytes, trivially copyable
   Tag      tag;
-  uint16_t enum_type;          // index into the enum table, when tag == Enum
-                               // (u16: no artificial 256-enum-type ceiling)
-  uint32_t ref;                // arena index for Text / List / Map
+  uint16_t type;               // index into the type table (2.2), when tag is
+                               // Enum or Struct (u16: no artificial ceiling)
+  uint32_t ref;                // arena index for Text / List / Map / Struct
   union { double num; bool b; int64_t i; };
 };
 // 16, not 8: the payload alone is 8 (full double / i64), and double alignment
@@ -809,14 +1014,20 @@ struct Value {                 // 16 bytes, trivially copyable
 // KBs saved cannot justify losing plain-field inspectability.
 ```
 
+A Struct value is one run of Values behind its `ref`, one per field of its type in
+the type table's field order, plus the set-bits that make read-modify-write honest
+(5.8). It is the ONE representation: a message being built, a struct-typed variable,
+a struct read off the mesh and a struct field of another struct are all this, so there
+is no message buffer type and no conversion between the two.
+
 Rules that keep this honest: numbers are double internally and narrowed only at
 encode time (an f32 field saturates and reports a fault if it cannot represent the
-value); Text, List and Map are indices into a value store: the per-execution scratch
-arena (reset at the end of every flow run, so no scratch reference outlives the run
-that made it), or the fixed retained store for the values that must outlive a run
-(widget slots, `str` variables, the last-value cache, parked suspensions), written
-only by deep copy-in (see PLAN.md, Memory and buffers); Enum carries both its
-integer and its type so `int()` and `name()` are both cheap; Nil is the UNKNOWN
+value); Text, List, Map and Struct are indices into a value store: the per-execution
+scratch arena (reset at the end of every flow run, so no scratch reference outlives
+the run that made it), or the fixed retained store for the values that must outlive a
+run (widget slots, `str` and struct-typed variables, the last-value cache, parked
+suspensions), written only by deep copy-in (see PLAN.md, Memory and buffers); Enum
+carries both its integer and its type so `int()` and `name()` are both cheap; Nil is the UNKNOWN
 that a missing feed produces and it poisons: any operation on Nil yields Nil, and a
 send of Nil is refused with a fault, which is exactly the fail-safe the UI
 promises. Color is an IMMEDIATE value: packed RGBA8 in the union, no arena, no
@@ -828,8 +1039,10 @@ for views and readable in diffs.
 
 Five passes, each of which can only reject, never repair:
 
-1. **Resolve.** Bind every entity reference to a reflection record and every
-   variable name to a slot index. Unresolved names become diagnostics, and the flows
+1. **Resolve.** Build the type table from the reflection snapshot (2.2), then bind
+   every entity reference to a reflection record, every type reference to a type-table
+   index, and every variable and local name to a cell index, declaring a temporary at
+   the move that first writes it. Unresolved names become diagnostics, and the flows
    that use them compile to a single FAULT instruction rather than being silently
    dropped: a broken behavior must be visibly broken at run time too.
 2. **Parse expressions.** Infix text -> a small postfix instruction run. This is
@@ -837,10 +1050,11 @@ Five passes, each of which can only reject, never repair:
 3. **Shape check.** The same rules as the inspector, run again authoritatively. The
    inspector's checking is a courtesy; the compiler's is the contract.
 4. **Lower.** Emit one instruction run per flow, plus a table of state slots (one
-   per deadband / throttle / suspend step, one per timer, one per message buffer).
-5. **Layout.** Freeze sizes: constant pool, variable table, message buffers (max
-   fields known from schemas), arena high-water mark. After this pass the runtime
-   never allocates.
+   per deadband / throttle / suspend step, one per call awaiting a response, one per
+   timer).
+5. **Layout.** Freeze sizes: constant pool, cell table (variables and every flow's
+   locals, struct cells sized from their type's field count), arena high-water mark.
+   After this pass the runtime never allocates.
 
 ### 5.4 Instruction set
 
@@ -852,9 +1066,8 @@ debugger-inspectable.
 | Opcode | Operands | Semantics |
 |---|---|---|
 | CONST | k | push constant pool[k] |
-| LOAD_X | | push the pipeline register |
-| LOAD | cell | push a value cell: HMI variable, widget slot, or timer field, one address space assigned at compile |
-| LOAD_MSGF | buf, field | push a field of an open message |
+| LOAD | cell | push a value cell: local (`x` included), HMI variable, widget slot, or timer field, one address space assigned at compile |
+| LOAD_FIELD | cell, field | push one field of a struct-valued cell |
 | ADD SUB MUL DIV MOD NEG | | arithmetic; division by zero -> Nil, never a trap |
 | EQ NE LT LE GT GE | | comparison; mixed shapes -> Nil |
 | NOT | | logical negation |
@@ -864,17 +1077,16 @@ debugger-inspectable.
 | METHOD | m, argc | a shape-scoped method (6.3); resolved to a concrete implementation at compile time |
 | MAP FILTER SORT_BY | sub, max_n | run sub-program `sub` once per element; `max_n` is the schema's bound, checked at compile time |
 | LOAD_ARG | | inside a sub-program: push the lambda's parameter |
-| STORE_X | | pop into the pipeline register (a transform step) |
+| STORE | cell | pop into a value cell (a `set` move, a feed store) |
+| STORE_FIELD | cell, field | pop into one field of a struct-valued cell, coercing per the field kind, and set its bit |
 | GATE | | pop; if not true, HALT |
 | DEADBAND | state, k | compare against the last passed value in `state`; HALT or update |
 | THROTTLE | state, k | HALT if tick - state < k, else stamp |
 | SUSPEND | state, k, mode | park the continuation (mode: debounce restarts a pending wait, delay does not) |
-| MSG_NEW | buf, ent, seed | open a buffer; seed from the cached last value or zeros |
-| MSG_SET | buf, field | pop into a field, coercing per the field kind |
-| SEND_MSG | buf, verb | emit an effect; close the buffer |
-| SEND_X | ent, field, verb | bare send of the pipeline value |
-| STORE | cell | pop into a value cell (assign steps, feed stores) |
-| UNFORCE | ent | emit an unforce effect |
+| NEW | cell, type | write a zeroed value of `type` into a cell, no bits set |
+| READ_ENT | cell, ent, field | copy the entity's cached value (whole, or one field) into a cell |
+| MOVE_OUT | ent, field, verb | emit an effect from the stack value (verb: write, force, unforce, publish, emit) |
+| CALL_ENT | ent, cell, state | emit a call effect from the stack value; with a destination cell, park the continuation until the response lands or the call times out |
 | TMR_START TMR_CANCEL | slot | arm / disarm; both rearm any OR that watches this timer |
 | FAULT | diag | record a fault and halt (emitted for unresolvable rows) |
 | HALT | | end the run; release the scratch arena |
@@ -918,13 +1130,12 @@ its whole state in a fixed slot and returns; the scheduler resumes it later at t
 next instruction.
 
 ```cpp
-struct Pending {              // one per SUSPEND site, preallocated
+struct Pending {              // one per SUSPEND / CALL_ENT site, preallocated
   bool     active;
-  uint64_t wake_tick;
+  uint64_t wake_tick;         // a call's is its timeout
   uint32_t resume_pc;
-  Value    x;                 // the pipeline register at suspension
-  uint8_t  open_buf;          // the message buffer under construction, or NONE
-  MsgBuf   buf;               // its contents, copied by value
+  Locals   locals;            // every local of the flow, copied by value,
+                              // struct payloads included (x is locals[0])
 };
 ```
 
@@ -932,8 +1143,13 @@ One slot per site means a second event arriving during a debounce window replace
 the pending run (which is precisely debounce semantics), and a delay is defined as
 latest-wins too. If a queue of overlapping delayed runs is ever wanted, that becomes
 an explicit step option (`delay, queued`) with a fixed depth, never an unbounded
-list. Copying the message buffer into the continuation matters: it is what makes a
-delay in the middle of building a message behave the way the UI reads.
+list. Copying the locals into the continuation matters: it is what makes a delay in
+the middle of filling a message behave the way the UI reads.
+
+A `call` with a destination local suspends on the same machinery, and its wake is
+whichever comes first: the response, decoded into the destination, or the timeout,
+which delivers Nil and a fault. So a call cannot hang a flow, and the awaited value
+is UNKNOWN rather than stale, exactly as a failed function feed is (5.9).
 
 ### 5.7 Timers and OR entries
 
@@ -946,19 +1162,26 @@ pattern's entire mechanism, and it deserves tests: press then release before the
 timeout, press then timeout before the release, and press-release-press inside one
 window.
 
-### 5.8 Messages, encode and read-modify-write
+### 5.8 Structs, encode and read-modify-write
 
-A message buffer is a fixed array of Value plus a set-bit per field, sized from the
-reflected schema at compile time. Seed "from last" copies the entity's last known
-value (from its subscription, or from what the HMI last wrote); "zero" starts from
-the schema's zero. On send, the buffer is encoded with the reflected layout (the
-wire format always comes from the owner, never from an assumption here) and cached
-as that entity's last value.
+A struct value is a fixed array of Value plus a set-bit per field, sized from its
+type at compile time (5.2). `READ_ENT` copies the entity's last known value (from its
+subscription, or from what the HMI last wrote) with every bit set; `NEW` writes the
+type's zero with no bit set. On a move out, the value is encoded with the reflected
+layout (the wire format always comes from the owner, never from an assumption here)
+and cached as that entity's last value.
+
+Read-modify-write is therefore not a mode any more, it is which source the author
+chose: `read` then write is RMW, `new` then write is a full overwrite, and both are
+visible on their own rows (2.6). A write of a value whose bits are partly unset sends
+only the set fields where the owner's protocol allows it, and otherwise fills the
+unset ones from the last known value and faults if there is none: the old
+"seed from last" behavior, now derived from the value rather than declared beside it.
 
 Writes are optimistic with revert-on-no-echo: publish the intended value to views
 immediately, and if the owner's echo does not arrive within a grace window, revert
 and log. Enum fields go on the wire as their backing integer while displaying as
-their variant name. Nil in any set field aborts the send with a fault.
+their variant name. Nil in any set field aborts the move with a fault.
 
 ### 5.9 Feeds and polling
 
@@ -993,7 +1216,8 @@ is an external DART bag tool's job, outside this project.
 struct RuntimeState {
   uint64_t              tick;
   std::vector<Value>    values;       // ONE cell table: HMI variables + widget
-                                      // slots (timer fields read through timers)
+                                      // slots + every flow's locals (timer fields
+                                      // read through timers)
   std::vector<Timer>    timers;
   std::vector<Value>    deadband;     // one per DEADBAND site
   std::vector<uint64_t> throttle;     // one per THROTTLE site
@@ -1007,11 +1231,16 @@ struct RuntimeState {
 Persist vars marked `persist` (by name and type, not by slot), and nothing else.
 Everything else is either derivable or deliberately transient.
 
+Locals are not persisted and not migrated: they hold a value only inside a run, so a
+hot swap between runs has nothing to carry. A run parked at a suspension is the
+exception, and it follows the rule below (its row survives, or the continuation is
+dropped and logged).
+
 Hot swap on every accepted edit: compile the new document, then migrate. Variables
-by name (a type change resets to the new initial value); timers by name (a running
-timer keeps its remaining time if its duration is unchanged); step state only where
-the site's identity is unchanged (same flow id, same row id, same kind); pending
-suspensions dropped if their row is gone. Log every migration decision; a dropped
+by name (a type change, including a change of TypeRef, resets to the new initial
+value); timers by name (a running timer keeps its remaining time if its duration is
+unchanged); step state only where the site's identity is unchanged (same flow id,
+same row id, same kind); pending suspensions dropped if their row is gone. Log every migration decision; a dropped
 continuation is exactly the kind of thing that looks like a bug three days later.
 
 ### 5.12 Faults
@@ -1029,7 +1258,7 @@ opt-in, because that is where the actual risk boundary sits.
 
 | | Display tier | Wire tier |
 |---|---|---|
-| Where | a feed's transform: mesh -> widget slot | field setters, transforms, gates, deadbands, assignments: widget -> mesh |
+| Where | a feed's transform: mesh -> widget slot | every move's source and every guard: widget -> mesh |
 | Job | format for a human: title-case a name list, count options, join, scale for a label | compute a value a machine will act on |
 | Cost of a bug | an ugly label, or UNKNOWN | a machine moves |
 | Vocabulary | full method set, list comprehensions, string work | same grammar, restricted set: numeric, comparison, conversion, aggregate; no list-returning result: a wire value is always one scalar |
@@ -1079,8 +1308,12 @@ is accepted.
 One line, pure, total, no statements, no assignment, no side effects. `x` is always
 the triggering event value or feed value. A flow reads the owning widget's current
 slots explicitly as `widget.<slot>`, so every event gets the same state vocabulary
-without colliding with HMI variable names. Everything else is a named HMI variable,
-an open message field such as `msg.speed`, or an enum variant.
+without colliding with HMI variable names. Everything else is a named HMI variable, a
+local of this flow (a struct one's fields addressed as `m.speed`), or an enum variant.
+
+An expression NEVER names an entity. Mesh values enter a flow only through a move's
+source (2.6), which is what keeps the set of entities a program consumes readable off
+the document rather than recovered by scanning expression text.
 
 ```
 expr    := or
@@ -1118,6 +1351,19 @@ formatting covers the display need.
 Method syntax below is sugar over the same typed table: `roundTo(x, 1)` and
 `x.round(1)` compile identically, so neither habit is punished.
 
+**`variants(T)`** is the one builtin taking a TYPE rather than a value: it yields that
+enum type's options as a list, resolved at compile to a constant, so it costs nothing
+at run time and a Dropdown fed by it can never disagree with the mesh. It is display
+tier (its result is a list, which no wire field accepts) and its argument is a TypeRef
+(2.2), picked, never typed as text.
+
+Which settles where a Dropdown's options come from. Default: from what the control is
+bound to. A Dropdown whose `value` slot is fed from an enum-shaped path derives its
+options from that field's type with no authoring at all, offered as the one-click fix
+on an empty `options`. Where there is nothing to derive from, the `options` slot takes
+a TypeRef directly (its editor is the type picker) and the compiler expands it to the
+same constant list. Options are never a hand-typed list that drifts from the schema.
+
 ### 6.3 The shape-scoped method table
 
 Because the receiver's shape is known at compile time, a method call is resolvable
@@ -1136,15 +1382,17 @@ not a reflex.
 | bool | `int not pick(a,b)` | both |
 | enum | `int name is(variant)` | both; `is` resolves its variant against the receiver's vocabulary at compile time |
 | map | `length keys values has(k) get(k)` | both mid-expression; `entries` waits on a pair shape |
+| struct | no methods: a struct is addressed by field, `m.speed`, typed by the type table | both mid-expression; a struct is never a wire value on its own, only its fields are |
 | color | `r g b a` (nums: channels 0..255, alpha 0..1 -> wire-legal, the LED bridge) `alpha(a) mix(c,t)` | accessors both; the rest display |
 
 Semantics pinned by the implementation: `replace(a,b)` replaces EVERY occurrence (the
 common intent on a label; JS's first-only surprise is not kept), `slice` takes
 JS-style negative indices from the end, `split` yields at most one piece per input
 byte (the `kSplitCeiling` safety ceiling), and indexing `x[i]` / `x["key"]` is the
-postfix grammar's bracket form over lists and maps. Aggregate ELEMENTS are scalars:
+postfix grammar's bracket form over lists and maps. Aggregate ELEMENTS stay scalars:
 DART arrays are scalar/string-element by construction and a map's values decode
-per-entry, so no struct value ever exists inside the VM.
+per-entry, so a struct value is only ever a whole entity value, a field of another
+struct, or a local holding one (5.2), never an element inside a list or a map.
 
 The motivating cases read the way a JS user expects, and type-check:
 
@@ -1174,7 +1422,7 @@ language addition, and it is deliberately crippled:
 - No nesting: a lambda body may not contain another lambda. One level of iteration,
   ever.
 - Scope is the parameter plus HMI variables and enum variants. Not `x`: shadowing
-  the pipeline register inside a comprehension is the kind of cleverness that
+  `x` inside a comprehension is the kind of cleverness that
   produces unreadable rows.
 
 Compilation: the body becomes a sub-program with its own tiny stack frame, invoked
@@ -1189,8 +1437,10 @@ unbounded loop inside a tick.
 
 ### 6.5 Lints to keep
 
-- An expression that must consume `x` (a feed transform, a transform step) and does
+- An expression that must consume `x` (a feed transform, a `set x = ...`) and does
   not.
+- An identifier naming an entity: expressions do not reach the mesh (6.2), so say
+  that and offer to insert the `read` move above this row.
 - A bare identifier matching no variable is read as an enum variant name, not an
   error: that is what users type for enum fields.
 - An unknown method on a known shape -> the alias suggestion above; on an unknown

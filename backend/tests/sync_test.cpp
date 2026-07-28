@@ -286,8 +286,8 @@ int main() {
                 {"base_version", app.document().version()},
                 {"ops", Json::array({Json{{"op", "set_prop"},
                                           {"node", reset_step},
-                                          {"key", "a"},
-                                          {"value", "5"}}})}});
+                                          {"key", "from"},
+                                          {"value", Json{{"expr", "5"}}}}})}});
     frames = pump(app, a, 1);
     CHECK(frame_of(frames, "ops_applied") != nullptr);
     a.take();

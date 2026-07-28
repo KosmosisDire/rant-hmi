@@ -18,9 +18,11 @@ struct FixedText {
     std::string_view view() const noexcept;
 };
 
-struct MessageState {
-    bool open = false;
-    uint32_t entity = 0;
+/* One struct value's storage: its fields plus a set-bit each. The set bits are what
+ * makes read-modify-write honest on the way out (spec 5.8): `new` sets none, a read sets
+ * all, and a field write sets its own. */
+struct StructState {
+    uint16_t type_id = 0;
     std::vector<Value> fields;
     std::vector<uint8_t> set;
 };
@@ -59,7 +61,9 @@ struct PendingState {
     uint32_t flow = 0;
     uint32_t resume_pc = 0;
     Value x = Value::nil();
-    std::vector<MessageState> buffers;
+    /* every struct slot, by value, so a run that parks mid-message re-enters with its
+     * own storage and nothing dangles when the scratch resets (spec 5.6) */
+    std::vector<StructState> structs;
 };
 
 class RuntimeState {
@@ -76,7 +80,8 @@ class RuntimeState {
     uint32_t mesh_scratch = 0;
     std::vector<std::vector<uint32_t>> entity_texts;   /* [entity][field] -> text slot */
     /* suspension deep-copy storage: each pending site owns a fixed run of text slots
-     * (one for x, one per text-shaped buffer field) so held text survives until resume */
+     * (one for x, one per text-shaped field of every struct slot) so held text survives
+     * until resume */
     std::vector<uint32_t> pending_texts;               /* [pending site] -> first slot */
     /* the aggregate scratch pool: list/map elements live here for one run, dealt out
      * by a cursor that whoever seeds x resets (reset_scratch). Element text rides in
@@ -86,7 +91,7 @@ class RuntimeState {
     uint32_t elem_text_base = 0;
     uint32_t elem_text_cursor = 0;
     uint32_t elem_text_count = 0;
-    std::vector<MessageState> buffers;
+    std::vector<StructState> structs;
     std::vector<LastValueState> last;
     std::vector<Value> deadband;
     std::vector<uint64_t> throttle;

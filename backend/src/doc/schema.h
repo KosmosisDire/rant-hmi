@@ -39,6 +39,7 @@ enum class Role {
     EntityRef,   /* {kind, name}: an HMI variable only when kind == "L" */
     Expr,        /* expression text: identifiers may name variables */
     Triggers,    /* the flow's `when` array: timer entries name variables */
+    MoveRef,     /* a move's `from` / `to`: an expression, a local name, or {kind, name} */
 };
 
 struct Prop {

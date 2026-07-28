@@ -31,6 +31,16 @@ reference material, not a dependency.
   ops. Visual reference for the inspector: the design project's Build Sheet mock,
   minus its traffic panel. It starts thin at stage 2 and grows with each backend
   stage (see Build order), so the protocol always has a real consumer.
+- **One move step** (2026-07-28, replacing build/setf/send/assign/unforce): every
+  transfer is one step naming a source and a destination, its verb derived from the
+  destination, and a message is an ordinary local holding a struct value rather than a
+  buffer with its own ownership rules. Types become a first-class document reference
+  (root type name plus a field path) so a value can be constructed, a variable typed
+  and a Dropdown's options filled without an entity in the way. Written up in spec
+  2.1, 2.2, 2.6, 2.7, 3.3 to 3.8, 5.2, 5.4, 5.6, 5.8, 5.11 and 6.2 to 6.5. The
+  document form changes outright: this project has no users and no document is
+  preserved, so there is no migration and no reader for the old five steps. A stale
+  `hmi.json` is re-authored, and the default document carries the new form.
 - **Persistence**: JSON on disk, split in two so runtime churn never touches the
   authored artifact: `hmi.json` (the document, git-diffable, written on accepted
   edits) and `hmi.state.json` (persisted variable values). Atomic temp-file + rename
@@ -103,19 +113,26 @@ Doc      { version: u64, next_id: u64, globals: [Var], pages: [Page] }
 Page     { id, name, grid: {cols, rows}, widgets: [Widget] }
 Widget   { id, type, label, geom: {x,y,w,h}, props: {},
            locals: [Var], feeds: [Feed], flows: [Flow] }
-Var      { id, name, type: f64|bool|str|timer, init, persist: bool }
+Var      { id, name, type: f64|bool|str|timer|TypeRef, init, persist: bool }
 Feed     { id, slot, src: EntityRef, path, xf: Expr?, poll_hz? }
-Flow     { id, trig, tmr?, hold_ms?, or?, or_mode, every, every_ms, do: [DoStep] }
-DoStep   { id, kind: transform|gate|deadband|throttle|debounce|delay
-                 | build|setf|send|assign|unforce|tmr_start|tmr_cancel, ... }
+Flow     { id, trig, tmr?, hold_ms?, or?, or_mode, every, every_ms, do: [Step] }
+Step     { id, kind: move|gate|deadband|throttle|debounce|delay
+                 | tmr_start|tmr_cancel, ... }
+move     { from: Expr | EntityRef+Path | new TypeRef,
+           to:   Local+Path | EntityRef+Path | widget.<slot>, mode? }
 EntityRef{ kind: V|T|F|S|L, name }
+TypeRef  { path: "ValveCmd" | "ValveCmd.mode" }   // root type name, then fields
 ```
 
 Semantics pinned by the spec and kept verbatim: one feed per slot; the DO list is a
-flat pipeline over one register `x` seeded with the widget output; message build/setf/
-send ownership; verb derived from target kind (the user only chooses write vs force);
-timers are ordinary variables valued `{running, remaining, duration}`; rename rewrites
-every reference in one transaction; two variable scopes only (global, widget-local).
+flat ordered list of independent steps; ONE move step covers every transfer and its
+verb is derived from the destination (spec 2.1, 2.6); a message is an ordinary local
+holding a struct value, so read-modify-write is an authored `read` line and not a
+mode; `x` is the flow's first local, seeded with the widget output; entities enter a
+flow only as a move source; temporaries are declared by use and typed by inference,
+declared variables are typed by their author; timers are ordinary variables valued
+`{running, remaining, duration}`; rename rewrites every reference in one transaction;
+two declared variable scopes (global, widget-local) plus flow-scoped temporaries.
 
 `version` is the sole sync authority. Canonical serialization + document hash (to
 skip a snapshot on reconnect) is a deferred optimization: snapshots of a small doc
@@ -246,26 +263,28 @@ backpressure, or disconnect). Nothing unbounded, nothing silent.
 | Regime | What lives there | Strategy |
 |---|---|---|
 | Control plane (human rate) | document tree + id index, compiler working set, reflection cache, sessions, JSON frames | ordinary heap, std containers; allocate freely, free normally |
-| Compiled artifacts (per accepted edit) | Program: instruction vectors, constant pool, lambda sub-programs, state-site tables, message layouts, enum table; RuntimeState backing | built with normal vectors, then frozen; double-buffered across hot swap (old program + state stay alive until migration completes, then freed) |
-| Tick hot path (per event / flow run) | scratch arena, pending slots, message buffers, dirty sets | zero allocation: everything preallocated by the layout pass; not fitting is a compile-time rejection or a runtime fault, never a realloc |
+| Compiled artifacts (per accepted edit) | Program: instruction vectors, constant pool, lambda sub-programs, state-site tables, struct layouts, type table; RuntimeState backing | built with normal vectors, then frozen; double-buffered across hot swap (old program + state stay alive until migration completes, then freed) |
+| Tick hot path (per event / flow run) | scratch arena, pending slots, flow locals, dirty sets | zero allocation: everything preallocated by the layout pass; not fitting is a compile-time rejection or a runtime fault, never a realloc |
 
-**Value payload storage.** A `Value` is 16 bytes; Text/List/Map payloads live behind
-its `ref` in exactly one of two stores, and which one is a correctness question, not
-a tuning question:
+**Value payload storage.** A `Value` is 16 bytes; Text/List/Map/Struct payloads live
+behind its `ref` in exactly one of two stores, and which one is a correctness
+question, not a tuning question:
 
 - **Scratch arena**: bump-allocated during a flow run, reset at HALT. Capacity is
   the compile-time high-water computed from schema bounds (string caps, arr counts,
   varr ceilings); exceeding it rejects at compile.
 - **Retained store**: fixed per-owner regions for values that outlive a run: widget
   slot values (views render them between runs), HMI `str` variables (fixed cap,
-  default 256 B), and the last-value cache (one region per subscribed entity, sized
-  to its schema's max encoded size, backing seed-from-last and RMW). Written by deep
-  copy-in from scratch. Migrated or re-laid-out only at hot swap.
+  default 256 B), struct-typed HMI variables (sized from their type), and the
+  last-value cache (one region per subscribed entity, sized to its schema's max
+  encoded size, backing `read` and RMW). Written by deep copy-in from scratch.
+  Migrated or re-laid-out only at hot swap.
 
-**Suspension deep-copies.** `Pending` holds `x` and the open message buffer by
-value, INCLUDING any text/list payload, in a per-site fixed block sized at layout.
+**Suspension deep-copies.** `Pending` holds every local of the flow by value,
+INCLUDING any text/list/struct payload, in a per-site fixed block sized at layout.
 A resumed run re-enters with its values in its own storage; nothing dangles when
-the scratch arena resets between runs.
+the scratch arena resets between runs. A `call` awaiting its response parks on the
+same block, so a round trip costs no separate mechanism.
 
 **Cross-thread queues**, all bounded:
 
@@ -426,7 +445,7 @@ working end-to-end demo at every stage. Each stage lands with its tests.
    to be visible: `x` as the value the widget PROPOSES (declared per event on the
    type, evaluated once before the event's flows run), the type BEHAVIOR table with
    its one-writer precedence (spec 2.3),
-   `assign` to `widget.<slot>`, a variable's type owning its init's shape (2.7), a
+   a move to `widget.<slot>`, a variable's type owning its init's shape (2.7), a
    value that cannot be its shape as a finding rather than a silent Nil, enum slots as
    constrained text, and compile findings carried in the snapshot, badged on the
    widget and listed in the inspector (3.8). Before the mesh, deliberately: hardware
@@ -436,6 +455,13 @@ working end-to-end demo at every stage. Each stage lands with its tests.
    against real controllers (the old folder's mock-controller works as a stand-in).
 6. **inspector authoring**: full menus, pickers and autocomplete driven by the
    served tables; diagnostics + one-click fixes; round-trip check.
+   6b. **the move rework** (the Decisions bullet above), landed in this order so the
+   tree compiles at every step: the type table and TypeRef resolution in `compile/`;
+   `Tag::Struct` and struct cells in `vm/`, with message buffers becoming locals;
+   the `move` node in `doc/`; lowering and the new opcodes; then the frontend's
+   two-family grid, type picker, `new` and `variants()`.
+   The additions this unlocks (`call` with a response, struct-typed variables,
+   enum-derived Dropdown options) land after the rework compiles clean, not with it.
 7. **hot swap + migration** (wiring the stage-3 design: recompile on accepted edit,
    migrate, log decisions).
 

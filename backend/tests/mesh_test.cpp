@@ -5,6 +5,7 @@
  * (RMW variable write preserving an untouched text field, publish, emit). Runs on an
  * isolated domain so a busy desk never interferes. */
 #include "check.h"
+#include "steps.h"
 #include "compile/compiler.h"
 #include "doc/doc.h"
 #include "mesh/dart_mesh.h"
@@ -251,26 +252,17 @@ int main() {
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                  {"when_mode", "any"},
                  {"do", Json::array({
-                     Json{{"kind", "transform"}, {"a", "77.75"}},
-                     Json{{"kind", "build"},
-                          {"buf", "msg"},
-                          {"target", entity_ref("V", "tank_level")},
-                          {"seed", "last"}},
-                     Json{{"kind", "setf"}, {"path", "level"}, {"a", "x"}},
-                     Json{{"kind", "send"}, {"buf", "msg"}, {"verb", "write"}},
+                     steps::set_x("77.75"),
+                     steps::read_into("msg", "V", "tank_level"),
+                     steps::set_field("msg", "level", "x"),
+                     steps::write_value("msg", "V", "tank_level"),
                  })}},
             /* press: a bare publish and a bare emit */
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
                  {"when_mode", "any"},
                  {"do", Json::array({
-                     Json{{"kind", "transform"}, {"a", "5.5"}},
-                     Json{{"kind", "send"},
-                          {"target", entity_ref("T", "cmd")},
-                          {"verb", "publish"}},
-                     Json{{"kind", "transform"}, {"a", "7"}},
-                     Json{{"kind", "send"},
-                          {"target", entity_ref("S", "alarm")},
-                          {"verb", "emit"}},
+                     steps::write_field("T", "cmd", "", "5.5"),
+                     steps::write_field("S", "alarm", "", "7"),
                  })}},
         })},
     };

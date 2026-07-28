@@ -224,7 +224,9 @@ Document Document::make_default() {
     ws[6]["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
         {"when_mode", "first"},
-        {"do", Json::array({Json{{"kind", "assign"}, {"var", "flow"}, {"a", "0"}}})}}});
+        {"do", Json::array({Json{{"kind", "move"},
+                                 {"from", {{"expr", "0"}}},
+                                 {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
     j["pages"] = Json::array({page});
 

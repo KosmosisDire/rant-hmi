@@ -118,11 +118,13 @@ Json event(const char* name, const char* x, const char* from = nullptr) {
  * authored flows and drops one whose slot something else already writes (a feed, or an
  * authored flow), so a slot never has two writers.
  *
- * A default writes the widget's OWN slot: `widget.<slot>`, the same name the read side
- * uses. It never reaches another widget, which is what keeps this from reopening the
- * rejected "flows write slots" door. */
+ * A default writes the widget's OWN slot, which a move names as its destination `slot`.
+ * It never reaches another widget, which is what keeps this from reopening the rejected
+ * "flows write slots" door. */
 Json sets_slot(const char* slot, const char* expression) {
-    return Json{{"kind", "assign"}, {"var", std::string("widget.") + slot}, {"a", expression}};
+    return Json{{"kind", "move"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"slot", slot}}}};
 }
 
 Json on_event(const char* name, std::initializer_list<Json> steps) {

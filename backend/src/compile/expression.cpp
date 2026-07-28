@@ -694,8 +694,8 @@ class Parser {
         advance();
         bool found = false;
         int64_t value = 0;
-        if (receiver_enum && receiver_enum < program_.enum_types.size())
-            for (const auto& row : program_.enum_types[receiver_enum])
+        if (receiver_enum && receiver_enum < program_.types.size())
+            for (const auto& row : program_.types[receiver_enum].variants)
                 if (row.first == variant) {
                     value = row.second;
                     found = true;

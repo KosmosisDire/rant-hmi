@@ -383,7 +383,7 @@ check(
   "the Toggle ships one default flow, got " + (toggleType.behavior ?? []).length,
 );
 check(
-  toggleType.behavior[0].do[0].var === "widget.value",
+  toggleType.behavior[0].do[0].to?.slot === "value",
   "and it writes the widget's own slot, not a variable",
 );
 /* the type-specific part is WHERE x COMES FROM, declared on the event, so the default
@@ -393,8 +393,8 @@ check(
   "the Toggle's tap declares what it proposes",
 );
 check(
-  toggleType.behavior[0].do[0].a === "x",
-  "so its default just takes x, got " + toggleType.behavior[0].do[0].a,
+  toggleType.behavior[0].do[0].from?.expr === "x",
+  "so its default just takes x, got " + toggleType.behavior[0].do[0].from?.expr,
 );
 check(
   !snapshot.registry.types.find((t) => t.name === "Slider").events.find((e) => e.name === "input")

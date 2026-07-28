@@ -31,8 +31,8 @@ Value text_result(const ExecContext& ctx, uint32_t site, std::string_view view) 
 
 std::string_view enum_variant_name(const Program& program, uint16_t type,
                                    int64_t value) noexcept {
-    if (type && type < program.enum_types.size())
-        for (const auto& row : program.enum_types[type])
+    if (type && type < program.types.size())
+        for (const auto& row : program.types[type].variants)
             if (row.second == value) return row.first;
     return {};
 }
@@ -179,7 +179,7 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
                     return text_result(ctx, site, buffer);
                 case ValueTag::Enum: {
                     const std::string_view name =
-                        enum_variant_name(ctx.program, v.enum_type, v.data.integer);
+                        enum_variant_name(ctx.program, v.type_id, v.data.integer);
                     if (!name.empty()) return text_result(ctx, site, name);
                     std::snprintf(buffer, sizeof(buffer), "%lld",
                                   static_cast<long long>(v.data.integer));
@@ -199,7 +199,7 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
         case Builtin::Name: {
             if (n != 1 || args[0].tag != ValueTag::Enum) return Value::nil();
             const std::string_view name =
-                enum_variant_name(ctx.program, args[0].enum_type, args[0].data.integer);
+                enum_variant_name(ctx.program, args[0].type_id, args[0].data.integer);
             return name.empty() ? Value::nil() : text_result(ctx, site, name);
         }
         case Builtin::FmtTime: {
@@ -599,7 +599,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
                     case ValueTag::Bool: append(elem.data.boolean ? "true" : "false"); break;
                     case ValueTag::Enum: {
                         const std::string_view name = enum_variant_name(
-                            ctx.program, elem.enum_type, elem.data.integer);
+                            ctx.program, elem.type_id, elem.data.integer);
                         if (!name.empty()) {
                             append(name);
                         } else {
@@ -710,7 +710,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
         case MethodId::EnumName: {
             if (receiver.tag != ValueTag::Enum || n != 0) return Value::nil();
             const std::string_view name =
-                enum_variant_name(ctx.program, receiver.enum_type, receiver.data.integer);
+                enum_variant_name(ctx.program, receiver.type_id, receiver.data.integer);
             return name.empty() ? Value::nil() : text_result(ctx, site, name);
         }
         default: break;
@@ -825,18 +825,19 @@ bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t 
     return copy_effect_text(program, state, effect, value, UINT32_MAX);
 }
 
-bool emit_message(const Program& program, RuntimeState& state, Verb verb,
-                  const MessageState& message) noexcept {
+bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
+                 const StructState& value) noexcept {
     if (state.effect_count >= state.effects.size()) return false;
     EffectRecord& effect = state.effects[state.effect_count];
     effect.verb = verb;
-    effect.entity = message.entity;
+    effect.entity = entity;
     effect.bare = false;
-    for (uint32_t i = 0; i < message.fields.size(); ++i) {
-        if (message.fields[i].tag == ValueTag::Nil) return false;
-        effect.fields[i] = message.fields[i];
-        effect.set[i] = message.set[i];
-        if (!copy_effect_text(program, state, effect, message.fields[i], i)) return false;
+    if (value.fields.size() > effect.fields.size()) return false;
+    for (uint32_t i = 0; i < value.fields.size(); ++i) {
+        if (value.fields[i].tag == ValueTag::Nil) return false;
+        effect.fields[i] = value.fields[i];
+        effect.set[i] = value.set[i];
+        if (!copy_effect_text(program, state, effect, value.fields[i], i)) return false;
     }
     ++state.effect_count;
     return true;
@@ -879,11 +880,15 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::Load:
                 if (ins.a >= state.values.size() || !push(state.values[ins.a])) fail(ins.c);
                 break;
-            case OpCode::LoadMsgF:
-                if (ins.a >= state.buffers.size() || ins.b >= state.buffers[ins.a].fields.size() ||
-                    !push(state.buffers[ins.a].fields[ins.b]))
+            case OpCode::LoadField: {
+                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
+                                                                 : Value::nil();
+                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size() ||
+                    ins.b >= state.structs[holder.ref].fields.size() ||
+                    !push(state.structs[holder.ref].fields[ins.b]))
                     fail(ins.c);
                 break;
+            }
             case OpCode::Add:
             case OpCode::Sub:
             case OpCode::Mul:
@@ -1018,93 +1023,124 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     return Value::text(slot);
                 };
                 pending.x = hold_text(x);
-                for (uint32_t i = 0; i < state.buffers.size(); ++i) {
-                    pending.buffers[i].open = state.buffers[i].open;
-                    pending.buffers[i].entity = state.buffers[i].entity;
-                    pending.buffers[i].fields = state.buffers[i].fields;
-                    pending.buffers[i].set = state.buffers[i].set;
-                    const uint32_t entity = state.buffers[i].entity;
-                    if (entity >= program.entities.size()) continue;
-                    const std::vector<FieldDef>& defs = program.entities[entity].fields;
+                for (uint32_t i = 0; i < state.structs.size(); ++i) {
+                    pending.structs[i].type_id = state.structs[i].type_id;
+                    pending.structs[i].fields = state.structs[i].fields;
+                    pending.structs[i].set = state.structs[i].set;
+                    const std::vector<FieldDef>& defs =
+                        struct_fields(program, state.structs[i].type_id);
                     for (uint32_t f = 0; f < defs.size() &&
-                                         f < pending.buffers[i].fields.size(); ++f)
+                                         f < pending.structs[i].fields.size(); ++f)
                         if (defs[f].shape == Shape::Text)
-                            pending.buffers[i].fields[f] =
-                                hold_text(state.buffers[i].fields[f]);
+                            pending.structs[i].fields[f] = hold_text(state.structs[i].fields[f]);
                 }
                 result.suspended = true;
                 result.halted = true;
                 break;
             }
-            case OpCode::MsgNew: {
-                if (ins.a >= state.buffers.size() || ins.b >= program.entities.size()) {
+            /* `new T -> cell`: the type's zero, no bit set, so a move out of it writes
+             * only the fields the flow went on to set */
+            case OpCode::New: {
+                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
+                                                                 : Value::nil();
+                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size()) {
                     fail(ins.c);
                     break;
                 }
-                MessageState& buffer = state.buffers[ins.a];
-                buffer.open = true;
-                buffer.entity = ins.b;
-                std::fill(buffer.set.begin(), buffer.set.end(), uint8_t{0});
-                const bool from_last = ins.small != 0;
+                StructState& item = state.structs[holder.ref];
+                const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
+                std::fill(item.set.begin(), item.set.end(), uint8_t{0});
+                for (uint32_t i = 0; i < item.fields.size(); ++i)
+                    item.fields[i] = zero_value(i < defs.size() ? defs[i].shape : Shape::Unknown);
+                break;
+            }
+            /* `read <entity> -> cell`: the cached last value, every bit set, which is
+             * read-modify-write stated as a line rather than hidden in a seed mode */
+            case OpCode::ReadEnt: {
+                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
+                                                                 : Value::nil();
+                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size() ||
+                    ins.b >= state.last.size()) {
+                    fail(ins.c);
+                    break;
+                }
+                StructState& item = state.structs[holder.ref];
                 const LastValueState& last = state.last[ins.b];
-                for (uint32_t i = 0; i < buffer.fields.size(); ++i) {
-                    const Shape shape = program.entities[ins.b].fields[i].shape;
-                    /* aggregate fields are read-side only: the buffer carries an inert
-                     * placeholder whichever way it was seeded */
+                const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
+                for (uint32_t i = 0; i < item.fields.size(); ++i) {
+                    const Shape shape = i < defs.size() ? defs[i].shape : Shape::Unknown;
+                    /* aggregates are read-side only, so the value carries the inert
+                     * placeholder and the wire keeps the owner's own bytes */
                     if (shape == Shape::List || shape == Shape::Map)
-                        buffer.fields[i] = zero_value(shape);
-                    else if (from_last)
-                        buffer.fields[i] = last.known ? last.fields[i] : Value::nil();
+                        item.fields[i] = zero_value(shape);
                     else
-                        buffer.fields[i] = zero_value(shape);
+                        item.fields[i] = last.known && i < last.fields.size() ? last.fields[i]
+                                                                             : Value::nil();
+                    item.set[i] = 1;
                 }
                 break;
             }
-            case OpCode::MsgSet: {
-                if (ins.a >= state.buffers.size() || ins.b >= state.buffers[ins.a].fields.size()) {
+            case OpCode::LoadEnt: {
+                if (ins.a >= state.last.size() || ins.b >= state.last[ins.a].fields.size()) {
                     fail(ins.c);
                     break;
                 }
-                MessageState& buffer = state.buffers[ins.a];
-                buffer.fields[ins.b] = pop();
-                buffer.set[ins.b] = 1;
+                const LastValueState& last = state.last[ins.a];
+                if (!push(last.known ? last.fields[ins.b] : Value::nil())) fail(ins.c);
                 break;
             }
-            case OpCode::SendMsg: {
-                if (ins.a >= state.buffers.size() ||
-                    !emit_message(program, state, static_cast<Verb>(ins.small), state.buffers[ins.a])) {
+            case OpCode::StoreField: {
+                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
+                                                                 : Value::nil();
+                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size() ||
+                    ins.b >= state.structs[holder.ref].fields.size()) {
                     fail(ins.c);
                     break;
                 }
-                MessageState& buffer = state.buffers[ins.a];
-                state.last[buffer.entity].known = true;
-                state.last[buffer.entity].fields = buffer.fields;
-                buffer.open = false;
+                StructState& item = state.structs[holder.ref];
+                item.fields[ins.b] = pop();
+                item.set[ins.b] = 1;
                 break;
             }
-            case OpCode::SendX:
-                if (!emit_bare(program, state, static_cast<Verb>(ins.small), ins.a, ins.b, x)) {
+            /* the one way a value leaves a flow. The source arrives on the stack, and
+             * whether it is a struct decides between a whole message and one field;
+             * unforce carries no source at all (spec 2.6). */
+            case OpCode::MoveOut: {
+                const Verb verb = static_cast<Verb>(ins.small);
+                if (verb == Verb::Unforce) {
+                    if (state.effect_count >= state.effects.size()) {
+                        fail(ins.c);
+                        break;
+                    }
+                    EffectRecord& effect = state.effects[state.effect_count++];
+                    effect.verb = Verb::Unforce;
+                    effect.entity = ins.a;
+                    effect.bare = true;
+                    effect.value = Value::nil();
+                    break;
+                }
+                const Value source = pop();
+                if (source.tag == ValueTag::Struct) {
+                    if (source.ref >= state.structs.size() ||
+                        !emit_struct(program, state, verb, ins.a, state.structs[source.ref])) {
+                        fail(ins.c);
+                        break;
+                    }
+                    if (ins.a < state.last.size()) {
+                        state.last[ins.a].known = true;
+                        state.last[ins.a].fields = state.structs[source.ref].fields;
+                    }
+                } else if (!emit_bare(program, state, verb, ins.a, ins.b, source)) {
                     fail(ins.c);
                 } else if (ins.a < state.last.size() && ins.b < state.last[ins.a].fields.size()) {
                     state.last[ins.a].known = true;
-                    state.last[ins.a].fields[ins.b] = x;
+                    state.last[ins.a].fields[ins.b] = source;
                 }
                 break;
+            }
             case OpCode::Store: {
                 const Value value = pop();
                 if (!state.store(program, ins.a, value)) fail(ins.c);
-                break;
-            }
-            case OpCode::Unforce: {
-                if (state.effect_count >= state.effects.size()) {
-                    fail(ins.c);
-                    break;
-                }
-                EffectRecord& effect = state.effects[state.effect_count++];
-                effect.verb = Verb::Unforce;
-                effect.entity = ins.a;
-                effect.bare = true;
-                effect.value = Value::nil();
                 break;
             }
             case OpCode::TmrStart:
@@ -1200,11 +1236,10 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     PendingState& pending = state.pending[pending_slot];
     if (!pending.active || pending.flow >= program.flows.size())
         return RunResult{true, true, false, 0};
-    for (uint32_t i = 0; i < state.buffers.size(); ++i) {
-        state.buffers[i].open = pending.buffers[i].open;
-        state.buffers[i].entity = pending.buffers[i].entity;
-        state.buffers[i].fields = pending.buffers[i].fields;
-        state.buffers[i].set = pending.buffers[i].set;
+    for (uint32_t i = 0; i < state.structs.size(); ++i) {
+        state.structs[i].type_id = pending.structs[i].type_id;
+        state.structs[i].fields = pending.structs[i].fields;
+        state.structs[i].set = pending.structs[i].set;
     }
     const uint32_t flow_index = pending.flow;
     const uint32_t pc = pending.resume_pc;

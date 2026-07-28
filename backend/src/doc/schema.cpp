@@ -123,25 +123,24 @@ const std::vector<NodeSpec>& table() {
         step.name = "step";
         step.variant_key = "kind";
         step.props = {enumer("kind",
-                             {"transform", "gate", "deadband", "throttle", "debounce", "delay",
-                              "build", "setf", "send", "assign", "unforce", "tmr_start",
-                              "tmr_cancel"},
-                             "transform")};
+                             {"move", "gate", "deadband", "throttle", "debounce", "delay",
+                              "tmr_start", "tmr_cancel"},
+                             "move")};
         step.variants = {
-            {"transform", {text("a", "x", Role::Expr)}},
+            /* ONE transfer step (spec 2.6). `from` and `to` are free-form objects
+               discriminated by which key they carry, so a source or destination gains a
+               form without a new prop:
+                 from  {"expr": "x"} | {"kind","name","path"} | {"type": "ValveCmd"}
+                 to    {"local","path"} | {"kind","name","path"} | {"slot"}
+               `mode` applies to a V destination only; every other verb is derived. */
+            {"move", {object("from", Json{{"expr", "x"}}, Role::MoveRef),
+                      object("to", Json::object(), Role::MoveRef),
+                      enumer("mode", {"write", "force", "unforce"}, "write")}},
             {"gate", {text("a", "", Role::Expr)}},
             {"deadband", {num("a", 0)}},
             {"throttle", {num("a", 0)}},
             {"debounce", {num("a", 0)}},
             {"delay", {num("a", 0)}},
-            {"build", {text("buf", "msg"), object("target", entity_ref(), Role::EntityRef),
-                       enumer("seed", {"last", "zero"}, "last")}},
-            {"setf", {text("path"), text("a", "", Role::Expr), text("variant")}},
-            {"send", {object("target", entity_ref(), Role::EntityRef),
-                      enumer("verb", {"write", "force", "publish", "call", "emit"}, "write"),
-                      text("buf")}},
-            {"assign", {text("var", "", Role::VarName), text("a", "x", Role::Expr)}},
-            {"unforce", {object("target", entity_ref(), Role::EntityRef)}},
             {"tmr_start", {text("timer", "", Role::VarName)}},
             {"tmr_cancel", {text("timer", "", Role::VarName)}},
         };

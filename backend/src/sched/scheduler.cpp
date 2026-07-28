@@ -198,7 +198,7 @@ void Scheduler::on_update(const MeshUpdate& update) {
             /* aggregates stay out of the last-value cache: their elements live in the
              * per-run scratch pool, and the wire side never builds them anyway */
             if (value.tag == ValueTag::List || value.tag == ValueTag::Map) continue;
-            if (value.tag == ValueTag::Enum) value.enum_type = fields[i].enum_type;
+            if (value.tag == ValueTag::Enum) value.type_id = fields[i].type_id;
             if (value.tag == ValueTag::Text) {
                 const uint32_t slot = state_.entity_texts[entity][i];
                 if (slot >= state_.texts.size()) continue;
@@ -216,7 +216,7 @@ void Scheduler::on_update(const MeshUpdate& update) {
         if (feed.field >= count) continue;
         state_.reset_scratch();
         Value x = update.fields[feed.field];
-        if (x.tag == ValueTag::Enum) x.enum_type = fields[feed.field].enum_type;
+        if (x.tag == ValueTag::Enum) x.type_id = fields[feed.field].type_id;
         if (x.tag == ValueTag::List || x.tag == ValueTag::Map)
             x = intake_aggregate(update, feed.field, fields[feed.field]);
         if (x.tag == ValueTag::Text) {

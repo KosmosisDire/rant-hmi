@@ -100,6 +100,18 @@ void visit_site(Role role, Json& value, const std::string& from, const std::stri
             }
             return;
         }
+        /* A move's `from` / `to` is one object carrying whichever form it is (spec 2.6),
+           so the site dispatches on the key present and reuses the three roles above:
+           there is no fourth kind of reference, only a fourth place to find one. */
+        case Role::MoveRef: {
+            if (!value.is_object()) return;
+            if (auto expr = value.find("expr"); expr != value.end())
+                visit_site(Role::Expr, *expr, from, to, hits);
+            if (auto local = value.find("local"); local != value.end())
+                visit_site(Role::VarName, *local, from, to, hits);
+            if (value.contains("kind")) visit_site(Role::EntityRef, value, from, to, hits);
+            return;
+        }
         case Role::Plain:
             return;
     }

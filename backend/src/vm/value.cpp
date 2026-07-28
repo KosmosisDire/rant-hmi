@@ -17,6 +17,7 @@ const char* shape_name(Shape shape) {
         case Shape::Map: return "map";
         case Shape::Struct: return "struct";
         case Shape::Color: return "color";
+        case Shape::Timer: return "timer";
     }
     return "unknown";
 }
@@ -47,7 +48,7 @@ Value Value::text(uint32_t ref) {
 Value Value::enumeration(int64_t value, uint16_t type) {
     Value out{};
     out.tag = ValueTag::Enum;
-    out.enum_type = type;
+    out.type_id = type;
     out.data.integer = value;
     return out;
 }
@@ -76,6 +77,14 @@ Value Value::map(uint32_t offset, uint32_t count) {
     return out;
 }
 
+Value Value::structure(uint32_t slot, uint16_t type) {
+    Value out{};
+    out.tag = ValueTag::Struct;
+    out.type_id = type;
+    out.ref = slot;
+    return out;
+}
+
 Shape value_shape(const Value& value) {
     switch (value.tag) {
         case ValueTag::Nil: return Shape::Nil;
@@ -85,6 +94,7 @@ Shape value_shape(const Value& value) {
         case ValueTag::Enum: return Shape::Enum;
         case ValueTag::List: return Shape::List;
         case ValueTag::Map: return Shape::Map;
+        case ValueTag::Struct: return Shape::Struct;
         case ValueTag::Color: return Shape::Color;
     }
     return Shape::Unknown;
@@ -103,7 +113,7 @@ bool value_same_scalar(const Value& a, const Value& b) {
         case ValueTag::Enum:
             /* type 0 is the untyped placeholder (a zero seed, a decode before the
              * program stamped it): match on the integer alone rather than refusing */
-            return (a.enum_type == 0 || b.enum_type == 0 || a.enum_type == b.enum_type) &&
+            return (a.type_id == 0 || b.type_id == 0 || a.type_id == b.type_id) &&
                    a.data.integer == b.data.integer;
         case ValueTag::Color: return a.data.rgba == b.data.rgba;
         default: return a.ref == b.ref;

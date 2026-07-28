@@ -14,7 +14,7 @@ std::string print_value(const Value& value, std::string_view text) {
         case ValueTag::Num: out << value.data.num; break;
         case ValueTag::Bool: out << (value.data.boolean ? "true" : "false"); break;
         case ValueTag::Text: out << '"' << text << '"'; break;
-        case ValueTag::Enum: out << "enum(" << value.enum_type << "," << value.data.integer << ")"; break;
+        case ValueTag::Enum: out << "enum(" << value.type_id << "," << value.data.integer << ")"; break;
         case ValueTag::Color: out << format_color(value.data.rgba); break;
         case ValueTag::List: out << "list"; break;
         case ValueTag::Map: out << "map"; break;

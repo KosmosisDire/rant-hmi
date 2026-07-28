@@ -34,14 +34,18 @@ uint32_t Program::add_text(const std::string& text) {
 }
 
 uint32_t Program::add_constant(Value value) {
-    /* exact enum_type match: value equality treats type 0 as a wildcard, but merging
+    /* exact type_id match: value equality treats type 0 as a wildcard, but merging
      * constants across enum types would strip the stamp `.is()` compares against */
     for (uint32_t i = 0; i < constants.size(); ++i)
-        if (constants[i].enum_type == value.enum_type &&
-            value_same_scalar(constants[i], value))
+        if (constants[i].type_id == value.type_id && value_same_scalar(constants[i], value))
             return i;
     constants.push_back(value);
     return static_cast<uint32_t>(constants.size() - 1);
+}
+
+const std::vector<FieldDef>& struct_fields(const Program& program, uint16_t type_id) {
+    static const std::vector<FieldDef> none;
+    return type_id < program.types.size() ? program.types[type_id].fields : none;
 }
 
 namespace {
@@ -51,7 +55,7 @@ const char* op_name(OpCode op) {
         case OpCode::Const: return "CONST";
         case OpCode::LoadX: return "LOAD_X";
         case OpCode::Load: return "LOAD";
-        case OpCode::LoadMsgF: return "LOAD_MSGF";
+        case OpCode::LoadField: return "LOAD_FIELD";
         case OpCode::Add: return "ADD";
         case OpCode::Sub: return "SUB";
         case OpCode::Mul: return "MUL";
@@ -74,12 +78,12 @@ const char* op_name(OpCode op) {
         case OpCode::Deadband: return "DEADBAND";
         case OpCode::Throttle: return "THROTTLE";
         case OpCode::Suspend: return "SUSPEND";
-        case OpCode::MsgNew: return "MSG_NEW";
-        case OpCode::MsgSet: return "MSG_SET";
-        case OpCode::SendMsg: return "SEND_MSG";
-        case OpCode::SendX: return "SEND_X";
+        case OpCode::New: return "NEW";
+        case OpCode::ReadEnt: return "READ_ENT";
+        case OpCode::LoadEnt: return "LOAD_ENT";
+        case OpCode::StoreField: return "STORE_FIELD";
+        case OpCode::MoveOut: return "MOVE_OUT";
         case OpCode::Store: return "STORE";
-        case OpCode::Unforce: return "UNFORCE";
         case OpCode::TmrStart: return "TMR_START";
         case OpCode::TmrCancel: return "TMR_CANCEL";
         case OpCode::Fault: return "FAULT";

@@ -1,4 +1,5 @@
 #include "check.h"
+#include "steps.h"
 #include "compile/compiler.h"
 #include "doc/doc.h"
 #include "mesh/fake.h"
@@ -50,20 +51,16 @@ Document timed_document() {
                                      {"every_ms", 2}}})},
                   {"when_mode", "any"},
                   {"do",
-                   Json::array({Json{{"kind", "assign"},
-                                     {"var", "count"},
-                                     {"a", "count + 100"}}})}},
+                   Json::array({steps::set_var("count", "count + 100")})}},
              Json{{"when", Json::array({Json{{"kind", "timer"}, {"var", "watchdog"}}})},
                   {"do",
-                   Json::array({Json{{"kind", "assign"},
-                                     {"var", "count"},
-                                     {"a", "count + 1000"}}})}},
+                   Json::array({steps::set_var("count", "count + 1000")})}},
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "any"},
                   {"do",
                    Json::array({
-                       Json{{"kind", "debounce"}, {"a", 2}},
-                       Json{{"kind", "assign"}, {"var", "count"}, {"a", "count + 5"}},
+                       steps::guard("debounce", 2),
+                       steps::set_var("count", "count + 5"),
                    })}},
          })},
     };
@@ -94,21 +91,21 @@ Document filter_document() {
                   {"do",
                    Json::array({
                        Json{{"kind", "deadband"}, {"a", 5}},
-                       Json{{"kind", "assign"}, {"var", "count"}, {"a", "count + 1"}},
+                       steps::set_var("count", "count + 1"),
                    })}},
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
                   {"when_mode", "any"},
                   {"do",
                    Json::array({
                        Json{{"kind", "throttle"}, {"a", 3}},
-                       Json{{"kind", "assign"}, {"var", "count"}, {"a", "count + 10"}},
+                       steps::set_var("count", "count + 10"),
                    })}},
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "commit"}}})},
                   {"when_mode", "any"},
                   {"do",
                    Json::array({
                        Json{{"kind", "delay"}, {"a", 2}},
-                       Json{{"kind", "assign"}, {"var", "count"}, {"a", "count + 100"}},
+                       steps::set_var("count", "count + 100"),
                    })}},
          })},
     };
@@ -140,7 +137,7 @@ Document first_document() {
                   {"do",
                    Json::array({
                        Json{{"kind", "tmr_cancel"}, {"timer", "window"}},
-                       Json{{"kind", "assign"}, {"var", "count"}, {"a", "count + 1"}},
+                       steps::set_var("count", "count + 1"),
                    })}},
          })},
     };
@@ -307,14 +304,7 @@ void test_gesture_pin() {
                     Json::array({Json{
                         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
                         {"when_mode", "first"},
-                        {"do", Json::array({Json{{"kind", "build"},
-                                                 {"buf", "msg"},
-                                                 {"target", Json{{"kind", "V"}, {"name", "switch"}}},
-                                                 {"seed", "zero"}},
-                                            Json{{"kind", "setf"}, {"path", "on"}, {"a", "x"}},
-                                            Json{{"kind", "send"},
-                                                 {"buf", "msg"},
-                                                 {"verb", "write"}}})}}})}};
+                        {"do", Json::array({steps::write_field("V", "switch", "on", "x")})}}})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
@@ -339,7 +329,7 @@ void test_gesture_pin() {
     scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 1);
-    CHECK(mesh.transcript()[0] == "write V:switch{on=true}");
+    CHECK(mesh.transcript()[0] == "write V:switch.on=true");
 
     /* the machine's echo lands MID-GESTURE: the toggle already shows true */
     mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(true)});
@@ -357,7 +347,7 @@ void test_gesture_pin() {
     scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 4});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 2);
-    CHECK(mesh.transcript()[1] == "write V:switch{on=false}");
+    CHECK(mesh.transcript()[1] == "write V:switch.on=false");
 }
 
 /* HOLD-TO-COMMIT: a Toggle whose only flow is on `held` (assign state = x), value fed
@@ -376,9 +366,7 @@ void test_held_proposal() {
                                                    {"name", "held"},
                                                    {"hold_ms", 5}}})},
                         {"when_mode", "first"},
-                        {"do", Json::array({Json{{"kind", "assign"},
-                                                 {"var", "state"},
-                                                 {"a", "x"}}})}}})}};
+                        {"do", Json::array({steps::set_var("state", "x")})}}})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals",

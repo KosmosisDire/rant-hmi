@@ -1,4 +1,5 @@
 #include "check.h"
+#include "steps.h"
 #include "compile/compiler.h"
 #include "compile/expression.h"
 #include "doc/doc.h"
@@ -74,11 +75,9 @@ Document runtime_document() {
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  Json{{"kind", "transform"}, {"a", "clamp(x * 2, 0, 100)"}},
-                  Json{{"kind", "assign"}, {"var", "setpoint"}, {"a", "x"}},
-                  Json{{"kind", "send"},
-                       {"target", entity("T", "command")},
-                       {"verb", "publish"}},
+                  steps::set_x("clamp(x * 2, 0, 100)"),
+                  steps::set_var("setpoint", "x"),
+                  steps::write_field("T", "command", "", "x"),
               })}});
 
     slider["flows"].push_back(
@@ -86,11 +85,9 @@ Document runtime_document() {
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  Json{{"kind", "gate"}, {"a", "true || (1 / 0 > 0)"}},
-                  Json{{"kind", "gate"}, {"a", "false"}},
-                  Json{{"kind", "send"},
-                       {"target", entity("T", "command")},
-                       {"verb", "publish"}},
+                  steps::gate("true || (1 / 0 > 0)"),
+                  steps::gate("false"),
+                  steps::write_field("T", "command", "", "x"),
               })}});
 
     slider["flows"].push_back(
@@ -98,14 +95,11 @@ Document runtime_document() {
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  Json{{"kind", "gate"}, {"a", "x >= 0 && x <= 100"}},
-                  Json{{"kind", "build"},
-                       {"buf", "msg"},
-                       {"target", entity("V", "motor")},
-                       {"seed", "zero"}},
-                  Json{{"kind", "setf"}, {"path", "speed"}, {"a", "x + setpoint"}},
-                  Json{{"kind", "setf"}, {"path", "enabled"}, {"a", "true"}},
-                  Json{{"kind", "send"}, {"buf", "msg"}, {"verb", "write"}},
+                  steps::gate("x >= 0 && x <= 100"),
+                  steps::new_into("msg", "Motor"),
+                  steps::set_field("msg", "speed", "x + setpoint"),
+                  steps::set_field("msg", "enabled", "true"),
+                  steps::write_value("msg", "V", "motor"),
               })}});
 
     slider["flows"].push_back(
@@ -113,10 +107,8 @@ Document runtime_document() {
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  Json{{"kind", "gate"}, {"a", "false && (1 / 0 > 0)"}},
-                  Json{{"kind", "send"},
-                       {"target", entity("T", "command")},
-                       {"verb", "publish"}},
+                  steps::gate("false && (1 / 0 > 0)"),
+                  steps::write_field("T", "command", "", "x"),
               })}});
 
     root["pages"].push_back(
@@ -147,6 +139,7 @@ std::vector<EntityDef> reflection() {
     motor.readable = true;
     motor.writable = true;
     motor.forceable = true;
+    motor.type_name = "Motor";
     motor.fields = {FieldDef{"speed", Shape::Num}, FieldDef{"enabled", Shape::Bool}};
     return {sensor, command, motor};
 }
@@ -336,7 +329,7 @@ void test_migration() {
 
 void test_compile_fault() {
     Document document = runtime_document();
-    document.root["pages"][0]["widgets"][0]["flows"][0]["do"][2]["target"]["name"] = "missing";
+    document.root["pages"][0]["widgets"][0]["flows"][0]["do"][2]["to"]["name"] = "missing";
     document.reindex();
     FakeMesh mesh(reflection());
     CompileResult compiled = compile_document(document, registry(), mesh);
@@ -423,9 +416,7 @@ void test_default_behavior() {
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "first"},
-                  {"do", Json::array({Json{{"kind", "assign"},
-                                           {"var", "widget.value"},
-                                           {"a", "true"}}})}}})}});
+                  {"do", Json::array({steps::set_slot("value", "true")})}}})}});
     CompileResult authored_compiled = compile_document(authored, registry(), mesh);
     CHECK(authored_compiled.ok);
     CHECK(!has_diag(authored_compiled, "behavior_inactive"));
@@ -444,10 +435,8 @@ void test_default_behavior() {
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "first"},
-                  {"do", Json::array({Json{{"kind", "assign"},
-                                           {"var", "widget.nosuchslot"},
-                                           {"a", "true"}}})}}})}});
-    CHECK(has_diag(compile_document(reaching, registry(), mesh), "assign_var"));
+                  {"do", Json::array({steps::set_slot("nosuchslot", "true")})}}})}});
+    CHECK(has_diag(compile_document(reaching, registry(), mesh), "move_dest"));
 }
 
 /* `x` IS WHAT THE WIDGET PROPOSES. A flow that sends x has to send the value the control
@@ -467,9 +456,7 @@ void test_event_value() {
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "first"},
-                  {"do", Json::array({Json{{"kind", "send"},
-                                           {"target", Json{{"kind", "V"}, {"name", "bit"}}},
-                                           {"verb", "write"}}})}}})}});
+                  {"do", Json::array({steps::write_field("V", "bit", "on", "x")})}}})}});
     CompileResult compiled = compile_document(document, registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
@@ -841,9 +828,9 @@ void test_text_and_enums() {
     const Program& program = compiled.program;
     const FieldDef& mode_field =
         program.entities[program.feeds[0].entity].fields[program.feeds[0].field];
-    CHECK(mode_field.enum_type != 0);
-    const Value running = Value::enumeration(2, mode_field.enum_type);
-    const Value idle = Value::enumeration(0, mode_field.enum_type);
+    CHECK(mode_field.type_id != 0);
+    const Value running = Value::enumeration(2, mode_field.type_id);
+    const Value idle = Value::enumeration(0, mode_field.type_id);
 
     run_feed(program, program.feeds[0], state, running);
     CHECK_EQ(text_of(program.feeds[0]), "running");
@@ -878,7 +865,9 @@ void test_text_and_enums() {
 
     /* variant resolution is compile-time: a bogus variant is an expression error */
     Program scratch;
-    scratch.enum_types = {{}, {{"idle", 0}, {"running", 2}}};
+    scratch.types.resize(2);
+    scratch.types[1].kind = TypeKind::Enum;
+    scratch.types[1].variants = {{"idle", 0}, {"running", 2}};
     ExpressionScope scope;
     scope.x_shape = Shape::Enum;
     scope.x_enum = 1;
@@ -1038,9 +1027,9 @@ void test_suspend_holds_text() {
     Json flow = Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
                      {"when_mode", "any"},
                      {"do", Json::array({
-                          Json{{"kind", "transform"}, {"a", "note"}},
-                          Json{{"kind", "delay"}, {"a", 5}},
-                          Json{{"kind", "assign"}, {"var", "out"}, {"a", "x"}},
+                          steps::set_x("note"),
+                          steps::guard("delay", 5),
+                          steps::set_var("out", "x"),
                       })}};
     Json widget = Json{{"type", "Button"}, {"label", "w"}, {"slots", Json::object()},
                        {"flows", Json::array({std::move(flow)})}};
@@ -1112,11 +1101,7 @@ void test_document_tolerance() {
         {"flows", Json::array({Json{
             {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
             {"when_mode", "any"},
-            {"do", Json::array({
-                Json{{"kind", "send"},
-                     {"target", entity("V", "sensor")},
-                     {"verb", "write"}},
-            })}}})}};
+            {"do", Json::array({steps::write_field("V", "sensor", "value", "x")})}}})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},

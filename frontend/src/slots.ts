@@ -32,21 +32,20 @@ export function fedSlots(widget: Widget): Set<string> {
   return new Set((widget.feeds ?? []).map((feed) => feed.slot));
 }
 
-/* Which slots the RUNTIME owns: a feed, an authored flow that assigns the slot, or the
- * type's default behavior. This is a union, not a decision: WHICH of them wins is the
+/* Which slots the RUNTIME owns: a feed, an authored flow whose move writes the slot, or
+ * the type's default behavior. This is a union, not a decision: WHICH of them wins is the
  * backend's precedence rule (spec 2.3) and is not restated here. Whether the slot is
  * written at all does not depend on that, and it is all a view needs to know. */
 export function runtimeSlots(widget: Widget, type: WidgetType | null): Set<string> {
   const out = fedSlots(widget);
-  const assigned = (flows: Json[]) => {
+  const written = (flows: Json[]) => {
     for (const flow of flows ?? [])
       for (const step of flow?.do ?? [])
-        if (step?.kind === "assign" && typeof step.var === "string" &&
-            step.var.startsWith("widget."))
-          out.add(step.var.slice("widget.".length));
+        if (step?.kind === "move" && typeof step.to?.slot === "string" && step.to.slot)
+          out.add(step.to.slot);
   };
-  assigned(widget.flows ?? []);
-  assigned((type?.behavior ?? []) as Json[]);
+  written(widget.flows ?? []);
+  written((type?.behavior ?? []) as Json[]);
   return out;
 }
 

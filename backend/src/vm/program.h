@@ -24,7 +24,9 @@ constexpr uint32_t kSplitCeiling = 256;
 struct FieldDef {
     std::string path;
     Shape shape = Shape::Unknown;
-    uint16_t enum_type = 0;
+    /* the field's entry in the program's type table when it has one (an enum's
+     * vocabulary today); 0 is untyped */
+    uint16_t type_id = 0;
     std::vector<std::pair<std::string, int64_t>> variants;
     /* aggregate fields: the element shape (a map's VALUE shape; keys are text) and
      * the element count bound (an arr's count, else the ceiling) */
@@ -38,6 +40,15 @@ struct EntityDef {
     bool readable = true;
     bool writable = false;
     bool forceable = false;
+    /* the schema's ROOT TYPE NAME and identity, straight off reflection: what the type
+     * table is keyed by, and the only name DART gives a type (spec 2.2). Empty / 0 where
+     * the owner published none. */
+    std::string type_name;
+    uint64_t schema_hash = 0;
+    /* the type table entry for this entity's VALUE (its request fields for a function),
+     * stamped by the compiler: what `read <entity> -> local` gives the local, and what a
+     * `new <Type>` of the same type may be written back to. 0 until stamped. */
+    uint16_t type_id = 0;
     /* the value fields (a FUNCTION's are its REQUEST fields: what a call builds) */
     std::vector<FieldDef> fields;
     /* FUNCTION only: the response fields (what a function feed reads and decodes) */
@@ -49,7 +60,35 @@ inline const std::vector<FieldDef>& feed_fields(const EntityDef& entity) {
     return entity.kind == EntityKind::Function ? entity.rsp_fields : entity.fields;
 }
 
-enum class CellKind : uint8_t { Global, Local, Slot };
+struct Program;
+
+/* the field table behind a type id, empty when it names no struct */
+const std::vector<FieldDef>& struct_fields(const Program& program, uint16_t type_id);
+
+/* One entry of the TYPE TABLE (spec 2.2): a struct type, keyed by its schema's root
+ * name, or an enum type's vocabulary. Entry 0 is the untyped placeholder. Two entities
+ * carrying the same schema resolve to ONE entry, so `ValveCmd` exists once however many
+ * valves the mesh has. */
+enum class TypeKind : uint8_t { None, Struct, Enum };
+
+struct TypeDef {
+    TypeKind kind = TypeKind::None;
+    std::string name;
+    /* Struct: the field table, in wire order. An entity whose type this is encodes and
+     * decodes through the same table, so a value read from one entity is writable to
+     * any other entity of the same type. */
+    std::vector<FieldDef> fields;
+    /* Enum: the vocabulary */
+    std::vector<std::pair<std::string, int64_t>> variants;
+    /* Struct: an entity carrying this type, so the write side has a layout to encode
+     * with (UINT32_MAX when the type came from a field rather than a root) */
+    uint32_t entity = UINT32_MAX;
+};
+
+/* Where a cell lives. Temp is a flow's own local: declared by the move that first writes
+ * it, storage fixed at compile like any other cell, but never persisted and never listed
+ * as a variable (spec 2.7). */
+enum class CellKind : uint8_t { Global, Local, Slot, Temp };
 
 struct CellDef {
     CellKind kind = CellKind::Global;
@@ -61,13 +100,19 @@ struct CellDef {
     bool persistent = false;
     uint32_t text_slot = UINT32_MAX;
     uint32_t text_cap = 0;
+    /* Struct-shaped cells only: the type-table entry and the run's struct slot holding
+     * this cell's fields */
+    uint16_t type_id = 0;
+    uint32_t struct_slot = UINT32_MAX;
+    /* Temp only: the flow it belongs to, so two flows may reuse a name */
+    uint64_t owner_flow = 0;
 };
 
 enum class OpCode : uint8_t {
     Const,
     LoadX,
     Load,
-    LoadMsgF,
+    LoadField,
     Add,
     Sub,
     Mul,
@@ -90,12 +135,15 @@ enum class OpCode : uint8_t {
     Deadband,
     Throttle,
     Suspend,
-    MsgNew,
-    MsgSet,
-    SendMsg,
-    SendX,
+    /* the move step's four forms (spec 5.4). New and ReadEnt fill a struct cell;
+     * StoreField sets one field of one; MoveOut emits the effect. A move into a scalar
+     * cell is an ordinary expression plus Store, so it needs no opcode of its own. */
+    New,
+    ReadEnt,
+    LoadEnt,
+    StoreField,
+    MoveOut,
     Store,
-    Unforce,
     TmrStart,
     TmrCancel,
     Fault,
@@ -200,9 +248,9 @@ struct Instruction {
 
 static_assert(sizeof(Instruction) == 16, "Instruction must stay compact");
 
-struct BufferDef {
-    std::string name;
-    uint32_t entity = 0;
+/* One struct slot in the run: which type it holds, so RuntimeState can size its fields */
+struct StructDef {
+    uint16_t type_id = 0;
 };
 
 struct FlowProgram {
@@ -273,6 +321,9 @@ struct ProgramLayout {
     uint32_t throttle_slots = 0;
     uint32_t pending_slots = 0;
     uint32_t fired_groups = 0;
+    /* struct storage: the widest field table any struct slot holds, so a suspension's
+     * deep copy and the effect records are one fixed size */
+    uint32_t max_struct_fields = 1;
     /* the aggregate scratch pool: element Values and element text slots, computed from
      * the schemas' bounds plus each list-producing expression site's worst case */
     uint32_t elem_values = 0;
@@ -283,13 +334,14 @@ struct Program {
     uint64_t document_version = 0;
     std::vector<Value> constants;
     std::vector<std::string> texts;
-    /* enum vocabulary by Value.enum_type id: entry 0 is the untyped placeholder;
-     * identical variant lists share one id (assigned in copy_entities), so equality
-     * between values from different entities with the same vocabulary holds */
-    std::vector<std::vector<std::pair<std::string, int64_t>>> enum_types;
+    /* the TYPE TABLE, indexed by Value.type_id: entry 0 is the untyped placeholder, and
+     * identical schemas / identical variant lists share one entry (built in
+     * build_types), so equality between values from different entities of the same type
+     * holds and `ValveCmd` names one thing */
+    std::vector<TypeDef> types;
     std::vector<CellDef> cells;
     std::vector<EntityDef> entities;
-    std::vector<BufferDef> buffers;
+    std::vector<StructDef> structs;
     std::vector<FlowProgram> flows;
     std::vector<FeedProgram> feeds;
     std::vector<EventValueProgram> event_values;

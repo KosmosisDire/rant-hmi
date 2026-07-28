@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <unordered_map>
 
 namespace hmi {
@@ -38,24 +39,20 @@ bool entity_kind(const std::string& text, EntityKind& out) {
     return true;
 }
 
-bool parse_verb(const std::string& text, Verb& out) {
-    if (text == "write") out = Verb::Write;
-    else if (text == "force") out = Verb::Force;
-    else if (text == "publish") out = Verb::Publish;
-    else if (text == "call") out = Verb::Call;
-    else if (text == "emit") out = Verb::Emit;
-    else return false;
-    return true;
-}
-
-bool verb_matches(EntityKind kind, Verb verb) {
+/* THE VERB IS DERIVED (spec 2.1): the destination's kind decides the mechanic, and the
+ * author's only choice is the mode on a variable. There is nothing to validate here
+ * because there is nothing to disagree with. */
+Verb verb_for(EntityKind kind, const std::string& mode) {
     switch (kind) {
-        case EntityKind::Variable: return verb == Verb::Write || verb == Verb::Force;
-        case EntityKind::Topic: return verb == Verb::Publish;
-        case EntityKind::Function: return verb == Verb::Call;
-        case EntityKind::Signal: return verb == Verb::Emit;
+        case EntityKind::Variable:
+            if (mode == "force") return Verb::Force;
+            if (mode == "unforce") return Verb::Unforce;
+            return Verb::Write;
+        case EntityKind::Topic: return Verb::Publish;
+        case EntityKind::Function: return Verb::Call;
+        case EntityKind::Signal: return Verb::Emit;
     }
-    return false;
+    return Verb::Write;
 }
 
 /* An authored literal as a runtime value. `ok` is false when the JSON cannot BE that shape,
@@ -96,10 +93,25 @@ Value json_value(Program& program, Shape shape, const Json& value, bool& ok) {
     }
 }
 
-/* the slot an assign target names, or "" when it names a variable */
-std::string slot_target(const std::string& name) {
-    const std::string prefix = "widget.";
-    return name.compare(0, prefix.size(), prefix) == 0 ? name.substr(prefix.size()) : std::string();
+/* A move's `from` / `to` is one object discriminated by the key it carries (spec 2.6),
+ * so reading one is asking which key is there. */
+enum class SideKind { None, Expr, Local, Entity, New };
+
+SideKind side_kind(const Json& side) {
+    if (!side.is_object()) return SideKind::None;
+    if (side.contains("expr")) return SideKind::Expr;
+    if (side.contains("local")) return SideKind::Local;
+    if (side.contains("slot")) return SideKind::Local;
+    if (side.contains("kind")) return SideKind::Entity;
+    if (side.contains("type")) return SideKind::New;
+    return SideKind::None;
+}
+
+/* the slot a move destination names, or "" when it names something else */
+std::string slot_of(const Json& side) {
+    if (!side.is_object()) return {};
+    auto it = side.find("slot");
+    return it != side.end() && it->is_string() ? it->get<std::string>() : std::string();
 }
 
 /* what a JSON literal looks like in a message, for a diagnostic that names the mistake */
@@ -107,6 +119,11 @@ std::string json_brief(const Json& value) {
     const std::string text = value.dump();
     return text.size() > 32 ? text.substr(0, 29) + "..." : text;
 }
+
+/* the locals a flow has declared so far, by name. `x` is not in here: it is the flow's
+ * first local by the spec's reckoning (2.6) but the VM keeps it in a register, so a move
+ * naming it lowers to StoreX and nothing else changes. */
+using FlowLocals = std::unordered_map<std::string, uint32_t>;
 
 struct WidgetInfo {
     uint64_t id = 0;
@@ -166,21 +183,66 @@ class Compiler {
         return nullptr;
     }
 
+    /* THE TYPE TABLE (spec 2.2). Entry 0 is the untyped placeholder. A struct type is
+     * keyed by its schema hash where the mesh gives one and by its field signature
+     * otherwise, so two entities carrying the same schema are ONE type and `ValveCmd`
+     * exists once however many valves there are. An enum type is keyed by its variant
+     * list, which is what makes equality between values from different entities with the
+     * same vocabulary hold. */
+    uint16_t intern_enum(const std::vector<std::pair<std::string, int64_t>>& variants) {
+        for (uint32_t i = 1; i < program_.types.size(); ++i)
+            if (program_.types[i].kind == TypeKind::Enum && program_.types[i].variants == variants)
+                return static_cast<uint16_t>(i);
+        TypeDef def;
+        def.kind = TypeKind::Enum;
+        def.variants = variants;
+        program_.types.push_back(std::move(def));
+        return static_cast<uint16_t>(program_.types.size() - 1);
+    }
+
+    static std::string field_signature(const std::vector<FieldDef>& fields) {
+        std::string out;
+        for (const FieldDef& field : fields)
+            out += field.path + ":" + shape_name(field.shape) + ";";
+        return out;
+    }
+
+    uint16_t intern_struct(const EntityDef& entity, uint32_t entity_index) {
+        const std::string key = entity.schema_hash
+                                    ? "#" + std::to_string(entity.schema_hash)
+                                    : "@" + field_signature(entity.fields);
+        auto found = struct_keys_.find(key);
+        if (found != struct_keys_.end()) return found->second;
+        TypeDef def;
+        def.kind = TypeKind::Struct;
+        /* a schema with no root name is not pickable by name; it stays addressable
+         * through its entity, which is what the entity index is for */
+        def.name = entity.type_name;
+        def.fields = entity.fields;
+        def.entity = entity_index;
+        program_.types.push_back(std::move(def));
+        const uint16_t id = static_cast<uint16_t>(program_.types.size() - 1);
+        struct_keys_[key] = id;
+        /* a root name carried by two different schemas is AMBIGUOUS: reported once, and
+         * left pickable only through an entity */
+        if (!entity.type_name.empty()) {
+            auto named = struct_names_.find(entity.type_name);
+            if (named == struct_names_.end()) struct_names_[entity.type_name] = id;
+            else if (named->second != id && ambiguous_.insert(entity.type_name).second)
+                diag(0, "type_ambiguous",
+                     "two different schemas are both called '" + entity.type_name +
+                         "'; pick this type through an entity",
+                     DiagGrade::Warning);
+        }
+        return id;
+    }
+
     void copy_entities() {
         program_.entities = mesh_.reflection();
-        /* assign every enum-shaped field its vocabulary id: entry 0 stays the untyped
-         * placeholder, identical variant lists share one id so equality across
-         * entities with the same vocabulary holds */
-        program_.enum_types.assign(1, {});
+        program_.types.assign(1, TypeDef{});
         auto assign_enum = [&](FieldDef& field) {
             if (field.variants.empty()) return;
-            for (uint32_t i = 1; i < program_.enum_types.size(); ++i)
-                if (program_.enum_types[i] == field.variants) {
-                    field.enum_type = static_cast<uint16_t>(i);
-                    return;
-                }
-            field.enum_type = static_cast<uint16_t>(program_.enum_types.size());
-            program_.enum_types.push_back(field.variants);
+            field.type_id = intern_enum(field.variants);
         };
         /* the aggregate intake bound: one delivery's elements live in the scratch pool
          * at a time (the pool resets per feed run), so the pool carries the LARGEST
@@ -203,7 +265,8 @@ class Compiler {
             intake_values = std::max(intake_values, values);
             intake_texts = std::max(intake_texts, texts);
         };
-        for (EntityDef& entity : program_.entities) {
+        for (uint32_t e = 0; e < program_.entities.size(); ++e) {
+            EntityDef& entity = program_.entities[e];
             for (FieldDef& field : entity.fields) assign_enum(field);
             for (FieldDef& field : entity.rsp_fields) assign_enum(field);
             measure(entity.fields);
@@ -211,6 +274,7 @@ class Compiler {
             program_.layout.max_entity_fields =
                 std::max<uint32_t>(program_.layout.max_entity_fields,
                                    static_cast<uint32_t>(entity.fields.size()));
+            if (!entity.fields.empty()) entity.type_id = intern_struct(entity, e);
         }
         program_.layout.elem_values += intake_values;
         program_.layout.elem_texts += intake_texts;
@@ -269,7 +333,7 @@ class Compiler {
                 globals_[name] =
                     add_cell(CellKind::Global, 0, id_of(var), name, shape,
                              var.value("init", Json()), var.value("persist", false));
-                if (shape == Shape::Struct) global_timers_[name] = add_timer(0, var);
+                if (shape == Shape::Timer) global_timers_[name] = add_timer(0, var);
             }
         }
 
@@ -301,7 +365,7 @@ class Compiler {
                         info.locals[name] =
                             add_cell(CellKind::Local, info.id, id_of(var), name, shape,
                                      var.value("init", Json()), var.value("persist", false));
-                        if (shape == Shape::Struct)
+                        if (shape == Shape::Timer)
                             info.timers[name] = add_timer(info.id, var);
                     }
                 }
@@ -354,7 +418,7 @@ class Compiler {
         if (type == "f64") return Shape::Num;
         if (type == "bool") return Shape::Bool;
         if (type == "str") return Shape::Text;
-        if (type == "timer") return Shape::Struct;
+        if (type == "timer") return Shape::Timer;
         return Shape::Unknown;
     }
 
@@ -517,7 +581,7 @@ class Compiler {
                     const FieldDef& source_field =
                         feed_fields(program_.entities[feed.entity])[feed.field];
                     scope.x_shape = source_field.shape;
-                    scope.x_enum = source_field.enum_type;
+                    scope.x_enum = source_field.type_id;
                     scope.x_elem = source_field.elem;
                     if (program_.entities[feed.entity].kind == EntityKind::Function) {
                         const double hz = num_or(node, "poll_hz", 0.0);
@@ -584,20 +648,49 @@ class Compiler {
         return slot;
     }
 
-    /* Where an assign writes. Reads already spell a slot `widget.<name>` (scope_for), so
-     * writes use the same vocabulary: one name form, both directions. The scope is the
-     * widget's OWN slots and nothing else, so a flow can never reach across and become a
-     * second writer on another widget's slot (the one-writer rule, spec 2.3). */
-    uint32_t assign_target(const WidgetInfo& widget, const std::string& name) const {
-        const std::string slot = slot_target(name);
-        if (!slot.empty()) {
-            auto found = widget.slots.find(slot);
-            return found == widget.slots.end() ? UINT32_MAX : found->second;
-        }
+    /* A DECLARED name in this widget's scope: its own local variable, else a global.
+     * Temporaries are not here; they are declared by the move that writes them. */
+    uint32_t declared_cell(const WidgetInfo& widget, const std::string& name) const {
         auto local = widget.locals.find(name);
         if (local != widget.locals.end()) return local->second;
         auto global = globals_.find(name);
         return global == globals_.end() ? UINT32_MAX : global->second;
+    }
+
+    /* A struct-shaped cell owns one of the run's struct slots: the cell's Value is the
+     * handle, the fields live in that slot (spec 5.2). */
+    uint32_t add_struct_cell(uint64_t flow_id, uint64_t widget_id, const std::string& name,
+                             uint16_t type_id) {
+        CellDef cell;
+        cell.kind = CellKind::Temp;
+        cell.owner_widget = widget_id;
+        cell.owner_flow = flow_id;
+        cell.name = name;
+        cell.shape = Shape::Struct;
+        cell.type_id = type_id;
+        cell.struct_slot = static_cast<uint32_t>(program_.structs.size());
+        program_.structs.push_back(StructDef{type_id});
+        program_.layout.max_struct_fields = std::max<uint32_t>(
+            program_.layout.max_struct_fields,
+            static_cast<uint32_t>(struct_fields(program_, type_id).size()));
+        program_.cells.push_back(std::move(cell));
+        return static_cast<uint32_t>(program_.cells.size() - 1);
+    }
+
+    uint32_t add_temp_cell(uint64_t flow_id, uint64_t widget_id, const std::string& name,
+                           Shape shape) {
+        CellDef cell;
+        cell.kind = CellKind::Temp;
+        cell.owner_widget = widget_id;
+        cell.owner_flow = flow_id;
+        cell.name = name;
+        cell.shape = shape;
+        if (shape == Shape::Text) {
+            cell.text_slot = program_.layout.text_slots++;
+            cell.text_cap = 256;
+        }
+        program_.cells.push_back(std::move(cell));
+        return static_cast<uint32_t>(program_.cells.size() - 1);
     }
 
     int resolve_timer(const WidgetInfo& widget, const std::string& name,
@@ -610,25 +703,347 @@ class Compiler {
         return -1;
     }
 
+    /* ONE TRANSFER STEP (spec 2.6). The author names a source and a destination; which
+     * mechanic that is, and which word the row shows, both follow. The destination is
+     * read first because it decides what the source has to produce. */
+    bool compile_move(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                      ExpressionScope& scope, FlowLocals& locals) {
+        const uint64_t step_id = id_of(step);
+        const Json& from = step.value("from", Json::object());
+        const Json& to = step.value("to", Json::object());
+        const SideKind source = side_kind(from);
+        if (source == SideKind::None) {
+            diag(step_id, "move_source", "this move has no source", DiagGrade::Error, "from");
+            return false;
+        }
+
+        const std::string slot = slot_of(to);
+        if (!slot.empty()) {
+            auto found = widget.slots.find(slot);
+            if (found == widget.slots.end()) {
+                diag(step_id, "move_dest", "this widget has no slot '" + slot + "'",
+                     DiagGrade::Error, "to");
+                return false;
+            }
+            return push_scalar(widget, step, flow, scope, from,
+                               program_.cells[found->second].shape) &&
+                   emit_store(flow, step_id, found->second);
+        }
+
+        if (to.contains("local")) return move_into_local(widget, step, flow, scope, locals);
+        if (to.contains("kind")) return move_out(widget, step, flow, scope, locals);
+        diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
+        return false;
+    }
+
+    bool emit_store(FlowProgram& flow, uint64_t step_id, uint32_t cell) {
+        Instruction store;
+        store.op = OpCode::Store;
+        store.a = cell;
+        store.c = fault_site(step_id, "move_store", "the value could not be stored");
+        flow.code.push_back(store);
+        return true;
+    }
+
+    /* Put ONE value on the stack from a move's source. A struct source is not a scalar
+     * and is handled by its own paths; everything here yields a single value. */
+    bool push_scalar(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                     ExpressionScope& scope, const Json& from, Shape expected,
+                     Shape* actual = nullptr) {
+        const uint64_t step_id = id_of(step);
+        if (from.contains("expr"))
+            return expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
+                              expected, flow.code, flow.max_stack, actual, "from");
+        if (from.contains("local")) {
+            const std::string text = str_or(from, "local", "");
+            const std::string path = str_or(from, "path", "");
+            return expression(step_id, path.empty() ? text : text + "." + path, ExprTier::Wire,
+                              scope, expected, flow.code, flow.max_stack, actual, "from");
+        }
+        if (from.contains("kind")) {
+            const int entity = resolve_entity(from, step_id, "from");
+            if (entity < 0) return false;
+            const int field = find_field(entity, str_or(from, "path", ""), step_id, "from");
+            if (field < 0) return false;
+            const FieldDef& def = program_.entities[entity].fields[field];
+            if (expected != Shape::Unknown && def.shape != expected) {
+                diag(step_id, "shape",
+                     "the source is " + std::string(shape_name(def.shape)) +
+                         ", but this destination wants " + shape_name(expected),
+                     DiagGrade::Error, "from");
+                return false;
+            }
+            Instruction load;
+            load.op = OpCode::LoadEnt;
+            load.a = static_cast<uint32_t>(entity);
+            load.b = static_cast<uint32_t>(field);
+            load.c = fault_site(step_id, "move_read", "the entity's value could not be read");
+            flow.code.push_back(load);
+            flow.max_stack = std::max(flow.max_stack, 1u);
+            if (actual) *actual = def.shape;
+            return true;
+        }
+        diag(step_id, "move_source", "a new value needs a struct destination",
+             DiagGrade::Error, "from");
+        return false;
+    }
+
+    /* `-> local`: the destination names a variable in scope, or declares a temporary by
+     * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt; a
+     * field of one by StoreField; a scalar by Store. */
+    bool move_into_local(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                         ExpressionScope& scope, FlowLocals& locals) {
+        const uint64_t step_id = id_of(step);
+        const Json& from = step.value("from", Json::object());
+        const Json& to = step.value("to", Json::object());
+        const std::string name = str_or(to, "local", "");
+        const std::string path = str_or(to, "path", "");
+        if (name.empty()) {
+            diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
+            return false;
+        }
+
+        /* `-> x`: the pipeline register, which the guards read. It is a local in the
+           document's vocabulary and a register in the VM's, and the two agree because
+           nothing else may name it. */
+        if (name == "x" && path.empty()) {
+            Shape produced = Shape::Unknown;
+            uint16_t produced_type = 0;
+            if (!from.contains("expr")) {
+                if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+                    return false;
+            } else if (!expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
+                                   Shape::Unknown, flow.code, flow.max_stack, &produced,
+                                   "from", &produced_type)) {
+                return false;
+            }
+            flow.code.push_back(Instruction{OpCode::StoreX});
+            scope.x_shape = produced;
+            scope.x_enum = produced_type;
+            return true;
+        }
+
+        /* a field of a struct local: the local must already exist, because a field write
+           says nothing about what type the whole value is */
+        if (!path.empty()) {
+            auto found = locals.find(name);
+            if (found == locals.end() || program_.cells[found->second].shape != Shape::Struct) {
+                diag(step_id, "move_dest",
+                     "'" + name + "' has no value yet at this row", DiagGrade::Error, "to");
+                return false;
+            }
+            const uint32_t cell = found->second;
+            const uint16_t type_id = program_.cells[cell].type_id;
+            const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
+            int field = -1;
+            for (uint32_t i = 0; i < fields.size(); ++i)
+                if (fields[i].path == path) field = static_cast<int>(i);
+            if (field < 0) {
+                diag(step_id, "unresolved_field",
+                     "'" + type_name_of(type_id) + "' has no field '" + path + "'",
+                     DiagGrade::Error, "to");
+                return false;
+            }
+            if (!push_scalar(widget, step, flow, scope, from, fields[field].shape)) return false;
+            Instruction set;
+            set.op = OpCode::StoreField;
+            set.a = cell;
+            set.b = static_cast<uint32_t>(field);
+            set.c = fault_site(step_id, "move_field", "the field could not be set");
+            flow.code.push_back(set);
+            return true;
+        }
+
+        /* `new T` and a whole-entity read both produce a STRUCT: the local takes that
+           type, which is what "a temporary is typed by what is first moved into it" means */
+        uint16_t struct_type = 0;
+        int read_entity = -1;
+        if (from.contains("type")) {
+            const std::string type_text = str_or(from, "type", "");
+            const int found = find_type(type_text);
+            if (found < 0) {
+                diag(step_id, "unresolved_type",
+                     type_text.empty() ? "pick a type" : "type '" + type_text + "' is not in the mesh",
+                     DiagGrade::Error, "from");
+                return false;
+            }
+            struct_type = static_cast<uint16_t>(found);
+        } else if (from.contains("kind") && str_or(from, "path", "").empty()) {
+            const int entity = resolve_entity(from, step_id, "from");
+            if (entity < 0) return false;
+            if (program_.entities[entity].fields.size() > 1 ||
+                program_.entities[entity].type_id != 0) {
+                read_entity = entity;
+                struct_type = program_.entities[entity].type_id;
+            }
+        }
+
+        if (struct_type != 0) {
+            const uint32_t cell = ensure_struct_local(widget, flow, locals, scope, name,
+                                                      struct_type, step_id);
+            if (cell == UINT32_MAX) return false;
+            Instruction ins;
+            ins.op = read_entity >= 0 ? OpCode::ReadEnt : OpCode::New;
+            ins.a = cell;
+            ins.b = read_entity >= 0 ? static_cast<uint32_t>(read_entity) : struct_type;
+            ins.c = fault_site(step_id, "move_new", "the value could not be created");
+            flow.code.push_back(ins);
+            return true;
+        }
+
+        /* a scalar destination: an existing variable keeps its declared shape, a fresh
+           temporary takes the source's */
+        uint32_t cell = declared_cell(widget, name);
+        Shape wanted = cell == UINT32_MAX ? Shape::Unknown : program_.cells[cell].shape;
+        if (cell == UINT32_MAX) {
+            auto found = locals.find(name);
+            if (found != locals.end()) {
+                cell = found->second;
+                wanted = program_.cells[cell].shape;
+            }
+        }
+        Shape produced = Shape::Unknown;
+        const size_t mark = flow.code.size();
+        if (!push_scalar(widget, step, flow, scope, from, wanted, &produced)) return false;
+        if (cell == UINT32_MAX) {
+            if (produced == Shape::Unknown || produced == Shape::Nil) {
+                diag(step_id, "temp_shape",
+                     "'" + name + "' cannot take its type from this source; "
+                     "declare it as a variable",
+                     DiagGrade::Error, "to");
+                flow.code.resize(mark);
+                return false;
+            }
+            cell = add_temp_cell(flow.flow_id, widget.id, name, produced);
+            locals[name] = cell;
+            scope.names[name] = Binding{produced, OpCode::Load, cell, 0};
+        }
+        return emit_store(flow, step_id, cell);
+    }
+
+    /* `-> entity`: the one way a value leaves a flow. The verb comes from the kind. */
+    bool move_out(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                  ExpressionScope& scope, FlowLocals& locals) {
+        const uint64_t step_id = id_of(step);
+        const Json& from = step.value("from", Json::object());
+        const Json& to = step.value("to", Json::object());
+        const int entity = resolve_entity(to, step_id, "to");
+        if (entity < 0) return false;
+        const EntityDef& target = program_.entities[entity];
+        const Verb verb = verb_for(target.kind, str_or(step, "mode", "write"));
+        if (verb == Verb::Unforce && target.kind != EntityKind::Variable) {
+            diag(step_id, "move_mode", "only a variable can be unforced", DiagGrade::Error, "to");
+            return false;
+        }
+
+        Instruction out;
+        out.op = OpCode::MoveOut;
+        out.a = static_cast<uint32_t>(entity);
+        out.b = 0;
+        out.small = static_cast<uint16_t>(verb);
+        out.c = fault_site(step_id, "move_out", "UNKNOWN was not sent");
+
+        if (verb == Verb::Unforce) {
+            flow.code.push_back(out);
+            ++program_.layout.effect_capacity;
+            return true;
+        }
+
+        /* a whole struct goes out as the message; anything else fills one field */
+        const std::string source_local = str_or(from, "local", "");
+        auto held = locals.find(source_local);
+        const bool whole = !source_local.empty() && str_or(from, "path", "").empty() &&
+                           held != locals.end() &&
+                           program_.cells[held->second].shape == Shape::Struct;
+        if (whole) {
+            const uint32_t cell = held->second;
+            if (program_.cells[cell].type_id != target.type_id) {
+                diag(step_id, "type_mismatch",
+                     "'" + type_name_of(program_.cells[cell].type_id) + "' does not fit " +
+                         entity_kind_name(target.kind) + ":" + target.name,
+                     DiagGrade::Error, "from");
+                return false;
+            }
+            Instruction load;
+            load.op = OpCode::Load;
+            load.a = cell;
+            load.c = fault_site(step_id, "move_out", "the value could not be read");
+            flow.code.push_back(load);
+            flow.max_stack = std::max(flow.max_stack, 1u);
+        } else {
+            const int field = find_field(entity, str_or(to, "path", ""), step_id, "to");
+            if (field < 0) {
+                if (target.fields.size() > 1)
+                    diag(step_id, "move_dest",
+                         std::string(entity_kind_name(target.kind)) + ":" + target.name +
+                             " has " + std::to_string(target.fields.size()) +
+                             " fields; pick one, or move a whole value of its type",
+                         DiagGrade::Error, "to");
+                return false;
+            }
+            if (!push_scalar(widget, step, flow, scope, from, target.fields[field].shape))
+                return false;
+            out.b = static_cast<uint32_t>(field);
+        }
+        flow.code.push_back(out);
+        ++program_.layout.effect_capacity;
+        (void)widget;
+        return true;
+    }
+
+    /* Declare (or find) a struct local and put its fields in scope, so a later row can
+     * read `m.position` the way it reads any other name. */
+    uint32_t ensure_struct_local(const WidgetInfo& widget, FlowProgram& flow,
+                                 FlowLocals& locals, ExpressionScope& scope,
+                                 const std::string& name, uint16_t type_id, uint64_t step_id) {
+        auto found = locals.find(name);
+        if (found != locals.end()) {
+            const CellDef& cell = program_.cells[found->second];
+            if (cell.shape != Shape::Struct || cell.type_id != type_id) {
+                diag(step_id, "temp_shape",
+                     "'" + name + "' already holds a " + shape_name(cell.shape) +
+                         " in this flow",
+                     DiagGrade::Error, "to");
+                return UINT32_MAX;
+            }
+            return found->second;
+        }
+        if (declared_cell(widget, name) != UINT32_MAX) {
+            diag(step_id, "temp_shadow",
+                 "'" + name + "' is already a variable; a struct temporary needs its own name",
+                 DiagGrade::Error, "to");
+            return UINT32_MAX;
+        }
+        const uint32_t cell = add_struct_cell(flow.flow_id, widget.id, name, type_id);
+        locals[name] = cell;
+        const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
+        for (uint32_t i = 0; i < fields.size(); ++i)
+            scope.qualified[name + "." + fields[i].path] =
+                Binding{fields[i].shape, OpCode::LoadField, cell, i, fields[i].type_id};
+        return cell;
+    }
+
+    int find_type(const std::string& name) const {
+        for (uint32_t i = 1; i < program_.types.size(); ++i)
+            if (program_.types[i].kind == TypeKind::Struct && program_.types[i].name == name)
+                return static_cast<int>(i);
+        return -1;
+    }
+
+    std::string type_name_of(uint16_t type_id) const {
+        if (type_id >= program_.types.size()) return "?";
+        const TypeDef& def = program_.types[type_id];
+        return def.name.empty() ? std::string("this type") : def.name;
+    }
+
     bool compile_steps(const WidgetInfo& widget, const Json& flow_node, FlowProgram& flow) {
         ExpressionScope scope = scope_for(widget, flow.event_shape);
-        Shape current_x_shape = flow.event_shape;
-        std::unordered_map<std::string, uint32_t> buffers;
-        int current_buffer = -1;
+        FlowLocals locals;
         for (const Json& step : flow_node.value("do", Json::array())) {
             const uint64_t step_id = id_of(step);
             const std::string kind = step.value("kind", "");
-            if (kind == "transform") {
-                Shape transformed = Shape::Unknown;
-                uint16_t transformed_enum = 0;
-                if (!expression(step_id, str_or(step, "a", "x"), ExprTier::Wire, scope,
-                                Shape::Unknown, flow.code, flow.max_stack, &transformed,
-                                "", &transformed_enum))
-                    return false;
-                flow.code.push_back(Instruction{OpCode::StoreX});
-                current_x_shape = transformed;
-                scope.x_shape = transformed;
-                scope.x_enum = transformed_enum;
+            if (kind == "move") {
+                if (!compile_move(widget, step, flow, scope, locals)) return false;
             } else if (kind == "gate") {
                 if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
                                 Shape::Bool, flow.code, flow.max_stack))
@@ -656,152 +1071,6 @@ class Compiler {
                 ins.small = kind == "debounce" ? 1 : 0;
                 ins.c = fault_site(step_id, "suspend", "suspension state is invalid");
                 flow.code.push_back(ins);
-            } else if (kind == "build") {
-                const int entity = resolve_entity(step["target"], step_id);
-                if (entity < 0) return false;
-                BufferDef def;
-                def.name = str_or(step, "buf", "msg");
-                def.entity = static_cast<uint32_t>(entity);
-                const uint32_t buffer = static_cast<uint32_t>(program_.buffers.size());
-                program_.buffers.push_back(def);
-                buffers[def.name] = buffer;
-                current_buffer = static_cast<int>(buffer);
-                Instruction ins;
-                ins.op = OpCode::MsgNew;
-                ins.a = buffer;
-                ins.b = def.entity;
-                ins.small = str_or(step, "seed", "last") == "last" ? 1 : 0;
-                ins.c = fault_site(step_id, "message_build", "message buffer could not be opened");
-                flow.code.push_back(ins);
-                for (uint32_t i = 0; i < program_.entities[def.entity].fields.size(); ++i) {
-                    const FieldDef& field = program_.entities[def.entity].fields[i];
-                    scope.qualified[def.name + "." + field.path] =
-                        Binding{field.shape, OpCode::LoadMsgF, buffer, i, field.enum_type};
-                }
-            } else if (kind == "setf") {
-                if (current_buffer < 0) {
-                    diag(step_id, "message_owner", "field setter has no open message");
-                    return false;
-                }
-                const uint32_t buffer = static_cast<uint32_t>(current_buffer);
-                const uint32_t entity = program_.buffers[buffer].entity;
-                const int field = find_field(entity, str_or(step, "path", ""), step_id);
-                if (field < 0) return false;
-                const FieldDef& field_def = program_.entities[entity].fields[field];
-                const std::string variant = str_or(step, "variant", "");
-                if (!variant.empty()) {
-                    bool found = false;
-                    for (const auto& item : field_def.variants) {
-                        if (item.first != variant) continue;
-                        Instruction constant;
-                        constant.op = OpCode::Const;
-                        constant.a = program_.add_constant(
-                            Value::enumeration(item.second, field_def.enum_type));
-                        flow.code.push_back(constant);
-                        flow.max_stack = std::max(flow.max_stack, 1u);
-                        found = true;
-                        break;
-                    }
-                    if (!found) {
-                        diag(step_id, "enum_variant",
-                             "field has no enum variant '" + variant + "'");
-                        return false;
-                    }
-                } else if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
-                                       field_def.shape, flow.code, flow.max_stack)) {
-                    return false;
-                }
-                Instruction set;
-                set.op = OpCode::MsgSet;
-                set.a = buffer;
-                set.b = static_cast<uint32_t>(field);
-                set.c = fault_site(step_id, "message_field", "message field could not be set");
-                flow.code.push_back(set);
-            } else if (kind == "send") {
-                uint32_t buffer = UINT32_MAX;
-                const std::string named = str_or(step, "buf", "");
-                if (!named.empty()) {
-                    auto found = buffers.find(named);
-                    if (found != buffers.end()) buffer = found->second;
-                } else if (current_buffer >= 0) {
-                    buffer = static_cast<uint32_t>(current_buffer);
-                }
-                Verb verb;
-                if (!parse_verb(str_or(step, "verb", ""), verb)) {
-                    diag(step_id, "verb", "send verb is invalid");
-                    return false;
-                }
-                if (buffer != UINT32_MAX) {
-                    const uint32_t entity = program_.buffers[buffer].entity;
-                    if (!verb_matches(program_.entities[entity].kind, verb)) {
-                        diag(step_id, "verb", "send verb does not match the message target");
-                        return false;
-                    }
-                    Instruction send;
-                    send.op = OpCode::SendMsg;
-                    send.a = buffer;
-                    send.small = static_cast<uint16_t>(verb);
-                    send.c = fault_site(step_id, "send_nil",
-                                        "message contains UNKNOWN and was not sent");
-                    flow.code.push_back(send);
-                    current_buffer = -1;
-                } else {
-                    const int entity = resolve_entity(step["target"], step_id);
-                    if (entity < 0) return false;
-                    const EntityDef& target = program_.entities[entity];
-                    if (target.fields.size() != 1) {
-                        diag(step_id, "bare_send",
-                             "bare send needs an entity with exactly one field");
-                        return false;
-                    }
-                    if (!verb_matches(target.kind, verb)) {
-                        diag(step_id, "verb", "send verb does not match the target kind");
-                        return false;
-                    }
-                    if (current_x_shape != target.fields[0].shape) {
-                        diag(step_id, "shape",
-                             "pipeline value does not match the target field");
-                        return false;
-                    }
-                    Instruction send;
-                    send.op = OpCode::SendX;
-                    send.a = static_cast<uint32_t>(entity);
-                    send.b = 0;
-                    send.small = static_cast<uint16_t>(verb);
-                    send.c = fault_site(step_id, "send_nil", "UNKNOWN was not sent");
-                    flow.code.push_back(send);
-                }
-                ++program_.layout.effect_capacity;
-            } else if (kind == "assign") {
-                const std::string name = str_or(step, "var", "");
-                const uint32_t cell = assign_target(widget, name);
-                if (cell == UINT32_MAX) {
-                    diag(step_id, "assign_var",
-                         (slot_target(name).empty() ? "variable '" : "slot '") + name +
-                             "' is unresolved");
-                    return false;
-                }
-                if (!expression(step_id, str_or(step, "a", "x"), ExprTier::Wire, scope,
-                                program_.cells[cell].shape, flow.code, flow.max_stack))
-                    return false;
-                Instruction store;
-                store.op = OpCode::Store;
-                store.a = cell;
-                store.c = fault_site(step_id, "assign_store", "assignment could not be stored");
-                flow.code.push_back(store);
-            } else if (kind == "unforce") {
-                const int entity = resolve_entity(step["target"], step_id);
-                if (entity < 0) return false;
-                if (program_.entities[entity].kind != EntityKind::Variable) {
-                    diag(step_id, "unforce_target", "unforce needs a variable target");
-                    return false;
-                }
-                Instruction ins;
-                ins.op = OpCode::Unforce;
-                ins.a = static_cast<uint32_t>(entity);
-                ins.c = fault_site(step_id, "unforce", "unforce could not be emitted");
-                flow.code.push_back(ins);
-                ++program_.layout.effect_capacity;
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
                 const int timer = resolve_timer(widget, str_or(step, "timer", ""), step_id);
                 if (timer < 0) return false;
@@ -845,7 +1114,7 @@ class Compiler {
                         const int timer = resolve_timer(widget, name, flow_id);
                         if (timer < 0) continue;
                         flow.event = program_.timers[timer].event;
-                        flow.event_shape = Shape::Struct;
+                        flow.event_shape = Shape::Timer;
                         program_.timers[timer].rearm_groups.push_back(group);
                     } else {
                         flow.event = trigger.value("name", "");
@@ -925,20 +1194,18 @@ class Compiler {
         auto flows = widget.node->find("flows");
         if (flows != widget.node->end() && flows->is_array())
             for (const Json& flow : *flows)
-                for (const Json& step : flow.value("do", Json::array())) {
-                    if (step.value("kind", "") != "assign") continue;
-                    const std::string slot = slot_target(step.value("var", ""));
-                    if (!slot.empty()) out[slot] = "a flow on this widget writes it";
-                }
+                for (const std::string& slot : written_slots(flow))
+                    out[slot] = "a flow on this widget writes it";
         return out;
     }
 
-    /* The slots one behavior flow writes, so precedence is decided before it is compiled */
-    std::vector<std::string> behavior_targets(const Json& flow) const {
+    /* The slots one flow writes: the destinations of its moves that name a slot. One
+     * step kind to scan, so precedence is decided from one place (spec 2.3). */
+    std::vector<std::string> written_slots(const Json& flow) const {
         std::vector<std::string> out;
         for (const Json& step : flow.value("do", Json::array())) {
-            if (step.value("kind", "") != "assign") continue;
-            const std::string slot = slot_target(step.value("var", ""));
+            if (step.value("kind", "") != "move") continue;
+            const std::string slot = slot_of(step.value("to", Json::object()));
             if (!slot.empty()) out.push_back(slot);
         }
         return out;
@@ -963,7 +1230,7 @@ class Compiler {
             const std::unordered_map<std::string, std::string> claimed = claimed_slots(widget);
             for (const Json& node : behavior) {
                 bool suppressed = false;
-                for (const std::string& slot : behavior_targets(node)) {
+                for (const std::string& slot : written_slots(node)) {
                     if (claimed.find(slot) == claimed.end()) continue;
                     suppressed = true;
                     break;
@@ -995,6 +1262,9 @@ class Compiler {
     bool has_errors_ = false;
     Json empty_object_ = Json::object();
     std::unordered_map<std::string, uint32_t> globals_;
+    std::unordered_map<std::string, uint16_t> struct_keys_;   /* schema key -> type id */
+    std::unordered_map<std::string, uint16_t> struct_names_;  /* root name -> type id */
+    std::set<std::string> ambiguous_;                         /* reported once each */
     std::unordered_map<std::string, uint32_t> global_timers_;
     std::vector<WidgetInfo> widgets_;
 };

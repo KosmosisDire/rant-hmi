@@ -470,6 +470,10 @@ bool DartMesh::refresh() {
         def.readable = true;
         def.writable = def.kind == EntityKind::Variable ? entity.writable : true;
         def.forceable = def.kind == EntityKind::Variable && entity.forceable;
+        /* the schema's root type name is the only name a type has (spec 2.2); the hash
+         * is its identity, so two entities of one type fold to one type-table entry */
+        def.type_name = entity.schema.name;
+        def.schema_hash = entity.schema_hash;
         build_fields(entity.schema, def.fields, nullptr);
         if (def.kind == EntityKind::Function)
             build_fields(entity.rsp_schema, def.rsp_fields, nullptr);

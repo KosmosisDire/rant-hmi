@@ -172,14 +172,14 @@ void test_structure_ops() {
                                    {"node", {{"kind", "delay"}, {"a", 250}}}}});
     CHECK_MSG(apply_ops(d, batch, r, err), err);
     const uint64_t step = r.ops[0]["node"]["id"].get<uint64_t>();
-    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", step}, {"key", "kind"}, {"value", "build"}}},
+    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", step}, {"key", "kind"}, {"value", "move"}}},
                     err),
               err);
     const Json& s = *d.node(step);
-    CHECK(s["kind"] == "build");
-    CHECK(s["buf"] == "msg");
-    CHECK(s["seed"] == "last");
-    CHECK(s["target"].is_object());
+    CHECK(s["kind"] == "move");
+    CHECK(s["from"].is_object());
+    CHECK(s["to"].is_object());
+    CHECK(s["mode"] == "write");
 }
 
 void test_rename() {
@@ -193,7 +193,9 @@ void test_rename() {
                                  {"parent", flow},
                                  {"list", "do"},
                                  {"index", 0},
-                                 {"node", {{"kind", "transform"}, {"a", "flow * 2 + flowRate"}}}}});
+                                 {"node", {{"kind", "move"},
+                                           {"from", {{"expr", "flow * 2 + flowRate"}}},
+                                           {"to", {{"local", "x"}, {"path", ""}}}}}}});
     CHECK_MSG(apply_ops(d, add, r, err), err);
     const uint64_t step = r.ops[0]["node"]["id"].get<uint64_t>();
 
@@ -208,10 +210,10 @@ void test_rename() {
 
     CHECK(global_named(d, "flowRate") != nullptr);
     CHECK(global_named(d, "flow") == nullptr);
-    /* the feed source, the assign target and the expression all followed */
+    /* the feed source, the move destination and the expression all followed */
     CHECK(d.root["pages"][0]["widgets"][4]["feeds"][0]["src"]["name"] == "flowRate");
-    CHECK(d.root["pages"][0]["widgets"][6]["flows"][0]["do"][1]["var"] == "flowRate");
-    CHECK((*d.node(step))["a"] == "flowRate * 2 + flowRate");
+    CHECK(d.root["pages"][0]["widgets"][6]["flows"][0]["do"][1]["to"]["local"] == "flowRate");
+    CHECK((*d.node(step))["from"]["expr"] == "flowRate * 2 + flowRate");
     /* and the fan-out is echoed as plain set_props, so a client needs no rename rule */
     int set_props = 0;
     for (const Json& op : rr.ops)
@@ -236,7 +238,7 @@ void test_rename() {
     Json shadowed = Json::array({Json{{"op", "rename"}, {"node", var_id}, {"name", "capture"}}});
     /* the global renames fine: this widget shadows it, so it holds no reference to it */
     CHECK_MSG(apply_ops(d, shadowed, br, err), err);
-    CHECK((*d.node(step))["a"] == "flowRate * 2 + flowRate");   /* untouched: shadowed */
+    CHECK((*d.node(step))["from"]["expr"] == "flowRate * 2 + flowRate");   /* untouched: shadowed */
 }
 
 void test_expr_rewrite() {

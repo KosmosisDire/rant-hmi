@@ -11,7 +11,7 @@ constexpr uint32_t kDefaultTextCap = 256;
 
 bool same_cell(const CellDef& a, const CellDef& b) {
     return a.kind == b.kind && a.owner_widget == b.owner_widget && a.name == b.name &&
-           a.shape == b.shape;
+           a.shape == b.shape && a.owner_flow == b.owner_flow;
 }
 
 /* the literal a cell is compiled to start from, if it starts from one */
@@ -65,14 +65,15 @@ Value zero_value(Shape shape) {
         case Shape::Enum: return Value::enumeration(0, 0);
         case Shape::Color: return Value::color(0x00000000u);
         case Shape::Text: return Value::text(kConstantRef);
-        /* aggregates in a message buffer are inert empty placeholders: never Nil (a
-         * send must not fault on a field the wire side cannot set anyway; the RMW
-         * base preserves the owner's actual bytes) */
+        /* aggregates in a struct are inert empty placeholders: never Nil (a move out
+         * must not fault on a field the wire side cannot set anyway; the RMW base
+         * preserves the owner's actual bytes) */
         case Shape::List: return Value::list(0, 0, ValueTag::Nil);
         case Shape::Map: return Value::map(0, 0);
         default: return Value::nil();
     }
 }
+
 
 RuntimeState::RuntimeState(const Program& program) {
     values.resize(program.cells.size(), Value::nil());
@@ -113,11 +114,11 @@ RuntimeState::RuntimeState(const Program& program) {
         }
     }
     /* suspension deep-copy slots: a fixed run per pending site (x first, then every
-     * text-shaped field of every buffer, in table order; the Suspend op walks the
+     * text-shaped field of every struct slot, in table order; the Suspend op walks the
      * same order) */
     uint32_t per_pending = 1;
-    for (const BufferDef& buffer : program.buffers)
-        for (const FieldDef& field : program.entities[buffer.entity].fields)
+    for (const StructDef& item : program.structs)
+        for (const FieldDef& field : struct_fields(program, item.type_id))
             if (field.shape == Shape::Text) ++per_pending;
     pending_texts.resize(program.layout.pending_slots);
     for (uint32_t i = 0; i < program.layout.pending_slots; ++i) {
@@ -133,13 +134,21 @@ RuntimeState::RuntimeState(const Program& program) {
         texts.emplace_back(kDefaultTextCap);
 
     uint32_t max_fields = std::max<uint32_t>(program.layout.max_entity_fields, 1);
-    buffers.resize(program.buffers.size());
-    for (uint32_t i = 0; i < program.buffers.size(); ++i) {
-        MessageState& buffer = buffers[i];
-        buffer.entity = program.buffers[i].entity;
-        const uint32_t n = static_cast<uint32_t>(program.entities[buffer.entity].fields.size());
-        buffer.fields.resize(n, Value::nil());
-        buffer.set.resize(n, 0);
+    structs.resize(program.structs.size());
+    for (uint32_t i = 0; i < program.structs.size(); ++i) {
+        StructState& item = structs[i];
+        item.type_id = program.structs[i].type_id;
+        const uint32_t n = static_cast<uint32_t>(struct_fields(program, item.type_id).size());
+        item.fields.resize(n, Value::nil());
+        item.set.resize(n, 0);
+    }
+    /* a struct-shaped cell POINTS at its slot: the Value is the handle, the fields live
+     * in `structs`, so a cell read pushes something copyable and a field write lands in
+     * exactly one place */
+    for (uint32_t i = 0; i < program.cells.size(); ++i) {
+        const CellDef& cell = program.cells[i];
+        if (cell.shape != Shape::Struct || cell.struct_slot >= structs.size()) continue;
+        values[i] = Value::structure(cell.struct_slot, cell.type_id);
     }
 
     last.resize(program.entities.size());
@@ -152,11 +161,11 @@ RuntimeState::RuntimeState(const Program& program) {
     fired.resize(program.layout.fired_groups, 0);
     pending.resize(program.layout.pending_slots);
     for (PendingState& item : pending) {
-        item.buffers.resize(buffers.size());
-        for (uint32_t i = 0; i < buffers.size(); ++i) {
-            item.buffers[i].entity = buffers[i].entity;
-            item.buffers[i].fields.resize(buffers[i].fields.size(), Value::nil());
-            item.buffers[i].set.resize(buffers[i].set.size(), 0);
+        item.structs.resize(structs.size());
+        for (uint32_t i = 0; i < structs.size(); ++i) {
+            item.structs[i].type_id = structs[i].type_id;
+            item.structs[i].fields.resize(structs[i].fields.size(), Value::nil());
+            item.structs[i].set.resize(structs[i].set.size(), 0);
         }
     }
 
@@ -188,6 +197,9 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
                          const Value& value) noexcept {
     if (cell_index >= values.size()) return false;
     const CellDef& cell = program.cells[cell_index];
+    /* a struct cell's Value is its handle and is fixed for the run: it is filled by New
+     * or ReadEnt and edited field by field, never replaced wholesale */
+    if (cell.shape == Shape::Struct) return false;
     if (cell.shape != value_shape(value) && value.tag != ValueTag::Nil) return false;
     if (cell.shape != Shape::Text || value.tag == ValueTag::Nil) {
         values[cell_index] = value;
@@ -235,6 +247,10 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
     next.tick = old_state.tick;
     for (uint32_t n = 0; n < new_program.cells.size(); ++n) {
         const CellDef& wanted = new_program.cells[n];
+        /* a temporary holds a value only inside a run, so a swap between runs has
+         * nothing to carry; a struct cell's handle was set by the constructor above and
+         * must not be replaced by the old program's slot index (spec 5.11) */
+        if (wanted.kind == CellKind::Temp || wanted.shape == Shape::Struct) continue;
         for (uint32_t o = 0; o < old_program.cells.size(); ++o) {
             if (!same_cell(wanted, old_program.cells[o])) continue;
             /* the author restated where this cell starts: keep what the new program
