@@ -14,6 +14,21 @@ uint64_t id_of(const Json& node) {
     return it == node.end() ? 0 : json_u64_or(*it, 0);
 }
 
+/* Type-safe reads of document values. Json::value() substitutes its default only for a
+ * MISSING key and THROWS on a present-but-differently-typed one, and the document holds
+ * both legitimately: optional numbers default to null in the schema (poll_hz), and a
+ * step keeps its old variant's fields across a kind flip, so `a` may hold another
+ * kind's text. A read here never throws; the wrong type reads as absent. */
+double num_or(const Json& node, const char* key, double fallback) {
+    auto it = node.find(key);
+    return it != node.end() && it->is_number() ? it->get<double>() : fallback;
+}
+
+std::string str_or(const Json& node, const char* key, const char* fallback) {
+    auto it = node.find(key);
+    return it != node.end() && it->is_string() ? it->get<std::string>() : fallback;
+}
+
 bool entity_kind(const std::string& text, EntityKind& out) {
     if (text == "V") out = EntityKind::Variable;
     else if (text == "T") out = EntityKind::Topic;
@@ -418,7 +433,7 @@ class Compiler {
                 feed.widget_id = widget.id;
                 feed.page_id = widget.page;
                 feed.feed_id = id_of(node);
-                const std::string slot = node.value("slot", "");
+                const std::string slot = str_or(node, "slot", "");
                 auto destination = widget.slots.find(slot);
                 if (destination == widget.slots.end()) {
                     diag(feed.feed_id, "feed_slot", "widget has no slot '" + slot + "'",
@@ -451,19 +466,19 @@ class Compiler {
                     const int entity = resolve_entity(ref, feed.feed_id, "src");
                     if (entity < 0) continue;
                     feed.entity = static_cast<uint32_t>(entity);
-                    const int field = find_field(feed.entity, node.value("path", ""),
+                    const int field = find_field(feed.entity, str_or(node, "path", ""),
                                                  feed.feed_id, "path", /*response=*/true);
                     if (field < 0) continue;
                     feed.field = static_cast<uint32_t>(field);
                     scope.x_shape = feed_fields(program_.entities[feed.entity])[feed.field].shape;
                     if (program_.entities[feed.entity].kind == EntityKind::Function) {
-                        const double hz = node.value("poll_hz", 0.0);
+                        const double hz = num_or(node, "poll_hz", 0.0);
                         feed.poll_ms = hz > 0.0
                             ? std::max(10u, static_cast<uint32_t>(std::lround(1000.0 / hz)))
                             : 1000u;
                     }
                 }
-                const std::string xf = node.value("xf", "");
+                const std::string xf = str_or(node, "xf", "");
                 bool ok = true;
                 if (xf.empty()) {
                     /* no transform: the source value stores as-is, so the shapes must
@@ -557,14 +572,14 @@ class Compiler {
             const std::string kind = step.value("kind", "");
             if (kind == "transform") {
                 Shape transformed = Shape::Unknown;
-                if (!expression(step_id, step.value("a", "x"), ExprTier::Wire, scope,
+                if (!expression(step_id, str_or(step, "a", "x"), ExprTier::Wire, scope,
                                 Shape::Unknown, flow.code, flow.max_stack, &transformed))
                     return false;
                 flow.code.push_back(Instruction{OpCode::StoreX});
                 current_x_shape = transformed;
                 scope.x_shape = transformed;
             } else if (kind == "gate") {
-                if (!expression(step_id, step.value("a", ""), ExprTier::Wire, scope,
+                if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
                                 Shape::Bool, flow.code, flow.max_stack))
                     return false;
                 flow.code.push_back(Instruction{OpCode::Gate});
@@ -572,7 +587,7 @@ class Compiler {
                 Instruction ins;
                 ins.op = OpCode::Deadband;
                 ins.a = state_site(StateSiteKind::Deadband, flow.flow_id, step_id);
-                ins.b = program_.add_constant(Value::number(step.value("a", 0.0)));
+                ins.b = program_.add_constant(Value::number(num_or(step, "a", 0.0)));
                 ins.c = fault_site(step_id, "deadband", "deadband needs a numeric value");
                 flow.code.push_back(ins);
             } else if (kind == "throttle") {
@@ -594,7 +609,7 @@ class Compiler {
                 const int entity = resolve_entity(step["target"], step_id);
                 if (entity < 0) return false;
                 BufferDef def;
-                def.name = step.value("buf", "msg");
+                def.name = str_or(step, "buf", "msg");
                 def.entity = static_cast<uint32_t>(entity);
                 const uint32_t buffer = static_cast<uint32_t>(program_.buffers.size());
                 program_.buffers.push_back(def);
@@ -604,7 +619,7 @@ class Compiler {
                 ins.op = OpCode::MsgNew;
                 ins.a = buffer;
                 ins.b = def.entity;
-                ins.small = step.value("seed", "last") == "last" ? 1 : 0;
+                ins.small = str_or(step, "seed", "last") == "last" ? 1 : 0;
                 ins.c = fault_site(step_id, "message_build", "message buffer could not be opened");
                 flow.code.push_back(ins);
                 for (uint32_t i = 0; i < program_.entities[def.entity].fields.size(); ++i) {
@@ -619,10 +634,10 @@ class Compiler {
                 }
                 const uint32_t buffer = static_cast<uint32_t>(current_buffer);
                 const uint32_t entity = program_.buffers[buffer].entity;
-                const int field = find_field(entity, step.value("path", ""), step_id);
+                const int field = find_field(entity, str_or(step, "path", ""), step_id);
                 if (field < 0) return false;
                 const FieldDef& field_def = program_.entities[entity].fields[field];
-                const std::string variant = step.value("variant", "");
+                const std::string variant = str_or(step, "variant", "");
                 if (!variant.empty()) {
                     bool found = false;
                     for (const auto& item : field_def.variants) {
@@ -641,7 +656,7 @@ class Compiler {
                              "field has no enum variant '" + variant + "'");
                         return false;
                     }
-                } else if (!expression(step_id, step.value("a", ""), ExprTier::Wire, scope,
+                } else if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
                                        field_def.shape, flow.code, flow.max_stack)) {
                     return false;
                 }
@@ -653,7 +668,7 @@ class Compiler {
                 flow.code.push_back(set);
             } else if (kind == "send") {
                 uint32_t buffer = UINT32_MAX;
-                const std::string named = step.value("buf", "");
+                const std::string named = str_or(step, "buf", "");
                 if (!named.empty()) {
                     auto found = buffers.find(named);
                     if (found != buffers.end()) buffer = found->second;
@@ -661,7 +676,7 @@ class Compiler {
                     buffer = static_cast<uint32_t>(current_buffer);
                 }
                 Verb verb;
-                if (!parse_verb(step.value("verb", ""), verb)) {
+                if (!parse_verb(str_or(step, "verb", ""), verb)) {
                     diag(step_id, "verb", "send verb is invalid");
                     return false;
                 }
@@ -707,7 +722,7 @@ class Compiler {
                 }
                 ++program_.layout.effect_capacity;
             } else if (kind == "assign") {
-                const std::string name = step.value("var", "");
+                const std::string name = str_or(step, "var", "");
                 const uint32_t cell = assign_target(widget, name);
                 if (cell == UINT32_MAX) {
                     diag(step_id, "assign_var",
@@ -715,7 +730,7 @@ class Compiler {
                              "' is unresolved");
                     return false;
                 }
-                if (!expression(step_id, step.value("a", "x"), ExprTier::Wire, scope,
+                if (!expression(step_id, str_or(step, "a", "x"), ExprTier::Wire, scope,
                                 program_.cells[cell].shape, flow.code, flow.max_stack))
                     return false;
                 Instruction store;
@@ -737,7 +752,7 @@ class Compiler {
                 flow.code.push_back(ins);
                 ++program_.layout.effect_capacity;
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
-                const int timer = resolve_timer(widget, step.value("timer", ""), step_id);
+                const int timer = resolve_timer(widget, str_or(step, "timer", ""), step_id);
                 if (timer < 0) return false;
                 Instruction ins;
                 ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
@@ -785,7 +800,7 @@ class Compiler {
                         flow.event = trigger.value("name", "");
                         flow.event_shape = event_shape(widget, flow.event, flow_id);
                         flow.hold_ticks =
-                            static_cast<uint32_t>(std::max(0.0, trigger.value("hold_ms", 600.0)));
+                            static_cast<uint32_t>(std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
                         const Json every = trigger.value("every_ms", Json());
                         flow.every_ticks =
                             every.is_number()

@@ -602,6 +602,56 @@ void test_colors() {
     CHECK(result.shape == Shape::Color);
 }
 
+/* The document holds values Json::value() would THROW on: optional numbers default to
+ * null in the doc schema, so every unauthored function-feed rate is `"poll_hz": null`.
+ * Reading it with value("poll_hz", 0.0) crashed the live backend the moment the
+ * function entity reflected (nlohmann type_error -> terminate); it must compile and
+ * fall back to the default rate instead. */
+void test_document_tolerance() {
+    EntityDef status;
+    status.kind = EntityKind::Function;
+    status.name = "status";
+    status.fields = {FieldDef{"probe", Shape::Num}};
+    status.rsp_fields = {FieldDef{"temp", Shape::Num}};
+    EntityDef sensor;
+    sensor.kind = EntityKind::Variable;
+    sensor.name = "sensor";
+    sensor.fields = {FieldDef{"value", Shape::Num}};
+    FakeMesh mesh(std::vector<EntityDef>{status, sensor});
+
+    Json widget = Json{
+        {"type", "Readout"},
+        {"label", "w"},
+        {"slots", Json::object()},
+        {"feeds", Json::array({Json{{"slot", "value"},
+                                    {"src", entity("F", "status")},
+                                    {"path", "temp"},
+                                    {"poll_hz", nullptr},
+                                    {"stale_ms", nullptr},
+                                    {"xf", ""}}})},
+        {"flows", Json::array({Json{
+            {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+            {"when_mode", "any"},
+            {"do", Json::array({
+                Json{{"kind", "send"},
+                     {"target", entity("V", "sensor")},
+                     {"verb", "write"}},
+            })}}})}};
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"},
+                                             {"widgets", Json::array({std::move(widget)})}}})}};
+    Document document;
+    std::string err;
+    CHECK_MSG(document.adopt(std::move(root), err), err);
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    /* the flipped transform reads as absent (`x` stands), so this still compiles; the
+       null poll rate falls back to the 1 Hz default */
+    CHECK(compiled.program.feeds.size() == 1);
+    CHECK(compiled.program.feeds.empty() || compiled.program.feeds[0].poll_ms == 1000);
+}
+
 } // namespace
 
 int main() {
@@ -614,5 +664,6 @@ int main() {
     test_event_value();
     test_value_shape_diagnostics();
     test_colors();
+    test_document_tolerance();
     return check::summary("runtime_test");
 }
