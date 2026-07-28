@@ -1036,6 +1036,41 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+/* a feed with cases: the line, then one row per arm, then the else */
+.feed-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.feed-case {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-left: 18px;
+}
+
+.feed-case > .field.num,
+.feed-case > .select-wrap {
+  flex: 0 0 92px;
+  min-width: 0;
+}
+
+.feed-case > .field.grow {
+  flex: 1 1 40px;
+  min-width: 34px;
+  width: 40px;
+  text-overflow: ellipsis;
+}
+
+.feed-case > .arrow,
+.feed-case > .icon-btn,
+.feed-case > .chip {
+  flex: none;
+}
+
 /* the WHEN block's label + editor grid (spec 3.5) */
 .sub-grid {
   display: grid;

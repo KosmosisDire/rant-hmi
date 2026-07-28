@@ -87,7 +87,10 @@ export interface Feed {
   slot: string;
   src: { kind: string; name: string };
   path: string;
+  /* with `cases`, the ELSE arm; alone, the whole transform */
   xf: string;
+  /* discrete pattern matching over x (spec 2.4): first match wins */
+  cases?: { when: Json; xf: string }[];
   poll_hz: number | null;
   stale_ms: number | null;
 }

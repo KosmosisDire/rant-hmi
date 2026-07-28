@@ -733,6 +733,18 @@ class Compiler {
                             : 1000u;
                     }
                 }
+                /* discrete PATTERN MATCHING (spec 2.4): with `cases`, each arm compares
+                 * x against a scalar and runs its own transform; the feed's xf is the
+                 * else. Coverage is checked, so a missed variant is a finding. */
+                const Json cases = node.value("cases", Json::array());
+                if (cases.is_array() && !cases.empty()) {
+                    if (!compile_feed_cases(node, feed, scope, cases)) continue;
+                    program_.layout.stack_values =
+                        std::max(program_.layout.stack_values, feed.max_stack);
+                    program_.feeds.push_back(std::move(feed));
+                    continue;
+                }
+
                 std::string xf = str_or(node, "xf", "");
                 /* the one automatic coercion (spec 6.2): an enum-shaped source feeding a
                  * text slot reads as its variant name, so a Dropdown bound to an enum
@@ -773,6 +785,150 @@ class Compiler {
                 program_.feeds.push_back(std::move(feed));
             }
         }
+    }
+
+    /* A feed's case arms (spec 2.4): first match wins, top to bottom.
+     *
+     *   LoadX; JmpNil -> NIL
+     *   arm i: LoadX; Const(when_i); Eq; JmpFalse -> arm i+1; <xf_i>; Jmp -> STORE
+     *   <else xf>; Jmp -> STORE          (when the feed's xf is non-empty)
+     *   NIL: Const(nil)                  (the Nil bail-out, and the covered dead end)
+     *   STORE: Store; Halt
+     *
+     * An enum source's `when` is a variant NAME (or its backing integer); coverage is
+     * CHECKED: no else means every variant (or both booleans) must be handled, and
+     * anything uncoverable (a number, text, an unreflected source) requires the else. */
+    bool compile_feed_cases(const Json& node, FeedProgram& feed, ExpressionScope& scope,
+                            const Json& cases) {
+        const Shape wanted = program_.cells[feed.cell].shape;
+        const Shape source = scope.x_shape;
+        const uint16_t source_enum = scope.x_enum;
+        std::vector<uint32_t> ends;
+        std::set<int64_t> covered;
+        bool covered_true = false, covered_false = false;
+
+        feed.code.push_back(Instruction{OpCode::LoadX});
+        const uint32_t bail = static_cast<uint32_t>(feed.code.size());
+        feed.code.push_back(Instruction{OpCode::JmpNil});
+        feed.max_stack = std::max(feed.max_stack, 2u);
+
+        uint32_t index = 0;
+        for (const Json& entry : cases) {
+            const std::string where = "case" + std::to_string(index);
+            const Json when = entry.is_object() && entry.contains("when") ? entry["when"]
+                                                                          : Json();
+            Value key = Value::nil();
+            bool ok = false;
+            if (source == Shape::Enum && when.is_string()) {
+                if (source_enum && source_enum < program_.types.size())
+                    for (const auto& row : program_.types[source_enum].variants)
+                        if (row.first == when.get<std::string>()) {
+                            key = Value::enumeration(row.second, source_enum);
+                            covered.insert(row.second);
+                            ok = true;
+                            break;
+                        }
+                if (!ok)
+                    diag(feed.feed_id, "enum_name",
+                         "'" + when.get<std::string>() +
+                             "' is not one of this enum's variants",
+                         DiagGrade::Error, where);
+            } else if (when.is_string() && !when.get<std::string>().empty()) {
+                key = Value::text(program_.add_text(when.get<std::string>()));
+                ok = true;
+            } else if (when.is_number()) {
+                key = Value::number(when.get<double>());
+                if (source == Shape::Enum)
+                    covered.insert(static_cast<int64_t>(when.get<double>()));
+                ok = true;
+            } else if (when.is_boolean()) {
+                key = Value::boolean(when.get<bool>());
+                (when.get<bool>() ? covered_true : covered_false) = true;
+                ok = true;
+            } else {
+                diag(feed.feed_id, "case_when", "pick a value for this case",
+                     DiagGrade::Error, where);
+            }
+            if (!ok) return false;
+
+            feed.code.push_back(Instruction{OpCode::LoadX});
+            Instruction constant;
+            constant.op = OpCode::Const;
+            constant.a = program_.add_constant(key);
+            feed.code.push_back(constant);
+            feed.code.push_back(Instruction{OpCode::Eq});
+            const uint32_t skip = static_cast<uint32_t>(feed.code.size());
+            Instruction branch;
+            branch.op = OpCode::JmpFalse;
+            branch.c = fault_site(feed.feed_id, "case_when", "the case could not compare");
+            feed.code.push_back(branch);
+
+            const std::string xf = entry.is_object() ? str_or(entry, "xf", "") : "";
+            if (xf.empty()) {
+                diag(feed.feed_id, "expression", "this case needs an expression",
+                     DiagGrade::Error, where);
+                return false;
+            }
+            if (!expression(feed.feed_id, xf, ExprTier::Display, scope, wanted, feed.code,
+                            feed.max_stack, nullptr, where))
+                return false;
+            ends.push_back(static_cast<uint32_t>(feed.code.size()));
+            feed.code.push_back(Instruction{OpCode::Jmp});
+            feed.code[skip].a = static_cast<uint32_t>(feed.code.size());
+            ++index;
+        }
+
+        const std::string otherwise = str_or(node, "xf", "");
+        if (!otherwise.empty()) {
+            if (!expression(feed.feed_id, otherwise, ExprTier::Display, scope, wanted,
+                            feed.code, feed.max_stack, nullptr, "xf"))
+                return false;
+            ends.push_back(static_cast<uint32_t>(feed.code.size()));
+            feed.code.push_back(Instruction{OpCode::Jmp});
+        } else if (source == Shape::Enum && source_enum &&
+                   source_enum < program_.types.size()) {
+            std::string missing;
+            for (const auto& row : program_.types[source_enum].variants)
+                if (!covered.count(row.second))
+                    missing += (missing.empty() ? "" : ", ") + row.first;
+            if (!missing.empty()) {
+                diag(feed.feed_id, "cases",
+                     "unhandled: " + missing + "; add them, or an else",
+                     DiagGrade::Error, "xf");
+                return false;
+            }
+        } else if (source == Shape::Bool) {
+            if (!covered_true || !covered_false) {
+                diag(feed.feed_id, "cases",
+                     std::string("unhandled: ") + (covered_true ? "false" : "true") +
+                         "; add it, or an else",
+                     DiagGrade::Error, "xf");
+                return false;
+            }
+        } else {
+            diag(feed.feed_id, "cases",
+                 "cases over " + std::string(shape_name(source)) +
+                     " cannot cover every value; add an else",
+                 DiagGrade::Error, "xf");
+            return false;
+        }
+
+        /* the Nil bail-out, which full coverage also falls into if it is ever wrong */
+        feed.code[bail].a = static_cast<uint32_t>(feed.code.size());
+        Instruction nil;
+        nil.op = OpCode::Const;
+        nil.a = program_.add_constant(Value::nil());
+        feed.code.push_back(nil);
+        feed.max_stack = std::max(feed.max_stack, 1u);
+
+        for (uint32_t at : ends) feed.code[at].a = static_cast<uint32_t>(feed.code.size());
+        Instruction store;
+        store.op = OpCode::Store;
+        store.a = feed.cell;
+        store.c = fault_site(feed.feed_id, "feed_store", "feed value could not be stored");
+        feed.code.push_back(store);
+        feed.code.push_back(Instruction{OpCode::Halt});
+        return true;
     }
 
     void break_flow(FlowProgram& flow, uint64_t node, const std::string& code,

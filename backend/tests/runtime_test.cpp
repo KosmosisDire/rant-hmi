@@ -664,6 +664,86 @@ void test_enum_names() {
     CHECK_MSG(expr_error.find("display") != std::string::npos, expr_error);
 }
 
+/* A feed's CASE ARMS (spec 2.4): first match wins, an enum's coverage is checked, the
+ * else fills the gap, and a Nil input stores UNKNOWN instead of faulting. */
+void test_feed_cases() {
+    auto document_with = [](Json cases, const char* otherwise) {
+        Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                     {"pages", Json::array()}};
+        Json label = {
+            {"type", "Label"},
+            {"label", "gear"},
+            {"slots", Json::object()},
+            {"feeds", Json::array({Json{{"slot", "text"},
+                                        {"src", entity("V", "gear")},
+                                        {"path", "mode"},
+                                        {"xf", otherwise},
+                                        {"cases", std::move(cases)}}})},
+            {"flows", Json::array()},
+        };
+        root["pages"].push_back(Json{{"name", "Main"}, {"widgets", Json::array({label})}});
+        Document document;
+        std::string error;
+        CHECK_MSG(document.adopt(std::move(root), error), error);
+        return document;
+    };
+
+    FakeMesh mesh(reflection());
+    Json full = Json::array({
+        Json{{"when", "stop"}, {"xf", "\"Halted\""}},
+        Json{{"when", "run"}, {"xf", "\"Turning\""}},
+        Json{{"when", "fast"}, {"xf", "\"Flying\""}},
+    });
+    Document document = document_with(full, "");
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    int gear = -1;
+    for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
+        if (compiled.program.entities[i].name == "gear") gear = static_cast<int>(i);
+    CHECK(gear >= 0);
+    const uint16_t mode_type = compiled.program.entities[gear].fields[0].type_id;
+    RuntimeState state(compiled.program);
+    const FeedProgram& feed = compiled.program.feeds[0];
+    const char* said[] = {"Halted", "Turning", "Flying"};
+    for (int64_t variant = 0; variant <= 2; ++variant) {
+        RunResult one = run_feed(compiled.program, feed, state,
+                                 Value::enumeration(variant, mode_type));
+        CHECK(!one.faulted);
+        CHECK_MSG(state.text(compiled.program, state.values[feed.cell]) == said[variant],
+                  std::string(state.text(compiled.program, state.values[feed.cell])));
+    }
+    /* UNKNOWN in, UNKNOWN out: no fault, no stale match */
+    RunResult nil_run = run_feed(compiled.program, feed, state, Value::nil());
+    CHECK(!nil_run.faulted);
+    CHECK(state.values[feed.cell].tag == ValueTag::Nil);
+
+    /* a missed variant with no else is a FINDING, and the else forgives it */
+    Json partial = Json::array({
+        Json{{"when", "stop"}, {"xf", "\"Halted\""}},
+        Json{{"when", "run"}, {"xf", "\"Turning\""}},
+    });
+    Document uncovered = document_with(partial, "");
+    CompileResult refused = compile_document(uncovered, registry(), mesh);
+    CHECK(!refused.ok);
+    bool found = false;
+    for (const Diag& diag : refused.program.diagnostics)
+        if (diag.code == "cases" && diag.message.find("fast") != std::string::npos)
+            found = true;
+    CHECK(found);
+
+    Document forgiven = document_with(partial, "\"?\"");
+    CompileResult covered = compile_document(forgiven, registry(), mesh);
+    CHECK(covered.ok);
+    RuntimeState fallback(covered.program);
+    RunResult other = run_feed(covered.program, covered.program.feeds[0], fallback,
+                               Value::enumeration(2, mode_type));
+    CHECK(!other.faulted);
+    CHECK(fallback.text(covered.program,
+                        fallback.values[covered.program.feeds[0].cell]) == "?");
+}
+
 void test_compile_fault() {
     Document document = runtime_document();
     document.root["pages"][0]["widgets"][0]["flows"][0]["do"][2]["to"]["name"] = "missing";
@@ -1463,6 +1543,7 @@ int main() {
     test_typed_variables();
     test_typed_temporaries();
     test_enum_names();
+    test_feed_cases();
     test_compile_fault();
     test_expression_rejection();
     test_tiers();

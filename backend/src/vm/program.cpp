@@ -90,6 +90,7 @@ const char* op_name(OpCode op) {
         case OpCode::Halt: return "HALT";
         case OpCode::Index: return "INDEX";
         case OpCode::EnumFromName: return "ENUM_FROM_NAME";
+        case OpCode::JmpNil: return "JMP_NIL";
     }
     return "?";
 }

@@ -988,6 +988,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 else if (!value.data.boolean) pc = ins.a;
                 break;
             }
+            case OpCode::JmpNil: {
+                const Value value = pop();
+                if (value.tag == ValueTag::Nil && ins.a < code.size()) pc = ins.a;
+                break;
+            }
             case OpCode::Call: {
                 const uint32_t argc = ins.b;
                 if (argc > sp) {

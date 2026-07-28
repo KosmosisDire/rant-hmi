@@ -105,7 +105,11 @@ const std::vector<NodeSpec>& table() {
             text("slot"),
             object("src", entity_ref(), Role::EntityRef),
             text("path"),
+            /* with `cases`, xf is the ELSE arm; alone it is the whole transform */
             text("xf", "", Role::Expr),
+            /* discrete PATTERN MATCHING over x (spec 2.4): [{when: scalar, xf: Expr}],
+               first match wins; coverage is checked at compile */
+            array("cases", Role::Cases),
             num("poll_hz", nullptr),
             num("stale_ms", nullptr),
         };

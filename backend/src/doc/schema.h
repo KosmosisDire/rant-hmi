@@ -40,6 +40,7 @@ enum class Role {
     Expr,        /* expression text: identifiers may name variables */
     Triggers,    /* the flow's `when` array: timer entries name variables */
     MoveRef,     /* a move's `from` / `to`: an expression, a local name, or {kind, name} */
+    Cases,       /* a feed's `cases` array: each entry's `xf` is an expression */
 };
 
 struct Prop {

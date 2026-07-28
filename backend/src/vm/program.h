@@ -157,6 +157,9 @@ enum class OpCode : uint8_t {
      * `b`: the compile-inserted coercion at a move into an enum-typed field, so a
      * Dropdown's selected name writes back with no authored transform (spec 6.2) */
     EnumFromName,
+    /* pop; jump to `a` when it was Nil: a cased feed's bail-out, so an UNKNOWN input
+     * stores UNKNOWN instead of faulting its way down the arms (spec 2.4) */
+    JmpNil,
 };
 
 enum class Builtin : uint16_t {
