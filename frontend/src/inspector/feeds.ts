@@ -13,7 +13,7 @@ import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
 import { Feed, Json, Widget, WidgetType } from "../types.js";
-import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
+import { attachAutocomplete, attachPathAutocomplete, exprContext, feedPaths, feedX } from "./autocomplete.js";
 import { entityChip, sourceField } from "./editors.js";
 
 const opened = new Set<number>();
@@ -126,6 +126,8 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     title: "Dotted path into the payload",
   });
   bindField(feed.id + ":path", path, () => at().path ?? "");
+  /* completing here IS completing on msg: the source's reflected field paths */
+  attachPathAutocomplete(path, feedPaths(editor, at));
   row("2", [
     diagIcon(editor.diagAt(feed.id, "path")),
     el("span", { class: "kw", html: 'x = <span style="color:#7fc4a0">msg.</span>' }),

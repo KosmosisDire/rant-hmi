@@ -42,6 +42,8 @@ let popFor: HTMLInputElement | null = null;
 let rows: Row[] = [];
 let active = 0;
 let prefixStart = 0;
+/* path pickers replace the whole value; expression completion splices at the prefix */
+let wholeValue = false;
 
 /* remove the dropdown; the row list survives (render re-reads it after closing the
  * previous popup, so clearing it here would blank every refresh) */
@@ -52,6 +54,13 @@ function close(): void {
 }
 
 function accept(input: HTMLInputElement, row: Row): void {
+  if (wholeValue) {
+    input.value = row.insert;
+    input.setSelectionRange(row.insert.length, row.insert.length);
+    close();
+    input.focus();
+    return;
+  }
   const caret = input.selectionStart ?? input.value.length;
   const value = input.value;
   input.value = value.slice(0, prefixStart) + row.insert + value.slice(caret);
@@ -61,6 +70,28 @@ function accept(input: HTMLInputElement, row: Row): void {
   input.focus();
   /* arguments may still be wanted: re-offer immediately after an opening paren */
   if (row.insert.endsWith("(")) refresh(input, contexts.get(input)!);
+}
+
+/* shared keyboard handling while a menu is open: arrows move, Enter/Tab accept,
+ * Escape only closes (capture phase, so commitInput's Enter-blur and Escape-revert
+ * stand once the menu is gone) */
+function menuKeydown(input: HTMLInputElement) {
+  return (ev: KeyboardEvent) => {
+    if (!pop || popFor !== input) return;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      const shown = Math.min(rows.length, 14);
+      active = (active + (ev.key === "ArrowDown" ? 1 : shown - 1)) % shown;
+      render(input);
+    } else if (ev.key === "Enter" || ev.key === "Tab") {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      accept(input, rows[active]);
+    } else if (ev.key === "Escape") {
+      ev.stopImmediatePropagation();
+      close();
+    }
+  };
 }
 
 function render(input: HTMLInputElement): void {
@@ -313,6 +344,7 @@ function refresh(input: HTMLInputElement, ctx: ExprContext): void {
     }
   }
   active = 0;
+  wholeValue = false;
   render(input);
 }
 
@@ -406,24 +438,83 @@ export function attachAutocomplete(input: HTMLInputElement, ctx: ExprContext): v
     close();
     rows = [];
   });
-  input.addEventListener(
-    "keydown",
-    (ev: KeyboardEvent) => {
-      if (!pop || popFor !== input) return;
-      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-        ev.preventDefault();
-        const shown = Math.min(rows.length, 14);
-        active = (active + (ev.key === "ArrowDown" ? 1 : shown - 1)) % shown;
-        render(input);
-      } else if (ev.key === "Enter" || ev.key === "Tab") {
-        ev.preventDefault();
-        ev.stopImmediatePropagation();
-        accept(input, rows[active]);
-      } else if (ev.key === "Escape") {
-        ev.stopImmediatePropagation();
-        close();
-      }
-    },
-    { capture: true },
-  );
+  input.addEventListener("keydown", menuKeydown(input), { capture: true });
+}
+
+/* ---- the path picker (spec 3.7): the chosen entity's field paths, with shapes ---- */
+
+export interface PathOption {
+  path: string;
+  shape: string;
+  elem?: string;
+}
+
+/* Complete a dotted-path field against a fixed option list: typing filters (prefix
+ * first, then contains), picking replaces the WHOLE value. This is "autocomplete on
+ * msg": the options are exactly the fields the source message carries. */
+export function attachPathAutocomplete(
+  input: HTMLInputElement,
+  options: () => PathOption[],
+): void {
+  const refreshPaths = () => {
+    const all = options();
+    const typed = input.value.trim().toLowerCase();
+    const starts = all.filter((o) => o.path.toLowerCase().startsWith(typed));
+    const rest = all.filter(
+      (o) => !starts.includes(o) && o.path.toLowerCase().includes(typed),
+    );
+    rows = starts.concat(rest).map((o) => ({
+      insert: o.path,
+      label: o.path,
+      signature: "",
+      result: o.elem ? o.shape + " of " + o.elem : o.shape,
+      note: "",
+    }));
+    active = 0;
+    wholeValue = true;
+    render(input);
+  };
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.addEventListener("input", refreshPaths);
+  input.addEventListener("focus", refreshPaths);
+  input.addEventListener("blur", () => {
+    close();
+    rows = [];
+  });
+  input.addEventListener("keydown", menuKeydown(input), { capture: true });
+}
+
+/* what a FEED's path may name: the source entity's readable fields (the response
+ * side for a function); an HMI variable has no paths */
+export function feedPaths(editor: Editor, feed: () => Feed) {
+  return (): PathOption[] => {
+    const at = feed();
+    if (!at.src || at.src.kind === "L") return [];
+    const entity = editor.mesh.entities.find(
+      (e) => e.kind === at.src.kind && e.name === at.src.name,
+    );
+    const fields = entity?.kind === "F" ? entity.returns ?? [] : entity?.fields ?? [];
+    return fields.map((f) => ({ path: f.path, shape: f.shape, elem: f.elem }));
+  };
+}
+
+/* what a SETF's path may name: the open message's target fields, i.e. the last build
+ * step before this one. Aggregates stay out: the write side cannot set them. */
+export function buildTargetPaths(editor: Editor, flow: () => Flow, stepId: number) {
+  return (): PathOption[] => {
+    let target: { kind: string; name: string } | null = null;
+    for (const step of (flow().do ?? []) as any[]) {
+      if (step.id === stepId) break;
+      if (step.kind === "build" && step.target?.name) target = step.target;
+      if (step.kind === "send" && !step.buf) target = null;
+    }
+    if (!target) return [];
+    const entity = editor.mesh.entities.find(
+      (e) => e.kind === target!.kind && e.name === target!.name,
+    );
+    return (entity?.fields ?? [])
+      .filter((f) => f.shape !== "list" && f.shape !== "map")
+      .map((f) => ({ path: f.path, shape: f.shape }));
+  };
 }

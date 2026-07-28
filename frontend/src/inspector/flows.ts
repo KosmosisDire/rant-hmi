@@ -15,7 +15,7 @@ import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { Flow, Json, Op, Widget, WidgetType } from "../types.js";
-import { attachAutocomplete, exprContext, flowX } from "./autocomplete.js";
+import { attachAutocomplete, attachPathAutocomplete, buildTargetPaths, exprContext, flowX } from "./autocomplete.js";
 import { sourceField } from "./editors.js";
 
 const opened = new Set<number>();
@@ -470,13 +470,24 @@ function stepRow(
       );
       break;
     }
-    case "setf":
-      cells.push(
-        expr("path", { placeholder: "field", title: "Dotted path into the message" }),
+    case "setf": {
+      /* the path is a FIELD of the open message, not an expression: it completes
+         against the last build target's field table (autocomplete on msg) */
+      const path = commitInput(String(step.path ?? ""), (text) => set("path", text), {
+        class: "field grow",
+        placeholder: "field",
+        title: "Dotted path into the message",
+      });
+      bindField(step.id + ":path", path, () => String(at().path ?? ""));
+      attachPathAutocomplete(
+        path,
+        buildTargetPaths(editor, () => (editor.store.node(flow.id) as Flow) ?? flow, step.id),
       );
+      cells.push(path);
       cells.push(el("span", { class: "op", text: "=" }));
       cells.push(expr("a"));
       break;
+    }
     case "send": {
       const seg = el("div", { class: "seg" }, [
         el("button", {
