@@ -429,7 +429,9 @@ Json indicator_type() {
 Json dropdown_type() {
     return type("Dropdown",
                 compose_slots(tile_base(), {
-                    slot("options", "list", Json::array(), "value"),
+                    /* a TypeRef naming an enum (spec 6.2): the view expands it to the
+                     * variant names, so the options can never drift from the schema */
+                    slot("options", "text", "", "value", "enum-type"),
                     slot("value", "text", "", "value"),
                     /* the field itself is the frame */
                     slot("surface", "color", "#141414", "appearance", "color"),

@@ -150,6 +150,10 @@ enum class OpCode : uint8_t {
     Halt,
     /* appended only: the frontend's attribute interpreter mirrors these ids */
     Index,
+    /* text -> the enum value whose variant name it is, over the type table entry in
+     * `b`: the compile-inserted coercion at a move into an enum-typed field, so a
+     * Dropdown's selected name writes back with no authored transform (spec 6.2) */
+    EnumFromName,
 };
 
 enum class Builtin : uint16_t {
@@ -248,9 +252,13 @@ struct Instruction {
 
 static_assert(sizeof(Instruction) == 16, "Instruction must stay compact");
 
-/* One struct slot in the run: which type it holds, so RuntimeState can size its fields */
+/* One struct slot in the run: which type it holds, so RuntimeState can size its fields.
+ * `temp` marks a flow temporary's slot: only those are snapshot and restored around a
+ * suspension (a declared variable is stable storage, and restoring it would roll back
+ * writes that landed while the run was parked). */
 struct StructDef {
     uint16_t type_id = 0;
+    bool temp = true;
 };
 
 struct FlowProgram {

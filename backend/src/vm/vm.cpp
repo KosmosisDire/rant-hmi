@@ -1023,7 +1023,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     return Value::text(slot);
                 };
                 pending.x = hold_text(x);
+                /* only TEMPORARIES snapshot: a declared struct variable is stable
+                 * storage, and restoring it at resume would roll back writes that
+                 * landed while this run was parked */
                 for (uint32_t i = 0; i < state.structs.size(); ++i) {
+                    if (i < program.structs.size() && !program.structs[i].temp) continue;
                     pending.structs[i].type_id = state.structs[i].type_id;
                     pending.structs[i].fields = state.structs[i].fields;
                     pending.structs[i].set = state.structs[i].set;
@@ -1076,6 +1080,13 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     else
                         item.fields[i] = last.known && i < last.fields.size() ? last.fields[i]
                                                                              : Value::nil();
+                    /* re-home cached text into the struct's own slot (see StoreField) */
+                    if (item.fields[i].tag == ValueTag::Text && i < item.texts.size() &&
+                        item.texts[i] < state.texts.size() &&
+                        item.fields[i].ref != item.texts[i]) {
+                        state.texts[item.texts[i]].set(state.text(program, item.fields[i]));
+                        item.fields[i] = Value::text(item.texts[i]);
+                    }
                     item.set[i] = 1;
                 }
                 break;
@@ -1098,7 +1109,16 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     break;
                 }
                 StructState& item = state.structs[holder.ref];
-                item.fields[ins.b] = pop();
+                Value value = pop();
+                /* text is copied into the struct's OWN slot, so the value at rest never
+                 * points into a site's scratch and survives whatever runs next */
+                if (value.tag == ValueTag::Text && ins.b < item.texts.size() &&
+                    item.texts[ins.b] < state.texts.size() &&
+                    value.ref != item.texts[ins.b]) {
+                    state.texts[item.texts[ins.b]].set(state.text(program, value));
+                    value = Value::text(item.texts[ins.b]);
+                }
+                item.fields[ins.b] = value;
                 item.set[ins.b] = 1;
                 break;
             }
@@ -1155,6 +1175,31 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 for (uint32_t group : program.timers[ins.a].rearm_groups) {
                     if (flow && flow->first_only && group == flow->group) continue;
                     if (group < state.fired.size()) state.fired[group] = 0;
+                }
+                break;
+            }
+            /* the compile-inserted text -> enum coercion: the top of stack must be one
+             * of the type's variant names; anything else is Nil plus a fault, so a
+             * misspelled option can never write a wrong integer silently */
+            case OpCode::EnumFromName: {
+                if (sp == 0) {
+                    fail(ins.c);
+                    break;
+                }
+                Value& top = state.stack[sp - 1];
+                bool matched = false;
+                if (top.tag == ValueTag::Text && ins.b < program.types.size()) {
+                    const std::string_view name = state.text(program, top);
+                    for (const auto& row : program.types[ins.b].variants) {
+                        if (row.first != name) continue;
+                        top = Value::enumeration(row.second, static_cast<uint16_t>(ins.b));
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    top = Value::nil();
+                    fail(ins.c);
                 }
                 break;
             }
@@ -1237,6 +1282,7 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     if (!pending.active || pending.flow >= program.flows.size())
         return RunResult{true, true, false, 0};
     for (uint32_t i = 0; i < state.structs.size(); ++i) {
+        if (i < program.structs.size() && !program.structs[i].temp) continue;
         state.structs[i].type_id = pending.structs[i].type_id;
         state.structs[i].fields = pending.structs[i].fields;
         state.structs[i].set = pending.structs[i].set;

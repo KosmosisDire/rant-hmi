@@ -138,9 +138,21 @@ RuntimeState::RuntimeState(const Program& program) {
     for (uint32_t i = 0; i < program.structs.size(); ++i) {
         StructState& item = structs[i];
         item.type_id = program.structs[i].type_id;
-        const uint32_t n = static_cast<uint32_t>(struct_fields(program, item.type_id).size());
+        const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
+        const uint32_t n = static_cast<uint32_t>(defs.size());
+        /* born ZEROED with no bit set (spec 2.7): a declared struct variable reads as
+         * its type's zero before anything writes it, and a move out of one carries only
+         * the fields that were actually given */
         item.fields.resize(n, Value::nil());
         item.set.resize(n, 0);
+        item.texts.assign(n, UINT32_MAX);
+        for (uint32_t f = 0; f < n; ++f) {
+            item.fields[f] = zero_value(defs[f].shape);
+            if (defs[f].shape == Shape::Text) {
+                item.texts[f] = static_cast<uint32_t>(texts.size());
+                texts.emplace_back(kDefaultTextCap);
+            }
+        }
     }
     /* a struct-shaped cell POINTS at its slot: the Value is the handle, the fields live
      * in `structs`, so a cell read pushes something copyable and a field write lands in
@@ -241,6 +253,54 @@ void RuntimeState::fault(uint32_t site) noexcept {
     ++fault_count;
 }
 
+namespace {
+
+/* the same field-by-field identity the compiler keys struct types by: a declared struct
+ * variable migrates only while its type still means the same thing */
+bool same_struct_type(const Program& a, uint16_t a_type, const Program& b, uint16_t b_type) {
+    const std::vector<FieldDef>& fa = struct_fields(a, a_type);
+    const std::vector<FieldDef>& fb = struct_fields(b, b_type);
+    if (fa.size() != fb.size()) return false;
+    for (uint32_t i = 0; i < fa.size(); ++i)
+        if (fa[i].path != fb[i].path || fa[i].shape != fb[i].shape) return false;
+    return true;
+}
+
+/* Carry a declared struct variable's fields into the new run's slot. Values copy
+ * directly except text (re-homed into the new slot's own FixedText) and aggregates
+ * (they point into the old run's element pool, so they stay the zeroed placeholder);
+ * enum values are restamped with the new program's type id. */
+void migrate_struct(const Program& old_program, const RuntimeState& old_state,
+                    const StructState& src, const Program& new_program,
+                    RuntimeState& next, StructState& dst) {
+    const std::vector<FieldDef>& defs = struct_fields(new_program, dst.type_id);
+    for (uint32_t f = 0; f < defs.size() && f < src.fields.size(); ++f) {
+        const Value& value = src.fields[f];
+        dst.set[f] = src.set[f];
+        switch (defs[f].shape) {
+            case Shape::Text:
+                if (value.tag == ValueTag::Text && f < dst.texts.size() &&
+                    dst.texts[f] < next.texts.size()) {
+                    next.texts[dst.texts[f]].set(old_state.text(old_program, value));
+                    dst.fields[f] = Value::text(dst.texts[f]);
+                }
+                break;
+            case Shape::List:
+            case Shape::Map:
+                break;
+            case Shape::Enum:
+                if (value.tag == ValueTag::Enum)
+                    dst.fields[f] = Value::enumeration(value.data.integer, defs[f].type_id);
+                break;
+            default:
+                if (value_shape(value) == defs[f].shape) dst.fields[f] = value;
+                break;
+        }
+    }
+}
+
+} // namespace
+
 RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_state,
                            const Program& new_program) {
     RuntimeState next(new_program);
@@ -248,9 +308,26 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
     for (uint32_t n = 0; n < new_program.cells.size(); ++n) {
         const CellDef& wanted = new_program.cells[n];
         /* a temporary holds a value only inside a run, so a swap between runs has
-         * nothing to carry; a struct cell's handle was set by the constructor above and
-         * must not be replaced by the old program's slot index (spec 5.11) */
-        if (wanted.kind == CellKind::Temp || wanted.shape == Shape::Struct) continue;
+         * nothing to carry */
+        if (wanted.kind == CellKind::Temp) continue;
+        /* a struct cell's handle was set by the constructor above and must not be
+         * replaced by the old program's slot index (spec 5.11); what migrates is the
+         * SLOT'S CONTENT, field by field, while the type still matches */
+        if (wanted.shape == Shape::Struct) {
+            for (uint32_t o = 0; o < old_program.cells.size(); ++o) {
+                const CellDef& before = old_program.cells[o];
+                if (!same_cell(wanted, before)) continue;
+                if (same_struct_type(old_program, before.type_id, new_program,
+                                     wanted.type_id) &&
+                    wanted.struct_slot < next.structs.size() &&
+                    before.struct_slot < old_state.structs.size())
+                    migrate_struct(old_program, old_state,
+                                   old_state.structs[before.struct_slot], new_program,
+                                   next, next.structs[wanted.struct_slot]);
+                break;
+            }
+            continue;
+        }
         for (uint32_t o = 0; o < old_program.cells.size(); ++o) {
             if (!same_cell(wanted, old_program.cells[o])) continue;
             /* the author restated where this cell starts: keep what the new program

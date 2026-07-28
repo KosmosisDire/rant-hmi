@@ -48,13 +48,6 @@ inline Json read_into(const std::string& local, const char* kind, const std::str
                 {"to", {{"local", local}, {"path", ""}}}};
 }
 
-/* new <Type> -> <local>: start from the type's zero */
-inline Json new_into(const std::string& local, const std::string& type) {
-    return Json{{"kind", "move"},
-                {"from", {{"type", type}}},
-                {"to", {{"local", local}, {"path", ""}}}};
-}
-
 /* <local>.<field> = <expression> */
 inline Json set_field(const std::string& local, const std::string& field,
                       const std::string& expression) {

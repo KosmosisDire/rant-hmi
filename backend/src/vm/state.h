@@ -19,12 +19,16 @@ struct FixedText {
 };
 
 /* One struct value's storage: its fields plus a set-bit each. The set bits are what
- * makes read-modify-write honest on the way out (spec 5.8): `new` sets none, a read sets
- * all, and a field write sets its own. */
+ * makes read-modify-write honest on the way out (spec 5.8): a fresh value sets none, a
+ * read sets all, and a field write sets its own. Text fields own a FixedText slot each
+ * (`texts`, UINT32_MAX where the field is not text): text landing in a struct is copied
+ * into the struct's own slot, so the value at rest never points into a site's scratch
+ * and a declared variable's text can migrate across a recompile. */
 struct StructState {
     uint16_t type_id = 0;
     std::vector<Value> fields;
     std::vector<uint8_t> set;
+    std::vector<uint32_t> texts;
 };
 
 struct LastValueState {

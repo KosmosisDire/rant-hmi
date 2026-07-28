@@ -95,7 +95,7 @@ Value json_value(Program& program, Shape shape, const Json& value, bool& ok) {
 
 /* A move's `from` / `to` is one object discriminated by the key it carries (spec 2.6),
  * so reading one is asking which key is there. */
-enum class SideKind { None, Expr, Local, Entity, New };
+enum class SideKind { None, Expr, Local, Entity };
 
 SideKind side_kind(const Json& side) {
     if (!side.is_object()) return SideKind::None;
@@ -103,7 +103,6 @@ SideKind side_kind(const Json& side) {
     if (side.contains("local")) return SideKind::Local;
     if (side.contains("slot")) return SideKind::Local;
     if (side.contains("kind")) return SideKind::Entity;
-    if (side.contains("type")) return SideKind::New;
     return SideKind::None;
 }
 
@@ -320,20 +319,41 @@ class Compiler {
         return static_cast<uint32_t>(program_.timers.size() - 1);
     }
 
+    /* One declared variable becomes its cell: a scalar or timer by the four base names,
+     * anything else a TypeRef resolved against the type table (spec 2.7) whose cell owns
+     * a struct slot, born zeroed. An unresolved TypeRef is a finding on the variable,
+     * never a silent Nil. */
+    uint32_t declare_variable(const Json& var, CellKind kind, uint64_t owner) {
+        const std::string name = var.value("name", "");
+        const std::string type_text = var.value("type", "");
+        const Shape shape = var_shape(type_text);
+        if (shape != Shape::Unknown)
+            return add_cell(kind, owner, id_of(var), name, shape, var.value("init", Json()),
+                            var.value("persist", false));
+        const int type_id = find_type(type_text);
+        if (type_id < 0) {
+            diag(id_of(var), "unresolved_type",
+                 type_text.empty()
+                     ? "variable '" + name + "' has no type"
+                     : "variable '" + name + "' has type '" + type_text +
+                           "', which is not a type in the mesh",
+                 DiagGrade::Error, "type");
+            return UINT32_MAX;
+        }
+        return add_struct_cell(kind, owner, 0, id_of(var), name,
+                               static_cast<uint16_t>(type_id));
+    }
+
     void build_cells() {
         auto globals = document_.root.find("globals");
         if (globals != document_.root.end() && globals->is_array()) {
             for (const Json& var : *globals) {
                 const std::string name = var.value("name", "");
-                const Shape shape = var_shape(var.value("type", ""));
-                if (shape == Shape::Unknown) {
-                    diag(id_of(var), "var_type", "variable '" + name + "' has an unknown type");
-                    continue;
-                }
-                globals_[name] =
-                    add_cell(CellKind::Global, 0, id_of(var), name, shape,
-                             var.value("init", Json()), var.value("persist", false));
-                if (shape == Shape::Timer) global_timers_[name] = add_timer(0, var);
+                const uint32_t cell = declare_variable(var, CellKind::Global, 0);
+                if (cell == UINT32_MAX) continue;
+                globals_[name] = cell;
+                if (program_.cells[cell].shape == Shape::Timer)
+                    global_timers_[name] = add_timer(0, var);
             }
         }
 
@@ -356,16 +376,10 @@ class Compiler {
                 if (locals != widget.end() && locals->is_array()) {
                     for (const Json& var : *locals) {
                         const std::string name = var.value("name", "");
-                        const Shape shape = var_shape(var.value("type", ""));
-                        if (shape == Shape::Unknown) {
-                            diag(id_of(var), "var_type",
-                                 "local variable '" + name + "' has an unknown type");
-                            continue;
-                        }
-                        info.locals[name] =
-                            add_cell(CellKind::Local, info.id, id_of(var), name, shape,
-                                     var.value("init", Json()), var.value("persist", false));
-                        if (shape == Shape::Timer)
+                        const uint32_t cell = declare_variable(var, CellKind::Local, info.id);
+                        if (cell == UINT32_MAX) continue;
+                        info.locals[name] = cell;
+                        if (program_.cells[cell].shape == Shape::Timer)
                             info.timers[name] = add_timer(info.id, var);
                     }
                 }
@@ -381,6 +395,7 @@ class Compiler {
                         auto override = authored.find(name);
                         if (override != authored.end()) initial = *override;
                         check_variants(info.id, name, slot, initial);
+                        check_enum_type_slot(info.id, name, slot, initial);
                         info.slots[name] =
                             add_cell(CellKind::Slot, info.id, info.id, name, shape, initial, false);
                     }
@@ -397,6 +412,21 @@ class Compiler {
     Shape slot_shape(const Json& slot) const {
         const std::string name = slot.value("shape", "");
         return name == "enum" ? Shape::Text : shape_from_name(name);
+    }
+
+    /* A slot whose editor is the type picker (a Dropdown's `options`) holds a TypeRef
+     * naming an enum (spec 6.2). The view expands it to the variant names itself; what
+     * the compiler owns is the finding when the reference stops resolving. */
+    void check_enum_type_slot(uint64_t widget_id, const std::string& slot, const Json& spec,
+                              const Json& value) {
+        if (spec.value("editor", "") != "enum-type") return;
+        if (!value.is_string() || value.get<std::string>().empty()) return;
+        const std::string text = value.get<std::string>();
+        const int type_id = find_type_ref(text);
+        if (type_id < 0 || program_.types[type_id].kind != TypeKind::Enum)
+            diag(widget_id, "unresolved_type",
+                 "slot '" + slot + "': '" + text + "' does not name an enum in the mesh",
+                 DiagGrade::Error, slot);
     }
 
     /* a value outside a slot's declared variant set is a typo, not a new option */
@@ -479,17 +509,25 @@ class Compiler {
         return -1;
     }
 
+    /* a struct-typed variable also puts each of its fields in scope, dotted, the same
+     * way a struct temporary does (ensure_struct_local): `staged.position` reads like
+     * any other name */
+    void bind_variable(ExpressionScope& scope, const std::string& name, uint32_t cell_index) {
+        const CellDef& cell = program_.cells[cell_index];
+        scope.names[name] = Binding{cell.shape, OpCode::Load, cell_index, 0};
+        if (cell.shape != Shape::Struct) return;
+        const std::vector<FieldDef>& fields = struct_fields(program_, cell.type_id);
+        for (uint32_t i = 0; i < fields.size(); ++i)
+            scope.qualified[name + "." + fields[i].path] =
+                Binding{fields[i].shape, OpCode::LoadField, cell_index, i,
+                        fields[i].type_id};
+    }
+
     ExpressionScope scope_for(const WidgetInfo& widget, Shape x_shape) {
         ExpressionScope scope;
         scope.x_shape = x_shape;
-        for (const auto& item : globals_) {
-            const CellDef& cell = program_.cells[item.second];
-            scope.names[item.first] = Binding{cell.shape, OpCode::Load, item.second, 0};
-        }
-        for (const auto& item : widget.locals) {
-            const CellDef& cell = program_.cells[item.second];
-            scope.names[item.first] = Binding{cell.shape, OpCode::Load, item.second, 0};
-        }
+        for (const auto& item : globals_) bind_variable(scope, item.first, item.second);
+        for (const auto& item : widget.locals) bind_variable(scope, item.first, item.second);
         for (const auto& item : widget.slots) {
             const CellDef& cell = program_.cells[item.second];
             scope.qualified["widget." + item.first] =
@@ -590,7 +628,13 @@ class Compiler {
                             : 1000u;
                     }
                 }
-                const std::string xf = str_or(node, "xf", "");
+                std::string xf = str_or(node, "xf", "");
+                /* the one automatic coercion (spec 6.2): an enum-shaped source feeding a
+                 * text slot reads as its variant name, so a Dropdown bound to an enum
+                 * field needs no authored transform */
+                if (xf.empty() && scope.x_shape == Shape::Enum &&
+                    program_.cells[feed.cell].shape == Shape::Text)
+                    xf = "x.name";
                 bool ok = true;
                 if (xf.empty()) {
                     /* no transform: the source value stores as-is, so the shapes must
@@ -658,18 +702,21 @@ class Compiler {
     }
 
     /* A struct-shaped cell owns one of the run's struct slots: the cell's Value is the
-     * handle, the fields live in that slot (spec 5.2). */
-    uint32_t add_struct_cell(uint64_t flow_id, uint64_t widget_id, const std::string& name,
-                             uint16_t type_id) {
+     * handle, the fields live in that slot (spec 5.2). A flow temporary and a declared
+     * struct variable differ only in kind and lifetime: a temporary's slot is snapshot
+     * around suspensions, a variable's is stable storage. */
+    uint32_t add_struct_cell(CellKind kind, uint64_t widget_id, uint64_t flow_id,
+                             uint64_t node_id, const std::string& name, uint16_t type_id) {
         CellDef cell;
-        cell.kind = CellKind::Temp;
+        cell.kind = kind;
         cell.owner_widget = widget_id;
         cell.owner_flow = flow_id;
+        cell.node_id = node_id;
         cell.name = name;
         cell.shape = Shape::Struct;
         cell.type_id = type_id;
         cell.struct_slot = static_cast<uint32_t>(program_.structs.size());
-        program_.structs.push_back(StructDef{type_id});
+        program_.structs.push_back(StructDef{type_id, kind == CellKind::Temp});
         program_.layout.max_struct_fields = std::max<uint32_t>(
             program_.layout.max_struct_fields,
             static_cast<uint32_t>(struct_fields(program_, type_id).size()));
@@ -783,9 +830,38 @@ class Compiler {
             if (actual) *actual = def.shape;
             return true;
         }
-        diag(step_id, "move_source", "a new value needs a struct destination",
-             DiagGrade::Error, "from");
+        diag(step_id, "move_source", "this move has no source", DiagGrade::Error, "from");
         return false;
+    }
+
+    /* push_scalar toward one FIELD, with the one compile-inserted coercion: text into an
+     * enum-typed field becomes the variant's value (spec 6.2), so a Dropdown's selected
+     * name writes back with no authored transform. */
+    bool push_field_value(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                          ExpressionScope& scope, const Json& from, const FieldDef& field) {
+        if (field.shape != Shape::Enum || field.type_id == 0)
+            return push_scalar(widget, step, flow, scope, from, field.shape);
+        Shape produced = Shape::Unknown;
+        if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+            return false;
+        if (produced == Shape::Text) {
+            Instruction coerce;
+            coerce.op = OpCode::EnumFromName;
+            coerce.b = field.type_id;
+            coerce.c = fault_site(id_of(step), "enum_name",
+                                  "the text is not one of this enum's variants");
+            flow.code.push_back(coerce);
+            return true;
+        }
+        if (produced != Shape::Unknown && produced != Shape::Nil &&
+            produced != Shape::Enum) {
+            diag(id_of(step), "shape",
+                 "the source is " + std::string(shape_name(produced)) +
+                     ", but this field wants enum",
+                 DiagGrade::Error, "from");
+            return false;
+        }
+        return true;
     }
 
     /* `-> local`: the destination names a variable in scope, or declares a temporary by
@@ -823,16 +899,26 @@ class Compiler {
             return true;
         }
 
-        /* a field of a struct local: the local must already exist, because a field write
-           says nothing about what type the whole value is */
+        /* A field of a struct value: the holder must already exist (a temporary above
+           this row, or a declared struct variable), because a field write says nothing
+           about what type the whole value is. */
         if (!path.empty()) {
+            uint32_t cell = UINT32_MAX;
             auto found = locals.find(name);
-            if (found == locals.end() || program_.cells[found->second].shape != Shape::Struct) {
+            if (found != locals.end()) cell = found->second;
+            else cell = declared_cell(widget, name);
+            if (cell == UINT32_MAX) {
                 diag(step_id, "move_dest",
                      "'" + name + "' has no value yet at this row", DiagGrade::Error, "to");
                 return false;
             }
-            const uint32_t cell = found->second;
+            if (program_.cells[cell].shape != Shape::Struct) {
+                diag(step_id, "move_dest",
+                     "'" + name + "' is " + shape_name(program_.cells[cell].shape) +
+                         ", which has no fields",
+                     DiagGrade::Error, "to");
+                return false;
+            }
             const uint16_t type_id = program_.cells[cell].type_id;
             const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
             int field = -1;
@@ -844,7 +930,8 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
-            if (!push_scalar(widget, step, flow, scope, from, fields[field].shape)) return false;
+            if (!push_field_value(widget, step, flow, scope, from, fields[field]))
+                return false;
             Instruction set;
             set.op = OpCode::StoreField;
             set.a = cell;
@@ -854,21 +941,13 @@ class Compiler {
             return true;
         }
 
-        /* `new T` and a whole-entity read both produce a STRUCT: the local takes that
-           type, which is what "a temporary is typed by what is first moved into it" means */
+        /* A whole-entity read produces a STRUCT: the local takes that type, which is
+           what "a temporary is typed by what is first moved into it" means. (Starting
+           from a zeroed value is not a step: declare a variable with the type, and it
+           is born zeroed, spec 2.7.) */
         uint16_t struct_type = 0;
         int read_entity = -1;
-        if (from.contains("type")) {
-            const std::string type_text = str_or(from, "type", "");
-            const int found = find_type(type_text);
-            if (found < 0) {
-                diag(step_id, "unresolved_type",
-                     type_text.empty() ? "pick a type" : "type '" + type_text + "' is not in the mesh",
-                     DiagGrade::Error, "from");
-                return false;
-            }
-            struct_type = static_cast<uint16_t>(found);
-        } else if (from.contains("kind") && str_or(from, "path", "").empty()) {
+        if (from.contains("kind") && str_or(from, "path", "").empty()) {
             const int entity = resolve_entity(from, step_id, "from");
             if (entity < 0) return false;
             if (program_.entities[entity].fields.size() > 1 ||
@@ -883,9 +962,9 @@ class Compiler {
                                                       struct_type, step_id);
             if (cell == UINT32_MAX) return false;
             Instruction ins;
-            ins.op = read_entity >= 0 ? OpCode::ReadEnt : OpCode::New;
+            ins.op = OpCode::ReadEnt;
             ins.a = cell;
-            ins.b = read_entity >= 0 ? static_cast<uint32_t>(read_entity) : struct_type;
+            ins.b = static_cast<uint32_t>(read_entity);
             ins.c = fault_site(step_id, "move_new", "the value could not be created");
             flow.code.push_back(ins);
             return true;
@@ -949,14 +1028,20 @@ class Compiler {
             return true;
         }
 
-        /* a whole struct goes out as the message; anything else fills one field */
+        /* a whole struct goes out as the message; anything else fills one field. The
+           holder is a flow temporary or a declared struct variable, same as any other
+           name in scope. */
         const std::string source_local = str_or(from, "local", "");
-        auto held = locals.find(source_local);
-        const bool whole = !source_local.empty() && str_or(from, "path", "").empty() &&
-                           held != locals.end() &&
-                           program_.cells[held->second].shape == Shape::Struct;
+        uint32_t held_cell = UINT32_MAX;
+        if (!source_local.empty()) {
+            auto held = locals.find(source_local);
+            if (held != locals.end()) held_cell = held->second;
+            else held_cell = declared_cell(widget, source_local);
+        }
+        const bool whole = held_cell != UINT32_MAX && str_or(from, "path", "").empty() &&
+                           program_.cells[held_cell].shape == Shape::Struct;
         if (whole) {
-            const uint32_t cell = held->second;
+            const uint32_t cell = held_cell;
             if (program_.cells[cell].type_id != target.type_id) {
                 diag(step_id, "type_mismatch",
                      "'" + type_name_of(program_.cells[cell].type_id) + "' does not fit " +
@@ -981,7 +1066,7 @@ class Compiler {
                          DiagGrade::Error, "to");
                 return false;
             }
-            if (!push_scalar(widget, step, flow, scope, from, target.fields[field].shape))
+            if (!push_field_value(widget, step, flow, scope, from, target.fields[field]))
                 return false;
             out.b = static_cast<uint32_t>(field);
         }
@@ -991,8 +1076,11 @@ class Compiler {
         return true;
     }
 
-    /* Declare (or find) a struct local and put its fields in scope, so a later row can
-     * read `m.position` the way it reads any other name. */
+    /* Declare (or find) a struct-holding destination and put its fields in scope, so a
+     * later row can read `m.position` the way it reads any other name. A declared
+     * struct variable of the same type is a legal destination (that is how a value is
+     * staged across flows, spec 2.7); a declared variable of any other type is a
+     * finding rather than a coercion. */
     uint32_t ensure_struct_local(const WidgetInfo& widget, FlowProgram& flow,
                                  FlowLocals& locals, ExpressionScope& scope,
                                  const std::string& name, uint16_t type_id, uint64_t step_id) {
@@ -1008,13 +1096,23 @@ class Compiler {
             }
             return found->second;
         }
-        if (declared_cell(widget, name) != UINT32_MAX) {
-            diag(step_id, "temp_shadow",
-                 "'" + name + "' is already a variable; a struct temporary needs its own name",
-                 DiagGrade::Error, "to");
-            return UINT32_MAX;
+        const uint32_t declared = declared_cell(widget, name);
+        if (declared != UINT32_MAX) {
+            const CellDef& cell = program_.cells[declared];
+            if (cell.shape != Shape::Struct || cell.type_id != type_id) {
+                diag(step_id, "type_mismatch",
+                     "'" + name + "' is a " +
+                         (cell.shape == Shape::Struct ? type_name_of(cell.type_id)
+                                                      : std::string(shape_name(cell.shape))) +
+                         " variable; it cannot take a " + type_name_of(type_id),
+                     DiagGrade::Error, "to");
+                return UINT32_MAX;
+            }
+            locals[name] = declared;
+            return declared;
         }
-        const uint32_t cell = add_struct_cell(flow.flow_id, widget.id, name, type_id);
+        const uint32_t cell =
+            add_struct_cell(CellKind::Temp, widget.id, flow.flow_id, 0, name, type_id);
         locals[name] = cell;
         const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
         for (uint32_t i = 0; i < fields.size(); ++i)
@@ -1027,6 +1125,19 @@ class Compiler {
         for (uint32_t i = 1; i < program_.types.size(); ++i)
             if (program_.types[i].kind == TypeKind::Struct && program_.types[i].name == name)
                 return static_cast<int>(i);
+        return -1;
+    }
+
+    /* A full TypeRef (spec 2.2): a struct root by name, or `Root.path.to.field` for a
+     * type that has no name of its own (an enum reached through a struct's field). */
+    int find_type_ref(const std::string& text) const {
+        const size_t dot = text.find('.');
+        if (dot == std::string::npos) return find_type(text);
+        const int root = find_type(text.substr(0, dot));
+        if (root < 0) return -1;
+        const std::string path = text.substr(dot + 1);
+        for (const FieldDef& field : program_.types[root].fields)
+            if (field.path == path && field.type_id) return field.type_id;
         return -1;
     }
 

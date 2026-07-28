@@ -60,6 +60,10 @@ Document runtime_document() {
         {"type", "Slider"},
         {"label", "Command"},
         {"slots", Json{{"value", 1.0}}},
+        /* `msg` is a struct-typed local (spec 2.7): born zeroed, so the commit flow
+         * needs no conjuring step before filling its fields */
+        {"locals",
+         Json::array({Json{{"name", "msg"}, {"type", "Motor"}, {"init", nullptr}}})},
         {"feeds",
          Json::array({
              Json{{"slot", "value"},
@@ -96,7 +100,6 @@ Document runtime_document() {
              {"do",
               Json::array({
                   steps::gate("x >= 0 && x <= 100"),
-                  steps::new_into("msg", "Motor"),
                   steps::set_field("msg", "speed", "x + setpoint"),
                   steps::set_field("msg", "enabled", "true"),
                   steps::write_value("msg", "V", "motor"),
@@ -141,7 +144,18 @@ std::vector<EntityDef> reflection() {
     motor.forceable = true;
     motor.type_name = "Motor";
     motor.fields = {FieldDef{"speed", Shape::Num}, FieldDef{"enabled", Shape::Bool}};
-    return {sensor, command, motor};
+
+    EntityDef gear;
+    gear.kind = EntityKind::Variable;
+    gear.name = "gear";
+    gear.readable = true;
+    gear.writable = true;
+    FieldDef mode;
+    mode.path = "mode";
+    mode.shape = Shape::Enum;
+    mode.variants = {{"stop", 0}, {"run", 1}, {"fast", 2}};
+    gear.fields = {mode};
+    return {sensor, command, motor, gear};
 }
 
 uint64_t slider_id(const Document& document) {
@@ -325,6 +339,115 @@ void test_migration() {
 
     RuntimeState untouched = migrate_state(compiled.program, old_state, compiled.program);
     CHECK(untouched.values[slot].data.num == 41);
+}
+
+/* A struct-TYPED declared variable (spec 2.7): born zeroed, filled field by field, its
+ * content carried across a recompile, and an unresolvable TypeRef a finding. */
+void test_typed_variables() {
+    Document document = runtime_document();
+    FakeMesh mesh(reflection());
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK(compiled.ok);
+    RuntimeState state(compiled.program);
+    const uint64_t widget = slider_id(document);
+    run_event(compiled.program, state, widget, "input", Value::number(3));
+    state.clear_outputs();
+    run_event(compiled.program, state, widget, "commit", Value::number(4));
+
+    int msg = -1;
+    for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+        if (compiled.program.cells[i].kind == CellKind::Local &&
+            compiled.program.cells[i].name == "msg")
+            msg = static_cast<int>(i);
+    CHECK(msg >= 0);
+    const CellDef& cell = compiled.program.cells[msg];
+    CHECK(cell.shape == Shape::Struct);
+    CHECK(cell.struct_slot < state.structs.size());
+    CHECK(state.structs[cell.struct_slot].fields[0].data.num == 10);
+    CHECK(state.structs[cell.struct_slot].set[0] == 1);
+
+    /* the staged value survives a recompile while the type still matches */
+    RuntimeState migrated = migrate_state(compiled.program, state, compiled.program);
+    CHECK(migrated.structs[cell.struct_slot].fields[0].data.num == 10);
+    CHECK(migrated.structs[cell.struct_slot].set[0] == 1);
+    CHECK(migrated.structs[cell.struct_slot].set[1] == 1);
+
+    /* a TypeRef that resolves nothing is a finding on the variable, never a silent Nil */
+    Document broken = runtime_document();
+    broken.root["pages"][0]["widgets"][0]["locals"][0]["type"] = "Bogus";
+    broken.reindex();
+    CompileResult failed = compile_document(broken, registry(), mesh);
+    CHECK(!failed.ok);
+    bool found = false;
+    for (const Diag& diag : failed.program.diagnostics)
+        if (diag.code == "unresolved_type") found = true;
+    CHECK(found);
+}
+
+/* The enum <-> text coercions the compiler inserts (spec 6.2): a feed from an enum field
+ * into a text slot reads as the variant name, and a text written into an enum field
+ * becomes the variant's value; a name outside the vocabulary is Nil plus a fault. */
+void test_enum_names() {
+    Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                 {"pages", Json::array()}};
+    Json label = {
+        {"type", "Label"},
+        {"label", "gear"},
+        {"slots", Json::object()},
+        {"feeds", Json::array({Json{{"slot", "text"},
+                                    {"src", entity("V", "gear")},
+                                    {"path", "mode"}}})},
+        {"flows",
+         Json::array({
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({steps::write_field("V", "gear", "mode", "\"fast\"")})}},
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({steps::write_field("V", "gear", "mode", "\"bogus\"")})}},
+         })},
+    };
+    root["pages"].push_back(Json{{"name", "Main"}, {"widgets", Json::array({label})}});
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    FakeMesh mesh(reflection());
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    RuntimeState state(compiled.program);
+
+    /* the feed carries no authored transform; the compiler inserted x.name */
+    CHECK(compiled.program.feeds.size() == 1);
+    const FeedProgram& feed = compiled.program.feeds[0];
+    int gear = -1;
+    for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
+        if (compiled.program.entities[i].name == "gear") gear = static_cast<int>(i);
+    CHECK(gear >= 0);
+    const uint16_t mode_type = compiled.program.entities[gear].fields[0].type_id;
+    CHECK(mode_type != 0);
+    RunResult fed = run_feed(compiled.program, feed, state,
+                             Value::enumeration(1, mode_type));
+    CHECK(!fed.faulted);
+    CHECK(state.text(compiled.program, state.values[feed.cell]) == "run");
+
+    /* writing the name lands the value */
+    state.clear_outputs();
+    RunResult tap = run_event(compiled.program, state, widget, "tap", Value::nil());
+    CHECK(!tap.faulted);
+    std::string fault;
+    CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
+    CHECK(!mesh.transcript().empty());
+    const std::string& line = mesh.transcript().back();
+    CHECK_MSG(line.find("write V:gear.mode=enum(") == 0, line);
+    CHECK_MSG(line.size() > 3 && line.compare(line.size() - 3, 3, ",2)") == 0, line);
+
+    /* a name outside the vocabulary faults instead of writing a wrong integer */
+    state.clear_outputs();
+    RunResult press = run_event(compiled.program, state, widget, "press", Value::nil());
+    CHECK(press.faulted);
 }
 
 void test_compile_fault() {
@@ -1123,6 +1246,8 @@ int main() {
     test_compile_and_run();
     test_replay();
     test_migration();
+    test_typed_variables();
+    test_enum_names();
     test_compile_fault();
     test_expression_rejection();
     test_tiers();

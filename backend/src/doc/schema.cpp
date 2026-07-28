@@ -19,11 +19,14 @@ Prop enumer(std::string key, std::vector<std::string> variants, const char* def)
     Prop p; p.key = std::move(key); p.type = PropType::Enum; p.variants = std::move(variants);
     p.def = def; return p;
 }
-/* an enum prop that also decides the shape of another prop: one default per variant, and
- * the default's JSON shape IS the target shape (no second table to keep in step) */
-Prop enumer_retyping(std::string key, std::vector<std::string> variants, const char* def,
-                     std::string retypes, std::vector<Json> defaults) {
-    Prop p = enumer(std::move(key), std::move(variants), def);
+/* Free text that still RETYPES another prop for the values it knows. A variable's type
+ * is one of the four scalars or any TypeRef from the mesh (spec 2.7); only the scalars
+ * imply an init shape, and an unknown value (a TypeRef) leaves the init alone: the
+ * compiler resolves it against the type table and zeroes the value. */
+Prop text_retyping(std::string key, const char* def, std::vector<std::string> known,
+                   std::string retypes, std::vector<Json> defaults) {
+    Prop p = text(std::move(key), def);
+    p.variants = std::move(known);
     p.retypes = std::move(retypes);
     p.variant_defaults = std::move(defaults);
     return p;
@@ -85,9 +88,11 @@ const std::vector<NodeSpec>& table() {
         var.props = {
             text("name"),
             /* the type owns the init's shape: a bool variable whose init stayed the
-             * number 0 would compile to UNKNOWN and never leave it (Nil poisons) */
-            enumer_retyping("type", {"f64", "bool", "str", "timer"}, "f64", "init",
-                            {Json(0.0), Json(false), Json(""), Json(1.0)}),
+             * number 0 would compile to UNKNOWN and never leave it (Nil poisons).
+             * Anything beyond the four scalars is a TypeRef (spec 2.7): the variable
+             * holds a struct, zeroed, and the compiler resolves the name. */
+            text_retyping("type", "f64", {"f64", "bool", "str", "timer"}, "init",
+                          {Json(0.0), Json(false), Json(""), Json(1.0)}),
             any("init", 0),
             boolean("persist", false),
         };
@@ -130,7 +135,7 @@ const std::vector<NodeSpec>& table() {
             /* ONE transfer step (spec 2.6). `from` and `to` are free-form objects
                discriminated by which key they carry, so a source or destination gains a
                form without a new prop:
-                 from  {"expr": "x"} | {"kind","name","path"} | {"type": "ValveCmd"}
+                 from  {"expr": "x"} | {"kind","name","path"} | {"local","path"}
                  to    {"local","path"} | {"kind","name","path"} | {"slot"}
                `mode` applies to a V destination only; every other verb is derived. */
             {"move", {object("from", Json{{"expr", "x"}}, Role::MoveRef),

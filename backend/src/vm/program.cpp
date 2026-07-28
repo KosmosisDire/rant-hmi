@@ -88,6 +88,8 @@ const char* op_name(OpCode op) {
         case OpCode::TmrCancel: return "TMR_CANCEL";
         case OpCode::Fault: return "FAULT";
         case OpCode::Halt: return "HALT";
+        case OpCode::Index: return "INDEX";
+        case OpCode::EnumFromName: return "ENUM_FROM_NAME";
     }
     return "?";
 }
