@@ -38,8 +38,11 @@ Json emit(const char* op, std::initializer_list<Json> args) {
 
 Json pick(Json cond, Json a, Json b) { return emit("PICK", {cond, a, b}); }
 Json sub(Json a, Json b) { return emit("SUB", {a, b}); }
+Json mul(Json a, Json b) { return emit("MUL", {a, b}); }
 Json div(Json a, Json b) { return emit("DIV", {a, b}); }
 Json ne(Json a, Json b) { return emit("NE", {a, b}); }
+Json ge(Json a, Json b) { return emit("GE", {a, b}); }
+Json lt(Json a, Json b) { return emit("LT", {a, b}); }
 Json to_fixed(Json v, Json dp) { return emit("TO_FIXED", {v, dp}); }
 
 /* value scaled into 0..1 by its min/max slots, clamped: what a bar or a knob wants */
@@ -262,33 +265,67 @@ Json toggle_type() {
 
 Json slider_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
+    /* whether the fill region can hold the value text: both sides in tile units. The
+       text box is 1.8 x the bar height; 1.9 leaves it a little air before flipping */
+    Json fill_w = mul(fraction, ref("tile:w"));
+    Json text_w = mul(lit(1.9), ref("tile:h"));
+    Json value_text = Json{{"text", to_fixed(ref("slot:value"), ref("slot:decimals"))},
+                           {"fill", ref("slot:text_color")},
+                           {"scale", ref("slot:text_scale")},
+                           {"strong", lit(true)},
+                           {"aspect", lit(1.8)},
+                           {"pad", lit(0.1)}};
+    Json inside_text = value_text;
+    inside_text["align"] = lit("end");
+    Json outside_text = std::move(value_text);
+    outside_text["align"] = lit("start");
     return type("Slider",
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
+                    slot("decimals", "num", 0, "config"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("knob_color", "color", "#ececec", "appearance", "color"),
+                    slot("show_value", "bool", true, "appearance"),
+                    slot("text_color", "color", "#ececec", "appearance", "color"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
                     Json::array({
-                        box("col", Json{{"pad", lit(0.3)}},
-                            Json::array({part("bar", Json{{"value", fraction},
-                                                          {"fill", ref("slot:fill_color")},
-                                                          {"track", ref("slot:track_color")},
-                                                          {"radius", lit(999)},
-                                                          {"dir", lit("h")}})})),
-                        box("row", Json::object(),
+                        /* the fill IS the handle: one full-tile bar, its leading edge
+                           marking the value */
+                        part("bar", Json{{"value", fraction},
+                                         {"fill", ref("slot:fill_color")},
+                                         {"track", ref("slot:track_color")},
+                                         {"radius", lit(4)},
+                                         {"dir", lit("h")}}),
+                        /* the value readout hugs the fill edge from the inside: a box
+                           whose weight IS the fraction ends exactly at the edge, and
+                           the text right-aligns in it, so it tracks the edge 1:1 */
+                        box("row", Json{{"show", pick(ref("slot:show_value"),
+                                                      ge(fill_w, text_w), lit(false))}},
                             Json::array({
-                                box("stack", Json{{"weight", fraction}}, Json::array()),
-                                part("rect", Json{{"fill", ref("slot:knob_color")},
-                                                  {"radius", lit(999)},
-                                                  {"aspect", lit(0.55)}}),
+                                box("row", Json{{"weight", fraction}},
+                                    Json::array({
+                                        box("stack", Json{{"weight", lit(1)}}, Json::array()),
+                                        part("text", inside_text),
+                                    })),
                                 box("stack", Json{{"weight", sub(lit(1), fraction)}},
                                     Json::array()),
+                            })),
+                        /* ...and flips to just past the edge when the fill is too
+                           narrow to hold it */
+                        box("row", Json{{"show", pick(ref("slot:show_value"),
+                                                      lt(fill_w, text_w), lit(false))}},
+                            Json::array({
+                                box("stack", Json{{"weight", fraction}}, Json::array()),
+                                box("row", Json{{"weight", sub(lit(1), fraction)}},
+                                    Json::array({
+                                        part("text", outside_text),
+                                        box("stack", Json{{"weight", lit(1)}}, Json::array()),
+                                    })),
                             })),
                     }),
                     interact("drag1d",
@@ -298,7 +335,7 @@ Json slider_type() {
                                   {"step", ref("slot:step")}},
                              Json{{"input", "input"}, {"commit", "commit"}})),
                 /* the drag primitive already mapped the pointer into min..max by step, so
-                   the default is the identity: the knob follows the finger */
+                   the default is the identity: the fill follows the finger */
                 Json::array({on_event("input", {sets_slot("value", "x")})}));
 }
 
