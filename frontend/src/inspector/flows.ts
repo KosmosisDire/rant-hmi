@@ -1,12 +1,19 @@
 /* Flow cards (spec 3.4 to 3.6): collapsed, a flow shows only what identifies it, its entry
  * condition and what it ends up writing. Open, the WHEN row and the numbered DO list, which
  * is a flat pipeline over one register `x`. Row 1 is not editable: it states where x comes
- * from, so the seed is visible. */
+ * from, so the seed is visible.
+ *
+ * SHAPE here is the pipeline itself: which steps exist, in what order, of what kind, and
+ * the discrete choices that grow or drop a row (a `held` trigger gains a duration, a
+ * repeating one gains an interval). The expressions, paths, names and rates written into
+ * those rows are values, so typing in one step never rebuilds the list around it and the
+ * live seed chip ticks without touching anything. */
 
-import { chip, commitInput, el, iconButton, numberInput, selectField } from "../dom.js";
-import { Editor, liveText, trackLive, variablesInScope } from "../editor.js";
+import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
+import { Editor, liveText, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
+import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { Flow, Json, Op, Widget, WidgetType } from "../types.js";
 import { entityRefEditor } from "./editors.js";
 
@@ -66,7 +73,29 @@ function targets(flow: Flow): { kind: string; name: string }[] {
   return out;
 }
 
+/* which rows this flow has; deliberately not what they say */
+export function flowShape(flow: Flow): Json {
+  const when: Json[] = Array.isArray(flow.when) ? flow.when : [];
+  const first = when[0] ?? {};
+  return [
+    flow.id,
+    opened.has(flow.id),
+    when.map((t: Json) => t?.kind ?? "event").join("|"),
+    first.kind ?? "event",
+    first.name ?? "",
+    Boolean(first.every_ms),
+    targets(flow).map((t) => t.kind + ":" + t.name).join(","),
+    (flow.do ?? []).map((step: Json) => [
+      step.id,
+      step.kind,
+      step.target?.kind ?? "",
+      Boolean(step.buf),
+    ]),
+  ];
+}
+
 export function flowCard(editor: Editor, widget: Widget, type: WidgetType | null, flow: Flow): HTMLElement {
+  const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
   const open = opened.has(flow.id);
   const set = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: flow.id, key, value }]);
@@ -80,14 +109,26 @@ export function flowCard(editor: Editor, widget: Widget, type: WidgetType | null
     style: open ? "" : "transform:rotate(-90deg)",
   });
   const written = targets(flow);
+
+  const trigger = chip("", "trigger");
+  bindText(flow.id + ":when.chip", trigger, () =>
+    triggerText((Array.isArray(at().when) ? at().when[0] : null) ?? first),
+  );
+  const every = first.every_ms ? chip("", "timer") : null;
+  if (every)
+    bindText(flow.id + ":every.chip", every, () => {
+      const head = (Array.isArray(at().when) ? at().when[0] : null) ?? first;
+      return (head?.every_ms ?? 0) + " ms";
+    });
+
   const head = el("div", { class: "card-head" }, [
     caret,
     el("span", { class: "kw", text: "when" }),
-    chip(triggerText(first), "trigger"),
+    trigger,
     timerEntry ? el("span", { class: "kw", text: "or" }) : null,
-    timerEntry ? timerChip(timerEntry.var || "?") : null,
+    timerEntry ? timerChip(editor, flow, timerEntry.var || "?") : null,
     first.every_ms ? el("span", { class: "kw", text: "every" }) : null,
-    first.every_ms ? chip(first.every_ms + " ms", "timer") : null,
+    every,
     ...(written.length
       ? written.flatMap((t) => [
           el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
@@ -125,10 +166,18 @@ export function flowCard(editor: Editor, widget: Widget, type: WidgetType | null
   return card;
 }
 
-function timerChip(name: string): HTMLElement {
+function timerChip(editor: Editor, flow: Flow, name: string): HTMLElement {
   const node = chip("", "timer");
   node.innerHTML = iconMarkup("timer", 11, 1.5);
-  node.appendChild(el("span", { text: " " + name + " ends" }));
+  const text = el("span", { text: " " + name + " ends" });
+  bindText(flow.id + ":or.chip", text, () => {
+    const when: Json[] = Array.isArray((editor.store.node(flow.id) as Flow)?.when)
+      ? (editor.store.node(flow.id) as Flow).when
+      : [];
+    const entry = when.find((t: Json) => t?.kind === "timer");
+    return " " + (entry?.var || "?") + " ends";
+  });
+  node.appendChild(text);
   return node;
 }
 
@@ -148,64 +197,68 @@ function whenRow(
   first: Json,
   set: (key: string, value: Json) => void,
 ): HTMLElement {
+  const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
+  const entries = (): Json[] => (Array.isArray(at().when) ? at().when : []);
+  const head = (): Json => entries()[0] ?? first;
   const events = (type?.events ?? []).map((e) => ({ value: e.name, label: pastTense(e.name) }));
   const timers = variablesInScope(editor, widget).filter((v) => v.type === "timer");
   const setFirst = (patch: Json) => {
-    const next = when.slice();
-    next[0] = { ...first, ...patch };
+    const next = entries().slice();
+    next[0] = { ...head(), ...patch };
     set("when", next.length ? next : [{ kind: "event", name: "press" }]);
   };
   const row = el("div", { class: "row" }, []);
 
   if (when.length > 1) {
-    const mode = flow.when_mode ?? "first";
-    row.appendChild(
-      el("div", { class: "seg" }, [
-        el("button", {
-          class: mode === "first" ? "on" : "",
-          title: "first trigger only",
-          text: "first",
-          onclick: () => set("when_mode", "first"),
-        }),
-        el("button", {
-          class: mode === "any" ? "on" : "",
-          title: "any trigger",
-          text: "any",
-          onclick: () => set("when_mode", "any"),
-        }),
-      ]),
-    );
+    const seg = el("div", { class: "seg" }, [
+      el("button", {
+        "data-value": "first",
+        title: "first trigger only",
+        text: "first",
+        onclick: () => set("when_mode", "first"),
+      }),
+      el("button", {
+        "data-value": "any",
+        title: "any trigger",
+        text: "any",
+        onclick: () => set("when_mode", "any"),
+      }),
+    ]);
+    bindGroup(flow.id + ":when_mode", seg, () => at().when_mode ?? "first");
+    row.appendChild(seg);
   }
 
   if (first.kind === "timer") {
-    row.appendChild(
-      selectField(
-        timers.length ? timers.map((t) => ({ value: t.name })) : [{ value: "" }],
-        first.var ?? "",
-        (name) => setFirst({ var: name }),
-        "trigger",
-      ),
+    const picker = selectField(
+      timers.length ? timers.map((t) => ({ value: t.name })) : [{ value: "" }],
+      first.var ?? "",
+      (name) => setFirst({ var: name }),
+      "trigger",
     );
+    bindChoice(flow.id + ":when.var", pickerOf(picker), () => head().var ?? "");
+    row.appendChild(picker);
     row.appendChild(el("span", { class: "op", text: "ends" }));
   } else {
-    row.appendChild(
-      selectField(
-        events.concat([{ value: "@timer", label: "timer ends" }]),
-        first.name ?? "",
-        (name) =>
-          name === "@timer"
-            ? setFirst({ kind: "timer", var: timers[0]?.name ?? "", name: undefined })
-            : setFirst({ name }),
-        "trigger",
-      ),
+    const picker = selectField(
+      events.concat([{ value: "@timer", label: "timer ends" }]),
+      first.name ?? "",
+      (name) =>
+        name === "@timer"
+          ? setFirst({ kind: "timer", var: timers[0]?.name ?? "", name: undefined })
+          : setFirst({ name }),
+      "trigger",
     );
+    bindChoice(flow.id + ":when.name", pickerOf(picker), () => head().name ?? "");
+    row.appendChild(picker);
   }
 
   if (first.name === "held") {
     row.appendChild(el("span", { class: "op", text: "for" }));
-    row.appendChild(
-      numberInput(first.hold_ms ?? 600, (ms) => setFirst({ hold_ms: ms }), { class: "field num" }),
-    );
+    const hold = numberInput(first.hold_ms ?? 600, (ms) => setFirst({ hold_ms: ms }), {
+      class: "field num",
+    });
+    bindField(flow.id + ":when.hold_ms", hold, () => String(head().hold_ms ?? 600));
+    row.appendChild(hold);
     row.appendChild(el("span", { class: "op", text: "ms" }));
     const repeating = Boolean(first.every_ms);
     row.appendChild(
@@ -226,31 +279,33 @@ function whenRow(
     );
     if (repeating) {
       row.appendChild(el("span", { class: "op", text: "every" }));
-      row.appendChild(
-        numberInput(first.every_ms ?? 250, (ms) => setFirst({ every_ms: ms }), { class: "field num" }),
-      );
+      const interval = numberInput(first.every_ms ?? 250, (ms) => setFirst({ every_ms: ms }), {
+        class: "field num",
+      });
+      bindField(flow.id + ":when.every_ms", interval, () => String(head().every_ms ?? 250));
+      row.appendChild(interval);
       row.appendChild(el("span", { class: "op", text: "ms" }));
     }
   }
 
-  const timerEntry = when.findIndex((t) => t.kind === "timer" && t !== first);
-  if (timerEntry >= 0) {
+  const orAt = when.findIndex((t) => t.kind === "timer" && t !== first);
+  if (orAt >= 0) {
     row.appendChild(el("span", { class: "op", text: "or" }));
-    row.appendChild(
-      selectField(
-        timers.length ? timers.map((t) => ({ value: t.name })) : [{ value: "" }],
-        when[timerEntry].var ?? "",
-        (name) => {
-          const next = when.slice();
-          next[timerEntry] = { kind: "timer", var: name };
-          set("when", next);
-        },
-      ),
+    const picker = selectField(
+      timers.length ? timers.map((t) => ({ value: t.name })) : [{ value: "" }],
+      when[orAt].var ?? "",
+      (name) => {
+        const next = entries().slice();
+        next[orAt] = { kind: "timer", var: name };
+        set("when", next);
+      },
     );
+    bindChoice(flow.id + ":when.or", pickerOf(picker), () => entries()[orAt]?.var ?? "");
+    row.appendChild(picker);
     row.appendChild(el("span", { class: "op", text: "ends" }));
     row.appendChild(
       iconButton("x", "remove this OR", () =>
-        set("when", when.filter((_, i) => i !== timerEntry)),
+        set("when", entries().filter((_, i) => i !== orAt)),
       ),
     );
   } else if (first.kind !== "timer" && !first.every_ms) {
@@ -259,7 +314,7 @@ function whenRow(
         class: "icon-btn framed",
         title: "add an OR entry",
         html: iconMarkup("plus", 11, 2),
-        onclick: () => set("when", when.concat([{ kind: "timer", var: timers[0]?.name ?? "" }])),
+        onclick: () => set("when", entries().concat([{ kind: "timer", var: timers[0]?.name ?? "" }])),
       }),
     );
   }
@@ -278,7 +333,7 @@ function doList(editor: Editor, widget: Widget, type: WidgetType | null, flow: F
       el("span", { class: "do-grip" }),
       el("span", { class: "row-num", text: "1" }),
       el("span", { class: "kw", title: "x starts as the widget output", text: "x =" }),
-      liveChip(editor, widget.id + ".value"),
+      liveChip(editor, flow.id + ":seed", widget.id + ".value"),
     ]),
   );
 
@@ -309,11 +364,10 @@ function doList(editor: Editor, widget: Widget, type: WidgetType | null, flow: F
   return list;
 }
 
-function liveChip(editor: Editor, cell: string): HTMLElement {
-  const node = chip(liveText(editor.live, cell), "live");
-  return trackLive(node, (live) => {
-    node.textContent = liveText(live, cell);
-  });
+function liveChip(editor: Editor, key: string, cell: string): HTMLElement {
+  const node = chip("", "live");
+  bindText(key, node, () => liveText(editor.live, cell));
+  return node;
 }
 
 function stepRow(
@@ -325,45 +379,58 @@ function stepRow(
   number: string,
   indented: boolean,
 ): HTMLElement {
+  const at = () => editor.store.node(step.id) ?? step;
   const set = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: step.id, key, value }]);
   const cells: (HTMLElement | null)[] = [];
   const label = STEP_LABEL[step.kind] ?? step.kind;
   if (label) cells.push(el("span", { class: "op", text: label }));
+  const expr = (prop: string, attrs: Json = {}) => {
+    const field = commitInput(String(step[prop] ?? ""), (text) => set(prop, text), {
+      class: "field grow",
+      ...attrs,
+    });
+    bindField(step.id + ":" + prop, field, () => String(at()[prop] ?? ""));
+    return field;
+  };
 
   switch (step.kind) {
     case "transform":
     case "gate":
-      cells.push(commitInput(step.a ?? "", (a) => set("a", a), { class: "field grow" }));
+      cells.push(expr("a"));
       break;
     case "deadband":
     case "throttle":
     case "debounce":
-    case "delay":
-      cells.push(numberInput(Number(step.a ?? 0), (a) => set("a", a), { class: "field num" }));
+    case "delay": {
+      const amount = numberInput(Number(step.a ?? 0), (a) => set("a", a), { class: "field num" });
+      bindField(step.id + ":a", amount, () => String(Number(at().a ?? 0)));
+      cells.push(amount);
       if (MS_STEPS.has(step.kind)) cells.push(el("span", { class: "op", text: "ms" }));
       break;
+    }
     case "build": {
-      cells.push(chip(step.buf || "msg", "msg", "message under construction"));
+      const buf = chip("", "msg", "message under construction");
+      bindText(step.id + ":buf", buf, () => at().buf || "msg");
+      cells.push(buf);
       cells.push(el("span", { class: "op", text: "=" }));
-      cells.push(entityRefEditor(step.target, (target) => set("target", target)));
-      const seed = step.seed ?? "last";
-      cells.push(
-        el("div", { class: "seg" }, [
-          el("button", {
-            class: seed === "last" ? "on" : "",
-            title: "seed from last values",
-            html: iconMarkup("reset", 11, 1.7),
-            onclick: () => set("seed", "last"),
-          }),
-          el("button", {
-            class: seed === "zero" ? "on" : "",
-            title: "start zeroed",
-            html: iconMarkup("x", 11, 1.7),
-            onclick: () => set("seed", "zero"),
-          }),
-        ]),
-      );
+      cells.push(entityRefEditor(step.id + ":target", () => at().target, (target) => set("target", target)));
+      const seg = el("div", { class: "seg" }, [
+        el("button", {
+          "data-value": "last",
+          title: "seed from last values",
+          html: iconMarkup("reset", 11, 1.7),
+          onclick: () => set("seed", "last"),
+        }),
+        el("button", {
+          "data-value": "zero",
+          title: "start zeroed",
+          html: iconMarkup("x", 11, 1.7),
+          onclick: () => set("seed", "zero"),
+        }),
+      ]);
+      bindGroup(step.id + ":seed", seg, () => at().seed ?? "last");
+      cells.push(seg);
       cells.push(
         el("button", {
           class: "chip clickable ghost-chip",
@@ -385,53 +452,57 @@ function stepRow(
     }
     case "setf":
       cells.push(
-        commitInput(step.path ?? "", (path) => set("path", path), {
-          class: "field grow",
-          placeholder: "field",
-          title: "Dotted path into the message",
-        }),
+        expr("path", { placeholder: "field", title: "Dotted path into the message" }),
       );
       cells.push(el("span", { class: "op", text: "=" }));
-      cells.push(commitInput(step.a ?? "", (a) => set("a", a), { class: "field grow" }));
+      cells.push(expr("a"));
       break;
     case "send": {
-      const verb = step.verb ?? "write";
-      cells.push(
-        el("div", { class: "seg" }, [
-          el("button", {
-            class: verb === "force" ? "" : "on",
-            title: "write",
-            html: iconMarkup("pencil", 11, 1.7),
-            onclick: () => set("verb", "write"),
-          }),
-          el("button", {
-            class: verb === "force" ? "on" : "",
-            title: "force",
-            html: iconMarkup("lock", 11, 1.7),
-            onclick: () => set("verb", "force"),
-          }),
-        ]),
-      );
-      cells.push(chip(step.buf || "x", step.buf ? "msg" : "live"));
+      const seg = el("div", { class: "seg" }, [
+        el("button", {
+          "data-value": "write",
+          title: "write",
+          html: iconMarkup("pencil", 11, 1.7),
+          onclick: () => set("verb", "write"),
+        }),
+        el("button", {
+          "data-value": "force",
+          title: "force",
+          html: iconMarkup("lock", 11, 1.7),
+          onclick: () => set("verb", "force"),
+        }),
+      ]);
+      bindGroup(step.id + ":verb", seg, () => at().verb ?? "write");
+      cells.push(seg);
+      const buf = chip("", step.buf ? "msg" : "live");
+      bindText(step.id + ":buf", buf, () => at().buf || "x");
+      cells.push(buf);
       cells.push(el("span", { class: "op", text: "to" }));
-      cells.push(entityRefEditor(step.target, (target) => set("target", target)));
+      cells.push(entityRefEditor(step.id + ":target", () => at().target, (target) => set("target", target)));
       break;
     }
     case "assign":
       cells.push(
-        variableChip(editor, widget, step.var ?? "", (name) => set("var", name)),
+        variableChip(editor, widget, step.id + ":var", () => at().var ?? "", (name) => set("var", name)),
       );
       cells.push(el("span", { class: "op", text: "=" }));
-      cells.push(commitInput(step.a ?? "", (a) => set("a", a), { class: "field grow" }));
+      cells.push(expr("a"));
       break;
     case "unforce":
       cells.push(unforceChip());
-      cells.push(entityRefEditor(step.target, (target) => set("target", target)));
+      cells.push(entityRefEditor(step.id + ":target", () => at().target, (target) => set("target", target)));
       break;
     case "tmr_start":
     case "tmr_cancel":
       cells.push(
-        variableChip(editor, widget, step.timer ?? "", (name) => set("timer", name), "timer"),
+        variableChip(
+          editor,
+          widget,
+          step.id + ":timer",
+          () => at().timer ?? "",
+          (name) => set("timer", name),
+          "timer",
+        ),
       );
       break;
     default:
@@ -498,13 +569,17 @@ function unforceChip(): HTMLElement {
 function variableChip(
   editor: Editor,
   widget: Widget,
-  name: string,
+  key: string,
+  read: () => string,
   commit: (name: string) => void,
   only?: "timer",
 ): HTMLElement {
-  const node = chip("", "clickable pad-mark" + (name ? "" : " ghost-chip"));
+  const node = chip("", "clickable pad-mark");
   node.appendChild(kindMark("L"));
-  node.appendChild(el("span", { text: name || "pick variable" }));
+  const text = el("span");
+  bindText(key, text, () => read() || "pick variable");
+  bindFlag(key + ".ghost", node, "ghost-chip", () => !read());
+  node.appendChild(text);
   node.appendChild(el("span", { class: "arrow", html: iconMarkup("chevron-down", 9, 2) }));
   node.addEventListener("click", (ev) => {
     const options = variablesInScope(editor, widget)
@@ -528,13 +603,13 @@ function stepMenu(
   flow: Flow,
   ev: MouseEvent,
 ): void {
-  const at = (flow.do ?? []).length;
+  const at = ((editor.store.node(flow.id) as Flow | null) ?? flow).do ?? [];
   const insert = (nodes: Json[]) => {
     const ops: Op[] = nodes.map((node, offset) => ({
       op: "insert",
       parent: flow.id,
       list: "do",
-      index: at + offset,
+      index: at.length + offset,
       node,
     }));
     editor.apply(ops);

@@ -1,6 +1,12 @@
-/* Slot resolution, the one rule both the canvas and the inspector must agree on
- * (spec 2.3): a slot WITH a feed resolves to the live value or UNKNOWN, never to a
- * fallback; a slot without one resolves to the instance value, else the type default. */
+/* Slot resolution (spec 2.3): a slot WITH a feed resolves to the live value or UNKNOWN,
+ * never to a fallback; a slot without one resolves to the instance value, else the type
+ * default.
+ *
+ * There are two readers, because the canvas and the inspector want different things from an
+ * unfed slot. `resolveSlot` is the canvas's: it DRAWS the runtime, so the runtime's cell
+ * wins wherever it has one. `editedSlot` is the inspector's: a field EDITS the document, so
+ * an unfed slot reads what the document says. They agree exactly where it matters, on a fed
+ * slot, which neither can source anywhere but the feed. */
 
 import { Cells } from "./program.js";
 import { Json, Live, Registry, SlotSpec, WidgetType, Widget } from "./types.js";
@@ -35,10 +41,33 @@ export function resolveSlot(
   const value = live?.values?.[slotCell(widget, name)];
   if (value !== undefined) return value;
   if (fed.has(name)) return null; /* fed but nothing delivered yet: UNKNOWN */
+  return authoredSlot(widget, type, name);
+}
+
+/* what the DOCUMENT says a slot is: the instance value, else the type default */
+export function authoredSlot(widget: Widget, type: WidgetType | null, name: string): Json {
   const instance = widget.slots?.[name];
   if (instance !== undefined) return instance;
   const spec = slotSpec(type, name);
   return spec ? spec.default : null;
+}
+
+/* What an INSPECTOR field shows, which is not what the canvas draws. The canvas renders the
+ * runtime and so reads the live cell for every slot; a field is an INPUT, and an input must
+ * show the thing it edits. So an unfed slot reads from the document: the runtime's cell for
+ * it is a compiled copy, and reading that back would fight whatever the user just typed.
+ * A fed slot has no authored value to show, so it is a read-only view of the feed: the live
+ * value, or UNKNOWN until something arrives. */
+export function editedSlot(
+  widget: Widget,
+  type: WidgetType | null,
+  live: Live | null,
+  fed: Set<string>,
+  name: string,
+): Json {
+  if (!fed.has(name)) return authoredSlot(widget, type, name);
+  const value = live?.values?.[slotCell(widget, name)];
+  return value === undefined ? null : value;
 }
 
 /* the cell space a template program reads: slots, this view's interaction state, and

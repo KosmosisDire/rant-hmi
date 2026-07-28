@@ -1,13 +1,15 @@
 /* Headless check of the view's pure half: it starts the real backend, joins over the
- * real protocol, and drives the document mirror, the attribute interpreter and the
- * template renderer (all DOM-free: the renderer returns SVG text). What it cannot cover
- * is pixels and gestures; that is what a browser is for.
+ * real protocol, and drives the document mirror, the attribute interpreter, the template
+ * renderer (DOM-free: it returns SVG text) and the rail reconciler, which gets a DOM small
+ * enough to run in-process (dom_shim.mjs). What none of it covers is pixels and gestures;
+ * that is what a browser is for.
  *
  *   node test/render_test.mjs        (after `node build.mjs` and a backend build) */
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { rmSync } from "node:fs";
+import { Element, fire, installDom, typeInto } from "./dom_shim.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist");
@@ -15,13 +17,16 @@ const exe = join(here, "..", "..", "bin", "hmi_designer" + (process.platform ===
 const PORT = 7593;
 const DOC = join(here, "render_test.tmp.json");
 
+installDom();
+
 const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
 const { renderContent } = await import(mod("canvas.js"));
 const { run } = await import(mod("program.js"));
 const { unionPath } = await import(mod("islands.js"));
 const { syncUrl } = await import(mod("endpoint.js"));
-const { refreshLive, trackLive } = await import(mod("editor.js"));
+const { Panel } = await import(mod("reconcile.js"));
+const { inspectorShape, renderInspector } = await import(mod("inspector/panel.js"));
 
 let failures = 0;
 let checks = 0;
@@ -52,22 +57,6 @@ check(
   "remote sync keeps the page origin",
 );
 
-let patched = null;
-const liveNode = {
-  setAttribute() {},
-};
-const liveRoot = {
-  scrollTop: 91,
-  querySelectorAll() {
-    return [liveNode];
-  },
-};
-trackLive(liveNode, (live) => {
-  patched = live;
-});
-refreshLive(liveRoot, { epoch: 4, values: { v1: 7 } });
-check(patched?.values?.v1 === 7, "live rail nodes patch without a rebuild");
-check(liveRoot.scrollTop === 91, "live rail patch keeps scroll position");
 function has(svg, needle, what) {
   check(svg.includes(needle), what + " (looking for " + JSON.stringify(needle) + ")");
 }
@@ -200,6 +189,163 @@ store.apply(second.version, second.ops);
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 has(svg, ">12<", "decimals 0 rounded the value");
 check(!svg.includes(">bar<"), "an empty units slot sheds its part");
+
+/* ---- inspector reconciliation ----
+   The rails are generated from the document, so the question every echo asks is what it
+   does to the DOM. An ordinary value must land in the control already standing there:
+   same node, new value, no rebuild, and therefore nothing to put back afterwards. A
+   structural edit may rebuild, and must then find the user again by document address
+   rather than by position in the tree. */
+
+const rail = new Element("aside");
+rail.className = "rail right";
+const panel = new Panel(rail);
+const readout = store.pages()[0].widgets[7];
+const editor = {
+  store,
+  registry: snapshot.registry,
+  live: { epoch: 1, values: {} },
+  view,
+  page: () => store.pages()[0],
+  selectedWidget: () => store.widget(readout.id),
+  apply: () => undefined,
+  setPage: () => undefined,
+  select: () => undefined,
+  refresh: () => undefined,
+};
+const draw = () => panel.render(inspectorShape(editor), (host) => renderInspector(host, editor));
+/* a version arriving from another window, applied to the mirror exactly as onOps does */
+const echo = (ops) => {
+  store.apply(store.version() + 1, ops);
+  draw();
+};
+const geomField = (at) => rail.querySelector(".geom-grid").children[at];
+const slotControl = (name) => {
+  for (const grid of rail.querySelectorAll(".prop-grid")) {
+    const kids = grid.children;
+    for (let i = 0; i + 1 < kids.length; i++)
+      if (kids[i].tagName === "LABEL" && kids[i].textContent === name) return kids[i + 1];
+  }
+  return null;
+};
+
+draw();
+check(rail.querySelectorAll("input").length > 0, "the inspector built controls");
+
+/* 1. a value echo moves the value and nothing else */
+const shapeBefore = inspectorShape(editor);
+const widthField = geomField(5);
+rail.scrollTop = 140;
+echo([{ op: "set_prop", node: readout.id, key: "geom", value: { ...readout.geom, w: 321 } }]);
+check(inspectorShape(editor) === shapeBefore, "a value echo does not move the inspector's shape");
+check(geomField(5) === widthField, "a value echo keeps the very same input node");
+check(widthField.value === "321", "a value echo assigns the new value, got " + widthField.value);
+check(rail.scrollTop === 140, "a value echo leaves scroll alone, got " + rail.scrollTop);
+
+/* 2. the bug the old focus restore caused: a remote change to the field you are standing
+      in was overwritten by the stale local copy, so the inspector looked frozen */
+widthField.focus();
+echo([{ op: "set_prop", node: readout.id, key: "geom", value: { ...readout.geom, w: 654 } }]);
+check(widthField.value === "654", "a remote change reaches a FOCUSED field, got " + widthField.value);
+check(document.activeElement === widthField, "and the field keeps focus");
+
+/* 3. An UNFED slot's field edits the document, so it shows the document. The runtime keeps
+      its own compiled copy of that slot, and a field that read it back would fight whatever
+      the user just typed: this is the "changing a value does nothing" bug. */
+const valueInput = slotControl("value").children[0];
+const authored = valueInput.value;
+editor.live = { epoch: 2, values: { [readout.id + ".value"]: 99.5 } };
+draw();
+check(slotControl("value").children[0] === valueInput, "a live frame does not rebuild the slot editor");
+check(
+  valueInput.value === authored,
+  "an unfed slot's field ignores the runtime cell, got " + valueInput.value,
+);
+echo([{ op: "set_prop", node: readout.id, key: "slots", value: { value: 5.5, decimals: 0 } }]);
+check(valueInput.value === "5.5", "an unfed slot's field follows the document, got " + valueInput.value);
+
+/* 4. a FED slot has no authored value to show, so it IS the runtime: live drives it, and
+      UNKNOWN until something arrives. Widget 10's `value` is fed in the seeded document. */
+const fedWidget = store.pages()[0].widgets.find((w) => (w.feeds ?? []).some((f) => f.slot === "value"));
+const fedPanel = new Panel(new Element("aside"));
+const fedEditor = { ...editor, selectedWidget: () => store.widget(fedWidget.id) };
+const drawFed = () =>
+  fedPanel.render(inspectorShape(fedEditor), (host) => renderInspector(host, fedEditor));
+fedEditor.live = { epoch: 3, values: {} };
+drawFed();
+const fedCell = (() => {
+  for (const grid of fedPanel.host.querySelectorAll(".prop-grid")) {
+    const kids = grid.children;
+    for (let i = 0; i + 1 < kids.length; i++)
+      if (kids[i].tagName === "LABEL" && kids[i].textContent === "value") return kids[i + 1];
+  }
+  return null;
+})();
+const fedInput = fedCell.children[0];
+check(fedInput.value === "", "a fed slot with nothing delivered reads UNKNOWN, got " + fedInput.value);
+check(fedInput.getAttribute("placeholder") === "--", "and says so with the UNKNOWN placeholder");
+fedEditor.live = { epoch: 4, values: { [fedWidget.id + ".value"]: 4.25 } };
+drawFed();
+check(fedCell.children[0] === fedInput, "a live frame does not rebuild a fed slot editor");
+check(fedInput.value === "4.25", "a live frame drives a fed slot, got " + fedInput.value);
+
+/* 4. uncommitted text is held under the document address, so a rebuild caused by an edit
+      somewhere else gives it back, and focus follows the key rather than the tree position */
+const labelField = rail.querySelector(".inspector-head").children[0];
+typeInto(labelField, "half typed");
+echo([
+  {
+    op: "insert",
+    parent: readout.id,
+    list: "locals",
+    node: { id: 9001, name: "tmp", type: "f64", init: 0, persist: false },
+  },
+]);
+const rebuiltLabel = rail.querySelector(".inspector-head").children[0];
+check(rebuiltLabel !== labelField, "a structural edit does rebuild the inspector");
+check(rebuiltLabel.value === "half typed", "uncommitted text survives it, got " + rebuiltLabel.value);
+check(document.activeElement === rebuiltLabel, "focus lands on the same control by key");
+fire(rebuiltLabel, "change");
+
+/* 5. an insert that puts controls ABOVE the focused one must not redirect focus into a
+      different control, which is exactly what a numeric DOM path would do */
+const heightField = geomField(7);
+heightField.focus();
+echo([
+  {
+    op: "insert",
+    parent: readout.id,
+    list: "locals",
+    node: { id: 9002, name: "tmp2", type: "f64", init: 0, persist: false },
+  },
+]);
+check(geomField(7) !== heightField, "the second insert rebuilt the inspector");
+check(document.activeElement === geomField(7), "focus follows the key past inserted controls");
+check(
+  document.activeElement.getAttribute("type") === "number",
+  "and lands on the same kind of control",
+);
+
+/* 6. the same batch changes the focused field AND the structure. Restoring the caret must
+      not restore the VALUE with it: the field was not dirty, so what the echo carries wins */
+const focusedWidth = geomField(5);
+focusedWidth.focus();
+echo([
+  { op: "set_prop", node: readout.id, key: "geom", value: { ...readout.geom, w: 777 } },
+  {
+    op: "insert",
+    parent: readout.id,
+    list: "locals",
+    node: { id: 9003, name: "tmp3", type: "f64", init: 0, persist: false },
+  },
+]);
+check(geomField(5) !== focusedWidth, "the mixed batch rebuilt the inspector");
+check(
+  geomField(5).value === "777",
+  "a rebuild with focus held still shows the echoed value, got " + geomField(5).value,
+);
+check(document.activeElement === geomField(5), "and the caret is still in that field");
+document.activeElement = null;
 
 /* merging does not depend on the grid: two touching off-grid widgets are ONE island, and
    two separated ones are two (one closed loop per island) */

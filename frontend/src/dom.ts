@@ -1,8 +1,11 @@
 /* The whole "framework": element construction, the small set of controls the rails are
  * built from, and nothing else. No virtual DOM and no reactivity on purpose: the document
- * lives on the backend, so a panel re-renders when a version arrives. */
+ * lives on the backend, and reconcile.ts pushes each arriving value into the control that
+ * already shows it. These constructors stay pure, so a control can be built once and then
+ * driven for the rest of its life. */
 
 import { iconMarkup } from "./icons.js";
+import { shownValue } from "./reconcile.js";
 
 export type Attrs = Record<string, string | number | boolean | ((ev: any) => void) | undefined>;
 export type Kids = (Node | string | null)[];
@@ -36,31 +39,6 @@ export function clear(node: Element): void {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
-/* A panel is rebuilt wholesale when a version arrives, so the control the user is in has
- * to be found again afterwards. Its address is its position in the tree: the structure is
- * generated from the document, so the same path lands on the same control, and when it
- * does not (the structure changed) the caller simply leaves focus alone. */
-export function pathOf(root: Element, node: Element): number[] | null {
-  const path: number[] = [];
-  let cur: Element | null = node;
-  while (cur && cur !== root) {
-    const parent: Element | null = cur.parentElement;
-    if (!parent) return null;
-    path.unshift(Array.prototype.indexOf.call(parent.children, cur));
-    cur = parent;
-  }
-  return cur === root ? path : null;
-}
-
-export function nodeAt(root: Element, path: number[]): Element | null {
-  let cur: Element | null = root;
-  for (const index of path) {
-    if (!cur) return null;
-    cur = cur.children[index] ?? null;
-  }
-  return cur;
-}
-
 export function iconButton(
   name: string,
   title: string,
@@ -76,7 +54,9 @@ export function iconButton(
 }
 
 /* a text input that commits on Enter or blur, never per keystroke: an op stream of
- * half-typed text would fight other views for the caret (spec 4.2) */
+ * half-typed text would fight other views for the caret (spec 4.2). Escape reverts to the
+ * value the reconciler last put in, which is the document's current one; the value the
+ * field was built with is only the fallback for an unbound field. */
 export function commitInput(
   value: string,
   commit: (text: string) => void,
@@ -91,7 +71,7 @@ export function commitInput(
       const input = ev.target as HTMLInputElement;
       if (ev.key === "Enter") input.blur();
       if (ev.key === "Escape") {
-        input.value = value;
+        input.value = shownValue(input) ?? value;
         input.blur();
       }
     },
@@ -116,6 +96,13 @@ export function numberInput(
   }) as HTMLInputElement;
 }
 
+/* the picker inside a select field's wrapper, for callers that bind its value */
+const pickers = new WeakMap<HTMLElement, HTMLSelectElement>();
+
+export function pickerOf(wrap: HTMLElement): HTMLSelectElement {
+  return pickers.get(wrap) as HTMLSelectElement;
+}
+
 /* a select carries its own caret mark: the native arrow is not part of the language */
 export function selectField(
   options: { value: string; label?: string }[],
@@ -135,10 +122,12 @@ export function selectField(
     ),
   );
   (picker as HTMLSelectElement).value = value;
-  return el("span", { class: "select-wrap " + cls }, [
+  const wrap = el("span", { class: "select-wrap " + cls }, [
     picker,
     el("span", { class: "caret-mark", html: iconMarkup("chevron-down", 9, 2) }),
   ]);
+  pickers.set(wrap, picker as HTMLSelectElement);
+  return wrap;
 }
 
 export function chip(text: string, cls = "", title = ""): HTMLElement {
@@ -146,7 +135,8 @@ export function chip(text: string, cls = "", title = ""): HTMLElement {
 }
 
 /* the content-alignment control: a 3x3 grid picking both axes at once, instead of a
- * nine-entry dropdown nobody can scan */
+ * nine-entry dropdown nobody can scan. Each button carries the value it stands for, so the
+ * selection can be re-pointed without rebuilding the grid. */
 const ALIGN_POSITIONS = [
   "top-left", "top", "top-right",
   "left", "center", "right",
@@ -158,16 +148,33 @@ export function alignGrid(value: string, commit: (v: string) => void): HTMLEleme
     "div",
     { class: "align-grid" },
     ALIGN_POSITIONS.map((pos) =>
-      el("button", { class: pos === value ? "on" : "", title: pos, onclick: () => commit(pos) }, [
-        el("span", { class: "align-dot" }),
-      ]),
+      el(
+        "button",
+        {
+          class: pos === value ? "on" : "",
+          title: pos,
+          "data-value": pos,
+          onclick: () => commit(pos),
+        },
+        [el("span", { class: "align-dot" })],
+      ),
     ),
   );
 }
 
 /* a bool as a two-state pair, matching every other two-state control */
 export function boolPair(value: boolean, commit: (v: boolean) => void): HTMLElement {
-  const off = el("button", { text: "off", class: value ? "" : "on", onclick: () => commit(false) });
-  const on = el("button", { text: "on", class: value ? "on" : "", onclick: () => commit(true) });
+  const off = el("button", {
+    text: "off",
+    class: value ? "" : "on",
+    "data-value": "off",
+    onclick: () => commit(false),
+  });
+  const on = el("button", {
+    text: "on",
+    class: value ? "on" : "",
+    "data-value": "on",
+    onclick: () => commit(true),
+  });
   return el("div", { class: "bool-pair" }, [off, on]);
 }

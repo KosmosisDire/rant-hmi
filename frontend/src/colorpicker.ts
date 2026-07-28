@@ -5,6 +5,7 @@
  * overlay, so any click outside closes it and nobody tracks "is a picker open". */
 
 import { commitInput, el } from "./dom.js";
+import { bind, bindField } from "./reconcile.js";
 
 interface Rgba {
   r: number; /* 0..255 */
@@ -358,28 +359,41 @@ function openColorPicker(
 
 /* ---- the field control ---- */
 
-/* the anchor row a caller embeds: a swatch that opens the popup, and the hex text form */
-export function colorField(value: string, commit: (hex: string) => void): HTMLElement {
+/* The anchor row a caller embeds: a swatch that opens the popup, and the hex text form.
+ * Given a key and a reader it drives itself, so the colour arriving from the document (or
+ * from another window's drag) repaints the swatch and refills the field without the anchor
+ * ever being replaced. That is what lets the popup stay open across an edit: it holds this
+ * exact swatch as its anchor. */
+export function colorField(
+  value: string,
+  commit: (hex: string) => void,
+  key?: string,
+  read?: () => string,
+): HTMLElement {
   const swatch = el("button", { class: "swatch", title: "pick a color" });
+  const current = () => (read ? read() : (hex as HTMLInputElement).value);
   /* the anchor field takes hex, and a pasted rgba tuple as a courtesy */
   const hex = commitInput(value, (text) => {
     const parsed = parseHex(text) ?? parseRgbaText(text);
     if (!parsed) {
-      (hex as HTMLInputElement).value = value;
+      (hex as HTMLInputElement).value = read ? read() : value;
       return;
     }
     commit(formatHex(parsed));
   }, { class: "field grow cpick-hex" });
 
-  paintSwatch(swatch, parseHex(value) ?? { r: 0, g: 0, b: 0, a: 0 });
+  const paintAnchor = (text: string) =>
+    paintSwatch(swatch, parseHex(text) ?? { r: 0, g: 0, b: 0, a: 0 });
+  paintAnchor(value);
+  if (key && read) {
+    bindField(key, hex as HTMLInputElement, read);
+    bind(key + ".swatch", swatch, () => paintAnchor(read()));
+  }
   swatch.addEventListener("click", () =>
-    openColorPicker(swatch, (hex as HTMLInputElement).value, (picked) => {
-      /* live feedback on the anchor while it is still in the document; a rail rebuild
-         replaces the anchor, and the popup keeps working on its own */
-      if (swatch.isConnected) {
-        paintSwatch(swatch, parseHex(picked) ?? { r: 0, g: 0, b: 0, a: 0 });
-        (hex as HTMLInputElement).value = picked;
-      }
+    openColorPicker(swatch, current(), (picked) => {
+      /* the drag paints the anchor as it goes; the echo confirms it through the binding */
+      paintAnchor(picked);
+      (hex as HTMLInputElement).value = picked;
       commit(picked);
     }),
   );

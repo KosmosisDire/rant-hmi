@@ -1,17 +1,28 @@
 /* Feed cards (spec 3.3): collapsed, a feed reads as one right-to-left sentence; open, it
  * is a numbered grid of the steps a value takes to reach the slot. Same document node
  * either way, so the collapsed form summarizes identity and the open form exposes fields:
- * there is no third representation. */
+ * there is no third representation.
+ *
+ * The card's SHAPE is which rows it has: whether it is open, which source kind it names
+ * (a function polls, so it grows a rate field), and whether it carries a transform at all.
+ * The names, paths and rates inside those rows are values, pushed in place, so editing one
+ * field never rebuilds the sentence above it. */
 
-import { chip, commitInput, el, numberInput, selectField } from "../dom.js";
+import { chip, commitInput, el, numberInput, pickerOf, selectField } from "../dom.js";
 import { Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
+import { bindChoice, bindField, bindText } from "../reconcile.js";
 import { Feed, Json, Widget, WidgetType } from "../types.js";
 import { entityChip, entityRefEditor } from "./editors.js";
 
 const opened = new Set<number>();
 
+export function feedShape(feed: Feed): Json {
+  return [feed.id, feed.slot, opened.has(feed.id), feed.src?.kind ?? "V", Boolean(feed.xf)];
+}
+
 export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | null, feed: Feed): HTMLElement {
+  const at = () => (editor.store.node(feed.id) as Feed | null) ?? feed;
   const open = opened.has(feed.id);
   const set = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: feed.id, key, value }]);
@@ -22,14 +33,25 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
     html: iconMarkup("chevron-down", 10, 2),
     style: open ? "" : "transform:rotate(-90deg)",
   });
+
+  const slotChip = chip("", "slot");
+  bindText(feed.id + ":slot.chip", slotChip, () => at().slot || "slot");
+  const xfChip = feed.xf ? chip("", "xf") : null;
+  if (xfChip) bindText(feed.id + ":xf.chip", xfChip, () => "f " + (at().xf ?? ""));
+  const rateChip = isFunction ? chip("", "timer") : null;
+  if (rateChip)
+    bindText(feed.id + ":poll.chip", rateChip, () =>
+      at().poll_hz ? at().poll_hz + " Hz" : "",
+    );
+
   const head = el("div", { class: "card-head" }, [
     caret,
-    chip(feed.slot || "slot", "slot"),
+    slotChip,
     el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }),
-    feed.xf ? chip("f " + feed.xf, "xf") : null,
-    feed.xf ? el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }) : null,
-    entityChip(feed.src, feed.path),
-    isFunction && feed.poll_hz ? chip(feed.poll_hz + " Hz", "timer") : null,
+    xfChip,
+    xfChip ? el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }) : null,
+    entityChip(feed.id + ":src.chip", () => ({ ref: at().src, path: at().path })),
+    rateChip,
   ]);
 
   const card = el("div", { class: "card" + (open ? " open" : "") }, [head]);
@@ -48,44 +70,47 @@ export function feedCard(editor: Editor, _widget: Widget, type: WidgetType | nul
     body.appendChild(el("div", { class: "row" }, cells));
   };
 
-  if (slots.length > 1)
-    row("", [
-      el("span", { class: "kw", text: "slot" }),
-      selectField(
-        slots.map((s) => ({ value: s.name })),
-        feed.slot,
-        (slot) => set("slot", slot),
-      ),
-    ]);
+  if (slots.length > 1) {
+    const picker = selectField(
+      slots.map((s) => ({ value: s.name })),
+      feed.slot,
+      (slot) => set("slot", slot),
+    );
+    bindChoice(feed.id + ":slot", pickerOf(picker), () => at().slot ?? "");
+    row("", [el("span", { class: "kw", text: "slot" }), picker]);
+  }
+
+  const rate = isFunction
+    ? numberInput(feed.poll_hz ?? 2, (hz) => set("poll_hz", hz), { class: "field num" })
+    : null;
+  if (rate) bindField(feed.id + ":poll_hz", rate, () => String(at().poll_hz ?? 2));
 
   row("1", [
     el("span", { class: "kw", text: "msg =" }),
-    entityRefEditor(feed.src, (src) => set("src", src)),
+    entityRefEditor(feed.id + ":src", () => at().src, (src) => set("src", src)),
     isFunction ? el("span", { class: "op", text: "polled at" }) : null,
-    isFunction
-      ? numberInput(feed.poll_hz ?? 2, (hz) => set("poll_hz", hz), { class: "field num" })
-      : null,
+    rate,
     isFunction ? el("span", { class: "op", text: "Hz" }) : null,
   ]);
 
+  const path = commitInput(feed.path ?? "", (text) => set("path", text), {
+    class: "field grow",
+    placeholder: "value",
+    title: "Dotted path into the payload",
+  });
+  bindField(feed.id + ":path", path, () => at().path ?? "");
   row("2", [
     el("span", { class: "kw", html: 'x = <span style="color:#7fc4a0">msg.</span>' }),
-    commitInput(feed.path ?? "", (path) => set("path", path), {
-      class: "field grow",
-      placeholder: "value",
-      title: "Dotted path into the payload",
-    }),
+    path,
   ]);
 
-  row("3", [
-    el("span", { class: "kw", text: "x =" }),
-    el("span", { class: "op", text: "f" }),
-    commitInput(feed.xf ?? "", (xf) => set("xf", xf), {
-      class: "field grow",
-      placeholder: "x",
-      title: "Formatting expression, evaluated on the backend",
-    }),
-  ]);
+  const xf = commitInput(feed.xf ?? "", (text) => set("xf", text), {
+    class: "field grow",
+    placeholder: "x",
+    title: "Formatting expression, evaluated on the backend",
+  });
+  bindField(feed.id + ":xf", xf, () => at().xf ?? "");
+  row("3", [el("span", { class: "kw", text: "x =" }), el("span", { class: "op", text: "f" }), xf]);
 
   card.appendChild(body);
   card.appendChild(

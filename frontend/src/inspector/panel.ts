@@ -1,16 +1,38 @@
 /* The two rails. Both are generated from the served tables: the section order is fixed
  * (spec 3.2), a slot's group decides whether its row lives in Data in or Appearance
- * (spec 3.3), and every editor comes from the slot's shape. */
+ * (spec 3.3), and every editor comes from the slot's shape.
+ *
+ * Each rail is declared twice, and the split is the point. `*Shape` projects the document
+ * down to what decides which controls EXIST; `render*` builds those controls once and binds
+ * each one to a reader for what it SHOWS. A rail is rebuilt only when its shape string
+ * changes, so an arriving value (a document echo, a live frame at 30 Hz) is an assignment
+ * into standing nodes and nothing else (reconcile.ts).
+ *
+ * Every reader looks its node up in the store by id rather than closing over the object it
+ * was built from. Op application mutates nodes in place, but a snapshot replaces them
+ * wholesale, and a binding holding the old object would then quietly show a document that
+ * no longer exists. */
 
 import { clear, commitInput, el, iconButton, numberInput } from "../dom.js";
-import { Editor, section, trackLive } from "../editor.js";
-import { fedSlots, resolveSlot, slotCell, typeOf } from "../slots.js";
-import { UNKNOWN_TEXT } from "../template.js";
-import { Json, SlotSpec, Widget } from "../types.js";
+import { Editor, section } from "../editor.js";
+import { bindField, bindFlag, bindText } from "../reconcile.js";
+import { authoredSlot, editedSlot, fedSlots, slotCell, typeOf } from "../slots.js";
+import { Json, Page, SlotSpec, Widget } from "../types.js";
 import { valueEditor } from "./editors.js";
-import { feedCard } from "./feeds.js";
-import { addFlowButton, flowCard } from "./flows.js";
-import { newVariable, varCard } from "./vars.js";
+import { feedCard, feedShape } from "./feeds.js";
+import { addFlowButton, flowCard, flowShape } from "./flows.js";
+import { newVariable, varCard, varShape } from "./vars.js";
+
+/* ---- left rail ---- */
+
+export function leftShape(editor: Editor): string {
+  const page = editor.page();
+  return JSON.stringify({
+    pages: editor.store.pages().map((p) => p.id),
+    current: page ? page.id : 0,
+    globals: editor.store.globals().map(varShape),
+  });
+}
 
 export function renderLeftRail(host: HTMLElement, editor: Editor): void {
   clear(host);
@@ -22,29 +44,9 @@ export function renderLeftRail(host: HTMLElement, editor: Editor): void {
       el(
         "div",
         { class: "pages" },
-        store.pages().map((p) =>
-          el("button", {
-            class: "page-chip" + (page && p.id === page.id ? " on" : ""),
-            text: p.name,
-            onclick: () => editor.setPage(p.id),
-          }),
-        ),
+        store.pages().map((p) => pageChip(editor, p)),
       ),
-      page
-        ? el("div", { class: "row" }, [
-            el("span", { class: "row-label", text: "NAME" }),
-            commitInput(
-              page.name,
-              (name) => editor.apply([{ op: "set_prop", node: page.id, key: "name", value: name }]),
-              { class: "field grow" },
-            ),
-            store.pages().length > 1
-              ? iconButton("trash", "remove this page", () =>
-                  editor.apply([{ op: "remove", node: page.id }]),
-                )
-              : null,
-          ])
-        : null,
+      page ? pageNameRow(editor, page) : null,
       el("button", {
         class: "dashed-btn",
         text: "+ Page",
@@ -67,6 +69,64 @@ export function renderLeftRail(host: HTMLElement, editor: Editor): void {
   );
 }
 
+/* the chip's name and its selected state both move without the chip being replaced, so
+   picking a page never disturbs the list under the pointer */
+function pageChip(editor: Editor, page: Page): HTMLElement {
+  const at = () => editor.store.page(page.id);
+  const chip = el("button", {
+    class: "page-chip",
+    onclick: () => editor.setPage(page.id),
+  });
+  bindText(page.id + ":name.chip", chip, () => at()?.name ?? "");
+  bindFlag(page.id + ":current", chip, "on", () => editor.page()?.id === page.id);
+  return chip;
+}
+
+function pageNameRow(editor: Editor, page: Page): HTMLElement {
+  const at = () => editor.store.page(page.id);
+  const name = commitInput(
+    page.name,
+    (text) => editor.apply([{ op: "set_prop", node: page.id, key: "name", value: text }]),
+    { class: "field grow" },
+  );
+  bindField(page.id + ":name", name, () => at()?.name ?? "");
+  return el("div", { class: "row" }, [
+    el("span", { class: "row-label", text: "NAME" }),
+    name,
+    editor.store.pages().length > 1
+      ? iconButton("trash", "remove this page", () =>
+          editor.apply([{ op: "remove", node: page.id }]),
+        )
+      : null,
+  ]);
+}
+
+/* ---- inspector ---- */
+
+export function inspectorShape(editor: Editor): string {
+  const widget = editor.selectedWidget();
+  if (!widget) return "empty";
+  const type = typeOf(editor.registry, widget.type);
+  const fed = fedSlots(widget);
+  const template = JSON.stringify(type?.template ?? null);
+  return JSON.stringify({
+    id: widget.id,
+    type: widget.type,
+    slots: (type?.slots ?? []).map((s) => [
+      s.name, s.shape, s.group, s.editor ?? "", (s.variants ?? []).join("|"),
+    ]),
+    fed: Array.from(fed).sort(),
+    align: template.includes("slot:align"),
+    textScale: template.includes("slot:text_scale"),
+    /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
+       genuinely structural; it is a boolean, and it moves only when an aspect is authored */
+    aspect: String(authoredSlot(widget, type, "aspect") ?? "") !== "",
+    feeds: (widget.feeds ?? []).map(feedShape),
+    flows: (widget.flows ?? []).map(flowShape),
+    locals: (widget.locals ?? []).map(varShape),
+  });
+}
+
 export function renderInspector(host: HTMLElement, editor: Editor): void {
   clear(host);
   const widget = editor.selectedWidget();
@@ -84,19 +144,22 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     return;
   }
 
+  const at = () => editor.store.widget(widget.id) ?? widget;
   const type = typeOf(editor.registry, widget.type);
   const fed = fedSlots(widget);
   const feeds = widget.feeds ?? [];
   const valueSlots = (type?.slots ?? []).filter((s) => s.group === "value");
   const otherSlots = (type?.slots ?? []).filter((s) => s.group !== "value");
 
+  const label = commitInput(
+    widget.label,
+    (text) => editor.apply([{ op: "set_prop", node: widget.id, key: "label", value: text }]),
+    { class: "field title", title: "the widget's label" },
+  );
+  bindField(widget.id + ":label", label, () => at().label ?? "");
   host.appendChild(
     el("div", { class: "inspector-head" }, [
-      commitInput(
-        widget.label,
-        (label) => editor.apply([{ op: "set_prop", node: widget.id, key: "label", value: label }]),
-        { class: "field title", title: "the widget's label" },
-      ),
+      label,
       el("span", { class: "type", text: widget.type.toUpperCase() + " · #" + widget.id }),
     ]),
   );
@@ -109,14 +172,9 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
    *    A fed slot is a card, an unfed one a row with a bind button. */
   if (valueSlots.length)
     body.append(
-      ...section("data-in", "Data in", String(feeds.length), () => {
-        const rows: (HTMLElement | null)[] = [];
-        for (const spec of valueSlots) {
-          const feed = feeds.find((f) => f.slot === spec.name);
-          rows.push(slotRow(editor, widget, spec, !!feed));
-        }
-        return rows;
-      }),
+      ...section("data-in", "Data in", String(feeds.length), () =>
+        valueSlots.map((spec) => slotRow(editor, widget, type, fed, spec)),
+      ),
     );
 
   /* 2. Behavior */
@@ -146,9 +204,9 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const template = JSON.stringify(type?.template ?? null);
   const usesAlign = template.includes("slot:align");
   const usesTextScale = template.includes("slot:text_scale");
-  const hasAspect = String(resolveSlot(widget, type, editor.live, fed, "aspect") ?? "") !== "";
+  const hasAspect = String(authoredSlot(widget, type, "aspect") ?? "") !== "";
   body.append(
-    ...section("appearance", "Appearance", String(fedSlots(widget).size ? fed.size : 0), () => [
+    ...section("appearance", "Appearance", String(fed.size), () => [
       el("div", { class: "prop-grid" }, [
         el("label", { text: "Place" }),
         geomRow(editor, widget),
@@ -162,26 +220,30 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
           .concat(otherSlots.filter((s) => s.group === "config"))
           .filter((s) => s.name !== "align" || usesAlign || hasAspect)
           .filter((s) => s.name !== "text_scale" || usesTextScale)
-          .flatMap((spec) => slotCells(editor, widget, spec, fed.has(spec.name))),
+          .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
       ),
     ]),
   );
 
   /* 5. Code: the generated view of what was built (read-only, spec 3.9) */
-  body.append(
-    ...section("code", "Code", null, () => [
-      el("pre", { class: "code", text: codeFor(widget) }),
-    ]),
-  );
+  const code = el("pre", { class: "code" });
+  bindText(widget.id + ":code", code, () => codeFor(at()));
+  body.append(...section("code", "Code", null, () => [code]));
 }
 
 function geomRow(editor: Editor, widget: Widget): HTMLElement {
-  const field = (key: "x" | "y" | "w" | "h") =>
-    numberInput(Math.round(widget.geom[key]), (n) =>
+  const at = () => editor.store.widget(widget.id) ?? widget;
+  const field = (key: "x" | "y" | "w" | "h") => {
+    const input = numberInput(Math.round(widget.geom[key]), (n) =>
       editor.apply([
-        { op: "set_prop", node: widget.id, key: "geom", value: { ...widget.geom, [key]: n } },
+        { op: "set_prop", node: widget.id, key: "geom", value: { ...at().geom, [key]: n } },
       ]),
     );
+    /* a canvas drag lands here as four value pushes: the fields track the pointer and the
+       one the user happens to be typing in is left alone */
+    bindField(widget.id + ":geom." + key, input, () => String(Math.round(at().geom[key])));
+    return input;
+  };
   return el("div", { class: "geom-grid" }, [
     el("label", { text: "x" }),
     field("x"),
@@ -195,8 +257,14 @@ function geomRow(editor: Editor, widget: Widget): HTMLElement {
 }
 
 /* one Data-in row for a value slot, bound or not */
-function slotRow(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolean): HTMLElement {
-  return el("div", { class: "prop-grid" }, slotCells(editor, widget, spec, bound));
+function slotRow(
+  editor: Editor,
+  widget: Widget,
+  type: ReturnType<typeof typeOf>,
+  fed: Set<string>,
+  spec: SlotSpec,
+): HTMLElement {
+  return el("div", { class: "prop-grid" }, slotCells(editor, widget, type, fed, spec));
 }
 
 /* a bound editor stays visible but inert: every control inside stops taking input */
@@ -207,44 +275,35 @@ function disableAll(node: HTMLElement): void {
 
 /* label + editor + the bind chip: which property you are binding is answered by where
  * you are standing (spec 3.3). A bound slot keeps its value editor, disabled, as a live
- * view of what the feed delivers (the UNKNOWN "--" until something arrives), and the
- * feed's own editor sits on a full-width row below it. */
-function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolean): HTMLElement[] {
-  const type = typeOf(editor.registry, widget.type);
-  const fed = fedSlots(widget);
-  const value = resolveSlot(widget, type, editor.live, fed, spec.name);
+ * view of what the feed delivers (UNKNOWN until something arrives), and the feed's own
+ * editor sits on a full-width row below it.
+ *
+ * Whether the slot is bound is STRUCTURE (it decides the chip, the disabling and the card
+ * below); what it currently reads is VALUE, and goes into the editor built here. */
+function slotCells(
+  editor: Editor,
+  widget: Widget,
+  type: ReturnType<typeof typeOf>,
+  fed: Set<string>,
+  spec: SlotSpec,
+): HTMLElement[] {
+  const bound = fed.has(spec.name);
+  const at = () => editor.store.widget(widget.id) ?? widget;
+  const read = () => editedSlot(at(), type, editor.live, fed, spec.name);
   const commit = (next: Json) => {
-    const slots = { ...(widget.slots ?? {}) };
+    const slots = { ...(at().slots ?? {}) };
     slots[spec.name] = next;
     editor.apply([{ op: "set_prop", node: widget.id, key: "slots", value: slots }]);
   };
   const feed = (widget.feeds ?? []).find((f) => f.slot === spec.name);
 
-  const control = el("span", { class: "value-cell" + (bound ? " bound" : "") });
-  let shown = "";
-  const paint = (next: Json) => {
-    const key = JSON.stringify(next);
-    if (key === shown) return;
-    shown = key;
-    clear(control);
-    control.appendChild(
-      bound && next === null
-        ? el("input", { class: "field grow", value: UNKNOWN_TEXT, disabled: true })
-        : valueEditor(spec, spec.shape, next, commit),
-    );
-    if (bound) disableAll(control);
-  };
-  paint(value);
-  if (bound) {
-    const cell = slotCell(widget, spec.name);
-    trackLive(control, (live) => {
-      const next = live?.values?.[cell];
-      paint(next === undefined ? null : next);
-    });
-  }
+  const control = el("span", { class: "value-cell" + (bound ? " bound" : "") }, [
+    valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, bound),
+  ]);
+  if (bound) disableAll(control);
 
   /* one link icon, two states: bound shows it lit and unbinds, unbound offers the feed */
-  const bind = bound
+  const link = bound
     ? iconButton("unlink", "unbind " + spec.name, () => {
         if (feed) editor.apply([{ op: "remove", node: feed.id }]);
       })
@@ -258,11 +317,15 @@ function slotCells(editor: Editor, widget: Widget, spec: SlotSpec, bound: boolea
           },
         ]),
       );
-  if (bound) bind.classList.add("on");
+  if (bound) link.classList.add("on");
 
   /* the shape is what the editor and the compiler enforce, so the row does not spell it
      out; it is on the label's tooltip for when the user wants to know */
-  const cells = [el("label", { text: spec.name, title: spec.name + ": " + spec.shape }), control, bind];
+  const cells = [
+    el("label", { text: spec.name, title: spec.name + ": " + spec.shape }),
+    control,
+    link,
+  ];
   if (bound && feed)
     cells.push(el("div", { class: "feed-below" }, [feedCard(editor, widget, type, feed)]));
   return cells;
@@ -306,3 +369,4 @@ function codeFor(widget: Widget): string {
   }
   return lines.join("\n") || "// no sources or behavior on this widget";
 }
+

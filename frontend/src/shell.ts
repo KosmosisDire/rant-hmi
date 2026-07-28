@@ -9,12 +9,13 @@
 
 import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
-import { clear, el, nodeAt, pathOf, svg } from "./dom.js";
-import { Editor, refreshLive } from "./editor.js";
+import { clear, el, svg } from "./dom.js";
+import { Editor } from "./editor.js";
 import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
-import { renderInspector, renderLeftRail } from "./inspector/panel.js";
+import { inspectorShape, leftShape, renderInspector, renderLeftRail } from "./inspector/panel.js";
 import { Connection, Status } from "./protocol.js";
+import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, typeOf } from "./slots.js";
 import { Rect } from "./template.js";
@@ -48,11 +49,13 @@ export class App implements Editor {
     pill: HTMLElement;
     palette: HTMLElement;
   };
+  private rails!: { left: Panel; inspector: Panel };
   private drag: Json = null;
   private control: Json = null;
   private inputSequence = 0;
   private frame = 0;
   private contentDirty = true;
+  private railsDirty = true;
   private lastContent = "";
   private lastOverlay = "";
 
@@ -61,11 +64,12 @@ export class App implements Editor {
     this.conn = new Connection(url, {
       snapshot: (doc, registry, live) => this.onSnapshot(doc, registry, live),
       ops: (version, ops) => this.onOps(version, ops),
+      /* a live frame and a document echo are the same event to a rail: re-read and
+         assign. The rails decide for themselves whether anything structural moved. */
       live: (live) => {
         this.live = live;
         this.queueCanvas(true);
-        refreshLive(this.nodes.left, live);
-        refreshLive(this.nodes.inspector, live);
+        this.queueRails();
       },
       diag: () => undefined,
       status: (state, detail) => this.onStatus(state, detail),
@@ -101,22 +105,37 @@ export class App implements Editor {
   select(ids: number[]): void {
     this.view.selection = ids;
     this.queueCanvas();
-    this.renderRails();
+    this.queueRails();
   }
 
   /* the artboard and its editing overlay are separate layers: only the overlay depends on
      the view transform, so panning and zooming redraw a handful of shapes */
   private queueCanvas(content = false): void {
     this.contentDirty = this.contentDirty || content;
+    this.schedule();
+  }
+
+  private queueRails(): void {
+    this.railsDirty = true;
+    this.schedule();
+  }
+
+  /* One frame for both. Everything arriving from the wire is coalesced here, so a burst of
+     op echoes and 30 Hz live frames costs one pass, not one pass each. */
+  private schedule(): void {
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
+      if (this.railsDirty) {
+        this.railsDirty = false;
+        this.renderRails();
+      }
       this.renderCanvas();
     });
   }
 
   refresh(): void {
-    this.renderRails();
+    this.queueRails();
   }
 
   /* ---- protocol ---- */
@@ -159,7 +178,7 @@ export class App implements Editor {
   private renderAll(): void {
     this.nodes.version.textContent = "v" + this.store.version();
     this.queueCanvas(true);
-    this.renderRails();
+    this.queueRails();
   }
 
   private renderCanvas(): void {
@@ -189,53 +208,13 @@ export class App implements Editor {
     this.nodes.overlay.innerHTML = overlay;
   }
 
-  /* Both rails are rebuilt on every version, then the control the user was in is found
-   * again and its caret restored. Text the user had typed but not committed outlives the
-   * rebuild: the document has not seen it yet, so the fresh field would otherwise throw it
-   * away (spec 4.2, until node-busy markers land). */
+  /* Each rail decides for itself. It is handed the shape of the document it draws from,
+   * and rebuilds only if that shape moved; otherwise every control it already built
+   * re-reads and assigns. So an arriving value does no layout, keeps focus, hover, open
+   * dropdowns and scroll untouched, and needs nothing put back afterwards. */
   private renderRails(): void {
-    const keep = this.captureFocus();
-    const leftScroll = this.nodes.left.scrollTop;
-    const inspectorScroll = this.nodes.inspector.scrollTop;
-    renderLeftRail(this.nodes.left, this);
-    renderInspector(this.nodes.inspector, this);
-    this.restoreFocus(keep);
-    this.nodes.left.scrollTop = leftScroll;
-    this.nodes.inspector.scrollTop = inspectorScroll;
-  }
-
-  private captureFocus(): Json {
-    const node = document.activeElement as HTMLElement | null;
-    const rail = node?.closest?.(".rail");
-    if (!node || !rail) return null;
-    const path = pathOf(rail, node);
-    if (!path) return null;
-    const field = node as HTMLInputElement;
-    const text = field.type === "text" || field.type === "number";
-    return {
-      rail,
-      path,
-      tag: node.tagName,
-      type: field.type ?? "",
-      value: typeof field.value === "string" ? field.value : null,
-      start: text ? field.selectionStart : null,
-      end: text ? field.selectionEnd : null,
-    };
-  }
-
-  private restoreFocus(keep: Json): void {
-    if (!keep) return;
-    const node = nodeAt(keep.rail, keep.path) as HTMLInputElement | null;
-    if (!node || node.tagName !== keep.tag || (node.type ?? "") !== keep.type) return;
-    node.focus({ preventScroll: true });
-    if (keep.value !== null && typeof node.value === "string" && node.value !== keep.value)
-      node.value = keep.value;
-    if (keep.start === null || !node.setSelectionRange) return;
-    try {
-      node.setSelectionRange(keep.start, keep.end);
-    } catch {
-      /* a number input refuses a selection range in some browsers; the focus is enough */
-    }
+    this.rails.left.render(leftShape(this), (host) => renderLeftRail(host, this));
+    this.rails.inspector.render(inspectorShape(this), (host) => renderInspector(host, this));
   }
 
   /* ---- shell construction ---- */
@@ -289,6 +268,7 @@ export class App implements Editor {
     this.root.appendChild(banner);
 
     this.nodes = { left, inspector, stage, layer, art, overlay, banner, version, pill, palette };
+    this.rails = { left: new Panel(left), inspector: new Panel(inspector) };
     this.restoreRailWidths();
 
     this.viewport = new Viewport(stage, layer, {

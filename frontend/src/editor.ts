@@ -1,5 +1,9 @@
 /* What the rails need from the shell, plus the two things every panel shares: the fold
- * state (per view, never synced) and the section header. */
+ * state (per view, never synced) and the section header.
+ *
+ * There is no separate "live" update path any more. A live frame and a document echo are
+ * the same event to a rail: the shape is unchanged, so every binding re-reads and assigns.
+ * One reconciliation path with two triggers (reconcile.ts). */
 
 import { ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
@@ -22,22 +26,10 @@ export interface Editor {
 }
 
 const folded = new Map<string, boolean>();
-type LiveUpdater = (live: Live | null) => void;
-const liveUpdaters = new WeakMap<HTMLElement, LiveUpdater>();
-
-export function trackLive<T extends HTMLElement>(node: T, update: LiveUpdater): T {
-  node.setAttribute("data-live", "");
-  liveUpdaters.set(node, update);
-  return node;
-}
-
-export function refreshLive(root: HTMLElement, live: Live | null): void {
-  for (const node of root.querySelectorAll<HTMLElement>("[data-live]"))
-    liveUpdaters.get(node)?.(live);
-}
 
 /* the header is the whole row, the caret rotates rather than swapping glyph, and the state
- * is remembered per section key across selection changes (spec 3.2) */
+ * is remembered per section key across selection changes (spec 3.2). Folding is a pure
+ * view act: it toggles one style and never asks for a rebuild. */
 export function section(
   key: string,
   title: string,
