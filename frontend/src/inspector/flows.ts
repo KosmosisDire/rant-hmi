@@ -518,10 +518,13 @@ function stepRow(
       cells.push(el("span", { class: "op", text: JSON.stringify(step) }));
   }
 
-  cells.push(
-    el("span", { class: "spacer" }),
-    iconButton("x", "remove this step", () => editor.apply([{ op: "remove", node: step.id }])),
+  /* the remove button rides the right edge by margin, not a flex spacer: a spacer with
+     flex:1 would split the free width with a growing expression field and halve it */
+  const remove = iconButton("x", "remove this step", () =>
+    editor.apply([{ op: "remove", node: step.id }]),
   );
+  remove.classList.add("push-right");
+  cells.push(remove);
 
   const row = el("div", { class: "do-row" + (indented ? " sub" : "") }, [
     grip(editor, step, index),

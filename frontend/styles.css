@@ -792,9 +792,10 @@ button:focus-visible {
   flex: none;
 }
 
-.spacer {
-  flex: 1;
-  min-width: 0;
+/* pushes a trailing control to the row's right edge; costs nothing when a growing
+   field already fills the line */
+.push-right {
+  margin-left: auto;
 }
 
 .kind-mark {
