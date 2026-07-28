@@ -64,7 +64,7 @@ interface Row {
   pick?: SourcePick;
 }
 
-const expanded = new Set<string>(["dart", "hmi"]);
+const expanded = new Set<string>(["dart", "hmi", "hmi/local", "hmi/global"]);
 
 let overlay: HTMLElement | null = null;
 let popover: HTMLElement | null = null;
@@ -194,18 +194,20 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
       pick: { family: "expr", kind: "", name: "x", path: "", shape: "" },
     });
 
-  /* ---- hmi: the names this widget owns ---- */
+  /* ---- hmi: the names this widget owns. The flow's OWN names (x, its temporaries)
+     and the widget's slots sit at the hmi level; the declared variables split into
+     `local` and `global` folders, which is where they are declared too. ---- */
   if (opts.hmi) {
     if (!searching) rows.push({ depth: 0, key: "hmi", label: "hmi", expandable: true });
     if (openOr("hmi")) {
       /* one variable or flow local, with its struct fields when it has them */
       const name_rows = (name: string, shape: string, type: string | undefined,
-                         fields: MeshField[], note: string) => {
+                         fields: MeshField[], note: string, depth: number) => {
         const key = "v:" + name;
         const descend = fields.length > 0;
         if (match(name)) {
           rows.push({
-            depth: depth0,
+            depth,
             key,
             label: name,
             kind: "L",
@@ -217,7 +219,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
           if (descend && openOr(key))
             for (const field of fields)
               rows.push({
-                depth: depth0 + 1,
+                depth: depth + 1,
                 key: key + "." + field.path,
                 label: field.path,
                 shape: field.shape,
@@ -229,7 +231,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
           for (const field of fields)
             if (match(name + "." + field.path))
               rows.push({
-                depth: depth0,
+                depth,
                 key: key + "." + field.path,
                 label: name + " . " + field.path,
                 kind: "L",
@@ -241,9 +243,11 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
         }
       };
 
+      /* the variables, bucketed by scope */
+      type NamedVar = { name: string; shape: string; type?: string; fields: MeshField[] };
+      const buckets: Record<"local" | "global", NamedVar[]> = { local: [], global: [] };
       if (opts.scope) {
-        /* a flow row's vocabulary: x, then the locals standing at that row (the scope
-           already sorts temporaries first and folds the declared variables in) */
+        /* the flow's own vocabulary first: x, then its temporaries */
         if (match("x"))
           rows.push({
             depth: depth0,
@@ -255,18 +259,35 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
             pick: { family: "local", kind: "L", name: "x", path: "",
                     shape: opts.scope.x?.shape ?? "" },
           });
-        for (const local of opts.scope.locals)
-          name_rows(local.name, local.shape, local.type, local.fields ?? [],
-                    local.note === "global" ? "" : local.note);
+        for (const local of opts.scope.locals) {
+          const row = { name: local.name, shape: local.shape, type: local.type,
+                        fields: local.fields ?? [] };
+          if (local.note === "temporary")
+            name_rows(row.name, row.shape, row.type, row.fields, "temporary", depth0);
+          else buckets[local.note].push(row);
+        }
       } else if (wanted("L")) {
-        const variable_row = (variable: Var, local: boolean) =>
-          name_rows(variable.name, varShape(variable.type),
-                    varFields(editor, variable.type).length ? variable.type : undefined,
-                    varFields(editor, variable.type), local ? "local" : "");
-        for (const variable of widget?.locals ?? []) variable_row(variable, true);
+        const named = (variable: Var): NamedVar => ({
+          name: variable.name,
+          shape: varShape(variable.type),
+          type: varFields(editor, variable.type).length ? variable.type : undefined,
+          fields: varFields(editor, variable.type),
+        });
+        for (const variable of widget?.locals ?? []) buckets.local.push(named(variable));
         const shadowed = new Set((widget?.locals ?? []).map((v) => v.name));
         for (const variable of editor.store.globals())
-          if (!shadowed.has(variable.name)) variable_row(variable, false);
+          if (!shadowed.has(variable.name)) buckets.global.push(named(variable));
+      }
+      for (const scope of ["local", "global"] as const) {
+        if (!buckets[scope].length) continue;
+        const key = "hmi/" + scope;
+        if (!searching) {
+          rows.push({ depth: depth0, key, label: scope, expandable: true });
+          if (!openOr(key)) continue;
+        }
+        for (const row of buckets[scope])
+          name_rows(row.name, row.shape, row.type, row.fields, "",
+                    searching ? depth0 : depth0 + 1);
       }
 
       /* the widget's own slots: a move destination, named the way expressions read them */

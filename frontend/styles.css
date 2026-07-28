@@ -1773,6 +1773,9 @@ button.swatch {
 .stree-search {
   margin: 6px;
   height: 24px;
+  /* the popover is a column capped in height; a full list must scroll, never
+     squeeze the search bar above it */
+  flex: none;
   padding: 0 7px;
   border: 1px solid var(--line-in);
   border-radius: 2px;

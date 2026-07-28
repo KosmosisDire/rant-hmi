@@ -63,13 +63,14 @@ interface Row {
   depth: number;
   key: string;
   label: string;
+  icon?: string;       /* folder roots; types themselves show the layers mark */
   shape?: string;      /* trailing type note */
-  note?: string;       /* carrier entities, variant values */
+  note?: string;       /* variant values, the unnamed mark */
   expandable: boolean;
   pick?: TypePick;
 }
 
-const expanded = new Set<string>();
+const expanded = new Set<string>(["hmi", "dart"]);
 
 let overlay: HTMLElement | null = null;
 let popover: HTMLElement | null = null;
@@ -108,17 +109,28 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
   const match = (text: string) => !filter || text.toLowerCase().includes(filter);
   const searching = Boolean(filter);
   const openOr = (key: string) => searching || expanded.has(key);
+  const depth0 = searching ? 0 : 1;
 
-  if (opts.scalars && !searching)
-    for (const scalar of SCALARS)
-      rows.push({
-        depth: 0,
-        key: "sc:" + scalar.ref,
-        label: scalar.label,
-        expandable: false,
-        pick: { ref: scalar.ref, kind: "scalar" },
-      });
+  /* the same two roots the entity tree has: `hmi` owns the four built-in scalars,
+     `dart` owns everything the mesh serves */
+  if (opts.scalars) {
+    if (!searching)
+      rows.push({ depth: 0, key: "hmi", label: "hmi", icon: "folder", expandable: true });
+    if (openOr("hmi"))
+      for (const scalar of SCALARS)
+        if (match(scalar.label))
+          rows.push({
+            depth: depth0,
+            key: "sc:" + scalar.ref,
+            label: scalar.label,
+            expandable: false,
+            pick: { ref: scalar.ref, kind: "scalar" },
+          });
+  }
 
+  if (!searching)
+    rows.push({ depth: 0, key: "dart", label: "dart", icon: "folder", expandable: true });
+  if (!openOr("dart")) return rows;
   for (const type of editor.mesh.types) {
     /* an unnamed root has no TypeRef (spec 2.2): it stays in the tree, labeled by the
        entity carrying it, so its fields can be browsed, but nothing under it picks */
@@ -133,7 +145,7 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
     if (!rootPicks && !fieldPicks && !(opts.structs && !named)) continue;
     if (match(label)) {
       rows.push({
-        depth: 0,
+        depth: depth0,
         key,
         label,
         note: named ? "" : "unnamed",
@@ -152,7 +164,7 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
       if (searching && (!picks || !match(ref))) continue;
       const fkey = key + "." + field.path;
       rows.push({
-        depth: searching ? 0 : 1,
+        depth: searching ? 0 : depth0 + 1,
         key: fkey,
         label: searching ? ref : field.path,
         shape: field.shape,
@@ -162,7 +174,7 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
       if (isEnum && openOr(fkey) && !searching)
         for (const variant of field.variants ?? [])
           rows.push({
-            depth: 2,
+            depth: depth0 + 2,
             key: fkey + ":" + variant.name,
             label: variant.name,
             note: "= " + variant.value,
@@ -211,7 +223,7 @@ export function openTypeTree(
         },
         [
           caret,
-          el("span", { class: "stree-foldicon", html: iconMarkup("layers", 11, 1.6) }),
+          el("span", { class: "stree-foldicon", html: iconMarkup(row.icon ?? "layers", 11, 1.6) }),
           el("span", { class: "stree-label", text: row.label }),
           row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
           row.note ? el("span", { class: "stree-local", text: row.note }) : null,
