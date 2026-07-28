@@ -320,8 +320,10 @@ class Compiler {
     }
 
     /* One declared variable becomes its cell: a scalar or timer by the four base names,
-     * anything else a TypeRef resolved against the type table (spec 2.7) whose cell owns
-     * a struct slot, born zeroed. An unresolved TypeRef is a finding on the variable,
+     * anything else a TypeRef resolved against the type table (spec 2.7). A struct root
+     * gives the cell a struct slot, born zeroed; an enum reached by path (`ValveCmd.mode`)
+     * gives it the ENUM type, seeded at the first variant, so `.name`/`.int`/`.is` work
+     * on it like on any enum value. An unresolved TypeRef is a finding on the variable,
      * never a silent Nil. */
     uint32_t declare_variable(const Json& var, CellKind kind, uint64_t owner) {
         const std::string name = var.value("name", "");
@@ -330,7 +332,7 @@ class Compiler {
         if (shape != Shape::Unknown)
             return add_cell(kind, owner, id_of(var), name, shape, var.value("init", Json()),
                             var.value("persist", false));
-        const int type_id = find_type(type_text);
+        const int type_id = find_type_ref(type_text);
         if (type_id < 0) {
             diag(id_of(var), "unresolved_type",
                  type_text.empty()
@@ -339,6 +341,15 @@ class Compiler {
                            "', which is not a type in the mesh",
                  DiagGrade::Error, "type");
             return UINT32_MAX;
+        }
+        if (program_.types[type_id].kind == TypeKind::Enum) {
+            const uint32_t cell = add_cell(kind, owner, id_of(var), name, Shape::Enum,
+                                           Json(), var.value("persist", false));
+            const auto& variants = program_.types[type_id].variants;
+            program_.cells[cell].type_id = static_cast<uint16_t>(type_id);
+            program_.cells[cell].initial = Value::enumeration(
+                variants.empty() ? 0 : variants[0].second, static_cast<uint16_t>(type_id));
+            return cell;
         }
         return add_struct_cell(kind, owner, 0, id_of(var), name,
                                static_cast<uint16_t>(type_id));
@@ -514,7 +525,7 @@ class Compiler {
      * any other name */
     void bind_variable(ExpressionScope& scope, const std::string& name, uint32_t cell_index) {
         const CellDef& cell = program_.cells[cell_index];
-        scope.names[name] = Binding{cell.shape, OpCode::Load, cell_index, 0};
+        scope.names[name] = Binding{cell.shape, OpCode::Load, cell_index, 0, cell.type_id};
         if (cell.shape != Shape::Struct) return;
         const std::vector<FieldDef>& fields = struct_fields(program_, cell.type_id);
         for (uint32_t i = 0; i < fields.size(); ++i)
@@ -608,6 +619,7 @@ class Compiler {
                     feed.entity = UINT32_MAX;
                     feed.source_cell = source;
                     scope.x_shape = program_.cells[source].shape;
+                    scope.x_enum = program_.cells[source].type_id;
                 } else {
                     const int entity = resolve_entity(ref, feed.feed_id, "src");
                     if (entity < 0) continue;
@@ -797,6 +809,7 @@ class Compiler {
     bool push_scalar(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                      ExpressionScope& scope, const Json& from, Shape expected,
                      Shape* actual = nullptr) {
+        (void)widget;
         const uint64_t step_id = id_of(step);
         if (from.contains("expr"))
             return expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
@@ -834,20 +847,21 @@ class Compiler {
         return false;
     }
 
-    /* push_scalar toward one FIELD, with the one compile-inserted coercion: text into an
-     * enum-typed field becomes the variant's value (spec 6.2), so a Dropdown's selected
-     * name writes back with no authored transform. */
-    bool push_field_value(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
-                          ExpressionScope& scope, const Json& from, const FieldDef& field) {
-        if (field.shape != Shape::Enum || field.type_id == 0)
-            return push_scalar(widget, step, flow, scope, from, field.shape);
+    /* push_scalar toward one typed destination, with the one compile-inserted coercion:
+     * text into an enum-typed field or variable becomes the variant's value (spec 6.2),
+     * so a Dropdown's selected name writes back with no authored transform. */
+    bool push_typed(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                    ExpressionScope& scope, const Json& from, Shape wanted,
+                    uint16_t type_id) {
+        if (wanted != Shape::Enum || type_id == 0)
+            return push_scalar(widget, step, flow, scope, from, wanted);
         Shape produced = Shape::Unknown;
         if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
             return false;
         if (produced == Shape::Text) {
             Instruction coerce;
             coerce.op = OpCode::EnumFromName;
-            coerce.b = field.type_id;
+            coerce.b = type_id;
             coerce.c = fault_site(id_of(step), "enum_name",
                                   "the text is not one of this enum's variants");
             flow.code.push_back(coerce);
@@ -857,7 +871,7 @@ class Compiler {
             produced != Shape::Enum) {
             diag(id_of(step), "shape",
                  "the source is " + std::string(shape_name(produced)) +
-                     ", but this field wants enum",
+                     ", but this destination wants enum",
                  DiagGrade::Error, "from");
             return false;
         }
@@ -930,7 +944,8 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
-            if (!push_field_value(widget, step, flow, scope, from, fields[field]))
+            if (!push_typed(widget, step, flow, scope, from, fields[field].shape,
+                            fields[field].type_id))
                 return false;
             Instruction set;
             set.op = OpCode::StoreField;
@@ -983,6 +998,14 @@ class Compiler {
         }
         Shape produced = Shape::Unknown;
         const size_t mark = flow.code.size();
+        /* an enum-typed variable takes text through the same coercion an enum field
+           does, so a Dropdown's selected name can be stored as the value it names */
+        if (wanted == Shape::Enum && cell != UINT32_MAX && program_.cells[cell].type_id) {
+            if (!push_typed(widget, step, flow, scope, from, wanted,
+                            program_.cells[cell].type_id))
+                return false;
+            return emit_store(flow, step_id, cell);
+        }
         if (!push_scalar(widget, step, flow, scope, from, wanted, &produced)) return false;
         if (cell == UINT32_MAX) {
             if (produced == Shape::Unknown || produced == Shape::Nil) {
@@ -1066,7 +1089,8 @@ class Compiler {
                          DiagGrade::Error, "to");
                 return false;
             }
-            if (!push_field_value(widget, step, flow, scope, from, target.fields[field]))
+            if (!push_typed(widget, step, flow, scope, from, target.fields[field].shape,
+                            target.fields[field].type_id))
                 return false;
             out.b = static_cast<uint32_t>(field);
         }

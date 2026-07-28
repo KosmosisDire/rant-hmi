@@ -103,6 +103,8 @@ RuntimeState::RuntimeState(const Program& program) {
      * them into the destination cell, and a `seed: last` build can re-send them. */
     mesh_scratch = static_cast<uint32_t>(texts.size());
     texts.emplace_back(kDefaultTextCap);
+    input_scratch = static_cast<uint32_t>(texts.size());
+    texts.emplace_back(kDefaultTextCap);
     entity_texts.resize(program.entities.size());
     for (uint32_t e = 0; e < program.entities.size(); ++e) {
         const std::vector<FieldDef>& entity_fields = program.entities[e].fields;
@@ -339,6 +341,9 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                     next.texts[wanted.text_slot].set(old_state.text(old_program, value));
                     next.values[n] = Value::text(wanted.text_slot);
                 }
+            } else if (wanted.shape == Shape::Enum && value.tag == ValueTag::Enum) {
+                /* the type table is rebuilt per program, so the stamp is re-issued */
+                next.values[n] = Value::enumeration(value.data.integer, wanted.type_id);
             } else {
                 next.values[n] = value;
             }

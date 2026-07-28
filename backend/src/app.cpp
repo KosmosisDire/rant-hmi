@@ -229,6 +229,17 @@ Json App::live() const {
             case ValueTag::Bool: values[key] = value.data.boolean; break;
             case ValueTag::Text: values[key] = std::string(state.text(program, value)); break;
             case ValueTag::Color: values[key] = format_color(value.data.rgba); break;
+            case ValueTag::Enum: {
+                /* an enum reads as its variant NAME (the vocabulary the author picked
+                   it by); a value outside the vocabulary shows its integer */
+                std::string name;
+                if (value.type_id < program.types.size())
+                    for (const auto& row : program.types[value.type_id].variants)
+                        if (row.second == value.data.integer) { name = row.first; break; }
+                if (name.empty()) values[key] = static_cast<double>(value.data.integer);
+                else values[key] = name;
+                break;
+            }
             default: break;
         }
     }
@@ -252,8 +263,13 @@ void App::on_input(uint64_t session, const Json& frame) {
         reject(session, "input needs widget_id and event");
         return;
     }
-    scheduler_->post(
-        InputEvent{session, widget, event, input_value(field(frame, "value")), sequence});
+    InputEvent input{session, widget, event, input_value(field(frame, "value")), sequence};
+    /* a string that is not a color is TEXT (a Dropdown's selected option); it rides
+       beside the Value and the scheduler homes it into the run's input slot */
+    const Json raw = field(frame, "value");
+    if (raw.is_string() && input.value.tag == ValueTag::Nil)
+        input.text = raw.get<std::string>();
+    scheduler_->post(std::move(input));
 }
 
 void App::compile_runtime() {

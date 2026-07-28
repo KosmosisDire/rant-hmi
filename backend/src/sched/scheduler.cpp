@@ -265,7 +265,14 @@ bool Scheduler::tick(std::string& fault) {
     for (const InputEvent& event : inbound_) {
         if (event.event == "press") on_press(event);
         else if (event.event == "release") on_release(event);
-        else dispatch(event.widget, event.event, event.value);
+        else {
+            Value value = event.value;
+            if (!event.text.empty() && state_.input_scratch < state_.texts.size()) {
+                state_.texts[state_.input_scratch].set(event.text);
+                value = Value::text(state_.input_scratch);
+            }
+            dispatch(event.widget, event.event, value);
+        }
     }
     inbound_.clear();
 

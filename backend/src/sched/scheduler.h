@@ -15,6 +15,10 @@ struct InputEvent {
     std::string event;
     Value value = Value::nil();
     uint64_t sequence = 0;
+    /* a TEXT payload (a Dropdown's selected option): a Value cannot carry a string
+       across the queue, so it rides beside and is homed into the run's input text slot
+       at dispatch */
+    std::string text;
 };
 
 class Scheduler final : private MeshSink {

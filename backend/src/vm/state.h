@@ -82,6 +82,9 @@ class RuntimeState {
      * text-shaped entity field so the last-value cache can hold deliverable text (a
      * `seed: last` build must be able to re-send it) */
     uint32_t mesh_scratch = 0;
+    /* one slot for an input event's text payload (a Dropdown's selected option),
+       homed here at dispatch so `x` can be text without the queue owning storage */
+    uint32_t input_scratch = 0;
     std::vector<std::vector<uint32_t>> entity_texts;   /* [entity][field] -> text slot */
     /* suspension deep-copy storage: each pending site owns a fixed run of text slots
      * (one for x, one per text-shaped field of every struct slot) so held text survives

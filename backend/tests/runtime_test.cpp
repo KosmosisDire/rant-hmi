@@ -150,6 +150,7 @@ std::vector<EntityDef> reflection() {
     gear.name = "gear";
     gear.readable = true;
     gear.writable = true;
+    gear.type_name = "Gear";
     FieldDef mode;
     mode.path = "mode";
     mode.shape = Shape::Enum;
@@ -394,6 +395,10 @@ void test_enum_names() {
         {"type", "Label"},
         {"label", "gear"},
         {"slots", Json::object()},
+        /* an ENUM-TYPED variable (spec 2.7): typed by the path to the enum, seeded at
+           the first variant, and taking text through the same coercion a field does */
+        {"locals", Json::array({
+             Json{{"name", "gearMode"}, {"type", "Gear.mode"}, {"init", nullptr}}})},
         {"feeds", Json::array({Json{{"slot", "text"},
                                     {"src", entity("V", "gear")},
                                     {"path", "mode"}}})},
@@ -405,6 +410,9 @@ void test_enum_names() {
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
                   {"when_mode", "first"},
                   {"do", Json::array({steps::write_field("V", "gear", "mode", "\"bogus\"")})}},
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "release"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({steps::set_var("gearMode", "\"run\"")})}},
          })},
     };
     root["pages"].push_back(Json{{"name", "Main"}, {"widgets", Json::array({label})}});
@@ -448,6 +456,22 @@ void test_enum_names() {
     state.clear_outputs();
     RunResult press = run_event(compiled.program, state, widget, "press", Value::nil());
     CHECK(press.faulted);
+
+    /* an enum-typed VARIABLE: seeded at the first variant, and text stores through the
+       same coercion */
+    int gear_mode = -1;
+    for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+        if (compiled.program.cells[i].kind == CellKind::Local &&
+            compiled.program.cells[i].name == "gearMode")
+            gear_mode = static_cast<int>(i);
+    CHECK(gear_mode >= 0);
+    CHECK(state.values[gear_mode].tag == ValueTag::Enum);
+    CHECK(state.values[gear_mode].data.integer == 0);
+    state.clear_outputs();
+    RunResult release = run_event(compiled.program, state, widget, "release", Value::nil());
+    CHECK(!release.faulted);
+    CHECK(state.values[gear_mode].tag == ValueTag::Enum);
+    CHECK(state.values[gear_mode].data.integer == 1);
 }
 
 void test_compile_fault() {
