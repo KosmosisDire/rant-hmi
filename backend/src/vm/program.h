@@ -163,6 +163,19 @@ struct StateSite {
     uint32_t slot = 0;
 };
 
+/* What `x` IS for one (widget, event). A gesture reports what the pointer did; the
+ * widget's logic decides what value that gesture proposes, and every flow on the event
+ * wants the second, not the first. A Toggle's tap proposes `!widget.value`; a Slider's
+ * drag already carries the value it proposes, so it declares nothing and the raw event
+ * value stands. Evaluated ONCE per event, before any flow runs, so every flow on that
+ * event sees the same x. */
+struct EventValueProgram {
+    uint64_t widget_id = 0;
+    std::string event;
+    std::vector<Instruction> code;
+    uint32_t max_stack = 0;
+};
+
 struct FeedProgram {
     uint64_t widget_id = 0;
     uint64_t feed_id = 0;
@@ -194,6 +207,7 @@ struct Program {
     std::vector<BufferDef> buffers;
     std::vector<FlowProgram> flows;
     std::vector<FeedProgram> feeds;
+    std::vector<EventValueProgram> event_values;
     std::vector<TimerDef> timers;
     std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;

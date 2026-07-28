@@ -385,6 +385,21 @@ check(
   toggleType.behavior[0].do[0].var === "widget.value",
   "and it writes the widget's own slot, not a variable",
 );
+/* the type-specific part is WHERE x COMES FROM, declared on the event, so the default
+   itself is the same one step on every value-owning type */
+check(
+  toggleType.events.find((e) => e.name === "tap")?.value === "!widget.value",
+  "the Toggle's tap declares what it proposes",
+);
+check(
+  toggleType.behavior[0].do[0].a === "x",
+  "so its default just takes x, got " + toggleType.behavior[0].do[0].a,
+);
+check(
+  !snapshot.registry.types.find((t) => t.name === "Slider").events.find((e) => e.name === "input")
+    ?.value,
+  "a slider's drag already carries its own value, so it declares none",
+);
 check(
   (snapshot.registry.types.find((t) => t.name === "Button").behavior ?? []).length === 0,
   "a Button owns no value, so it ships no default",
@@ -398,7 +413,7 @@ const toggleEditor = { ...editor, selectedWidget: () => store.widget(toggle.id) 
 togglePanel.render(inspectorShape(toggleEditor), (host) => renderInspector(host, toggleEditor));
 const defaults = togglePanel.host.querySelectorAll(".default-flow");
 check(defaults.length === 1, "the inspector shows the type's default flow, got " + defaults.length);
-has(defaults[0].textContent, "widget.value = !widget.value", "the default row reads as a flow");
+has(defaults[0].textContent, "widget.value = x", "the default row reads as a flow");
 check(
   defaults[0].querySelectorAll("button").length === 1,
   "and offers exactly one action, detach",

@@ -65,10 +65,12 @@ runtime are all driven by declarative tables, never by per-type code branches:
   process value or corner radius alike, feedable or instance-set, grouped for the
   inspector) composed over the BASE slot sets the type uses (STATE: visible, enabled;
   FRAME: merge, surface, border, radius, paddings, aspect box), overridable per type
-  by name and omitted where a type has no such part, an events table, a BEHAVIOR
-  table (the type's default flows, in the document's own flow shape, compiled per
-  instance and dropped where a feed or an authored flow already writes the slot, so a
-  Toggle toggles the moment it is placed with no per-type code), and a
+  by name and omitted where a type has no such part, an EVENTS table (each row naming
+  what the event proposes, so `x` is the value the control is trying to set and not
+  the raw gesture), a BEHAVIOR table (the type's default flows, in the document's own
+  flow shape, compiled per instance and dropped where a feed or an authored flow
+  already writes the slot, so a Toggle toggles the moment it is placed with no
+  per-type code), and a
   visual TEMPLATE (proportional layout boxes +
   draw parts + interaction primitives; every attribute ships as a compiled
   program). Layout is scale-to-fit by construction (weights, auto-flip by aspect,
@@ -421,7 +423,9 @@ working end-to-end demo at every stage. Each stage lands with its tests.
    events: buttons and sliders drive flows end to end against the fake mesh.
    4b. **controls that work, and say why when they do not.** A placed control has to
    move before anything is bound to it, and a document that cannot express itself has
-   to be visible: the type BEHAVIOR table with its one-writer precedence (spec 2.3),
+   to be visible: `x` as the value the widget PROPOSES (declared per event on the
+   type, evaluated once before the event's flows run), the type BEHAVIOR table with
+   its one-writer precedence (spec 2.3),
    `assign` to `widget.<slot>`, a variable's type owning its init's shape (2.7), a
    value that cannot be its shape as a finding rather than a silent Nil, enum slots as
    constrained text, and compile findings carried in the snapshot, badged on the

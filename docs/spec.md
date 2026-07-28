@@ -85,7 +85,8 @@ same kind of row, so custom components need no plugin mechanism.
 WidgetType {
   name,                          // registry key; never referenced by code
   slots:  [ {name, shape, default, group, editor?} ],
-  events: [ {name, x: shape} ],  // what flows can trigger on; x is the seed shape
+  events: [ {name, x: shape, value?: Expr} ],  // what flows can trigger on; x is the
+                                 // seed shape, `value` where x comes FROM (below)
   behavior: [ Flow ],            // the type's DEFAULT flows (below)
   template: Node                 // the visual (below)
 }
@@ -151,12 +152,33 @@ the read side already uses, and its scope is the widget's own slots and nothing
 else. Reaching across to another widget stays impossible, which is what kept the
 rejected door shut in the first place.
 
+**`x` is what the widget PROPOSES, not what the pointer did.** A gesture reports an
+edge: a tap is `true` whichever way the toggle was pointing. The value that gesture
+proposes is the type's own logic, so the events table declares it as `value`, an
+expression over the widget's slots and the raw event value, and the backend
+evaluates it ONCE per event before any flow on that event runs. A Toggle's `tap`
+proposes `!widget.value`; a Readout's `press` proposes the value it is displaying.
+Where the gesture already carries its proposal (a Slider's drag, a Dropdown's
+selection) the type declares nothing and the raw value stands.
+
+This is what makes `x` mean one thing everywhere: **the value this widget is trying
+to set**. A flow that sends `x` to the plant needs no copy of the widget's logic, and
+does not have to wait for a round trip to learn what the control was proposing. It
+also removes the last piece of truth from the view: where the type declares a
+`value`, the client sends no payload at all, because the backend already owns it.
+
 **Default behavior.** A type carries `behavior`: ordinary flows, in the document's
-own flow shape, that the backend compiles per instance. A Toggle inverts its value
-on `tap`, a Slider follows `input`, a Dropdown takes `select`; Button, Label,
-Panel, Readout and Indicator own no value and carry none. There is still no
-per-type code: the compiler treats these exactly as authored flows, so a custom
-component declares behavior the same way.
+own flow shape, that the backend compiles per instance. Because the events table
+already says what a gesture proposes, every value-owning type's default is the same
+single step, `widget.<slot> = x`: Toggle on `tap`, Slider on `input`, Dropdown on
+`select`. Button, Label, Panel, Readout and Indicator own no value and carry none.
+There is still no per-type code: the compiler treats these exactly as authored
+flows, so a custom component declares behavior the same way.
+
+A type's defaults run BEFORE the instance's own flows on the same event, so by the
+time an authored flow runs, the widget's state already reflects the gesture and
+`widget.<slot>` agrees with `x`. Two readings of one event would be worse than
+either.
 
 One writer per slot survives by PRECEDENCE, resolved at compile time in this
 order:
@@ -192,14 +214,14 @@ text is integral to the control):
 
 | Type | Value slots (shape) | Events | `x` is |
 |---|---|---|---|
-| Button | none | `press, release, pressrelease, tap, held` | bool |
-| Toggle | `value` (bool) | `press, release, tap, held` | bool |
-| Slider | `value` (num) | `input, commit` | num |
-| Dropdown | `options` (list), `value` (text/enum) | `select, open` | enum / text |
-| Readout | `value` (num) | `press, release, tap, held` | num |
-| Indicator | `value` (num/bool) | `press, tap` | num |
-| Label | `text` (text) | `press, tap` | text |
-| Panel | none | `press, tap` | bool |
+| Button | none | `press, release, pressrelease, tap, held` | the edge, bool |
+| Toggle | `value` (bool) | `press, release, tap, held` | `!widget.value` on tap, else the edge |
+| Slider | `value` (num) | `input, commit` | the dragged value, num |
+| Dropdown | `options` (list), `value` (text/enum) | `select, open` | the selection; `widget.value` on open |
+| Readout | `value` (num) | `press, release, tap, held` | `widget.value` |
+| Indicator | `value` (bool) | `press, tap` | `widget.value` |
+| Label | `text` (text) | `press, tap` | `widget.text` |
+| Panel | none | `press, tap` | the edge, bool |
 
 Every type additionally gets the synthetic trigger `timer <name> ends`. Everything a
 widget does BEYOND its own value echo is authored per instance as feeds and flows: a
@@ -330,8 +352,9 @@ rule). `"any"` runs on every arrival.
 ### 2.6 The DO list
 
 A flat, ordered list of steps executed as a pipeline over a single register `x`,
-seeded with the widget's output. Flatness is the point: no nesting, no branches, no
-loops. Readable top to bottom, and trivially compilable.
+seeded with the widget's output: the value the control PROPOSES for this event, per
+its type's `value` declaration (2.3), not the raw gesture. Flatness is the point: no
+nesting, no branches, no loops. Readable top to bottom, and trivially compilable.
 
 | Step | Fields | Effect |
 |---|---|---|

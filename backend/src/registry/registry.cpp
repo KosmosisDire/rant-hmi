@@ -92,7 +92,22 @@ Json align_slot(const char* def) {
                      def, "appearance", "align");
 }
 
-Json event(const char* name, const char* x) { return Json{{"name", name}, {"x", x}}; }
+/* An event row: its name, the SHAPE of `x`, and optionally where `x` comes FROM.
+ *
+ * A gesture reports what the pointer did. What the widget PROPOSES is the type's own
+ * logic, so it is declared here once, as an expression over the widget's slots, and the
+ * backend evaluates it before any flow on that event runs. A Toggle's tap proposes the
+ * inverse of its value; a Readout's press proposes the value it is displaying. Where the
+ * gesture already carries the proposal (a Slider's drag, a Dropdown's selection) there is
+ * nothing to declare and the raw event value stands.
+ *
+ * This is what makes `x` mean the same thing everywhere: the value this widget is trying
+ * to set. A flow that sends `x` to the plant needs no copy of the widget's logic. */
+Json event(const char* name, const char* x, const char* from = nullptr) {
+    Json row = Json{{"name", name}, {"x", x}};
+    if (from) row["value"] = from;
+    return row;
+}
 
 /* DEFAULT BEHAVIOR (spec 2.3). Ordinary flows, in the document's own flow shape, shipped
  * with the type instead of authored per instance: a Toggle toggles and a Slider slides the
@@ -217,8 +232,10 @@ Json toggle_type() {
                     slot("off_color", "color", "#2a2a2a", "appearance", "color"),
                     slot("knob_color", "color", "#ececec", "appearance", "color"),
                 }),
+                /* press/release/held are the gesture's own edges and stay raw; a TAP is
+                   the toggling act, and what it proposes is the opposite of the value */
                 Json::array({event("press", "bool"), event("release", "bool"),
-                             event("tap", "bool"), event("held", "bool")}),
+                             event("tap", "bool", "!widget.value"), event("held", "bool")}),
                 box("stack", Json{{"aspect", lit(2.0)}},
                     Json::array({
                         part("rect", Json{{"fill", pick(on, ref("slot:on_color"),
@@ -238,7 +255,9 @@ Json toggle_type() {
                             })),
                     }),
                     press_interact()),
-                Json::array({on_event("tap", {sets_slot("value", "!widget.value")})}));
+                /* every value-owning type's default is the same one step now: take what
+                   the event proposes. The type-specific part lives in its events table */
+                Json::array({on_event("tap", {sets_slot("value", "x")})}));
 }
 
 Json slider_type() {
@@ -292,8 +311,12 @@ Json readout_type() {
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("units_color", "color", "#8a8a8a", "appearance", "color"),
                 }),
-                Json::array({event("press", "num"), event("release", "num"),
-                             event("tap", "num"), event("held", "num")}),
+                /* a press on a Readout is about the value it is SHOWING, and the backend
+                   knows that value: the view never has to supply its own copy */
+                Json::array({event("press", "num", "widget.value"),
+                             event("release", "num", "widget.value"),
+                             event("tap", "num", "widget.value"),
+                             event("held", "num", "widget.value")}),
                 box("auto", Json::object(),
                     Json::array({
                         part("text", Json{{"text", to_fixed(ref("slot:value"),
@@ -321,7 +344,10 @@ Json indicator_type() {
                     slot("off_color", "color", "#2a2a2a", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                 }),
-                Json::array({event("press", "num"), event("tap", "num")}),
+                /* the lamp's value is bool, so its events are: the shape a type reports
+                   has to be the shape it holds, or nothing downstream can check anything */
+                Json::array({event("press", "bool", "widget.value"),
+                             event("tap", "bool", "widget.value")}),
                 box("col", Json::object(),
                     Json::array({
                         box("stack", Json{{"weight", lit(1.0)}},
@@ -352,7 +378,8 @@ Json dropdown_type() {
                     slot("border", "color", "#2e2e2e", "appearance", "color"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                 }),
-                Json::array({event("select", "text"), event("open", "text")}),
+                /* the selection is the gesture's own payload; opening proposes nothing new */
+                Json::array({event("select", "text"), event("open", "text", "widget.value")}),
                 box("stack", Json::object(),
                     Json::array({
                         box("row", Json{{"pad", lit(0.18)}},
@@ -380,7 +407,8 @@ Json label_type() {
                     /* a label reads like a line of text, so it starts left, not center */
                     align_slot("left"),
                 }),
-                Json::array({event("press", "text"), event("tap", "text")}),
+                Json::array({event("press", "text", "widget.text"),
+                             event("tap", "text", "widget.text")}),
                 box("stack", Json::object(),
                     Json::array({part("text", Json{{"text", ref("slot:text")},
                                                    {"fill", ref("slot:text_color")},

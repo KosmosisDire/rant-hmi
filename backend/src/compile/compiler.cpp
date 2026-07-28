@@ -114,8 +114,13 @@ class Compiler {
         copy_entities();
         build_cells();
         build_feeds();
-        build_flows();
+        build_event_values();
+        /* The type's defaults are compiled FIRST, so they run first: by the time an
+         * authored flow on the same event runs, the widget's own state already reflects
+         * the gesture and `widget.<slot>` agrees with `x`. Two readings of the same
+         * event would be worse than either one. */
         build_type_behavior();
+        build_flows();
         program_.layout.stack_values = std::max<uint32_t>(program_.layout.stack_values, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
         CompileResult out;
@@ -763,6 +768,37 @@ class Compiler {
                         std::max(program_.layout.stack_values, flow.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
+            }
+        }
+    }
+
+    /* WHAT `x` IS, per (widget, event). A gesture reports what the pointer did; the value
+     * the widget PROPOSES is a property of the type, so the events table declares it:
+     * a Toggle's tap proposes `!widget.value`, a Readout's press proposes the value it is
+     * showing. A Slider's drag already carries its own proposal, so it declares nothing.
+     *
+     * Without this, `x` on a tap is the pointer's `true` and every flow that wants the
+     * value has to restate the widget's own logic, which is both boilerplate and a second
+     * place for it to be wrong. */
+    void build_event_values() {
+        for (WidgetInfo& widget : widgets_) {
+            if (!widget.type) continue;
+            for (const Json& row : widget.type->value("events", Json::array())) {
+                const std::string expression_text = row.value("value", "");
+                if (expression_text.empty()) continue;
+                EventValueProgram source;
+                source.widget_id = widget.id;
+                source.event = row.value("name", "");
+                const Shape shape = shape_from_name(row.value("x", ""));
+                ExpressionScope scope = scope_for(widget, shape);
+                if (!expression(widget.id, expression_text, ExprTier::Wire, scope, shape,
+                                source.code, source.max_stack))
+                    continue;
+                source.code.push_back(Instruction{OpCode::StoreX});
+                source.code.push_back(Instruction{OpCode::Halt});
+                program_.layout.stack_values =
+                    std::max(program_.layout.stack_values, source.max_stack);
+                program_.event_values.push_back(std::move(source));
             }
         }
     }

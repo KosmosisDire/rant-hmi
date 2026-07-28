@@ -550,14 +550,11 @@ export class App implements Editor {
     return cellsFor(widget, type, this.live, this.view.state[widget.id] ?? {});
   }
 
-  private eventValue(widget: Widget, type: WidgetType, event: string, down: boolean): Json {
-    const shape = type.events.find((row) => row.name === event)?.x ?? "bool";
-    const fed = fedSlots(widget);
-    const value = resolveSlot(widget, type, this.live, fed, "value");
-    if (shape === "num") return typeof value === "number" ? value : null;
-    if (shape === "text" || shape === "enum") return typeof value === "string" ? value : null;
-    if (shape === "bool") return down;
-    return down;
+  /* What the gesture itself reports. Where the type declares where `x` comes from, that
+     is the backend's to derive and this sends nothing: a view holding its own copy of a
+     value the backend already owns is exactly the truth this tier must not hold. */
+  private eventValue(type: WidgetType, event: string, down: boolean): Json {
+    return type.events.find((row) => row.name === event)?.value ? null : down;
   }
 
   private emitInput(widget: Widget, event: string | undefined, value: Json): void {
@@ -592,10 +589,10 @@ export class App implements Editor {
     };
     if (interact.primitive === "press")
       this.emitInput(widget, interact.emits.press,
-        this.eventValue(widget, type, interact.emits.press, true));
+        this.eventValue(type, interact.emits.press, true));
     else if (interact.primitive === "pick")
       this.emitInput(widget, interact.emits.open,
-        this.eventValue(widget, type, interact.emits.open, true));
+        this.eventValue(type, interact.emits.open, true));
     else if (interact.primitive === "drag1d")
       /* a press on the track IS a drag to that point: without this, a click that never
          moves emits nothing at all and the knob ignores it */
@@ -642,18 +639,18 @@ export class App implements Editor {
     state.pressed = state.dragging = state.open = false;
     if (interact.primitive === "press") {
       this.emitInput(widget, interact.emits.release,
-        this.eventValue(widget, type, interact.emits.release, false));
+        this.eventValue(type, interact.emits.release, false));
       const hold = Number(run(interact.params.hold_ms, this.controlCells(widget, type)) ?? 600);
       if (!cancelled && performance.now() - control.started < hold)
         this.emitInput(widget, interact.emits.tap,
-          this.eventValue(widget, type, interact.emits.tap, true));
+          this.eventValue(type, interact.emits.tap, true));
     } else if (interact.primitive === "drag1d") {
       if (!cancelled && control.value !== undefined)
         this.emitInput(widget, interact.emits.commit, control.value);
     } else if (interact.primitive === "pick" && !cancelled) {
       const options = run(interact.params.options, this.controlCells(widget, type));
       if (Array.isArray(options) && options.length) {
-        const current = this.eventValue(widget, type, interact.emits.select, true);
+        const current = resolveSlot(widget, type, this.live, fedSlots(widget), "value");
         const at = Math.max(-1, options.indexOf(current));
         this.emitInput(widget, interact.emits.select, options[(at + 1) % options.length]);
       }

@@ -88,6 +88,9 @@ export interface SlotSpec {
 export interface EventSpec {
   name: string;
   x: string;
+  /* where `x` comes from, when the type derives it rather than the gesture carrying it
+     (spec 2.3). The backend evaluates it; a view only reports the gesture. */
+  value?: string;
 }
 
 export type Attrs = Record<string, Program>;

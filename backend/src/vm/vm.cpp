@@ -181,7 +181,7 @@ bool emit_message(const Program& program, RuntimeState& state, Verb verb,
 
 static RunResult run_code(const Program& program, const std::vector<Instruction>& code,
                           const FlowProgram* flow, RuntimeState& state, Value event_value,
-                          uint32_t start_pc = 0) noexcept {
+                          uint32_t start_pc = 0, Value* out_x = nullptr) noexcept {
     RunResult result;
     Value x = event_value;
     uint32_t sp = 0;
@@ -436,6 +436,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
         }
     }
     result.halted = true;
+    if (out_x) *out_x = x;
     return result;
 }
 
@@ -444,9 +445,21 @@ RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState
     return run_code(program, flow.code, &flow, state, event_value);
 }
 
+Value event_x(const Program& program, RuntimeState& state, uint64_t widget_id,
+              const std::string& event, Value raw) noexcept {
+    for (const EventValueProgram& source : program.event_values) {
+        if (source.widget_id != widget_id || source.event != event) continue;
+        Value out = raw;
+        run_code(program, source.code, nullptr, state, raw, 0, &out);
+        return out;
+    }
+    return raw;
+}
+
 RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget_id,
-                    const std::string& event, Value event_value) noexcept {
+                    const std::string& event, Value raw) noexcept {
     RunResult total;
+    const Value event_value = event_x(program, state, widget_id, event, raw);
     for (const FlowProgram& flow : program.flows) {
         if (flow.widget_id != widget_id || flow.event != event) continue;
         if (flow.first_only && flow.group < state.fired.size() && state.fired[flow.group])

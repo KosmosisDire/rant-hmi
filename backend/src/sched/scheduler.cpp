@@ -38,7 +38,10 @@ void Scheduler::run_one(uint32_t index, Value value) {
     run_flow(program_, flow, state_, value);
 }
 
-void Scheduler::dispatch(uint64_t widget, const std::string& event, Value value) {
+void Scheduler::dispatch(uint64_t widget, const std::string& event, Value raw) {
+    /* what the widget PROPOSES, derived once so every flow on this event sees the same x
+     * (spec 2.3); the raw value stands where the type declares no derivation */
+    const Value value = event_x(program_, state_, widget, event, raw);
     for (uint32_t i = 0; i < program_.flows.size(); ++i) {
         const FlowProgram& flow = program_.flows[i];
         if (flow.widget_id == widget && flow.event == event) run_one(i, value);

@@ -402,6 +402,76 @@ void test_default_behavior() {
     CHECK(has_diag(compile_document(reaching, registry(), mesh), "assign_var"));
 }
 
+/* `x` IS WHAT THE WIDGET PROPOSES. A flow that sends x has to send the value the control
+ * is trying to set, without restating the control's own logic and without waiting for a
+ * round trip to bring the value back. */
+void test_event_value() {
+    EntityDef bit;
+    bit.kind = EntityKind::Variable;
+    bit.name = "bit";
+    bit.writable = true;
+    bit.fields = {FieldDef{"on", Shape::Bool}};
+    FakeMesh mesh(std::vector<EntityDef>{bit});
+
+    /* the canonical case: a toggle whose tap writes the plant, authored with x alone */
+    Document document = widget_document(
+        "Toggle", Json{{"value", false}},
+        Json{{"flows", Json::array({Json{
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({Json{{"kind", "send"},
+                                           {"target", Json{{"kind", "V"}, {"name", "bit"}}},
+                                           {"verb", "write"}}})}}})}});
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    RuntimeState state(compiled.program);
+    const uint64_t id = only_widget(document);
+
+    /* the gesture reports true both times; what x means is the widget's business */
+    run_event(compiled.program, state, id, "tap", Value::boolean(true));
+    CHECK(state.effect_count == 1);
+    CHECK(state.effects[0].value.tag == ValueTag::Bool);
+    CHECK(state.effects[0].value.data.boolean == true);
+
+    state.clear_outputs();
+    run_event(compiled.program, state, id, "tap", Value::boolean(true));
+    CHECK(state.effect_count == 1);
+    CHECK(state.effects[0].value.data.boolean == false);
+
+    /* and the widget's own state agrees with x by the time the authored flow reads it:
+       the type's default is compiled first, so it runs first */
+    const uint32_t slot = [&] {
+        for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+            if (compiled.program.cells[i].kind == CellKind::Slot &&
+                compiled.program.cells[i].name == "value")
+                return i;
+        return UINT32_MAX;
+    }();
+    CHECK(state.values[slot].data.boolean == false);
+
+    /* a type that declares no derivation keeps the gesture's own value: a slider's drag
+       already carries what it proposes */
+    Document slider = widget_document("Slider", Json{{"value", 0}, {"min", 0}, {"max", 100}});
+    CompileResult slider_compiled = compile_document(slider, registry(), mesh);
+    RuntimeState slider_state(slider_compiled.program);
+    run_event(slider_compiled.program, slider_state, only_widget(slider), "input",
+              Value::number(62.5));
+    for (uint32_t i = 0; i < slider_compiled.program.cells.size(); ++i)
+        if (slider_compiled.program.cells[i].name == "value")
+            CHECK(slider_state.values[i].data.num == 62.5);
+
+    /* a read-only control proposes what it is SHOWING, so the view never supplies it */
+    Document readout = widget_document("Readout", Json{{"value", 7.5}});
+    CompileResult readout_compiled = compile_document(readout, registry(), mesh);
+    RuntimeState readout_state(readout_compiled.program);
+    const Value shown = event_x(readout_compiled.program, readout_state, only_widget(readout),
+                                "tap", Value::nil());
+    CHECK(shown.tag == ValueTag::Num);
+    CHECK(shown.data.num == 7.5);
+}
+
 /* A value that cannot be its declared shape used to become Nil in silence, which reads on
  * screen exactly like a value that has not arrived. It is a finding now. */
 void test_value_shape_diagnostics() {
@@ -439,6 +509,7 @@ int main() {
     test_compile_fault();
     test_expression_rejection();
     test_default_behavior();
+    test_event_value();
     test_value_shape_diagnostics();
     return check::summary("runtime_test");
 }
