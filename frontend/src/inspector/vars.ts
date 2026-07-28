@@ -63,11 +63,15 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
     el("div", { class: "var-grid" }, [
       el("span", { class: "row-label", text: "TYPE" }),
       type,
-      el("span", { class: "row-label", text: variable.type === "timer" ? "SECS" : "INIT" }, [
-        /* an init that cannot be the variable's shape is pinned on the INIT row */
-        diagIcon(editor.diagAt(variable.id, "init")),
-      ]),
-      el("span", { class: "value-cell" }, [
+      /* init and keep share one full-width line: the label rides inline, the init editor
+         takes the room, keep sits at the right edge. The controls live in a flex line
+         because a bare control as a grid item would be stretched to the column, which is
+         exactly not what a two-state pair wants. */
+      el("div", { class: "var-line" }, [
+        el("span", { class: "row-label", text: variable.type === "timer" ? "SECS" : "INIT" }, [
+          /* an init that cannot be the variable's shape is pinned on the INIT row */
+          diagIcon(editor.diagAt(variable.id, "init")),
+        ]),
         valueEditor(
           null,
           initShape,
@@ -76,15 +80,15 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
           (value) => setProp("init", value),
         ),
         variable.type === "timer" ? el("span", { class: "op", text: "s" }) : null,
+        el("span", { class: "row-label keep-label", text: "KEEP" }),
+        valueEditor(
+          null,
+          "bool",
+          variable.id + ":persist",
+          () => at().persist,
+          (value) => setProp("persist", value),
+        ),
       ]),
-      el("span", { class: "row-label", text: "KEEP" }),
-      valueEditor(
-        null,
-        "bool",
-        variable.id + ":persist",
-        () => at().persist,
-        (value) => setProp("persist", value),
-      ),
     ]),
   ]);
 }

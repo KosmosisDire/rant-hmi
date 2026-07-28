@@ -1047,6 +1047,19 @@ select.field {
   margin: -2px 0 7px;
 }
 
+/* init and keep share one full-width line; keep is pushed to the right edge */
+.var-line {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.keep-label {
+  margin-left: auto;
+}
+
 .now-value {
   display: inline-flex;
   align-items: center;
