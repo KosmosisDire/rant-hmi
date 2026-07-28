@@ -1752,6 +1752,11 @@ button.swatch {
   display: none;
 }
 
+/* the type tree can open FROM the source tree (a typed new name), so it always wins */
+#ttree {
+  z-index: 71;
+}
+
 #stree.on,
 #ttree.on {
   display: block;
@@ -1795,7 +1800,21 @@ button.swatch {
   padding-bottom: 4px;
 }
 
-/* a fresh temporary needs only a name (spec 2.7): the tree's last row is a text field */
+/* a fresh temporary needs only a name (spec 2.7): the tree's last row is a text field,
+   with the typed-declaration button beside it */
+.stree-newrow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 8px 6px;
+}
+
+.stree-newrow > .stree-new {
+  flex: 1 1 auto;
+  margin: 0;
+  width: auto;
+}
+
 .stree-new {
   margin: 4px 8px 6px;
   width: calc(100% - 16px);

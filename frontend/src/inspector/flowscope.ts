@@ -144,6 +144,14 @@ export function scopeAt(
       x = produced ? { shape: produced.shape, elem: produced.elem } : null;
       continue;
     }
+    /* a TYPED destination declares a fresh temporary right here (spec 2.7), zeroed
+       per run, whichever field the row goes on to fill */
+    if (typeof to.type === "string" && to.type && !scope.has(to.local)) {
+      scope.set(to.local, to.type.includes(".")
+        ? { name: to.local, shape: "enum", type: to.type, note: "temporary" }
+        : { name: to.local, shape: "struct", type: to.type,
+            fields: typeFields(editor, to.type), note: "temporary" });
+    }
     /* a field write says nothing about the whole value, so it declares nothing */
     if (to.path) continue;
     /* a declared variable keeps the type its author gave it */

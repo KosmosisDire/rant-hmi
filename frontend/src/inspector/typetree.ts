@@ -236,8 +236,9 @@ export function openTypeTree(
       };
       node.addEventListener("click", (ev) => {
         /* a row that both expands and picks splits at its ICON: everything left of it
-           (the indent and the caret) folds, the name and what follows picks */
-        if (row.expandable && row.pick && !filter) {
+           (the indent and the caret) folds, the name and what follows picks. A click
+           with no coordinates (keyboard, scripted) always picks. */
+        if (row.expandable && row.pick && !filter && ev.detail !== 0) {
           const icon = node.children[1] as HTMLElement;
           if (ev.clientX < icon.getBoundingClientRect().left) {
             toggle();

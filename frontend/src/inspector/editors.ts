@@ -104,6 +104,11 @@ export function valueEditor(
  * name, path and value type along in one act, so no kind or type dropdown exists. The
  * structure key of the row containing this must include the reference's kind, so a
  * cross-kind repick rebuilds the kind mark. */
+/* the scope mark for an HMI variable reference: blue local, violet global */
+function scopeMark(widget: Widget | null, name: string | undefined): string {
+  return widget?.locals.some((v) => v.name === name) ? "l" : "g";
+}
+
 export function sourceField(
   key: string,
   editor: Editor,
@@ -112,7 +117,8 @@ export function sourceField(
   read: () => { ref?: { kind: string; name: string }; path?: string },
   onPick: (pick: SourcePick) => void,
 ): HTMLElement {
-  const kind = read().ref?.kind ?? "?";
+  const raw = read().ref?.kind ?? "?";
+  const kind = raw === "L" ? scopeMark(widget, read().ref?.name) : raw;
   const node = el("button", { class: "chip pad-mark source-chip", title: "pick from the network" });
   bindFlag(key + ".ghost", node, "ghost-chip", () => !read().ref?.name);
   node.appendChild(kindMark(kind));
@@ -144,7 +150,8 @@ export function entityChip(
   editor?: Editor,
   widget?: Widget | null,
 ): HTMLElement {
-  const kind = read().ref?.kind ?? "?";
+  const raw = read().ref?.kind ?? "?";
+  const kind = raw === "L" ? scopeMark(widget ?? null, read().ref?.name) : raw;
   const node = chip("", "pad-mark");
   bindFlag(key + ".ghost", node, "ghost-chip", () => !read().ref?.name);
   node.appendChild(kindMark(kind));

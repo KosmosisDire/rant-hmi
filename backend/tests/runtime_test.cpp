@@ -385,6 +385,53 @@ void test_typed_variables() {
     CHECK(found);
 }
 
+/* A TYPED TEMPORARY (spec 2.7): the destination carries a TypeRef, so a fresh name is
+ * declared and ZEROED at its row every run: no field can carry stale state from the
+ * previous run the way a persistent variable would. */
+void test_typed_temporaries() {
+    Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                 {"pages", Json::array()}};
+    Json slider = {
+        {"type", "Slider"},
+        {"label", "cmd"},
+        {"slots", Json::object()},
+        {"feeds", Json::array()},
+        {"flows",
+         Json::array({
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({
+                       steps::new_field("fresh", "Motor", "speed", "x"),
+                       steps::write_value("fresh", "V", "motor"),
+                   })}},
+         })},
+    };
+    root["pages"].push_back(Json{{"name", "Main"}, {"widgets", Json::array({slider})}});
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    FakeMesh mesh(reflection());
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    RuntimeState state(compiled.program);
+    std::string fault;
+
+    run_event(compiled.program, state, widget, "input", Value::number(7));
+    CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
+    state.clear_outputs();
+    run_event(compiled.program, state, widget, "input", Value::number(9));
+    CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
+    CHECK(mesh.transcript().size() == 2);
+    /* `enabled` is the type's zero BOTH runs: the row re-zeroes, nothing carries */
+    CHECK_MSG(mesh.transcript()[0] == "write V:motor{speed=7,enabled=false}",
+              mesh.transcript()[0]);
+    CHECK_MSG(mesh.transcript()[1] == "write V:motor{speed=9,enabled=false}",
+              mesh.transcript()[1]);
+}
+
 /* The enum <-> text coercions the compiler inserts (spec 6.2): a feed from an enum field
  * into a text slot reads as the variant name, and a text written into an enum field
  * becomes the variant's value; a name outside the vocabulary is Nil plus a fault. */
@@ -413,9 +460,27 @@ void test_enum_names() {
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "release"}}})},
                   {"when_mode", "first"},
                   {"do", Json::array({steps::set_var("gearMode", "\"run\"")})}},
+             /* an enum moved into a TEXT destination renders as its variant name */
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "held"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({Json{{"kind", "move"},
+                                           {"from", {{"local", "gearMode"}, {"path", ""}}},
+                                           {"to", {{"slot", "text"}}}}})}},
          })},
     };
-    root["pages"].push_back(Json{{"name", "Main"}, {"widgets", Json::array({label})}});
+    /* a second label formats with text JOINING: enum x rendered as its name */
+    Json fmt = {
+        {"type", "Label"},
+        {"label", "fmt"},
+        {"slots", Json::object()},
+        {"feeds", Json::array({Json{{"slot", "text"},
+                                    {"src", entity("V", "gear")},
+                                    {"path", "mode"},
+                                    {"xf", "\"Run \" + x"}}})},
+        {"flows", Json::array()},
+    };
+    root["pages"].push_back(
+        Json{{"name", "Main"}, {"widgets", Json::array({label, fmt})}});
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
@@ -428,7 +493,7 @@ void test_enum_names() {
     RuntimeState state(compiled.program);
 
     /* the feed carries no authored transform; the compiler inserted x.name */
-    CHECK(compiled.program.feeds.size() == 1);
+    CHECK(compiled.program.feeds.size() == 2);
     const FeedProgram& feed = compiled.program.feeds[0];
     int gear = -1;
     for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
@@ -440,6 +505,14 @@ void test_enum_names() {
                              Value::enumeration(1, mode_type));
     CHECK(!fed.faulted);
     CHECK(state.text(compiled.program, state.values[feed.cell]) == "run");
+
+    /* the joining feed: "Run " + <enum> lands as "Run run" */
+    const FeedProgram& joined = compiled.program.feeds[1];
+    RunResult ran = run_feed(compiled.program, joined, state,
+                             Value::enumeration(1, mode_type));
+    CHECK(!ran.faulted);
+    CHECK_MSG(state.text(compiled.program, state.values[joined.cell]) == "Run run",
+              std::string(state.text(compiled.program, state.values[joined.cell])));
 
     /* writing the name lands the value */
     state.clear_outputs();
@@ -472,6 +545,35 @@ void test_enum_names() {
     CHECK(!release.faulted);
     CHECK(state.values[gear_mode].tag == ValueTag::Enum);
     CHECK(state.values[gear_mode].data.integer == 1);
+
+    /* the enum variable into the text slot: the compiler inserted the .name render */
+    int text_cell = -1;
+    for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+        if (compiled.program.cells[i].kind == CellKind::Slot &&
+            compiled.program.cells[i].owner_widget == widget &&
+            compiled.program.cells[i].name == "text")
+            text_cell = static_cast<int>(i);
+    CHECK(text_cell >= 0);
+    state.clear_outputs();
+    RunResult held = run_event(compiled.program, state, widget, "held", Value::nil());
+    CHECK(!held.faulted);
+    CHECK(state.text(compiled.program, state.values[text_cell]) == "run");
+
+    /* `+` JOINS text in a display expression, rendering the other side as str() does;
+       a wire value refuses it like any other formatting */
+    ExpressionScope scope;
+    scope.x_shape = Shape::Enum;
+    scope.x_enum = mode_type;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string expr_error;
+    CHECK(compile_expression("\"Run \" + x", ExprTier::Display, scope, compiled.program,
+                             code, result, expr_error));
+    CHECK(result.shape == Shape::Text);
+    code.clear();
+    CHECK(!compile_expression("\"Run \" + x", ExprTier::Wire, scope, compiled.program,
+                              code, result, expr_error));
+    CHECK_MSG(expr_error.find("display") != std::string::npos, expr_error);
 }
 
 void test_compile_fault() {
@@ -1271,6 +1373,7 @@ int main() {
     test_replay();
     test_migration();
     test_typed_variables();
+    test_typed_temporaries();
     test_enum_names();
     test_compile_fault();
     test_expression_rejection();

@@ -437,8 +437,9 @@ unchanged.
 `unforce` ignores its source: it hands the variable back to its owner. `call` is the
 one move that suspends (5.6), because a response is a round trip; a call with no
 destination local is fire and forget and does not suspend. There is no `new` source:
-starting from a zeroed value is declaring a variable with the type (2.7), which is
-born zeroed.
+starting from a zeroed value is a TYPED destination (a temporary declared with a
+TypeRef, zeroed per run at its row, 2.7) or a declared variable of the type, born
+zeroed once.
 
 **GUARD** steps stop or delay the run and move nothing. They read and write `x`
 implicitly, because they ARE the pipeline:
@@ -526,6 +527,13 @@ appears in a variable section, and takes its TYPE from what is first moved into 
 `read` gives it the source's type, an expression gives it the expression's shape).
 Storage is per site and fixed at compile like everything else,
 so "declared by use" is an authoring convenience and not a dynamic environment.
+
+A destination may also carry a TypeRef (`to {local, path, type}`): a TYPED temporary,
+declared with that type and ZEROED AT ITS ROW EVERY RUN. That is where a clean
+message comes from when read-modify-write is not wanted: unlike a persistent
+variable, no field can silently carry what the previous run left there, which is
+the difference between the two flavors. On a name that already exists the type is a
+claim to check, never a redeclaration.
 
 That is the split the two flavors are for: a temporary is inferred and cheap, so the
 common case costs one click; a declared variable is typed by its author, so moving a
@@ -799,16 +807,20 @@ Three menu families, all the same shape (a hierarchical, collapsible, searchable
 tree under the control, rendered like a folder listing):
 
 - **THE source tree**: the one picker for every reference a feed or a flow makes.
-  Two roots: `hmi` (the flow's locals in scope with their inferred types, struct ones
-  expanded to their fields, then the variables, then this widget's own slots, then
-  "+ new name": a fresh temporary needs only a name, 2.7) and `dart` (the mesh,
+  Two roots: `hmi` (the flow's own names first: `x` and its temporaries, then the
+  variables in `local` and `global` subfolders, then this widget's own slots, then
+  "+ new name": a fresh temporary needs only a name, 2.7, and the button beside it
+  declares the name WITH a type, a per-run zeroed value) and `dart` (the mesh,
   foldered by the / segments of entity names; an entity that expands into fields is
   also pickable whole where a whole value is what the row wants). A from side
   additionally offers `expression` at the top, the way back to a typed expression.
   Every row shows its kind mark and resolved type, so the pick carries kind, name,
-  path AND type in one act and no kind or family dropdown exists anywhere. A
+  path AND type in one act and no kind or family dropdown exists anywhere. The three
+  storeys have three mark colours (blue box-dot local, violet globe global, the
+  entity kinds their own), so where a thing lives is legible without reading. A
   constrained picker (writable targets only, variables only) HIDES what cannot be
-  picked rather than showing it dead.
+  picked rather than showing it dead. Clicking anywhere left of a row's icon folds
+  it; the name and what follows picks.
 - **Type tree**: the root types of the type table (2.2) by name. Every root BROWSES
   into its full field table so an unfamiliar name can be verified against what it
   carries (the carrier entity is not restated on the row); an enum field is pickable
@@ -1333,6 +1345,12 @@ Both are pure num -> text; there is no time SHAPE, deliberately: live-updating
 formatting covers the display need.
 Method syntax below is sugar over the same typed table: `roundTo(x, 1)` and
 `x.round(1)` compile identically, so neither habit is punished.
+
+**`+` JOINS when either side is text**: `"Run " + x` renders the other operand the way
+`str()` renders it (a number formatted, an enum as its variant name, a bool as
+true/false), so the two spellings can never disagree. Text production is display
+vocabulary, so a wire value refuses it like any other formatting; an aggregate or Nil
+operand is Nil, never a quiet empty string.
 
 **`variants(T)`** is the one builtin taking a TYPE rather than a value: it yields that
 enum type's options as a list, resolved at compile to a constant, so it costs nothing

@@ -37,6 +37,34 @@ std::string_view enum_variant_name(const Program& program, uint16_t type,
     return {};
 }
 
+/* any scalar as text: a Text value passes through, everything else formats into the
+ * caller's buffer. This IS the str() vocabulary, shared by text joining, so `"x: " + v`
+ * and `"x: " + str(v)` can never disagree. */
+std::string_view scalar_text(const ExecContext& ctx, const Value& v,
+                             char* buffer, size_t cap) noexcept {
+    switch (v.tag) {
+        case ValueTag::Text: return text_of(ctx, v);
+        case ValueTag::Bool: return v.data.boolean ? "true" : "false";
+        case ValueTag::Num:
+            std::snprintf(buffer, cap, "%.15g", v.data.num);
+            return buffer;
+        case ValueTag::Enum: {
+            const std::string_view name =
+                enum_variant_name(ctx.program, v.type_id, v.data.integer);
+            if (!name.empty()) return name;
+            std::snprintf(buffer, cap, "%lld", static_cast<long long>(v.data.integer));
+            return buffer;
+        }
+        case ValueTag::Color:
+            if ((v.data.rgba & 0xffu) == 0xffu)
+                std::snprintf(buffer, cap, "#%06x", static_cast<unsigned>(v.data.rgba >> 8));
+            else
+                std::snprintf(buffer, cap, "#%08x", static_cast<unsigned>(v.data.rgba));
+            return buffer;
+        default: return {};
+    }
+}
+
 /* a bounds-checked window into the element pool; count is entries (a map's PAIRS,
  * entries interleaved key,value) */
 struct AggView {
@@ -170,31 +198,12 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
         case Builtin::Str: {
             if (n != 1) return Value::nil();
             const Value& v = args[0];
+            if (v.tag == ValueTag::Text) return v;
+            if (v.tag == ValueTag::Nil || v.tag == ValueTag::List ||
+                v.tag == ValueTag::Map || v.tag == ValueTag::Struct)
+                return Value::nil();
             char buffer[64];
-            switch (v.tag) {
-                case ValueTag::Text: return v;
-                case ValueTag::Bool: return text_result(ctx, site, v.data.boolean ? "true" : "false");
-                case ValueTag::Num:
-                    std::snprintf(buffer, sizeof(buffer), "%.15g", v.data.num);
-                    return text_result(ctx, site, buffer);
-                case ValueTag::Enum: {
-                    const std::string_view name =
-                        enum_variant_name(ctx.program, v.type_id, v.data.integer);
-                    if (!name.empty()) return text_result(ctx, site, name);
-                    std::snprintf(buffer, sizeof(buffer), "%lld",
-                                  static_cast<long long>(v.data.integer));
-                    return text_result(ctx, site, buffer);
-                }
-                case ValueTag::Color:
-                    if ((v.data.rgba & 0xffu) == 0xffu)
-                        std::snprintf(buffer, sizeof(buffer), "#%06x",
-                                      static_cast<unsigned>(v.data.rgba >> 8));
-                    else
-                        std::snprintf(buffer, sizeof(buffer), "#%08x",
-                                      static_cast<unsigned>(v.data.rgba));
-                    return text_result(ctx, site, buffer);
-                default: return Value::nil();
-            }
+            return text_result(ctx, site, scalar_text(ctx, v, buffer, sizeof(buffer)));
         }
         case Builtin::Name: {
             if (n != 1 || args[0].tag != ValueTag::Enum) return Value::nil();
@@ -712,6 +721,27 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const std::string_view name =
                 enum_variant_name(ctx.program, receiver.type_id, receiver.data.integer);
             return name.empty() ? Value::nil() : text_result(ctx, site, name);
+        }
+        /* text joining (`a + b` with a text side, display tier): both operands rendered
+         * as str() renders them; an aggregate or a Nil side is Nil, never "" quietly */
+        case MethodId::TextConcat: {
+            if (n != 1) return Value::nil();
+            const Value& right = args[0];
+            const auto scalar = [](const Value& v) {
+                return v.tag != ValueTag::Nil && v.tag != ValueTag::List &&
+                       v.tag != ValueTag::Map && v.tag != ValueTag::Struct;
+            };
+            if (!scalar(receiver) || !scalar(right)) return Value::nil();
+            char left_buffer[64], right_buffer[64], out[512];
+            const std::string_view a =
+                scalar_text(ctx, receiver, left_buffer, sizeof(left_buffer));
+            const std::string_view b =
+                scalar_text(ctx, right, right_buffer, sizeof(right_buffer));
+            const size_t la = std::min(a.size(), sizeof(out));
+            if (la) std::memcpy(out, a.data(), la);
+            const size_t lb = std::min(b.size(), sizeof(out) - la);
+            if (lb) std::memcpy(out + la, b.data(), lb);
+            return text_result(ctx, site, std::string_view(out, la + lb));
         }
         default: break;
     }

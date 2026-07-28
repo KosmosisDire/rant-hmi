@@ -56,6 +56,15 @@ inline Json set_field(const std::string& local, const std::string& field,
                 {"to", {{"local", local}, {"path", field}}}};
 }
 
+/* the TYPED declaring row (spec 2.7): a fresh temporary of <type>, zeroed here every
+ * run, with this row filling its first field */
+inline Json new_field(const std::string& local, const std::string& type,
+                      const std::string& field, const std::string& expression) {
+    return Json{{"kind", "move"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"local", local}, {"path", field}, {"type", type}}}};
+}
+
 /* <local> -> <entity>: the whole value out */
 inline Json write_value(const std::string& local, const char* kind, const std::string& name,
                         const char* mode = "write") {

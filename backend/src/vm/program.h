@@ -239,6 +239,9 @@ enum class MethodId : uint16_t {
     MapValues,
     MapHas,
     MapGet,
+    /* `a + b` with a text operand (display tier): both sides rendered as str() would
+     * render them, joined into the site's own slot */
+    TextConcat,
 };
 
 struct Instruction {

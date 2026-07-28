@@ -133,6 +133,9 @@ export function flowShape(flow: Flow): Json {
       sideOf(step.to),
       step.from?.kind ?? "",
       step.to?.kind ?? "",
+      /* the NAMES a side holds pick its scope mark, so a repick rebuilds the row */
+      step.from?.local ?? "",
+      step.to?.local ?? "",
       verbOf(step),
     ]),
   ];
@@ -535,7 +538,10 @@ function stepCell(
       else set("from", { kind: pick.kind, name: pick.name, path: pick.path });
     };
     const setTo = (pick: SourcePick) => {
-      if (pick.family === "local") set("to", { local: pick.name, path: pick.path });
+      if (pick.family === "local")
+        set("to", pick.type
+          ? { local: pick.name, path: pick.path, type: pick.type }
+          : { local: pick.name, path: pick.path });
       else if (pick.family === "slot") set("to", { slot: pick.name });
       else if (pick.family === "entity")
         set("to", { kind: pick.kind, name: pick.name, path: pick.path });
@@ -640,7 +646,13 @@ function sideChip(
   const markOf = (side: Json): string => {
     const form = sideOf(side);
     if (form === "entity") return side.kind || "?";
-    if (form === "local") return "L";
+    if (form === "local") {
+      /* the scope mark: blue for the flow's own names and widget locals, violet for
+         a global, so the three storeys can never be confused */
+      const held = localAt(editor, widget, (editor.store.node(flow.id) as Flow) ?? flow,
+                           stepId, String(side.local ?? ""));
+      return held?.note === "global" ? "g" : "l";
+    }
     return "";
   };
   /* the kind mark is structure (flowShape keys on the side form and entity kind), so it

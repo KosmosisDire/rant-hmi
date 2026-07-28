@@ -505,6 +505,21 @@ class Parser {
             const TokenKind op = token_.kind;
             advance();
             Shape right = parse_product();
+            /* `+` with a text side JOINS (spec 6.2): the other operand is rendered as
+               str() renders it. Text production is display vocabulary, so a wire value
+               refuses it like any other formatting. */
+            if (op == TokenKind::Plus && (left == Shape::Text || right == Shape::Text)) {
+                if (tier_ == ExprTier::Wire) {
+                    fail("'+' on text is display vocabulary (formatting); this value is "
+                         "for a machine");
+                    return Shape::Unknown;
+                }
+                emit(OpCode::Method, program_.layout.text_slots++, 1,
+                     static_cast<uint16_t>(MethodId::TextConcat));
+                if (depth_) --depth_;
+                left = Shape::Text;
+                continue;
+            }
             require(left, Shape::Num, op == TokenKind::Plus ? "+" : "-");
             require(right, Shape::Num, op == TokenKind::Plus ? "+" : "-");
             emit(op == TokenKind::Plus ? OpCode::Add : OpCode::Sub);

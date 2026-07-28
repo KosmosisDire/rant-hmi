@@ -784,8 +784,8 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
-            return push_scalar(widget, step, flow, scope, from,
-                               program_.cells[found->second].shape) &&
+            return push_typed(widget, step, flow, scope, from,
+                              program_.cells[found->second].shape, 0) &&
                    emit_store(flow, step_id, found->second);
         }
 
@@ -847,12 +847,36 @@ class Compiler {
         return false;
     }
 
-    /* push_scalar toward one typed destination, with the one compile-inserted coercion:
-     * text into an enum-typed field or variable becomes the variant's value (spec 6.2),
-     * so a Dropdown's selected name writes back with no authored transform. */
+    /* push_scalar toward one typed destination, with the two compile-inserted enum
+     * coercions (spec 6.2): text into an enum-typed field or variable becomes the
+     * variant's value (a Dropdown's selected name writes back with no authored
+     * transform), and an enum into a text destination renders as its variant name. */
     bool push_typed(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                     ExpressionScope& scope, const Json& from, Shape wanted,
                     uint16_t type_id) {
+        if (wanted == Shape::Text) {
+            Shape produced = Shape::Unknown;
+            if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+                return false;
+            if (produced == Shape::Enum) {
+                Instruction name;
+                name.op = OpCode::Method;
+                name.a = program_.layout.text_slots++;
+                name.b = 0;
+                name.small = static_cast<uint16_t>(MethodId::EnumName);
+                flow.code.push_back(name);
+                return true;
+            }
+            if (produced != Shape::Unknown && produced != Shape::Nil &&
+                produced != Shape::Text) {
+                diag(id_of(step), "shape",
+                     "the source is " + std::string(shape_name(produced)) +
+                         ", but this destination wants text",
+                     DiagGrade::Error, "from");
+                return false;
+            }
+            return true;
+        }
         if (wanted != Shape::Enum || type_id == 0)
             return push_scalar(widget, step, flow, scope, from, wanted);
         Shape produced = Shape::Unknown;
@@ -891,6 +915,52 @@ class Compiler {
         if (name.empty()) {
             diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
             return false;
+        }
+
+        /* A TYPED temporary (spec 2.7): the destination carries a TypeRef, so a FRESH
+           name is declared here with that type and zeroed at THIS ROW every run: the
+           per-run clean value a persistent variable cannot be. On a name that already
+           exists the type is a claim to check, never a redeclaration. */
+        const std::string typed = str_or(to, "type", "");
+        if (!typed.empty() && name != "x") {
+            const int type_id = find_type_ref(typed);
+            if (type_id < 0) {
+                diag(step_id, "unresolved_type",
+                     "type '" + typed + "' is not a type in the mesh",
+                     DiagGrade::Error, "to");
+                return false;
+            }
+            const bool fresh = locals.find(name) == locals.end() &&
+                               declared_cell(widget, name) == UINT32_MAX;
+            if (fresh && program_.types[type_id].kind == TypeKind::Enum) {
+                const uint32_t cell = add_temp_cell(flow.flow_id, widget.id, name,
+                                                    Shape::Enum);
+                program_.cells[cell].type_id = static_cast<uint16_t>(type_id);
+                locals[name] = cell;
+                scope.names[name] = Binding{Shape::Enum, OpCode::Load, cell, 0,
+                                            static_cast<uint16_t>(type_id)};
+            } else if (fresh) {
+                const uint32_t cell = ensure_struct_local(widget, flow, locals, scope,
+                                                          name, static_cast<uint16_t>(type_id),
+                                                          step_id);
+                if (cell == UINT32_MAX) return false;
+                Instruction zero;
+                zero.op = OpCode::New;
+                zero.a = cell;
+                zero.b = static_cast<uint32_t>(type_id);
+                zero.c = fault_site(step_id, "move_new", "the value could not be created");
+                flow.code.push_back(zero);
+            } else {
+                const uint32_t held = locals.count(name) ? locals[name]
+                                                         : declared_cell(widget, name);
+                if (program_.cells[held].type_id != type_id) {
+                    diag(step_id, "type_mismatch",
+                         "'" + name + "' does not hold a " + type_name_of(
+                             static_cast<uint16_t>(type_id)),
+                         DiagGrade::Error, "to");
+                    return false;
+                }
+            }
         }
 
         /* `-> x`: the pipeline register, which the guards read. It is a local in the
@@ -996,16 +1066,17 @@ class Compiler {
                 wanted = program_.cells[cell].shape;
             }
         }
-        Shape produced = Shape::Unknown;
-        const size_t mark = flow.code.size();
-        /* an enum-typed variable takes text through the same coercion an enum field
-           does, so a Dropdown's selected name can be stored as the value it names */
-        if (wanted == Shape::Enum && cell != UINT32_MAX && program_.cells[cell].type_id) {
+        /* a DECLARED destination goes through the typed path, so an enum variable
+           takes text (the Dropdown's selected name) and a text variable takes an enum
+           (rendered as its name), exactly like the same-shaped fields do */
+        if (cell != UINT32_MAX) {
             if (!push_typed(widget, step, flow, scope, from, wanted,
                             program_.cells[cell].type_id))
                 return false;
             return emit_store(flow, step_id, cell);
         }
+        Shape produced = Shape::Unknown;
+        const size_t mark = flow.code.size();
         if (!push_scalar(widget, step, flow, scope, from, wanted, &produced)) return false;
         if (cell == UINT32_MAX) {
             if (produced == Shape::Unknown || produced == Shape::Nil) {

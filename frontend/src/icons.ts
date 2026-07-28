@@ -29,6 +29,10 @@ export const ICONS: Record<string, string> = {
   "kind-T": '<path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.4"/>',
   "kind-F": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/>',
   "kind-S": '<path d="M13 2 4.6 12.6a1 1 0 0 0 .8 1.6H11l-1 7.8 8.4-10.6a1 1 0 0 0-.8-1.6H12z"/>',
+  /* HMI scopes, so a local, a global and a mesh variable can never be confused:
+     local = a dot in its own box, global = a globe */
+  "kind-l": '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>',
+  "kind-g": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
 
   /* widget types, for the palette and the add menu */
   Button: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M8 12h8"/>',
@@ -47,6 +51,9 @@ export const KIND_COLOR: Record<string, string> = {
   T: "#9a9a9f",
   F: "#4db6ac",
   S: "#46ae64",
+  /* HMI scopes: blue for this widget's own names, violet for the whole HMI's */
+  l: "#4e8ef7",
+  g: "#a78bfa",
 };
 
 export function kindColor(kind: string): string {

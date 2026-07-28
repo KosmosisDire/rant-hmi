@@ -64,7 +64,8 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   const typeDiags = editor.diagAt(variable.id, "type");
   const head = el("div", { class: "card-head" }, [
     caret,
-    kindMark("L", scope === "local" ? "Only visible to this widget" : "Lives in the HMI"),
+    kindMark(scope === "local" ? "l" : "g",
+             scope === "local" ? "Only visible to this widget" : "Lives in the HMI"),
     name,
     now,
     diagIcon(open ? editor.diagAt(variable.id)

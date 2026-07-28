@@ -16,6 +16,7 @@ import { Editor } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { MeshEntity, MeshField, SlotSpec, Var, Widget } from "../types.js";
 import { FlowScope } from "./flowscope.js";
+import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
 export interface SourcePick {
   /* which side FORM the pick maps to: a mesh entity, a local/variable (by name), one of
@@ -25,6 +26,9 @@ export interface SourcePick {
   name: string;   /* entity/variable name; the slot's name; the expression's text */
   path: string;   /* the field within the entity or struct value; "" = the whole thing */
   shape: string;  /* the resolved value type ("" when nothing has said) */
+  /* a TYPED fresh temporary (spec 2.7): the TypeRef the new name is declared with,
+     zeroed per run at its declaring row */
+  type?: string;
 }
 
 export interface SourceTreeOptions {
@@ -202,7 +206,8 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
     if (openOr("hmi")) {
       /* one variable or flow local, with its struct fields when it has them */
       const name_rows = (name: string, shape: string, type: string | undefined,
-                         fields: MeshField[], note: string, depth: number) => {
+                         fields: MeshField[], note: string, depth: number,
+                         mark: string) => {
         const key = "v:" + name;
         const descend = fields.length > 0;
         if (match(name)) {
@@ -210,7 +215,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
             depth,
             key,
             label: name,
-            kind: "L",
+            kind: mark,
             shape: type || shape,
             note,
             expandable: descend,
@@ -234,7 +239,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
                 depth,
                 key: key + "." + field.path,
                 label: name + " . " + field.path,
-                kind: "L",
+                kind: mark,
                 shape: field.shape,
                 expandable: false,
                 pick: { family: "local", kind: "L", name, path: field.path,
@@ -253,7 +258,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
             depth: depth0,
             key: "v:x",
             label: "x",
-            kind: "L",
+            kind: "l",
             shape: opts.scope.x?.shape ?? "",
             expandable: false,
             pick: { family: "local", kind: "L", name: "x", path: "",
@@ -263,7 +268,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
           const row = { name: local.name, shape: local.shape, type: local.type,
                         fields: local.fields ?? [] };
           if (local.note === "temporary")
-            name_rows(row.name, row.shape, row.type, row.fields, "temporary", depth0);
+            name_rows(row.name, row.shape, row.type, row.fields, "temporary", depth0, "l");
           else buckets[local.note].push(row);
         }
       } else if (wanted("L")) {
@@ -287,7 +292,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
         }
         for (const row of buckets[scope])
           name_rows(row.name, row.shape, row.type, row.fields, "",
-                    searching ? depth0 : depth0 + 1);
+                    searching ? depth0 : depth0 + 1, scope === "local" ? "l" : "g");
       }
 
       /* the widget's own slots: a move destination, named the way expressions read them */
@@ -446,8 +451,9 @@ export function openSourceTree(
       };
       node.addEventListener("click", (ev) => {
         /* a row that both expands and picks splits at its ICON: everything left of it
-           (the indent and the caret) folds, the name and what follows picks */
-        if (row.expandable && row.pick && !filter) {
+           (the indent and the caret) folds, the name and what follows picks. A click
+           with no coordinates (keyboard, scripted) always picks. */
+        if (row.expandable && row.pick && !filter && ev.detail !== 0) {
           const icon = node.children[1] as HTMLElement;
           if (ev.clientX < icon.getBoundingClientRect().left) {
             toggle();
@@ -464,7 +470,11 @@ export function openSourceTree(
       list.appendChild(node);
     }
 
-    /* a fresh temporary needs only a name (spec 2.7): a text row, nothing else */
+    /* A fresh temporary needs only a name (spec 2.7): a text row, Enter commits it,
+       typed by what the move puts into it. The button beside it declares the name WITH
+       a type instead: a per-run zeroed value of that type, which is where a clean
+       message comes from. A struct pick aims the row at the type's first field, so the
+       declaring row is immediately a useful one. */
     if (opts.newName && !filter) {
       const name = el("input", {
         class: "stree-new",
@@ -479,7 +489,28 @@ export function openSourceTree(
         onPick({ family: "local", kind: "L", name: text, path: "", shape: "" });
       });
       name.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-      list.appendChild(name);
+      const typed = el("button", {
+        class: "icon-btn",
+        title: "declare it with a type (a fresh zeroed value)",
+        html: iconMarkup("layers", 11, 1.6),
+      });
+      typed.addEventListener("click", () => {
+        const text = name.value.trim();
+        if (!text) {
+          name.focus();
+          return;
+        }
+        openTypeTree(typed, editor, { structs: true, enums: true }, (pick) => {
+          const resolved = resolveTypeRef(editor.mesh, pick.ref);
+          const first = pick.kind === "struct"
+            ? resolved?.type.fields.find((f) => f.shape !== "list" && f.shape !== "map")
+            : undefined;
+          closeSourceTree();
+          onPick({ family: "local", kind: "L", name: text, path: first?.path ?? "",
+                   shape: "", type: pick.ref });
+        });
+      });
+      list.appendChild(el("div", { class: "stree-newrow" }, [name, typed]));
     }
 
     if (!rows.length && !opts.newName)
