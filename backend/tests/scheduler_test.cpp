@@ -283,11 +283,65 @@ void test_first_of_rearm() {
     CHECK(scheduler.state().values[cell].data.num == 3);
 }
 
+/* PROPOSED VS TRUE (spec 2.3): a fed Toggle's tap shows immediately as a pending
+ * write; the fed truth confirms it or the scheduler's window lapse takes it back. */
+void test_overlay_fallback() {
+    EntityDef sw;
+    sw.kind = EntityKind::Variable;
+    sw.name = "switch";
+    sw.readable = true;
+    sw.fields = {FieldDef{"on", Shape::Bool}};
+    FakeMesh mesh({sw});
+
+    Json toggle = {{"type", "Toggle"},
+                   {"slots", Json::object()},
+                   {"feeds", Json::array({Json{{"slot", "value"},
+                                               {"src", Json{{"kind", "V"}, {"name", "switch"}}},
+                                               {"path", "on"},
+                                               {"xf", ""}}})}};
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages",
+                  Json::array({Json{{"name", "Main"}, {"widgets", Json::array({toggle})}}})}};
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK(compiled.ok);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const uint32_t slot = scheduler.program().feeds[0].cell;
+
+    /* the machine says false; the panel shows it */
+    mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(false)});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[slot].data.boolean == false);
+
+    /* tap: the proposal shows immediately, then the unconfirmed window lapses and the
+       toggle visibly falls back to the fed truth */
+    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 1});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[slot].data.boolean == true);
+    tick(scheduler, kOverlayTtlTicks);
+    CHECK(scheduler.state().values[slot].data.boolean == false);
+
+    /* tap again, and this time the machine confirms inside the window: the value
+       stands, seamlessly, well past where a fallback would have fired */
+    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 2});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[slot].data.boolean == true);
+    mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(true)});
+    tick(scheduler, kOverlayTtlTicks + 1);
+    CHECK(scheduler.state().values[slot].data.boolean == true);
+}
+
 } // namespace
 
 int main() {
     test_timing();
     test_filters();
     test_first_of_rearm();
+    test_overlay_fallback();
     return check::summary("scheduler_test");
 }

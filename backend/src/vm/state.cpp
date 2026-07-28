@@ -146,6 +146,7 @@ RuntimeState::RuntimeState(const Program& program) {
     for (uint32_t i = 0; i < program.entities.size(); ++i)
         last[i].fields.resize(program.entities[i].fields.size(), Value::nil());
 
+    overlays.resize(program.overlays.size());
     deadband.resize(program.layout.deadband_slots, Value::nil());
     throttle.resize(program.layout.throttle_slots, UINT64_MAX);
     timers.resize(program.timers.size());
@@ -184,19 +185,80 @@ std::string_view RuntimeState::text(const Program& program, const Value& value) 
     return value.ref < texts.size() ? texts[value.ref].view() : std::string_view{};
 }
 
-bool RuntimeState::store(const Program& program, uint32_t cell_index,
-                         const Value& value) noexcept {
+namespace {
+
+/* the plain cell write, shared by store() and the overlay fallback */
+bool write_cell(RuntimeState& state, const Program& program, uint32_t cell_index,
+                const Value& value) noexcept {
+    const CellDef& cell = program.cells[cell_index];
+    if (cell.shape != Shape::Text || value.tag == ValueTag::Nil) {
+        state.values[cell_index] = value;
+        return true;
+    }
+    if (cell.text_slot >= state.texts.size()) return false;
+    state.texts[cell.text_slot].set(state.text(program, value));
+    state.values[cell_index] = Value::text(cell.text_slot);
+    return true;
+}
+
+/* does the fed value CONFIRM the pending one? Text compares by content (the two sides
+ * live in different slots); aggregates never match (scratch-backed, expiry decides) */
+bool overlay_confirms(const RuntimeState& state, const Program& program, const Value& shown,
+                      const Value& fed) noexcept {
+    if (shown.tag == ValueTag::List || shown.tag == ValueTag::Map) return false;
+    if (shown.tag == ValueTag::Text && fed.tag == ValueTag::Text)
+        return state.text(program, shown) == state.text(program, fed);
+    return value_same_scalar(shown, fed);
+}
+
+} // namespace
+
+bool RuntimeState::store(const Program& program, uint32_t cell_index, const Value& value,
+                         bool authoritative) noexcept {
     if (cell_index >= values.size()) return false;
     const CellDef& cell = program.cells[cell_index];
     if (cell.shape != value_shape(value) && value.tag != ValueTag::Nil) return false;
-    if (cell.shape != Shape::Text || value.tag == ValueTag::Nil) {
-        values[cell_index] = value;
-        return true;
+    /* aggregates live in the per-run scratch pool, so they cannot be shadowed across
+       ticks: they bypass the overlay and land directly */
+    const bool scalar = value.tag != ValueTag::List && value.tag != ValueTag::Map;
+    if (cell.overlay < overlays.size() && scalar) {
+        OverlayState& overlay = overlays[cell.overlay];
+        if (!authoritative) {
+            /* the operator's write shows immediately; the fallback clock starts */
+            if (!write_cell(*this, program, cell_index, value)) return false;
+            overlay.active = true;
+            overlay.expire_tick = tick + kOverlayTtlTicks;
+            return true;
+        }
+        /* the fed truth lands in the shadow (text into its own retained slot, so it
+           outlives whatever transient storage delivered it) */
+        if (cell.shape == Shape::Text && value.tag == ValueTag::Text) {
+            const uint32_t slot = program.overlays[cell.overlay].shadow_text;
+            if (slot >= texts.size()) return false;
+            texts[slot].set(text(program, value));
+            overlay.shadow = Value::text(slot);
+        } else {
+            overlay.shadow = value;
+        }
+        if (overlay.active) {
+            /* a matching arrival confirms the pending write (the cell already shows
+               it); a mismatch waits out the window, since a stale echo of the
+               pre-write state is indistinguishable from an active refusal */
+            if (overlay_confirms(*this, program, values[cell_index], value))
+                overlay.active = false;
+            return true;
+        }
     }
-    if (cell.text_slot >= texts.size()) return false;
-    texts[cell.text_slot].set(text(program, value));
-    values[cell_index] = Value::text(cell.text_slot);
-    return true;
+    return write_cell(*this, program, cell_index, value);
+}
+
+void RuntimeState::expire_overlays(const Program& program) noexcept {
+    for (uint32_t i = 0; i < program.overlays.size() && i < overlays.size(); ++i) {
+        OverlayState& overlay = overlays[i];
+        if (!overlay.active || overlay.expire_tick > tick) continue;
+        overlay.active = false;
+        write_cell(*this, program, program.overlays[i].cell, overlay.shadow);
+    }
 }
 
 void RuntimeState::clear_outputs() noexcept {

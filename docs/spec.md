@@ -193,22 +193,31 @@ that edit triggers). A slot nothing writes has no such split: the document IS th
 value, and the field shows the document so that typing is never fought by a compiled
 copy of the value before it.
 
-One writer per slot survives by PRECEDENCE, resolved at compile time in this
-order:
+One LOCAL writer per slot survives by PRECEDENCE, resolved at compile time: an
+authored flow on the widget that assigns a slot replaces the type's default (the
+author overrode it); otherwise the default runs. Suppression is per slot WRITTEN,
+not per event, so "on tap, send to the PLC" coexists with the default local echo:
+the widget flips and the write goes out. Standing down is deterministic and silent:
+the flow that won is the one the author asked for, so there is nothing to report.
+The inspector does not list a type's defaults either; they are the control working
+as expected, not authored behavior, and authoring a flow on the same slot takes
+over automatically.
 
-1. a feed on the slot: the control is a view of the machine, and the default
-   stands down;
-2. an authored flow on the widget that assigns the same slot: the author
-   overrode the default;
-3. otherwise the default runs, and the slot is the widget's own state.
-
-Suppression is per slot WRITTEN, not per event, so "on tap, send to the PLC"
-coexists with the default local echo: the widget flips and the write goes out. Add
-a feed on the slot later and the machine becomes the truth. Standing down is
-deterministic and silent: the feed or flow that won is the one the author asked
-for, so there is nothing to report. The inspector does not list a type's defaults
-either; they are the control working as expected, not authored behavior, and
-authoring a flow on the same slot takes over automatically.
+**A feed is not a competing writer: PROPOSED vs TRUE.** A slot both fed and locally
+written resolves through a PENDING OVERLAY rather than by suppression. The local
+write (the default's echo, or an authored assign) shows immediately and opens a
+bounded pending window (500 ms); the feed's value lands in the overlay's shadow
+while the window is open, and in the cell as usual otherwise. A fed value that
+MATCHES the pending write confirms it instantly, and the handoff is seamless
+because they are equal; a window that lapses unconfirmed falls the cell back to
+the fed truth, so the visible snap-back is the machine's rejection, never silence.
+A mismatching arrival inside the window does NOT take the cell early: a stale
+in-flight echo of the pre-write state is indistinguishable from an active refusal,
+so the window decides. This is also what keeps `x` honest on a fed control: the
+proposal (`!widget.value`) reads the SHOWN value, so a second tap inside the round
+trip toggles the operator's intent instead of re-proposing against stale truth.
+The window's length has a floor when it is ever made tunable: the write's round
+trip plus the source's own publish period.
 
 **A value that cannot be its shape is a finding.** An authored slot value or
 variable init of the wrong JSON shape used to become Nil in silence, and Nil is
@@ -456,8 +465,9 @@ Both sidebars are resizable by drag handles (widths persisted per view):
 - **Left sidebar**, scrolling: **Global Variables**, one card per variable, always
   visible regardless of selection, because they are the HMI's state.
 - **Canvas**: the artboard and its surrounding pasteboard (below).
-- **Inspector** (right). A sticky header shows the widget's label and its type +
-  id; below it, the folding section stack.
+- **Inspector** (right). A sticky header shows the widget's label; below it, the
+  folding section stack. The type and the document id are not shown: neither is
+  something the author acts on.
 
 **The artboard.** A page is authored against the document's one fixed-aspect
 artboard (2.8). Rendering SCALES TO FIT and never stretches: on every device the

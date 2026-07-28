@@ -115,8 +115,9 @@ Json event(const char* name, const char* x, const char* from = nullptr) {
 /* DEFAULT BEHAVIOR (spec 2.3). Ordinary flows, in the document's own flow shape, shipped
  * with the type instead of authored per instance: a Toggle toggles and a Slider slides the
  * moment it is placed, with no per-type code anywhere. The compiler treats them exactly as
- * authored flows and drops one whose slot something else already writes (a feed, or an
- * authored flow), so a slot never has two writers.
+ * authored flows and drops one whose slot an authored flow already assigns (the author
+ * overrode it). A FED slot keeps its default: the echo becomes a bounded PENDING write
+ * over the fed truth (the slot's overlay), confirmed or reverted by what the machine says.
  *
  * A default writes the widget's OWN slot: `widget.<slot>`, the same name the read side
  * uses. It never reaches another widget, which is what keeps this from reopening the

@@ -200,6 +200,10 @@ bool Scheduler::tick(std::string& fault) {
     ++state_.tick;
     state_.clear_outputs();
 
+    /* pending local writes whose window passed fall back to the fed truth first, so
+       an arrival this same tick lands on the settled value */
+    state_.expire_overlays(program_);
+
     /* tick step 1: the mesh's arrivals, decoded, before anything time-driven runs */
     mesh_.drain(*this);
 
