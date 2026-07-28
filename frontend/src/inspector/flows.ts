@@ -38,10 +38,13 @@ const STEP_LABEL: Record<string, string> = {
 
 const MS_STEPS = new Set(["throttle", "debounce", "delay"]);
 
+/* "tapped" is the everyday word for a click, so it leads (the registry orders the
+ * events table that way); "pressed down" names the down EDGE explicitly, so nobody
+ * authors it meaning a click and fires before the finger lifts */
 function pastTense(event: string): string {
-  if (event === "press") return "pressed";
+  if (event === "press") return "pressed down";
   if (event === "release") return "released";
-  if (event === "pressrelease") return "pressed or released";
+  if (event === "pressrelease") return "pressed down or released";
   if (event === "tap") return "tapped";
   if (event === "held") return "held";
   if (event === "input") return "changed";

@@ -213,8 +213,11 @@ Json button_type() {
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#0d0d0d", "appearance", "color"),
                 }),
-                Json::array({event("press", "bool"), event("release", "bool"),
-                             event("pressrelease", "bool"), event("tap", "bool"),
+                /* tap leads: it is the commit gesture and what an author usually means
+                   by "when clicked", so it is the dropdown's first offer and the new
+                   flow's default; press (the down edge) is the deliberate choice */
+                Json::array({event("tap", "bool"), event("release", "bool"),
+                             event("press", "bool"), event("pressrelease", "bool"),
                              event("held", "bool")}),
                 box("stack", Json::object(),
                     Json::array({
@@ -240,9 +243,9 @@ Json toggle_type() {
                    on it, not just the tap that commits: an author who gates a press on
                    `x` must see the value the control is trying to set, the same as on a
                    Readout or an Indicator, never the pointer's own true/false */
-                Json::array({event("press", "bool", "!widget.value"),
+                Json::array({event("tap", "bool", "!widget.value"),
                              event("release", "bool", "!widget.value"),
-                             event("tap", "bool", "!widget.value"),
+                             event("press", "bool", "!widget.value"),
                              event("held", "bool", "!widget.value")}),
                 box("stack", Json{{"aspect", lit(2.0)}},
                     Json::array({
@@ -355,9 +358,9 @@ Json readout_type() {
                 }),
                 /* a press on a Readout is about the value it is SHOWING, and the backend
                    knows that value: the view never has to supply its own copy */
-                Json::array({event("press", "num", "widget.value"),
+                Json::array({event("tap", "num", "widget.value"),
                              event("release", "num", "widget.value"),
-                             event("tap", "num", "widget.value"),
+                             event("press", "num", "widget.value"),
                              event("held", "num", "widget.value")}),
                 box("auto", Json::object(),
                     Json::array({
@@ -388,8 +391,8 @@ Json indicator_type() {
                 }),
                 /* the lamp's value is bool, so its events are: the shape a type reports
                    has to be the shape it holds, or nothing downstream can check anything */
-                Json::array({event("press", "bool", "widget.value"),
-                             event("tap", "bool", "widget.value")}),
+                Json::array({event("tap", "bool", "widget.value"),
+                             event("press", "bool", "widget.value")}),
                 box("col", Json::object(),
                     Json::array({
                         box("stack", Json{{"weight", lit(1.0)}},
@@ -449,8 +452,8 @@ Json label_type() {
                     /* a label reads like a line of text, so it starts left, not center */
                     align_slot("left"),
                 }),
-                Json::array({event("press", "text", "widget.text"),
-                             event("tap", "text", "widget.text")}),
+                Json::array({event("tap", "text", "widget.text"),
+                             event("press", "text", "widget.text")}),
                 box("stack", Json::object(),
                     Json::array({part("text", Json{{"text", ref("slot:text")},
                                                    {"fill", ref("slot:text_color")},
@@ -467,7 +470,7 @@ Json panel_type() {
                     slot("surface", "color", "#1d1d1d", "appearance", "color"),
                     slot("border", "color", "#2a2a2a", "appearance", "color"),
                 }),
-                Json::array({event("press", "bool"), event("tap", "bool")}),
+                Json::array({event("tap", "bool"), event("press", "bool")}),
                 box("stack", Json::object(), Json::array(), press_interact()));
 }
 

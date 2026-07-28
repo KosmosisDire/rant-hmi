@@ -882,6 +882,12 @@ select.field {
   min-width: 0;
 }
 
+/* the caret is placed on the wrap, so the select has to fill it: a wrap stretched by its
+   container (a grid cell) would otherwise leave the mark floating past the select's edge */
+.select-wrap select.field {
+  flex: 1 1 auto;
+}
+
 .select-wrap .caret-mark {
   position: absolute;
   right: 5px;
@@ -1008,31 +1014,25 @@ select.field {
   color: var(--acc-ink);
 }
 
+/* one label column for NOW, TYPE and INIT; the column is as wide as the widest of them */
 .var-grid {
   display: grid;
-  grid-template-columns: 44px 1fr;
-  gap: 6px;
+  grid-template-columns: auto 1fr;
+  gap: 6px 8px;
   align-items: center;
 }
 
-.var-now {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: -2px 0 7px;
-}
-
-/* init and keep share one full-width line; keep is pushed to the right edge */
+/* a row's controls: laid out at their own size, not stretched to the value column */
 .var-line {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
 
+/* keep reads as a second pair on the init line, so it is separated but not banished */
 .keep-label {
-  margin-left: auto;
+  margin-left: 4px;
 }
 
 .now-value {

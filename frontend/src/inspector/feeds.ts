@@ -11,12 +11,13 @@
 import { chip, commitInput, el, numberInput, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
-import { bindChoice, bindField, bindText } from "../reconcile.js";
+import { bind, bindChoice, bindField, bindText } from "../reconcile.js";
 import { Feed, Json, Widget, WidgetType } from "../types.js";
 import { attachAutocomplete, attachPathAutocomplete, exprContext, feedPaths, feedX } from "./autocomplete.js";
 import { entityChip, sourceField } from "./editors.js";
 
 const opened = new Set<number>();
+const XF_CHIP_MAX = 14;   /* expression characters the collapsed head shows before "..." */
 
 export function feedShape(feed: Feed): Json {
   return [feed.id, feed.slot, opened.has(feed.id), feed.src?.kind ?? "V", Boolean(feed.xf)];
@@ -37,8 +38,17 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
 
   const slotChip = chip("", "slot");
   bindText(feed.id + ":slot.chip", slotChip, () => at().slot || "slot");
+  /* the head says WHICH steps a value takes, not what they contain: an expression runs to
+     any length, so the chip shows its head and the whole of it stays on row 3 (and in the
+     hover title, so the collapsed card can still be read without opening it) */
   const xfChip = feed.xf ? chip("", "xf") : null;
-  if (xfChip) bindText(feed.id + ":xf.chip", xfChip, () => "f " + (at().xf ?? ""));
+  if (xfChip)
+    bind(feed.id + ":xf.chip", xfChip, () => {
+      const text = (at().xf ?? "").trim();
+      const cut = text.length > XF_CHIP_MAX ? text.slice(0, XF_CHIP_MAX).trimEnd() + "..." : text;
+      if (xfChip.textContent !== "f " + cut) xfChip.textContent = "f " + cut;
+      if (xfChip.title !== text) xfChip.title = text;
+    });
   const rateChip = isFunction ? chip("", "timer") : null;
   if (rateChip)
     bindText(feed.id + ":poll.chip", rateChip, () =>

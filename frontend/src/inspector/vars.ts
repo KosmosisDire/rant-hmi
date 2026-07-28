@@ -59,19 +59,20 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
         editor.apply([{ op: "remove", node: variable.id }]),
       ),
     ]),
-    el("div", { class: "var-now" }, [el("span", { class: "row-label", text: "NOW" }), now]),
+    /* NOW, TYPE and INIT share one label column, so the three lines start at the same x.
+       Every row's controls sit in a flex line rather than in the grid cell itself: a bare
+       control as a grid item would be stretched to the column, which is exactly not what a
+       picker or a two-state pair wants. Keep follows the init editor on its line. */
     el("div", { class: "var-grid" }, [
+      el("span", { class: "row-label", text: "NOW" }),
+      el("div", { class: "var-line" }, [now]),
       el("span", { class: "row-label", text: "TYPE" }),
-      type,
-      /* init and keep share one full-width line: the label rides inline, the init editor
-         takes the room, keep sits at the right edge. The controls live in a flex line
-         because a bare control as a grid item would be stretched to the column, which is
-         exactly not what a two-state pair wants. */
+      el("div", { class: "var-line" }, [type]),
+      el("span", { class: "row-label", text: variable.type === "timer" ? "SECS" : "INIT" }, [
+        /* an init that cannot be the variable's shape is pinned on the INIT row */
+        diagIcon(editor.diagAt(variable.id, "init")),
+      ]),
       el("div", { class: "var-line" }, [
-        el("span", { class: "row-label", text: variable.type === "timer" ? "SECS" : "INIT" }, [
-          /* an init that cannot be the variable's shape is pinned on the INIT row */
-          diagIcon(editor.diagAt(variable.id, "init")),
-        ]),
         valueEditor(
           null,
           initShape,
