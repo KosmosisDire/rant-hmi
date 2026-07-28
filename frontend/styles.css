@@ -1396,12 +1396,18 @@ button.swatch {
 
 [data-mode="run"] .widget,
 [data-mode="operate"] .widget {
-  cursor: pointer;
   touch-action: none;
 }
 
-[data-mode="run"] .widget.disabled,
-[data-mode="operate"] .widget.disabled {
+/* the pointer cursor follows the hit test exactly: only what an interact element
+   PAINTED invites a press; a widget's inert background reads as surface */
+[data-mode="run"] .widget [data-act],
+[data-mode="operate"] .widget [data-act] {
+  cursor: pointer;
+}
+
+[data-mode="run"] .widget.disabled [data-act],
+[data-mode="operate"] .widget.disabled [data-act] {
   cursor: not-allowed;
 }
 
