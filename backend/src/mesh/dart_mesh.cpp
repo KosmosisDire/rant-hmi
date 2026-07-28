@@ -316,6 +316,7 @@ bool DartMesh::start(std::string& err) {
     options.match_wait_ms = 50;     /* effects block briefly for a forming match, never 1s */
     options.multicast_interface = impl_->opts.interface_ip;
     options.seed_peers = impl_->opts.seed_peers;
+    options.discovery_port = impl_->opts.discovery_port;
     options.announce_interval_us = impl_->opts.announce_interval_us;
     Impl* impl = impl_.get();
 #if defined(__cpp_exceptions)

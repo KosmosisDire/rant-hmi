@@ -23,6 +23,9 @@ using namespace hmi;
 namespace {
 
 constexpr uint16_t kDomain = 41;
+/* own discovery PORT, not just domain: another DART process on this host (the explorer,
+ * a bridge) shares UDP 7400 via REUSEADDR and swallows the unicast seed announces */
+constexpr uint16_t kDiscoveryPort = 17441;
 constexpr const char* kLoopback = "127.0.0.1";
 constexpr uint32_t kAnnounceUs = 100000;
 
@@ -79,6 +82,11 @@ int main() {
     dart::NodeOptions peer_options;
     peer_options.domain = kDomain;
     peer_options.multicast_interface = kLoopback;
+    /* the dart_test selftest recipe: loopback multicast PLUS a unicast seed, because
+     * Windows loopback multicast is not reliable on its own (announces also reinforce
+     * to known peers' data ports, so one landed announce heals both directions) */
+    peer_options.seed_peers = {kLoopback};
+    peer_options.discovery_port = kDiscoveryPort;
     peer_options.announce_interval_us = kAnnounceUs;
     peer_options.max_topics = 32;
     dart::Node peer(
@@ -135,7 +143,10 @@ int main() {
     mesh_options.node_name = "hmi-under-test";
     mesh_options.domain = kDomain;
     mesh_options.interface_ip = kLoopback;
+    mesh_options.seed_peers = {kLoopback};
+    mesh_options.discovery_port = kDiscoveryPort;
     mesh_options.announce_interval_us = kAnnounceUs;
+    mesh_options.verbose = true;
     DartMesh mesh(mesh_options);
     std::string err;
     CHECK_MSG(mesh.start(err), err);
@@ -152,6 +163,14 @@ int main() {
                     ++found;
         reflected = found == 5;
         if (!reflected) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (!reflected && i % 20 == 19) {
+            std::printf("settle %d: peer sees %u peers; %zu/5 entities [", i,
+                        peer.peer_count(), found);
+            for (const EntityDef& entity : mesh.reflection())
+                std::printf(" %c:%s", "VTFS"[static_cast<int>(entity.kind)],
+                            entity.name.c_str());
+            std::printf(" ]\n");
+        }
     }
     CHECK_MSG(reflected, "reflection did not settle");
 
