@@ -31,6 +31,9 @@ export interface SourceTreeOptions {
   writableOnly?: boolean;
   /* restrict to these kinds (unforce wants only variables); empty = all */
   kinds?: string[];
+  /* an entity that expands into fields is ALSO pickable whole (path ""), for a row that
+     moves a whole value in or out. Its caret then toggles and the rest of the row picks. */
+  wholeEntity?: boolean;
 }
 
 interface Row {
@@ -106,8 +109,8 @@ export function resolveShape(
   const entity = editor.mesh.entities.find((e) => e.kind === ref.kind && e.name === ref.name);
   if (!entity) return "";
   const fields = fieldsOf(entity);
-  const field = path ? fields.find((f) => f.path === path)
-                     : fields.length === 1 ? fields[0] : null;
+  if (!path && fields.length !== 1) return entity.type ?? "";
+  const field = path ? fields.find((f) => f.path === path) : fields[0];
   return field?.shape ?? "";
 }
 
@@ -154,17 +157,21 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
     const descend = opts.fields && fields.length > 1;
     const label = searching ? entity.name : leaf_name(entity.name);
     const one = fields.length === 1 ? fields[0] : null;
+    const whole: SourcePick = {
+      kind: entity.kind,
+      name: entity.name,
+      path: "",
+      shape: descend ? entity.type ?? "" : one?.shape ?? "",
+    };
     if (match(entity.name)) {
       rows.push({
         depth,
         key,
         label,
         kind: entity.kind,
-        shape: opts.fields ? (one?.shape ?? "") : "",
+        shape: opts.fields ? whole.shape : "",
         expandable: descend,
-        pick: descend
-          ? undefined
-          : { kind: entity.kind, name: entity.name, path: "", shape: one?.shape ?? "" },
+        pick: descend && !opts.wholeEntity ? undefined : whole,
       });
       if (descend && openOr(key))
         for (const field of fields)
@@ -294,15 +301,25 @@ export function openSourceTree(
           row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
         ],
       );
+      const toggle = () => {
+        if (expanded.has(row.key)) expanded.delete(row.key);
+        else expanded.add(row.key);
+        render();
+      };
+      /* a row that both expands and picks splits the two: the caret opens it, the rest
+         of the row takes the whole value */
+      if (row.expandable && row.pick && !filter)
+        caret.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          toggle();
+        });
       node.addEventListener("click", () => {
         if (row.pick) {
           closeSourceTree();
           onPick(row.pick);
           return;
         }
-        if (expanded.has(row.key)) expanded.delete(row.key);
-        else expanded.add(row.key);
-        render();
+        toggle();
       });
       list.appendChild(node);
     }

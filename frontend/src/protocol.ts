@@ -148,7 +148,7 @@ export class Connection {
         this.handlers.diag(frame.compile ?? []);
         return;
       case "mesh":
-        this.handlers.mesh({ entities: frame.entities ?? [] });
+        this.handlers.mesh({ entities: frame.entities ?? [], types: frame.types ?? [] });
         return;
       case "reject":
         /* the backend always follows a reject with a snapshot */

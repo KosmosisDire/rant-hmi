@@ -30,6 +30,9 @@ export interface Editor {
   /* the findings pinned to one node, or to one field of it (spec 3.8: a finding sits on
      the row that is wrong). No `where` asks for the node's own findings only. */
   diagAt(node: number, where?: string): Diag[];
+  /* every finding about a node, whatever field of it they name. A summary line stands for
+     the whole node, so it rolls these up; the form under it pins each one to its row. */
+  diagNode(node: number): Diag[];
   /* re-render the sidebars: a fold or a menu changed, not the document */
   refresh(): void;
 }

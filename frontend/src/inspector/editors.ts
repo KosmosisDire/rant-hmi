@@ -101,7 +101,7 @@ export function sourceField(
   const node = el("button", { class: "chip pad-mark source-chip", title: "pick from the network" });
   bindFlag(key + ".ghost", node, "ghost-chip", () => !read().ref?.name);
   node.appendChild(kindMark(kind));
-  const name = el("span");
+  const name = el("span", { class: "name" });
   bindText(key + ".name", name, () => read().ref?.name || "pick source");
   node.appendChild(name);
   const sep = el("span", { class: "sep" });

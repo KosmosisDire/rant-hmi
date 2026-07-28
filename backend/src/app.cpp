@@ -281,27 +281,29 @@ void App::update_viewed_pages() {
 }
 
 Json App::mesh_json() const {
+    auto fields_json = [](const std::vector<FieldDef>& fields) {
+        Json rows = Json::array();
+        for (const FieldDef& field : fields) {
+            Json row{{"path", field.path}, {"shape", shape_name(field.shape)}};
+            if (field.shape == Shape::List || field.shape == Shape::Map)
+                row["elem"] = shape_name(field.elem);
+            if (!field.variants.empty()) {
+                Json variants = Json::array();
+                for (const auto& variant : field.variants)
+                    variants.push_back(Json{{"name", variant.first},
+                                            {"value", variant.second}});
+                row["variants"] = std::move(variants);
+            }
+            rows.push_back(std::move(row));
+        }
+        return rows;
+    };
+
     Json entities = Json::array();
     for (const EntityDef& entity : mesh_->reflection()) {
-        auto fields_json = [](const std::vector<FieldDef>& fields) {
-            Json rows = Json::array();
-            for (const FieldDef& field : fields) {
-                Json row{{"path", field.path}, {"shape", shape_name(field.shape)}};
-                if (field.shape == Shape::List || field.shape == Shape::Map)
-                    row["elem"] = shape_name(field.elem);
-                if (!field.variants.empty()) {
-                    Json variants = Json::array();
-                    for (const auto& variant : field.variants)
-                        variants.push_back(Json{{"name", variant.first},
-                                                {"value", variant.second}});
-                    row["variants"] = std::move(variants);
-                }
-                rows.push_back(std::move(row));
-            }
-            return rows;
-        };
         Json row{{"kind", std::string(1, "VTFS"[static_cast<int>(entity.kind)])},
                  {"name", entity.name},
+                 {"type", entity.type_name},
                  {"writable", entity.writable},
                  {"forceable", entity.forceable},
                  {"fields", fields_json(entity.fields)}};
@@ -309,7 +311,30 @@ Json App::mesh_json() const {
             row["returns"] = fields_json(entity.rsp_fields);
         entities.push_back(std::move(row));
     }
-    return Json{{"entities", std::move(entities)}};
+
+    /* The TYPE TABLE (spec 2.2), which is a COMPILE product rather than raw reflection:
+     * two entities carrying the same schema are one entry, so `ValveCmd` is offered once
+     * however many valves the mesh has. Each entry names the entities carrying it, which
+     * is how a picker identifies an unfamiliar type name. An unnamed root is served with
+     * an empty name: the view lists it, marked, and refuses to pick it by name. */
+    Json types = Json::array();
+    if (scheduler_) {
+        const Program& program = scheduler_->program();
+        for (uint16_t id = 1; id < program.types.size(); ++id) {
+            const TypeDef& def = program.types[id];
+            if (def.kind != TypeKind::Struct) continue;
+            Json carriers = Json::array();
+            for (const EntityDef& entity : program.entities)
+                if (entity.type_id == id)
+                    carriers.push_back(
+                        Json{{"kind", std::string(1, "VTFS"[static_cast<int>(entity.kind)])},
+                             {"name", entity.name}});
+            types.push_back(Json{{"name", def.name},
+                                 {"fields", fields_json(def.fields)},
+                                 {"entities", std::move(carriers)}});
+        }
+    }
+    return Json{{"entities", std::move(entities)}, {"types", std::move(types)}};
 }
 
 /* the expression language as data (spec 3.7): straight from the compiler's own

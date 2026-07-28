@@ -33,7 +33,7 @@ export class App implements Editor {
   registry: Registry | null = null;
   /* the reflected entity tree, served by the backend: the "dart" root of the coming
      source picker (stage 6); the "hmi" root is the document's own variables */
-  mesh: Mesh = { entities: [] };
+  mesh: Mesh = { entities: [], types: [] };
   /* the served expression vocabulary: autocomplete reads exactly what compiles */
   lang: Lang | null = null;
   live: Live | null = null;
@@ -72,7 +72,7 @@ export class App implements Editor {
       snapshot: (doc, registry, live, diag, mesh, lang) =>
         this.onSnapshot(doc, registry, live, diag, mesh, lang),
       mesh: (mesh) => {
-        this.mesh = mesh;
+        this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
         refreshSourceTree();
         this.queueSidebars();
       },
@@ -158,7 +158,7 @@ export class App implements Editor {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
-    this.mesh = mesh;
+    this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
     this.lang = lang;
     this.onDiag(diag, false);
     const page = this.page();
@@ -232,6 +232,10 @@ export class App implements Editor {
     return this.diagnostics.filter(
       (row) => row.node === node && (row.where ?? "") === (where ?? ""),
     );
+  }
+
+  diagNode(node: number): Diag[] {
+    return this.diagnostics.filter((row) => row.node === node);
   }
 
   private onStatus(state: Status, detail: string): void {

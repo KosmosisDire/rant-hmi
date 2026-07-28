@@ -214,6 +214,7 @@ const editor = {
   refresh: () => undefined,
   diagFor: () => [],
   diagAt: () => [],
+  diagNode: () => [],
 };
 const draw = () => panel.render(inspectorShape(editor), (host) => renderInspector(host, editor));
 /* a version arriving from another window, applied to the mirror exactly as onOps does */
@@ -468,6 +469,7 @@ const findingEditor = {
   diagFor: () => findingRows,
   diagAt: (node, where) =>
     findingRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
+  diagNode: (node) => findingRows.filter((d) => d.node === node),
 };
 const findingPanel = new Panel(new Element("aside"));
 findingPanel.render(inspectorShape(findingEditor), (host) => renderInspector(host, findingEditor));
@@ -502,6 +504,7 @@ const stepEditor = {
   diagFor: () => stepRows,
   diagAt: (node, where) =>
     stepRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
+  diagNode: (node) => stepRows.filter((d) => d.node === node),
 };
 const stepPanel = new Panel(new Element("aside"));
 stepPanel.render(inspectorShape(stepEditor), (host) => renderInspector(host, stepEditor));
@@ -524,6 +527,7 @@ const feedEditor = {
   diagFor: () => feedRows,
   diagAt: (node, where) =>
     feedRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
+  diagNode: (node) => feedRows.filter((d) => d.node === node),
 };
 const feedPanel2 = new Panel(new Element("aside"));
 feedPanel2.render(inspectorShape(feedEditor), (host) => renderInspector(host, feedEditor));

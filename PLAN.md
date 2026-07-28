@@ -459,9 +459,10 @@ working end-to-end demo at every stage. Each stage lands with its tests.
    tree compiles at every step: the type table and TypeRef resolution in `compile/`;
    `Tag::Struct` and struct cells in `vm/`, with message buffers becoming locals;
    the `move` node in `doc/`; lowering and the new opcodes; then the frontend's
-   two-family grid, type picker, `new` and `variants()`.
-   The additions this unlocks (`call` with a response, struct-typed variables,
-   enum-derived Dropdown options) land after the rework compiles clean, not with it.
+   summary-plus-form DO list, the served type table, and the pickers over it.
+   DONE except `variants()`. The additions this unlocks (`call` with a response,
+   struct-typed variables, enum-derived Dropdown options) land after the rework
+   compiles clean, not with it.
 7. **hot swap + migration** (wiring the stage-3 design: recompile on accepted edit,
    migrate, log decisions).
 

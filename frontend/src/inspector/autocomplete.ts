@@ -12,6 +12,7 @@
 import { el } from "../dom.js";
 import { Editor, variablesInScope } from "../editor.js";
 import { Feed, Flow, Lang, LangEntry, Widget } from "../types.js";
+import { localAt, scopeAt } from "./flowscope.js";
 
 export interface NameRow {
   label: string;   /* what inserting places: "setpoint", "widget.value", "x" */
@@ -411,16 +412,37 @@ export function feedX(editor: Editor, widget: Widget | null, feed: () => Feed) {
   };
 }
 
-/* what x IS at a flow's steps: the trigger event's declared shape (a transform ahead
- * of this step may change it; then the receiver resolves as unknown, which just
- * widens the offer) */
-export function flowX(editor: Editor, widget: Widget | null, flow: () => Flow) {
-  return (): { shape: string; elem?: string } | null => {
-    const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
-    const trigger = (flow().when ?? []).find((w: any) => w.kind === "event") as any;
-    if (!trigger || !type) return null;
-    const event = type.events.find((e) => e.name === trigger.name);
-    return event?.x ? { shape: event.x } : null;
+/* what x IS at one row of a flow: the trigger's proposal, retyped by every `set x = ...`
+ * above this row (spec 2.6). An earlier row can change it, so the row matters. */
+export function flowX(editor: Editor, widget: Widget | null, flow: () => Flow, stepId = 0) {
+  return (): { shape: string; elem?: string } | null =>
+    scopeAt(editor, widget, flow(), stepId).x;
+}
+
+/* The names a FLOW ROW may write: the standing scope plus this flow's own locals,
+ * declared above this row only, and struct ones expanded to their fields so one field
+ * can be computed from another (spec 3.7). */
+export function flowNames(editor: Editor, widget: Widget | null, flow: () => Flow, stepId: number) {
+  return (): NameRow[] => {
+    const rows = scopeNames(editor, widget);
+    const declared = new Set(rows.map((r) => r.label));
+    for (const local of scopeAt(editor, widget, flow(), stepId).locals) {
+      if (!declared.has(local.name))
+        rows.push({
+          label: local.name,
+          shape: local.shape,
+          elem: local.elem,
+          note: local.note,
+        });
+      for (const field of local.fields ?? [])
+        rows.push({
+          label: local.name + "." + field.path,
+          shape: field.shape,
+          elem: field.elem,
+          note: local.type || "field",
+        });
+    }
+    return rows;
   };
 }
 
@@ -429,12 +451,13 @@ export function exprContext(
   widget: Widget | null,
   tier: "display" | "wire",
   x: () => { shape: string; elem?: string } | null,
+  names?: () => NameRow[],
 ): ExprContext {
   return {
     tier,
     lang: () => editor.lang,
     x,
-    names: () => scopeNames(editor, widget),
+    names: names ?? (() => scopeNames(editor, widget)),
   };
 }
 
@@ -517,22 +540,54 @@ export function feedPaths(editor: Editor, feed: () => Feed) {
   };
 }
 
-/* what a SETF's path may name: the open message's target fields, i.e. the last build
- * step before this one. Aggregates stay out: the write side cannot set them. */
-export function buildTargetPaths(editor: Editor, flow: () => Flow, stepId: number) {
+/* What a move's `to.path` may name when the destination is a LOCAL: the fields of the
+ * struct that local holds at this row (spec 2.6). Aggregates stay out, because the write
+ * side cannot set them. */
+export function localPaths(
+  editor: Editor,
+  widget: Widget | null,
+  flow: () => Flow,
+  stepId: number,
+  local: () => string,
+) {
   return (): PathOption[] => {
-    let target: { kind: string; name: string } | null = null;
-    for (const step of (flow().do ?? []) as any[]) {
-      if (step.id === stepId) break;
-      if (step.kind === "build" && step.target?.name) target = step.target;
-      if (step.kind === "send" && !step.buf) target = null;
-    }
-    if (!target) return [];
-    const entity = editor.mesh.entities.find(
-      (e) => e.kind === target!.kind && e.name === target!.name,
-    );
-    return (entity?.fields ?? [])
+    const held = localAt(editor, widget, flow(), stepId, local());
+    return (held?.fields ?? [])
       .filter((f) => f.shape !== "list" && f.shape !== "map")
       .map((f) => ({ path: f.path, shape: f.shape }));
   };
+}
+
+/* The names a move side may write: this flow's locals above the row and the variables in
+ * scope, each also offered field by field where it holds a struct, so `m.position` is one
+ * pick rather than a name plus a path. Typing anything else declares a temporary, which
+ * is the whole ceremony (spec 2.7), so this list never constrains the field. */
+export function localNames(
+  editor: Editor,
+  widget: Widget | null,
+  flow: () => Flow,
+  stepId: number,
+) {
+  return (): PathOption[] => {
+    const out: PathOption[] = [];
+    for (const local of scopeAt(editor, widget, flow(), stepId).locals) {
+      out.push({ path: local.name, shape: local.type || local.shape });
+      for (const field of local.fields ?? [])
+        if (field.shape !== "list" && field.shape !== "map")
+          out.push({ path: local.name + "." + field.path, shape: field.shape });
+    }
+    return out;
+  };
+}
+
+/* the root types the mesh knows, for a `new T` row. An unnamed root is listed but not
+ * pickable by name (spec 2.2), so it is simply not offered. */
+export function typeNames(editor: Editor) {
+  return (): PathOption[] =>
+    editor.mesh.types
+      .filter((t) => t.name)
+      .map((t) => ({
+        path: t.name,
+        shape: t.entities.map((e) => e.name).join(", ") || "no entity carries it",
+      }));
 }

@@ -853,24 +853,147 @@ button:focus-visible {
   min-width: 0;
 }
 
+/* ONE skeleton for every step: grip, number, verb, statement, then the trailing marks
+   (spec 3.6). The verb column is fixed and right-aligned so verbs align down one edge and
+   statements down the other; the statement column is the only elastic one, and it
+   truncates rather than wrapping, so a long expression never reflows the list. An open
+   step's form spans the whole row underneath. */
 .do-row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 12px 12px 44px minmax(0, 1fr) auto;
   gap: 5px;
+  align-items: center;
   min-width: 0;
-  flex-wrap: wrap;
-}
-
-/* a field row belongs to the message above it: indented, no number, a left rule */
-.do-row.sub {
-  margin-left: 14px;
-  padding-left: 8px;
-  border-left: 1px solid #2e2e2e;
 }
 
 .do-row.dragging {
   opacity: 0.5;
 }
+
+.do-verb {
+  font: 500 12px/24px var(--mono);
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.do-row.open .do-verb {
+  color: var(--acc-ink);
+}
+
+/* the statement is TEXT, not controls: one line, ellipsised, never a source of width */
+.do-say {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font: 400 12px/24px var(--mono);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.do-say > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the last segment of a statement absorbs the slack, so the truncation lands at the end */
+.do-say .say-grow {
+  flex: 1 1 auto;
+}
+
+.do-tail {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.do-tail .icon-btn {
+  color: var(--dim-2);
+}
+
+.do-tail .icon-btn:hover {
+  color: var(--ink-3);
+}
+
+/* the form: every parameter of the open step, labelled, in the inspector's two columns */
+.do-form {
+  grid-column: 1 / -1;
+  margin: 6px 0 2px 12px;
+  padding: 8px 0 2px;
+  border-top: 1px dashed #2e2e2e;
+}
+
+/* the shared label + editor grid: the WHEN block and every step form use it, so the
+   editors of both start at the same x and hold the same width (spec 3.3) */
+.sub-grid {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 7px 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.sub-grid > label {
+  font: 700 10.5px var(--mono);
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sub-grid > .cell {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sub-grid > .cell > .field.num {
+  width: 56px;
+  flex: none;
+}
+
+/* which FORM a side takes is a fixed-width choice; the editor beside it takes the rest
+   of the column and truncates, so the two rows of a move stay on one line each */
+.sub-grid > .cell > .select-wrap.family {
+  flex: 0 0 78px;
+}
+
+.sub-grid > .cell > .select-wrap {
+  min-width: 0;
+}
+
+.sub-grid > .cell > .source-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.source-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the NAME is what identifies the pick, so it takes the slack and the type chip gives
+   way; a truncated name would leave the row saying nothing at all */
+.source-chip .name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.source-chip .shape,
+.source-chip .path {
+  flex: 0 1 auto;
+}
+
+.sub-grid > .cell > .field.grow {
+  flex: 1 1 auto;
+}
+
 
 .do-grip {
   display: inline-flex;
@@ -887,10 +1010,6 @@ button:focus-visible {
   color: var(--muted-2);
 }
 
-.do-row .row-num {
-  width: 10px;
-  flex: none;
-}
 
 /* pushes a trailing control to the row's right edge; costs nothing when a growing
    field already fills the line */

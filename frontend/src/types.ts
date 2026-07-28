@@ -17,14 +17,28 @@ export interface MeshField {
 export interface MeshEntity {
   kind: "V" | "T" | "F" | "S";
   name: string;
+  /* the schema's ROOT type name, "" where the schema names none. DART names only the
+     root (spec 2.2), so this is the whole of what an entity says about its type. */
+  type: string;
   writable: boolean;
   forceable: boolean;
   fields: MeshField[];
   returns?: MeshField[]; /* functions: the response fields a feed reads */
 }
 
+/* One entry of the served type table: one per SCHEMA, not per entity, so a type shared
+ * by ten valves is offered once. `entities` are the ones carrying it, which is how an
+ * unfamiliar type name is identified in the picker. An empty name is an unnamed root:
+ * listed, marked, and not pickable by name. */
+export interface MeshType {
+  name: string;
+  fields: MeshField[];
+  entities: { kind: string; name: string }[];
+}
+
 export interface Mesh {
   entities: MeshEntity[];
+  types: MeshType[];
 }
 
 /* ---- the expression language, as served tables (spec 3.7) ---- */
