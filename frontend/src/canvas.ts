@@ -23,6 +23,7 @@ export interface ViewState {
   scale: number;                                /* px per canvas unit */
   ghost: Rect | null;                           /* drag/resize preview */
   state: Record<number, Record<string, Json>>;  /* per-widget interaction state */
+  faults: Record<number, string>;               /* worst compile grade, per widget */
 }
 
 const ISLAND_RADIUS = 16;
@@ -213,6 +214,19 @@ function overlay(page: Page, view: ViewState): string {
   return out.join("");
 }
 
+/* a corner badge on a widget with a compile finding: a filled dot with a bang, sized off
+ * the tile so it stays legible without depending on the view scale */
+function faultMark(geom: Rect, grade: string): string {
+  const r = Math.max(5, Math.min(9, Math.min(geom.w, geom.h) / 8));
+  const cx = geom.x + geom.w - r - 3;
+  const cy = geom.y + r + 3;
+  return (
+    `<g class="fault ${grade}"><circle cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}"/>` +
+    `<path d="M${num(cx)} ${num(cy - r * 0.45)}v${num(r * 0.6)}" stroke-width="${num(r * 0.28)}"/>` +
+    `<circle class="dot" cx="${num(cx)}" cy="${num(cy + r * 0.45)}" r="${num(r * 0.14)}"/></g>`
+  );
+}
+
 /* ---- the page ---- */
 
 export function renderContent(
@@ -318,6 +332,11 @@ export function renderContent(
           `text-anchor="middle" dominant-baseline="central">${escapeXml(widget.type)}?</text>`,
       );
     }
+    /* A widget the compiler complained about is marked HERE, on the thing itself. A feed
+       that did not compile leaves its slot UNKNOWN forever, which on its own looks exactly
+       like a value that has not arrived yet; without this the mistake is invisible. */
+    const fault = editing ? view.faults?.[widget.id] : undefined;
+    if (fault === "error" || fault === "warning") out.push(faultMark(widget.geom, fault));
     out.push(`</g>`);
   }
 

@@ -117,7 +117,7 @@ check(
 
 const store = new DocStore();
 store.load(snapshot.doc);
-const view = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {} };
+const view = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {}, faults: {} };
 const page = store.pages()[0];
 let svg = renderContent(store.doc, page, snapshot.registry, snapshot.live, view);
 
@@ -212,6 +212,7 @@ const editor = {
   setPage: () => undefined,
   select: () => undefined,
   refresh: () => undefined,
+  diagFor: () => [],
 };
 const draw = () => panel.render(inspectorShape(editor), (host) => renderInspector(host, editor));
 /* a version arriving from another window, applied to the mirror exactly as onOps does */
@@ -369,6 +370,57 @@ check(run({ code: [{ op: "CONST", v: -3 }, { op: "ABS" }] }, () => null) === 3,
 check(run({ code: [{ op: "CONST", v: 7 }, { op: "CONST", v: 3 }, { op: "MOD" }] }, () => null) === 1,
       "the full scalar interpreter runs MOD");
 check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is UNKNOWN");
+
+/* ---- default behavior and diagnostics ----
+   A control has to work the moment it is placed, and the view has to be able to say why
+   when it does not. Both are served as data: the type's `behavior` flows, and the compile
+   findings the snapshot carries. */
+
+const toggleType = snapshot.registry.types.find((type) => type.name === "Toggle");
+check(
+  (toggleType.behavior ?? []).length === 1,
+  "the Toggle ships one default flow, got " + (toggleType.behavior ?? []).length,
+);
+check(
+  toggleType.behavior[0].do[0].var === "widget.value",
+  "and it writes the widget's own slot, not a variable",
+);
+check(
+  (snapshot.registry.types.find((t) => t.name === "Button").behavior ?? []).length === 0,
+  "a Button owns no value, so it ships no default",
+);
+check(Array.isArray(snapshot.diag?.compile), "the snapshot carries the compile findings");
+
+/* the default rows render read-only in the inspector, with the detach action */
+const toggle = store.pages()[0].widgets.find((w) => w.type === "Toggle");
+const togglePanel = new Panel(new Element("aside"));
+const toggleEditor = { ...editor, selectedWidget: () => store.widget(toggle.id) };
+togglePanel.render(inspectorShape(toggleEditor), (host) => renderInspector(host, toggleEditor));
+const defaults = togglePanel.host.querySelectorAll(".default-flow");
+check(defaults.length === 1, "the inspector shows the type's default flow, got " + defaults.length);
+has(defaults[0].textContent, "widget.value = !widget.value", "the default row reads as a flow");
+check(
+  defaults[0].querySelectorAll("button").length === 1,
+  "and offers exactly one action, detach",
+);
+
+/* a finding lands on the widget it names, in the rail and on the canvas */
+const findingEditor = {
+  ...toggleEditor,
+  diagFor: () => [{ node: toggle.id, grade: "error", code: "expression", message: "unknown name 'msg'" }],
+};
+const findingPanel = new Panel(new Element("aside"));
+findingPanel.render(inspectorShape(findingEditor), (host) => renderInspector(host, findingEditor));
+const finding = findingPanel.host.querySelectorAll(".finding.error");
+check(finding.length === 1, "an error shows in the inspector, got " + finding.length);
+has(finding[0].textContent, "unknown name", "with the compiler's own words");
+
+view.faults = { [toggle.id]: "error" };
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
+has(svg, 'class="fault error"', "the widget is marked on the canvas");
+view.faults = {};
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
+check(!svg.includes('class="fault'), "and unmarked when the finding clears");
 
 ws.close();
 backend.kill();

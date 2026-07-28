@@ -43,30 +43,54 @@ bool verb_matches(EntityKind kind, Verb verb) {
     return false;
 }
 
-Value json_value(Program& program, Shape shape, const Json& value) {
+/* An authored literal as a runtime value. `ok` is false when the JSON cannot BE that shape,
+ * which is a mistake worth a diagnostic: the result would otherwise be Nil, and Nil is also
+ * the legitimate "no value yet", so the two are indistinguishable on screen and the mistake
+ * is invisible. A null is not a mistake: it is a deliberate UNKNOWN. */
+Value json_value(Program& program, Shape shape, const Json& value, bool& ok) {
+    ok = true;
     if (value.is_null()) return Value::nil();
+    ok = false;
     switch (shape) {
         case Shape::Num:
-            return value.is_number() ? Value::number(value.get<double>()) : Value::nil();
+            if (!value.is_number()) return Value::nil();
+            ok = true;
+            return Value::number(value.get<double>());
         case Shape::Bool:
-            return value.is_boolean() ? Value::boolean(value.get<bool>()) : Value::nil();
+            if (!value.is_boolean()) return Value::nil();
+            ok = true;
+            return Value::boolean(value.get<bool>());
         case Shape::Text:
-            return value.is_string()
-                       ? Value::text(program.add_text(value.get<std::string>()))
-                       : Value::nil();
+            if (!value.is_string()) return Value::nil();
+            ok = true;
+            return Value::text(program.add_text(value.get<std::string>()));
         case Shape::Color: {
             if (!value.is_string()) return Value::nil();
-            bool ok = false;
             const uint32_t color = parse_color(value.get<std::string>(), ok);
             return ok ? Value::color(color) : Value::nil();
         }
         case Shape::Enum:
-            return value.is_number_integer()
-                       ? Value::enumeration(value.get<int64_t>(), 0)
-                       : Value::nil();
+            if (!value.is_number_integer()) return Value::nil();
+            ok = true;
+            return Value::enumeration(value.get<int64_t>(), 0);
         default:
+            /* a shape with no literal form (list, map, struct): an authored value cannot
+               be checked here, so it is not called a mistake */
+            ok = true;
             return Value::nil();
     }
+}
+
+/* the slot an assign target names, or "" when it names a variable */
+std::string slot_target(const std::string& name) {
+    const std::string prefix = "widget.";
+    return name.compare(0, prefix.size(), prefix) == 0 ? name.substr(prefix.size()) : std::string();
+}
+
+/* what a JSON literal looks like in a message, for a diagnostic that names the mistake */
+std::string json_brief(const Json& value) {
+    const std::string text = value.dump();
+    return text.size() > 32 ? text.substr(0, 29) + "..." : text;
 }
 
 struct WidgetInfo {
@@ -91,6 +115,7 @@ class Compiler {
         build_cells();
         build_feeds();
         build_flows();
+        build_type_behavior();
         program_.layout.stack_values = std::max<uint32_t>(program_.layout.stack_values, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
         CompileResult out;
@@ -134,10 +159,16 @@ class Compiler {
         CellDef cell;
         cell.kind = kind;
         cell.owner_widget = owner_widget;
-        cell.node_id = node_id;
         cell.name = name;
+        cell.node_id = node_id;
         cell.shape = shape;
-        cell.initial = json_value(program_, shape, initial);
+        bool ok = true;
+        cell.initial = json_value(program_, shape, initial, ok);
+        if (!ok)
+            diag(node_id, "value_shape",
+                 std::string(kind == CellKind::Slot ? "slot '" : "variable '") + name +
+                     "' is " + shape_name(shape) + ", but its value is " + json_brief(initial) +
+                     ": it starts UNKNOWN");
         cell.persistent = persistent;
         if (shape == Shape::Text) {
             cell.text_slot = program_.layout.text_slots++;
@@ -216,10 +247,11 @@ class Compiler {
                             ? widget["slots"] : empty_object_;
                     for (const Json& slot : info.type->value("slots", Json::array())) {
                         const std::string name = slot.value("name", "");
-                        const Shape shape = shape_from_name(slot.value("shape", ""));
+                        const Shape shape = slot_shape(slot);
                         Json initial = slot.value("default", Json());
                         auto override = authored.find(name);
                         if (override != authored.end()) initial = *override;
+                        check_variants(info.id, name, slot, initial);
                         info.slots[name] =
                             add_cell(CellKind::Slot, info.id, info.id, name, shape, initial, false);
                     }
@@ -227,6 +259,29 @@ class Compiler {
                 widgets_.push_back(std::move(info));
             }
         }
+    }
+
+    /* A registry slot declared `enum` is CONSTRAINED TEXT: its values are the variant NAMES
+     * the author picks and the template draws ("center"), so the cell holds the name. The
+     * VM's Enum shape means something else, a mesh field's backing integer (spec 2.2), and
+     * conflating them left every enum slot holding Nil. */
+    Shape slot_shape(const Json& slot) const {
+        const std::string name = slot.value("shape", "");
+        return name == "enum" ? Shape::Text : shape_from_name(name);
+    }
+
+    /* a value outside a slot's declared variant set is a typo, not a new option */
+    void check_variants(uint64_t widget_id, const std::string& slot, const Json& spec,
+                        const Json& value) {
+        auto variants = spec.find("variants");
+        if (variants == spec.end() || !variants->is_array() || !value.is_string()) return;
+        for (const Json& variant : *variants)
+            if (variant == value) return;
+        std::string known;
+        for (const Json& variant : *variants)
+            known += (known.empty() ? "" : ", ") + variant.get<std::string>();
+        diag(widget_id, "slot_variant",
+             "slot '" + slot + "' is " + json_brief(value) + ", which is not one of: " + known);
     }
 
     Shape var_shape(const std::string& type) const {
@@ -422,6 +477,22 @@ class Compiler {
         return slot;
     }
 
+    /* Where an assign writes. Reads already spell a slot `widget.<name>` (scope_for), so
+     * writes use the same vocabulary: one name form, both directions. The scope is the
+     * widget's OWN slots and nothing else, so a flow can never reach across and become a
+     * second writer on another widget's slot (the one-writer rule, spec 2.3). */
+    uint32_t assign_target(const WidgetInfo& widget, const std::string& name) const {
+        const std::string slot = slot_target(name);
+        if (!slot.empty()) {
+            auto found = widget.slots.find(slot);
+            return found == widget.slots.end() ? UINT32_MAX : found->second;
+        }
+        auto local = widget.locals.find(name);
+        if (local != widget.locals.end()) return local->second;
+        auto global = globals_.find(name);
+        return global == globals_.end() ? UINT32_MAX : global->second;
+    }
+
     int resolve_timer(const WidgetInfo& widget, const std::string& name,
                       uint64_t node) {
         auto local = widget.timers.find(name);
@@ -593,13 +664,11 @@ class Compiler {
                 ++program_.layout.effect_capacity;
             } else if (kind == "assign") {
                 const std::string name = step.value("var", "");
-                auto local = widget.locals.find(name);
-                auto global = globals_.find(name);
-                const uint32_t cell =
-                    local != widget.locals.end() ? local->second
-                                                : global != globals_.end() ? global->second : UINT32_MAX;
+                const uint32_t cell = assign_target(widget, name);
                 if (cell == UINT32_MAX) {
-                    diag(step_id, "assign_var", "variable '" + name + "' is unresolved");
+                    diag(step_id, "assign_var",
+                         (slot_target(name).empty() ? "variable '" : "slot '") + name +
+                             "' is unresolved");
                     return false;
                 }
                 if (!expression(step_id, step.value("a", "x"), ExprTier::Wire, scope,
@@ -690,6 +759,90 @@ class Compiler {
                         flow.max_stack = 1;
                         flow.worst_steps = 2;
                     }
+                    program_.layout.stack_values =
+                        std::max(program_.layout.stack_values, flow.max_stack);
+                    program_.flows.push_back(std::move(flow));
+                }
+            }
+        }
+    }
+
+    /* Who already writes each of a widget's slots, and what to call it in a diagnostic.
+     * One writer per slot is the rule that keeps a slot deterministic (spec 2.3); this is
+     * where it is decided, once, at compile time. */
+    std::unordered_map<std::string, std::string> claimed_slots(const WidgetInfo& widget) const {
+        std::unordered_map<std::string, std::string> out;
+        auto feeds = widget.node->find("feeds");
+        if (feeds != widget.node->end() && feeds->is_array())
+            for (const Json& feed : *feeds) {
+                const std::string slot = feed.value("slot", "");
+                const Json& src = feed.value("src", Json::object());
+                if (!slot.empty())
+                    out[slot] = "it is fed from " + src.value("kind", "?") + ":" +
+                                src.value("name", "?");
+            }
+        auto flows = widget.node->find("flows");
+        if (flows != widget.node->end() && flows->is_array())
+            for (const Json& flow : *flows)
+                for (const Json& step : flow.value("do", Json::array())) {
+                    if (step.value("kind", "") != "assign") continue;
+                    const std::string slot = slot_target(step.value("var", ""));
+                    if (!slot.empty()) out[slot] = "a flow on this widget writes it";
+                }
+        return out;
+    }
+
+    /* The slots one behavior flow writes, so precedence is decided before it is compiled */
+    std::vector<std::string> behavior_targets(const Json& flow) const {
+        std::vector<std::string> out;
+        for (const Json& step : flow.value("do", Json::array())) {
+            if (step.value("kind", "") != "assign") continue;
+            const std::string slot = slot_target(step.value("var", ""));
+            if (!slot.empty()) out.push_back(slot);
+        }
+        return out;
+    }
+
+    /* A widget type's DEFAULT BEHAVIOR: ordinary flows shipped in the registry row rather
+     * than authored per instance, so a Toggle toggles the moment it is placed. They are
+     * compiled by this same compiler into the same programs, so there is no per-type code
+     * and a custom component declares behavior the same way.
+     *
+     * Precedence, resolved here so exactly one writer survives: a feed on the slot wins
+     * (the control is a view of the machine), then an authored flow that assigns the same
+     * slot (the author overrode the default), otherwise the default runs. Suppression is
+     * per slot WRITTEN, not per event, so "on tap, send to the PLC" coexists with the
+     * default local echo. Every suppression is reported, so none of this is invisible. */
+    void build_type_behavior() {
+        for (WidgetInfo& widget : widgets_) {
+            if (!widget.type) continue;
+            const Json& behavior = widget.type->value("behavior", Json::array());
+            if (!behavior.is_array() || behavior.empty()) continue;
+            const std::unordered_map<std::string, std::string> claimed = claimed_slots(widget);
+            for (const Json& node : behavior) {
+                bool suppressed = false;
+                for (const std::string& slot : behavior_targets(node)) {
+                    auto by = claimed.find(slot);
+                    if (by == claimed.end()) continue;
+                    diag(widget.id, "behavior_inactive",
+                         "the default " + widget.type->value("name", "") + " behavior on '" +
+                             slot + "' is inactive: " + by->second,
+                         DiagGrade::Info);
+                    suppressed = true;
+                    break;
+                }
+                if (suppressed) continue;
+                for (const Json& trigger : node.value("when", Json::array())) {
+                    FlowProgram flow;
+                    flow.widget_id = widget.id;
+                    /* the widget's own id: document ids are unique, so this cannot collide
+                       with an authored flow, and it keeps state-site identity stable */
+                    flow.flow_id = widget.id;
+                    flow.group = program_.layout.fired_groups++;
+                    flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
+                    flow.event = trigger.value("name", "");
+                    flow.event_shape = event_shape(widget, flow.event, widget.id);
+                    if (!compile_steps(widget, node, flow)) continue;
                     program_.layout.stack_values =
                         std::max(program_.layout.stack_values, flow.max_stack);
                     program_.flows.push_back(std::move(flow));

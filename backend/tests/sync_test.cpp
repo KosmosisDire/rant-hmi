@@ -147,6 +147,10 @@ int main() {
     CHECK((*snapshot)["doc"]["pages"][0]["widgets"].size() == 7);
     CHECK((*snapshot)["registry"]["types"].size() == 8);
     CHECK((*snapshot)["live"]["values"].is_object());
+    /* Compile findings ride the snapshot. They are produced once, at startup, so a view
+     * that joins later has no other frame to learn them from and would sit looking at a
+     * dead widget with nothing to explain it. */
+    CHECK((*snapshot)["diag"]["compile"].is_array());
 
     /* every template attribute arrives as a compiled program */
     const Json& button = (*snapshot)["registry"]["types"][0];

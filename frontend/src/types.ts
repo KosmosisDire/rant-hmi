@@ -107,6 +107,10 @@ export interface WidgetType {
   slots: SlotSpec[];
   events: EventSpec[];
   template: TemplateNode;
+  /* the type's default flows: ordinary flow rows the backend compiles per instance and
+     drops where a feed or an authored flow already writes the slot. The view never runs
+     them, it only shows them, so this is document-shaped data like everything else. */
+  behavior?: Flow[];
 }
 
 export interface Registry {
@@ -128,4 +132,15 @@ export type Op =
 export interface Live {
   epoch: number;
   values: Record<string, Json>;
+}
+
+/* ---- diagnostics ---- */
+
+/* One compile finding, addressed to the document node it is about (spec 3.8). `node` may
+ * be any node, so a view maps it to the widget that owns it before marking the canvas. */
+export interface Diag {
+  node: number;
+  grade: "error" | "warning" | "info";
+  code: string;
+  message: string;
 }

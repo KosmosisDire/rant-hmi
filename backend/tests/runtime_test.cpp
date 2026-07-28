@@ -306,6 +306,130 @@ void test_compile_fault() {
     CHECK(state.effect_count == 0);
 }
 
+/* a page with one widget of `type`, its authored slots, and whatever else is passed in */
+Document widget_document(const char* type, Json slots, Json extra = Json::object()) {
+    Json widget = Json{{"type", type}, {"label", "w"}, {"slots", std::move(slots)}};
+    for (auto item = extra.begin(); item != extra.end(); ++item) widget[item.key()] = item.value();
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"},
+                                             {"widgets", Json::array({std::move(widget)})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    return document;
+}
+
+uint64_t only_widget(const Document& document) {
+    return json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+}
+
+bool has_diag(const CompileResult& compiled, const char* code) {
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.code == code) return true;
+    return false;
+}
+
+/* DEFAULT BEHAVIOR: a control works the moment it is placed, and stands down where
+ * something else already writes its slot. One writer per slot, decided at compile time. */
+void test_default_behavior() {
+    FakeMesh mesh(reflection());
+
+    Document bare = widget_document("Toggle", Json{{"value", false}});
+    CompileResult compiled = compile_document(bare, registry(), mesh);
+    CHECK(compiled.ok);
+    RuntimeState state(compiled.program);
+    const uint64_t id = only_widget(bare);
+    CHECK(state.values[0].tag != ValueTag::Nil);   /* a bool slot starts from its value */
+    run_event(compiled.program, state, id, "tap", Value::boolean(true));
+    const uint32_t slot = [&] {
+        for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+            if (compiled.program.cells[i].kind == CellKind::Slot &&
+                compiled.program.cells[i].name == "value")
+                return i;
+        return UINT32_MAX;
+    }();
+    CHECK(slot != UINT32_MAX);
+    CHECK(state.values[slot].data.boolean == true);
+    run_event(compiled.program, state, id, "tap", Value::boolean(true));
+    CHECK(state.values[slot].data.boolean == false);
+
+    /* a feed on the slot takes it over: the control becomes a view of the machine */
+    Document fed = widget_document(
+        "Toggle", Json::object(),
+        Json{{"feeds", Json::array({Json{{"slot", "value"},
+                                         {"src", entity("V", "sensor")},
+                                         {"path", "on"},
+                                         {"xf", ""}}})}});
+    CompileResult fed_compiled = compile_document(fed, registry(), mesh);
+    CHECK(has_diag(fed_compiled, "behavior_inactive"));
+    RuntimeState fed_state(fed_compiled.program);
+    run_event(fed_compiled.program, fed_state, only_widget(fed), "tap", Value::boolean(true));
+    CHECK(fed_state.effect_count == 0);   /* nothing ran: the default stood down */
+
+    /* an authored flow writing the same slot wins over the default, and the default is
+       reported inactive rather than silently dropped */
+    Document authored = widget_document(
+        "Toggle", Json{{"value", false}},
+        Json{{"flows", Json::array({Json{
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({Json{{"kind", "assign"},
+                                           {"var", "widget.value"},
+                                           {"a", "true"}}})}}})}});
+    CompileResult authored_compiled = compile_document(authored, registry(), mesh);
+    CHECK(authored_compiled.ok);
+    CHECK(has_diag(authored_compiled, "behavior_inactive"));
+    RuntimeState authored_state(authored_compiled.program);
+    const uint64_t authored_id = only_widget(authored);
+    run_event(authored_compiled.program, authored_state, authored_id, "tap",
+              Value::boolean(true));
+    run_event(authored_compiled.program, authored_state, authored_id, "tap",
+              Value::boolean(true));
+    /* the author's flow assigns true, so a second tap does NOT toggle it back */
+    CHECK(authored_state.values[slot].data.boolean == true);
+
+    /* a slot is the widget's own: another widget's slot is not addressable */
+    Document reaching = widget_document(
+        "Toggle", Json{{"value", false}},
+        Json{{"flows", Json::array({Json{
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({Json{{"kind", "assign"},
+                                           {"var", "widget.nosuchslot"},
+                                           {"a", "true"}}})}}})}});
+    CHECK(has_diag(compile_document(reaching, registry(), mesh), "assign_var"));
+}
+
+/* A value that cannot be its declared shape used to become Nil in silence, which reads on
+ * screen exactly like a value that has not arrived. It is a finding now. */
+void test_value_shape_diagnostics() {
+    FakeMesh mesh(reflection());
+
+    Document mistyped = widget_document("Toggle", Json{{"value", 3}});
+    CHECK(has_diag(compile_document(mistyped, registry(), mesh), "value_shape"));
+
+    /* an explicit null is a deliberate UNKNOWN, not a mistake */
+    Document unknown = widget_document("Toggle", Json{{"value", nullptr}});
+    CHECK(!has_diag(compile_document(unknown, registry(), mesh), "value_shape"));
+
+    /* an enum slot holds a variant NAME, so it is text and its value is checked */
+    Document aligned = widget_document("Label", Json{{"align", "top-left"}});
+    CompileResult ok = compile_document(aligned, registry(), mesh);
+    CHECK(!has_diag(ok, "slot_variant"));
+    CHECK(!has_diag(ok, "value_shape"));
+    bool text_align = false;
+    for (const CellDef& cell : ok.program.cells)
+        if (cell.name == "align" && cell.shape == Shape::Text &&
+            cell.initial.tag == ValueTag::Text)
+            text_align = true;
+    CHECK(text_align);
+
+    Document typo = widget_document("Label", Json{{"align", "middle"}});
+    CHECK(has_diag(compile_document(typo, registry(), mesh), "slot_variant"));
+}
+
 } // namespace
 
 int main() {
@@ -314,5 +438,7 @@ int main() {
     test_migration();
     test_compile_fault();
     test_expression_rejection();
+    test_default_behavior();
+    test_value_shape_diagnostics();
     return check::summary("runtime_test");
 }

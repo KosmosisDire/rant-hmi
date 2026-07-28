@@ -18,6 +18,7 @@ import { Editor, section } from "../editor.js";
 import { bindField, bindFlag, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, slotCell, typeOf } from "../slots.js";
 import { Json, Page, SlotSpec, Widget } from "../types.js";
+
 import { valueEditor } from "./editors.js";
 import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
@@ -67,6 +68,52 @@ export function renderLeftRail(host: HTMLElement, editor: Editor): void {
       }),
     ]),
   );
+}
+
+/* A row for one of the type's DEFAULT flows: what the widget does before anyone authors
+ * anything. Read-only, because it belongs to the type and not to this instance, with one
+ * action that copies it into the document as an ordinary flow (spec 3.10: a preset only
+ * inserts ordinary rows, and afterwards it is indistinguishable from hand-built). The copy
+ * takes over the slot, which is what makes the default stand down. */
+function defaultFlowRow(editor: Editor, widget: Widget, flow: Json): HTMLElement {
+  const trigger = (flow.when ?? [])[0] ?? {};
+  const steps: Json[] = flow.do ?? [];
+  return el("div", { class: "default-flow" }, [
+    el("span", { class: "tag", text: "default" }),
+    el("span", { class: "kw", text: "on" }),
+    el("span", { class: "chip trigger", text: trigger.name ?? "?" }),
+    el(
+      "span",
+      { class: "steps" },
+      steps.map((step) =>
+        el("span", { class: "step", text: stepText(step) }),
+      ),
+    ),
+    el("button", {
+      class: "ghost-btn",
+      text: "detach",
+      title: "copy this into the document, where it can be edited",
+      onclick: () =>
+        editor.apply([
+          {
+            op: "insert",
+            parent: widget.id,
+            list: "flows",
+            node: {
+              when: JSON.parse(JSON.stringify(flow.when ?? [])),
+              when_mode: flow.when_mode ?? "first",
+              do: JSON.parse(JSON.stringify(steps)),
+            },
+          },
+        ]),
+    }),
+  ]);
+}
+
+function stepText(step: Json): string {
+  if (step.kind === "assign") return step.var + " = " + step.a;
+  if (step.kind === "transform") return "x = " + step.a;
+  return step.kind;
 }
 
 /* the chip's name and its selected state both move without the chip being replaced, so
@@ -124,6 +171,8 @@ export function inspectorShape(editor: Editor): string {
     feeds: (widget.feeds ?? []).map(feedShape),
     flows: (widget.flows ?? []).map(flowShape),
     locals: (widget.locals ?? []).map(varShape),
+    behavior: (type?.behavior ?? []).length,
+    diag: editor.diagFor(widget.id).map((d) => d.code + ":" + d.message),
   });
 }
 
@@ -167,6 +216,22 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
+  /* 0. What the compiler said about this widget, first because it explains everything
+   *    under it: a feed that did not compile leaves its slot UNKNOWN, which looks exactly
+   *    like a value that has not arrived. */
+  const findings = editor.diagFor(widget.id);
+  if (findings.length)
+    body.append(
+      ...section("findings", "Findings", String(findings.length), () =>
+        findings.map((row) =>
+          el("div", { class: "finding " + row.grade }, [
+            el("span", { class: "grade", text: row.grade }),
+            el("span", { class: "message", text: row.message }),
+          ]),
+        ),
+      ),
+    );
+
   /* 1. Data in, and ONLY where the type takes values: what a widget consumes is its
    *    value-group slots, so a Button (which consumes nothing) shows no such section.
    *    A fed slot is a card, an unfed one a row with a bind button. */
@@ -177,11 +242,14 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       ),
     );
 
-  /* 2. Behavior */
+  /* 2. Behavior: the type's defaults first, then what this instance authors */
   body.append(
     ...section("behavior", "Behavior", String((widget.flows ?? []).length), () => [
+      ...(type?.behavior ?? []).map((flow) => defaultFlowRow(editor, widget, flow)),
       ...(widget.flows ?? []).map((flow) => flowCard(editor, widget, type, flow)),
-      (widget.flows ?? []).length ? null : el("p", { class: "empty", text: "no behavior yet" }),
+      (widget.flows ?? []).length || (type?.behavior ?? []).length
+        ? null
+        : el("p", { class: "empty", text: "no behavior yet" }),
       addFlowButton(editor, widget, type),
     ]),
   );
@@ -225,9 +293,10 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     ]),
   );
 
-  /* 5. Code: the generated view of what was built (read-only, spec 3.9) */
+  /* 5. Code: the generated view of what was built (read-only, spec 3.9). The type's
+   *    defaults belong in it: they are part of what this widget does. */
   const code = el("pre", { class: "code" });
-  bindText(widget.id + ":code", code, () => codeFor(at()));
+  bindText(widget.id + ":code", code, () => codeFor(at(), type?.behavior ?? []));
   body.append(...section("code", "Code", null, () => [code]));
 }
 
@@ -333,9 +402,14 @@ function slotCells(
 
 /* The Code panel: a readable chained form of the same document, generated. It is a view,
  * never an input (spec 3.9). */
-function codeFor(widget: Widget): string {
+function codeFor(widget: Widget, defaults: Json[] = []): string {
   const lines: string[] = [];
   const name = widget.label || widget.type.toLowerCase();
+  for (const flow of defaults)
+    for (const step of flow.do ?? [])
+      lines.push(
+        `// default: on ${(flow.when ?? [])[0]?.name} -> ${stepText(step)}`,
+      );
   for (const feed of widget.feeds ?? []) {
     const src = feed.src ?? { kind: "V", name: "" };
     const base =

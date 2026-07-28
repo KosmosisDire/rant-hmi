@@ -94,6 +94,25 @@ Json align_slot(const char* def) {
 
 Json event(const char* name, const char* x) { return Json{{"name", name}, {"x", x}}; }
 
+/* DEFAULT BEHAVIOR (spec 2.3). Ordinary flows, in the document's own flow shape, shipped
+ * with the type instead of authored per instance: a Toggle toggles and a Slider slides the
+ * moment it is placed, with no per-type code anywhere. The compiler treats them exactly as
+ * authored flows and drops one whose slot something else already writes (a feed, or an
+ * authored flow), so a slot never has two writers.
+ *
+ * A default writes the widget's OWN slot: `widget.<slot>`, the same name the read side
+ * uses. It never reaches another widget, which is what keeps this from reopening the
+ * rejected "flows write slots" door. */
+Json sets_slot(const char* slot, const char* expression) {
+    return Json{{"kind", "assign"}, {"var", std::string("widget.") + slot}, {"a", expression}};
+}
+
+Json on_event(const char* name, std::initializer_list<Json> steps) {
+    return Json{{"when", Json::array({Json{{"kind", "event"}, {"name", name}}})},
+                {"when_mode", "first"},
+                {"do", Json(steps)}};
+}
+
 /* Two base sets, composed per type rather than forced on every one: a property a widget
  * does not use must not appear in its inspector, and that is a decision in this data.
  *
@@ -152,9 +171,10 @@ Json compose_slots(Json base, std::initializer_list<Json> own) {
     return slots;
 }
 
-Json type(const char* name, Json slots, Json events, Json tmpl) {
+Json type(const char* name, Json slots, Json events, Json tmpl,
+          Json behavior = Json::array()) {
     return Json{{"name", name}, {"slots", std::move(slots)}, {"events", std::move(events)},
-                {"template", std::move(tmpl)}};
+                {"template", std::move(tmpl)}, {"behavior", std::move(behavior)}};
 }
 
 /* ---- the built-in types ---- */
@@ -217,7 +237,8 @@ Json toggle_type() {
                                     Json::array()),
                             })),
                     }),
-                    press_interact()));
+                    press_interact()),
+                Json::array({on_event("tap", {sets_slot("value", "!widget.value")})}));
 }
 
 Json slider_type() {
@@ -256,7 +277,10 @@ Json slider_type() {
                                   {"min", ref("slot:min")},
                                   {"max", ref("slot:max")},
                                   {"step", ref("slot:step")}},
-                             Json{{"input", "input"}, {"commit", "commit"}})));
+                             Json{{"input", "input"}, {"commit", "commit"}})),
+                /* the drag primitive already mapped the pointer into min..max by step, so
+                   the default is the identity: the knob follows the finger */
+                Json::array({on_event("input", {sets_slot("value", "x")})}));
 }
 
 Json readout_type() {
@@ -344,7 +368,8 @@ Json dropdown_type() {
                             })),
                     }),
                     interact("pick", Json{{"options", ref("slot:options")}},
-                             Json{{"open", "open"}, {"select", "select"}})));
+                             Json{{"open", "open"}, {"select", "select"}})),
+                Json::array({on_event("select", {sets_slot("value", "x")})}));
 }
 
 Json label_type() {

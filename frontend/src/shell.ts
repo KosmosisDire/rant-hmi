@@ -19,7 +19,7 @@ import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, typeOf } from "./slots.js";
 import { Rect } from "./template.js";
-import { Doc, Interact, Json, Live, Op, Page, Registry, Widget, WidgetType } from "./types.js";
+import { Diag, Doc, Interact, Json, Live, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 
 type Mode = "edit" | "run" | "operate";
@@ -32,7 +32,10 @@ export class App implements Editor {
   store = new DocStore();
   registry: Registry | null = null;
   live: Live | null = null;
-  view: ViewState = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {} };
+  diagnostics: Diag[] = [];
+  view: ViewState = {
+    mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {}, faults: {},
+  };
 
   private conn: Connection;
   private viewport: Viewport | null = null;
@@ -46,6 +49,7 @@ export class App implements Editor {
     overlay: SVGSVGElement;
     banner: HTMLElement;
     version: HTMLElement;
+    problems: HTMLElement;
     pill: HTMLElement;
     palette: HTMLElement;
   };
@@ -62,7 +66,7 @@ export class App implements Editor {
   constructor(private root: HTMLElement, url: string) {
     this.build();
     this.conn = new Connection(url, {
-      snapshot: (doc, registry, live) => this.onSnapshot(doc, registry, live),
+      snapshot: (doc, registry, live, diag) => this.onSnapshot(doc, registry, live, diag),
       ops: (version, ops) => this.onOps(version, ops),
       /* a live frame and a document echo are the same event to a rail: re-read and
          assign. The rails decide for themselves whether anything structural moved. */
@@ -71,7 +75,7 @@ export class App implements Editor {
         this.queueCanvas(true);
         this.queueRails();
       },
-      diag: () => undefined,
+      diag: (rows) => this.onDiag(rows),
       status: (state, detail) => this.onStatus(state, detail),
     });
   }
@@ -140,10 +144,11 @@ export class App implements Editor {
 
   /* ---- protocol ---- */
 
-  private onSnapshot(doc: Doc, registry: Registry, live: Live): void {
+  private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[]): void {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
+    this.onDiag(diag, false);
     const page = this.page();
     this.pageId = page ? page.id : 0;
     this.viewport?.setArtboard(doc.canvas.unit_w, doc.canvas.unit_h);
@@ -158,6 +163,58 @@ export class App implements Editor {
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
     if (!this.page()) this.pageId = this.store.pages()[0]?.id ?? 0;
     this.renderAll();
+  }
+
+  /* Diagnostics arrive addressed to a document node, which may be a feed, a step or a
+   * variable. The canvas can only mark a WIDGET, so each finding is walked up to the widget
+   * that owns it; a global variable's finding belongs to no widget and stays in the list. */
+  private onDiag(rows: Diag[], render = true): void {
+    this.diagnostics = Array.isArray(rows) ? rows : [];
+    this.view.faults = {};
+    for (const row of this.diagnostics) {
+      const widget = this.owningWidget(row.node);
+      if (!widget) continue;
+      const worst = this.view.faults[widget];
+      if (worst === "error" || (worst === "warning" && row.grade === "info")) continue;
+      this.view.faults[widget] = row.grade;
+    }
+    const errors = this.diagnostics.filter((row) => row.grade === "error").length;
+    const notes = this.diagnostics.length - errors;
+    this.nodes.problems.textContent = errors
+      ? errors + (errors === 1 ? " problem" : " problems")
+      : notes
+        ? notes + (notes === 1 ? " note" : " notes")
+        : "";
+    this.nodes.problems.className = "problems" + (errors ? " bad" : notes ? " note" : " none");
+    if (render) this.renderAll();
+  }
+
+  /* the first thing worth looking at: select its widget and say what is wrong */
+  private showProblem(): void {
+    const row =
+      this.diagnostics.find((d) => d.grade === "error") ?? this.diagnostics[0] ?? null;
+    if (!row) return;
+    const widget = this.owningWidget(row.node);
+    if (widget) this.select([widget]);
+    this.flash(row.message);
+  }
+
+  private owningWidget(node: number): number {
+    let at: Json = this.store.node(node);
+    let id = node;
+    while (at) {
+      if (at.type !== undefined && at.geom !== undefined) return id;
+      const parent = this.store.parentOf(id);
+      if (!parent || typeof parent.id !== "number") return 0;
+      id = parent.id;
+      at = parent;
+    }
+    return 0;
+  }
+
+  /* every finding about this widget or anything inside it */
+  diagFor(widget: number): Diag[] {
+    return this.diagnostics.filter((row) => this.owningWidget(row.node) === widget);
   }
 
   private onStatus(state: Status, detail: string): void {
@@ -223,6 +280,9 @@ export class App implements Editor {
     clear(this.root);
     const pill = el("span", { class: "pill connecting", text: "connecting" });
     const version = el("span", { class: "version", text: "v0" });
+    /* compile findings live next to the version because that is what they are about: this
+       document at this version. Clicking one selects the widget it names. */
+    const problems = el("button", { class: "problems", onclick: () => this.showProblem() });
     const palette = el("div", { class: "tools" });
     const left = el("aside", { class: "rail left" });
     const inspector = el("aside", { class: "rail right" });
@@ -253,7 +313,7 @@ export class App implements Editor {
         ]),
         modes,
         palette,
-        el("div", { class: "status" }, [version, pill]),
+        el("div", { class: "status" }, [problems, version, pill]),
       ]),
     );
     this.root.appendChild(
@@ -267,7 +327,9 @@ export class App implements Editor {
     );
     this.root.appendChild(banner);
 
-    this.nodes = { left, inspector, stage, layer, art, overlay, banner, version, pill, palette };
+    this.nodes = {
+      left, inspector, stage, layer, art, overlay, banner, version, problems, pill, palette,
+    };
     this.rails = { left: new Panel(left), inspector: new Panel(inspector) };
     this.restoreRailWidths();
 
@@ -534,30 +596,38 @@ export class App implements Editor {
     else if (interact.primitive === "pick")
       this.emitInput(widget, interact.emits.open,
         this.eventValue(widget, type, interact.emits.open, true));
+    else if (interact.primitive === "drag1d")
+      /* a press on the track IS a drag to that point: without this, a click that never
+         moves emits nothing at all and the knob ignores it */
+      this.emitDrag(widget, type, interact, at.x, at.y);
     this.queueCanvas(true);
     ev.preventDefault();
     ev.stopPropagation();
+  }
+
+  /* the drag1d primitive: map a point in the tile onto the range its params declare, and
+     report it. The value it computes is not truth, it is an input event like any other */
+  private emitDrag(widget: Widget, type: WidgetType, interact: Interact, x: number, y: number): void {
+    const cells = this.controlCells(widget, type);
+    const axis = String(run(interact.params.axis, cells) ?? "x");
+    const lo = Number(run(interact.params.min, cells) ?? 0);
+    const hi = Number(run(interact.params.max, cells) ?? 1);
+    const step = Math.max(0, Number(run(interact.params.step, cells) ?? 0));
+    const fraction = axis === "y"
+      ? 1 - (y - widget.geom.y) / widget.geom.h
+      : (x - widget.geom.x) / widget.geom.w;
+    let value = lo + Math.max(0, Math.min(1, fraction)) * (hi - lo);
+    if (step > 0) value = lo + Math.round((value - lo) / step) * step;
+    if (this.control) this.control.value = value;
+    this.emitInput(widget, interact.emits.input, value);
   }
 
   private onControlMove(ev: PointerEvent): void {
     const control = this.control;
     if (!control || control.pointer !== ev.pointerId || !this.viewport) return;
     if (control.interact.primitive !== "drag1d") return;
-    const widget = control.widget as Widget;
-    const type = control.type as WidgetType;
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const cells = this.controlCells(widget, type);
-    const axis = String(run(control.interact.params.axis, cells) ?? "x");
-    const lo = Number(run(control.interact.params.min, cells) ?? 0);
-    const hi = Number(run(control.interact.params.max, cells) ?? 1);
-    const step = Math.max(0, Number(run(control.interact.params.step, cells) ?? 0));
-    const fraction = axis === "y"
-      ? 1 - (at.y - widget.geom.y) / widget.geom.h
-      : (at.x - widget.geom.x) / widget.geom.w;
-    let value = lo + Math.max(0, Math.min(1, fraction)) * (hi - lo);
-    if (step > 0) value = lo + Math.round((value - lo) / step) * step;
-    control.value = value;
-    this.emitInput(widget, control.interact.emits.input, value);
+    this.emitDrag(control.widget as Widget, control.type as WidgetType, control.interact, at.x, at.y);
     ev.preventDefault();
   }
 

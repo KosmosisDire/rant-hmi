@@ -235,13 +235,21 @@ void App::compile_runtime() {
                                       next->program());
     scheduler_ = std::move(next);
     ++epoch_;
+    if (server_.sessions())
+        server_.broadcast(Json{{"type", "diag"}, {"compile", diagnostics()}});
+}
+
+Json App::diagnostics() const {
     Json rows = Json::array();
+    if (!scheduler_) return rows;
     for (const Diag& diag : scheduler_->program().diagnostics)
         rows.push_back(Json{{"node", diag.node_id},
-                            {"grade", diag.grade == DiagGrade::Error ? "error" : "warning"},
+                            {"grade", diag.grade == DiagGrade::Error     ? "error"
+                                      : diag.grade == DiagGrade::Warning ? "warning"
+                                                                         : "info"},
                             {"code", diag.code},
                             {"message", diag.message}});
-    if (server_.sessions()) server_.broadcast(Json{{"type", "diag"}, {"compile", rows}});
+    return rows;
 }
 
 void App::publish_live() {
@@ -257,7 +265,8 @@ Json App::snapshot() const {
                 {"version", doc_.version()},
                 {"doc", doc_.root},
                 {"registry", registry()},
-                {"live", live()}};
+                {"live", live()},
+                {"diag", Json{{"compile", diagnostics()}}}};
 }
 
 void App::send_snapshot(uint64_t session) { server_.send(session, snapshot()); }

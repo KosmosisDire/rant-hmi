@@ -59,6 +59,10 @@ class App {
 
     Json snapshot() const;
     Json live() const;
+    /* the current compile's diagnostics, as the wire carries them. A joining client gets
+     * them in its snapshot: they are computed once at startup, so a view that arrives
+     * later would otherwise never learn why its widget is dead. */
+    Json diagnostics() const;
     void send_snapshot(uint64_t session);
     void reject(uint64_t session, const std::string& reason);
 

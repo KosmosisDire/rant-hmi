@@ -86,6 +86,7 @@ WidgetType {
   name,                          // registry key; never referenced by code
   slots:  [ {name, shape, default, group, editor?} ],
   events: [ {name, x: shape} ],  // what flows can trigger on; x is the seed shape
+  behavior: [ Flow ],            // the type's DEFAULT flows (below)
   template: Node                 // the visual (below)
 }
 ```
@@ -136,12 +137,54 @@ a shape rather than a panel (a toggle's pill, a slider's bar, an indicator's lam
 names that shape's colours as its own slots, and its frame stays the optional
 background behind it.
 
-**Behavior-driven appearance goes through a variable.** Flows writing slots
-directly was considered and rejected: it would put a second writer on a slot,
+**Behavior-driven appearance goes through a variable.** A flow writing ANOTHER
+widget's slot was considered and rejected: it would put a second writer on a slot,
 racing its feed and breaking one-feed-per-slot determinism. The composition that
 already exists covers it: the flow assigns an HMI variable, and the slot feeds
 from that variable (`L` is an ordinary feed source). One writer per slot, no new
 mechanism, and the indirection is visible state a card in the rail shows live.
+
+**A widget writes its OWN slots.** The narrow case the rejection above does not
+cover is the control's own echo: a Toggle that does not toggle when tapped is a
+picture of a toggle. So an `assign` step may target `widget.<slot>`, the same name
+the read side already uses, and its scope is the widget's own slots and nothing
+else. Reaching across to another widget stays impossible, which is what kept the
+rejected door shut in the first place.
+
+**Default behavior.** A type carries `behavior`: ordinary flows, in the document's
+own flow shape, that the backend compiles per instance. A Toggle inverts its value
+on `tap`, a Slider follows `input`, a Dropdown takes `select`; Button, Label,
+Panel, Readout and Indicator own no value and carry none. There is still no
+per-type code: the compiler treats these exactly as authored flows, so a custom
+component declares behavior the same way.
+
+One writer per slot survives by PRECEDENCE, resolved at compile time in this
+order:
+
+1. a feed on the slot: the control is a view of the machine, and the default
+   stands down;
+2. an authored flow on the widget that assigns the same slot: the author
+   overrode the default;
+3. otherwise the default runs, and the slot is the widget's own state.
+
+Suppression is per slot WRITTEN, not per event, so "on tap, send to the PLC"
+coexists with the default local echo: the widget flips and the write goes out. Add
+a feed on the slot later and the machine becomes the truth. Every suppression is
+reported as an `info` finding naming what took the slot over, and the inspector
+shows a type's defaults as read-only rows with one action that copies them into
+the document as ordinary flows (3.10). Nothing is hidden behind a friendly label.
+
+**A value that cannot be its shape is a finding.** An authored slot value or
+variable init of the wrong JSON shape used to become Nil in silence, and Nil is
+also the legitimate "no value yet", so the mistake was indistinguishable from an
+honest UNKNOWN. It is a diagnostic now. An explicit `null` is not a mistake: it is
+a deliberate UNKNOWN start. A variable's `type` additionally OWNS the shape of its
+`init` (2.7), so the two can never disagree in the first place.
+
+A slot declared `enum` is CONSTRAINED TEXT: its values are the variant names the
+author picks and the template draws, so the cell holds the name, and a value
+outside the declared set is a finding. The `enum` SHAPE in the value model (5.2)
+is a different thing, a mesh field's backing integer.
 
 The built-in set (value-group slots shown; every type also carries its
 appearance/config slots: colors, min/max/step where relevant, a `text` slot only where
@@ -158,9 +201,10 @@ text is integral to the control):
 | Label | `text` (text) | `press, tap` | text |
 | Panel | none | `press, tap` | bool |
 
-Every type additionally gets the synthetic trigger `timer <name> ends`. Behavior is
-NEVER part of a type: everything a widget does is authored per instance as feeds and
-flows, and a type ships at most presets, which insert ordinary rows (3.10).
+Every type additionally gets the synthetic trigger `timer <name> ends`. Everything a
+widget does BEYOND its own value echo is authored per instance as feeds and flows: a
+type's `behavior` reaches its own slots only (never a variable, a message or another
+widget), so nothing that touches the plant is ever implied by a type.
 
 **Templates.** A template is a tree of layout boxes and draw parts:
 
@@ -300,7 +344,7 @@ loops. Readable top to bottom, and trivially compilable.
 | build | `target, seed` | open a message buffer (`msg`, `msg2`, ...) seeded from last or zero |
 | setf | `path, a: Expr \| Variant` | set one field of the open message |
 | send | `target?, verb` | put the open message (or bare `x`) on the wire; closes the message |
-| assign | `var, a: Expr` | set an HMI variable |
+| assign | `var, a: Expr` | set an HMI variable, or this widget's own slot as `widget.<slot>` (2.3) |
 | unforce | `target` | hand a forced variable back to its owner |
 | start / cancel | `timer` | arm / disarm a timer variable |
 
@@ -321,6 +365,14 @@ variable whose value is `{ running: bool, remaining: s, duration: s }`, readable
 expressions as `t.running` and `t.remaining`. That one decision removes hidden timer
 objects from the model: users manage them like any other variable, and there is
 nothing to garbage-collect.
+
+A variable's `type` OWNS the shape of its `init`: changing the type coerces the init
+to the new shape (a number to a bool by zero/non-zero, a bool to 0/1, and so on),
+falling back to that type's default where the meaning does not carry. This runs
+wherever the document is written, on load and on every edit, so a document can never
+hold a bool variable whose init is the number 0: that compiles to UNKNOWN, Nil
+poisons, and the variable could then never be toggled out of it. An explicit `null`
+init is left alone: it means a deliberate UNKNOWN start.
 
 Names are unique within their scope (one namespace across all four types); a
 widget-local shadows a same-named global inside that widget's flows and feeds.
@@ -560,8 +612,16 @@ keyboard-navigable):
 ### 3.8 Diagnostics and one-click fixes
 
 Diagnostics are attached to the row that is wrong, never collected in a panel, and
-are graded: **error** (this cannot run) vs **warning** (this runs but does nothing
-useful). Where a mechanical repair exists, offer it as a button.
+are graded: **error** (this cannot run), **warning** (this runs but does nothing
+useful) and **info** (this is fine, but you should know: a default that stood down).
+Where a mechanical repair exists, offer it as a button.
+
+They must REACH the view that needs them. Compile findings are produced once per
+compile, usually before a given client existed, so they ride the snapshot as well as
+the per-compile broadcast; without that, a view joining later has no frame to learn
+them from. A finding also marks the widget that owns it on the artboard, because the
+symptom of a feed that did not compile is a slot stuck at UNKNOWN, which looks
+exactly like a value that has not arrived yet.
 
 | Condition | Message | Fix |
 |---|---|---|

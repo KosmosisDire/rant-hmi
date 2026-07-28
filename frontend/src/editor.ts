@@ -9,7 +9,7 @@ import { ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
-import { Json, Live, Op, Page, Registry, Var, Widget } from "./types.js";
+import { Diag, Json, Live, Op, Page, Registry, Var, Widget } from "./types.js";
 
 export interface Editor {
   store: DocStore;
@@ -21,6 +21,8 @@ export interface Editor {
   apply(ops: Op[]): void;
   setPage(id: number): void;
   select(ids: number[]): void;
+  /* what the compiler said about this widget or anything inside it */
+  diagFor(widget: number): Diag[];
   /* re-render the rails: a fold or a menu changed, not the document */
   refresh(): void;
 }
