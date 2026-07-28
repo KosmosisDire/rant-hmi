@@ -670,7 +670,9 @@ function sideChip(
         const entity = editor.mesh.entities.find(
           (e) => e.kind === side.kind && e.name === side.name);
         if (!entity) return "";
-        const fields = entity.kind === "F" ? entity.fields : entity.fields;
+        /* a move side touches the entity's VALUE table (a function's arguments),
+           never the response: that is a feed's business */
+        const fields = entity.fields;
         if (!side.path) return fields.length === 1 ? fields[0].shape : entity.type ?? "";
         return fields.find((f) => f.path === side.path)?.shape ?? "";
       }

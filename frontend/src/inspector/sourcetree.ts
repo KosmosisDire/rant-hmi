@@ -102,8 +102,11 @@ export function closeSourceTree(): void {
 
 /* ---- the model ---- */
 
-function fieldsOf(entity: MeshEntity): MeshField[] {
-  return entity.kind === "F" ? (entity.returns ?? []) : entity.fields;
+/* A FUNCTION has two field tables and the tree shows the one the row will touch: a
+ * read/feed decodes its RESPONSE, a write target fills its REQUEST (the arguments). */
+function fieldsOf(entity: MeshEntity, write: boolean): MeshField[] {
+  if (entity.kind !== "F") return entity.fields;
+  return write ? entity.fields : entity.returns ?? [];
 }
 
 const SCALAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
@@ -136,7 +139,7 @@ export function resolveShape(
   }
   const entity = editor.mesh.entities.find((e) => e.kind === ref.kind && e.name === ref.name);
   if (!entity) return "";
-  const fields = fieldsOf(entity);
+  const fields = fieldsOf(entity, /*write=*/ false);
   if (!path && fields.length !== 1) return entity.type ?? "";
   const field = path ? fields.find((f) => f.path === path) : fields[0];
   return field?.shape ?? "";
@@ -285,7 +288,9 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
 
   /* ---- dart: the mesh ---- */
   const entity_rows = (entity: MeshEntity, depth: number) => {
-    const fields = fieldsOf(entity);
+    /* a write-target tree (writableOnly) fills what it picks, so a function shows its
+       ARGUMENTS; everywhere else a function is read and shows its response */
+    const fields = fieldsOf(entity, Boolean(opts.writableOnly));
     const key = "e:" + entity.kind + ":" + entity.name;
     const descend = opts.fields && fields.length > 1;
     const label = searching ? entity.name : leaf_name(entity.name);
