@@ -15,11 +15,21 @@ enum class Verb : uint8_t { Write, Force, Publish, Call, Emit, Unforce };
 const char* entity_kind_name(EntityKind kind);
 const char* verb_name(Verb verb);
 
+/* safety ceilings on genuinely unbounded inputs (PLAN.md: computed bounds, not
+ * configured ceilings): an uncapped varr or map truncates here with a fault, and a
+ * split can yield at most one piece per input byte */
+constexpr uint32_t kVarrCeiling = 512;
+constexpr uint32_t kSplitCeiling = 256;
+
 struct FieldDef {
     std::string path;
     Shape shape = Shape::Unknown;
     uint16_t enum_type = 0;
     std::vector<std::pair<std::string, int64_t>> variants;
+    /* aggregate fields: the element shape (a map's VALUE shape; keys are text) and
+     * the element count bound (an arr's count, else the ceiling) */
+    Shape elem = Shape::Unknown;
+    uint32_t bound = 0;
 };
 
 struct EntityDef {
@@ -90,6 +100,8 @@ enum class OpCode : uint8_t {
     TmrCancel,
     Fault,
     Halt,
+    /* appended only: the frontend's attribute interpreter mirrors these ids */
+    Index,
 };
 
 enum class Builtin : uint16_t {
@@ -120,6 +132,8 @@ enum class Builtin : uint16_t {
     CoolWarm,
     Viridis,
     Grayscale,
+    Values,
+    Keys,
 };
 
 enum class MethodId : uint16_t {
@@ -154,6 +168,25 @@ enum class MethodId : uint16_t {
     TextPadStart,
     EnumInt,
     EnumName,
+    TextSplit,
+    ListLength,
+    ListFirst,
+    ListLast,
+    ListSum,
+    ListAvg,
+    ListMax,
+    ListMin,
+    ListJoin,
+    ListSort,
+    ListReverse,
+    ListSlice,
+    ListContains,
+    ListIndexOf,
+    MapLength,
+    MapKeys,
+    MapValues,
+    MapHas,
+    MapGet,
 };
 
 struct Instruction {
@@ -240,6 +273,10 @@ struct ProgramLayout {
     uint32_t throttle_slots = 0;
     uint32_t pending_slots = 0;
     uint32_t fired_groups = 0;
+    /* the aggregate scratch pool: element Values and element text slots, computed from
+     * the schemas' bounds plus each list-producing expression site's worst case */
+    uint32_t elem_values = 0;
+    uint32_t elem_texts = 0;
 };
 
 struct Program {

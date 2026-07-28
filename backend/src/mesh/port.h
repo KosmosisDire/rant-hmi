@@ -26,15 +26,25 @@ struct EffectView {
     const FixedText* field_text = nullptr;
 };
 
+/* The decoded elements behind one aggregate field: `count` Values (a map interleaves
+ * key,value, so 2 x pairs). texts[k] backs data[k] when that element is Text. */
+struct MeshElems {
+    const Value* data = nullptr;
+    const std::string_view* texts = nullptr;
+    uint32_t count = 0;
+};
+
 /* One decoded arrival from the mesh: the entity's current field values, in the order of
  * its reflected field table (a FUNCTION delivers its RESPONSE fields, everything else
- * its value fields). A field the codec cannot represent as a scalar (list, map, struct)
- * arrives Nil. Views are valid for the on_update call only. */
+ * its value fields). An aggregate field carries a List/Map head value whose elements
+ * ride in elems[i]; a field the codec cannot represent arrives Nil. Views are valid for
+ * the on_update call only. */
 struct MeshUpdate {
     EntityKind kind = EntityKind::Variable;
     std::string_view name;
     const Value* fields = nullptr;
     const std::string_view* texts = nullptr;   /* texts[i] backs fields[i] when Text */
+    const MeshElems* elems = nullptr;          /* elems[i] backs fields[i] when List/Map */
     uint32_t field_count = 0;
 };
 

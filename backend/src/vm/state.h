@@ -78,6 +78,14 @@ class RuntimeState {
     /* suspension deep-copy storage: each pending site owns a fixed run of text slots
      * (one for x, one per text-shaped buffer field) so held text survives until resume */
     std::vector<uint32_t> pending_texts;               /* [pending site] -> first slot */
+    /* the aggregate scratch pool: list/map elements live here for one run, dealt out
+     * by a cursor that whoever seeds x resets (reset_scratch). Element text rides in
+     * `texts` slots [elem_text_base, elem_text_base + layout.elem_texts). */
+    std::vector<Value> elems;
+    uint32_t elem_cursor = 0;
+    uint32_t elem_text_base = 0;
+    uint32_t elem_text_cursor = 0;
+    uint32_t elem_text_count = 0;
     std::vector<MessageState> buffers;
     std::vector<LastValueState> last;
     std::vector<Value> deadband;
@@ -95,6 +103,13 @@ class RuntimeState {
     bool store(const Program& program, uint32_t cell, const Value& value) noexcept;
     void clear_outputs() noexcept;
     void fault(uint32_t site) noexcept;
+
+    /* aggregate scratch: reset before seeding a run's x, allocate during the run.
+     * alloc_elems returns the pool offset or UINT32_MAX when the layout bound is hit;
+     * alloc_elem_text returns a text slot index or UINT32_MAX. */
+    void reset_scratch() noexcept;
+    uint32_t alloc_elems(uint32_t count) noexcept;
+    uint32_t alloc_elem_text() noexcept;
 };
 
 RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_state,

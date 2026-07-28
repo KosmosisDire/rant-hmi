@@ -17,6 +17,8 @@ enum class TokenKind {
     Ident,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     Comma,
     Dot,
     Plus,
@@ -65,6 +67,8 @@ class Lexer {
         switch (c) {
             case '(': token.kind = TokenKind::LParen; return token;
             case ')': token.kind = TokenKind::RParen; return token;
+            case '[': token.kind = TokenKind::LBracket; return token;
+            case ']': token.kind = TokenKind::RBracket; return token;
             case ',': token.kind = TokenKind::Comma; return token;
             case '.':
                 if (at_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[at_]))) {
@@ -251,6 +255,27 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Text, "padStart", MethodId::TextPadStart, 2, {NUM, Shape::Text}, Shape::Text, true},
         {Shape::Enum, "int", MethodId::EnumInt, 0, {}, Shape::Num, false},
         {Shape::Enum, "name", MethodId::EnumName, 0, {}, Shape::Text, false},
+        {Shape::Text, "split", MethodId::TextSplit, 1, {Shape::Text}, Shape::List, true},
+        /* aggregates ride mid-expression on either tier (max over a list is a wire
+         * value); the wire-result rule alone keeps a LIST from going to a machine */
+        {Shape::List, "length", MethodId::ListLength, 0, {}, Shape::Num, false},
+        {Shape::List, "first", MethodId::ListFirst, 0, {}, Shape::Unknown, false},
+        {Shape::List, "last", MethodId::ListLast, 0, {}, Shape::Unknown, false},
+        {Shape::List, "sum", MethodId::ListSum, 0, {}, Shape::Num, false},
+        {Shape::List, "avg", MethodId::ListAvg, 0, {}, Shape::Num, false},
+        {Shape::List, "max", MethodId::ListMax, 0, {}, Shape::Num, false},
+        {Shape::List, "min", MethodId::ListMin, 0, {}, Shape::Num, false},
+        {Shape::List, "join", MethodId::ListJoin, 1, {Shape::Text}, Shape::Text, true},
+        {Shape::List, "sort", MethodId::ListSort, 0, {}, Shape::List, false},
+        {Shape::List, "reverse", MethodId::ListReverse, 0, {}, Shape::List, false},
+        {Shape::List, "slice", MethodId::ListSlice, 2, {NUM, NUM}, Shape::List, false},
+        {Shape::List, "contains", MethodId::ListContains, 1, {ANY}, Shape::Bool, false},
+        {Shape::List, "indexOf", MethodId::ListIndexOf, 1, {ANY}, Shape::Num, false},
+        {Shape::Map, "length", MethodId::MapLength, 0, {}, Shape::Num, false},
+        {Shape::Map, "keys", MethodId::MapKeys, 0, {}, Shape::List, false},
+        {Shape::Map, "values", MethodId::MapValues, 0, {}, Shape::List, false},
+        {Shape::Map, "has", MethodId::MapHas, 1, {Shape::Text}, Shape::Bool, false},
+        {Shape::Map, "get", MethodId::MapGet, 1, {Shape::Text}, Shape::Unknown, false},
     };
     return table;
 }
@@ -277,6 +302,8 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"name", {Builtin::Name, 1, 1, {ANY}, Shape::Text, false}},
         {"fmtTime", {Builtin::FmtTime, 1, 1, {NUM}, Shape::Text, true}},
         {"fmtDuration", {Builtin::FmtDuration, 1, 1, {NUM}, Shape::Text, true}},
+        {"values", {Builtin::Values, 1, 1, {ANY}, Shape::List, false}},
+        {"keys", {Builtin::Keys, 1, 1, {ANY}, Shape::List, false}},
         {"color", {Builtin::Color, 1, 1, {Shape::Text}, Shape::Color, true}},
         {"jet", {Builtin::Jet, 1, 1, {NUM}, Shape::Color, true}},
         {"hot", {Builtin::Hot, 1, 1, {NUM}, Shape::Color, true}},
@@ -525,8 +552,31 @@ class Parser {
 
     Shape parse_postfix() {
         Shape receiver = parse_primary();
-        while (error_.empty() && token_.kind == TokenKind::Dot) {
+        while (error_.empty() &&
+               (token_.kind == TokenKind::Dot || token_.kind == TokenKind::LBracket)) {
             const uint16_t receiver_enum = enum_type_;
+            const Shape receiver_elem = elem_;
+            if (token_.kind == TokenKind::LBracket) {
+                advance();
+                Shape key = parse_or();
+                if (token_.kind != TokenKind::RBracket) {
+                    fail("expected ']'");
+                    return Shape::Unknown;
+                }
+                advance();
+                if (receiver == Shape::List) require(key, Shape::Num, "list index");
+                else if (receiver == Shape::Map) require(key, Shape::Text, "map key");
+                else if (receiver != Shape::Unknown && receiver != Shape::Nil) {
+                    fail("only a list or a map can be indexed");
+                    return Shape::Unknown;
+                }
+                emit(OpCode::Index);
+                --depth_;
+                receiver = receiver_elem;
+                enum_type_ = 0;
+                elem_ = Shape::Unknown;
+                continue;
+            }
             advance();
             if (token_.kind != TokenKind::Ident) {
                 fail("expected a method after '.'");
@@ -583,15 +633,51 @@ class Parser {
                 fail(name + " takes " + std::to_string(spec->args) + " arguments");
                 return Shape::Unknown;
             }
+            if ((spec->method == MethodId::ListSum || spec->method == MethodId::ListAvg ||
+                 spec->method == MethodId::ListMax || spec->method == MethodId::ListMin) &&
+                receiver_elem != Shape::Unknown && receiver_elem != Shape::Num) {
+                fail(std::string(name) + " needs a list of numbers, this is a list of " +
+                     shape_name(receiver_elem));
+                return Shape::Unknown;
+            }
             /* a text-producing site owns one fixed slot for its result, assigned here
-             * so runtime text costs no allocation and no cursor */
+             * so runtime text costs no allocation and no cursor; a list-producing site
+             * reserves its worst case in the element pool */
             const uint32_t site =
                 spec->result == Shape::Text ? program_.layout.text_slots++ : 0;
+            if (spec->result == Shape::List) {
+                const bool split = spec->method == MethodId::TextSplit;
+                program_.layout.elem_values += split ? kSplitCeiling : kVarrCeiling;
+                if (split) program_.layout.elem_texts += kSplitCeiling;
+            }
             emit(OpCode::Method, site, argc, static_cast<uint16_t>(spec->method));
             if (argc) depth_ -= argc;
-            receiver = spec->result == Shape::Unknown
-                           ? (argc ? Shape::Unknown : receiver)
-                           : spec->result;
+            switch (spec->method) {
+                case MethodId::ListFirst:
+                case MethodId::ListLast:
+                case MethodId::MapGet:
+                    receiver = receiver_elem;
+                    elem_ = Shape::Unknown;
+                    break;
+                case MethodId::ListSort:
+                case MethodId::ListReverse:
+                case MethodId::ListSlice:
+                case MethodId::MapValues:
+                    receiver = Shape::List;
+                    elem_ = receiver_elem;
+                    break;
+                case MethodId::MapKeys:
+                case MethodId::TextSplit:
+                    receiver = Shape::List;
+                    elem_ = Shape::Text;
+                    break;
+                default:
+                    receiver = spec->result == Shape::Unknown
+                                   ? (argc ? Shape::Unknown : receiver)
+                                   : spec->result;
+                    elem_ = Shape::Unknown;
+                    break;
+            }
             enum_type_ = 0;
         }
         return receiver;
@@ -636,6 +722,7 @@ class Parser {
 
     Shape parse_primary() {
         enum_type_ = 0;
+        elem_ = Shape::Unknown;
         if (token_.kind == TokenKind::Number) {
             emit(OpCode::Const, program_.add_constant(Value::number(token_.number)));
             pushed();
@@ -687,6 +774,8 @@ class Parser {
             emit(OpCode::LoadX);
             pushed();
             enum_type_ = scope_.x_shape == Shape::Enum ? scope_.x_enum : 0;
+            if (scope_.x_shape == Shape::List || scope_.x_shape == Shape::Map)
+                elem_ = scope_.x_elem;
             return scope_.x_shape;
         }
         if (token_.kind == TokenKind::LParen) return parse_call(name);
@@ -728,9 +817,11 @@ class Parser {
         }
         advance();
         uint32_t argc = 0;
+        Shape first_arg_elem = Shape::Unknown;
         if (token_.kind != TokenKind::RParen) {
             for (;;) {
                 Shape arg = parse_or();
+                if (argc == 0) first_arg_elem = elem_;
                 if (argc < spec.max_args && spec.arg_shape[argc] != Shape::Unknown)
                     require(arg, spec.arg_shape[argc], name.c_str());
                 ++argc;
@@ -749,9 +840,14 @@ class Parser {
         }
         const uint32_t site =
             spec.result == Shape::Text ? program_.layout.text_slots++ : 0;
+        if (spec.result == Shape::List)
+            program_.layout.elem_values += kVarrCeiling;
         emit(OpCode::Call, site, argc, static_cast<uint16_t>(spec.builtin));
         if (argc) depth_ -= argc - 1;
         enum_type_ = 0;
+        elem_ = spec.builtin == Builtin::Keys      ? Shape::Text
+                : spec.builtin == Builtin::Values  ? first_arg_elem
+                                                   : Shape::Unknown;
         return spec.result;
     }
 
@@ -767,6 +863,9 @@ class Parser {
     /* the enum vocabulary of the most recently parsed unit (0 = none): consumed by
      * postfix `.is(...)` and reported on an enum-shaped result */
     uint16_t enum_type_ = 0;
+    /* the element shape of the most recently parsed aggregate (a map's value shape;
+     * keys are always text): consumed by first/last/get/indexing */
+    Shape elem_ = Shape::Unknown;
 };
 
 } // namespace

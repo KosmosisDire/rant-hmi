@@ -41,6 +41,7 @@ void Scheduler::run_one(uint32_t index, Value value) {
 void Scheduler::dispatch(uint64_t widget, const std::string& event, Value raw) {
     /* what the widget PROPOSES, derived once so every flow on this event sees the same x
      * (spec 2.3); the raw value stands where the type declares no derivation */
+    state_.reset_scratch();
     const Value value = event_x(program_, state_, widget, event, raw);
     for (uint32_t i = 0; i < program_.flows.size(); ++i) {
         const FlowProgram& flow = program_.flows[i];
@@ -100,8 +101,37 @@ void Scheduler::release_session(uint64_t session) {
 void Scheduler::apply_local_feeds() {
     for (const FeedProgram& feed : program_.feeds) {
         if (feed.source_cell == UINT32_MAX || feed.source_cell >= state_.values.size()) continue;
+        state_.reset_scratch();
         run_feed(program_, feed, state_, state_.values[feed.source_cell]);
     }
+}
+
+Value Scheduler::intake_aggregate(const MeshUpdate& update, uint32_t field,
+                                  const FieldDef& def) {
+    if (!update.elems || !update.elems[field].data) return Value::nil();
+    const MeshElems& source = update.elems[field];
+    const Value& head = update.fields[field];
+    const bool is_map = head.tag == ValueTag::Map;
+    const uint32_t width = is_map ? 2 : 1;
+    const uint32_t limit = def.bound ? def.bound : kVarrCeiling;
+    uint32_t count = static_cast<uint32_t>(head.data.integer);
+    count = std::min(count, source.count / width);
+    count = std::min(count, limit);   /* the ceiling: truncate, never overrun */
+    const uint32_t need = count * width;
+    const uint32_t offset = state_.alloc_elems(need);
+    if (offset == UINT32_MAX) return Value::nil();
+    for (uint32_t k = 0; k < need; ++k) {
+        Value element = source.data[k];
+        if (element.tag == ValueTag::Text) {
+            const uint32_t slot = state_.alloc_elem_text();
+            if (slot == UINT32_MAX) return Value::nil();
+            state_.texts[slot].set(source.texts ? source.texts[k] : std::string_view{});
+            element = Value::text(slot);
+        }
+        state_.elems[offset + k] = element;
+    }
+    return is_map ? Value::map(offset, count)
+                  : Value::list(offset, count, static_cast<ValueTag>(head.flags));
 }
 
 void Scheduler::on_update(const MeshUpdate& update) {
@@ -127,6 +157,9 @@ void Scheduler::on_update(const MeshUpdate& update) {
         for (uint32_t i = 0; i < count && i < last.fields.size(); ++i) {
             Value value = update.fields[i];
             if (value.tag == ValueTag::Nil) continue;
+            /* aggregates stay out of the last-value cache: their elements live in the
+             * per-run scratch pool, and the wire side never builds them anyway */
+            if (value.tag == ValueTag::List || value.tag == ValueTag::Map) continue;
             if (value.tag == ValueTag::Enum) value.enum_type = fields[i].enum_type;
             if (value.tag == ValueTag::Text) {
                 const uint32_t slot = state_.entity_texts[entity][i];
@@ -143,8 +176,11 @@ void Scheduler::on_update(const MeshUpdate& update) {
         if (feed.source_cell != UINT32_MAX || feed.entity != static_cast<uint32_t>(entity))
             continue;
         if (feed.field >= count) continue;
+        state_.reset_scratch();
         Value x = update.fields[feed.field];
         if (x.tag == ValueTag::Enum) x.enum_type = fields[feed.field].enum_type;
+        if (x.tag == ValueTag::List || x.tag == ValueTag::Map)
+            x = intake_aggregate(update, feed.field, fields[feed.field]);
         if (x.tag == ValueTag::Text) {
             /* cached entities already hold the text in its retained slot; a function
              * response rides the one scratch slot, consumed by this run alone */

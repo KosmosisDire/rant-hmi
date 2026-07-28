@@ -64,11 +64,30 @@ void FakeMesh::drain(MeshSink& sink) {
             if (update.fields[i].tag == ValueTag::Text &&
                 update.fields[i].ref < update.texts.size())
                 views[i] = update.texts[update.fields[i].ref];
+        std::vector<MeshElems> elems;
+        std::vector<std::vector<std::string_view>> elem_views;
+        if (!update.elems.empty()) {
+            elems.resize(update.fields.size());
+            elem_views.resize(update.fields.size());
+            for (size_t i = 0; i < update.elems.size() && i < update.fields.size(); ++i) {
+                const FieldElems& source = update.elems[i];
+                if (source.data.empty()) continue;
+                elem_views[i].resize(source.data.size());
+                for (size_t k = 0; k < source.data.size(); ++k)
+                    if (source.data[k].tag == ValueTag::Text &&
+                        source.data[k].ref < source.texts.size())
+                        elem_views[i][k] = source.texts[source.data[k].ref];
+                elems[i].data = source.data.data();
+                elems[i].texts = elem_views[i].data();
+                elems[i].count = static_cast<uint32_t>(source.data.size());
+            }
+        }
         MeshUpdate out;
         out.kind = update.kind;
         out.name = update.name;
         out.fields = update.fields.data();
         out.texts = views.data();
+        out.elems = elems.empty() ? nullptr : elems.data();
         out.field_count = static_cast<uint32_t>(update.fields.size());
         sink.on_update(out);
     }
@@ -77,7 +96,16 @@ void FakeMesh::drain(MeshSink& sink) {
 
 void FakeMesh::push_update(EntityKind kind, std::string name, std::vector<Value> fields,
                            std::vector<std::string> texts) {
-    updates_.push_back(Update{kind, std::move(name), std::move(fields), std::move(texts)});
+    updates_.push_back(Update{kind, std::move(name), std::move(fields), std::move(texts), {}});
+}
+
+void FakeMesh::push_elems(uint32_t field, std::vector<Value> elements,
+                          std::vector<std::string> texts) {
+    if (updates_.empty()) return;
+    Update& update = updates_.back();
+    if (update.elems.size() < update.fields.size()) update.elems.resize(update.fields.size());
+    if (field >= update.elems.size()) return;
+    update.elems[field] = FieldElems{std::move(elements), std::move(texts)};
 }
 
 void FakeMesh::clear() { transcript_.clear(); }

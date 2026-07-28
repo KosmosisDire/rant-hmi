@@ -182,13 +182,38 @@ class Compiler {
             field.enum_type = static_cast<uint16_t>(program_.enum_types.size());
             program_.enum_types.push_back(field.variants);
         };
+        /* the aggregate intake bound: one delivery's elements live in the scratch pool
+         * at a time (the pool resets per feed run), so the pool carries the LARGEST
+         * single entity's aggregate payload plus every expression site's worst case
+         * (added by the parser as it compiles) */
+        uint32_t intake_values = 0, intake_texts = 0;
+        auto measure = [&](const std::vector<FieldDef>& fields) {
+            uint32_t values = 0, texts = 0;
+            for (const FieldDef& field : fields) {
+                if (field.shape != Shape::List && field.shape != Shape::Map) continue;
+                const uint32_t bound = field.bound ? field.bound : kVarrCeiling;
+                if (field.shape == Shape::Map) {
+                    values += bound * 2;
+                    texts += bound * 2;   /* keys, plus text values worst case */
+                } else {
+                    values += bound;
+                    if (field.elem == Shape::Text) texts += bound;
+                }
+            }
+            intake_values = std::max(intake_values, values);
+            intake_texts = std::max(intake_texts, texts);
+        };
         for (EntityDef& entity : program_.entities) {
             for (FieldDef& field : entity.fields) assign_enum(field);
             for (FieldDef& field : entity.rsp_fields) assign_enum(field);
+            measure(entity.fields);
+            measure(entity.rsp_fields);
             program_.layout.max_entity_fields =
                 std::max<uint32_t>(program_.layout.max_entity_fields,
                                    static_cast<uint32_t>(entity.fields.size()));
         }
+        program_.layout.elem_values += intake_values;
+        program_.layout.elem_texts += intake_texts;
     }
 
     uint32_t add_cell(CellKind kind, uint64_t owner_widget, uint64_t node_id,
@@ -493,6 +518,7 @@ class Compiler {
                         feed_fields(program_.entities[feed.entity])[feed.field];
                     scope.x_shape = source_field.shape;
                     scope.x_enum = source_field.enum_type;
+                    scope.x_elem = source_field.elem;
                     if (program_.entities[feed.entity].kind == EntityKind::Function) {
                         const double hz = num_or(node, "poll_hz", 0.0);
                         feed.poll_ms = hz > 0.0

@@ -59,6 +59,23 @@ Value Value::color(uint32_t rgba) {
     return out;
 }
 
+Value Value::list(uint32_t offset, uint32_t count, ValueTag elem) {
+    Value out{};
+    out.tag = ValueTag::List;
+    out.flags = static_cast<uint8_t>(elem);
+    out.ref = offset;
+    out.data.integer = count;
+    return out;
+}
+
+Value Value::map(uint32_t offset, uint32_t count) {
+    Value out{};
+    out.tag = ValueTag::Map;
+    out.ref = offset;
+    out.data.integer = count;
+    return out;
+}
+
 Shape value_shape(const Value& value) {
     switch (value.tag) {
         case ValueTag::Nil: return Shape::Nil;

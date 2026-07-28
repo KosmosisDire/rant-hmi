@@ -4,6 +4,7 @@
 #include "doc/doc.h"
 #include "mesh/fake.h"
 #include "registry/registry.h"
+#include "sched/scheduler.h"
 #include "vm/vm.h"
 
 #include <atomic>
@@ -865,6 +866,143 @@ void test_text_and_enums() {
     CHECK(result.shape == Shape::Bool);
 }
 
+/* Lists and maps flow from the mesh through transforms: aggregate fields decode into
+ * the per-run scratch pool, the method table reduces them to scalars, and indexing,
+ * sorting, joining and the container conversions all work end to end. */
+void test_lists_and_maps() {
+    EntityDef plant;
+    plant.kind = EntityKind::Variable;
+    plant.name = "plant";
+    FieldDef temps;
+    temps.path = "temps";
+    temps.shape = Shape::List;
+    temps.elem = Shape::Num;
+    temps.bound = 8;
+    FieldDef names;
+    names.path = "names";
+    names.shape = Shape::List;
+    names.elem = Shape::Text;
+    names.bound = 4;
+    FieldDef config;
+    config.path = "config";
+    config.shape = Shape::Map;
+    config.bound = 8;
+    FieldDef csv;
+    csv.path = "csv";
+    csv.shape = Shape::Text;
+    plant.fields = {temps, names, config, csv};
+    FakeMesh mesh(std::vector<EntityDef>{plant});
+
+    auto feed = [](const char* slot, const char* path, const char* xf) {
+        return Json{{"slot", slot}, {"src", entity("V", "plant")}, {"path", path}, {"xf", xf}};
+    };
+    Json widgets = Json::array();
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("value", "temps", "x.max"),
+            feed("decimals", "temps", "x.length"),
+            feed("units", "names", "x.join(\", \")"),
+        })}});
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "b"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("value", "temps", "x.sort()[0]"),
+            feed("decimals", "temps", "x.slice(1, 3).sum"),
+            feed("units", "names", "x.sort().join(\"|\")"),
+        })}});
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "c"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("value", "config", "num(x.get(\"speed\"))"),
+            feed("decimals", "config", "x.length"),
+            feed("units", "config", "x.keys().sort().join(\",\")"),
+        })}});
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "d"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("value", "names", "x.indexOf(\"b\")"),
+            feed("units", "config", "x.has(\"mode\").pick(\"y\", \"n\")"),
+        })}});
+    widgets.push_back(Json{{"type", "Label"}, {"label", "e"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("text", "csv", "x.split(\",\").slice(0, 2).join(\"+\")"),
+        })}});
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "f"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("value", "config", "values(x).length"),
+        })}});
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"}, {"widgets", std::move(widgets)}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("list compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+    if (!CHECK(compiled.program.feeds.size() == 13)) return;
+    CHECK(compiled.program.layout.elem_values > 0);
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    mesh.push_update(EntityKind::Variable, "plant",
+                     {Value::list(0, 3, ValueTag::Num), Value::list(0, 3, ValueTag::Text),
+                      Value::map(0, 2), Value::text(0)},
+                     {"a,b,c"});
+    /* push_elems attaches to the LAST update, per field */
+    mesh.push_elems(0, {Value::number(30), Value::number(10), Value::number(20)});
+    mesh.push_elems(1, {Value::text(0), Value::text(1), Value::text(2)}, {"b", "c", "a"});
+    mesh.push_elems(2, {Value::text(0), Value::number(5), Value::text(1), Value::text(2)},
+                    {"speed", "mode", "fast"});
+    std::string fault;
+    scheduler.tick(fault);
+    const RuntimeState& state = scheduler.state();
+
+    auto cell_num = [&](uint32_t feed_index) {
+        const Value& value = state.values[program.feeds[feed_index].cell];
+        return value.tag == ValueTag::Num ? value.data.num : -1e9;
+    };
+    auto cell_text = [&](uint32_t feed_index) {
+        return std::string(
+            state.text(program, state.values[program.feeds[feed_index].cell]));
+    };
+    CHECK_EQ(cell_num(0), 30.0);            /* max */
+    CHECK_EQ(cell_num(1), 3.0);             /* length */
+    CHECK_EQ(cell_text(2), "b, c, a");      /* join */
+    CHECK_EQ(cell_num(3), 10.0);            /* sort()[0] */
+    CHECK_EQ(cell_num(4), 30.0);            /* slice(1,3).sum = 10+20 */
+    CHECK_EQ(cell_text(5), "a|b|c");        /* sort text, join */
+    CHECK_EQ(cell_num(6), 5.0);             /* num(get("speed")) */
+    CHECK_EQ(cell_num(7), 2.0);             /* map length */
+    CHECK_EQ(cell_text(8), "mode,speed");   /* keys().sort().join */
+    CHECK_EQ(cell_num(9), 0.0);             /* indexOf("b") */
+    CHECK_EQ(cell_text(10), "y");           /* has("mode").pick */
+    CHECK_EQ(cell_text(11), "a+b");         /* split.slice.join */
+    CHECK_EQ(cell_num(12), 2.0);            /* values(x).length */
+
+    /* compile-time element checking: sum over a text list names the problem */
+    Program scratch;
+    ExpressionScope scope;
+    scope.x_shape = Shape::List;
+    scope.x_elem = Shape::Text;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string error;
+    CHECK(!compile_expression("x.sum", ExprTier::Display, scope, scratch, code, result, error));
+    CHECK_MSG(error.find("numbers") != std::string::npos, error);
+    /* and a LIST can never be the wire's final value */
+    error.clear();
+    code.clear();
+    CHECK(!compile_expression("x.sort()", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK_MSG(error.find("one scalar") != std::string::npos, error);
+    /* but reducing one on the wire tier is fine */
+    error.clear();
+    code.clear();
+    scope.x_elem = Shape::Num;
+    CHECK(compile_expression("x.max + 1", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(result.shape == Shape::Num);
+}
+
 /* A suspension captures text BY VALUE: what was held at the delay is what resumes,
  * even if the variable it came from moves meanwhile (the plan's deep-copy rule). */
 void test_suspend_holds_text() {
@@ -980,6 +1118,7 @@ int main() {
     test_colors();
     test_tonemaps();
     test_text_and_enums();
+    test_lists_and_maps();
     test_suspend_holds_text();
     test_document_tolerance();
     return check::summary("runtime_test");

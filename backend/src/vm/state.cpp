@@ -119,6 +119,13 @@ RuntimeState::RuntimeState(const Program& program) {
         pending_texts[i] = static_cast<uint32_t>(texts.size());
         for (uint32_t k = 0; k < per_pending; ++k) texts.emplace_back(kDefaultTextCap);
     }
+    /* the aggregate scratch pool (elements + their text slots) */
+    elems.resize(program.layout.elem_values, Value::nil());
+    elem_text_base = static_cast<uint32_t>(texts.size());
+    elem_text_cursor = elem_text_base;
+    elem_text_count = program.layout.elem_texts;
+    for (uint32_t i = 0; i < program.layout.elem_texts; ++i)
+        texts.emplace_back(kDefaultTextCap);
 
     uint32_t max_fields = std::max<uint32_t>(program.layout.max_entity_fields, 1);
     buffers.resize(program.buffers.size());
@@ -190,6 +197,23 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
 void RuntimeState::clear_outputs() noexcept {
     effect_count = 0;
     fault_count = 0;
+}
+
+void RuntimeState::reset_scratch() noexcept {
+    elem_cursor = 0;
+    elem_text_cursor = elem_text_base;
+}
+
+uint32_t RuntimeState::alloc_elems(uint32_t count) noexcept {
+    if (count > elems.size() || elem_cursor > elems.size() - count) return UINT32_MAX;
+    const uint32_t offset = elem_cursor;
+    elem_cursor += count;
+    return offset;
+}
+
+uint32_t RuntimeState::alloc_elem_text() noexcept {
+    if (elem_text_cursor >= elem_text_base + elem_text_count) return UINT32_MAX;
+    return elem_text_cursor++;
 }
 
 void RuntimeState::fault(uint32_t site) noexcept {

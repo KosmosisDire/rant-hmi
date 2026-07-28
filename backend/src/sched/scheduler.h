@@ -56,6 +56,8 @@ class Scheduler final : private MeshSink {
     void apply_local_feeds();
     /* a decoded mesh arrival: refresh the RMW seed and run the feeds bound to it */
     void on_update(const MeshUpdate& update) override;
+    /* copy an aggregate field's elements into the run's scratch pool (bounded) */
+    Value intake_aggregate(const MeshUpdate& update, uint32_t field, const FieldDef& def);
 
     Program program_;
     RuntimeState state_;

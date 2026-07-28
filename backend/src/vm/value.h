@@ -45,6 +45,11 @@ struct Value {
     static Value text(uint32_t ref);
     static Value enumeration(int64_t value, uint16_t type);
     static Value color(uint32_t rgba);
+    /* aggregates live in the run's element pool: ref = the pool offset, the integer
+     * payload = the count (a map counts PAIRS; entries interleave key,value). flags
+     * carries the element ValueTag for a list. */
+    static Value list(uint32_t offset, uint32_t count, ValueTag elem);
+    static Value map(uint32_t offset, uint32_t count);
 };
 
 static_assert(sizeof(Value) == 16, "Value must stay 16 bytes");

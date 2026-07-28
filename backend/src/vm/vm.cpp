@@ -37,6 +37,39 @@ std::string_view enum_variant_name(const Program& program, uint16_t type,
     return {};
 }
 
+/* a bounds-checked window into the element pool; count is entries (a map's PAIRS,
+ * entries interleaved key,value) */
+struct AggView {
+    const Value* data = nullptr;
+    uint32_t count = 0;
+};
+
+AggView agg_view(const ExecContext& ctx, const Value& value) noexcept {
+    const uint32_t count = static_cast<uint32_t>(value.data.integer);
+    const uint32_t need = value.tag == ValueTag::Map ? count * 2 : count;
+    if (value.ref > ctx.state.elems.size() ||
+        need > ctx.state.elems.size() - value.ref)
+        return {};
+    return {ctx.state.elems.data() + value.ref, count};
+}
+
+/* scalar equality that compares text by CONTENT (refs differ across slots) */
+bool same_value(const ExecContext& ctx, const Value& a, const Value& b) noexcept {
+    if (a.tag == ValueTag::Text && b.tag == ValueTag::Text)
+        return text_of(ctx, a) == text_of(ctx, b);
+    return value_same_scalar(a, b);
+}
+
+/* copy `count` values taken every `stride` entries from src into a fresh pool range */
+Value copied_list(const ExecContext& ctx, const Value* src, uint32_t count,
+                  uint32_t stride, uint32_t first, ValueTag elem) noexcept {
+    const uint32_t offset = ctx.state.alloc_elems(count);
+    if (offset == UINT32_MAX) return Value::nil();
+    for (uint32_t i = 0; i < count; ++i)
+        ctx.state.elems[offset + i] = src[first + i * stride];
+    return Value::list(offset, count, elem);
+}
+
 Value numeric(OpCode op, const Value& left, const Value& right) noexcept {
     if (left.tag != ValueTag::Num || right.tag != ValueTag::Num) return Value::nil();
     const double a = left.data.num;
@@ -184,6 +217,19 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
             std::snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", parts.tm_hour,
                           parts.tm_min, parts.tm_sec);
             return text_result(ctx, site, buffer);
+        }
+        case Builtin::Values:
+        case Builtin::Keys: {
+            if (n != 1) return Value::nil();
+            const Value& v = args[0];
+            if (v.tag == ValueTag::List)
+                return builtin == Builtin::Values ? v : Value::nil();
+            if (v.tag != ValueTag::Map) return Value::nil();
+            const AggView view = agg_view(ctx, v);
+            if (!view.data && view.count) return Value::nil();
+            const bool keys = builtin == Builtin::Keys;
+            return copied_list(ctx, view.data, view.count, 2, keys ? 0 : 1,
+                               keys ? ValueTag::Text : ValueTag::Nil);
         }
         case Builtin::Color: {
             if (n != 1 || args[0].tag != ValueTag::Text) return Value::nil();
@@ -451,6 +497,212 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const size_t take = std::min(view.size(), sizeof(buffer) - lead);
             if (take) std::memcpy(buffer + lead, view.data(), take);
             return text_result(ctx, site, std::string_view(buffer, lead + take));
+        }
+        case MethodId::TextSplit: {
+            if (receiver.tag != ValueTag::Text || n != 1 || args[0].tag != ValueTag::Text)
+                return Value::nil();
+            const std::string_view view = text_of(ctx, receiver);
+            const std::string_view sep = text_of(ctx, args[0]);
+            /* count first (bounded), then allocate the exact range */
+            uint32_t pieces = 1;
+            if (!sep.empty()) {
+                size_t at = 0;
+                while (pieces < kSplitCeiling) {
+                    const size_t hit = view.find(sep, at);
+                    if (hit == std::string_view::npos) break;
+                    ++pieces;
+                    at = hit + sep.size();
+                }
+            }
+            const uint32_t offset = ctx.state.alloc_elems(pieces);
+            if (offset == UINT32_MAX) return Value::nil();
+            size_t at = 0;
+            for (uint32_t i = 0; i < pieces; ++i) {
+                const size_t hit = (i + 1 < pieces && !sep.empty())
+                                       ? view.find(sep, at)
+                                       : std::string_view::npos;
+                const std::string_view piece =
+                    hit == std::string_view::npos ? view.substr(at)
+                                                  : view.substr(at, hit - at);
+                const uint32_t slot = ctx.state.alloc_elem_text();
+                if (slot == UINT32_MAX) return Value::nil();
+                ctx.state.texts[slot].set(piece);
+                ctx.state.elems[offset + i] = Value::text(slot);
+                if (hit != std::string_view::npos) at = hit + sep.size();
+            }
+            return Value::list(offset, pieces, ValueTag::Text);
+        }
+        case MethodId::ListLength:
+        case MethodId::MapLength: {
+            const ValueTag wanted =
+                method == MethodId::ListLength ? ValueTag::List : ValueTag::Map;
+            if (receiver.tag != wanted || n != 0) return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            return view.data || view.count == 0
+                       ? Value::number(static_cast<double>(view.count))
+                       : Value::nil();
+        }
+        case MethodId::ListFirst:
+        case MethodId::ListLast: {
+            if (receiver.tag != ValueTag::List || n != 0) return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data || !view.count) return Value::nil();
+            return view.data[method == MethodId::ListFirst ? 0 : view.count - 1];
+        }
+        case MethodId::ListSum:
+        case MethodId::ListAvg:
+        case MethodId::ListMax:
+        case MethodId::ListMin: {
+            if (receiver.tag != ValueTag::List || n != 0) return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            if (!view.count)
+                return method == MethodId::ListSum ? Value::number(0) : Value::nil();
+            double sum = 0, low = 0, high = 0;
+            for (uint32_t i = 0; i < view.count; ++i) {
+                if (view.data[i].tag != ValueTag::Num) return Value::nil();
+                const double v = view.data[i].data.num;
+                sum += v;
+                if (i == 0 || v < low) low = v;
+                if (i == 0 || v > high) high = v;
+            }
+            switch (method) {
+                case MethodId::ListSum: return Value::number(sum);
+                case MethodId::ListAvg: return Value::number(sum / view.count);
+                case MethodId::ListMax: return Value::number(high);
+                default: return Value::number(low);
+            }
+        }
+        case MethodId::ListJoin: {
+            if (receiver.tag != ValueTag::List || n != 1 || args[0].tag != ValueTag::Text)
+                return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            const std::string_view sep = text_of(ctx, args[0]);
+            char buffer[512];
+            size_t out = 0;
+            auto append = [&](std::string_view piece) {
+                const size_t take = std::min(piece.size(), sizeof(buffer) - out);
+                if (take) std::memcpy(buffer + out, piece.data(), take);
+                out += take;
+            };
+            for (uint32_t i = 0; i < view.count && out < sizeof(buffer); ++i) {
+                if (i) append(sep);
+                const Value& elem = view.data[i];
+                char scratch[64];
+                switch (elem.tag) {
+                    case ValueTag::Text: append(text_of(ctx, elem)); break;
+                    case ValueTag::Num:
+                        std::snprintf(scratch, sizeof(scratch), "%.15g", elem.data.num);
+                        append(scratch);
+                        break;
+                    case ValueTag::Bool: append(elem.data.boolean ? "true" : "false"); break;
+                    case ValueTag::Enum: {
+                        const std::string_view name = enum_variant_name(
+                            ctx.program, elem.enum_type, elem.data.integer);
+                        if (!name.empty()) {
+                            append(name);
+                        } else {
+                            std::snprintf(scratch, sizeof(scratch), "%lld",
+                                          static_cast<long long>(elem.data.integer));
+                            append(scratch);
+                        }
+                        break;
+                    }
+                    default: return Value::nil();
+                }
+            }
+            return text_result(ctx, site, std::string_view(buffer, out));
+        }
+        case MethodId::ListSort: {
+            if (receiver.tag != ValueTag::List || n != 0) return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            bool numeric_elems = true, text_elems = true;
+            for (uint32_t i = 0; i < view.count; ++i) {
+                if (view.data[i].tag != ValueTag::Num ||
+                    std::isnan(view.data[i].data.num))
+                    numeric_elems = false;
+                if (view.data[i].tag != ValueTag::Text) text_elems = false;
+            }
+            if (!numeric_elems && !text_elems && view.count) return Value::nil();
+            const Value sorted = copied_list(ctx, view.data, view.count, 1, 0,
+                                             static_cast<ValueTag>(receiver.flags));
+            if (sorted.tag != ValueTag::List) return sorted;
+            Value* begin = ctx.state.elems.data() + sorted.ref;
+            if (numeric_elems)
+                std::sort(begin, begin + view.count, [](const Value& a, const Value& b) {
+                    return a.data.num < b.data.num;
+                });
+            else
+                std::sort(begin, begin + view.count,
+                          [&](const Value& a, const Value& b) {
+                              return text_of(ctx, a) < text_of(ctx, b);
+                          });
+            return sorted;
+        }
+        case MethodId::ListReverse: {
+            if (receiver.tag != ValueTag::List || n != 0) return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            const Value copy = copied_list(ctx, view.data, view.count, 1, 0,
+                                           static_cast<ValueTag>(receiver.flags));
+            if (copy.tag != ValueTag::List) return copy;
+            Value* begin = ctx.state.elems.data() + copy.ref;
+            std::reverse(begin, begin + view.count);
+            return copy;
+        }
+        case MethodId::ListSlice: {
+            if (receiver.tag != ValueTag::List || n != 2 ||
+                args[0].tag != ValueTag::Num || args[1].tag != ValueTag::Num)
+                return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            const int64_t length = view.count;
+            int64_t from = static_cast<int64_t>(args[0].data.num);
+            int64_t to = static_cast<int64_t>(args[1].data.num);
+            if (from < 0) from += length;
+            if (to < 0) to += length;
+            from = std::max<int64_t>(0, std::min(length, from));
+            to = std::max<int64_t>(0, std::min(length, to));
+            const uint32_t count = to > from ? static_cast<uint32_t>(to - from) : 0;
+            return copied_list(ctx, view.data, count, 1, static_cast<uint32_t>(from),
+                               static_cast<ValueTag>(receiver.flags));
+        }
+        case MethodId::ListContains:
+        case MethodId::ListIndexOf: {
+            if (receiver.tag != ValueTag::List || n != 1) return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            for (uint32_t i = 0; i < view.count; ++i)
+                if (same_value(ctx, view.data[i], args[0]))
+                    return method == MethodId::ListContains
+                               ? Value::boolean(true)
+                               : Value::number(static_cast<double>(i));
+            return method == MethodId::ListContains ? Value::boolean(false)
+                                                    : Value::number(-1);
+        }
+        case MethodId::MapKeys:
+        case MethodId::MapValues: {
+            if (receiver.tag != ValueTag::Map || n != 0) return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            const bool keys = method == MethodId::MapKeys;
+            return copied_list(ctx, view.data, view.count, 2, keys ? 0 : 1,
+                               keys ? ValueTag::Text : ValueTag::Nil);
+        }
+        case MethodId::MapHas:
+        case MethodId::MapGet: {
+            if (receiver.tag != ValueTag::Map || n != 1 || args[0].tag != ValueTag::Text)
+                return Value::nil();
+            const AggView view = agg_view(ctx, receiver);
+            if (!view.data && view.count) return Value::nil();
+            const std::string_view key = text_of(ctx, args[0]);
+            for (uint32_t i = 0; i < view.count; ++i)
+                if (text_of(ctx, view.data[i * 2]) == key)
+                    return method == MethodId::MapHas ? Value::boolean(true)
+                                                      : view.data[i * 2 + 1];
+            return method == MethodId::MapHas ? Value::boolean(false) : Value::nil();
         }
         case MethodId::EnumInt:
             if (receiver.tag != ValueTag::Enum || n != 0) return Value::nil();
@@ -863,6 +1115,27 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     if (flow && flow->first_only && group == flow->group) continue;
                     if (group < state.fired.size()) state.fired[group] = 0;
                 }
+                break;
+            }
+            case OpCode::Index: {
+                const Value key = pop();
+                const Value target = pop();
+                Value out = Value::nil();
+                if (target.tag == ValueTag::List && key.tag == ValueTag::Num) {
+                    const AggView view = agg_view(ctx, target);
+                    const int64_t at = static_cast<int64_t>(key.data.num);
+                    if (view.data && at >= 0 && at < static_cast<int64_t>(view.count))
+                        out = view.data[at];
+                } else if (target.tag == ValueTag::Map && key.tag == ValueTag::Text) {
+                    const AggView view = agg_view(ctx, target);
+                    const std::string_view wanted = state.text(program, key);
+                    for (uint32_t i = 0; view.data && i < view.count; ++i)
+                        if (state.text(program, view.data[i * 2]) == wanted) {
+                            out = view.data[i * 2 + 1];
+                            break;
+                        }
+                }
+                if (!push(out)) fail(ins.c);
                 break;
             }
             case OpCode::Fault:
