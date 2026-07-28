@@ -62,7 +62,7 @@ function has(svg, needle, what) {
 }
 
 rmSync(DOC, { force: true });
-const backend = spawn(exe, ["--port", String(PORT), "--doc", DOC], { stdio: "ignore" });
+const backend = spawn(exe, ["--port", String(PORT), "--doc", DOC, "--no-mesh"], { stdio: "ignore" });
 process.on("exit", () => backend.kill());
 
 async function connect() {
@@ -103,7 +103,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 1, client_name: "render_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 2, client_name: "render_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 8, "eight widget types");

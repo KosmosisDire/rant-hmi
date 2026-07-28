@@ -4,6 +4,7 @@
 #include "doc/ops.h"
 #include "registry/registry.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <thread>
@@ -55,7 +56,15 @@ void op_targets(const Json& ops, std::vector<uint64_t>& out) {
 
 } // namespace
 
-App::App(AppOptions opts) : opts_(std::move(opts)), server_(opts_.server) {}
+App::App(AppOptions opts) : opts_(std::move(opts)), server_(opts_.server) {
+    if (opts_.mesh) {
+        auto mesh = std::make_unique<DartMesh>(opts_.mesh_opts);
+        dart_mesh_ = mesh.get();
+        mesh_ = std::move(mesh);
+    } else {
+        mesh_ = std::make_unique<FakeMesh>();
+    }
+}
 
 bool App::start(std::string& err) {
     if (!Document::from_file(opts_.doc_path, doc_, err)) {
@@ -64,8 +73,12 @@ bool App::start(std::string& err) {
         doc_ = Document::make_default();
         if (opts_.persist && !doc_.to_file(opts_.doc_path, err)) return false;
     }
+    if (dart_mesh_ && !dart_mesh_->start(err)) return false;
+    if (dart_mesh_) mesh_->refresh();   /* whatever the mesh already knows, before the
+                                           first compile; the rest lands via refresh */
     compile_runtime();
     next_tick_ = std::chrono::steady_clock::now();
+    next_mesh_refresh_ = next_tick_;
     return server_.start(err);
 }
 
@@ -87,6 +100,7 @@ size_t App::poll() {
             case Inbound::What::Gone:
                 if (scheduler_) scheduler_->release_session(in.session);
                 sessions_.erase(in.session);
+                update_viewed_pages();
                 if (opts_.verbose)
                     std::printf("hmi: session %llu gone\n",
                                 static_cast<unsigned long long>(in.session));
@@ -105,6 +119,19 @@ size_t App::poll() {
         if (next_tick_ + std::chrono::milliseconds(100) < now)
             next_tick_ = now;
         if (scheduler_->state().tick - last_live_tick_ >= 33) publish_live();
+    }
+    /* reflection at control-plane rate: a schema arriving or changing recompiles
+     * through the ordinary hot-swap path and re-serves the entity tree */
+    if (std::chrono::steady_clock::now() >= next_mesh_refresh_) {
+        next_mesh_refresh_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        if (mesh_->refresh()) {
+            compile_runtime();
+            if (server_.sessions()) {
+                Json frame = mesh_json();
+                frame["type"] = "mesh";
+                server_.broadcast(frame);
+            }
+        }
     }
     return batch_.size();
 }
@@ -125,6 +152,7 @@ void App::on_frame(uint64_t session, const Json& frame) {
         it->second.page = json_u64_or(field(frame, "page_id"), 0);
         const Json visible = field(frame, "visible");
         it->second.visible = visible.is_boolean() ? visible.get<bool>() : true;
+        update_viewed_pages();
         return;
     }
     if (type == "apply_ops") { on_apply_ops(session, frame); return; }
@@ -228,15 +256,57 @@ void App::on_input(uint64_t session, const Json& frame) {
 }
 
 void App::compile_runtime() {
-    CompileResult compiled = compile_document(doc_, registry(), mesh_);
-    auto next = std::make_unique<Scheduler>(std::move(compiled.program), mesh_);
+    CompileResult compiled = compile_document(doc_, registry(), *mesh_);
+    auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);
     if (scheduler_)
         next->state() = migrate_state(scheduler_->program(), scheduler_->state(),
                                       next->program());
     scheduler_ = std::move(next);
     ++epoch_;
+    mesh_->apply(scheduler_->program());
+    update_viewed_pages();
     if (server_.sessions())
         server_.broadcast(Json{{"type", "diag"}, {"compile", diagnostics()}});
+}
+
+void App::update_viewed_pages() {
+    std::vector<uint64_t> pages;
+    for (const auto& item : sessions_) {
+        if (!item.second.visible || !item.second.page) continue;
+        if (std::find(pages.begin(), pages.end(), item.second.page) == pages.end())
+            pages.push_back(item.second.page);
+    }
+    mesh_->set_viewed_pages(pages);
+}
+
+Json App::mesh_json() const {
+    Json entities = Json::array();
+    for (const EntityDef& entity : mesh_->reflection()) {
+        auto fields_json = [](const std::vector<FieldDef>& fields) {
+            Json rows = Json::array();
+            for (const FieldDef& field : fields) {
+                Json row{{"path", field.path}, {"shape", shape_name(field.shape)}};
+                if (!field.variants.empty()) {
+                    Json variants = Json::array();
+                    for (const auto& variant : field.variants)
+                        variants.push_back(Json{{"name", variant.first},
+                                                {"value", variant.second}});
+                    row["variants"] = std::move(variants);
+                }
+                rows.push_back(std::move(row));
+            }
+            return rows;
+        };
+        Json row{{"kind", std::string(1, "VTFS"[static_cast<int>(entity.kind)])},
+                 {"name", entity.name},
+                 {"writable", entity.writable},
+                 {"forceable", entity.forceable},
+                 {"fields", fields_json(entity.fields)}};
+        if (entity.kind == EntityKind::Function)
+            row["returns"] = fields_json(entity.rsp_fields);
+        entities.push_back(std::move(row));
+    }
+    return Json{{"entities", std::move(entities)}};
 }
 
 Json App::diagnostics() const {
@@ -267,6 +337,7 @@ Json App::snapshot() const {
                 {"doc", doc_.root},
                 {"registry", registry()},
                 {"live", live()},
+                {"mesh", mesh_json()},
                 {"diag", Json{{"compile", diagnostics()}}}};
 }
 

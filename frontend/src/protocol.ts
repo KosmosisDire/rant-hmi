@@ -5,15 +5,17 @@
  * Anti-desync rules (PLAN.md) live here: a version that is not last + 1 is a GAP, and a
  * gap discards state and asks for a snapshot rather than patching around the hole. */
 
-import { Diag, Doc, Json, Live, Op, PROTO, Registry } from "./types.js";
+import { Diag, Doc, Json, Live, Mesh, Op, PROTO, Registry } from "./types.js";
 
 export interface Handlers {
   /* the snapshot carries diagnostics too: they are computed at compile time, which is
      usually before this client existed, so there is no later frame to learn them from */
-  snapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[]): void;
+  snapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh): void;
   ops(version: number, ops: Op[], origin: number): void;
   live(live: Live): void;
   diag(diag: Diag[]): void;
+  /* the reflected entity tree changed (a peer or schema came or went) */
+  mesh(mesh: Mesh): void;
   status(state: Status, detail: string): void;
 }
 
@@ -122,7 +124,8 @@ export class Connection {
         /* a snapshot settles everything outstanding (it follows every reject and
            resync), so anything queued goes out against its fresh version */
         this.version = frame.version;
-        this.handlers.snapshot(frame.doc, frame.registry, frame.live, frame.diag?.compile ?? []);
+        this.handlers.snapshot(frame.doc, frame.registry, frame.live,
+          frame.diag?.compile ?? [], frame.mesh ?? { entities: [] });
         this.flush();
         return;
       case "ops_applied":
@@ -141,6 +144,9 @@ export class Connection {
         return;
       case "diag":
         this.handlers.diag(frame.compile ?? []);
+        return;
+      case "mesh":
+        this.handlers.mesh({ entities: frame.entities ?? [] });
         return;
       case "reject":
         /* the backend always follows a reject with a snapshot */

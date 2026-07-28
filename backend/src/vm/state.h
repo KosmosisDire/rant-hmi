@@ -69,6 +69,12 @@ class RuntimeState {
     uint64_t tick = 0;
     std::vector<Value> values;
     std::vector<FixedText> texts;
+    /* mesh-inbound text storage, appended after the cell slots: one scratch slot for
+     * values consumed immediately (a function response feed), and one RETAINED slot per
+     * text-shaped entity field so the last-value cache can hold deliverable text (a
+     * `seed: last` build must be able to re-send it) */
+    uint32_t mesh_scratch = 0;
+    std::vector<std::vector<uint32_t>> entity_texts;   /* [entity][field] -> text slot */
     std::vector<MessageState> buffers;
     std::vector<LastValueState> last;
     std::vector<Value> deadband;

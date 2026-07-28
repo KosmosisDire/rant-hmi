@@ -17,7 +17,7 @@ struct InputEvent {
     uint64_t sequence = 0;
 };
 
-class Scheduler {
+class Scheduler final : private MeshSink {
   public:
     Scheduler(Program program, MeshPort& mesh);
 
@@ -54,6 +54,8 @@ class Scheduler {
     void on_press(const InputEvent& event);
     void on_release(const InputEvent& event);
     void apply_local_feeds();
+    /* a decoded mesh arrival: refresh the RMW seed and run the feeds bound to it */
+    void on_update(const MeshUpdate& update) override;
 
     Program program_;
     RuntimeState state_;

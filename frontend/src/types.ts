@@ -3,7 +3,28 @@
 
 export type Json = any;
 
-export const PROTO = 1;
+export const PROTO = 2;
+
+/* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
+
+export interface MeshField {
+  path: string;
+  shape: string;
+  variants?: { name: string; value: number }[];
+}
+
+export interface MeshEntity {
+  kind: "V" | "T" | "F" | "S";
+  name: string;
+  writable: boolean;
+  forceable: boolean;
+  fields: MeshField[];
+  returns?: MeshField[]; /* functions: the response fields a feed reads */
+}
+
+export interface Mesh {
+  entities: MeshEntity[];
+}
 
 /* ---- document ---- */
 

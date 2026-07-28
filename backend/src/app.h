@@ -5,6 +5,7 @@
 #pragma once
 
 #include "doc/doc.h"
+#include "mesh/dart_mesh.h"
 #include "mesh/fake.h"
 #include "sched/scheduler.h"
 #include "sync/server.h"
@@ -17,14 +18,17 @@
 
 namespace hmi {
 
-/* bumped when a frame shape changes; a client with another number is refused */
-constexpr int kProto = 1;
+/* bumped when a frame shape changes; a client with another number is refused
+ * (2: the snapshot carries `mesh` and the server pushes `mesh` frames) */
+constexpr int kProto = 2;
 
 struct AppOptions {
     ServerOptions server;
     std::string doc_path = "hmi.json";
     bool persist = true;      /* write the document back on every accepted edit */
     bool verbose = false;
+    bool mesh = true;         /* false = offline: a FakeMesh with no entities */
+    DartMeshOptions mesh_opts;
 };
 
 class App {
@@ -56,9 +60,11 @@ class App {
     void on_input(uint64_t session, const Json& frame);
     void compile_runtime();
     void publish_live();
+    void update_viewed_pages();
 
     Json snapshot() const;
     Json live() const;
+    Json mesh_json() const;
     /* the current compile's diagnostics, as the wire carries them. A joining client gets
      * them in its snapshot: they are computed once at startup, so a view that arrives
      * later would otherwise never learn why its widget is dead. */
@@ -78,9 +84,11 @@ class App {
     std::vector<Inbound> batch_;
     uint64_t edits_ = 0;
     uint64_t epoch_ = 1;
-    FakeMesh mesh_;
+    std::unique_ptr<MeshPort> mesh_;
+    DartMesh* dart_mesh_ = nullptr;   /* set when mesh_ is the real adapter */
     std::unique_ptr<Scheduler> scheduler_;
     std::chrono::steady_clock::time_point next_tick_;
+    std::chrono::steady_clock::time_point next_mesh_refresh_;
     uint64_t last_live_tick_ = 0;
 };
 

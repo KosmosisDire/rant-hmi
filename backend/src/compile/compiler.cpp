@@ -95,6 +95,7 @@ std::string json_brief(const Json& value) {
 
 struct WidgetInfo {
     uint64_t id = 0;
+    uint64_t page = 0;
     const Json* node = nullptr;
     const Json* type = nullptr;
     std::unordered_map<std::string, uint32_t> locals;
@@ -223,6 +224,7 @@ class Compiler {
             for (const Json& widget : *widgets) {
                 WidgetInfo info;
                 info.id = id_of(widget);
+                info.page = id_of(page);
                 info.node = &widget;
                 info.type = type_named(widget.value("type", ""));
                 if (!info.type)
@@ -341,12 +343,15 @@ class Compiler {
         return found;
     }
 
+    /* `response` reads a function's response table (what a feed decodes); everything
+     * else (a call's build/setf, a bare send) targets the value/request fields */
     int find_field(uint32_t entity, const std::string& path, uint64_t node,
-                   const std::string& where = "") {
+                   const std::string& where = "", bool response = false) {
         const EntityDef& def = program_.entities[entity];
-        if (path.empty() && def.fields.size() == 1) return 0;
-        for (uint32_t i = 0; i < def.fields.size(); ++i)
-            if (def.fields[i].path == path) return static_cast<int>(i);
+        const std::vector<FieldDef>& fields = response ? feed_fields(def) : def.fields;
+        if (path.empty() && fields.size() == 1) return 0;
+        for (uint32_t i = 0; i < fields.size(); ++i)
+            if (fields[i].path == path) return static_cast<int>(i);
         diag(node, "unresolved_field",
              "entity '" + def.name + "' has no field '" + path + "'",
              DiagGrade::Error, where);
@@ -411,6 +416,7 @@ class Compiler {
             for (const Json& node : *feeds) {
                 FeedProgram feed;
                 feed.widget_id = widget.id;
+                feed.page_id = widget.page;
                 feed.feed_id = id_of(node);
                 const std::string slot = node.value("slot", "");
                 auto destination = widget.slots.find(slot);
@@ -445,11 +451,17 @@ class Compiler {
                     const int entity = resolve_entity(ref, feed.feed_id, "src");
                     if (entity < 0) continue;
                     feed.entity = static_cast<uint32_t>(entity);
-                    const int field =
-                        find_field(feed.entity, node.value("path", ""), feed.feed_id, "path");
+                    const int field = find_field(feed.entity, node.value("path", ""),
+                                                 feed.feed_id, "path", /*response=*/true);
                     if (field < 0) continue;
                     feed.field = static_cast<uint32_t>(field);
-                    scope.x_shape = program_.entities[feed.entity].fields[feed.field].shape;
+                    scope.x_shape = feed_fields(program_.entities[feed.entity])[feed.field].shape;
+                    if (program_.entities[feed.entity].kind == EntityKind::Function) {
+                        const double hz = node.value("poll_hz", 0.0);
+                        feed.poll_ms = hz > 0.0
+                            ? std::max(10u, static_cast<uint32_t>(std::lround(1000.0 / hz)))
+                            : 1000u;
+                    }
                 }
                 const std::string xf = node.value("xf", "");
                 bool ok = true;

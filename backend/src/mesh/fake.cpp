@@ -57,6 +57,29 @@ bool FakeMesh::execute(const EffectView& effect, std::string& fault) noexcept {
     return true;
 }
 
+void FakeMesh::drain(MeshSink& sink) {
+    for (const Update& update : updates_) {
+        std::vector<std::string_view> views(update.fields.size());
+        for (size_t i = 0; i < update.fields.size(); ++i)
+            if (update.fields[i].tag == ValueTag::Text &&
+                update.fields[i].ref < update.texts.size())
+                views[i] = update.texts[update.fields[i].ref];
+        MeshUpdate out;
+        out.kind = update.kind;
+        out.name = update.name;
+        out.fields = update.fields.data();
+        out.texts = views.data();
+        out.field_count = static_cast<uint32_t>(update.fields.size());
+        sink.on_update(out);
+    }
+    updates_.clear();
+}
+
+void FakeMesh::push_update(EntityKind kind, std::string name, std::vector<Value> fields,
+                           std::vector<std::string> texts) {
+    updates_.push_back(Update{kind, std::move(name), std::move(fields), std::move(texts)});
+}
+
 void FakeMesh::clear() { transcript_.clear(); }
 
 const std::vector<std::string>& FakeMesh::transcript() const { return transcript_; }

@@ -28,8 +28,16 @@ struct EntityDef {
     bool readable = true;
     bool writable = false;
     bool forceable = false;
+    /* the value fields (a FUNCTION's are its REQUEST fields: what a call builds) */
     std::vector<FieldDef> fields;
+    /* FUNCTION only: the response fields (what a function feed reads and decodes) */
+    std::vector<FieldDef> rsp_fields;
 };
+
+/* the field table a FEED reads from: the response side of a function, else the value */
+inline const std::vector<FieldDef>& feed_fields(const EntityDef& entity) {
+    return entity.kind == EntityKind::Function ? entity.rsp_fields : entity.fields;
+}
 
 enum class CellKind : uint8_t { Global, Local, Slot };
 
@@ -179,10 +187,12 @@ struct EventValueProgram {
 struct FeedProgram {
     uint64_t widget_id = 0;
     uint64_t feed_id = 0;
+    uint64_t page_id = 0;      /* the page the owning widget sits on (poll gating) */
     uint32_t entity = 0;
     uint32_t field = 0;
     uint32_t source_cell = UINT32_MAX;
     uint32_t cell = 0;
+    uint32_t poll_ms = 0;      /* FUNCTION source: poll interval (authored poll_hz) */
     std::vector<Instruction> code;
     uint32_t max_stack = 0;
 };

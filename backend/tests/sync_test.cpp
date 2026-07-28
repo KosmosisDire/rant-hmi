@@ -117,6 +117,7 @@ int main() {
     opts.server.port = kPort;
     opts.server.statics = kStatics;
     opts.doc_path = kDocPath;
+    opts.mesh = false;   /* the sync suite runs offline; mesh_test covers the adapter */
     App app(opts);
     std::string err;
     if (!CHECK_MSG(app.start(err), err)) return check::summary("sync_test");

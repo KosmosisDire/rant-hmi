@@ -91,6 +91,22 @@ RuntimeState::RuntimeState(const Program& program) {
         }
         values[i] = Value::text(slot);
     }
+    /* mesh-inbound text storage (see the header): the scratch slot, then one retained
+     * slot per text-shaped entity field. Delivered strings land in ordinary FixedText
+     * slots, so they resolve through the standard text machinery: a feed's store copies
+     * them into the destination cell, and a `seed: last` build can re-send them. */
+    mesh_scratch = static_cast<uint32_t>(texts.size());
+    texts.emplace_back(kDefaultTextCap);
+    entity_texts.resize(program.entities.size());
+    for (uint32_t e = 0; e < program.entities.size(); ++e) {
+        const std::vector<FieldDef>& entity_fields = program.entities[e].fields;
+        entity_texts[e].assign(entity_fields.size(), UINT32_MAX);
+        for (uint32_t f = 0; f < entity_fields.size(); ++f) {
+            if (entity_fields[f].shape != Shape::Text) continue;
+            entity_texts[e][f] = static_cast<uint32_t>(texts.size());
+            texts.emplace_back(kDefaultTextCap);
+        }
+    }
 
     uint32_t max_fields = std::max<uint32_t>(program.layout.max_entity_fields, 1);
     buffers.resize(program.buffers.size());

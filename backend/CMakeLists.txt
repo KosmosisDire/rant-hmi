@@ -53,6 +53,8 @@ add_library(hmi_core STATIC
   src/vm/vm.cpp
   src/mesh/port.cpp
   src/mesh/fake.cpp
+  src/mesh/dart_mesh.cpp
+  src/mesh/dart_impl.cpp
   src/compile/expression.cpp
   src/compile/compiler.cpp
   src/sched/scheduler.cpp
@@ -60,11 +62,23 @@ add_library(hmi_core STATIC
   src/sync/server.cpp
   src/app.cpp
 )
-target_include_directories(hmi_core PUBLIC src)
+# DART: the single-header C++ wrapper (dist/dart.hpp) from the surrounding repo;
+# override HMI_DART_DIST when building elsewhere.
+set(HMI_DART_DIST "${HMI_ROOT}/../dist" CACHE PATH "directory holding dart.hpp")
+if(NOT EXISTS "${HMI_DART_DIST}/dart.hpp")
+  message(FATAL_ERROR "dart.hpp not found in ${HMI_DART_DIST} (set HMI_DART_DIST)")
+endif()
+
+target_include_directories(hmi_core PUBLIC src "${HMI_DART_DIST}")
 target_link_libraries(hmi_core PUBLIC nlohmann_json::nlohmann_json ixwebsocket::ixwebsocket)
 
 find_package(Threads REQUIRED)
 target_link_libraries(hmi_core PUBLIC Threads::Threads)
+if(WIN32)
+  target_link_libraries(hmi_core PUBLIC ws2_32 bcrypt winmm)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(hmi_core PUBLIC rt)   # shm_open for DART's SHM fast path
+endif()
 
 # pinned float behaviour: replay compares effects bit for bit within one build
 if(MSVC)
@@ -77,7 +91,7 @@ add_executable(hmi_designer src/main.cpp)
 target_link_libraries(hmi_designer PRIVATE hmi_core)
 
 enable_testing()
-foreach(_test doc_test sync_test runtime_test scheduler_test)
+foreach(_test doc_test sync_test runtime_test scheduler_test mesh_test)
   add_executable(hmi_${_test} tests/${_test}.cpp)
   target_link_libraries(hmi_${_test} PRIVATE hmi_core)
   add_test(NAME ${_test} COMMAND hmi_${_test})

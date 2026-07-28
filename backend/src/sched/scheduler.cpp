@@ -104,9 +104,66 @@ void Scheduler::apply_local_feeds() {
     }
 }
 
+void Scheduler::on_update(const MeshUpdate& update) {
+    int entity = -1;
+    for (uint32_t i = 0; i < program_.entities.size(); ++i)
+        if (program_.entities[i].kind == update.kind && program_.entities[i].name == update.name) {
+            entity = static_cast<int>(i);
+            break;
+        }
+    if (entity < 0) return;
+    const EntityDef& def = program_.entities[entity];
+    const std::vector<FieldDef>& fields = feed_fields(def);
+    const uint32_t count =
+        std::min<uint32_t>(update.field_count, static_cast<uint32_t>(fields.size()));
+    /* refresh the last-value cache (the seed-from-last / RMW base) from what actually
+     * arrived. Delivered text lands in its retained per-field slot, so the cached value
+     * stays resolvable and re-sendable. Functions stay out: their `fields` are the
+     * request side, not what arrived. */
+    const bool cache = def.kind != EntityKind::Function;
+    if (cache) {
+        auto& last = state_.last[entity];
+        bool any = false;
+        for (uint32_t i = 0; i < count && i < last.fields.size(); ++i) {
+            Value value = update.fields[i];
+            if (value.tag == ValueTag::Nil) continue;
+            if (value.tag == ValueTag::Text) {
+                const uint32_t slot = state_.entity_texts[entity][i];
+                if (slot >= state_.texts.size()) continue;
+                state_.texts[slot].set(update.texts[i]);
+                value = Value::text(slot);
+            }
+            last.fields[i] = value;
+            any = true;
+        }
+        if (any) last.known = true;
+    }
+    for (const FeedProgram& feed : program_.feeds) {
+        if (feed.source_cell != UINT32_MAX || feed.entity != static_cast<uint32_t>(entity))
+            continue;
+        if (feed.field >= count) continue;
+        Value x = update.fields[feed.field];
+        if (x.tag == ValueTag::Text) {
+            /* cached entities already hold the text in its retained slot; a function
+             * response rides the one scratch slot, consumed by this run alone */
+            uint32_t slot = cache && feed.field < state_.entity_texts[entity].size()
+                                ? state_.entity_texts[entity][feed.field]
+                                : state_.mesh_scratch;
+            if (slot >= state_.texts.size()) continue;
+            if (!cache || slot == state_.mesh_scratch)
+                state_.texts[slot].set(update.texts[feed.field]);
+            x = Value::text(slot);
+        }
+        run_feed(program_, feed, state_, x);
+    }
+}
+
 bool Scheduler::tick(std::string& fault) {
     ++state_.tick;
     state_.clear_outputs();
+
+    /* tick step 1: the mesh's arrivals, decoded, before anything time-driven runs */
+    mesh_.drain(*this);
 
     ended_.clear();
     for (uint32_t i = 0; i < state_.timers.size(); ++i) {

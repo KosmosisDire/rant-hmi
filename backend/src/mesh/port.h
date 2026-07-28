@@ -1,3 +1,8 @@
+/* The mesh seam (PLAN.md: The DART seam). compile/vm/sched see ONLY this interface:
+ * reflection records out, effects in, decoded deliveries into the tick's inbound path.
+ * The fake mesh and the real DART adapter are the two implementations. Everything here
+ * is called from the logic thread; an implementation with its own I/O threads keeps
+ * them behind its drain/refresh boundary. */
 #pragma once
 
 #include "vm/state.h"
@@ -21,11 +26,48 @@ struct EffectView {
     const FixedText* field_text = nullptr;
 };
 
+/* One decoded arrival from the mesh: the entity's current field values, in the order of
+ * its reflected field table (a FUNCTION delivers its RESPONSE fields, everything else
+ * its value fields). A field the codec cannot represent as a scalar (list, map, struct)
+ * arrives Nil. Views are valid for the on_update call only. */
+struct MeshUpdate {
+    EntityKind kind = EntityKind::Variable;
+    std::string_view name;
+    const Value* fields = nullptr;
+    const std::string_view* texts = nullptr;   /* texts[i] backs fields[i] when Text */
+    uint32_t field_count = 0;
+};
+
+class MeshSink {
+  public:
+    virtual ~MeshSink() = default;
+    virtual void on_update(const MeshUpdate& update) = 0;
+};
+
 class MeshPort {
   public:
     virtual ~MeshPort() = default;
     virtual const std::vector<EntityDef>& reflection() const noexcept = 0;
     virtual bool execute(const EffectView& effect, std::string& fault) noexcept = 0;
+
+    /* Hand every delivery that arrived since the last call to the sink, decoded.
+     * Called at the top of each tick (tick step 1), on the logic thread. */
+    virtual void drain(MeshSink& sink) { (void)sink; }
+
+    /* Reconcile subscriptions and function polls with a freshly compiled program:
+     * which entities its feeds consume, and at what rate a function feed polls.
+     * Called after every accepted compile, on the logic thread. */
+    virtual void apply(const Program& program) { (void)program; }
+
+    /* The pages at least one visible session is viewing; a function feed on any other
+     * page stops polling (the spec's visibility rule, page-scoped). */
+    virtual void set_viewed_pages(const std::vector<uint64_t>& pages) { (void)pages; }
+
+    /* Refresh the reflection snapshot from the live mesh. Returns true when the
+     * snapshot CHANGED, which is the caller's cue to recompile (a schema arriving or
+     * changing re-resolves through the ordinary recompile + hot-swap path). Called at
+     * control-plane rate on the logic thread; reflection() stays valid across it. */
+    virtual bool refresh() { return false; }
 };
 
 bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,

@@ -19,9 +19,15 @@ void usage() {
     std::printf(
         "usage: hmi_designer [--port 7500] [--bind 127.0.0.1] [--doc hmi.json]\n"
         "                    [--statics DIR] [--no-save] [--verbose]\n"
+        "                    [--no-mesh] [--mesh-name hmi] [--domain N]\n"
+        "                    [--mesh-if IP] [--peer IP[:PORT]] [--mesh-topics N]\n"
         "  --statics DIR  serve the frontend from DIR on the same port as the sync\n"
         "                 channel, so http://host:port/ is the whole application\n"
-        "  --bind 0.0.0.0 expose the HMI beyond this host (no authentication yet)\n");
+        "  --bind 0.0.0.0 expose the HMI beyond this host (no authentication yet)\n"
+        "  --no-mesh      run offline: no DART node, no reflected entities\n"
+        "  --mesh-if IP   the multicast interface (multihomed hosts: this LAN's IP)\n"
+        "  --peer IP      seed discovery over unicast (repeatable; where multicast\n"
+        "                 is broken)\n");
 }
 
 bool arg_value(int argc, char** argv, int& i, const char* name, std::string& out) {
@@ -42,7 +48,13 @@ int main(int argc, char** argv) {
         if (arg_value(argc, argv, i, "--doc", value)) { opts.doc_path = value; continue; }
         if (arg_value(argc, argv, i, "--statics", value)) { opts.server.statics = value; continue; }
         if (!std::strcmp(argv[i], "--no-save")) { opts.persist = false; continue; }
-        if (!std::strcmp(argv[i], "--verbose")) { opts.verbose = true; continue; }
+        if (!std::strcmp(argv[i], "--verbose")) { opts.verbose = true; opts.mesh_opts.verbose = true; continue; }
+        if (!std::strcmp(argv[i], "--no-mesh")) { opts.mesh = false; continue; }
+        if (arg_value(argc, argv, i, "--mesh-name", value)) { opts.mesh_opts.node_name = value; continue; }
+        if (arg_value(argc, argv, i, "--domain", value)) { opts.mesh_opts.domain = static_cast<uint16_t>(std::atoi(value.c_str())); continue; }
+        if (arg_value(argc, argv, i, "--mesh-if", value)) { opts.mesh_opts.interface_ip = value; continue; }
+        if (arg_value(argc, argv, i, "--peer", value)) { opts.mesh_opts.seed_peers.push_back(value); continue; }
+        if (arg_value(argc, argv, i, "--mesh-topics", value)) { opts.mesh_opts.max_topics = static_cast<uint16_t>(std::atoi(value.c_str())); continue; }
         usage();
         return std::strcmp(argv[i], "--help") && std::strcmp(argv[i], "-h") ? 1 : 0;
     }

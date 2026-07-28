@@ -19,7 +19,7 @@ import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, typeOf } from "./slots.js";
 import { Rect } from "./template.js";
-import { Diag, Doc, Interact, Json, Live, Op, Page, Registry, Widget, WidgetType } from "./types.js";
+import { Diag, Doc, Interact, Json, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 
 type Mode = "edit" | "run" | "operate";
@@ -31,6 +31,9 @@ const MIN_SIZE = 20;
 export class App implements Editor {
   store = new DocStore();
   registry: Registry | null = null;
+  /* the reflected entity tree, served by the backend: the "dart" root of the coming
+     source picker (stage 6); the "hmi" root is the document's own variables */
+  mesh: Mesh = { entities: [] };
   live: Live | null = null;
   diagnostics: Diag[] = [];
   view: ViewState = {
@@ -66,7 +69,11 @@ export class App implements Editor {
   constructor(private root: HTMLElement, url: string) {
     this.build();
     this.conn = new Connection(url, {
-      snapshot: (doc, registry, live, diag) => this.onSnapshot(doc, registry, live, diag),
+      snapshot: (doc, registry, live, diag, mesh) => this.onSnapshot(doc, registry, live, diag, mesh),
+      mesh: (mesh) => {
+        this.mesh = mesh;
+        this.queueRails();
+      },
       ops: (version, ops) => this.onOps(version, ops),
       /* a live frame and a document echo are the same event to a rail: re-read and
          assign. The rails decide for themselves whether anything structural moved. */
@@ -144,10 +151,11 @@ export class App implements Editor {
 
   /* ---- protocol ---- */
 
-  private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[]): void {
+  private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh): void {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
+    this.mesh = mesh;
     this.onDiag(diag, false);
     const page = this.page();
     this.pageId = page ? page.id : 0;
