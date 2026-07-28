@@ -69,14 +69,17 @@ std::string text_at(const Scheduler& sched, int cell) {
 int main() {
     /* ---- the peer: what a small controller node looks like on the mesh ---- */
     auto tank_schema = dart::Schema::compile("Tank { level: f64, label: string<16> }");
+    auto hist_schema =
+        dart::Schema::compile("Hist { temps: f64[4] tags: string<8>[] extras: map }");
     auto belt_schema = dart::Schema::compile("Belt { speed: f64, running: bool }");
     auto req_schema = dart::Schema::compile("StatusQ { probe: u8 }");
     auto rsp_schema = dart::Schema::compile("StatusR { temp: f64 }");
     auto alarm_schema = dart::Schema::compile("Alarm { code: u8 }");
     auto cmd_schema = dart::Schema::compile("Cmd { n: f64 }");
-    CHECK(tank_schema && belt_schema && req_schema && rsp_schema && alarm_schema && cmd_schema);
-    if (!tank_schema || !belt_schema || !req_schema || !rsp_schema || !alarm_schema ||
-        !cmd_schema)
+    CHECK(tank_schema && hist_schema && belt_schema && req_schema && rsp_schema &&
+          alarm_schema && cmd_schema);
+    if (!tank_schema || !hist_schema || !belt_schema || !req_schema || !rsp_schema ||
+        !alarm_schema || !cmd_schema)
         return check::summary("mesh_test");
 
     dart::NodeOptions peer_options;
@@ -108,6 +111,35 @@ int main() {
     dart::Publisher<> belt(peer, "belt", &*belt_schema,
                            dart::Qos{dart::Reliability::Reliable});
     CHECK(belt.valid());
+
+    /* a variable with every aggregate kind: fixed f64 array, varr of strings, map */
+    dart::MessageBuilder hist_initial(*hist_schema);
+    {
+        const double temps[4] = {1.5, 9.25, 3.0, 0.5};
+        hist_initial.set_array("temps", dart::Bytes(
+            reinterpret_cast<const uint8_t*>(temps), sizeof(temps)));
+        std::vector<uint8_t> tag_slots;   /* string-array raw slots: [u16 len][cap bytes] */
+        auto put_tag = [&](const char* tag) {
+            const uint16_t length = static_cast<uint16_t>(std::strlen(tag));
+            tag_slots.push_back(static_cast<uint8_t>(length & 0xff));
+            tag_slots.push_back(static_cast<uint8_t>(length >> 8));
+            const size_t at = tag_slots.size();
+            tag_slots.resize(at + 8, 0);
+            std::memcpy(tag_slots.data() + at, tag, length);
+        };
+        put_tag("hot");
+        put_tag("cold");
+        hist_initial.set_array("tags", dart::Bytes(tag_slots.data(), tag_slots.size()));
+        dart::MapWriter extras;
+        extras.put_uint("speed", 5).put_string("state", "run");
+        CHECK(extras.ok());
+        hist_initial.set_map("extras", extras);
+    }
+    CHECK(hist_initial.ok());
+    dart::VariableOptions<> hist_options;
+    hist_options.initial = hist_initial.bytes();
+    dart::VariableDefinition<> hist(peer, "history", &*hist_schema, hist_options);
+    CHECK(hist.valid());
 
     std::atomic<int> calls{0};
     dart::FunctionDefinition<> status(
@@ -152,7 +184,8 @@ int main() {
     CHECK_MSG(mesh.start(err), err);
 
     /* reflection settles once discovery + detail fetches land */
-    const char* wanted[] = {"tank_level", "belt", "status", "alarm", "cmd"};
+    const char* wanted[] = {"tank_level", "history", "belt", "status", "alarm", "cmd"};
+    constexpr size_t kWanted = sizeof(wanted) / sizeof(wanted[0]);
     bool reflected = false;
     for (int i = 0; i < 100 && !reflected; ++i) {
         mesh.refresh();
@@ -161,11 +194,11 @@ int main() {
             for (const EntityDef& entity : mesh.reflection())
                 if (entity.name == name && (!entity.fields.empty() || !entity.rsp_fields.empty()))
                     ++found;
-        reflected = found == 5;
+        reflected = found == kWanted;
         if (!reflected) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (!reflected && i % 20 == 19) {
-            std::printf("settle %d: peer sees %u peers; %zu/5 entities [", i,
-                        peer.peer_count(), found);
+            std::printf("settle %d: peer sees %u peers; %zu/%zu entities [", i,
+                        peer.peer_count(), found, kWanted);
             for (const EntityDef& entity : mesh.reflection())
                 std::printf(" %c:%s", "VTFS"[static_cast<int>(entity.kind)],
                             entity.name.c_str());
@@ -176,9 +209,19 @@ int main() {
 
     const EntityDef* tank_def = nullptr;
     const EntityDef* status_def = nullptr;
+    const EntityDef* hist_def = nullptr;
     for (const EntityDef& entity : mesh.reflection()) {
         if (entity.name == "tank_level") tank_def = &entity;
         if (entity.name == "status") status_def = &entity;
+        if (entity.name == "history") hist_def = &entity;
+    }
+    CHECK(hist_def && hist_def->fields.size() == 3);
+    if (hist_def && hist_def->fields.size() == 3) {
+        CHECK(hist_def->fields[0].shape == Shape::List &&
+              hist_def->fields[0].elem == Shape::Num && hist_def->fields[0].bound == 4);
+        CHECK(hist_def->fields[1].shape == Shape::List &&
+              hist_def->fields[1].elem == Shape::Text);
+        CHECK(hist_def->fields[2].shape == Shape::Map);
     }
     CHECK(tank_def && tank_def->kind == EntityKind::Variable);
     if (tank_def) {
@@ -264,6 +307,25 @@ int main() {
                                     {"src", entity_ref("S", "alarm")},
                                     {"path", "code"}}})},
     };
+    Json hist_widget = {
+        {"type", "Readout"},
+        {"label", "Hist"},
+        {"geom", Json{{"x", 260}, {"y", 70}, {"w", 120}, {"h", 60}}},
+        {"feeds", Json::array({
+            Json{{"slot", "value"},
+                 {"src", entity_ref("V", "history")},
+                 {"path", "temps"},
+                 {"xf", "x.max"}},
+            Json{{"slot", "decimals"},
+                 {"src", entity_ref("V", "history")},
+                 {"path", "extras"},
+                 {"xf", "num(x.get(\"speed\"))"}},
+            Json{{"slot", "units"},
+                 {"src", entity_ref("V", "history")},
+                 {"path", "tags"},
+                 {"xf", "x.join(\"/\")"}},
+        })},
+    };
 
     Json root = {
         {"version", 1},
@@ -272,7 +334,7 @@ int main() {
         {"pages", Json::array({Json{{"name", "Main"},
                                     {"widgets", Json::array({level_widget, label_widget,
                                                              speed_widget, temp_widget,
-                                                             alarm_widget})}}})},
+                                                             alarm_widget, hist_widget})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -291,6 +353,7 @@ int main() {
     const uint64_t speed_id = page["widgets"][2].value("id", 0);
     const uint64_t temp_id = page["widgets"][3].value("id", 0);
     const uint64_t alarm_id = page["widgets"][4].value("id", 0);
+    const uint64_t hist_id = page["widgets"][5].value("id", 0);
 
     Scheduler sched(std::move(compiled.program), mesh);
     mesh.apply(sched.program());
@@ -309,6 +372,20 @@ int main() {
               "tank level never arrived");
     CHECK_MSG(run_until(sched, [&] { return text_at(sched, label_cell) == "ok"; }),
               "tank label never arrived");
+
+    /* aggregate fields decode into list/map values and reduce through transforms */
+    {
+        const int hist_max = cell_of(sched.program(), hist_id, "value");
+        const int hist_speed = cell_of(sched.program(), hist_id, "decimals");
+        const int hist_tags = cell_of(sched.program(), hist_id, "units");
+        CHECK(hist_max >= 0 && hist_speed >= 0 && hist_tags >= 0);
+        CHECK_MSG(run_until(sched, [&] { return num_at(sched, hist_max) == 9.25; }),
+                  "temps.max never arrived");
+        CHECK_MSG(run_until(sched, [&] { return num_at(sched, hist_speed) == 5.0; }),
+                  "extras.speed never arrived");
+        CHECK_MSG(run_until(sched, [&] { return text_at(sched, hist_tags) == "hot/cold"; }),
+                  "tags join never arrived");
+    }
 
     /* a topic feed: publish from the peer until the cell shows it */
     {

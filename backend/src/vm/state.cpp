@@ -65,6 +65,11 @@ Value zero_value(Shape shape) {
         case Shape::Enum: return Value::enumeration(0, 0);
         case Shape::Color: return Value::color(0x00000000u);
         case Shape::Text: return Value::text(kConstantRef);
+        /* aggregates in a message buffer are inert empty placeholders: never Nil (a
+         * send must not fault on a field the wire side cannot set anyway; the RMW
+         * base preserves the owner's actual bytes) */
+        case Shape::List: return Value::list(0, 0, ValueTag::Nil);
+        case Shape::Map: return Value::map(0, 0);
         default: return Value::nil();
     }
 }

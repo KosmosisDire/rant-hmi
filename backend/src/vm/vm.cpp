@@ -1048,10 +1048,15 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const bool from_last = ins.small != 0;
                 const LastValueState& last = state.last[ins.b];
                 for (uint32_t i = 0; i < buffer.fields.size(); ++i) {
-                    if (from_last)
+                    const Shape shape = program.entities[ins.b].fields[i].shape;
+                    /* aggregate fields are read-side only: the buffer carries an inert
+                     * placeholder whichever way it was seeded */
+                    if (shape == Shape::List || shape == Shape::Map)
+                        buffer.fields[i] = zero_value(shape);
+                    else if (from_last)
                         buffer.fields[i] = last.known ? last.fields[i] : Value::nil();
                     else
-                        buffer.fields[i] = zero_value(program.entities[ins.b].fields[i].shape);
+                        buffer.fields[i] = zero_value(shape);
                 }
                 break;
             }

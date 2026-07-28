@@ -146,10 +146,11 @@ struct EncField {
     dart::FieldType elem = dart::FieldType::U8;   /* enum backing */
 };
 
-/* The reflected schema as the HMI's field vocabulary: dotted leaf paths, scalar-ish
- * shapes. Struct containers contribute their name to the path; aggregate kinds (fixed
- * and variable arrays, maps) stay out of the table this stage, so a feed or setf naming
- * one gets an honest "no field" instead of a value that can never be non-Nil. */
+/* The reflected schema as the HMI's field vocabulary: dotted leaf paths. Struct
+ * containers contribute their name to the path. Aggregate kinds present as List/Map
+ * shapes for the READ side (feeds decode their elements into the scratch pool); the
+ * write side never builds them (a wire value is one scalar), so encode skips them and
+ * the RMW base preserves the owner's aggregate bytes untouched. */
 void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
                   std::vector<EncField>* enc) {
     std::vector<std::string> stack;
@@ -162,9 +163,6 @@ void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
             stack.push_back(field.name);
             continue;
         }
-        if (field.kind == dart::FieldType::Array || field.kind == dart::FieldType::VArray ||
-            field.kind == dart::FieldType::Map)
-            continue;
         FieldDef def;
         def.path = path;
         switch (field.kind) {
@@ -176,10 +174,64 @@ void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
                 for (const dart::SchemaField::Option& option : field.variants)
                     def.variants.push_back({option.name, option.value});
                 break;
+            case dart::FieldType::Array:
+            case dart::FieldType::VArray:
+                def.shape = Shape::List;
+                def.elem = field.elem == dart::FieldType::String ? Shape::Text
+                           : field.elem == dart::FieldType::Bool ? Shape::Bool
+                                                                 : Shape::Num;
+                def.bound = field.kind == dart::FieldType::Array
+                                ? field.count
+                                : kVarrCeiling;
+                break;
+            case dart::FieldType::Map:
+                def.shape = Shape::Map;
+                def.bound = kVarrCeiling;
+                break;
             default: def.shape = Shape::Num; break;
         }
         out.push_back(std::move(def));
         if (enc) enc->push_back(EncField{path, field.kind, field.elem});
+    }
+}
+
+/* scalar element sizes on the wire (little-endian; LE host assumed per PLAN.md) */
+size_t elem_size_of(dart::FieldType kind) {
+    switch (kind) {
+        case dart::FieldType::U8:
+        case dart::FieldType::I8:
+        case dart::FieldType::Bool: return 1;
+        case dart::FieldType::U16:
+        case dart::FieldType::I16: return 2;
+        case dart::FieldType::U32:
+        case dart::FieldType::I32:
+        case dart::FieldType::F32: return 4;
+        default: return 8;   /* U64 I64 F64 */
+    }
+}
+
+Value scalar_elem(dart::FieldType kind, const uint8_t* at) {
+    uint64_t raw = 0;
+    const size_t size = elem_size_of(kind);
+    for (size_t i = 0; i < size; ++i) raw |= static_cast<uint64_t>(at[i]) << (8 * i);
+    switch (kind) {
+        case dart::FieldType::Bool: return Value::boolean(raw != 0);
+        case dart::FieldType::I8: return Value::number(static_cast<int8_t>(raw));
+        case dart::FieldType::I16: return Value::number(static_cast<int16_t>(raw));
+        case dart::FieldType::I32: return Value::number(static_cast<int32_t>(raw));
+        case dart::FieldType::I64:
+            return Value::number(static_cast<double>(static_cast<int64_t>(raw)));
+        case dart::FieldType::F32: {
+            float value = 0;
+            std::memcpy(&value, at, sizeof(value));
+            return Value::number(value);
+        }
+        case dart::FieldType::F64: {
+            double value = 0;
+            std::memcpy(&value, at, sizeof(value));
+            return Value::number(value);
+        }
+        default: return Value::number(static_cast<double>(raw));
     }
 }
 
@@ -272,6 +324,18 @@ struct Rec {
     std::vector<Value> values;
     std::vector<std::string> texts;
     std::vector<std::string_view> views;
+    /* aggregate element scratch: elements flattened across the delivery's fields,
+     * spans built after decoding (vector addresses are stable by then) */
+    struct ElemMeta {
+        uint32_t field = 0;
+        uint32_t offset = 0;
+        uint32_t count = 0;
+    };
+    std::vector<Value> elem_pool;
+    std::vector<std::string> elem_strings;
+    std::vector<std::string_view> elem_views;
+    std::vector<MeshElems> elem_spans;
+    std::vector<ElemMeta> elem_meta;
 
     /* encode scratch */
     std::vector<uint8_t> out;
@@ -619,15 +683,122 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
     rec.values.resize(fields.size());
     rec.texts.resize(fields.size());
     rec.views.assign(fields.size(), std::string_view{});
+    rec.elem_pool.clear();
+    rec.elem_strings.clear();
+    rec.elem_meta.clear();
+
+    auto map_scalar = [&](const dc::DartValue& entry) -> Value {
+        switch (static_cast<dart::FieldType>(entry.kind)) {
+            case dart::FieldType::U8:
+            case dart::FieldType::U16:
+            case dart::FieldType::U32:
+            case dart::FieldType::U64:
+                return Value::number(static_cast<double>(entry.v.u));
+            case dart::FieldType::I8:
+            case dart::FieldType::I16:
+            case dart::FieldType::I32:
+            case dart::FieldType::I64:
+                return Value::number(static_cast<double>(entry.v.i));
+            case dart::FieldType::F32:
+            case dart::FieldType::F64:
+                return Value::number(entry.v.f);
+            case dart::FieldType::Bool:
+                return Value::boolean(entry.v.u != 0);
+            case dart::FieldType::VString: {
+                const Value out = Value::text(static_cast<uint32_t>(rec.elem_strings.size()));
+                rec.elem_strings.emplace_back(
+                    entry.bytes.data ? reinterpret_cast<const char*>(entry.bytes.data) : "",
+                    entry.bytes.len);
+                return out;
+            }
+            default: return Value::nil();   /* nested arrays/maps: not represented */
+        }
+    };
+
+    auto decode_agg = [&](const FieldDef& def, uint32_t field_index) -> Value {
+        const int index = dc::dart_schema_field_index(schema, def.path.c_str());
+        if (index < 0) return Value::nil();
+        dc::DartValue raw;
+        if (!dc::dart_get_value(data, schema, static_cast<uint16_t>(index), &raw))
+            return Value::nil();
+        const uint32_t offset = static_cast<uint32_t>(rec.elem_pool.size());
+        const dart::FieldType kind = static_cast<dart::FieldType>(raw.kind);
+        const uint32_t limit = def.bound ? def.bound : kVarrCeiling;
+        if (kind == dart::FieldType::Map) {
+            const dc::DartBytes body = raw.bytes;
+            uint32_t pairs = std::min<uint32_t>(dc::dart_map_count(body), limit);
+            uint32_t kept = 0;
+            for (uint32_t e = 0; e < pairs; ++e) {
+                dc::DartString key{};
+                dc::DartValue entry{};
+                if (!dc::dart_map_at(body, static_cast<uint16_t>(e), &key, &entry)) break;
+                rec.elem_pool.push_back(
+                    Value::text(static_cast<uint32_t>(rec.elem_strings.size())));
+                rec.elem_strings.emplace_back(key.data ? key.data : "", key.len);
+                rec.elem_pool.push_back(map_scalar(entry));
+                ++kept;
+            }
+            rec.elem_meta.push_back(
+                {field_index, offset, static_cast<uint32_t>(rec.elem_pool.size()) - offset});
+            return Value::map(0, kept);
+        }
+        if (kind != dart::FieldType::Array && kind != dart::FieldType::VArray)
+            return Value::nil();
+        const dart::FieldType elem = static_cast<dart::FieldType>(raw.elem);
+        if (elem == dart::FieldType::String) {
+            uint32_t count = 0;
+            while (count < limit) {
+                const dc::DartString s = dc::dart_get_string_at(
+                    data, schema, def.path.c_str(), static_cast<uint16_t>(count));
+                if (!s.data) break;
+                rec.elem_pool.push_back(
+                    Value::text(static_cast<uint32_t>(rec.elem_strings.size())));
+                rec.elem_strings.emplace_back(s.data, s.len);
+                ++count;
+            }
+            rec.elem_meta.push_back({field_index, offset, count});
+            return Value::list(0, count, ValueTag::Text);
+        }
+        const size_t size = elem_size_of(elem);
+        uint32_t count = size ? static_cast<uint32_t>(raw.bytes.len / size) : 0;
+        count = std::min(count, limit);
+        for (uint32_t k = 0; k < count; ++k)
+            rec.elem_pool.push_back(scalar_elem(elem, raw.bytes.data + k * size));
+        rec.elem_meta.push_back({field_index, offset, count});
+        return Value::list(0, count,
+                           elem == dart::FieldType::Bool ? ValueTag::Bool : ValueTag::Num);
+    };
+
     for (size_t i = 0; i < fields.size(); ++i) {
+        if (fields[i].shape == Shape::List || fields[i].shape == Shape::Map) {
+            rec.values[i] = decode_agg(fields[i], static_cast<uint32_t>(i));
+            continue;
+        }
         rec.values[i] = decode_field(data, schema, fields[i].path.c_str(), rec.texts[i]);
         if (rec.values[i].tag == ValueTag::Text) rec.views[i] = rec.texts[i];
     }
+
+    /* element vectors are stable now: build the views and per-field spans */
+    rec.elem_views.assign(rec.elem_pool.size(), std::string_view{});
+    for (size_t k = 0; k < rec.elem_pool.size(); ++k)
+        if (rec.elem_pool[k].tag == ValueTag::Text &&
+            rec.elem_pool[k].ref < rec.elem_strings.size())
+            rec.elem_views[k] = rec.elem_strings[rec.elem_pool[k].ref];
+    bool any_elems = false;
+    rec.elem_spans.assign(fields.size(), MeshElems{});
+    for (const Rec::ElemMeta& meta : rec.elem_meta) {
+        rec.elem_spans[meta.field] =
+            MeshElems{rec.elem_pool.data() + meta.offset,
+                      rec.elem_views.data() + meta.offset, meta.count};
+        any_elems = true;
+    }
+
     MeshUpdate update;
     update.kind = rec.kind;
     update.name = rec.name;
     update.fields = rec.values.data();
     update.texts = rec.views.data();
+    update.elems = any_elems ? rec.elem_spans.data() : nullptr;
     update.field_count = static_cast<uint32_t>(fields.size());
     sink.on_update(update);
 }
@@ -800,6 +971,12 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                 ok = dc::dart_set_string(rec.out.data(), rec.out.size(), schema, path,
                                          dc::dart_string(text.data(), text.size()));
                 break;
+            case dart::FieldType::Array:
+            case dart::FieldType::VArray:
+            case dart::FieldType::Map:
+                /* aggregates are read-side only: the buffer holds an inert empty
+                 * placeholder and the RMW base keeps the owner's bytes untouched */
+                return true;
             default:
                 fault = "field '" + enc.path + "' has a kind the HMI cannot encode";
                 return false;
