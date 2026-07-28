@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace hmi {
 
@@ -51,7 +52,7 @@ static_assert(sizeof(Value) == 16, "Value must stay 16 bytes");
 Shape value_shape(const Value& value);
 bool value_truth(const Value& value);
 bool value_same_scalar(const Value& a, const Value& b);
-uint32_t parse_color(const std::string& text, bool& ok);
+uint32_t parse_color(std::string_view text, bool& ok);
 std::string format_color(uint32_t rgba);
 /* channels 0..255, alpha 0..1, everything clamped; layout 0xRRGGBBAA */
 uint32_t pack_rgba(double r, double g, double b, double a);

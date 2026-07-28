@@ -69,6 +69,23 @@ Value compare(OpCode op, const Value& left, const Value& right) noexcept {
     }
 }
 
+/* piecewise-linear ramp over {t, r, g, b} stops (the prototype's tonemap ramps) */
+uint32_t gradient(double t, const double stops[][4], int count) noexcept {
+    if (!(t > 0.0)) t = 0.0;   /* NaN lands here too */
+    if (t > 1.0) t = 1.0;
+    for (int i = 1; i < count; ++i) {
+        if (t > stops[i][0]) continue;
+        const double* a = stops[i - 1];
+        const double* b = stops[i];
+        const double span = b[0] - a[0];
+        const double f = span > 0 ? (t - a[0]) / span : 0.0;
+        return pack_rgba(a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f,
+                         a[3] + (b[3] - a[3]) * f, 1.0);
+    }
+    const double* s = stops[count - 1];
+    return pack_rgba(s[1], s[2], s[3], 1.0);
+}
+
 /* strtod over a bounded view without allocation: the view is copied into a stack
  * buffer first because strtod needs a terminator */
 bool parse_number(std::string_view view, double& out) noexcept {
@@ -168,6 +185,12 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
                           parts.tm_min, parts.tm_sec);
             return text_result(ctx, site, buffer);
         }
+        case Builtin::Color: {
+            if (n != 1 || args[0].tag != ValueTag::Text) return Value::nil();
+            bool ok = false;
+            const uint32_t rgba = parse_color(text_of(ctx, args[0]), ok);
+            return ok ? Value::color(rgba) : Value::nil();
+        }
         case Builtin::FmtDuration: {
             if (n != 1 || args[0].tag != ValueTag::Num) return Value::nil();
             double total = args[0].data.num;
@@ -250,6 +273,49 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
                 }
                 return Value::color(pack_rgba((r + m) * 255.0, (g + m) * 255.0,
                                               (b + m) * 255.0, n == 4 ? number(3) : 1.0));
+            }
+            break;
+        /* the tonemaps proven in the old prototype: num in 0..1 -> color */
+        case Builtin::Jet:
+            if (n == 1) {
+                const double t = std::max(0.0, std::min(1.0, number(0)));
+                auto channel = [&](double x) {
+                    return std::max(0.0, std::min(1.0, 1.5 - std::fabs(4.0 * t - x))) * 255.0;
+                };
+                return Value::color(pack_rgba(channel(3), channel(2), channel(1), 1.0));
+            }
+            break;
+        case Builtin::Hot:
+            if (n == 1) {
+                const double t = std::max(0.0, std::min(1.0, number(0)));
+                auto channel = [](double x) {
+                    return std::max(0.0, std::min(1.0, x)) * 255.0;
+                };
+                return Value::color(
+                    pack_rgba(channel(3 * t), channel(3 * t - 1), channel(3 * t - 2), 1.0));
+            }
+            break;
+        case Builtin::CoolWarm:
+            if (n == 1) {
+                static const double stops[][4] = {
+                    {0, 59, 76, 192}, {0.5, 221, 221, 221}, {1, 180, 4, 38}};
+                return Value::color(gradient(number(0), stops, 3));
+            }
+            break;
+        case Builtin::Viridis:
+            if (n == 1) {
+                static const double stops[][4] = {{0, 68, 1, 84},
+                                                  {0.25, 59, 82, 139},
+                                                  {0.5, 33, 145, 140},
+                                                  {0.75, 94, 201, 98},
+                                                  {1, 253, 231, 37}};
+                return Value::color(gradient(number(0), stops, 5));
+            }
+            break;
+        case Builtin::Grayscale:
+            if (n == 1) {
+                const double v = std::max(0.0, std::min(1.0, number(0))) * 255.0;
+                return Value::color(pack_rgba(v, v, v, 1.0));
             }
             break;
         default: break;

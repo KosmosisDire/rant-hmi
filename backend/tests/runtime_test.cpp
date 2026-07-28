@@ -637,6 +637,97 @@ void test_colors() {
     CHECK(result.shape == Shape::Color);
 }
 
+/* The tonemaps and color(text): num in 0..1 sweeps a proven ramp, text parses to a
+ * color or honestly fails to Nil. All display-tier only. */
+void test_tonemaps() {
+    EntityDef sensor;
+    sensor.kind = EntityKind::Variable;
+    sensor.name = "sensor";
+    sensor.fields = {FieldDef{"value", Shape::Num}};
+    EntityDef tag;
+    tag.kind = EntityKind::Variable;
+    tag.name = "tag";
+    tag.fields = {FieldDef{"text", Shape::Text}};
+    FakeMesh mesh(std::vector<EntityDef>{sensor, tag});
+
+    Json widgets = Json::array();
+    widgets.push_back(Json{
+        {"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "text_color"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "jet(x)"}},
+            Json{{"slot", "units_color"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "hot(x)"}},
+            Json{{"slot", "surface"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "coolWarm(x)"}},
+            Json{{"slot", "border"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "viridis(x)"}},
+        })}});
+    widgets.push_back(Json{
+        {"type", "Label"}, {"label", "b"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "text_color"}, {"src", entity("V", "tag")}, {"path", "text"},
+                 {"xf", "color(x)"}},
+        })}});
+    widgets.push_back(Json{
+        {"type", "Button"}, {"label", "c"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            Json{{"slot", "surface"}, {"src", entity("V", "sensor")}, {"path", "value"},
+                 {"xf", "grayscale(x)"}},
+        })}});
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"}, {"widgets", std::move(widgets)}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("tonemap compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+    if (!CHECK(compiled.program.feeds.size() == 6)) return;
+    const Program& program = compiled.program;
+    RuntimeState state(program);
+    auto rgba_of = [&](const FeedProgram& feed) {
+        const Value& value = state.values[feed.cell];
+        return value.tag == ValueTag::Color ? value.data.rgba : 0u;
+    };
+    run_feed(program, program.feeds[0], state, Value::number(0.5));
+    CHECK_EQ(rgba_of(program.feeds[0]), 0x80ff80ffu);
+    run_feed(program, program.feeds[1], state, Value::number(0.4));
+    CHECK_EQ(rgba_of(program.feeds[1]), 0xff3300ffu);
+    run_feed(program, program.feeds[2], state, Value::number(0.5));
+    CHECK_EQ(rgba_of(program.feeds[2]), 0xddddddffu);
+    run_feed(program, program.feeds[2], state, Value::number(0));
+    CHECK_EQ(rgba_of(program.feeds[2]), 0x3b4cc0ffu);
+    run_feed(program, program.feeds[3], state, Value::number(0.25));
+    CHECK_EQ(rgba_of(program.feeds[3]), 0x3b528bffu);
+
+    auto text_x = [&](const char* value) {
+        state.texts[state.mesh_scratch].set(value);
+        return Value::text(state.mesh_scratch);
+    };
+    run_feed(program, program.feeds[4], state, text_x("#ff8040"));
+    CHECK_EQ(rgba_of(program.feeds[4]), 0xff8040ffu);
+    run_feed(program, program.feeds[4], state, text_x("nope"));
+    CHECK(state.values[program.feeds[4].cell].tag == ValueTag::Nil);
+
+    run_feed(program, program.feeds[5], state, Value::number(0.5));
+    CHECK_EQ(rgba_of(program.feeds[5]), 0x808080ffu);
+
+    /* all of it is display vocabulary: refused where the value is for a machine */
+    Program scratch;
+    ExpressionScope scope;
+    scope.x_shape = Shape::Num;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string error;
+    CHECK(!compile_expression("jet(x)", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK_MSG(error.find("display") != std::string::npos, error);
+}
+
 /* Text and enums flow end to end: mesh enums resolve their variant names, text
  * transforms build new text in fixed per-site slots (no allocation), and the
  * conversions bridge shapes. */
@@ -887,6 +978,7 @@ int main() {
     test_event_value();
     test_value_shape_diagnostics();
     test_colors();
+    test_tonemaps();
     test_text_and_enums();
     test_suspend_holds_text();
     test_document_tolerance();

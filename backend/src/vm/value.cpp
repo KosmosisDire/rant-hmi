@@ -93,7 +93,7 @@ bool value_same_scalar(const Value& a, const Value& b) {
     }
 }
 
-uint32_t parse_color(const std::string& text, bool& ok) {
+uint32_t parse_color(std::string_view text, bool& ok) {
     ok = false;
     if (text.size() != 4 && text.size() != 7 && text.size() != 9) return 0;
     if (text[0] != '#') return 0;

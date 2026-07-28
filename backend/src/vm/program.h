@@ -114,6 +114,12 @@ enum class Builtin : uint16_t {
     Name,
     FmtTime,
     FmtDuration,
+    Color,
+    Jet,
+    Hot,
+    CoolWarm,
+    Viridis,
+    Grayscale,
 };
 
 enum class MethodId : uint16_t {

@@ -277,6 +277,12 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"name", {Builtin::Name, 1, 1, {ANY}, Shape::Text, false}},
         {"fmtTime", {Builtin::FmtTime, 1, 1, {NUM}, Shape::Text, true}},
         {"fmtDuration", {Builtin::FmtDuration, 1, 1, {NUM}, Shape::Text, true}},
+        {"color", {Builtin::Color, 1, 1, {Shape::Text}, Shape::Color, true}},
+        {"jet", {Builtin::Jet, 1, 1, {NUM}, Shape::Color, true}},
+        {"hot", {Builtin::Hot, 1, 1, {NUM}, Shape::Color, true}},
+        {"coolWarm", {Builtin::CoolWarm, 1, 1, {NUM}, Shape::Color, true}},
+        {"viridis", {Builtin::Viridis, 1, 1, {NUM}, Shape::Color, true}},
+        {"grayscale", {Builtin::Grayscale, 1, 1, {NUM}, Shape::Color, true}},
     };
     return table;
 }
