@@ -563,6 +563,12 @@ button:focus-visible {
   align-items: start;
 }
 
+/* a variable body is one grid of its own: it takes the divider, not the numbered
+   two-column template a feed or flow body carries */
+.card-body.var-body {
+  display: block;
+}
+
 .card-foot {
   display: flex;
   justify-content: flex-end;
@@ -1123,11 +1129,6 @@ select.field {
   align-items: center;
   gap: 6px;
   min-width: 0;
-}
-
-/* keep reads as a second pair on the init line, so it is separated but not banished */
-.keep-label {
-  margin-left: 4px;
 }
 
 .now-value {
