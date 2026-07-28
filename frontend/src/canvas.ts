@@ -314,17 +314,25 @@ export function renderContent(
     );
     const surface = opaqueEnough(slot("surface"));
     const border = opaqueEnough(slot("border"));
-    if (surface || border)
+    /* an interact on the template ROOT owns the widget's whole face, so the generic
+       frame paint joins its element (a Panel's card, a Button's face are the thing the
+       operator presses); a nested interact leaves the frame inert (a Toggle's pill) */
+    const rootAct = Boolean(type && (type.template as Json)?.interact);
+    if (surface || border) {
+      if (rootAct) out.push(`<g data-act="0">`);
       out.push(
         `<rect x="${num(frame.x)}" y="${num(frame.y)}" width="${num(frame.w)}" ` +
           `height="${num(frame.h)}" rx="${num(radius)}" fill="${surface ?? "none"}"` +
           (border ? ` stroke="${border}" stroke-width="1.5"` : "") +
           `/>`,
       );
+      if (rootAct) out.push(`</g>`);
+    }
 
     if (type) {
       const rect = contentRect(frame, pad);
-      renderNode(type.template, rect, cellsFor(widget, type, live, view.state[widget.id] ?? {}), out);
+      renderNode(type.template, rect, cellsFor(widget, type, live, view.state[widget.id] ?? {}), out,
+                 { next: 0 });
     } else {
       out.push(
         `<text x="${num(widget.geom.x + widget.geom.w / 2)}" ` +

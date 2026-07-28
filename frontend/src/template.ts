@@ -156,11 +156,42 @@ interface Child {
   main: number;
 }
 
-export function renderNode(node: TemplateNode, rect: Rect, cells: Cells, out: string[]): void {
+/* Counts off the template's interact-carrying nodes in render order, so the DOM group a
+ * pointer event lands in names its interact by ordinal (shell.ts interactions() walks
+ * the same preorder). Consumed before the visibility check so a hidden interact keeps
+ * later ordinals stable; the one drift case, an interact nested under a hidden box that
+ * precedes another interact, exists in no type. */
+export interface ActCounter {
+  next: number;
+}
+
+export function renderNode(
+  node: TemplateNode,
+  rect: Rect,
+  cells: Cells,
+  out: string[],
+  acts?: ActCounter,
+): void {
   if (!node) return;
+  const act = (node as Json).interact && acts ? acts.next++ : -1;
   const attrs = (node as Json).attrs ?? {};
   if (attrs.show && !attrBool(attr(attrs, "show", cells), false)) return;
 
+  /* the browser's own SVG hit test resolves gestures: everything this node PAINTS is
+     the interactive element, whatever its shape, so the group carries the ordinal */
+  if (act >= 0) out.push(`<g data-act="${act}">`);
+  renderBody(node, rect, attrs, cells, out, acts);
+  if (act >= 0) out.push(`</g>`);
+}
+
+function renderBody(
+  node: TemplateNode,
+  rect: Rect,
+  attrs: Attrs,
+  cells: Cells,
+  out: string[],
+  acts?: ActCounter,
+): void {
   let area = rect;
   const aspect = attrNum(attr(attrs, "aspect", cells), 0);
   if (aspect > 0) area = fitAspect(area, aspect);
@@ -184,7 +215,7 @@ export function renderNode(node: TemplateNode, rect: Rect, cells: Cells, out: st
   if (!children.length) return;
 
   if (dir === "stack") {
-    for (const child of children) renderNode(child, area, cells, out);
+    for (const child of children) renderNode(child, area, cells, out, acts);
     return;
   }
 
@@ -222,6 +253,6 @@ export function renderNode(node: TemplateNode, rect: Rect, cells: Cells, out: st
       ? { x: at, y: area.y, w: c.main, h: area.h }
       : { x: area.x, y: at, w: area.w, h: c.main };
     at += c.main;
-    if (c.main > 0.5) renderNode(c.node, childRect, cells, out);
+    if (c.main > 0.5) renderNode(c.node, childRect, cells, out, acts);
   }
 }

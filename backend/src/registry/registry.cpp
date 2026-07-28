@@ -246,25 +246,34 @@ Json toggle_type() {
                              event("release", "bool", "!widget.value"),
                              event("press", "bool", "!widget.value"),
                              event("held", "bool", "!widget.value")}),
-                box("stack", Json{{"aspect", lit(2.0)}},
+                /* the interact rides the PILL box, not the template root: the pill (and
+                   its knob) is the element the pointer must be inside, so a visible
+                   frame behind the toggle never toggles (a root interact would fold the
+                   frame into the element, which is right for Button/Panel, wrong here) */
+                box("stack", Json::object(),
                     Json::array({
-                        part("rect", Json{{"fill", pick(on, ref("slot:on_color"),
-                                                        ref("slot:off_color"))},
-                                          {"radius", lit(999)}}),
-                        /* the knob rides between two spacers whose weights swap with
-                         * the value: position from data, no per-type code */
-                        box("row", Json{{"pad", lit(0.08)}},
+                        box("stack", Json{{"aspect", lit(2.0)}},
                             Json::array({
-                                box("stack", Json{{"weight", pick(on, lit(1), lit(0))}},
-                                    Json::array()),
-                                part("rect", Json{{"fill", ref("slot:knob_color")},
-                                                  {"radius", lit(999)},
-                                                  {"aspect", lit(1.0)}}),
-                                box("stack", Json{{"weight", pick(on, lit(0), lit(1))}},
-                                    Json::array()),
-                            })),
-                    }),
-                    press_interact()),
+                                part("rect", Json{{"fill", pick(on, ref("slot:on_color"),
+                                                                ref("slot:off_color"))},
+                                                  {"radius", lit(999)}}),
+                                /* the knob rides between two spacers whose weights swap
+                                 * with the value: position from data, no per-type code */
+                                box("row", Json{{"pad", lit(0.08)}},
+                                    Json::array({
+                                        box("stack",
+                                            Json{{"weight", pick(on, lit(1), lit(0))}},
+                                            Json::array()),
+                                        part("rect", Json{{"fill", ref("slot:knob_color")},
+                                                          {"radius", lit(999)},
+                                                          {"aspect", lit(1.0)}}),
+                                        box("stack",
+                                            Json{{"weight", pick(on, lit(0), lit(1))}},
+                                            Json::array()),
+                                    })),
+                            }),
+                            press_interact()),
+                    })),
                 /* every value-owning type's default is the same one step now: take what
                    the event proposes. The type-specific part lives in its events table */
                 Json::array({on_event("tap", {sets_slot("value", "x")})}));

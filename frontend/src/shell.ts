@@ -420,7 +420,9 @@ export class App implements Editor {
 
   private grabbable(ev: PointerEvent): boolean {
     const target = ev.target as Element | null;
-    if (this.view.mode !== "edit") return Boolean(target?.closest?.("[data-id]"));
+    /* operating: only an interactive ELEMENT claims the pointer, so a touch on a
+       widget's inert background can still pan the viewport */
+    if (this.view.mode !== "edit") return Boolean(target?.closest?.("[data-act]"));
     return Boolean(target?.closest?.("[data-id], [data-handle]"));
   }
 
@@ -541,17 +543,17 @@ export class App implements Editor {
     this.queueCanvas();
   }
 
-  private interaction(type: WidgetType | null): Interact | null {
-    const walk = (node: Json): Interact | null => {
-      if (!node) return null;
-      if (node.interact) return node.interact as Interact;
-      for (const child of node.children ?? []) {
-        const found = walk(child);
-        if (found) return found;
-      }
-      return null;
+  /* the type's interacts in template PREORDER: the same order the renderer counts them
+     off into data-act ordinals, so a hit group names its interact by index */
+  private interactions(type: WidgetType | null): Interact[] {
+    const out: Interact[] = [];
+    const walk = (node: Json): void => {
+      if (!node) return;
+      if (node.interact) out.push(node.interact as Interact);
+      for (const child of node.children ?? []) walk(child);
     };
-    return type ? walk(type.template) : null;
+    if (type) walk(type.template);
+    return out;
   }
 
   private controlCells(widget: Widget, type: WidgetType): (cell: string) => Json {
@@ -572,14 +574,22 @@ export class App implements Editor {
 
   private onControlDown(ev: PointerEvent): void {
     if (ev.button !== 0 || !this.viewport) return;
-    const page = this.page();
-    if (!page) return;
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const widget = this.store.widget(hitTest(page, at.x, at.y));
+    /* The browser's own SVG hit test decides what is interactive: a gesture starts only
+       on something PAINTED by an interact-carrying template element, so a circle hits
+       inside the circle and a toggle only on its pill, never the tile around it. The
+       group's ordinal names which of the type's interacts was hit. */
+    const target = ev.target as Element | null;
+    const hit = (target?.closest?.("[data-act]") ?? null) as Element | null;
+    if (!hit) return;
+    const holder = hit.closest("[data-id]");
+    const widget = this.store.widget(Number(holder?.getAttribute("data-id") ?? 0));
     if (!widget) return;
     const type = typeOf(this.registry, widget.type);
-    const interact = this.interaction(type);
+    const interact = type
+      ? this.interactions(type)[Number(hit.getAttribute("data-act") ?? 0)] ?? null
+      : null;
     if (!type || !interact) return;
+    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     const fed = fedSlots(widget);
     if (resolveSlot(widget, type, this.live, fed, "enabled") !== true) return;
     this.control = {
