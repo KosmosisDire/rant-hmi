@@ -422,12 +422,16 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     const width = Math.max(0.75, rect.h * 0.07);
     /* the bar is roughly the row above this one; its stroke for the cap clamp */
     const inset = Math.min(rect.w / 4, capOf(rect.h * 2.2) + width / 2);
+    /* the marks are round-capped strokes: their paint reaches half the width past
+       the endpoint, so the bar-facing end drops by that half plus a whisker of
+       gap, never touching the bar above (same clearance as the radial scales) */
+    const clear = width / 2 + rect.h * 0.06;
     const x0 = rect.x + inset;
     const spanW = Math.max(1, rect.w - 2 * inset);
     const spacing = spanW / (count - 1);
     for (let i = 0; i < count; ++i) {
       const x = x0 + spacing * i;
-      out.push(`<path d="M${n(x)} ${n(rect.y)} v${n(mark)}" stroke="${fill}" ` +
+      out.push(`<path d="M${n(x)} ${n(rect.y + clear)} v${n(mark)}" stroke="${fill}" ` +
                `stroke-width="${n(width)}" stroke-linecap="round"/>`);
     }
     if (!labels) return;
@@ -440,9 +444,9 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
       if (every > 1 && i % every !== 0 && i !== count - 1) continue;
       const half = (0.58 * size * texts[i].length) / 2;
       const x = Math.max(rect.x + half, Math.min(rect.x + rect.w - half, x0 + spacing * i));
-      out.push(`<text x="${n(x)}" y="${n(rect.y + mark + size * 0.65)}" fill="${textFill}" ` +
-               `font-size="${n(size)}" text-anchor="middle" dominant-baseline="central">` +
-               `${escapeXml(texts[i])}</text>`);
+      out.push(`<text x="${n(x)}" y="${n(rect.y + clear + mark + size * 0.65)}" ` +
+               `fill="${textFill}" font-size="${n(size)}" text-anchor="middle" ` +
+               `dominant-baseline="central">${escapeXml(texts[i])}</text>`);
     }
     return;
   }
