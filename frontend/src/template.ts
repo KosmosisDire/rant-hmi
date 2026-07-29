@@ -57,6 +57,27 @@ function n(value: number): string {
   return value.toFixed(2);
 }
 
+/* ---- clipping ----
+ *
+ * One generic mechanism: `clipTo` opens an SVG clipPath over a rounded rect and
+ * returns the tag that closes it. Any template node may declare a `clip` attr (true =
+ * its own rect, a number = its rect rounded by that radius) and everything the node
+ * paints stays inside it; the bar part uses the same helper so its fill is ALWAYS
+ * clipped by the track's shape. Ids only need to be unique within the current
+ * document, so a forever-incrementing serial is enough (each render replaces the SVG
+ * wholesale). */
+let clipSerial = 0;
+
+function clipTo(rect: Rect, radius: number, out: string[]): string {
+  const id = "clip" + ++clipSerial;
+  const r = Math.min(Math.max(0, radius), Math.min(rect.w, rect.h) / 2);
+  out.push(
+    `<clipPath id="${id}"><rect x="${n(rect.x)}" y="${n(rect.y)}" width="${n(rect.w)}" ` +
+      `height="${n(rect.h)}" rx="${n(r)}"/></clipPath><g clip-path="url(#${id})">`,
+  );
+  return `</g>`;
+}
+
 /* ---- draw parts ---- */
 
 function drawRect(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
@@ -89,10 +110,13 @@ function drawBar(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
     const w = vertical ? rect.w : rect.w * value;
     const h = vertical ? rect.h * value : rect.h;
     const y = vertical ? rect.y + rect.h - h : rect.y;
+    /* the fill is CLIPPED BY THE TRACK, never rounded on its own: its leading edge
+       stays straight, and its outer corners follow the track's shape exactly */
+    const close = clipTo(rect, radius, out);
     out.push(
-      `<rect x="${n(rect.x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" ` +
-        `rx="${n(Math.min(radius, Math.min(w, h) / 2))}" fill="${fill}"/>`,
+      `<rect x="${n(rect.x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" fill="${fill}"/>`,
     );
+    out.push(close);
   }
 }
 
@@ -291,6 +315,11 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const width = Math.max(0.75, f.radius * 0.018);
   /* option names run longer than numbers, so they set a little smaller */
   const size = Math.max(5, f.radius * (names ? 0.11 : 0.16));
+  /* a scale OUTSIDE the control keeps its marks closest to it and sets the values
+     beyond them (labels_out); an inside scale mirrors that, values further in */
+  const labelAt = attrBool(attr(attrs, "labels_out", cells), false)
+    ? outer + size * 0.75
+    : outer - len - size * 0.9;
   for (let i = 0; i < count; ++i) {
     const angle = f.start + (f.sweep * i) / (count - 1);
     const [x0, y0] = polar(f.cx, f.cy, outer - len, angle);
@@ -298,7 +327,7 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     out.push(`<path d="M${n(x0)} ${n(y0)} L${n(x1)} ${n(y1)}" stroke="${fill}" ` +
              `stroke-width="${n(width)}" stroke-linecap="round"/>`);
     if (!labels) continue;
-    const [tx, ty] = polar(f.cx, f.cy, outer - len - size * 0.9, angle);
+    const [tx, ty] = polar(f.cx, f.cy, labelAt, angle);
     out.push(`<text x="${n(tx)}" y="${n(ty)}" fill="${textFill}" font-size="${n(size)}" ` +
              `text-anchor="middle" dominant-baseline="central">` +
              `${escapeXml(label(i))}</text>`);
@@ -473,6 +502,26 @@ function renderBody(
   const pad = attrNum(attr(attrs, "pad", cells), 0);
   if (pad > 0) area = inset(area, pad * Math.min(area.w, area.h));
 
+  /* generic clipping: a node with `clip` keeps everything it paints inside its own
+     area (true = square, a number = that corner radius) */
+  const clipRaw = attrs && attrs.clip ? attr(attrs, "clip", cells) : null;
+  if (clipRaw !== null && clipRaw !== false) {
+    const close = clipTo(area, clipRaw === true ? 0 : attrNum(clipRaw, 0), out);
+    renderClipped(node, area, attrs, cells, out, acts);
+    out.push(close);
+    return;
+  }
+  renderClipped(node, area, attrs, cells, out, acts);
+}
+
+function renderClipped(
+  node: TemplateNode,
+  area: Rect,
+  attrs: Attrs,
+  cells: Cells,
+  out: string[],
+  acts?: ActCounter,
+): void {
   if (node.kind === "part") {
     switch (node.draw) {
       case "rect": drawRect(area, attrs, cells, out); return;

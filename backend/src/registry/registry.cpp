@@ -528,12 +528,15 @@ Json knob_type() {
                     {"value", fraction},
                     {"width", ref("slot:thickness")},
                     {"pad", pick(show_scale, lit(0.15), lit(0))}};
+    /* the outside scale reads control-outward: marks hug the arc, values sit beyond
+       the marks */
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
+                      {"labels_out", lit(true)},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
-                      {"outer", lit(1.0)},
+                      {"outer", lit(0.8)},
                       {"len", lit(0.07)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
@@ -758,13 +761,14 @@ Json selector_type() {
                        {"inner", lit(0.25)},
                        {"outer", pick(ref("slot:show_scale"), lit(0.58), lit(0.78))},
                        {"width", lit(0.09)}};
-    /* one detent mark per option on the rim; scale_values sets each option's NAME
-       beside its mark (the Selector never shows the current selection as text: a
-       value readout is the user's own Label, fed from the value slot) */
+    /* one detent mark per option hugging the body, each option's NAME beyond its
+       mark when scale_values is on (the Selector never shows the current selection
+       as text: a value readout is the user's own Label, fed from the value slot) */
     Json ticks = Json{{"count", ref("optcount:options")},
                       {"names", ref("optnames:options")},
                       {"labels", ref("slot:scale_values")},
-                      {"outer", lit(1.0)},
+                      {"labels_out", lit(true)},
+                      {"outer", lit(0.78)},
                       {"len", lit(0.08)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", ref("slot:text_color")},

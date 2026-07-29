@@ -631,6 +631,7 @@ class Compiler {
     void bind_timer(ExpressionScope& scope, const std::string& name, uint32_t index) {
         scope.qualified[name + ".running"] = Binding{Shape::Bool, OpCode::TmrRead, index, 0};
         scope.qualified[name + ".remaining"] = Binding{Shape::Num, OpCode::TmrRead, index, 1};
+        scope.qualified[name + ".progress"] = Binding{Shape::Num, OpCode::TmrRead, index, 3};
         scope.qualified[name + ".duration"] = Binding{Shape::Num, OpCode::TmrRead, index, 2};
     }
 

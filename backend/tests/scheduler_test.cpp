@@ -435,7 +435,13 @@ Json timer_read_root(const std::string& surface_xf) {
                                Json{{"slot", "decimals"},
                                     {"src", Json{{"kind", "V"}, {"name", ""}}},
                                     {"path", ""},
-                                    {"xf", "blink.duration * 1000"}}})},
+                                    {"xf", "blink.duration * 1000"}},
+                               /* the fraction finished, 0..1, with no knowledge of
+                                  the total time */
+                               Json{{"slot", "text_scale"},
+                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
+                                    {"path", ""},
+                                    {"xf", "blink.progress"}}})},
         {"flows", Json::array()},
     };
     /* the pressed-recently treatment (a CASED feed over the timer): the arm is a
@@ -476,12 +482,15 @@ void test_timer_reads() {
     const uint32_t surface = scheduler.program().feeds[0].cell;
     const uint32_t remaining = scheduler.program().feeds[1].cell;
     const uint32_t duration = scheduler.program().feeds[2].cell;
-    const uint32_t track_color = scheduler.program().feeds[3].cell;
+    const uint32_t progress = scheduler.program().feeds[3].cell;
+    const uint32_t track_color = scheduler.program().feeds[4].cell;
 
     tick(scheduler, 1);
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().values[remaining].data.num == 0);
     CHECK(scheduler.state().values[duration].data.num == 4);
+    /* an idle timer's remaining is zero, so it reads as finished */
+    CHECK(scheduler.state().values[progress].data.num == 1);
     CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
 
     scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
@@ -491,13 +500,17 @@ void test_timer_reads() {
     CHECK(scheduler.state().values[track_color].data.rgba == 0x885a1fffu);
     const double started = scheduler.state().values[remaining].data.num;
     CHECK(started >= 3 && started <= 4);
+    /* progress tracks remaining with no knowledge of the total */
+    CHECK(scheduler.state().values[progress].data.num == 1.0 - started / 4.0);
     tick(scheduler, 2);
     CHECK(scheduler.state().values[remaining].data.num == started - 2);
+    CHECK(scheduler.state().values[progress].data.num == 1.0 - (started - 2) / 4.0);
 
     tick(scheduler, 6);
     CHECK(!scheduler.state().timers[0].running);
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().values[remaining].data.num == 0);
+    CHECK(scheduler.state().values[progress].data.num == 1);
     CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
 
     /* a BARE timer (named or as x) has no scalar to be, and an unknown field is named */

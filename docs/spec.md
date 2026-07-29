@@ -355,10 +355,12 @@ holds; value fractions map onto the sweep. `arc` strokes the track over the whol
 sweep and the fill over the value's fraction of it (`width` = stroke as a radius
 fraction); `needle` is a pointer line from `inner` to `outer` with an optional
 center `hub`; `mark` is the grabbable dot at radius fraction `at`; `ticks` spreads
-`count` scale markers over the sweep with optional numeric labels interpolated
-min..max (the one text a radial control renders besides its own `text` slot). A
-null value draws no fill, no needle and no mark: UNKNOWN is never an invented
-position.
+`count` scale markers over the sweep with optional labels: numeric min..max
+interpolation, or per-tick text via `names` (the one text a radial control renders
+besides its own `text` slot). A scale reads control-outward: the marks sit closest
+to the control and the values beyond them (`labels_out` for an outside scale, the
+mirrored default for an inside one). A null value draws no fill, no needle and no
+mark: UNKNOWN is never an invented position.
 
 **Layout: scale to fit, always.** Template geometry is proportional, never
 absolute: a box lays out its children by `dir` with per-child `weight` and
@@ -376,6 +378,12 @@ a part marked `oneline` (the dropdown's value) shows a break as a space instead.
 refs for anything finer. The contract this buys: a widget always fills its tile
 and stays legible at every size the grid allows, so the user's job is composing
 the UI, never fitting it.
+
+**Clipping is generic.** Any node may declare a `clip` attr: everything it paints
+stays inside its own area (true = square, a number = that corner radius), one
+mechanism for every template. The `bar` part uses it internally: its fill is
+ALWAYS clipped by the track's rounded shape, so the leading edge stays straight
+and the outer corners follow the track exactly, never a separately rounded blob.
 
 **Text belongs to the user.** Built-in templates carry text only where it is
 integral to the control: a button's `text`, a dropdown's selected value, and the
@@ -605,10 +613,13 @@ as its variant name. Scalar wire types need no such distinction (`f64` covers th
 enums do, because the vocabulary IS the type.
 
 A timer is not a special mechanism: it is a
-variable whose value is `{ running: bool, remaining: s, duration: s }`, readable in
-expressions as `t.running`, `t.remaining` and `t.duration` (seconds; the state is
-read from the timer table at evaluation, so a computed binding tracks a countdown
-live). A bare `t` has no scalar to be and is refused with the fields named. That
+variable whose value is `{ running: bool, remaining: s, duration: s, progress }`,
+readable in expressions as `t.running`, `t.remaining`, `t.duration` (seconds) and
+`t.progress` (the FRACTION finished, 0..1, readable with no knowledge of the total
+time: what a progress bar or a sweep arc binds to; an idle timer's remaining is
+zero, so it reads as finished). The state is read from the timer table at
+evaluation, so a computed binding tracks a countdown live. A bare `t` has no
+scalar to be and is refused with the fields named. That
 one decision removes hidden timer
 objects from the model: users manage them like any other variable, and there is
 nothing to garbage-collect.

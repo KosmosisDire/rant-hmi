@@ -250,7 +250,11 @@ Json App::live() const {
         values["v" + std::to_string(def.node_id)] =
             Json{{"running", timer.running},
                  {"remaining", static_cast<double>(timer.remaining) / 1000.0},
-                 {"duration", static_cast<double>(def.duration_ticks) / 1000.0}};
+                 {"duration", static_cast<double>(def.duration_ticks) / 1000.0},
+                 {"progress", def.duration_ticks
+                                  ? 1.0 - static_cast<double>(timer.remaining) /
+                                              def.duration_ticks
+                                  : 0.0}};
     }
     return Json{{"epoch", epoch_}, {"values", std::move(values)}};
 }

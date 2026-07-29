@@ -886,12 +886,12 @@ class Parser {
             if (scope_.x_shape == Shape::Timer) {
                 if (scope_.x_timer == UINT32_MAX) {
                     fail("x is a timer event here; read the timer variable's fields "
-                         "instead (t.running / t.remaining / t.duration)");
+                         "instead (t.running / t.remaining / t.duration / t.progress)");
                     return Shape::Unknown;
                 }
                 if (token_.kind != TokenKind::Dot) {
                     fail("x is a timer here; pick a field "
-                         "(x.running / x.remaining / x.duration)");
+                         "(x.running / x.remaining / x.duration / x.progress)");
                     return Shape::Unknown;
                 }
                 advance();
@@ -903,8 +903,9 @@ class Parser {
                 advance();
                 const uint32_t which = field == "running" ? 0u
                                      : field == "remaining" ? 1u
-                                     : field == "duration" ? 2u : 3u;
-                if (which == 3u) {
+                                     : field == "duration" ? 2u
+                                     : field == "progress" ? 3u : 4u;
+                if (which == 4u) {
                     fail("unknown field 'x." + field + "'");
                     return Shape::Unknown;
                 }
@@ -951,7 +952,7 @@ class Parser {
                                  found->second.shape == Shape::Timer;
             if (found->second.shape == Shape::Timer && token_.kind != TokenKind::Dot) {
                 fail("'" + name + "' is a timer; read a field (" + name +
-                     ".running / .remaining / .duration)");
+                     ".running / .remaining / .duration / .progress)");
                 return Shape::Unknown;
             }
             if (!fielded || token_.kind != TokenKind::Dot)

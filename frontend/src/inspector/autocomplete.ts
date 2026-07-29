@@ -428,6 +428,7 @@ const TIMER_FIELDS: MeshField[] = [
   { path: "running", shape: "bool" },
   { path: "remaining", shape: "num" },
   { path: "duration", shape: "num" },
+  { path: "progress", shape: "num" },
 ];
 
 /* the standing name vocabulary at a widget: its slots as widget.<name>, then every

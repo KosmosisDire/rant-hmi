@@ -1288,14 +1288,20 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 const TimerState& timer = state.timers[ins.a];
                 /* ticks are milliseconds; the fields speak SECONDS, like a timer's
-                   declared duration does */
+                   declared duration does. `progress` is the FRACTION finished, 0..1,
+                   readable with no knowledge of the total time (an idle timer reads
+                   as finished: its remaining is zero). */
+                const uint32_t duration = program.timers[ins.a].duration_ticks;
                 const Value value =
                     ins.b == 0 ? Value::boolean(timer.running)
                     : ins.b == 1
                         ? Value::number(static_cast<double>(timer.remaining) / 1000.0)
+                    : ins.b == 2
+                        ? Value::number(static_cast<double>(duration) / 1000.0)
                         : Value::number(
-                              static_cast<double>(program.timers[ins.a].duration_ticks) /
-                              1000.0);
+                              duration ? 1.0 - static_cast<double>(timer.remaining) /
+                                                   duration
+                                       : 0.0);
                 if (!push(value)) fail(ins.c);
                 break;
             }
