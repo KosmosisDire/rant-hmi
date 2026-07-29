@@ -112,13 +112,15 @@ void visit_site(Role role, Json& value, const std::string& from, const std::stri
             if (value.contains("kind")) visit_site(Role::EntityRef, value, from, to, hits);
             return;
         }
-        /* a feed's case arms: each entry's expression is an ordinary Expr site */
+        /* a feed's case arms: the expression and any predicate are ordinary Expr sites */
         case Role::Cases: {
             if (!value.is_array()) return;
             for (Json& entry : value) {
                 if (!entry.is_object()) continue;
                 if (auto xf = entry.find("xf"); xf != entry.end())
                     visit_site(Role::Expr, *xf, from, to, hits);
+                if (auto test = entry.find("test"); test != entry.end())
+                    visit_site(Role::Expr, *test, from, to, hits);
             }
             return;
         }

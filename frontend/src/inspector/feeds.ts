@@ -23,7 +23,10 @@ import { sourceField } from "./editors.js";
 import { highlighted } from "../highlight.js";
 
 export function feedShape(feed: Feed): Json {
-  return [feed.id, feed.slot, feed.src?.kind ?? "V", (feed.cases ?? []).length];
+  return [feed.id, feed.slot, feed.src?.kind ?? "V",
+          /* per-arm MODE is structure: a value arm and a predicate arm are different
+             controls, so flipping one rebuilds its row */
+          (feed.cases ?? []).map((c) => (c.test !== undefined ? "t" : "v")).join("")];
 }
 
 /* the enum vocabulary behind the feed's source, when it has one */
@@ -121,22 +124,56 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
 
   /* the case rows: condition column, expression column; the else is the feed's xf */
   const block = el("div", { class: "feed-block" }, [line]);
-  const editCase = (index: number, patch: Partial<{ when: Json; xf: string }>) => {
-    const list = ((at().cases ?? []) as { when: Json; xf: string }[]).slice();
+  type Case = { when?: Json; test?: string; xf: string };
+  const editCase = (index: number, next: Case) => {
+    const list = ((at().cases ?? []) as Case[]).slice();
     if (index >= list.length) return;
-    list[index] = { ...list[index], ...patch };
+    list[index] = next;
     set("cases", list);
   };
+  const heldCase = (index: number): Case => (at().cases ?? [])[index] ?? { xf: "" };
   const variants = sourceVariants(editor, at);
 
   cases.forEach((entry, index) => {
     const key = feed.id + ":case" + index;
+
+    /* a PREDICATE arm: the condition is its own expression; clearing it returns the
+       arm to value matching */
+    if (entry.test !== undefined) {
+      const test = commitInput(entry.test ?? "", (text) => {
+        const held = heldCase(index);
+        editCase(index, text.trim()
+          ? { test: text, xf: held.xf }
+          : { when: null, xf: held.xf });
+      }, { class: "field grow", placeholder: "condition" });
+      bindField(key + ".test", test, () => String(heldCase(index).test ?? ""));
+      attachAutocomplete(test,
+        exprContext(editor, widget, "display", feedX(editor, widget, at)));
+      block.appendChild(
+        el("div", { class: "feed-case" }, [
+          highlighted(test, "when"),
+          el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
+          xfInput(key + ".xf", () => String(heldCase(index).xf ?? ""),
+                  (text) => editCase(index, { ...heldCase(index), xf: text }),
+                  "expression"),
+          diagIcon(editor.diagAt(feed.id, "case" + index)),
+          iconButton("x", "remove this case", () => {
+            const list = ((at().cases ?? []) as Json[]).slice();
+            list.splice(index, 1);
+            set("cases", list);
+          }),
+        ]),
+      );
+      return;
+    }
+
     let when: HTMLElement;
     if (variants.length) {
       const options = [{ value: "" }, ...variants.map((v) => ({ value: v.name }))];
       const picker = selectField(options,
                                  typeof entry.when === "string" ? entry.when : "",
-                                 (name) => editCase(index, { when: name }));
+                                 (name) => editCase(index, { when: name,
+                                                             xf: heldCase(index).xf }));
       bindChoice(key + ".when", pickerOf(picker), () => {
         const held = (at().cases ?? [])[index]?.when;
         return typeof held === "string" ? held : "";
@@ -156,6 +193,7 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
               : Number.isFinite(numeric) && trimmed !== "" && !Number.isNaN(numeric) &&
                 /^[-+0-9.eE]+$/.test(trimmed) ? numeric
               : trimmed,
+            xf: heldCase(index).xf,
           });
         },
         { class: "field num", placeholder: "value" });
@@ -168,10 +206,14 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     block.appendChild(
       el("div", { class: "feed-case" }, [
         when,
+        /* the way out of value matching: make this arm a PREDICATE (`x[8] == 4100`) */
+        iconButton("pencil", "match with a condition instead", () =>
+          editCase(index, { test: "", xf: heldCase(index).xf })),
         el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
         xfInput(key + ".xf",
                 () => String((at().cases ?? [])[index]?.xf ?? ""),
-                (text) => editCase(index, { xf: text }), "expression"),
+                (text) => editCase(index, { ...heldCase(index), xf: text }),
+                "expression"),
         diagIcon(editor.diagAt(feed.id, "case" + index)),
         iconButton("x", "remove this case", () => {
           const list = ((at().cases ?? []) as Json[]).slice();

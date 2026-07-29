@@ -815,6 +815,42 @@ class Compiler {
         uint32_t index = 0;
         for (const Json& entry : cases) {
             const std::string where = "case" + std::to_string(index);
+
+            /* a PREDICATE arm ({test}): any boolean expression over x, for the matches
+               a value cannot spell (`x[8] == 4100 or x[8] == 4`). It counts toward no
+               coverage: nothing about it can be analyzed, and is not meant to be. */
+            if (entry.is_object() && entry.contains("test")) {
+                const std::string test = str_or(entry, "test", "");
+                if (test.empty()) {
+                    diag(feed.feed_id, "case_when", "write this case's condition",
+                         DiagGrade::Error, where);
+                    return false;
+                }
+                if (!expression(feed.feed_id, test, ExprTier::Display, scope, Shape::Bool,
+                                feed.code, feed.max_stack, nullptr, where))
+                    return false;
+                const uint32_t skip = static_cast<uint32_t>(feed.code.size());
+                Instruction branch;
+                branch.op = OpCode::JmpFalse;
+                branch.c = fault_site(feed.feed_id, "case_when",
+                                      "the case could not compare");
+                feed.code.push_back(branch);
+                const std::string xf = str_or(entry, "xf", "");
+                if (xf.empty()) {
+                    diag(feed.feed_id, "expression", "this case needs an expression",
+                         DiagGrade::Error, where);
+                    return false;
+                }
+                if (!expression(feed.feed_id, xf, ExprTier::Display, scope, wanted,
+                                feed.code, feed.max_stack, nullptr, where))
+                    return false;
+                ends.push_back(static_cast<uint32_t>(feed.code.size()));
+                feed.code.push_back(Instruction{OpCode::Jmp});
+                feed.code[skip].a = static_cast<uint32_t>(feed.code.size());
+                ++index;
+                continue;
+            }
+
             const Json when = entry.is_object() && entry.contains("when") ? entry["when"]
                                                                           : Json();
             Value key = Value::nil();

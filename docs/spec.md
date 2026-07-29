@@ -385,9 +385,12 @@ tick; `x` is Nil, there being nothing for it to be. A binding with neither a sou
 nor an expression is the finding "pick a source, or write an expression".
 
 **Cases: discrete pattern matching over x.** A feed may carry
-`cases: [{when, xf}]`: each arm compares x against a scalar (an enum source's `when`
-is a variant NAME, picked from its vocabulary; a number or bool otherwise), first
-match wins top to bottom, and the feed's own `xf` is the else. An EMPTY else means
+`cases: [{when, xf} | {test, xf}]`, first match wins top to bottom, and the feed's
+own `xf` is the else. A VALUE arm (`when`) compares x against a scalar (an enum
+source's `when` is a variant NAME, picked from its vocabulary; a number or bool
+otherwise). A PREDICATE arm (`test`) is any boolean expression over x, for the
+matches a value cannot spell (`x[8] == 4100 or x[8] == 4`); it counts toward no
+coverage, since nothing about it can be analyzed. An EMPTY else means
 what an empty inline transform means: the value PASSES THROUGH (an enum into a text
 slot as its name), so cases read as "override these values, show the rest as
 themselves". COVERAGE IS CHECKED exactly where pass-through is impossible: a value

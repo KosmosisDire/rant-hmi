@@ -89,8 +89,10 @@ export interface Feed {
   path: string;
   /* with `cases`, the ELSE arm; alone, the whole transform */
   xf: string;
-  /* discrete pattern matching over x (spec 2.4): first match wins */
-  cases?: { when: Json; xf: string }[];
+  /* discrete pattern matching over x (spec 2.4): first match wins. An arm matches a
+     VALUE ({when}, counted toward coverage) or a PREDICATE ({test}, any boolean
+     expression), key-discriminated like a move's sides. */
+  cases?: { when?: Json; test?: string; xf: string }[];
   poll_hz: number | null;
   stale_ms: number | null;
 }
