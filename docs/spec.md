@@ -391,6 +391,23 @@ control-outward: the marks sit closest to the control and the values beyond them
 null value draws no fill, no needle and no mark: UNKNOWN is never an invented
 position.
 
+**The tick and label rules**, shared by every tick-bearing control (one drawer
+draws them all): a label anchors a small gap past its mark and its box is pushed
+away along the tick's own direction, so the edge facing the tick is centered ON
+the tick (a top label sits above its tick, horizontally centered; a side label
+sits beside it, vertically centered) and never overlaps the mark. Marks never
+overlap each other (their width caps at a third of their spacing); labels never
+collide either: the size shrinks toward a readable floor first, and past it
+labels are thinned (every k-th drawn, the last always) instead of made
+illegible. Turning an outside scale on shrinks the control (`outer` reserves the
+rim), and the labels repay it by sizing to fit between the marks and the rim, so
+they never spill out of the tile; the fit's `flare` widens the extent past the
+sweep ends for the end labels' room. The END ticks sit a few degrees INSIDE the
+sweep (`inset`, derived from the arc's thickness): fully inside the arc's
+rounded end caps, deliberately a hair inside the true endpoint, because the end
+labels read as the endpoints' marks either way and a tick riding the cap's curve
+looks broken.
+
 **Radial fit.** Where the circle sits in the part's rect is the `fit` attr. The
 default, `circle`, inscribes the full circle centered (the Selector's round body
 stays physically round whatever its sweep). `extent` scales and places the circle
@@ -765,15 +782,19 @@ on anything else. The plot part (2.3) draws whatever the `hist:<slot>` cell
 resolves to; its only text is the hi/lo scale markers.
 
 **Smoothing is display-tier.** The ring always keeps the raw truth; the Trend's
-two knobs shape only the drawn copy, recomputed per render (deriving pixels from
-backend-authoritative values is rendering, not truth), so they cost no state, no
-wire change, and no history migration. `kalman` (0..1, 0 = off) runs a 1D
-constant-velocity Kalman filter per series, the knob setting how much the model
-outweighs the measurements (noise rejection with little lag); `smoothing` (0..1,
-0 = off) is an exponential moving average on top, plain temporal smoothing. They
-compose, autoscale reads the smoothed values (the plot fits what it shows), and
-a null sample resets both filters and still breaks the line: a gap is never
-bridged by a filter's memory.
+two knobs shape only the drawn copy (deriving pixels from backend-authoritative
+values is rendering, not truth), so they cost no wire change and no history
+migration. `kalman` (0..1, 0 = off) runs a 1D constant-velocity Kalman filter
+per series, the knob setting how much the model outweighs the measurements
+(noise rejection with little lag); `smoothing` (0..1, 0 = off) is an exponential
+moving average on top, plain temporal smoothing. They compose, autoscale reads
+the smoothed values (the plot fits what it shows), and a null sample resets both
+filters and still breaks the line: a gap is never bridged by a filter's memory.
+The filters are causal and their state PERSISTS per view, advancing only over
+newly arrived samples: refiltering the window from scratch would re-seed at
+whatever sample rides the window's edge, and the whole drawn line would re-shape
+as the ring scrolls. A knob change or a replaced ring refilters once, from the
+oldest sample still held.
 
 ## 3. The frontend
 

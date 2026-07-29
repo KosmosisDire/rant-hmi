@@ -219,7 +219,10 @@ function radialFrame(rect: Rect, attrs: Attrs, cells: Cells): RadialFrame {
   const sweep = Math.max(1, Math.min(360, attrNum(attr(attrs, "sweep", cells), 270)));
   if (attrText(attr(attrs, "fit", cells)) === "extent") {
     const core = Math.max(0, Math.min(1, attrNum(attr(attrs, "core", cells), 0)));
-    const b = radialExtent(start, sweep, core);
+    /* `flare` (degrees) widens the extent past each sweep end: the room the ends'
+       tick labels take, so a shown scale never spills out of the tile */
+    const flare = Math.max(0, attrNum(attr(attrs, "flare", cells), 0));
+    const b = radialExtent(start - flare, Math.min(360, sweep + 2 * flare), core);
     const scale = Math.min(rect.w / b.w, rect.h / b.h);
     return {
       cx: rect.x + (rect.w - scale * b.w) / 2 - scale * b.x,
@@ -419,25 +422,66 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const f = radialFrame(rect, attrs, cells);
   const outer = f.radius * attrNum(attr(attrs, "outer", cells), 1);
   const len = f.radius * attrNum(attr(attrs, "len", cells), 0.1);
-  const width = Math.max(0.75, f.radius * 0.018);
-  /* option names run longer than numbers, so they set a little smaller */
-  const size = Math.max(5, f.radius * (names ? 0.11 : 0.16));
-  /* a scale OUTSIDE the control keeps its marks closest to it and sets the values
-     beyond them (labels_out); an inside scale mirrors that, values further in */
-  const labelAt = attrBool(attr(attrs, "labels_out", cells), false)
-    ? outer + size * 0.75
-    : outer - len - size * 0.9;
+  /* the END ticks sit INSIDE the sweep by `inset` degrees (the registry derives it
+     from the arc's thickness: enough to clear the rounded end caps and the tick's
+     own stroke). A hair inside the true endpoint, deliberately: the end labels
+     read as the endpoints' marks either way, and a tick riding the cap's curve
+     looks broken */
+  const inset = Math.max(0, Math.min(attrNum(attr(attrs, "inset", cells), 0), f.sweep / 4));
+  const a0 = f.start + inset;
+  const span = Math.max(1, f.sweep - 2 * inset);
+  const angleOf = (i: number) => a0 + (span * i) / (count - 1);
+  /* the angular pitch between marks, and the tangential room it leaves at a radius:
+     the one crowding measure marks and labels both size against */
+  const pitch = (span / (count - 1)) * (Math.PI / 180);
+  const roomAt = (r: number) => 2 * r * Math.sin(Math.min(Math.PI / 2, pitch / 2));
+  /* marks never overlap each other: their width caps at a third of their spacing */
+  const width = Math.max(0.75, Math.min(f.radius * 0.018, roomAt(outer) / 3));
   for (let i = 0; i < count; ++i) {
-    const angle = f.start + (f.sweep * i) / (count - 1);
+    const angle = angleOf(i);
     const [x0, y0] = polar(f.cx, f.cy, outer - len, angle);
     const [x1, y1] = polar(f.cx, f.cy, outer, angle);
     out.push(`<path d="M${n(x0)} ${n(y0)} L${n(x1)} ${n(y1)}" stroke="${fill}" ` +
              `stroke-width="${n(width)}" stroke-linecap="round"/>`);
-    if (!labels) continue;
-    const [tx, ty] = polar(f.cx, f.cy, labelAt, angle);
-    out.push(`<text x="${n(tx)}" y="${n(ty)}" fill="${textFill}" font-size="${n(size)}" ` +
+  }
+  if (!labels) return;
+
+  /* ---- the label rules, shared by every tick-bearing control ----
+     1. a label never overlaps its mark: it anchors a small gap past the mark's end,
+        and its box is pushed AWAY along the tick's own direction, so the edge that
+        faces the tick is centered ON the tick (a top label sits above its tick,
+        horizontally centered; a side label sits beside it, vertically centered);
+     2. turning labels on shrinks the control (its `outer` reserves the rim), and
+        the labels repay it: the size shrinks until the longest label fits between
+        the marks and the rim, so a label never spills out of the tile;
+     3. neighboring labels never collide: the size shrinks toward a readable floor
+        first, and past the floor labels are THINNED (every k-th drawn, the last
+        always) rather than made illegible. */
+  const texts: string[] = [];
+  for (let i = 0; i < count; ++i) texts.push(label(i));
+  const chars = Math.max(1, ...texts.map((t) => t.length));
+  const outSide = attrBool(attr(attrs, "labels_out", cells), false);
+  /* option names run longer than numbers, so they start a little smaller */
+  let size = Math.max(5, f.radius * (names ? 0.11 : 0.16));
+  if (outSide)
+    size = Math.min(size, Math.max(6, (f.radius - outer) / (0.35 + 0.58 * chars)));
+  const room = roomAt(outSide ? outer : Math.max(1, outer - len)) * 0.9;
+  if (0.58 * size * chars > room) size = Math.max(6, room / (0.58 * chars));
+  const every = Math.max(1, Math.ceil((0.58 * size * chars) / Math.max(1, room)));
+  const anchorR = outSide ? outer + size * 0.35 : outer - len - size * 0.35;
+  for (let i = 0; i < count; ++i) {
+    if (every > 1 && i % every !== 0 && i !== count - 1) continue;
+    const angle = angleOf(i);
+    const rad = angle * (Math.PI / 180);
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad);
+    const push = outSide ? 1 : -1;
+    const [px, py] = polar(f.cx, f.cy, anchorR, angle);
+    const cx = px + push * dx * ((0.58 * size * texts[i].length) / 2);
+    const cy = py + push * dy * (size * 0.6);
+    out.push(`<text x="${n(cx)}" y="${n(cy)}" fill="${textFill}" font-size="${n(size)}" ` +
              `text-anchor="middle" dominant-baseline="central">` +
-             `${escapeXml(label(i))}</text>`);
+             `${escapeXml(texts[i])}</text>`);
   }
 }
 
@@ -474,53 +518,107 @@ function rotateHue(hex: string, index: number): string {
  * 0 = off). The two compose: Kalman rejects measurement noise with little lag,
  * the EMA adds plain temporal smoothing on top. A null sample resets both and still
  * breaks the line: a gap is a gap, never bridged by a filter's memory. */
+interface SmoothState {
+  started: boolean;
+  x: number; v: number;
+  p00: number; p01: number; p10: number; p11: number;
+  ema: number;
+}
+
+function freshSmooth(): SmoothState {
+  return { started: false, x: 0, v: 0, p00: 1, p01: 0, p10: 0, p11: 1, ema: 0 };
+}
+
+/* one sample through the filter pair; mutates the per-series state */
+function smoothStep(
+  st: SmoothState, z: number | null, kalman: number, smoothing: number,
+): number | null {
+  if (typeof z !== "number" || !isFinite(z)) {
+    st.started = false; /* a gap resets both filters: never bridged by their memory */
+    return null;
+  }
+  if (!st.started) {
+    st.started = true;
+    st.x = z; st.v = 0; st.p00 = 1; st.p01 = 0; st.p10 = 0; st.p11 = 1; st.ema = z;
+    return z; /* the first sample of a run passes through unchanged */
+  }
+  let filtered = z;
+  if (kalman > 0) {
+    /* r fixed at 1, q from the knob: small q trusts the model, large q the data */
+    const q = Math.pow(10, 1 - 5 * kalman);
+    /* predict (constant velocity, dt = 1 sample) ... */
+    st.x += st.v;
+    const a00 = st.p00 + st.p10 + st.p01 + st.p11 + q / 4;
+    const a01 = st.p01 + st.p11 + q / 2;
+    const a10 = st.p10 + st.p11 + q / 2;
+    const a11 = st.p11 + q;
+    /* ... then update against the measurement */
+    const gain = a00 + 1;
+    const k0 = a00 / gain, k1 = a10 / gain;
+    const resid = z - st.x;
+    st.x += k0 * resid;
+    st.v += k1 * resid;
+    st.p00 = (1 - k0) * a00; st.p01 = (1 - k0) * a01;
+    st.p10 = a10 - k1 * a00; st.p11 = a11 - k1 * a01;
+    filtered = st.x;
+  }
+  st.ema += (1 - smoothing) * (filtered - st.ema);
+  return smoothing > 0 ? st.ema : filtered;
+}
+
 export function smoothSamples(
   samples: (number | null)[][],
   series: number,
   kalman: number,
   smoothing: number,
 ): (number | null)[][] {
-  const out = samples.map((row) => row.slice());
-  /* r fixed at 1, q from the knob: small q trusts the model (smooth), large q the data */
-  const q = Math.pow(10, 1 - 5 * kalman);
-  const q00 = q / 4, q01 = q / 2;
-  for (let s = 0; s < series; ++s) {
-    let started = false;
-    let x = 0, v = 0, p00 = 1, p01 = 0, p10 = 0, p11 = 1, ema = 0;
-    for (let i = 0; i < samples.length; ++i) {
-      const z = samples[i][s];
-      if (typeof z !== "number" || !isFinite(z)) {
-        started = false;
-        continue;
-      }
-      if (!started) {
-        started = true;
-        x = z; v = 0; p00 = 1; p01 = 0; p10 = 0; p11 = 1; ema = z;
-        continue; /* the first sample of a run passes through unchanged */
-      }
-      let filtered = z;
-      if (kalman > 0) {
-        /* predict (constant velocity, dt = 1 sample) ... */
-        x += v;
-        const a00 = p00 + p10 + p01 + p11 + q00;
-        const a01 = p01 + p11 + q01;
-        const a10 = p10 + p11 + q01;
-        const a11 = p11 + q;
-        /* ... then update against the measurement */
-        const gain = a00 + 1;
-        const k0 = a00 / gain, k1 = a10 / gain;
-        const resid = z - x;
-        x += k0 * resid;
-        v += k1 * resid;
-        p00 = (1 - k0) * a00; p01 = (1 - k0) * a01;
-        p10 = a10 - k1 * a00; p11 = a11 - k1 * a01;
-        filtered = x;
-      }
-      ema += (1 - smoothing) * (filtered - ema);
-      out[i][s] = smoothing > 0 ? ema : filtered;
-    }
+  const states: SmoothState[] = [];
+  for (let s = 0; s < series; ++s) states.push(freshSmooth());
+  return samples.map((row) => row.map((z, s) => smoothStep(states[s], z, kalman, smoothing)));
+}
+
+/* The filters are CAUSAL, seeded at the first sample they see: refiltered from
+ * scratch each render, the seed would be whatever sample currently rides the
+ * window's edge, and the whole left side would re-shape as the ring scrolls. So the
+ * filter state PERSISTS on the history view and only ever ADVANCES, over newly
+ * arrived samples; history scrolling off the end no longer affects anything drawn.
+ * A knob change or a replaced ring refilters once, from the oldest sample held. */
+interface SmoothCache {
+  k: number;
+  s: number;
+  total: number; /* absolute sample count consumed (HistView.total) */
+  states: SmoothState[];
+  rows: (number | null)[][];
+}
+
+function smoothedView(
+  view: { series: number; cap: number; samples: (number | null)[][] },
+  kalman: number,
+  smoothing: number,
+): (number | null)[][] {
+  const holder = view as unknown as { __smooth?: SmoothCache; total?: number };
+  const total = Number(holder.total ?? view.samples.length);
+  let c = holder.__smooth;
+  const fresh = () => {
+    const states: SmoothState[] = [];
+    for (let s = 0; s < view.series; ++s) states.push(freshSmooth());
+    return { k: kalman, s: smoothing, total: 0, states, rows: [] as (number | null)[][] };
+  };
+  const grown = c ? total - c.total : 0;
+  if (!c || c.k !== kalman || c.s !== smoothing || c.states.length !== view.series ||
+      grown < 0 || grown > view.samples.length) {
+    c = fresh();
+    holder.__smooth = c;
+    c.rows = view.samples.map((row) =>
+      row.map((z, s) => smoothStep(c!.states[s], z, kalman, smoothing)));
+  } else {
+    for (const row of view.samples.slice(view.samples.length - grown))
+      c.rows.push(row.map((z, s) => smoothStep(c!.states[s], z, kalman, smoothing)));
+    if (c.rows.length > view.samples.length)
+      c.rows.splice(0, c.rows.length - view.samples.length);
   }
-  return out;
+  c.total = total;
+  return c.rows.length === view.samples.length ? c.rows : view.samples;
 }
 
 /* the TREND plot: polylines over the history view riding the `values` attr (a HistView:
@@ -536,7 +634,7 @@ function drawPlot(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const kalman = Math.max(0, Math.min(1, attrNum(attr(attrs, "kalman", cells), 0)));
   const smoothing = Math.max(0, Math.min(0.98, attrNum(attr(attrs, "smoothing", cells), 0)));
   if (view && (kalman > 0 || smoothing > 0))
-    view = { ...view, samples: smoothSamples(view.samples, view.series, kalman, smoothing) };
+    view = { ...view, samples: smoothedView(view, kalman, smoothing) };
   const track = attrColor(attr(attrs, "track", cells));
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#4e8ef7";
   const labels = attrBool(attr(attrs, "labels", cells), true);
@@ -665,6 +763,13 @@ function renderBody(
   acts?: ActCounter,
 ): void {
   let area = rect;
+  /* a node with `at: "center"` pins its area to the FITTED CIRCLE (the square around
+     it), before aspect/pad apply: with `fit` fill the circle sits off the widget
+     center, and a control's own label belongs on the circle, not the tile */
+  if (attrs && attrs.at && attrText(attr(attrs, "at", cells)) === "center") {
+    const f = radialFrame(rect, attrs, cells);
+    area = { x: f.cx - f.radius, y: f.cy - f.radius, w: 2 * f.radius, h: 2 * f.radius };
+  }
   const aspect = attrNum(attr(attrs, "aspect", cells), 0);
   if (aspect > 0) area = fitAspect(area, aspect);
   const pad = attrNum(attr(attrs, "pad", cells), 0);

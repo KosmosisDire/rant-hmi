@@ -531,6 +531,15 @@ Json dropdown_type() {
  * handle = the grabbable marker). The drag_radial primitive reads the same two angle
  * slots the parts draw with, so the finger and the paint can never disagree. */
 
+/* The END ticks' angular inset (degrees) for an arc of thickness fraction t: enough to
+ * sit fully inside the arc's rounded end caps (full round = half the stroke; the
+ * small-angle form of asin((t/2)/(1 - t/2))) plus a degree for the tick's own width.
+ * The end labels then read as the endpoints' marks: a hair inside the true endpoint,
+ * which looks far better than a tick riding the cap's curve. */
+Json tick_inset(Json t) {
+    return add(lit(1), mul(lit(28.6), div(t, sub(lit(1), mul(t, lit(0.5))))));
+}
+
 Json radial_interact(Json extra_params, Json emits) {
     Json params = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
     for (auto& item : extra_params.items()) params[item.key()] = item.value();
@@ -561,6 +570,7 @@ Json knob_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.07)},
+                      {"inset", tick_inset(t)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
@@ -577,19 +587,28 @@ Json knob_type() {
     Json fit = pick(eq(ref("slot:fit"), lit("center")), lit("circle"), lit("extent"));
     angles["fit"] = fit;
     angles["core"] = face;
+    angles["flare"] = pick(show_scale, lit(9), lit(0));
     /* ...and the dot rides at a fixed fraction of that face, however big it is */
     Json mark = Json{{"value", fraction},
                      {"fill", ref("slot:handle_color")},
                      {"at", mul(lit(0.68), face)},
                      {"size", pick(show_scale, lit(0.07), lit(0.09))}};
     /* the face itself is a radial part (a bare hub), so it rides the fitted circle
-       exactly like the arc and the dot, wherever the fit places it */
+       exactly like the arc and the dot, wherever the fit places it; the label pins
+       itself to the same circle (`at` center) for the same reason */
     Json body = Json{{"fill", ref("slot:body_color")}, {"hub", face}};
+    Json title = Json{{"text", ref("slot:text")},
+                      {"fill", ref("slot:text_color")},
+                      {"scale", ref("slot:text_scale")},
+                      {"strong", lit(true)},
+                      {"at", lit("center")},
+                      {"pad", pick(show_scale, lit(0.4), lit(0.31))}};
     for (auto& item : angles.items()) {
         arc[item.key()] = item.value();
         ticks[item.key()] = item.value();
         mark[item.key()] = item.value();
         body[item.key()] = item.value();
+        title[item.key()] = item.value();
     }
     return type("Knob",
                 compose_slots(tile_base(), {
@@ -628,12 +647,7 @@ Json knob_type() {
                                 part("ticks", ticks),
                                 part("needle", body),
                                 part("mark", mark),
-                                part("text", Json{{"text", ref("slot:text")},
-                                                  {"fill", ref("slot:text_color")},
-                                                  {"scale", ref("slot:text_scale")},
-                                                  {"strong", lit(true)},
-                                                  {"pad", pick(show_scale, lit(0.4),
-                                                               lit(0.31))}}),
+                                part("text", title),
                             }),
                             radial_interact(Json{{"min", ref("slot:min")},
                                                  {"max", ref("slot:max")},
@@ -653,11 +667,12 @@ Json radial_slider_type() {
        tile; "center" pins the circle's center to the tile's center. The chosen fit +
        the angles ride every radial part identically, so they always share one circle */
     Json fit = pick(eq(ref("slot:fit"), lit("center")), lit("circle"), lit("extent"));
-    Json angles = Json{{"start", ref("slot:start_angle")},
-                       {"sweep", ref("slot:sweep_angle")},
-                       {"fit", fit}};
     Json show_scale = ref("slot:show_scale");
     Json t = ref("slot:thickness");
+    Json angles = Json{{"start", ref("slot:start_angle")},
+                       {"sweep", ref("slot:sweep_angle")},
+                       {"fit", fit},
+                       {"flare", pick(show_scale, lit(9), lit(0))}};
     Json outside = eq(ref("slot:scale_position"), lit("outside"));
     /* an OUTSIDE scale pulls the arc inward and rings it; an INSIDE one keeps the
        arc at the rim and sets the scale within. Drawn exactly like the linear bar:
@@ -677,12 +692,22 @@ Json radial_slider_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.06)},
+                      {"inset", tick_inset(t)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
+    /* the label pins itself to the fitted circle: with `fit` fill the circle's
+       center is not the tile's */
+    Json title = Json{{"text", ref("slot:text")},
+                      {"fill", ref("slot:text_color")},
+                      {"scale", ref("slot:text_scale")},
+                      {"strong", lit(true)},
+                      {"at", lit("center")},
+                      {"pad", lit(0.3)}};
     for (auto& item : angles.items()) {
         arc[item.key()] = item.value();
         ticks[item.key()] = item.value();
+        title[item.key()] = item.value();
     }
     return type("RadialSlider",
                 compose_slots(tile_base(), {
@@ -716,11 +741,7 @@ Json radial_slider_type() {
                             Json::array({
                                 part("arc", arc),
                                 part("ticks", ticks),
-                                part("text", Json{{"text", ref("slot:text")},
-                                                  {"fill", ref("slot:text_color")},
-                                                  {"scale", ref("slot:text_scale")},
-                                                  {"strong", lit(true)},
-                                                  {"pad", lit(0.3)}}),
+                                part("text", title),
                             }),
                             radial_interact(Json{{"min", ref("slot:min")},
                                                  {"max", ref("slot:max")},
@@ -737,10 +758,11 @@ Json gauge_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
     /* the fit slot, exactly as on the RadialSlider: fill the tile, or center */
     Json fit = pick(eq(ref("slot:fit"), lit("center")), lit("circle"), lit("extent"));
+    Json show_scale = ref("slot:show_scale");
     Json angles = Json{{"start", ref("slot:start_angle")},
                        {"sweep", ref("slot:sweep_angle")},
-                       {"fit", fit}};
-    Json show_scale = ref("slot:show_scale");
+                       {"fit", fit},
+                       {"flare", pick(show_scale, lit(9), lit(0))}};
     Json outside = eq(ref("slot:scale_position"), lit("outside"));
     Json arc = Json{{"track", ref("slot:track_color")},
                     {"fill", ref("slot:fill_color")},
@@ -756,6 +778,7 @@ Json gauge_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", lit(0.8)},
                       {"len", lit(0.07)},
+                      {"inset", tick_inset(ref("slot:thickness"))},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
@@ -825,13 +848,22 @@ Json gauge_type() {
 }
 
 Json selector_type() {
-    Json angles = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
+    Json show_scale = ref("slot:show_scale");
+    /* the fit slot, as on the Knob: the round body is the extent's CORE, so a
+       partial-sweep selector fills its tile but always keeps room for the body */
+    Json fit = pick(eq(ref("slot:fit"), lit("center")), lit("circle"), lit("extent"));
+    Json body_frac = pick(show_scale, lit(0.66), lit(0.84));
+    Json angles = Json{{"start", ref("slot:start_angle")},
+                       {"sweep", ref("slot:sweep_angle")},
+                       {"fit", fit},
+                       {"core", body_frac},
+                       {"flare", pick(show_scale, lit(9), lit(0))}};
     /* the pointer's angle is where the value's NAME sits in the options list; an
        unknown value or unresolvable options draw no pointer at all */
     Json needle = Json{{"value", ref("optfrac:value@options")},
                        {"fill", ref("slot:handle_color")},
                        {"inner", lit(0.25)},
-                       {"outer", pick(ref("slot:show_scale"), lit(0.58), lit(0.78))},
+                       {"outer", pick(show_scale, lit(0.58), lit(0.78))},
                        {"width", lit(0.09)}};
     /* one detent mark per option hugging the body, each option's NAME beyond its
        mark when scale_values is on (the Selector never shows the current selection
@@ -845,9 +877,13 @@ Json selector_type() {
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", ref("slot:text_color")},
                       {"show", ref("slot:show_scale")}};
+    /* the body pulls in when the scale shows, so the option names ring it; a radial
+       part (a bare hub), so it rides the fitted circle like everything else */
+    Json body = Json{{"fill", ref("slot:body_color")}, {"hub", body_frac}};
     for (auto& item : angles.items()) {
         needle[item.key()] = item.value();
         ticks[item.key()] = item.value();
+        body[item.key()] = item.value();
     }
     return type("Selector",
                 compose_slots(tile_base(), {
@@ -863,25 +899,23 @@ Json selector_type() {
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("show_scale", "bool", true, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
+                    slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("select", "text")}),
                 box("stack", Json::object(),
                     Json::array({
-                        box("stack", Json{{"aspect", lit(1.0)}},
+                        box("stack", Json::object(),
                             Json::array({
-                                /* the body pulls in when the scale shows, so the
-                                   option names ring it */
-                                part("rect", Json{{"fill", ref("slot:body_color")},
-                                                  {"radius", lit(999)},
-                                                  {"aspect", lit(1.0)},
-                                                  {"pad", pick(ref("slot:show_scale"),
-                                                               lit(0.17), lit(0.08))}}),
+                                part("needle", body),
                                 part("ticks", ticks),
                                 part("needle", needle),
                             }),
                             radial_interact(
                                 Json{{"options", ref("slot:options")},
                                      {"mode", ref("slot:drag")},
+                                     {"fit", fit},
+                                     {"core", body_frac},
+                                     {"flare", pick(show_scale, lit(9), lit(0))},
                                      {"fraction", ref("optfrac:value@options")}},
                                 Json{{"select", "select"}})),
                     })),
