@@ -25,6 +25,7 @@ const { renderContent } = await import(mod("canvas.js"));
 const { run } = await import(mod("program.js"));
 const { unionPath } = await import(mod("islands.js"));
 const { syncUrl } = await import(mod("endpoint.js"));
+const { parseRich, richMarkup, richUnits } = await import(mod("rich.js"));
 const { Panel } = await import(mod("reconcile.js"));
 const { inspectorShape, renderInspector } = await import(mod("inspector/panel.js"));
 
@@ -56,6 +57,21 @@ check(
   }) === "wss://hmi.example/sync",
   "remote sync keeps the page origin",
 );
+
+/* ---- inline markup (rich.ts), a pure function of the string ---- */
+const mutes = (line) => (parseRich(line) ?? []).map((s) => s.mute).join(",");
+check(mutes("12.3 _bar_") === "0,1", "an underscore run is the muted secondary scale");
+check(mutes("__note__") === "2", "a double underscore is the dimmer step");
+check(mutes("_a **b** c_") === "1,1,1", "bold nests inside a muted run");
+check(parseRich("feed_name") === null, "an underscore inside a word stays literal");
+check(parseRich("motor_1_speed") === null, "so does every underscore of a snake_case path");
+check(parseRich("_kg_s") === null, "a closer that would split a word does not close");
+check(parseRich("tail_") === null, "an unclosed underscore stays literal");
+{
+  const mark = richMarkup(parseRich("12.3 _bar_"), 0, 0, 20, "middle", "#fff", 450);
+  check(mark.includes(`font-size="12.00" fill-opacity="0.55"`), "the muted run renders smaller and dimmer");
+  check(richUnits(parseRich("12.3 _bar_")) < "12.3 bar".length, "and autosizing counts it narrower");
+}
 
 function has(svg, needle, what) {
   check(svg.includes(needle), what + " (looking for " + JSON.stringify(needle) + ")");
