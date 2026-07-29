@@ -696,8 +696,9 @@ void test_enum_names() {
     CHECK_MSG(expr_error.find("display") != std::string::npos, expr_error);
 }
 
-/* A feed's CASE ARMS (spec 2.4): first match wins, an enum's coverage is checked, the
- * else fills the gap, and a Nil input stores UNKNOWN instead of faulting. */
+/* A feed's CASE ARMS (spec 2.4): CONDITIONS only, first match wins, the else fills the
+ * gap (or the value passes through where it can), and a Nil input stores UNKNOWN
+ * instead of faulting. A value-matching arm ({when}) is refused with guidance. */
 void test_feed_cases() {
     auto document_with = [](const char* slot, Json cases, const char* otherwise) {
         Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
@@ -722,9 +723,9 @@ void test_feed_cases() {
 
     FakeMesh mesh(reflection());
     Json full = Json::array({
-        Json{{"when", "stop"}, {"xf", "\"Halted\""}},
-        Json{{"when", "run"}, {"xf", "\"Turning\""}},
-        Json{{"when", "fast"}, {"xf", "\"Flying\""}},
+        Json{{"test", "x == .stop"}, {"xf", "\"Halted\""}},
+        Json{{"test", "x == .run"}, {"xf", "\"Turning\""}},
+        Json{{"test", "x == .fast"}, {"xf", "\"Flying\""}},
     });
     Document document = document_with("text", full, "");
     CompileResult compiled = compile_document(document, registry(), mesh);
@@ -754,8 +755,8 @@ void test_feed_cases() {
     /* an EMPTY else where the value can stand as itself PASSES THROUGH, exactly like
        an empty inline transform: cases override, the rest shows as its name */
     Json partial = Json::array({
-        Json{{"when", "stop"}, {"xf", "\"Halted\""}},
-        Json{{"when", "run"}, {"xf", "\"Turning\""}},
+        Json{{"test", "x == .stop"}, {"xf", "\"Halted\""}},
+        Json{{"test", "x == .run"}, {"xf", "\"Turning\""}},
     });
     Document through = document_with("text", partial, "");
     CompileResult passing = compile_document(through, registry(), mesh);
@@ -767,42 +768,30 @@ void test_feed_cases() {
     CHECK(passed.text(passing.program,
                       passed.values[passing.program.feeds[0].cell]) == "fast");
 
-    /* a PREDICATE arm matches any boolean over x, beside the value arms */
-    Json predicated = Json::array({
-        Json{{"test", "x.int == 0 or x.int == 2"}, {"xf", "\"Edge\""}},
-        Json{{"when", "run"}, {"xf", "\"Turning\""}},
-    });
-    Document mixed = document_with("text", predicated, "");
-    CompileResult judged = compile_document(mixed, registry(), mesh);
-    CHECK_MSG(judged.ok, judged.program.diagnostics.empty()
-                             ? "compile failed without a diagnostic"
-                             : judged.program.diagnostics[0].message);
-    RuntimeState tested(judged.program);
-    const char* judged_text[] = {"Edge", "Turning", "Edge"};
-    for (int64_t variant = 0; variant <= 2; ++variant) {
-        RunResult one = run_feed(judged.program, judged.program.feeds[0], tested,
-                                 Value::enumeration(variant, mode_type));
-        CHECK(!one.faulted);
-        CHECK_MSG(tested.text(judged.program,
-                              tested.values[judged.program.feeds[0].cell]) ==
-                      judged_text[variant],
-                  std::string(tested.text(judged.program,
-                                          tested.values[judged.program.feeds[0].cell])));
-    }
+    /* the retired value-matching arm ({when}) is refused, with guidance */
+    Json valued = Json::array({Json{{"when", "run"}, {"xf", "\"Turning\""}}});
+    Document matched = document_with("text", valued, "");
+    CompileResult refused_arm = compile_document(matched, registry(), mesh);
+    CHECK(!refused_arm.ok);
+    bool guided = false;
+    for (const Diag& diag : refused_arm.program.diagnostics)
+        if (diag.code == "case_when" &&
+            diag.message.find("condition") != std::string::npos)
+            guided = true;
+    CHECK(guided);
 
-    /* where the value CANNOT stand as itself (an enum into a color), a missed variant
-       with no else is a FINDING, and the else forgives it */
+    /* where the value CANNOT stand as itself (an enum into a color), an empty else is
+       a FINDING, and a written else forgives it */
     Json colored = Json::array({
-        Json{{"when", "stop"}, {"xf", "#888888"}},
-        Json{{"when", "run"}, {"xf", "#7fc4a0"}},
+        Json{{"test", "x == .stop"}, {"xf", "#888888"}},
+        Json{{"test", "x == .run"}, {"xf", "#7fc4a0"}},
     });
     Document uncovered = document_with("text_color", colored, "");
     CompileResult refused = compile_document(uncovered, registry(), mesh);
     CHECK(!refused.ok);
     bool found = false;
     for (const Diag& diag : refused.program.diagnostics)
-        if (diag.code == "cases" && diag.message.find("fast") != std::string::npos)
-            found = true;
+        if (diag.code == "cases") found = true;
     CHECK(found);
 
     Document forgiven = document_with("text_color", colored, "#444444");

@@ -155,6 +155,11 @@ vocabulary learnable:
 | `text`, `text_color` | the control's own text and its color; `text` defaults EMPTY and is bindable like any slot |
 | `control_radius` | corner rounding of the control's own shape; the frame's `radius` rounds the panel around it |
 | `value`, `min`, `max`, `step` | the process value and its range |
+| `show_scale`, `divisions`, `decimals` | the toggleable range ticks and their labeling |
+| `start_angle`, `sweep_angle` | a radial control's sweep (degrees, 0 = up, clockwise) |
+| `thickness` | an arc's stroke, as a fraction of the radius |
+| `body_color` | a rotary control's circular body |
+| `drag` | radial vs linear gesture mapping on a radial control |
 
 A new type reuses these names wherever the semantic matches and invents a name
 only for a genuinely new concept.
@@ -237,8 +242,9 @@ also removes the last piece of truth from the view: where the type declares a
 **Default behavior.** A type carries `behavior`: ordinary flows, in the document's
 own flow shape, that the backend compiles per instance. Because the events table
 already says what a gesture proposes, every value-owning type's default is the same
-single step, `widget.<slot> = x`: Toggle on `tap`, Slider on `input`, Dropdown on
-`select`. Button, Label, Panel, Readout and Indicator own no value and carry none.
+single step, `widget.<slot> = x`: Toggle on `tap`, Slider / Knob / RadialSlider on
+`input`, Dropdown and Selector on `select`. Button, Label, Panel and Readout own no
+value and carry none.
 There is still no per-type code: the compiler treats these exactly as authored
 flows, so a custom component declares behavior the same way.
 
@@ -299,12 +305,25 @@ text is integral to the control):
 | RadialSlider | `value` (num) | `input, commit` | the dragged value, num (drag_radial) |
 | Selector | `options` (TypeRef), `value` (text) | `select` | the selected name (drag_radial detents) |
 | Gauge | `value` (num) | `press, release, tap, held` | `widget.value` |
-| Trend | `value` (num or list) | none | display only; history-backed (2.10) |
+| Trend | `value` (num or list) | none | display only; history-backed (2.9) |
 | Dropdown | `options` (list), `value` (text/enum) | `select, open` | the selection; `widget.value` on open |
 | Readout | `value` (num) | `press, release, tap, held` | `widget.value` |
-| Indicator | `value` (bool) | `press, tap` | `widget.value` |
 | Label | `text` (text) | `press, tap` | `widget.text` |
 | Panel | none | `press, tap` | the edge, bool |
+
+There is deliberately NO Indicator type: a lamp is a Panel with a bound `surface`
+(colors bind anywhere), and NO built-in value readout on any control: `text` slots
+default empty, and a value display is the user's own Label or Readout placed beside
+(or on) the control. What every value control DOES carry is a toggleable SCALE
+(`show_scale`, with `divisions` / `decimals` where the scale is numeric): range
+ticks drawn by the shared ticks part, under a Slider's bar, around a radial's arc,
+one detent mark per option on a Selector.
+
+The radial controls share `start_angle` / `sweep_angle` (degrees, 0 = up, clockwise)
+and a `drag` mode: `radial` (the value points at the pointer) or `linear` (dragging
+horizontally moves the value relative to where it stood at pointer-down, a fader in
+knob's clothing). The mode is an ordinary enum slot read by the interact's params,
+so it can even be bound.
 
 Every type additionally gets the synthetic trigger `timer <name> ends`. Everything a
 widget does BEYOND its own value echo is authored per instance as feeds and flows: a
@@ -437,21 +456,19 @@ expression over the widget's scope (variables, `widget.<slot>`), re-evaluated ev
 tick; `x` is Nil, there being nothing for it to be. A binding with neither a source
 nor an expression is the finding "pick a source, or write an expression".
 
-**Cases: discrete pattern matching over x.** A feed may carry
-`cases: [{when, xf} | {test, xf}]`, first match wins top to bottom, and the feed's
-own `xf` is the else. A VALUE arm (`when`) compares x against a scalar (an enum
-source's `when` is a variant NAME, picked from its vocabulary; a number or bool
-otherwise). A PREDICATE arm (`test`) is any boolean expression over x, for the
-matches a value cannot spell (`x[8] == 4100 or x[8] == 4`); it counts toward no
-coverage, since nothing about it can be analyzed. An EMPTY else means
-what an empty inline transform means: the value PASSES THROUGH (an enum into a text
-slot as its name), so cases read as "override these values, show the rest as
-themselves". COVERAGE IS CHECKED exactly where pass-through is impossible: a value
-that cannot stand as itself (an enum into a color) must handle every variant (a bool
-both values) or carry an else, so a missed state is a finding, never a silent hole.
-A Nil input stores UNKNOWN without running any arm. In the UI a feed starts as ONE
-inline expression; "+ case" moves it onto its own row and adds the condition column,
-so the plain case pays nothing.
+**Cases: conditional arms over x.** A feed may carry `cases: [{test, xf}]`, first
+match wins top to bottom, and the feed's own `xf` is the else. Every arm's `test`
+is a boolean expression over x (`x == .run`, `x > 40`, `x[8] == 4100 or x[8] == 4`).
+There is no value matching: a condition says everything a picked value said and
+more, and one arm form keeps the rows one shape (the old `{when, xf}` value arms
+are refused with guidance, and with them coverage analysis is gone: conditions
+cannot be enumerated). An EMPTY else means what an empty inline transform means:
+the value PASSES THROUGH (an enum into a text slot as its name), so cases read as
+"override these, show the rest as themselves"; where pass-through is impossible (an
+enum into a color) the else must be written, so a missed state is a finding, never
+a silent hole. A Nil input stores UNKNOWN without running any arm. In the UI a feed
+starts as ONE inline expression; "+ case" moves it onto its own row and adds the
+condition column, so the plain case pays nothing.
 
 ### 2.5 Flows (behavior)
 
@@ -650,6 +667,37 @@ The canvas shape is document data, set once per HMI (a portrait handheld HMI pic
 
 `version` is the sole sync authority (see PLAN.md for the op protocol and the
 persistence split between the authored document and runtime state).
+
+### 2.9 Trend history
+
+A Trend's truth is a PAST, and the past must exist before anyone looks at it, so
+history is BACKEND-OWNED and central: the registry flags the slot (`history: true`
+on Trend's `value`), and the compiler turns each flagged slot into a sampling ring
+(rate and window read from the widget's `rate` / `window` slots at compile; an
+edit recompiles, so compile-time is live enough; 1..100 Hz, ring capped at 4096
+samples). The scheduler commits a sample every rate tick whether or not any client
+is viewing, so the plot has a past the moment a page opens, and every client sees
+the SAME history (per-widget frontend buffers were considered and rejected: they
+start empty on every reload and disagree between views).
+
+The feed on a history slot stores into the ring's LATEST capture buffer instead of
+the cell (StoreHist, the compile rewriting the feed's Store tail): its value may be
+a scalar or a whole numeric list, so the same Trend plots one line or a series
+(one line per element; the series colors rotate hue from `fill_color`). The
+capture happens inside the feed's own run, while the run's element pool is still
+valid; the rate tick then commits the capture sample-and-hold. No capture yet, or
+a non-numeric value, samples as unknown: the plot shows an honest gap, never an
+invented zero. A series-width change resets the ring, so stale series never age
+out beside fresh ones. History survives a recompile while the def still means the
+same sampling (same widget, rate, depth).
+
+On the wire, histories ride the live frame as deltas keyed `"<widget>.<slot>"`:
+`{rate, series, cap, from, values}` where `from` is the absolute index of the
+first delivered sample and `values` is flat, sample-major, null = unknown. The
+snapshot (and the first frame after a recompile) carries each ring whole; a client
+appends contiguous deltas, pads a forward gap with unknowns, and replaces its view
+on anything else. The plot part (2.3) draws whatever the `hist:<slot>` cell
+resolves to; its only text is the hi/lo scale markers.
 
 ## 3. The frontend
 

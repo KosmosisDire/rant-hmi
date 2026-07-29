@@ -64,6 +64,9 @@ class App {
 
     Json snapshot() const;
     Json live() const;
+    /* the trend histories: full rings, or only the samples pushed since the last
+     * publish (the broadcast's steady state) */
+    Json hist_json(bool full) const;
     Json mesh_json() const;
     /* the expression vocabulary (builtins + shape-scoped methods) for autocomplete */
     static Json lang_json();
@@ -92,6 +95,9 @@ class App {
     std::chrono::steady_clock::time_point next_tick_;
     std::chrono::steady_clock::time_point next_mesh_refresh_;
     uint64_t last_live_tick_ = 0;
+    /* per-history total at the last broadcast; reset on recompile so the next live
+     * frame carries each ring whole (the frame's `from` tells the client to resync) */
+    std::vector<uint64_t> hist_published_;
 };
 
 } // namespace hmi

@@ -168,6 +168,11 @@ enum class OpCode : uint8_t {
      * seconds, 2 duration seconds): expressions read a timer only by field, the way
      * `myTimer.remaining` spells it; the state lives beside the cells, not in one */
     TmrRead,
+    /* pop into history `a`'s LATEST buffer (a scalar, or every element of a numeric
+     * list, captured while the run's element pool is still valid): the tail of a feed
+     * whose slot the type flagged `history`. The rate timer commits the latest into
+     * the ring; the cell itself is never stored (a series is not a scalar). */
+    StoreHist,
 };
 
 enum class Builtin : uint16_t {
@@ -330,6 +335,19 @@ struct EventValueProgram {
     uint32_t max_stack = 0;
 };
 
+/* One widget slot the backend keeps HISTORY for (a Trend's value): sampled into a ring
+ * at a fixed rate whether or not anyone is viewing, so the plot has a past the moment a
+ * page opens. Declared by the slot spec's `history` flag; rate and window read from the
+ * widget's `rate` / `window` slots at compile (an edit recompiles anyway). */
+struct HistoryDef {
+    uint64_t widget_id = 0;
+    uint32_t cell = UINT32_MAX;       /* the flagged slot's cell */
+    std::string slot;                 /* its name, for the wire key */
+    uint32_t rate_ticks = 100;        /* sample period in 1 ms ticks */
+    uint32_t capacity = 600;          /* ring depth in samples (window x rate, capped) */
+    uint32_t series_cap = 8;          /* widest sample a list capture may fill */
+};
+
 struct FeedProgram {
     uint64_t widget_id = 0;
     uint64_t feed_id = 0;
@@ -375,6 +393,7 @@ struct Program {
     std::vector<StructDef> structs;
     std::vector<FlowProgram> flows;
     std::vector<FeedProgram> feeds;
+    std::vector<HistoryDef> histories;
     std::vector<EventValueProgram> event_values;
     std::vector<TimerDef> timers;
     std::vector<StateSite> state_sites;

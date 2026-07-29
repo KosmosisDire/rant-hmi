@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 namespace hmi {
 
@@ -178,6 +179,12 @@ RuntimeState::RuntimeState(const Program& program) {
     deadband.resize(program.layout.deadband_slots, Value::nil());
     throttle.resize(program.layout.throttle_slots, UINT64_MAX);
     timers.resize(program.timers.size());
+    histories.resize(program.histories.size());
+    for (uint32_t i = 0; i < program.histories.size(); ++i) {
+        const HistoryDef& def = program.histories[i];
+        histories[i].latest.resize(def.series_cap, 0.0f);
+        histories[i].data.resize(static_cast<size_t>(def.capacity) * def.series_cap, 0.0f);
+    }
     fired.resize(program.layout.fired_groups, 0);
     pending.resize(program.layout.pending_slots);
     for (PendingState& item : pending) {
@@ -253,6 +260,26 @@ uint32_t RuntimeState::alloc_elem_text() noexcept {
     return elem_text_cursor++;
 }
 
+/* Commit the latest capture into the ring at the rate tick. A width change resets the
+ * ring (stale series must never age out beside fresh ones); no capture yet samples NaN,
+ * so the plot shows an honest gap, never an invented zero. */
+void HistoryState::sample(uint32_t capacity, uint32_t series_cap) noexcept {
+    if (!capacity || data.size() < static_cast<size_t>(capacity) * series_cap) return;
+    const uint32_t width = has ? latest_count : series;
+    if (width != series) {
+        head = 0;
+        count = 0;
+        series = width;
+    }
+    float* slot = data.data() +
+                  static_cast<size_t>((head + count) % capacity) * series_cap;
+    for (uint32_t k = 0; k < series && k < series_cap; ++k)
+        slot[k] = has ? latest[k] : std::numeric_limits<float>::quiet_NaN();
+    if (count == capacity) head = (head + 1) % capacity;
+    else ++count;
+    ++total;
+}
+
 void RuntimeState::fault(uint32_t site) noexcept {
     if (site >= faults.size()) return;
     faults[site].site = site;
@@ -313,6 +340,20 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                            const Program& new_program) {
     RuntimeState next(new_program);
     next.tick = old_state.tick;
+    /* history survives a recompile: the ring carries over while the def still means
+     * the same sampling (same widget, rate, depth); a changed rate or window starts
+     * a fresh ring rather than lying about the old samples' spacing */
+    for (uint32_t n = 0; n < new_program.histories.size(); ++n) {
+        const HistoryDef& wanted = new_program.histories[n];
+        for (uint32_t o = 0; o < old_program.histories.size(); ++o) {
+            const HistoryDef& before = old_program.histories[o];
+            if (before.widget_id != wanted.widget_id || before.slot != wanted.slot) continue;
+            if (before.rate_ticks == wanted.rate_ticks && before.capacity == wanted.capacity &&
+                before.series_cap == wanted.series_cap && o < old_state.histories.size())
+                next.histories[n] = old_state.histories[o];
+            break;
+        }
+    }
     for (uint32_t n = 0; n < new_program.cells.size(); ++n) {
         const CellDef& wanted = new_program.cells[n];
         /* a temporary holds a value only inside a run, so a swap between runs has

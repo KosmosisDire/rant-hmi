@@ -15,7 +15,7 @@
  *                      (spec 3.10), and editing it restates where the runtime starts. */
 
 import { Cells } from "./program.js";
-import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, WidgetType, Widget } from "./types.js";
+import { HistView, Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, WidgetType, Widget } from "./types.js";
 
 /* What a TypeRef lands on, from the served table: the same resolution the compiler runs
  * (find_type_ref), so what the view expands and what compiles can never disagree. Lives
@@ -130,6 +130,7 @@ export function cellsFor(
   live: Live | null,
   state: Record<string, Json>,
   mesh: Mesh | null = null,
+  hists: Record<string, HistView> | null = null,
 ): Cells {
   const fed = fedSlots(widget);
   return (cell: string): Json => {
@@ -147,6 +148,15 @@ export function cellsFor(
         if (name === "h") return widget.geom.h;
         if (name === "aspect") return widget.geom.h ? widget.geom.w / widget.geom.h : 1;
         return null;
+      case "hist":
+        /* "hist:<slot>": the slot's accumulated history view (a Trend's plot data) */
+        return (hists?.[widget.id + "." + name] as unknown as Json) ?? null;
+      case "optcount": {
+        /* "optcount:<options slot>": how many options resolve (a Selector's detent
+           marks); null when the list is unresolvable or trivially small */
+        const count = optionNames(mesh, resolveSlot(widget, type, live, fed, name)).length;
+        return count >= 2 ? count : null;
+      }
       case "optfrac": {
         /* "optfrac:<value slot>@<options slot>": where the value slot's NAME sits in
            the options slot's list, as a 0..1 fraction (a Selector's pointer angle).

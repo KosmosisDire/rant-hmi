@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <limits>
 
 namespace hmi {
 namespace {
@@ -1296,6 +1297,46 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                               static_cast<double>(program.timers[ins.a].duration_ticks) /
                               1000.0);
                 if (!push(value)) fail(ins.c);
+                break;
+            }
+            /* a history feed's tail: capture the value (a scalar, or every numeric
+             * element of a list, read while the run's element pool is still valid)
+             * into the history's LATEST buffer; the scheduler's rate timer commits it
+             * into the ring. Anything non-numeric captures as unknown. */
+            case OpCode::StoreHist: {
+                const Value value = pop();
+                if (ins.a >= state.histories.size() ||
+                    ins.a >= program.histories.size())
+                    break;
+                HistoryState& hist = state.histories[ins.a];
+                const uint32_t cap = program.histories[ins.a].series_cap;
+                auto scalar = [](const Value& v, float& out) {
+                    switch (v.tag) {
+                        case ValueTag::Num: out = static_cast<float>(v.data.num); return true;
+                        case ValueTag::Bool: out = v.data.boolean ? 1.0f : 0.0f; return true;
+                        case ValueTag::Enum:
+                            out = static_cast<float>(v.data.integer);
+                            return true;
+                        default: return false;
+                    }
+                };
+                if (value.tag == ValueTag::List) {
+                    const uint32_t n =
+                        std::min<uint32_t>(static_cast<uint32_t>(value.data.integer), cap);
+                    hist.has = n > 0;
+                    hist.latest_count = std::max<uint32_t>(n, 1);
+                    for (uint32_t k = 0; k < n; ++k) {
+                        float out = std::numeric_limits<float>::quiet_NaN();
+                        if (value.ref + k < state.elems.size())
+                            scalar(state.elems[value.ref + k], out);
+                        hist.latest[k] = out;
+                    }
+                } else {
+                    float out = 0;
+                    hist.has = scalar(value, out);
+                    hist.latest_count = 1;
+                    if (hist.has) hist.latest[0] = out;
+                }
                 break;
             }
             /* the compile-inserted text -> enum coercion: the top of stack must be one

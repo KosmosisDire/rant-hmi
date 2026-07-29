@@ -308,6 +308,19 @@ bool Scheduler::tick(std::string& fault) {
     }
 
     apply_local_feeds();
+
+    /* the history rate timers: commit each ring's latest capture on its own cadence,
+     * viewed or not, so a trend has a past the moment a page opens. Runs after the
+     * feeds so a sample lands the same tick its value arrived. */
+    for (uint32_t i = 0; i < program_.histories.size() && i < state_.histories.size(); ++i) {
+        HistoryState& hist = state_.histories[i];
+        if (hist.next_tick == 0) hist.next_tick = state_.tick;
+        if (state_.tick < hist.next_tick) continue;
+        hist.sample(program_.histories[i].capacity, program_.histories[i].series_cap);
+        hist.next_tick += program_.histories[i].rate_ticks;
+        if (hist.next_tick <= state_.tick) hist.next_tick = state_.tick + 1;
+    }
+
     return flush_effects(program_, state_, mesh_, fault);
 }
 

@@ -20,7 +20,7 @@ import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, optionNames, resolveSlot, typeOf } from "./slots.js";
 import { Rect } from "./template.js";
-import { Diag, Doc, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
+import { Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 
 type Mode = "edit" | "run" | "operate";
@@ -38,6 +38,7 @@ export class App implements Editor {
   /* the served expression vocabulary: autocomplete reads exactly what compiles */
   lang: Lang | null = null;
   live: Live | null = null;
+  hists: Record<string, HistView> = {};
   diagnostics: Diag[] = [];
   view: ViewState = {
     mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {}, faults: {},
@@ -82,6 +83,7 @@ export class App implements Editor {
          assign. The sidebars decide for themselves whether anything structural moved. */
       live: (live) => {
         this.live = live;
+        this.absorbHist(live.hist);
         this.queueCanvas(true);
         this.queueSidebars();
       },
@@ -154,11 +156,50 @@ export class App implements Editor {
 
   /* ---- protocol ---- */
 
+  /* Fold a frame's history deltas into the standing views. `from` is the absolute index
+   * of the first delivered sample: contiguous appends extend, a jump forward pads the
+   * gap with unknowns, and anything else (a snapshot, a recompile's full resend, a
+   * series-width change) replaces the view outright. */
+  private absorbHist(hist: Record<string, Json> | undefined): void {
+    if (!hist) return;
+    for (const key of Object.keys(hist)) {
+      const entry = hist[key] as Json;
+      if (!entry || typeof entry !== "object") continue;
+      const series = Math.max(1, Number(entry.series ?? 1));
+      const flat = Array.isArray(entry.values) ? (entry.values as (number | null)[]) : [];
+      const samples: (number | null)[][] = [];
+      for (let at = 0; at + series <= flat.length; at += series)
+        samples.push(flat.slice(at, at + series));
+      const from = Number(entry.from ?? 0);
+      const cap = Math.max(2, Number(entry.cap ?? 600));
+      const view = this.hists[key];
+      if (view && view.series === series && from >= view.total) {
+        for (let pad = view.total; pad < from; ++pad)
+          view.samples.push(new Array(series).fill(null));
+        view.samples.push(...samples);
+        view.total = from + samples.length;
+        view.cap = cap;
+        view.rate = Number(entry.rate ?? view.rate);
+        if (view.samples.length > cap) view.samples.splice(0, view.samples.length - cap);
+      } else {
+        this.hists[key] = {
+          rate: Number(entry.rate ?? 10),
+          series,
+          cap,
+          total: from + samples.length,
+          samples,
+        };
+      }
+    }
+  }
+
   private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
                      lang: Lang): void {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
+    this.hists = {};
+    this.absorbHist(live.hist);
     this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
     this.lang = lang;
     this.onDiag(diag, false);
@@ -272,7 +313,8 @@ export class App implements Editor {
     const viewBox = `0 0 ${doc.canvas.unit_w} ${doc.canvas.unit_h}`;
     if (this.contentDirty) {
       this.contentDirty = false;
-      const content = renderContent(doc, page, this.registry, this.live, this.view, this.mesh);
+      const content = renderContent(doc, page, this.registry, this.live, this.view, this.mesh,
+                                    this.hists);
       if (content !== this.lastContent) {
         this.lastContent = content;
         this.nodes.art.setAttribute("viewBox", viewBox);
@@ -598,8 +640,11 @@ export class App implements Editor {
     const fed = fedSlots(widget);
     if (resolveSlot(widget, type, this.live, fed, "enabled") !== true) return;
     /* a radial gesture pivots on the CENTER of what the interact painted (the knob's
-       face, the arc), measured in client pixels once at the down edge */
+       face, the arc), measured in client pixels once at the down edge; linear mode
+       instead anchors on the down point and the fraction the control held there */
     const pivot = hit.getBoundingClientRect();
+    const cells = this.controlCells(widget, type);
+    const f0 = interact.params.fraction ? run(interact.params.fraction, cells) : null;
     this.control = {
       pointer: ev.pointerId,
       widget,
@@ -608,6 +653,9 @@ export class App implements Editor {
       started: performance.now(),
       cx: pivot.left + pivot.width / 2,
       cy: pivot.top + pivot.height / 2,
+      downX: ev.clientX,
+      downY: ev.clientY,
+      f0: typeof f0 === "number" ? Math.max(0, Math.min(1, f0)) : 0,
     };
     this.view.state[widget.id] = {
       ...(this.view.state[widget.id] ?? {}),
@@ -652,22 +700,31 @@ export class App implements Editor {
   /* The drag_radial primitive: the pointer's bearing from the control's center, mapped
    * onto the sweep the params declare (degrees, 0 = up, clockwise; the same convention
    * the arc parts draw with). A bearing outside the sweep clamps to the nearer end, so
-   * dragging past the stop holds it there. With `options`, the sweep is a detent per
-   * option and the gesture reports the SELECTED NAME (on change only); without, it
-   * reports the min..max value like drag1d. */
+   * dragging past the stop holds it there. With `mode` "linear" the same control drags
+   * like a fader instead: horizontal motion moves the value RELATIVE to where it stood
+   * at pointer-down (the `fraction` param), full range over ~220 px. With `options`,
+   * the range is a detent per option and the gesture reports the SELECTED NAME (on
+   * change only); without, it reports the min..max value like drag1d. */
   private emitRadial(widget: Widget, type: WidgetType, interact: Interact,
                      clientX: number, clientY: number): void {
     const cells = this.controlCells(widget, type);
-    const start = Number(run(interact.params.start, cells) ?? -135);
-    const sweep = Math.max(1, Math.min(360, Number(run(interact.params.sweep, cells) ?? 270)));
-    const dx = clientX - Number(this.control?.cx ?? 0);
-    const dy = clientY - Number(this.control?.cy ?? 0);
-    if (dx * dx + dy * dy < 9) return;                /* dead zone: no bearing yet */
-    const bearing = (Math.atan2(dx, -dy) * 180) / Math.PI;   /* [-180, 180], 0 = up */
-    let rel = ((bearing - start) % 360 + 360) % 360;          /* into [0, 360) */
-    /* past the open end: snap to whichever stop is closer around the gap */
-    if (rel > sweep) rel = rel - sweep < (360 - rel) ? sweep : 0;
-    const fraction = rel / sweep;
+    let fraction: number;
+    if (String(run(interact.params.mode, cells) ?? "radial") === "linear") {
+      const moved = clientX - Number(this.control?.downX ?? clientX);
+      if (!moved) return;
+      fraction = Math.max(0, Math.min(1, Number(this.control?.f0 ?? 0) + moved / 220));
+    } else {
+      const start = Number(run(interact.params.start, cells) ?? -135);
+      const sweep = Math.max(1, Math.min(360, Number(run(interact.params.sweep, cells) ?? 270)));
+      const dx = clientX - Number(this.control?.cx ?? 0);
+      const dy = clientY - Number(this.control?.cy ?? 0);
+      if (dx * dx + dy * dy < 9) return;              /* dead zone: no bearing yet */
+      const bearing = (Math.atan2(dx, -dy) * 180) / Math.PI;   /* [-180, 180], 0 = up */
+      let rel = ((bearing - start) % 360 + 360) % 360;          /* into [0, 360) */
+      /* past the open end: snap to whichever stop is closer around the gap */
+      if (rel > sweep) rel = rel - sweep < (360 - rel) ? sweep : 0;
+      fraction = rel / sweep;
+    }
 
     if (interact.params.options) {
       const options = optionNames(this.mesh, run(interact.params.options, cells));

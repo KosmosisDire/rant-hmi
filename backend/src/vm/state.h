@@ -59,6 +59,25 @@ struct TimerState {
     uint32_t remaining = 0;
 };
 
+/* One history's runtime side (HistoryDef is the compile side). `latest` is the capture
+ * buffer StoreHist fills (sample-and-hold); the rate timer commits it into the ring.
+ * The ring is sample-major at a FIXED stride of series_cap floats, so a series-count
+ * change never reallocates: it just resets the ring (stale series must not age out
+ * beside fresh ones). An unknown sample is NaN, serialized as null. */
+struct HistoryState {
+    bool has = false;                 /* latest holds a capture */
+    uint32_t latest_count = 1;
+    std::vector<float> latest;        /* series_cap floats */
+    uint32_t series = 1;              /* the ring's current sample width */
+    uint32_t head = 0;                /* index of the OLDEST sample */
+    uint32_t count = 0;               /* valid samples, <= capacity */
+    uint64_t total = 0;               /* samples ever pushed (the wire cursor) */
+    uint64_t next_tick = 0;
+    std::vector<float> data;          /* capacity x series_cap floats */
+
+    void sample(uint32_t capacity, uint32_t series_cap) noexcept;
+};
+
 struct PendingState {
     bool active = false;
     uint64_t wake_tick = 0;
@@ -104,6 +123,7 @@ class RuntimeState {
     std::vector<uint64_t> throttle;
     std::vector<PendingState> pending;
     std::vector<TimerState> timers;
+    std::vector<HistoryState> histories;
     std::vector<uint8_t> fired;
     std::vector<Value> stack;
     std::vector<EffectRecord> effects;

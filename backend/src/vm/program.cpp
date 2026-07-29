@@ -91,6 +91,8 @@ const char* op_name(OpCode op) {
         case OpCode::Index: return "INDEX";
         case OpCode::EnumFromName: return "ENUM_FROM_NAME";
         case OpCode::JmpNil: return "JMP_NIL";
+        case OpCode::TmrRead: return "TMR_READ";
+        case OpCode::StoreHist: return "STORE_HIST";
     }
     return "?";
 }

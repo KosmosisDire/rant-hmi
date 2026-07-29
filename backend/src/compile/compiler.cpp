@@ -147,6 +147,7 @@ class Compiler {
         copy_entities();
         build_cells();
         build_feeds();
+        wire_history_feeds();
         build_event_values();
         /* The type's defaults are compiled FIRST, so they run first: by the time an
          * authored flow on the same event runs, the widget's own state already reflects
@@ -470,11 +471,41 @@ class Compiler {
                         check_enum_type_slot(info.id, name, slot, initial);
                         info.slots[name] =
                             add_cell(CellKind::Slot, info.id, info.id, name, shape, initial, false);
+                        /* a slot the type flags `history` gets a sampling ring (spec
+                         * 2.10): rate and window read from the sibling slots' authored
+                         * values (an edit recompiles, so compile-time is live enough) */
+                        if (slot.value("history", false))
+                            add_history(info, name, info.slots[name], authored);
                     }
                 }
                 widgets_.push_back(std::move(info));
             }
         }
+    }
+
+    /* One history per flagged slot: the sampling parameters come from the widget's own
+     * `rate` (Hz) and `window` (seconds) slots, authored value first, the type's default
+     * otherwise, clamped to sane sampling (1..100 Hz, ring capped at 4096 samples). */
+    void add_history(const WidgetInfo& info, const std::string& name, uint32_t cell,
+                     const Json& authored) {
+        auto slot_number = [&](const char* slot, double fallback) {
+            auto it = authored.find(slot);
+            if (it != authored.end() && it->is_number()) return it->get<double>();
+            for (const Json& row : info.type->value("slots", Json::array()))
+                if (row.value("name", "") == slot && row["default"].is_number())
+                    return row["default"].get<double>();
+            return fallback;
+        };
+        const double rate = std::min(100.0, std::max(1.0, slot_number("rate", 10.0)));
+        const double window = std::min(3600.0, std::max(1.0, slot_number("window", 60.0)));
+        HistoryDef def;
+        def.widget_id = info.id;
+        def.cell = cell;
+        def.slot = name;
+        def.rate_ticks = static_cast<uint32_t>(std::lround(1000.0 / rate));
+        def.capacity = static_cast<uint32_t>(
+            std::min(4096.0, std::max(2.0, std::round(rate * window))));
+        program_.histories.push_back(std::move(def));
     }
 
     /* A registry slot declared `enum` is CONSTRAINED TEXT: its values are the variant NAMES
@@ -833,25 +864,39 @@ class Compiler {
         }
     }
 
-    /* A feed's case arms (spec 2.4): first match wins, top to bottom.
+    /* A feed whose slot has a history ring stores into the ring's LATEST buffer, not
+     * the cell: its value may be a whole numeric list (a series), which no scalar cell
+     * can hold. The rewrite happens after the feed compiled normally, so every feed
+     * form (plain, cased, computed) funnels through the same one Store site. */
+    void wire_history_feeds() {
+        for (FeedProgram& feed : program_.feeds)
+            for (uint32_t h = 0; h < program_.histories.size(); ++h) {
+                if (program_.histories[h].cell != feed.cell) continue;
+                for (Instruction& ins : feed.code)
+                    if (ins.op == OpCode::Store && ins.a == feed.cell) {
+                        ins.op = OpCode::StoreHist;
+                        ins.a = h;
+                    }
+            }
+    }
+
+    /* A feed's case arms (spec 2.4): CONDITIONS only, first match wins, top to bottom.
      *
      *   LoadX; JmpNil -> NIL
-     *   arm i: LoadX; Const(when_i); Eq; JmpFalse -> arm i+1; <xf_i>; Jmp -> STORE
-     *   <else xf>; Jmp -> STORE          (when the feed's xf is non-empty)
-     *   NIL: Const(nil)                  (the Nil bail-out, and the covered dead end)
+     *   arm i: <test_i>; JmpFalse -> arm i+1; <xf_i>; Jmp -> STORE
+     *   <else xf>; Jmp -> STORE
+     *   NIL: Const(nil)                  (the Nil bail-out)
      *   STORE: Store; Halt
      *
-     * An enum source's `when` is a variant NAME (or its backing integer); coverage is
-     * CHECKED: no else means every variant (or both booleans) must be handled, and
-     * anything uncoverable (a number, text, an unreflected source) requires the else. */
+     * Every arm is {test, xf}: a boolean expression over x (`x == ._None`,
+     * `x.running`, `x[8] == 4100`). The old value-matching arms ({when}) are gone,
+     * and with them the coverage analysis: conditions cannot be enumerated, so an
+     * empty else stands only where the value can PASS THROUGH unchanged. */
     bool compile_feed_cases(const Json& node, FeedProgram& feed, ExpressionScope& scope,
                             const Json& cases) {
         const Shape wanted = program_.cells[feed.cell].shape;
         const Shape source = scope.x_shape;
-        const uint16_t source_enum = scope.x_enum;
         std::vector<uint32_t> ends;
-        std::set<int64_t> covered;
-        bool covered_true = false, covered_false = false;
 
         /* the Nil bail guards a SCALAR x; a whole-message feed's x is Nil by design
            (its fields ride qualified bindings), and a TIMER's state lives in the
@@ -867,112 +912,31 @@ class Compiler {
         uint32_t index = 0;
         for (const Json& entry : cases) {
             const std::string where = "case" + std::to_string(index);
-
-            /* a PREDICATE arm ({test}): any boolean expression over x, for the matches
-               a value cannot spell (`x[8] == 4100 or x[8] == 4`). It counts toward no
-               coverage: nothing about it can be analyzed, and is not meant to be. */
-            if (entry.is_object() && entry.contains("test")) {
-                const std::string test = str_or(entry, "test", "");
-                if (test.empty()) {
-                    diag(feed.feed_id, "case_when", "write this case's condition",
-                         DiagGrade::Error, where);
-                    return false;
-                }
-                if (!expression(feed.feed_id, test, ExprTier::Display, scope, Shape::Bool,
-                                feed.code, feed.max_stack, nullptr, where))
-                    return false;
-                const uint32_t skip = static_cast<uint32_t>(feed.code.size());
-                Instruction branch;
-                branch.op = OpCode::JmpFalse;
-                branch.c = fault_site(feed.feed_id, "case_when",
-                                      "the case could not compare");
-                feed.code.push_back(branch);
-                const std::string xf = str_or(entry, "xf", "");
-                if (xf.empty()) {
-                    diag(feed.feed_id, "expression", "this case needs an expression",
-                         DiagGrade::Error, where);
-                    return false;
-                }
-                if (!expression(feed.feed_id, xf, ExprTier::Display, scope, wanted,
-                                feed.code, feed.max_stack, nullptr, where))
-                    return false;
-                ends.push_back(static_cast<uint32_t>(feed.code.size()));
-                feed.code.push_back(Instruction{OpCode::Jmp});
-                feed.code[skip].a = static_cast<uint32_t>(feed.code.size());
-                ++index;
-                continue;
-            }
-
-            const Json when = entry.is_object() && entry.contains("when") ? entry["when"]
-                                                                          : Json();
-            if (source == Shape::Struct) {
+            const std::string test = entry.is_object() ? str_or(entry, "test", "") : "";
+            if (test.empty()) {
                 diag(feed.feed_id, "case_when",
-                     "the value is a whole message; match with a condition over "
-                     "x.<field>",
+                     entry.is_object() && entry.contains("when")
+                         ? "value matching is gone; write a condition over x"
+                         : "write this case's condition",
                      DiagGrade::Error, where);
                 return false;
             }
-            if (source == Shape::Timer) {
-                diag(feed.feed_id, "case_when",
-                     "the value is a timer; match with a condition over x.running / "
-                     "x.remaining",
-                     DiagGrade::Error, where);
+            if (!expression(feed.feed_id, test, ExprTier::Display, scope, Shape::Bool,
+                            feed.code, feed.max_stack, nullptr, where))
                 return false;
-            }
-            Value key = Value::nil();
-            bool ok = false;
-            if (source == Shape::Enum && when.is_string()) {
-                if (source_enum && source_enum < program_.types.size())
-                    for (const auto& row : program_.types[source_enum].variants)
-                        if (row.first == when.get<std::string>()) {
-                            key = Value::enumeration(row.second, source_enum);
-                            covered.insert(row.second);
-                            ok = true;
-                            break;
-                        }
-                if (!ok)
-                    diag(feed.feed_id, "enum_name",
-                         "'" + when.get<std::string>() +
-                             "' is not one of this enum's variants",
-                         DiagGrade::Error, where);
-            } else if (when.is_string() && !when.get<std::string>().empty()) {
-                key = Value::text(program_.add_text(when.get<std::string>()));
-                ok = true;
-            } else if (when.is_number()) {
-                key = Value::number(when.get<double>());
-                if (source == Shape::Enum)
-                    covered.insert(static_cast<int64_t>(when.get<double>()));
-                ok = true;
-            } else if (when.is_boolean()) {
-                key = Value::boolean(when.get<bool>());
-                (when.get<bool>() ? covered_true : covered_false) = true;
-                ok = true;
-            } else {
-                diag(feed.feed_id, "case_when", "pick a value for this case",
-                     DiagGrade::Error, where);
-            }
-            if (!ok) return false;
-
-            feed.code.push_back(Instruction{OpCode::LoadX});
-            Instruction constant;
-            constant.op = OpCode::Const;
-            constant.a = program_.add_constant(key);
-            feed.code.push_back(constant);
-            feed.code.push_back(Instruction{OpCode::Eq});
             const uint32_t skip = static_cast<uint32_t>(feed.code.size());
             Instruction branch;
             branch.op = OpCode::JmpFalse;
             branch.c = fault_site(feed.feed_id, "case_when", "the case could not compare");
             feed.code.push_back(branch);
-
-            const std::string xf = entry.is_object() ? str_or(entry, "xf", "") : "";
+            const std::string xf = str_or(entry, "xf", "");
             if (xf.empty()) {
                 diag(feed.feed_id, "expression", "this case needs an expression",
                      DiagGrade::Error, where);
                 return false;
             }
-            if (!expression(feed.feed_id, xf, ExprTier::Display, scope, wanted, feed.code,
-                            feed.max_stack, nullptr, where))
+            if (!expression(feed.feed_id, xf, ExprTier::Display, scope, wanted,
+                            feed.code, feed.max_stack, nullptr, where))
                 return false;
             ends.push_back(static_cast<uint32_t>(feed.code.size()));
             feed.code.push_back(Instruction{OpCode::Jmp});
@@ -982,9 +946,8 @@ class Compiler {
 
         /* The ELSE arm. An EMPTY else means what an empty inline transform means: the
            value PASSES THROUGH (an enum into a text slot as its name), so cases read
-           as "override these values, show the rest as themselves". Coverage is
-           demanded only where pass-through is impossible: a value that cannot stand
-           as itself (an enum into a color) must be handled or given an else. */
+           as "override these, show the rest as themselves". Where pass-through is
+           impossible (an enum into a color), the else must be written. */
         const std::string otherwise = str_or(node, "xf", "");
         const bool passes =
             otherwise.empty() &&
@@ -1000,30 +963,9 @@ class Compiler {
                 return false;
             ends.push_back(static_cast<uint32_t>(feed.code.size()));
             feed.code.push_back(Instruction{OpCode::Jmp});
-        } else if (source == Shape::Enum && source_enum &&
-                   source_enum < program_.types.size()) {
-            std::string missing;
-            for (const auto& row : program_.types[source_enum].variants)
-                if (!covered.count(row.second))
-                    missing += (missing.empty() ? "" : ", ") + row.first;
-            if (!missing.empty()) {
-                diag(feed.feed_id, "cases",
-                     "unhandled: " + missing + "; add them, or an else",
-                     DiagGrade::Error, "xf");
-                return false;
-            }
-        } else if (source == Shape::Bool) {
-            if (!covered_true || !covered_false) {
-                diag(feed.feed_id, "cases",
-                     std::string("unhandled: ") + (covered_true ? "false" : "true") +
-                         "; add it, or an else",
-                     DiagGrade::Error, "xf");
-                return false;
-            }
         } else {
             diag(feed.feed_id, "cases",
-                 "cases over " + std::string(shape_name(source)) +
-                     " cannot cover every value; add an else",
+                 "the value cannot pass through as-is; write the else",
                  DiagGrade::Error, "xf");
             return false;
         }

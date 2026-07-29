@@ -213,7 +213,8 @@ Document Document::make_default() {
     ws.push_back(widget("Toggle", "Pump", 3, 5, 9, 3, Json{{"value", true}}));
     ws.push_back(widget("Slider", "Setpoint", 3, 9, 20, 3, Json{{"value", 62}, {"min", 0}, {"max", 100}}));
     ws.push_back(widget("Readout", "Flow", 26, 4, 12, 5, Json{{"value", 42.5}, {"units", "l/min"}}));
-    ws.push_back(widget("Indicator", "Fault", 26, 10, 5, 5, Json{{"value", false}}));
+    /* the lamp is a Panel with a bound surface: there is no Indicator type */
+    ws.push_back(widget("Panel", "Fault", 26, 10, 5, 5, Json{{"surface", "#2a2a2a"}}));
     ws.push_back(widget("Button", "Reset", 33, 10, 8, 5, Json{{"text", "Reset"}}));
 
     /* one feed and one flow so the inspector and the rename fan-out have real work */

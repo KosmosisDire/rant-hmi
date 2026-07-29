@@ -244,21 +244,46 @@ function drawMarkPart(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): vo
   out.push(`<circle cx="${n(x)}" cy="${n(y)}" r="${n(size)}" fill="${fill}"/>`);
 }
 
-/* the SCALE MARKERS: `count` marks spread over the sweep, each a short radial line
- * ending at the outer edge, with optional numeric labels (min..max interpolated) set
- * inside them. The one text a radial control renders besides its own `text` slot. */
+/* the SCALE MARKERS: `count` marks spread over the sweep (or, with dir "h", along the
+ * rect's width), with optional numeric labels (min..max interpolated). The one text a
+ * control renders besides its own `text` slot: a value readout is always the user's
+ * own Label or Readout, never built in. */
 function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
-  const f = radialFrame(rect, attrs, cells);
-  const count = Math.max(2, Math.min(51, Math.round(attrNum(attr(attrs, "count", cells), 5))));
+  /* a declared-but-unresolvable count (a Selector with no options yet) draws nothing */
+  const rawCount = attr(attrs, "count", cells);
+  if (attrs && attrs.count && rawCount === null) return;
+  const count = Math.max(2, Math.min(51, Math.round(attrNum(rawCount, 5))));
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#5a5a5a";
-  const outer = f.radius * attrNum(attr(attrs, "outer", cells), 1);
-  const len = f.radius * attrNum(attr(attrs, "len", cells), 0.1);
-  const width = Math.max(0.75, f.radius * 0.018);
   const labels = attrBool(attr(attrs, "labels", cells), false);
   const lo = attrNum(attr(attrs, "min", cells), 0);
   const hi = attrNum(attr(attrs, "max", cells), 1);
   const decimals = Math.max(0, Math.min(6, attrNum(attr(attrs, "decimals", cells), 0)));
   const textFill = attrColor(attr(attrs, "text_fill", cells)) ?? "#8a8a8a";
+  const label = (i: number) => (lo + ((hi - lo) * i) / (count - 1)).toFixed(decimals);
+
+  if (attrText(attr(attrs, "dir", cells)) === "h") {
+    /* linear: marks along the top of this rect (the row under a slider's bar), labels
+       set beneath them; the end labels anchor inward so they stay inside the tile */
+    const mark = rect.h * (labels ? 0.4 : 0.8);
+    const width = Math.max(0.75, rect.h * 0.07);
+    const size = Math.max(5, Math.min(rect.h * 0.55, rect.w / (0.6 * count * 4)));
+    for (let i = 0; i < count; ++i) {
+      const x = rect.x + (rect.w * i) / (count - 1);
+      out.push(`<path d="M${n(x)} ${n(rect.y)} v${n(mark)}" stroke="${fill}" ` +
+               `stroke-width="${n(width)}" stroke-linecap="round"/>`);
+      if (!labels) continue;
+      const anchor = i === 0 ? "start" : i === count - 1 ? "end" : "middle";
+      out.push(`<text x="${n(x)}" y="${n(rect.y + mark + size * 0.65)}" fill="${textFill}" ` +
+               `font-size="${n(size)}" text-anchor="${anchor}" dominant-baseline="central">` +
+               `${escapeXml(label(i))}</text>`);
+    }
+    return;
+  }
+
+  const f = radialFrame(rect, attrs, cells);
+  const outer = f.radius * attrNum(attr(attrs, "outer", cells), 1);
+  const len = f.radius * attrNum(attr(attrs, "len", cells), 0.1);
+  const width = Math.max(0.75, f.radius * 0.018);
   const size = Math.max(5, f.radius * 0.16);
   for (let i = 0; i < count; ++i) {
     const angle = f.start + (f.sweep * i) / (count - 1);
@@ -268,10 +293,111 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
              `stroke-width="${n(width)}" stroke-linecap="round"/>`);
     if (!labels) continue;
     const [tx, ty] = polar(f.cx, f.cy, outer - len - size * 0.9, angle);
-    const value = lo + ((hi - lo) * i) / (count - 1);
     out.push(`<text x="${n(tx)}" y="${n(ty)}" fill="${textFill}" font-size="${n(size)}" ` +
              `text-anchor="middle" dominant-baseline="central">` +
-             `${escapeXml(value.toFixed(decimals))}</text>`);
+             `${escapeXml(label(i))}</text>`);
+  }
+}
+
+/* a deterministic palette for multi-series plots: series 0 wears the fill color, later
+ * ones rotate its hue so any series count stays distinguishable with one authored color */
+function rotateHue(hex: string, index: number): string {
+  if (!index || !/^#[0-9a-fA-F]{6,8}$/.test(hex)) return hex;
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d > 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  const s = max === 0 ? 0 : d / max;
+  const v = max;
+  h = (h + index * 67) % 360;
+  const c = v * s, x2 = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  const [rr, gg, bb] =
+    h < 60 ? [c, x2, 0] : h < 120 ? [x2, c, 0] : h < 180 ? [0, c, x2]
+    : h < 240 ? [0, x2, c] : h < 300 ? [x2, 0, c] : [c, 0, x2];
+  const to = (v2: number) => Math.round((v2 + m) * 255).toString(16).padStart(2, "0");
+  return `#${to(rr)}${to(gg)}${to(bb)}`;
+}
+
+/* the TREND plot: polylines over the history view riding the `values` attr (a HistView:
+ * rate/series/cap/samples, built by the shell from the wire's deltas). Newest at the
+ * right edge; a ring that is not yet full starts partway in; a null sample breaks the
+ * line (unknown is a gap, not a zero). Text: the hi/lo scale markers only. */
+function drawPlot(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
+  const raw = attr(attrs, "values", cells) as Json;
+  const view = raw && typeof raw === "object" && Array.isArray((raw as Json).samples)
+    ? (raw as { series: number; cap: number; samples: (number | null)[][] })
+    : null;
+  const track = attrColor(attr(attrs, "track", cells));
+  const fill = attrColor(attr(attrs, "fill", cells)) ?? "#4e8ef7";
+  const labels = attrBool(attr(attrs, "labels", cells), true);
+  const textFill = attrColor(attr(attrs, "text_fill", cells)) ?? "#8a8a8a";
+  const decimals = Math.max(0, Math.min(6, attrNum(attr(attrs, "decimals", cells), 0)));
+
+  /* the range: authored, or autoscaled over what is on screen (padded a tenth) */
+  let lo = attrNum(attr(attrs, "min", cells), 0);
+  let hi = attrNum(attr(attrs, "max", cells), 1);
+  if (attrBool(attr(attrs, "autoscale", cells), false) && view) {
+    let dataLo = Infinity, dataHi = -Infinity;
+    for (const sample of view.samples)
+      for (const v of sample)
+        if (typeof v === "number" && isFinite(v)) {
+          if (v < dataLo) dataLo = v;
+          if (v > dataHi) dataHi = v;
+        }
+    if (dataLo <= dataHi) {
+      const pad = (dataHi - dataLo) * 0.1 || Math.abs(dataHi) * 0.1 || 1;
+      lo = dataLo - pad;
+      hi = dataHi + pad;
+    }
+  }
+  if (!(hi > lo)) hi = lo + 1;
+
+  /* the grid: top, middle and bottom rules in the track color */
+  if (track)
+    for (const at of [0, 0.5, 1])
+      out.push(`<path d="M${n(rect.x)} ${n(rect.y + rect.h * at)} h${n(rect.w)}" ` +
+               `stroke="${track}" stroke-width="1" vector-effect="non-scaling-stroke"/>`);
+
+  if (view && view.samples.length > 1) {
+    const cap = Math.max(2, view.cap);
+    const xFor = (i: number) =>
+      rect.x + (rect.w * (cap - view.samples.length + i)) / (cap - 1);
+    const yFor = (v: number) =>
+      rect.y + rect.h * (1 - Math.max(0, Math.min(1, (v - lo) / (hi - lo))));
+    for (let s = 0; s < view.series; ++s) {
+      const color = rotateHue(fill, s);
+      let run: string[] = [];
+      const flush = () => {
+        if (run.length > 1)
+          out.push(`<polyline points="${run.join(" ")}" fill="none" stroke="${color}" ` +
+                   `stroke-width="1.4" vector-effect="non-scaling-stroke" ` +
+                   `stroke-linejoin="round"/>`);
+        run = [];
+      };
+      for (let i = 0; i < view.samples.length; ++i) {
+        const v = view.samples[i][s];
+        if (typeof v === "number" && isFinite(v)) run.push(`${n(xFor(i))},${n(yFor(v))}`);
+        else flush();
+      }
+      flush();
+    }
+  }
+
+  if (labels) {
+    const size = Math.max(5, Math.min(rect.h * 0.14, rect.w * 0.08));
+    const mark = (value: number, y: number, base: string) =>
+      out.push(`<text x="${n(rect.x + size * 0.3)}" y="${n(y)}" fill="${textFill}" ` +
+               `font-size="${n(size)}" text-anchor="start" dominant-baseline="${base}">` +
+               `${escapeXml(value.toFixed(decimals))}</text>`);
+    mark(hi, rect.y + size * 0.2, "hanging");
+    mark(lo, rect.y + rect.h - size * 0.2, "auto");
   }
 }
 
@@ -351,6 +477,7 @@ function renderBody(
       case "needle": drawNeedle(area, attrs, cells, out); return;
       case "mark": drawMarkPart(area, attrs, cells, out); return;
       case "ticks": drawTicks(area, attrs, cells, out); return;
+      case "plot": drawPlot(area, attrs, cells, out); return;
     }
     return;
   }

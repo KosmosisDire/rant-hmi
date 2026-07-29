@@ -519,22 +519,6 @@ void test_timer_reads() {
     refuses(1, "x * 2", "x is a timer");
     refuses(1, "x.expired * 2", "unknown field");
 
-    /* a VALUE arm cannot match a timer: the finding points at conditions */
-    {
-        Json root = timer_read_root("blink.running.pick(#00ff00, #102030)");
-        root["pages"][0]["widgets"][2]["feeds"][0]["cases"] =
-            Json::array({Json{{"when", true}, {"xf", "#885a1f"}}});
-        Document bad;
-        std::string adopt_error;
-        CHECK_MSG(bad.adopt(std::move(root), adopt_error), adopt_error);
-        CompileResult result = compile_document(bad, registry(), mesh);
-        CHECK(!result.ok);
-        bool found = false;
-        for (const auto& diagnostic : result.program.diagnostics)
-            if (diagnostic.message.find("match with a condition") != std::string::npos)
-                found = true;
-        CHECK_MSG(found, "no value-arm-on-timer diagnostic");
-    }
 }
 
 /* A FLOW that reads an entity (the read -> gate -> force/unforce toggle-off-the-plant
@@ -621,6 +605,98 @@ void test_flow_entity_read() {
     CHECK_MSG(mesh.transcript()[1] == "unforce V:suction", mesh.transcript()[1]);
 }
 
+/* TREND HISTORY (spec 2.9): a history-flagged slot samples into a backend ring at its
+ * authored rate, viewed or not; a scalar and a list series both capture through the
+ * feed's StoreHist tail; no arrival samples as NaN (an honest gap); a series-width
+ * change resets the ring. */
+void test_trend_history() {
+    EntityDef temp;
+    temp.kind = EntityKind::Variable;
+    temp.name = "temp";
+    temp.readable = true;
+    temp.fields = {FieldDef{"value", Shape::Num}};
+    EntityDef temps;
+    temps.kind = EntityKind::Variable;
+    temps.name = "temps";
+    temps.readable = true;
+    FieldDef vals;
+    vals.path = "vals";
+    vals.shape = Shape::List;
+    vals.elem = Shape::Num;
+    vals.bound = 4;
+    temps.fields = {vals};
+    FakeMesh mesh({temp, temps});
+
+    auto trend = [](const char* source, const char* path) {
+        return Json{{"type", "Trend"},
+                    {"slots", Json{{"rate", 100}, {"window", 1}}},
+                    {"feeds", Json::array({Json{{"slot", "value"},
+                                                {"src", Json{{"kind", "V"}, {"name", source}}},
+                                                {"path", path},
+                                                {"xf", ""}}})},
+                    {"flows", Json::array()}};
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages",
+                  Json::array({Json{{"name", "Main"},
+                                    {"widgets", Json::array({trend("temp", ""),
+                                                             trend("temps", "vals")})}}})}};
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    CHECK(compiled.program.histories.size() == 2);
+    CHECK(compiled.program.histories[0].rate_ticks == 10);
+    CHECK(compiled.program.histories[0].capacity == 100);
+    /* the feed's Store tail became StoreHist: nothing ever stores into the cell */
+    bool rewired = false;
+    for (const Instruction& ins : compiled.program.feeds[0].code)
+        if (ins.op == OpCode::StoreHist) rewired = true;
+    CHECK(rewired);
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    auto newest = [&](uint32_t h) {
+        const HistoryState& hist = scheduler.state().histories[h];
+        const HistoryDef& def = scheduler.program().histories[h];
+        return hist.data.data() +
+               static_cast<size_t>((hist.head + hist.count - 1) % def.capacity) *
+                   def.series_cap;
+    };
+
+    /* no arrival yet: the rate still ticks, and it samples UNKNOWN */
+    tick(scheduler, 25);
+    CHECK(scheduler.state().histories[0].count >= 2);
+    CHECK(std::isnan(newest(0)[0]));
+
+    /* a scalar arrival captures and the next rate tick commits it */
+    mesh.push_update(EntityKind::Variable, "temp", {Value::number(42.5)});
+    tick(scheduler, 11);
+    CHECK(newest(0)[0] == 42.5f);
+
+    /* a list arrival is a SERIES: one lane per element (the first wide sample already
+       reset the ring away from the width-1 unknowns, so let a few accumulate) */
+    mesh.push_update(EntityKind::Variable, "temps", {Value::list(0, 3, ValueTag::Num)});
+    mesh.push_elems(0, {Value::number(1), Value::number(2), Value::number(3)});
+    tick(scheduler, 35);
+    CHECK(scheduler.state().histories[1].series == 3);
+    CHECK(newest(1)[0] == 1.0f && newest(1)[1] == 2.0f && newest(1)[2] == 3.0f);
+
+    /* a width change resets the ring rather than mixing sample shapes */
+    const uint32_t before = scheduler.state().histories[1].count;
+    CHECK(before > 1);
+    mesh.push_update(EntityKind::Variable, "temps", {Value::list(0, 2, ValueTag::Num)});
+    mesh.push_elems(0, {Value::number(7), Value::number(8)});
+    tick(scheduler, 11);
+    CHECK(scheduler.state().histories[1].series == 2);
+    CHECK(scheduler.state().histories[1].count < before);
+    CHECK(newest(1)[0] == 7.0f && newest(1)[1] == 8.0f);
+}
+
 } // namespace
 
 int main() {
@@ -631,5 +707,6 @@ int main() {
     test_held_proposal();
     test_timer_reads();
     test_flow_entity_read();
+    test_trend_history();
     return check::summary("scheduler_test");
 }

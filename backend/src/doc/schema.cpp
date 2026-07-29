@@ -107,8 +107,8 @@ const std::vector<NodeSpec>& table() {
             text("path"),
             /* with `cases`, xf is the ELSE arm; alone it is the whole transform */
             text("xf", "", Role::Expr),
-            /* discrete PATTERN MATCHING over x (spec 2.4): [{when: scalar, xf: Expr}],
-               first match wins; coverage is checked at compile */
+            /* CONDITIONAL arms over x (spec 2.4): [{test: Expr, xf: Expr}], first
+               match wins; the feed's xf is the else */
             array("cases", Role::Cases),
             num("poll_hz", nullptr),
             num("stale_ms", nullptr),

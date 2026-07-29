@@ -4,19 +4,18 @@
  * sits, so the line does not restate it. There is nothing to fold: the line is the
  * editor, it never wraps, and content squishes rather than reflowing the sidebar.
  *
- * "+ case" graduates the one transform into PATTERN MATCHING (spec 2.4): the expression
- * moves onto its own row, each row gaining a condition column (a variant dropdown when
- * the source is an enum, so the vocabulary is picked, never typed) and an expression
- * column, with the feed's own xf standing as the else. Coverage is the compiler's check;
- * the rows just carry its findings.
+ * "+ case" graduates the one transform into CONDITIONAL arms (spec 2.4): the expression
+ * moves onto its own row, each row a condition over x and its expression, first match
+ * wins, with the feed's own xf standing as the else. There is no value matching: a
+ * condition (`x == .run`, `x > 40`) says everything a picked value said and more.
  *
  * The line's SHAPE is which controls exist: the source kind, and how many case rows.
  * The names, paths, conditions and rates inside are values, pushed in place. */
 
-import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
+import { chip, commitInput, el, iconButton, numberInput } from "../dom.js";
 import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
-import { bindChoice, bindField } from "../reconcile.js";
+import { bindField } from "../reconcile.js";
 import { Feed, Json, SlotSpec, Widget, WidgetType } from "../types.js";
 import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
 import { sourceField, valueEditor } from "./editors.js";
@@ -58,26 +57,7 @@ function pickable(spec: SlotSpec | undefined): boolean {
 }
 
 export function feedShape(feed: Feed): Json {
-  return [feed.id, feed.slot, feed.src?.kind ?? "V",
-          /* per-arm MODE is structure: a value arm and a predicate arm are different
-             controls, so flipping one rebuilds its row */
-          (feed.cases ?? []).map((c) => (c.test !== undefined ? "t" : "v")).join("")];
-}
-
-/* the enum vocabulary behind the feed's source, when it has one */
-function sourceVariants(
-  editor: Editor,
-  feed: () => Feed,
-): { name: string; value: number }[] {
-  const at = feed();
-  if (!at.src?.name || at.src.kind === "L") return [];
-  const entity = editor.mesh.entities.find(
-    (e) => e.kind === at.src.kind && e.name === at.src.name,
-  );
-  const fields = entity?.kind === "F" ? entity.returns ?? [] : entity?.fields ?? [];
-  const field = at.path ? fields.find((f) => f.path === at.path)
-                        : fields.length === 1 ? fields[0] : undefined;
-  return field?.variants ?? [];
+  return [feed.id, feed.slot, feed.src?.kind ?? "V", (feed.cases ?? []).length];
 }
 
 export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null, feed: Feed): HTMLElement {
@@ -160,18 +140,18 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
   if (rate) bindField(feed.id + ":poll_hz", rate, () => String(at().poll_hz ?? 2));
 
   /* "+ case": the FIRST one carries the standing expression onto its own row */
-  const addCase = iconButton("plus", "add a case (pattern match on the value)", () => {
+  const addCase = iconButton("plus", "add a conditional case", () => {
     const held = at();
     const list = (held.cases ?? []).slice();
     if (!list.length) {
       editor.apply([
         { op: "set_prop", node: feed.id, key: "cases",
-          value: [{ when: null, xf: held.xf ?? "" }] },
+          value: [{ test: "", xf: held.xf ?? "" }] },
         { op: "set_prop", node: feed.id, key: "xf", value: "" },
       ]);
       return;
     }
-    list.push({ when: null, xf: "" });
+    list.push({ test: "", xf: "" });
     set("cases", list);
   });
 
@@ -201,7 +181,7 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
 
   /* the case rows: condition column, expression column; the else is the feed's xf */
   const block = el("div", { class: "feed-block" }, [line]);
-  type Case = { when?: Json; test?: string; xf: string };
+  type Case = { test?: string; xf: string };
   const editCase = (index: number, next: Case) => {
     const list = ((at().cases ?? []) as Case[]).slice();
     if (index >= list.length) return;
@@ -209,88 +189,20 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     set("cases", list);
   };
   const heldCase = (index: number): Case => (at().cases ?? [])[index] ?? { xf: "" };
-  const variants = sourceVariants(editor, at);
 
   cases.forEach((entry, index) => {
     const key = feed.id + ":case" + index;
-
-    /* a PREDICATE arm: the condition is its own expression; clearing it returns the
-       arm to value matching */
-    if (entry.test !== undefined) {
-      const test = commitInput(entry.test ?? "", (text) => {
-        const held = heldCase(index);
-        editCase(index, text.trim()
-          ? { test: text, xf: held.xf }
-          : { when: null, xf: held.xf });
-      }, { class: "field grow", placeholder: "condition" });
-      bindField(key + ".test", test, () => String(heldCase(index).test ?? ""));
-      attachAutocomplete(test,
-        exprContext(editor, widget, "display", feedX(editor, widget, at)));
-      block.appendChild(
-        el("div", { class: "feed-case" }, [
-          highlighted(test, "when"),
-          /* the way BACK from a predicate to value matching */
-          iconButton("check", "match a value instead", () =>
-            editCase(index, { when: null, xf: heldCase(index).xf })),
-          el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
-          resultCell(key + ".xf", () => String(heldCase(index).xf ?? ""),
-                     (text) => editCase(index, { ...heldCase(index), xf: text })),
-          diagIcon(editor.diagAt(feed.id, "case" + index)),
-          iconButton("x", "remove this case", () => {
-            const list = ((at().cases ?? []) as Json[]).slice();
-            list.splice(index, 1);
-            set("cases", list);
-          }),
-        ]),
-      );
-      return;
-    }
-
-    let when: HTMLElement;
-    if (variants.length) {
-      const options = [{ value: "" }, ...variants.map((v) => ({ value: v.name }))];
-      const picker = selectField(options,
-                                 typeof entry.when === "string" ? entry.when : "",
-                                 (name) => editCase(index, { when: name,
-                                                             xf: heldCase(index).xf }));
-      bindChoice(key + ".when", pickerOf(picker), () => {
-        const held = (at().cases ?? [])[index]?.when;
-        return typeof held === "string" ? held : "";
-      });
-      when = picker;
-    } else {
-      /* free scalar: a number stays a number, true/false a bool, the rest text */
-      const input = commitInput(
-        entry.when === null || entry.when === undefined ? "" : String(entry.when),
-        (text) => {
-          const trimmed = text.trim();
-          const numeric = Number(trimmed);
-          editCase(index, {
-            when: trimmed === "" ? null
-              : trimmed === "true" ? true
-              : trimmed === "false" ? false
-              : Number.isFinite(numeric) && trimmed !== "" && !Number.isNaN(numeric) &&
-                /^[-+0-9.eE]+$/.test(trimmed) ? numeric
-              : trimmed,
-            xf: heldCase(index).xf,
-          });
-        },
-        { class: "field num", placeholder: "value" });
-      bindField(key + ".when", input, () => {
-        const held = (at().cases ?? [])[index]?.when;
-        return held === null || held === undefined ? "" : String(held);
-      });
-      when = input;
-    }
+    const test = commitInput(entry.test ?? "", (text) =>
+      editCase(index, { test: text, xf: heldCase(index).xf }),
+      { class: "field grow", placeholder: "condition" });
+    bindField(key + ".test", test, () => String(heldCase(index).test ?? ""));
+    attachAutocomplete(test,
+      exprContext(editor, widget, "display", feedX(editor, widget, at)));
     block.appendChild(
       el("div", { class: "feed-case" }, [
-        when,
-        /* the way out of value matching: make this arm a PREDICATE (`x[8] == 4100`) */
-        iconButton("pencil", "match with a condition instead", () =>
-          editCase(index, { test: "", xf: heldCase(index).xf })),
+        highlighted(test, "when"),
         el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
-        resultCell(key + ".xf",
-                   () => String((at().cases ?? [])[index]?.xf ?? ""),
+        resultCell(key + ".xf", () => String(heldCase(index).xf ?? ""),
                    (text) => editCase(index, { ...heldCase(index), xf: text })),
         diagIcon(editor.diagAt(feed.id, "case" + index)),
         iconButton("x", "remove this case", () => {

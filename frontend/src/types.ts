@@ -90,10 +90,8 @@ export interface Feed {
   path: string;
   /* with `cases`, the ELSE arm; alone, the whole transform */
   xf: string;
-  /* discrete pattern matching over x (spec 2.4): first match wins. An arm matches a
-     VALUE ({when}, counted toward coverage) or a PREDICATE ({test}, any boolean
-     expression), key-discriminated like a move's sides. */
-  cases?: { when?: Json; test?: string; xf: string }[];
+  /* conditional arms over x (spec 2.4): first match wins, any boolean condition */
+  cases?: { test?: string; xf: string }[];
   poll_hz: number | null;
   stale_ms: number | null;
 }
@@ -194,6 +192,17 @@ export type Op =
 export interface Live {
   epoch: number;
   values: Record<string, Json>;
+  /* trend history deltas, keyed "<widget>.<slot>" (shell.ts folds them into HistViews) */
+  hist?: Record<string, Json>;
+}
+
+/* one widget slot's accumulated history, rebuilt from the wire's from/values deltas */
+export interface HistView {
+  rate: number;
+  series: number;
+  cap: number;
+  total: number;                    /* absolute index one past the newest sample */
+  samples: (number | null)[][];     /* oldest first; null = unknown */
 }
 
 /* ---- diagnostics ---- */

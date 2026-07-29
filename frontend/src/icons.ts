@@ -45,7 +45,6 @@ export const ICONS: Record<string, string> = {
   Selector: '<circle cx="12" cy="12" r="7"/><path d="M12 12V7"/><path d="M12 2v1.5"/><path d="m19.1 4.9-1.1 1.1"/><path d="m4.9 4.9 1.1 1.1"/>',
   Trend: '<path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/>',
   Readout: '<path d="M4 7h4"/><path d="M6 7v10"/><path d="M13 17h7"/><path d="M13 12h7"/>',
-  Indicator: '<circle cx="12" cy="12" r="6"/>',
   Dropdown: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="m9 11 3 3 3-3"/>',
   Label: '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
   Panel: '<rect x="3" y="4" width="18" height="16" rx="2"/>',

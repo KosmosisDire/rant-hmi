@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <thread>
 
@@ -254,6 +255,42 @@ Json App::live() const {
     return Json{{"epoch", epoch_}, {"values", std::move(values)}};
 }
 
+/* The trend histories on the wire, keyed "<widget>.<slot>". `from` is the absolute
+ * index of the first sample in `values` (flat, sample-major, null = unknown); a client
+ * whose local total is not `from` resyncs from this frame when it carries the whole
+ * ring, else it shows a gap until the next full send. */
+Json App::hist_json(bool full) const {
+    Json out = Json::object();
+    if (!scheduler_) return out;
+    const Program& program = scheduler_->program();
+    const RuntimeState& state = scheduler_->state();
+    for (uint32_t i = 0; i < program.histories.size() && i < state.histories.size(); ++i) {
+        const HistoryDef& def = program.histories[i];
+        const HistoryState& hist = state.histories[i];
+        const uint64_t oldest = hist.total - hist.count;
+        uint64_t from = full ? oldest : std::max(oldest,
+            i < hist_published_.size() ? hist_published_[i] : 0);
+        if (!full && from == hist.total) continue;   /* nothing new this frame */
+        Json values = Json::array();
+        for (uint64_t s = from; s < hist.total; ++s) {
+            const float* sample = hist.data.data() +
+                static_cast<size_t>((hist.head + (s - oldest)) % def.capacity) *
+                    def.series_cap;
+            for (uint32_t k = 0; k < hist.series; ++k) {
+                if (std::isnan(sample[k])) values.push_back(nullptr);
+                else values.push_back(static_cast<double>(sample[k]));
+            }
+        }
+        out[std::to_string(def.widget_id) + "." + def.slot] =
+            Json{{"rate", 1000.0 / def.rate_ticks},
+                 {"series", hist.series},
+                 {"cap", def.capacity},
+                 {"from", from},
+                 {"values", std::move(values)}};
+    }
+    return out;
+}
+
 void App::on_input(uint64_t session, const Json& frame) {
     if (!scheduler_) return;
     const uint64_t widget = json_u64_or(field(frame, "widget_id"), 0);
@@ -280,6 +317,8 @@ void App::compile_runtime() {
                                       next->program());
     scheduler_ = std::move(next);
     ++epoch_;
+    /* resend every ring whole on the next live frame: the client resyncs off `from` */
+    hist_published_.assign(scheduler_->state().histories.size(), 0);
     mesh_->apply(scheduler_->program());
     update_viewed_pages();
     if (server_.sessions())
@@ -397,15 +436,22 @@ void App::publish_live() {
     last_live_tick_ = scheduler_->state().tick;
     Json frame = live();
     frame["type"] = "live";
+    frame["hist"] = hist_json(false);
+    const RuntimeState& state = scheduler_->state();
+    hist_published_.assign(state.histories.size(), 0);
+    for (uint32_t i = 0; i < state.histories.size(); ++i)
+        hist_published_[i] = state.histories[i].total;
     server_.broadcast(frame);
 }
 
 Json App::snapshot() const {
+    Json live_frame = live();
+    live_frame["hist"] = hist_json(true);
     return Json{{"type", "snapshot"},
                 {"version", doc_.version()},
                 {"doc", doc_.root},
                 {"registry", registry()},
-                {"live", live()},
+                {"live", std::move(live_frame)},
                 {"mesh", mesh_json()},
                 {"lang", lang_json()},
                 {"diag", Json{{"compile", diagnostics()}}}};
