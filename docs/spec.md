@@ -405,11 +405,16 @@ labels are thinned (every k-th drawn, the last always) instead of made
 illegible. Turning an outside scale on shrinks the control (`outer` reserves the
 rim), and the labels repay it by sizing to fit between the marks and the rim, so
 they never spill out of the tile; the fit's `flare` widens the extent past the
-sweep ends for the end labels' room. The END ticks sit a few degrees INSIDE the
-sweep (`inset`, derived from the arc's thickness): fully inside the arc's
-rounded end caps, deliberately a hair inside the true endpoint, because the end
-labels read as the endpoints' marks either way and a tick riding the cap's curve
-looks broken.
+sweep ends for the end labels' room. The END ticks sit fully INSIDE the ends,
+by the control's ACTUAL end rounding plus half the tick's own stroke: the ticks
+carry `cap_radius` (the control_radius slot) and `cap_width` (the arc's stroke),
+clamp them exactly as the arc does, and convert the fillet to the angle it
+subtends at the marks' radius. So at control_radius 0 the end tick is inset by
+just its own stroke, and as the radius grows it moves in to start where the
+rounding stops. Deliberately a hair inside the true endpoint: the end labels
+read as the endpoints' marks either way, and a tick riding the cap's curve
+looks broken. The linear slider's scale follows the same rules (insets, sizing,
+thinning, tick-centered labels slid inward only where the tile would cut them).
 
 **Radial fit.** Where the circle sits in the part's rect is the `fit` attr. The
 default, `circle`, inscribes the full circle centered (the Selector's round body

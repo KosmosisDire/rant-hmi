@@ -400,21 +400,49 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const label = (i: number) =>
     names ? names[i] ?? "" : (lo + ((hi - lo) * i) / (count - 1)).toFixed(decimals);
 
+  const texts: string[] = [];
+  for (let i = 0; i < count; ++i) texts.push(label(i));
+  const chars = Math.max(1, ...texts.map((t) => t.length));
+
+  /* the END ticks sit fully INSIDE the ends: past the control's own end rounding
+     (`cap_radius` = the control_radius slot, clamped exactly as the arc/bar clamps
+     it) plus half the tick's own stroke. At radius 0 that is just the stroke; as
+     the radius grows the end tick starts where the rounding stops. Deliberately a
+     hair inside the true endpoint: the end labels read as the endpoints' marks
+     either way, and a tick riding the cap's curve looks broken. */
+  const capOf = (stroke: number) => {
+    const raw = attrs && attrs.cap_radius ? attr(attrs, "cap_radius", cells) : null;
+    return Math.max(0, Math.min(raw === null ? stroke / 2 : attrNum(raw, 0), stroke / 2));
+  };
+
   if (attrText(attr(attrs, "dir", cells)) === "h") {
-    /* linear: marks along the top of this rect (the row under a slider's bar), labels
-       set beneath them; the end labels anchor inward so they stay inside the tile */
+    /* linear: marks along the top of this rect (the row under a slider's bar),
+       labels set beneath them, under the same rules as the radial scale */
     const mark = rect.h * (labels ? 0.4 : 0.8);
     const width = Math.max(0.75, rect.h * 0.07);
-    const size = Math.max(5, Math.min(rect.h * 0.55, rect.w / (0.6 * count * 4)));
+    /* the bar is roughly the row above this one; its stroke for the cap clamp */
+    const inset = Math.min(rect.w / 4, capOf(rect.h * 2.2) + width / 2);
+    const x0 = rect.x + inset;
+    const spanW = Math.max(1, rect.w - 2 * inset);
+    const spacing = spanW / (count - 1);
     for (let i = 0; i < count; ++i) {
-      const x = rect.x + (rect.w * i) / (count - 1);
+      const x = x0 + spacing * i;
       out.push(`<path d="M${n(x)} ${n(rect.y)} v${n(mark)}" stroke="${fill}" ` +
                `stroke-width="${n(width)}" stroke-linecap="round"/>`);
-      if (!labels) continue;
-      const anchor = i === 0 ? "start" : i === count - 1 ? "end" : "middle";
+    }
+    if (!labels) return;
+    /* same label rules as below: sized against the spacing, thinned past the floor,
+       each centered on its tick (slid inward only if the tile would cut it) */
+    let size = Math.max(5, Math.min(rect.h * 0.55, (spacing * 0.9) / (0.58 * chars)));
+    if (size < 6) size = 6;
+    const every = Math.max(1, Math.ceil((0.58 * size * chars) / Math.max(1, spacing * 0.95)));
+    for (let i = 0; i < count; ++i) {
+      if (every > 1 && i % every !== 0 && i !== count - 1) continue;
+      const half = (0.58 * size * texts[i].length) / 2;
+      const x = Math.max(rect.x + half, Math.min(rect.x + rect.w - half, x0 + spacing * i));
       out.push(`<text x="${n(x)}" y="${n(rect.y + mark + size * 0.65)}" fill="${textFill}" ` +
-               `font-size="${n(size)}" text-anchor="${anchor}" dominant-baseline="central">` +
-               `${escapeXml(label(i))}</text>`);
+               `font-size="${n(size)}" text-anchor="middle" dominant-baseline="central">` +
+               `${escapeXml(texts[i])}</text>`);
     }
     return;
   }
@@ -422,12 +450,21 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const f = radialFrame(rect, attrs, cells);
   const outer = f.radius * attrNum(attr(attrs, "outer", cells), 1);
   const len = f.radius * attrNum(attr(attrs, "len", cells), 0.1);
-  /* the END ticks sit INSIDE the sweep by `inset` degrees (the registry derives it
-     from the arc's thickness: enough to clear the rounded end caps and the tick's
-     own stroke). A hair inside the true endpoint, deliberately: the end labels
-     read as the endpoints' marks either way, and a tick riding the cap's curve
-     looks broken */
-  const inset = Math.max(0, Math.min(attrNum(attr(attrs, "inset", cells), 0), f.sweep / 4));
+  /* mark width first (from the un-inset pitch: the inset is a few degrees and must
+     not feed back into it), then the end inset it contributes to */
+  const pitch0 = (f.sweep / (count - 1)) * (Math.PI / 180);
+  const width = Math.max(0.75, Math.min(f.radius * 0.018,
+    (2 * outer * Math.sin(Math.min(Math.PI / 2, pitch0 / 2))) / 3));
+  /* the arc's end fillet, in the ticks' own angular terms: rc from cap_radius
+     clamped to the arc's stroke (`cap_width`, the thickness fraction), converted
+     to the angle it subtends at the marks' radius */
+  const capW = f.radius * Math.max(0, attrNum(attr(attrs, "cap_width", cells), 0));
+  const rc = capW > 0 ? capOf(capW) : 0;
+  const deg = 180 / Math.PI;
+  const inset = outer > 0
+    ? Math.min(f.sweep / 4,
+        deg * (Math.asin(Math.min(1, rc / outer)) + Math.asin(Math.min(1, width / 2 / outer))))
+    : 0;
   const a0 = f.start + inset;
   const span = Math.max(1, f.sweep - 2 * inset);
   const angleOf = (i: number) => a0 + (span * i) / (count - 1);
@@ -435,8 +472,6 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
      the one crowding measure marks and labels both size against */
   const pitch = (span / (count - 1)) * (Math.PI / 180);
   const roomAt = (r: number) => 2 * r * Math.sin(Math.min(Math.PI / 2, pitch / 2));
-  /* marks never overlap each other: their width caps at a third of their spacing */
-  const width = Math.max(0.75, Math.min(f.radius * 0.018, roomAt(outer) / 3));
   for (let i = 0; i < count; ++i) {
     const angle = angleOf(i);
     const [x0, y0] = polar(f.cx, f.cy, outer - len, angle);
@@ -457,9 +492,6 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
      3. neighboring labels never collide: the size shrinks toward a readable floor
         first, and past the floor labels are THINNED (every k-th drawn, the last
         always) rather than made illegible. */
-  const texts: string[] = [];
-  for (let i = 0; i < count; ++i) texts.push(label(i));
-  const chars = Math.max(1, ...texts.map((t) => t.length));
   const outSide = attrBool(attr(attrs, "labels_out", cells), false);
   /* option names run longer than numbers, so they start a little smaller */
   let size = Math.max(5, f.radius * (names ? 0.11 : 0.16));

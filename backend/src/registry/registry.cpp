@@ -395,6 +395,7 @@ Json slider_type() {
                             })),
                         /* the toggleable scale: marks + range labels under the bar */
                         part("ticks", Json{{"dir", lit("h")},
+                                           {"cap_radius", ref("slot:control_radius")},
                                            {"count", ref("slot:divisions")},
                                            {"labels", ref("slot:scale_values")},
                                            {"min", ref("slot:min")},
@@ -540,15 +541,6 @@ Json dropdown_type() {
  * handle = the grabbable marker). The drag_radial primitive reads the same two angle
  * slots the parts draw with, so the finger and the paint can never disagree. */
 
-/* The END ticks' angular inset (degrees) for an arc of thickness fraction t: enough to
- * sit fully inside the arc's rounded end caps (full round = half the stroke; the
- * small-angle form of asin((t/2)/(1 - t/2))) plus a degree for the tick's own width.
- * The end labels then read as the endpoints' marks: a hair inside the true endpoint,
- * which looks far better than a tick riding the cap's curve. */
-Json tick_inset(Json t) {
-    return add(lit(1), mul(lit(28.6), div(t, sub(lit(1), mul(t, lit(0.5))))));
-}
-
 Json radial_interact(Json extra_params, Json emits) {
     Json params = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
     for (auto& item : extra_params.items()) params[item.key()] = item.value();
@@ -579,7 +571,8 @@ Json knob_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.07)},
-                      {"inset", tick_inset(t)},
+                      {"cap_radius", ref("slot:control_radius")},
+                      {"cap_width", t},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
@@ -701,7 +694,8 @@ Json radial_slider_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.06)},
-                      {"inset", tick_inset(t)},
+                      {"cap_radius", ref("slot:control_radius")},
+                      {"cap_width", t},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
@@ -787,7 +781,8 @@ Json gauge_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", lit(0.8)},
                       {"len", lit(0.07)},
-                      {"inset", tick_inset(ref("slot:thickness"))},
+                      {"cap_radius", ref("slot:control_radius")},
+                      {"cap_width", ref("slot:thickness")},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
