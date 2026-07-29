@@ -20,6 +20,7 @@ import { bindChoice, bindField } from "../reconcile.js";
 import { Feed, Json, Widget, WidgetType } from "../types.js";
 import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
 import { sourceField } from "./editors.js";
+import { highlighted } from "../highlight.js";
 
 export function feedShape(feed: Feed): Json {
   return [feed.id, feed.slot, feed.src?.kind ?? "V", (feed.cases ?? []).length];
@@ -71,7 +72,7 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     bindField(key, input, read);
     /* a feed's transform is DISPLAY tier: the full formatting vocabulary */
     attachAutocomplete(input, exprContext(editor, widget, "display", feedX(editor, widget, at)));
-    return input;
+    return highlighted(input);
   };
 
   const rate = isFunction
@@ -185,7 +186,7 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
       chip("else", "ghost-chip"),
       el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
       xfInput(feed.id + ":xf", () => at().xf ?? "",
-              (text) => set("xf", text), "covered, or an expression"),
+              (text) => set("xf", text), "passes through"),
       diagIcon(editor.diagAt(feed.id, "xf").concat(editor.diagAt(feed.id, "cases"))),
     ]),
   );

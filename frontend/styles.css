@@ -951,9 +951,15 @@ button:focus-visible {
   border-color: var(--acc);
 }
 
-.expr-pick > .field {
+.expr-pick > .hl-wrap {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.expr-pick .field {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
   height: 22px;
   border: 0;
   background: none;
@@ -1034,6 +1040,75 @@ button:focus-visible {
 .feed-line > .icon-btn {
   flex: none;
   white-space: nowrap;
+}
+
+/* ---- expression highlighting: a colored underlay behind a transparent-text input.
+   The underlay mirrors the input's font and padding EXACTLY, or the caret drifts. ---- */
+
+.hl-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hl-wrap > .hl-input {
+  position: relative;
+  width: 100%;
+  color: transparent;
+  caret-color: var(--ink);
+  background: var(--input);
+}
+
+.hl-wrap > .hl-input::placeholder {
+  color: #5a5a5a;
+}
+
+.hl-wrap > .hl-input::selection {
+  background: rgba(78, 142, 247, 0.35);
+  color: transparent;
+}
+
+.hl-under {
+  position: absolute;
+  inset: 1px 0 0 0;
+  padding: 0 7px;   /* the field's 1px border + 6px padding: the text must sit EXACTLY
+                       under the caret's text */
+  display: flex;
+  align-items: center;
+  white-space: pre;
+  pointer-events: none;
+  font: 600 12px var(--mono);
+  color: var(--ink-2);
+  z-index: 1;
+}
+
+/* inside the fused expression box the input is borderless, so the origin shifts 1px */
+.expr-pick .hl-under {
+  inset: 0;
+  padding: 0 6px;
+}
+
+.hl-under .tk-str { color: #7fc4a0; }
+.hl-under .tk-color { color: #d7a5e8; }
+.hl-under .tk-num { color: #d7b562; }
+.hl-under .tk-kw { color: #8ab4f8; }
+.hl-under .tk-fn { color: #4db6ac; }
+.hl-under .tk-dot { color: #cf9a3a; }
+.hl-under .tk-id { color: var(--ink); }
+.hl-under .tk-op { color: #8a8a8a; }
+
+/* the flexible sizing the raw field carried moves onto the wrapper */
+.do-cell > .hl-wrap,
+.feed-line > .hl-wrap,
+.feed-case > .hl-wrap {
+  flex: 1 1 40px;
+  min-width: 34px;
+}
+
+.hl-wrap > .field.grow {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 /* a feed with cases: the line, then one row per arm, then the else */

@@ -285,11 +285,11 @@ void test_tiers() {
     std::string error;
     /* the color constructors are display vocabulary: fine in a transform, refused
      * where the result is for a machine */
-    CHECK(compile_expression("rgb(255, 0, 0)", ExprTier::Display, scope, program, code,
+    CHECK(compile_expression("rgb(1, 0, 0)", ExprTier::Display, scope, program, code,
                              result, error));
     code.clear();
     error.clear();
-    CHECK(!compile_expression("rgb(255, 0, 0)", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expression("rgb(1, 0, 0)", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
     CHECK(code.empty());
@@ -308,6 +308,20 @@ void test_tiers() {
     code.clear();
     CHECK(compile_expression("x.r", ExprTier::Wire, scope, program, code, result, error));
     CHECK(result.shape == Shape::Num);
+
+    /* the word operators are the symbol operators, and `.not` still names the method */
+    error.clear();
+    code.clear();
+    scope.x_shape = Shape::Num;
+    CHECK_MSG(compile_expression("x > 0 and not (x > 10) or x == 42", ExprTier::Wire,
+                                 scope, program, code, result, error), error);
+    CHECK(result.shape == Shape::Bool);
+    error.clear();
+    code.clear();
+    scope.x_shape = Shape::Bool;
+    CHECK_MSG(compile_expression("x.not", ExprTier::Wire, scope, program, code, result,
+                                 error), error);
+    CHECK(result.shape == Shape::Bool);
 }
 
 void test_replay() {
@@ -667,14 +681,14 @@ void test_enum_names() {
 /* A feed's CASE ARMS (spec 2.4): first match wins, an enum's coverage is checked, the
  * else fills the gap, and a Nil input stores UNKNOWN instead of faulting. */
 void test_feed_cases() {
-    auto document_with = [](Json cases, const char* otherwise) {
+    auto document_with = [](const char* slot, Json cases, const char* otherwise) {
         Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                      {"pages", Json::array()}};
         Json label = {
             {"type", "Label"},
             {"label", "gear"},
             {"slots", Json::object()},
-            {"feeds", Json::array({Json{{"slot", "text"},
+            {"feeds", Json::array({Json{{"slot", slot},
                                         {"src", entity("V", "gear")},
                                         {"path", "mode"},
                                         {"xf", otherwise},
@@ -694,7 +708,7 @@ void test_feed_cases() {
         Json{{"when", "run"}, {"xf", "\"Turning\""}},
         Json{{"when", "fast"}, {"xf", "\"Flying\""}},
     });
-    Document document = document_with(full, "");
+    Document document = document_with("text", full, "");
     CompileResult compiled = compile_document(document, registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
@@ -719,12 +733,29 @@ void test_feed_cases() {
     CHECK(!nil_run.faulted);
     CHECK(state.values[feed.cell].tag == ValueTag::Nil);
 
-    /* a missed variant with no else is a FINDING, and the else forgives it */
+    /* an EMPTY else where the value can stand as itself PASSES THROUGH, exactly like
+       an empty inline transform: cases override, the rest shows as its name */
     Json partial = Json::array({
         Json{{"when", "stop"}, {"xf", "\"Halted\""}},
         Json{{"when", "run"}, {"xf", "\"Turning\""}},
     });
-    Document uncovered = document_with(partial, "");
+    Document through = document_with("text", partial, "");
+    CompileResult passing = compile_document(through, registry(), mesh);
+    CHECK(passing.ok);
+    RuntimeState passed(passing.program);
+    RunResult rest = run_feed(passing.program, passing.program.feeds[0], passed,
+                              Value::enumeration(2, mode_type));
+    CHECK(!rest.faulted);
+    CHECK(passed.text(passing.program,
+                      passed.values[passing.program.feeds[0].cell]) == "fast");
+
+    /* where the value CANNOT stand as itself (an enum into a color), a missed variant
+       with no else is a FINDING, and the else forgives it */
+    Json colored = Json::array({
+        Json{{"when", "stop"}, {"xf", "#888888"}},
+        Json{{"when", "run"}, {"xf", "#7fc4a0"}},
+    });
+    Document uncovered = document_with("text_color", colored, "");
     CompileResult refused = compile_document(uncovered, registry(), mesh);
     CHECK(!refused.ok);
     bool found = false;
@@ -733,15 +764,14 @@ void test_feed_cases() {
             found = true;
     CHECK(found);
 
-    Document forgiven = document_with(partial, "\"?\"");
+    Document forgiven = document_with("text_color", colored, "#444444");
     CompileResult covered = compile_document(forgiven, registry(), mesh);
     CHECK(covered.ok);
     RuntimeState fallback(covered.program);
     RunResult other = run_feed(covered.program, covered.program.feeds[0], fallback,
                                Value::enumeration(2, mode_type));
     CHECK(!other.faulted);
-    CHECK(fallback.text(covered.program,
-                        fallback.values[covered.program.feeds[0].cell]) == "?");
+    CHECK(fallback.values[covered.program.feeds[0].cell].data.rgba == 0x444444ffu);
 }
 
 void test_compile_fault() {
@@ -995,7 +1025,7 @@ void test_colors() {
                   Json{{"slot", "surface"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
-                       {"xf", "rgb(x, 0, 255 - x)"}},
+                       {"xf", "rgb(x / 255, 0, 1 - x / 255)"}},
                   Json{{"slot", "border"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},

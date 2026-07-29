@@ -318,9 +318,12 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
         case Builtin::Min: if (n == 2) return Value::number(std::min(number(0), number(1))); break;
         case Builtin::Max: if (n == 2) return Value::number(std::max(number(0), number(1))); break;
         case Builtin::Rgb:
+            /* every channel is FRACTIONAL 0..1, like alpha and hsv's s/v: one scale
+               across the whole color vocabulary */
             if (n == 3 || n == 4)
-                return Value::color(
-                    pack_rgba(number(0), number(1), number(2), n == 4 ? number(3) : 1.0));
+                return Value::color(pack_rgba(number(0) * 255.0, number(1) * 255.0,
+                                              number(2) * 255.0,
+                                              n == 4 ? number(3) : 1.0));
             break;
         case Builtin::Hsv:
             if (n == 3 || n == 4) {

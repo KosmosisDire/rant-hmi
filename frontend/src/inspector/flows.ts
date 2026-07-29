@@ -25,9 +25,10 @@ import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
 import { Flow, Json, Op, Widget, WidgetType } from "../types.js";
-import { attachAutocomplete, exprContext, flowNames, flowX, localPaths } from "./autocomplete.js";
-import { LocalInfo, localAt, scopeAt } from "./flowscope.js";
+import { attachAutocomplete, exprContext, flowNames, flowX } from "./autocomplete.js";
+import { localAt, scopeAt } from "./flowscope.js";
 import { openSourceTree, SourcePick, SourceTreeOptions } from "./sourcetree.js";
+import { highlighted } from "../highlight.js";
 
 const opened = new Set<number>();
 
@@ -571,7 +572,7 @@ function stepCell(
         const tree = iconButton("folder", "pick this value from the tree instead", () =>
           openSourceTree(fused, editor, widget, fromOpts, setFrom),
         );
-        const fused = el("span", { class: "expr-pick" }, [field, tree]);
+        const fused = el("span", { class: "expr-pick" }, [highlighted(field), tree]);
         cell.appendChild(fused);
       } else {
         cell.appendChild(sideChip(editor, widget, step.id + ":from", () => at().from ?? {},
@@ -599,7 +600,8 @@ function stepCell(
 
   if (step.kind === "gate") {
     cell.appendChild(el("span", { class: "op", text: "only if" }));
-    cell.appendChild(expr(() => String(at().a ?? ""), (text) => set("a", text), "a"));
+    cell.appendChild(highlighted(expr(() => String(at().a ?? ""),
+                                      (text) => set("a", text), "a")));
     return cell;
   }
 
@@ -719,33 +721,6 @@ function sideChip(
   return node;
 }
 
-/* insert a `set` for the next field of `local` no row has set yet, after `afterIndex` */
-function addField(editor: Editor, widget: Widget, flow: Flow, local: string,
-                  afterIndex: number): void {
-  const at = (editor.store.node(flow.id) as Flow) ?? flow;
-  const steps = (at.do ?? []) as Json[];
-  const scope = localPaths(editor, widget, () => at, 0, () => local)();
-  const set = new Set(
-    steps
-      .filter((s) => s.kind === "move" && s.to?.local === local && s.to?.path)
-      .map((s) => String(s.to.path)),
-  );
-  const next = scope.find((option) => !set.has(option.path));
-  editor.apply([
-    {
-      op: "insert",
-      parent: flow.id,
-      list: "do",
-      index: afterIndex + 1,
-      node: {
-        kind: "move",
-        from: { expr: "x" },
-        to: { local, path: next?.path ?? "" },
-      },
-    },
-  ]);
-}
-
 /* Drag to reorder, from the grip only: an armed drag, so a normal click never starts one
  * (spec 3.6). The move op lands on release. Every order is a valid document now, so a
  * reorder can be wrong but can never be rejected. */
@@ -799,9 +774,7 @@ function stepMenu(
   const insert = (node: Json) =>
     editor.apply([{ op: "insert", parent: flow.id, list: "do", index: at.length, node } as Op]);
   const continuous = (type?.events ?? []).some((e) => e.x === "num");
-  const structs = scopeAt(editor, widget, here, 0).locals.filter(
-    (l: LocalInfo) => l.shape === "struct" && (l.fields ?? []).length,
-  );
+  void widget;
 
   const items = [
     {
@@ -820,11 +793,6 @@ function stepMenu(
       icon: "reset",
       run: () => insert({ kind: "move", from: { init: true }, to: { local: "", path: "" } }),
     },
-    ...structs.map((held: LocalInfo) => ({
-      label: "set next field of " + held.name,
-      icon: "pencil",
-      run: () => addField(editor, widget, flow, held.name, at.length - 1),
-    })),
     { separator: true },
     { label: "gate", run: () => insert({ kind: "gate", a: "" }) },
     ...(continuous ? [{ label: "deadband", run: () => insert({ kind: "deadband", a: 1 }) }] : []),

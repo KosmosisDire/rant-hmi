@@ -384,6 +384,19 @@ expression over the widget's scope (variables, `widget.<slot>`), re-evaluated ev
 tick; `x` is Nil, there being nothing for it to be. A binding with neither a source
 nor an expression is the finding "pick a source, or write an expression".
 
+**Cases: discrete pattern matching over x.** A feed may carry
+`cases: [{when, xf}]`: each arm compares x against a scalar (an enum source's `when`
+is a variant NAME, picked from its vocabulary; a number or bool otherwise), first
+match wins top to bottom, and the feed's own `xf` is the else. An EMPTY else means
+what an empty inline transform means: the value PASSES THROUGH (an enum into a text
+slot as its name), so cases read as "override these values, show the rest as
+themselves". COVERAGE IS CHECKED exactly where pass-through is impossible: a value
+that cannot stand as itself (an enum into a color) must handle every variant (a bool
+both values) or carry an else, so a missed state is a finding, never a silent hole.
+A Nil input stores UNKNOWN without running any arm. In the UI a feed starts as ONE
+inline expression; "+ case" moves it onto its own row and adds the condition column,
+so the plain case pays nothing.
+
 ### 2.5 Flows (behavior)
 
 ```
@@ -1317,12 +1330,12 @@ the document rather than recovered by scanning expression text.
 
 ```
 expr    := or
-or      := and ( "||" and )*
-and     := cmp ( "&&" cmp )*
-cmp     := sum ( ("=="|"!="|"<"|"<="|">"|">=") sum )?
+or      := and ( ("||" | "or") and )*
+and     := cmp ( ("&&" | "and") cmp )*
+cmp     := sum ( ("=="|"!="|"<"|"<="|">"|">=") ( sum | "." IDENT ) )?
 sum     := product ( ("+"|"-") product )*
 product := unary ( ("*"|"/"|"%") unary )*
-unary   := ("-"|"!")? postfix
+unary   := ("-"|"!"|"not")? postfix
 postfix := primary ( "[" expr "]" | "." IDENT | "." IDENT "(" args? ")" )*
 primary := NUMBER | STRING | COLOR | "true" | "false" | IDENT | CALL | LAMBDA | "(" expr ")"
 COLOR   := "#" hex{3|6|8}                   // a color literal: #9aa, #3a9c5d, #3a9c5dff
@@ -1330,13 +1343,20 @@ args    := expr ( "," expr )*
 LAMBDA  := IDENT "=>" expr        // one parameter, one expression, no capture of x
 ```
 
+`and`, `or` and `not` are the word spellings of the symbol operators, byte for byte
+the same programs. `==`/`!=` with an ENUM side accepts a `.Variant` literal (resolved
+against the left side's vocabulary at compile, an unknown name a finding), a variant
+NAME as text, or the backing integer; ordered comparisons stay numeric (`x.int()` is
+the bridge).
+
 Free functions are the whole of the wire tier's vocabulary: `clamp mapRange roundTo
 lerp abs round floor ceil sqrt pow min max` (numeric), `int num str name`
 (conversion), `values keys` (container; `entries` waits on a pair shape). A wire
 expression may CARRY an aggregate mid-chain (`values(x).max`), but its RESULT is
 always one scalar: a list-shaped result is refused at compile. The display tier adds the color
 vocabulary (constructors with fixed ranges, never auto-detected): `rgb(r, g, b
-[, a])` (channels 0..255, alpha 0..1), `hsv(h, s, v [, a])` (h 0..360, s/v 0..1),
+[, a])` (every channel FRACTIONAL 0..1, like alpha), `hsv(h, s, v [, a])` (h 0..360,
+s/v 0..1),
 `color(text)` (parses `#rgb`/`#rrggbb`/`#rrggbbaa`; a failed parse is Nil), and
 the tonemaps proven in the old prototype: `jet hot coolWarm viridis grayscale`
 (num in 0..1 -> color, so `coolWarm(x.mapRange(20, 90, 0, 1))` colors a fill by

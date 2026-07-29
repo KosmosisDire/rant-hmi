@@ -152,6 +152,11 @@ class Lexer {
             ++at_;
         }
         token.text = source_.substr(start, at_ - start);
+        /* the word spellings of the boolean operators (spec 6.2): `a and not b` reads
+           the way an operator writes it, and neither habit is punished */
+        if (token.text == "and") token.kind = TokenKind::AndAnd;
+        else if (token.text == "or") token.kind = TokenKind::OrOr;
+        else if (token.text == "not") token.kind = TokenKind::Bang;
         return token;
     }
 
@@ -634,7 +639,12 @@ class Parser {
                 continue;
             }
             advance();
-            if (token_.kind != TokenKind::Ident) {
+            /* the word operators still name methods after a dot: `x.not` stands */
+            const bool wordy = (token_.kind == TokenKind::Bang ||
+                                token_.kind == TokenKind::AndAnd ||
+                                token_.kind == TokenKind::OrOr) &&
+                               !token_.text.empty();
+            if (token_.kind != TokenKind::Ident && !wordy) {
                 fail("expected a method after '.'");
                 return Shape::Unknown;
             }

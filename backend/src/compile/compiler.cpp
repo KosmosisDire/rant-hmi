@@ -878,9 +878,22 @@ class Compiler {
             ++index;
         }
 
+        /* The ELSE arm. An EMPTY else means what an empty inline transform means: the
+           value PASSES THROUGH (an enum into a text slot as its name), so cases read
+           as "override these values, show the rest as themselves". Coverage is
+           demanded only where pass-through is impossible: a value that cannot stand
+           as itself (an enum into a color) must be handled or given an else. */
         const std::string otherwise = str_or(node, "xf", "");
-        if (!otherwise.empty()) {
-            if (!expression(feed.feed_id, otherwise, ExprTier::Display, scope, wanted,
+        const bool passes =
+            otherwise.empty() &&
+            (source == Shape::Unknown || wanted == Shape::Unknown || source == wanted ||
+             (source == Shape::Enum && wanted == Shape::Text));
+        if (!otherwise.empty() || passes) {
+            const std::string tail =
+                !otherwise.empty() ? otherwise
+                : source == Shape::Enum && wanted == Shape::Text ? "x.name"
+                                                                 : "x";
+            if (!expression(feed.feed_id, tail, ExprTier::Display, scope, wanted,
                             feed.code, feed.max_stack, nullptr, "xf"))
                 return false;
             ends.push_back(static_cast<uint32_t>(feed.code.size()));
