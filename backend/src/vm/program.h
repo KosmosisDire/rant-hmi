@@ -173,6 +173,11 @@ enum class OpCode : uint8_t {
      * whose slot the type flagged `history`. The rate timer commits the latest into
      * the ring; the cell itself is never stored (a series is not a scalar). */
     StoreHist,
+    /* pop `b` values (pushed left to right) into a fresh element run and push the
+     * list: the `[a, b, c]` array literal, how an expression builds a Trend's
+     * multi-series value. A Nil element stays Nil (a gap in that one series), it
+     * does not poison the whole list. */
+    MakeList,
 };
 
 enum class Builtin : uint16_t {

@@ -1553,7 +1553,8 @@ sum     := product ( ("+"|"-") product )*
 product := unary ( ("*"|"/"|"%") unary )*
 unary   := ("-"|"!"|"not")? postfix
 postfix := primary ( "[" expr "]" | "." IDENT | "." IDENT "(" args? ")" )*
-primary := NUMBER | STRING | COLOR | "true" | "false" | IDENT | CALL | LAMBDA | "(" expr ")"
+primary := NUMBER | STRING | COLOR | "true" | "false" | IDENT | CALL | LAMBDA
+         | "(" expr ")" | "[" args? "]"
 COLOR   := "#" hex{3|6|8}                   // a color literal: #9aa, #3a9c5d, #3a9c5dff
 args    := expr ( "," expr )*
 LAMBDA  := IDENT "=>" expr        // one parameter, one expression, no capture of x
@@ -1563,7 +1564,10 @@ LAMBDA  := IDENT "=>" expr        // one parameter, one expression, no capture o
 the same programs. `==`/`!=` with an ENUM side accepts a `.Variant` literal (resolved
 against the left side's vocabulary at compile, an unknown name a finding), a variant
 NAME as text, or the backing integer; ordered comparisons stay numeric (`x.int` is
-the bridge).
+the bridge). `[a, b, c]` is an ARRAY literal building a list — how a feed hands a
+Trend a multi-series value (`[x.force.x, x.force.y, x.force.z]`); a Nil element
+stays a gap in its own series, never poisoning the list. The wire tier's
+one-scalar rule is unchanged: a list result still cannot go to the machine.
 
 Free functions are the whole of the wire tier's vocabulary: `clamp mapRange roundTo
 lerp abs round floor ceil sqrt pow min max` (numeric), `int num str name`

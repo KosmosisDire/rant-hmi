@@ -867,6 +867,36 @@ class Parser {
             advance();
             return shape;
         }
+        if (token_.kind == TokenKind::LBracket) {
+            /* an ARRAY literal: [a, b, c] builds a list, which is how an expression
+               hands a Trend a multi-series value ([x.force.x, x.force.y, x.force.z]) */
+            advance();
+            uint32_t count = 0;
+            Shape elem = Shape::Unknown;
+            bool uniform = true;
+            if (token_.kind != TokenKind::RBracket) {
+                for (;;) {
+                    const Shape one = parse_or();
+                    if (!error_.empty()) return Shape::Unknown;
+                    if (count == 0) elem = one;
+                    else if (one != elem) uniform = false;
+                    ++count;
+                    if (token_.kind != TokenKind::Comma) break;
+                    advance();
+                }
+            }
+            if (token_.kind != TokenKind::RBracket) {
+                fail("expected ']'");
+                return Shape::Unknown;
+            }
+            advance();
+            emit(OpCode::MakeList, 0, count);
+            if (count) depth_ -= count - 1; /* the elements collapse into one list */
+            else pushed();
+            enum_type_ = 0;
+            elem_ = uniform ? elem : Shape::Unknown;
+            return Shape::List;
+        }
         if (token_.kind != TokenKind::Ident) {
             fail("expected an expression");
             return Shape::Unknown;

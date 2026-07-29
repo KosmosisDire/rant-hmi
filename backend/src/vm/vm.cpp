@@ -1360,6 +1360,34 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 break;
             }
+            case OpCode::MakeList: {
+                /* the [a, b, c] array literal: collect the `b` values pushed left to
+                   right into a fresh element run. A Nil element stays Nil (a gap in
+                   that one series), it does not poison the whole list. */
+                const uint32_t count = ins.b;
+                if (count > sp) {
+                    fail(ins.c);
+                    break;
+                }
+                const uint32_t offset = state.alloc_elems(count);
+                if (offset == UINT32_MAX) {
+                    sp -= count;
+                    fail(ins.c);
+                    break;
+                }
+                ValueTag elem = ValueTag::Nil;
+                bool uniform = true;
+                for (uint32_t k = 0; k < count; ++k) {
+                    const Value v = state.stack[sp - count + k];
+                    state.elems[offset + k] = v;
+                    if (k == 0) elem = v.tag;
+                    else if (v.tag != elem) uniform = false;
+                }
+                sp -= count;
+                if (!push(Value::list(offset, count, uniform && count ? elem : ValueTag::Nil)))
+                    fail(ins.c);
+                break;
+            }
             /* the compile-inserted text -> enum coercion: the top of stack must be one
              * of the type's variant names; anything else is Nil plus a fault, so a
              * misspelled option can never write a wrong integer silently */
