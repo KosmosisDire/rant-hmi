@@ -444,10 +444,13 @@ Json dropdown_type() {
                     Json::array({
                         box("row", Json{{"pad", lit(0.18)}},
                             Json::array({
+                                /* oneline: a picked value never line-breaks, however
+                                   the fed text spells it */
                                 part("text", Json{{"text", ref("slot:value")},
                                                   {"fill", ref("slot:text_color")},
                                                   {"align", lit("start")},
                                                   {"scale", ref("slot:text_scale")},
+                                                  {"oneline", lit(true)},
                                                   {"weight", lit(1.0)}}),
                                 part("icon", Json{{"name", lit("chevron-down")},
                                                   {"fill", lit("#8a8a8a")},

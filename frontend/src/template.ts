@@ -99,8 +99,13 @@ function drawBar(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
 function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const raw = attr(attrs, "text", cells);
   const unknown = raw === null;
-  const text = unknown ? UNKNOWN_TEXT : attrText(raw) ?? UNKNOWN_TEXT;
+  let text = unknown ? UNKNOWN_TEXT : attrText(raw) ?? UNKNOWN_TEXT;
+  /* an EXPLICIT newline breaks the line; nothing ever auto-wraps. A part marked
+     `oneline` (the dropdown's value) shows the break as a space instead: a picked
+     value must stay one row however it was fed. */
+  if (attrBool(attr(attrs, "oneline", cells), false)) text = text.replace(/\n/g, " ");
   if (!text.length) return;
+  const lines = text.split("\n");
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#e7ecf5";
   /* either vocabulary: start/center/end, or the shared align slot's 9 positions
      (top-left .. bottom-right), which place the line on both axes */
@@ -111,25 +116,31 @@ function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
      knob biases autoscaling instead of replacing it */
   const scaleRaw = attrNum(attr(attrs, "scale", cells), 1);
   const scale = scaleRaw > 0 ? scaleRaw : 1;
-  const byHeight = rect.h * 0.66;
-  const byWidth = rect.w / (0.58 * Math.max(1, text.length));
+  const longest = lines.reduce((len, line) => Math.max(len, line.length), 1);
+  const byHeight = (rect.h * 0.66) / lines.length;
+  const byWidth = rect.w / (0.58 * longest);
   const size = Math.max(6, Math.min(byHeight, byWidth) * scale);
+  const step = size * 1.3;
   const left = align === "start" || align.includes("left");
   const right = align === "end" || align.includes("right");
   const anchor = left ? "start" : right ? "end" : "middle";
   const x = left ? rect.x : right ? rect.x + rect.w : rect.x + rect.w / 2;
+  /* the vertical anchor places the whole BLOCK of lines, then each line steps down */
   const y = align.includes("top")
     ? rect.y + size * 0.55
     : align.includes("bottom")
-      ? rect.y + rect.h - size * 0.55
-      : rect.y + rect.h / 2;
-  out.push(
-    `<text x="${n(x)}" y="${n(y)}" fill="${fill}" font-size="${n(size)}" ` +
-      `text-anchor="${anchor}" dominant-baseline="central" ` +
-      `font-weight="${strong ? 650 : 450}"` +
-      (unknown ? ` opacity="0.45"` : "") +
-      `>${escapeXml(text)}</text>`,
-  );
+      ? rect.y + rect.h - size * 0.55 - step * (lines.length - 1)
+      : rect.y + rect.h / 2 - (step * (lines.length - 1)) / 2;
+  lines.forEach((line, i) => {
+    if (!line.length) return;
+    out.push(
+      `<text x="${n(x)}" y="${n(y + step * i)}" fill="${fill}" font-size="${n(size)}" ` +
+        `text-anchor="${anchor}" dominant-baseline="central" ` +
+        `font-weight="${strong ? 650 : 450}"` +
+        (unknown ? ` opacity="0.45"` : "") +
+        `>${escapeXml(line)}</text>`,
+    );
+  });
 }
 
 function drawIcon(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {

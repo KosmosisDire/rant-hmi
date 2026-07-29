@@ -1304,6 +1304,18 @@ button:focus-visible {
   border-color: #3d3d3d;
 }
 
+/* the textarea form (text values may hold explicit newlines): same one-row box as an
+   input; extra lines scroll rather than growing the row */
+textarea.field {
+  height: 24px;
+  padding-top: 3px;
+  line-height: 16px;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  display: block;
+}
+
 .field.grow {
   flex: 1;
   width: 100%;

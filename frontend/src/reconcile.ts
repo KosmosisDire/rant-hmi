@@ -136,7 +136,11 @@ export function bind(key: string, node: HTMLElement, push: Push): void {
 /* A text or number field. The value is assigned in, never the node replaced, and while the
  * user has uncommitted text in it the assignment is held back. That text is kept under the
  * key, so a rebuild triggered by an edit elsewhere does not throw it away. */
-export function bindField(key: string, input: HTMLInputElement, read: () => string): void {
+export function bindField(
+  key: string,
+  input: HTMLInputElement | HTMLTextAreaElement,
+  read: () => string,
+): void {
   input.addEventListener("input", () => {
     if (input.value === shown.get(input)) pending.delete(key);
     else pending.set(key, input.value);

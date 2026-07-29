@@ -79,6 +79,36 @@ export function commitInput(
   }) as HTMLInputElement;
 }
 
+/* the textarea form of commitInput, for TEXT VALUES that may hold explicit newlines
+ * (a label or button caption): Enter still commits, Shift+Enter breaks the line. One
+ * row tall always, so a slot row never changes height; longer content scrolls. */
+export function commitTextInput(
+  value: string,
+  commit: (text: string) => void,
+  attrs: Attrs = {},
+): HTMLTextAreaElement {
+  const node = el("textarea", {
+    class: "field",
+    rows: "1",
+    value,
+    ...attrs,
+    onkeydown: (ev: KeyboardEvent) => {
+      const input = ev.target as HTMLTextAreaElement;
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        input.blur();
+      }
+      if (ev.key === "Escape") {
+        input.value = shownValue(input) ?? value;
+        input.blur();
+      }
+    },
+    onchange: (ev: Event) => commit((ev.target as HTMLTextAreaElement).value),
+  }) as HTMLTextAreaElement;
+  node.spellcheck = false;
+  return node;
+}
+
 export function numberInput(
   value: number,
   commit: (n: number) => void,

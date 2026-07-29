@@ -13,7 +13,7 @@
  * row that changes height moves everything under it. */
 
 import { colorField } from "../colorpicker.js";
-import { alignGrid, boolPair, chip, commitInput, el, numberInput, pickerOf, selectField } from "../dom.js";
+import { alignGrid, boolPair, chip, commitTextInput, el, numberInput, pickerOf, selectField } from "../dom.js";
 import { Editor } from "../editor.js";
 import { kindMark } from "../icons.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
@@ -89,7 +89,9 @@ export function valueEditor(
       return wrap;
     }
     case "text": {
-      const field = commitInput(text(value), commit, { class: "field grow", ...placeholder });
+      /* a textarea, not an input: a caption may hold EXPLICIT newlines (Shift+Enter);
+         Enter still commits, and the row stays one line tall either way */
+      const field = commitTextInput(text(value), commit, { class: "field grow", ...placeholder });
       bindField(key, field, () => text(read()));
       return field;
     }
