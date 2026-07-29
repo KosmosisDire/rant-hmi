@@ -12,7 +12,7 @@
 import { dividerPath, unionPath } from "./islands.js";
 import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.js";
 import { escapeXml, Rect, renderNode } from "./template.js";
-import { Canvas, Doc, HistView, Json, Live, Mesh, Page, Registry, Widget } from "./types.js";
+import { Canvas, Doc, HistView, Json, Live, Mesh, Page, Registry, Widget, WidgetType } from "./types.js";
 
 export type Mode = "edit" | "run" | "operate";
 
@@ -81,6 +81,25 @@ function contentRect(frame: Rect, pad: number): Rect {
     w: Math.max(1, frame.w - 2 * p),
     h: Math.max(1, frame.h - 2 * p),
   };
+}
+
+/* Does this widget's face DO anything when touched? An event-triggered flow of its
+ * own counts; so does a type default (behavior) that writes a slot the author left
+ * unfed. A FED slot makes the default write moot: the feed owns the value, so a
+ * value-owning control whose value is fed is read-only. An inert widget is made
+ * pointer-transparent in run/operate, so a read-only progress slider laid over other
+ * controls lets the clicks through to them instead of swallowing them. */
+function widgetInteractive(widget: Widget, type: WidgetType | null, fed: Set<string>): boolean {
+  const byEvent = (flow: Json) =>
+    Array.isArray(flow?.when) && flow.when.some((t: Json) => t?.kind === "event");
+  if ((widget.flows ?? []).some(byEvent)) return true;
+  for (const flow of (type?.behavior ?? []) as Json[]) {
+    if (!byEvent(flow)) continue;
+    for (const step of flow?.do ?? [])
+      if (step?.kind === "move" && typeof step.to?.slot === "string" && !fed.has(step.to.slot))
+        return true;
+  }
+  return false;
 }
 
 export function bboxOf(widgets: Widget[]): Rect {
@@ -300,7 +319,11 @@ export function renderContent(
     const uncapped =
       rawRadius < 0 ? Math.max(0, ISLAND_RADIUS - (panelPad < 0 ? 5 : panelPad)) : rawRadius;
 
-    out.push(`<g class="widget${enabled ? "" : " disabled"}" data-id="${widget.id}">`);
+    /* outside edit mode an inert widget never captures the pointer: the browser's
+       hit test skips its whole group, so whatever sits behind it gets the event */
+    const inert = view.mode !== "edit" && !widgetInteractive(widget, type, fed);
+    out.push(`<g class="widget${enabled ? "" : " disabled"}" data-id="${widget.id}"` +
+             `${inert ? ` pointer-events="none"` : ""}>`);
     if (editing) {
       const g = widget.geom;
       out.push(

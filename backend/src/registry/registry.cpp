@@ -161,11 +161,13 @@ Json on_event(const char* name, std::initializer_list<Json> steps) {
  *                 lamp, a knob's swept arc, a trend's line)
  *   track_color   the inert part behind it (an off pill, a slider's track, an arc's
  *                 track, an unlit lamp)
- *   handle_color  the grabbable marker (a toggle's knob, a radial control's handle)
+ *   handle_color  the grabbable or pointing marker (a toggle's knob, a knob's dot, a
+ *                 gauge or selector needle; the RadialSlider has none: its fill edge
+ *                 is the value, like the linear bar's)
  *   text /        the control's own text and its color; `text` defaults empty and is
  *   text_color    bindable like any slot
- *   control_radius  corner rounding of the control's own shape (the frame's `radius`
- *                 rounds the panel; this rounds the thing drawn inside it) */
+ *   control_radius  corner rounding of the control's own shape (a bar's track, an
+ *                 arc's ends); the frame's `radius` rounds the panel around it */
 Json state_slots() {
     return Json::array({
         slot("visible", "bool", true, "config"),
@@ -627,23 +629,26 @@ Json knob_type() {
 
 Json radial_slider_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
-    Json angles = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
+    /* the fit slot: "fill" (default) places the circle so a partial sweep fills the
+       tile; "center" pins the circle's center to the tile's center. The chosen fit +
+       the angles ride every radial part identically, so they always share one circle */
+    Json fit = pick(eq(ref("slot:fit"), lit("center")), lit("circle"), lit("extent"));
+    Json angles = Json{{"start", ref("slot:start_angle")},
+                       {"sweep", ref("slot:sweep_angle")},
+                       {"fit", fit}};
     Json show_scale = ref("slot:show_scale");
     Json t = ref("slot:thickness");
     Json outside = eq(ref("slot:scale_position"), lit("outside"));
     /* an OUTSIDE scale pulls the arc inward and rings it; an INSIDE one keeps the
-       arc at the rim and sets the scale within */
-    Json arc_scale = pick(show_scale, pick(outside, lit(0.7), lit(1)), lit(1));
+       arc at the rim and sets the scale within. Drawn exactly like the linear bar:
+       no handle, the fill's straight leading edge IS the value, and control_radius
+       rounds the track's ends. */
     Json arc = Json{{"track", ref("slot:track_color")},
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
                     {"width", t},
-                    {"pad", pick(show_scale, pick(outside, lit(0.15), lit(0)), lit(0))}};
-    /* the handle rides ON the arc's centreline, wherever the arc sits */
-    Json mark = Json{{"value", fraction},
-                     {"fill", ref("slot:handle_color")},
-                     {"at", mul(arc_scale, sub(lit(1), mul(t, lit(0.5))))},
-                     {"size", mul(t, lit(0.72))}};
+                    {"radius", ref("slot:control_radius")},
+                    {"outer", pick(show_scale, pick(outside, lit(0.7), lit(1)), lit(1))}};
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
                       {"labels_out", outside},
@@ -657,7 +662,6 @@ Json radial_slider_type() {
                       {"show", show_scale}};
     for (auto& item : angles.items()) {
         arc[item.key()] = item.value();
-        mark[item.key()] = item.value();
         ticks[item.key()] = item.value();
     }
     return type("RadialSlider",
@@ -673,23 +677,25 @@ Json radial_slider_type() {
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
-                    slot("handle_color", "color", "#ececec", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("control_radius", "num", 4, "appearance"),
                     fine(slot("thickness", "num", 0.18, "appearance"), 0.05),
                     slot("show_scale", "bool", false, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
                     slot_enum("scale_position", {"inside", "outside"}, "inside",
                               "appearance"),
+                    slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
                     Json::array({
-                        box("stack", Json{{"aspect", lit(1.0)}},
+                        /* no aspect lock: the extent fit places the circle, so a half
+                           sweep spreads over the whole (possibly oblong) tile */
+                        box("stack", Json::object(),
                             Json::array({
                                 part("arc", arc),
                                 part("ticks", ticks),
-                                part("mark", mark),
                                 part("text", Json{{"text", ref("slot:text")},
                                                   {"fill", ref("slot:text_color")},
                                                   {"scale", ref("slot:text_scale")},
@@ -700,6 +706,7 @@ Json radial_slider_type() {
                                                  {"max", ref("slot:max")},
                                                  {"step", ref("slot:step")},
                                                  {"mode", ref("slot:drag")},
+                                                 {"fit", fit},
                                                  {"fraction", fraction}},
                                             Json{{"input", "input"}, {"commit", "commit"}})),
                     })),
@@ -708,14 +715,18 @@ Json radial_slider_type() {
 
 Json gauge_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
-    Json angles = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
+    /* the fit slot, exactly as on the RadialSlider: fill the tile, or center */
+    Json fit = pick(eq(ref("slot:fit"), lit("center")), lit("circle"), lit("extent"));
+    Json angles = Json{{"start", ref("slot:start_angle")},
+                       {"sweep", ref("slot:sweep_angle")},
+                       {"fit", fit}};
     Json show_scale = ref("slot:show_scale");
     Json outside = eq(ref("slot:scale_position"), lit("outside"));
     Json arc = Json{{"track", ref("slot:track_color")},
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
                     {"width", ref("slot:thickness")},
-                    {"pad", pick(show_scale, pick(outside, lit(0.15), lit(0)), lit(0))}};
+                    {"outer", pick(show_scale, pick(outside, lit(0.7), lit(1)), lit(1))}};
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
                       {"labels_out", outside},
@@ -757,6 +768,7 @@ Json gauge_type() {
                     slot("scale_values", "bool", true, "appearance"),
                     slot_enum("scale_position", {"inside", "outside"}, "inside",
                               "appearance"),
+                    slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 /* a press on a Gauge is about the value it is showing, like a Readout */
                 Json::array({event("tap", "num", "widget.value"),
@@ -765,7 +777,7 @@ Json gauge_type() {
                              event("held", "num", "widget.value")}),
                 box("stack", Json::object(),
                     Json::array({
-                        box("stack", Json{{"aspect", lit(1.0)}},
+                        box("stack", Json::object(),
                             Json::array({
                                 part("arc", arc),
                                 part("ticks", ticks),

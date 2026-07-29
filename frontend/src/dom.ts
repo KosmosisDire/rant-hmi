@@ -109,12 +109,70 @@ export function commitTextInput(
   return node;
 }
 
+/* Click-drag SCRUBBING on a number field: dragging an UNFOCUSED field slides its value,
+ * one `step` per pixel (Shift scrubs at a tenth-step for precision, switchable
+ * mid-drag). A plain click still focuses the field for typing: the down edge is
+ * suppressed so the drag never turns into text selection, and a click that never moved
+ * replays the focus itself. A focused field is left alone, so dragging a caret through
+ * the text works as ever. */
+function attachScrub(field: HTMLInputElement, commit: (n: number) => void, step: number): void {
+  let pointer = -1;
+  let start = 0;
+  let acc = 0;
+  let lastX = 0;
+  let travel = 0;
+  let moved = false;
+  const decimalsOf = (s: number) => (String(s).split(".")[1] ?? "").length;
+  field.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0 || document.activeElement === field) return;
+    ev.preventDefault();
+    pointer = ev.pointerId;
+    start = Number(field.value) || 0;
+    acc = 0;
+    lastX = ev.clientX;
+    travel = 0;
+    moved = false;
+    field.setPointerCapture(pointer);
+  });
+  field.addEventListener("pointermove", (ev) => {
+    if (ev.pointerId !== pointer) return;
+    const dx = ev.clientX - lastX;
+    lastX = ev.clientX;
+    if (!moved) {
+      travel += Math.abs(dx);
+      if (travel < 4) return; /* click slop: below it this is still a click */
+      moved = true;
+    }
+    const grain = ev.shiftKey ? step / 10 : step;
+    acc += dx * grain;
+    const decimals = Math.min(6, decimalsOf(grain));
+    const next = Number((start + Math.round(acc / grain) * grain).toFixed(decimals));
+    if (String(next) !== field.value) {
+      field.value = String(next);
+      commit(next);
+    }
+  });
+  const end = (ev: PointerEvent) => {
+    if (ev.pointerId !== pointer) return;
+    pointer = -1;
+    if (!moved) {
+      /* the click whose default we swallowed: focus and select for typing */
+      field.focus();
+      field.select();
+    }
+  };
+  field.addEventListener("pointerup", end);
+  field.addEventListener("pointercancel", (ev) => {
+    if (ev.pointerId === pointer) pointer = -1;
+  });
+}
+
 export function numberInput(
   value: number,
   commit: (n: number) => void,
   attrs: Attrs = {},
 ): HTMLInputElement {
-  return el("input", {
+  const field = el("input", {
     class: "field num",
     type: "number",
     value: String(value),
@@ -124,6 +182,8 @@ export function numberInput(
       if (Number.isFinite(n)) commit(n);
     },
   }) as HTMLInputElement;
+  attachScrub(field, commit, Number(attrs.step) || 1);
+  return field;
 }
 
 /* the picker inside a select field's wrapper, for callers that bind its value */

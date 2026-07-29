@@ -19,7 +19,7 @@ import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, typeOf, widgetOptions } from "./slots.js";
-import { Rect } from "./template.js";
+import { radialExtent, Rect } from "./template.js";
 import { Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 
@@ -645,14 +645,28 @@ export class App implements Editor {
     const pivot = hit.getBoundingClientRect();
     const cells = this.controlCells(widget, type);
     const f0 = interact.params.fraction ? run(interact.params.fraction, cells) : null;
+    /* a fit-declaring radial control's circle center is NOT its painted bbox center
+       (a half-circle's pivot sits on the bbox edge): recover it by mapping the unit
+       origin through the extent box. Valid for BOTH its fits: such a control paints
+       only swept parts, so its bbox is the extent box at either scale. Types without
+       the param (a Knob's full-circle face) keep the plain bbox center. */
+    let cx = pivot.left + pivot.width / 2;
+    let cy = pivot.top + pivot.height / 2;
+    if (interact.params.fit) {
+      const start = Number(run(interact.params.start, cells) ?? -135);
+      const sweep = Math.max(1, Math.min(360, Number(run(interact.params.sweep, cells) ?? 270)));
+      const b = radialExtent(start, sweep);
+      cx = pivot.left + ((0 - b.x) / b.w) * pivot.width;
+      cy = pivot.top + ((0 - b.y) / b.h) * pivot.height;
+    }
     this.control = {
       pointer: ev.pointerId,
       widget,
       type,
       interact,
       started: performance.now(),
-      cx: pivot.left + pivot.width / 2,
-      cy: pivot.top + pivot.height / 2,
+      cx,
+      cy,
       downX: ev.clientX,
       downY: ev.clientY,
       f0: typeof f0 === "number" ? Math.max(0, Math.min(1, f0)) : 0,

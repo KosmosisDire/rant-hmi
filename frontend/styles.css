@@ -1325,6 +1325,13 @@ textarea.field {
   width: 54px;
 }
 
+/* an unfocused number field scrubs on drag (dom.ts attachScrub): say so with the
+   cursor; once focused it edits like any text field */
+input[type="number"]:not(:focus) {
+  cursor: ew-resize;
+  touch-action: none;
+}
+
 .field.title {
   height: 26px;
   background: transparent;

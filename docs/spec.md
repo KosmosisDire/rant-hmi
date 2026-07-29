@@ -121,9 +121,14 @@ same kind of row, so custom components need no plugin mechanism.
 ```
 WidgetType {
   name,                          // registry key; never referenced by code
-  slots:  [ {name, shape, default, group, editor?, step?} ],  // step: the caret
-                                 // increment for num slots (fractions step 0.05,
-                                 // angles 5, not the number input's default 1)
+  slots:  [ {name, shape, default, group, editor?, step?} ],  // step: the caret and
+                                 // SCRUB increment for num slots (fractions step
+                                 // 0.05, angles 5, not the number input's default
+                                 // 1). Every number field scrubs: dragging an
+                                 // unfocused field slides its value one step per
+                                 // pixel, Shift scrubs at a tenth-step for
+                                 // precision, and a plain click still focuses it
+                                 // for typing.
   events: [ {name, x: shape, value?: Expr} ],  // what flows can trigger on; x is the
                                  // seed shape, `value` where x comes FROM (below)
   behavior: [ Flow ],            // the type's DEFAULT flows (below)
@@ -153,9 +158,9 @@ vocabulary learnable:
 |---|---|
 | `fill_color` | the value-carrying part: a toggle's on state, a slider's fill, a lit lamp, a swept arc, a trend's line |
 | `track_color` | the inert part behind it: the off pill, the slider's track, an arc's track, the unlit lamp |
-| `handle_color` | the grabbable marker: a toggle's knob, a radial control's handle |
+| `handle_color` | the grabbable or pointing marker: a toggle's knob, a knob's dot, a gauge or selector needle. The RadialSlider has none: like the linear Slider, its fill's leading edge IS the value |
 | `text`, `text_color` | the control's own text and its color; `text` defaults EMPTY and is bindable like any slot |
-| `control_radius` | corner rounding of the control's own shape; the frame's `radius` rounds the panel around it |
+| `control_radius` | corner rounding of the control's own shape (the Slider's bar, the RadialSlider's arc ends); the frame's `radius` rounds the panel around it |
 | `value`, `min`, `max`, `step` | the process value and its range |
 | `show_scale`, `scale_values`, `divisions`, `decimals` | the toggleable range ticks; `scale_values` toggles their labels separately (marks alone, or marks with values) |
 | `scale_position` | a radial scale's side: `outside` pulls the arc inward and rings it; `inside` keeps the arc at the rim and sets the scale within |
@@ -164,6 +169,7 @@ vocabulary learnable:
 | `thickness` | an arc's stroke, as a fraction of the radius |
 | `body_color` | a rotary control's circular body |
 | `drag` | radial vs linear gesture mapping on a radial control |
+| `fit` | where a partial sweep's circle sits: `fill` (default) places it so the swept extent fills the tile, `center` pins the circle's center to the widget's center |
 
 A new type reuses these names wherever the semantic matches and invents a name
 only for a genuinely new concept.
@@ -284,6 +290,17 @@ for, so there is nothing to report. The inspector does not list a type's default
 either; they are the control working as expected, not authored behavior, and
 authoring a flow on the same slot takes over automatically.
 
+**An INERT widget passes the pointer through.** Outside edit mode, a widget whose
+events drive nothing captures no pointer at all: no event-triggered flow of its
+own, and every slot the type's defaults would write is fed (a fed slot makes the
+default write moot, so a Slider whose `value` is fed is read-only). Its whole
+group is pointer-transparent, so whatever sits behind it receives the click. That
+is what makes an overlay natural: a read-only progress slider or a decorative
+Label/Panel laid over live controls never swallows their gestures, and the
+moment the author feeds off the slot or hangs a flow on an event, the widget is
+interactive again. Edit mode always hit-tests every widget, or nothing could be
+selected.
+
 **A value that cannot be its shape is a finding.** An authored slot value or
 variable init of the wrong JSON shape used to become Nil in silence, and Nil is
 also the legitimate "no value yet", so the mistake was indistinguishable from an
@@ -354,17 +371,35 @@ Interact = { primitive: press | drag1d | drag_radial | pick, params: {...},
 **The radial vocabulary.** One angle convention for every radial part and the
 drag_radial primitive: DEGREES, 0 = straight up, clockwise positive. Each radial
 part reads `start` and `sweep` attrs (the registry wires them to the shared
-`start_angle` / `sweep_angle` slots) and draws inside the largest circle its rect
-holds; value fractions map onto the sweep. `arc` strokes the track over the whole
-sweep and the fill over the value's fraction of it (`width` = stroke as a radius
-fraction); `needle` is a pointer line from `inner` to `outer` with an optional
-center `hub`; `mark` is the grabbable dot at radius fraction `at`; `ticks` spreads
-`count` scale markers over the sweep with optional labels: numeric min..max
-interpolation, or per-tick text via `names` (the one text a radial control renders
-besides its own `text` slot). A scale reads control-outward: the marks sit closest
-to the control and the values beyond them (`labels_out` for an outside scale, the
-mirrored default for an inside one). A null value draws no fill, no needle and no
-mark: UNKNOWN is never an invented position.
+`start_angle` / `sweep_angle` slots); value fractions map onto the sweep. `arc`
+draws the track and fill exactly like the `bar`: the track is a filled annular
+sector over the whole sweep whose end rounding is the `radius` attr (absent =
+fully round; wired to `control_radius` on the RadialSlider), and the fill is a
+square-ended sector over the value's fraction, CLIPPED by the track, so its start
+follows the track's rounding, its leading edge stays straight, and it shrinks
+continuously to nothing (a round stroke cap would bottom out as a dot). `width`
+is the stroke as a radius fraction; `outer` scales the arc inward without moving
+its center (an outside scale's inset). `needle` is a pointer line from `inner`
+to `outer` with an optional center `hub`; `mark` is the grabbable dot at radius
+fraction `at`; `ticks` spreads `count` scale markers over the sweep with optional
+labels: numeric min..max interpolation, or per-tick text via `names` (the one
+text a radial control renders besides its own `text` slot). A scale reads
+control-outward: the marks sit closest to the control and the values beyond them
+(`labels_out` for an outside scale, the mirrored default for an inside one). A
+null value draws no fill, no needle and no mark: UNKNOWN is never an invented
+position.
+
+**Radial fit.** Where the circle sits in the part's rect is the `fit` attr. The
+default, `circle`, inscribes the full circle centered: right for the round-bodied
+types (a Knob's face and a Selector's body stay physically round whatever their
+sweep). `extent` scales and places the circle so the swept extent (the arc plus
+the center) fills the rect, so a half-circle RadialSlider or Gauge spreads over
+its whole tile instead of floating in half of an inscribed circle; those types
+drop the square aspect lock for the same reason. On the RadialSlider and Gauge
+the choice is the user's, a `fit` slot: `fill` (the default, the extent fit) or
+`center`, which pins the circle's center to the widget's center for layouts that
+need exact concentricity. The shell recovers the fitted circle center for the
+drag pivot from the interact's own `fit` param, valid at either setting.
 
 **Layout: scale to fit, always.** Template geometry is proportional, never
 absolute: a box lays out its children by `dir` with per-child `weight` and

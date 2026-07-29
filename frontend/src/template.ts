@@ -171,66 +171,150 @@ function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
  *
  * One angle convention for every radial part and the drag_radial primitive: DEGREES,
  * 0 = straight up, clockwise positive. A part reads `start` and `sweep` (the registry
- * wires them to the shared start_angle / sweep_angle slots), maps value fractions onto
- * that sweep, and draws inside the largest circle the rect holds. */
+ * wires them to the shared start_angle / sweep_angle slots) and maps value fractions
+ * onto that sweep. */
 
 function polar(cx: number, cy: number, r: number, deg: number): [number, number] {
   const rad = (deg * Math.PI) / 180;
   return [cx + r * Math.sin(rad), cy - r * Math.cos(rad)];
 }
 
-function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
-  const [x0, y0] = polar(cx, cy, r, a0);
-  const [x1, y1] = polar(cx, cy, r, a1);
-  const large = a1 - a0 > 180 ? 1 : 0;
-  return `M${n(x0)} ${n(y0)} A${n(r)} ${n(r)} 0 ${large} 1 ${n(x1)} ${n(y1)}`;
+/* The unit-circle bounding box of what a sweep actually USES: the center plus the arc
+ * from `start` over `sweep` degrees (its endpoints, and every cardinal the sweep
+ * crosses). Extent-fitted parts scale and place their circle so THIS box fills the
+ * rect, so a half-circle slider fills its tile instead of floating in the top half of
+ * an inscribed full circle. Shared with the shell, whose radial drag pivots on the
+ * same circle center. */
+export function radialExtent(start: number, sweep: number): Rect {
+  const xs = [0];
+  const ys = [0];
+  const add = (deg: number) => {
+    const rad = (deg * Math.PI) / 180;
+    xs.push(Math.sin(rad));
+    ys.push(-Math.cos(rad));
+  };
+  add(start);
+  add(start + sweep);
+  for (let a = Math.ceil(start / 90) * 90; a <= start + sweep; a += 90) add(a);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
 }
 
 interface RadialFrame {
   cx: number;
   cy: number;
-  radius: number;      /* the outer circle the rect holds */
+  radius: number;      /* the circle's outer radius */
   start: number;
   sweep: number;
 }
 
+/* Where a radial part's circle sits in its rect. Default `fit` "circle" inscribes the
+ * full circle, centered: right for the round-bodied types (a Knob's face, a Selector's
+ * body stay physically round whatever the sweep). `fit` "extent" scales and offsets the
+ * circle so the swept extent fills the rect, so a partial-sweep arc uses all its space. */
 function radialFrame(rect: Rect, attrs: Attrs, cells: Cells): RadialFrame {
+  const start = attrNum(attr(attrs, "start", cells), -135);
+  const sweep = Math.max(1, Math.min(360, attrNum(attr(attrs, "sweep", cells), 270)));
+  if (attrText(attr(attrs, "fit", cells)) === "extent") {
+    const b = radialExtent(start, sweep);
+    const scale = Math.min(rect.w / b.w, rect.h / b.h);
+    return {
+      cx: rect.x + (rect.w - scale * b.w) / 2 - scale * b.x,
+      cy: rect.y + (rect.h - scale * b.h) / 2 - scale * b.y,
+      radius: scale,
+      start,
+      sweep,
+    };
+  }
   return {
     cx: rect.x + rect.w / 2,
     cy: rect.y + rect.h / 2,
     radius: Math.min(rect.w, rect.h) / 2,
-    start: attrNum(attr(attrs, "start", cells), -135),
-    sweep: Math.max(1, Math.min(360, attrNum(attr(attrs, "sweep", cells), 270))),
+    start,
+    sweep,
   };
 }
 
-/* an annular arc: the track over the whole sweep, the fill over `value`'s fraction of
- * it. `width` is the stroke as a fraction of the radius; a null value fills nothing
- * (UNKNOWN is drawn as the bare track, never as an invented zero). */
+/* a full annulus (sweep >= 360): two circles, punched out by the even-odd rule */
+function ringPath(cx: number, cy: number, ro: number, ri: number): string {
+  const circle = (r: number, sweep: number) =>
+    `M${n(cx)} ${n(cy - r)} A${n(r)} ${n(r)} 0 1 ${sweep} ${n(cx)} ${n(cy + r)} ` +
+    `A${n(r)} ${n(r)} 0 1 ${sweep} ${n(cx)} ${n(cy - r)} `;
+  return circle(ro, 1) + circle(ri, 0);
+}
+
+/* a square-ended annular sector from a0 to a1 */
+function sectorPath(cx: number, cy: number, ri: number, ro: number, a0: number, a1: number): string {
+  const large = a1 - a0 > 180 ? 1 : 0;
+  const p = (r: number, a: number) => polar(cx, cy, r, a).map(n).join(" ");
+  return `M${p(ro, a0)} A${n(ro)} ${n(ro)} 0 ${large} 1 ${p(ro, a1)} ` +
+         `L${p(ri, a1)} A${n(ri)} ${n(ri)} 0 ${large} 0 ${p(ri, a0)} Z`;
+}
+
+/* the sector with its four corners rounded by rc (clamped to the stroke and to the
+ * angular room the span leaves): the arc's analog of the bar's rounded track */
+function roundedSectorPath(
+  cx: number, cy: number, ri: number, ro: number, a0: number, a1: number, rc: number,
+): string {
+  const deg = 180 / Math.PI;
+  const span = a1 - a0;
+  const s = Math.sin(Math.min(90, span / 2) / deg);
+  rc = Math.min(rc, (ro - ri) / 2, (ri * s) / (1 - s + 1e-9), (ro * s) / (1 + s));
+  if (rc < 0.25) return sectorPath(cx, cy, ri, ro, a0, a1);
+  /* each fillet circle is tangent to its main arc and to the radial end edge: its
+     center rides at ro-rc (outer) / ri+rc (inner), pulled in from the edge by the
+     angle that leaves exactly rc of clearance */
+  const phiO = deg * Math.asin(Math.min(1, rc / (ro - rc)));
+  const phiI = deg * Math.asin(Math.min(1, rc / (ri + rc)));
+  const dO = Math.sqrt(Math.max(0, (ro - rc) * (ro - rc) - rc * rc));
+  const dI = Math.sqrt(Math.max(0, (ri + rc) * (ri + rc) - rc * rc));
+  const p = (r: number, a: number) => polar(cx, cy, r, a).map(n).join(" ");
+  const corner = (r: number, a: number) => `A${n(rc)} ${n(rc)} 0 0 1 ${p(r, a)} `;
+  const largeO = span - 2 * phiO > 180 ? 1 : 0;
+  const largeI = span - 2 * phiI > 180 ? 1 : 0;
+  return `M${p(ro, a0 + phiO)} ` +
+    `A${n(ro)} ${n(ro)} 0 ${largeO} 1 ${p(ro, a1 - phiO)} ` +
+    corner(dO, a1) + `L${p(dI, a1)} ` + corner(ri, a1 - phiI) +
+    `A${n(ri)} ${n(ri)} 0 ${largeI} 0 ${p(ri, a0 + phiI)} ` +
+    corner(dI, a0) + `L${p(dO, a0)} ` + corner(ro, a0 + phiO) + `Z`;
+}
+
+/* An annular arc, drawn EXACTLY like the bar: the track is the shape (a filled sector
+ * whose end rounding is the `radius` attr; absent = fully round, the classic cap), and
+ * the fill is a square-ended sector over `value`'s fraction of the sweep, CLIPPED by
+ * the track. So the fill's start follows the track's rounding, its leading edge stays
+ * straight, and it keeps shrinking all the way to nothing (a round stroke cap would
+ * bottom out as a dot). `width` is the stroke as a fraction of the radius; `outer`
+ * scales the whole arc inward (fraction of the radius) without moving its center; a
+ * null value fills nothing (UNKNOWN is the bare track, never an invented zero). */
 function drawArc(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const f = radialFrame(rect, attrs, cells);
   const track = attrColor(attr(attrs, "track", cells));
   const fill = attrColor(attr(attrs, "fill", cells));
-  const stroke = Math.max(1, f.radius * Math.max(0.02, attrNum(attr(attrs, "width", cells), 0.18)));
-  const cap = attrText(attr(attrs, "cap", cells)) === "butt" ? "butt" : "round";
-  const r = Math.max(0.5, f.radius - stroke / 2);
+  const ro = f.radius * Math.max(0.05, Math.min(1, attrNum(attr(attrs, "outer", cells), 1)));
+  const stroke = Math.max(1, Math.min(ro - 0.5,
+    f.radius * Math.max(0.02, attrNum(attr(attrs, "width", cells), 0.18))));
+  const ri = Math.max(0, ro - stroke);
+  const rawRadius = attrs && attrs.radius ? attr(attrs, "radius", cells) : null;
+  const rc = Math.max(0, Math.min(rawRadius === null ? stroke / 2 : attrNum(rawRadius, 0),
+                                  stroke / 2));
+  const whole = f.sweep >= 360;
+  const a1 = f.start + Math.min(f.sweep, 360);
+  const shape = whole ? ringPath(f.cx, f.cy, ro, ri)
+                      : roundedSectorPath(f.cx, f.cy, ri, ro, f.start, a1, rc);
+  if (track) out.push(`<path d="${shape}" fill="${track}" fill-rule="evenodd"/>`);
   const raw = attr(attrs, "value", cells);
   const value = raw === null ? null : Math.max(0, Math.min(1, attrNum(raw, 0)));
-  const line = (path: string, color: string) =>
-    out.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="${n(stroke)}" ` +
-             `stroke-linecap="${cap}"/>`);
-  const whole = f.sweep >= 360;
-  if (track) {
-    if (whole)
-      out.push(`<circle cx="${n(f.cx)}" cy="${n(f.cy)}" r="${n(r)}" fill="none" ` +
-               `stroke="${track}" stroke-width="${n(stroke)}"/>`);
-    else line(arcPath(f.cx, f.cy, r, f.start, f.start + f.sweep), track);
-  }
   if (fill && value !== null && value > 0) {
-    if (whole && value >= 1)
-      out.push(`<circle cx="${n(f.cx)}" cy="${n(f.cy)}" r="${n(r)}" fill="none" ` +
-               `stroke="${fill}" stroke-width="${n(stroke)}"/>`);
-    else line(arcPath(f.cx, f.cy, r, f.start, f.start + Math.min(f.sweep, 359.9) * value), fill);
+    const id = "clip" + ++clipSerial;
+    out.push(`<clipPath id="${id}"><path d="${shape}" clip-rule="evenodd"/></clipPath>` +
+             `<g clip-path="url(#${id})">`);
+    const filled = whole && value >= 1
+      ? ringPath(f.cx, f.cy, ro, ri)
+      : sectorPath(f.cx, f.cy, ri, ro, f.start,
+                   f.start + Math.min(f.sweep, 359.9) * value);
+    out.push(`<path d="${filled}" fill="${fill}" fill-rule="evenodd"/></g>`);
   }
 }
 
