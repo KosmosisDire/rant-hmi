@@ -408,6 +408,95 @@ void test_held_proposal() {
     CHECK(scheduler.state().values[state_cell].data.boolean == false);
 }
 
+/* TIMER FIELDS in expressions: `blink.running` / `.remaining` / `.duration` read the
+ * timer table (in seconds), so a binding can color a widget off a running timer; the
+ * computed bindings re-run every tick, so a readout tracks the countdown live. */
+Json timer_read_root(const std::string& surface_xf) {
+    Json button = {
+        {"type", "Button"},
+        {"slots", Json{{"text", "Run"}}},
+        {"feeds", Json::array({Json{{"slot", "surface"},
+                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
+                                    {"path", ""},
+                                    {"xf", surface_xf}}})},
+        {"flows", Json::array({Json{
+            {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+            {"when_mode", "first"},
+            {"do", Json::array({Json{{"kind", "tmr_start"}, {"timer", "blink"}}})}}})},
+    };
+    Json readout = {
+        {"type", "Readout"},
+        {"slots", Json::object()},
+        {"feeds", Json::array({Json{{"slot", "value"},
+                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
+                                    {"path", ""},
+                                    {"xf", "blink.remaining * 1000"}},
+                               Json{{"slot", "decimals"},
+                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
+                                    {"path", ""},
+                                    {"xf", "blink.duration * 1000"}}})},
+        {"flows", Json::array()},
+    };
+    return Json{{"version", 1},
+                {"next_id", 1},
+                {"globals",
+                 Json::array({Json{{"name", "blink"}, {"type", "timer"}, {"init", 0.004}}})},
+                {"pages",
+                 Json::array({Json{{"name", "Main"},
+                                   {"widgets", Json::array({button, readout})}}})}};
+}
+
+void test_timer_reads() {
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(timer_read_root("blink.running.pick(#00ff00, #102030)"), error),
+              error);
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const uint32_t surface = scheduler.program().feeds[0].cell;
+    const uint32_t remaining = scheduler.program().feeds[1].cell;
+    const uint32_t duration = scheduler.program().feeds[2].cell;
+
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
+    CHECK(scheduler.state().values[remaining].data.num == 0);
+    CHECK(scheduler.state().values[duration].data.num == 4);
+
+    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().timers[0].running);
+    CHECK(scheduler.state().values[surface].data.rgba == 0x00ff00ffu);
+    const double started = scheduler.state().values[remaining].data.num;
+    CHECK(started >= 3 && started <= 4);
+    tick(scheduler, 2);
+    CHECK(scheduler.state().values[remaining].data.num == started - 2);
+
+    tick(scheduler, 6);
+    CHECK(!scheduler.state().timers[0].running);
+    CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
+    CHECK(scheduler.state().values[remaining].data.num == 0);
+
+    /* a BARE timer name has no scalar to be, and an unknown field is named */
+    auto refuses = [&](const std::string& xf, const char* needle) {
+        Document bad;
+        std::string adopt_error;
+        CHECK_MSG(bad.adopt(timer_read_root(xf), adopt_error), adopt_error);
+        CompileResult result = compile_document(bad, registry(), mesh);
+        CHECK(!result.ok);
+        bool found = false;
+        for (const auto& diagnostic : result.program.diagnostics)
+            if (diagnostic.message.find(needle) != std::string::npos) found = true;
+        CHECK_MSG(found, "no diagnostic mentions '" + std::string(needle) + "'");
+    };
+    refuses("blink.pick(#00ff00, #102030)", "unknown field");
+    refuses("blink == true", "is a timer");
+}
+
 } // namespace
 
 int main() {
@@ -416,5 +505,6 @@ int main() {
     test_first_of_rearm();
     test_gesture_pin();
     test_held_proposal();
+    test_timer_reads();
     return check::summary("scheduler_test");
 }

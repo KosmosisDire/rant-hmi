@@ -1282,6 +1282,24 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 break;
             }
+            case OpCode::TmrRead: {
+                if (ins.a >= state.timers.size() || ins.a >= program.timers.size()) {
+                    fail(ins.c);
+                    break;
+                }
+                const TimerState& timer = state.timers[ins.a];
+                /* ticks are milliseconds; the fields speak SECONDS, like a timer's
+                   declared duration does */
+                const Value value =
+                    ins.b == 0 ? Value::boolean(timer.running)
+                    : ins.b == 1
+                        ? Value::number(static_cast<double>(timer.remaining) / 1000.0)
+                        : Value::number(
+                              static_cast<double>(program.timers[ins.a].duration_ticks) /
+                              1000.0);
+                if (!push(value)) fail(ins.c);
+                break;
+            }
             /* the compile-inserted text -> enum coercion: the top of stack must be one
              * of the type's variant names; anything else is Nil plus a fault, so a
              * misspelled option can never write a wrong integer silently */

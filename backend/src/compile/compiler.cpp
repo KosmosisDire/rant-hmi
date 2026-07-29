@@ -595,11 +595,21 @@ class Compiler {
                         fields[i].type_id};
     }
 
+    /* a timer variable reads by FIELD (`blink.running`, `blink.remaining`): the state
+     * lives in the timer table, not the cell, so its bindings load from there */
+    void bind_timer(ExpressionScope& scope, const std::string& name, uint32_t index) {
+        scope.qualified[name + ".running"] = Binding{Shape::Bool, OpCode::TmrRead, index, 0};
+        scope.qualified[name + ".remaining"] = Binding{Shape::Num, OpCode::TmrRead, index, 1};
+        scope.qualified[name + ".duration"] = Binding{Shape::Num, OpCode::TmrRead, index, 2};
+    }
+
     ExpressionScope scope_for(const WidgetInfo& widget, Shape x_shape) {
         ExpressionScope scope;
         scope.x_shape = x_shape;
         for (const auto& item : globals_) bind_variable(scope, item.first, item.second);
         for (const auto& item : widget.locals) bind_variable(scope, item.first, item.second);
+        for (const auto& item : global_timers_) bind_timer(scope, item.first, item.second);
+        for (const auto& item : widget.timers) bind_timer(scope, item.first, item.second);
         for (const auto& item : widget.slots) {
             const CellDef& cell = program_.cells[item.second];
             scope.qualified["widget." + item.first] =

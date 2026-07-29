@@ -305,7 +305,10 @@ prototype's flip set, generalized). `show` is an attribute like any other (false
 or Nil hides the node), and a child whose `min_px` cannot be met is dropped, so a
 template inlines or sheds parts as space shrinks: declaratively, not per type.
 Text parts fit their box by default (the renderer sizes the font to the space,
-once, generically). `tile.w`, `tile.h` and `tile.aspect` are available as attr
+once, generically). Text never auto-wraps, but an EXPLICIT newline in the value
+breaks the line (a two-line caption fits as a block, placed by the same align);
+a part marked `oneline` (the dropdown's value) shows a break as a space instead.
+`tile.w`, `tile.h` and `tile.aspect` are available as attr
 refs for anything finer. The contract this buys: a widget always fills its tile
 and stays legible at every size the grid allows, so the user's job is composing
 the UI, never fitting it.
@@ -527,7 +530,10 @@ enums do, because the vocabulary IS the type.
 
 A timer is not a special mechanism: it is a
 variable whose value is `{ running: bool, remaining: s, duration: s }`, readable in
-expressions as `t.running` and `t.remaining`. That one decision removes hidden timer
+expressions as `t.running`, `t.remaining` and `t.duration` (seconds; the state is
+read from the timer table at evaluation, so a computed binding tracks a countdown
+live). A bare `t` has no scalar to be and is refused with the fields named. That
+one decision removes hidden timer
 objects from the model: users manage them like any other variable, and there is
 nothing to garbage-collect.
 

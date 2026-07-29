@@ -160,6 +160,10 @@ enum class OpCode : uint8_t {
     /* pop; jump to `a` when it was Nil: a cased feed's bail-out, so an UNKNOWN input
      * stores UNKNOWN instead of faulting its way down the arms (spec 2.4) */
     JmpNil,
+    /* push one FIELD of timer `a` from the timer table (`b`: 0 running, 1 remaining
+     * seconds, 2 duration seconds): expressions read a timer only by field, the way
+     * `myTimer.remaining` spells it; the state lives beside the cells, not in one */
+    TmrRead,
 };
 
 enum class Builtin : uint16_t {

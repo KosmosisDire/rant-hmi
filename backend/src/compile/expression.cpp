@@ -895,7 +895,19 @@ class Parser {
         if (token_.kind == TokenKind::LParen) return parse_call(name);
 
         auto found = scope_.names.find(name);
-        if (found != scope_.names.end()) return load_binding(found->second);
+        if (found != scope_.names.end()) {
+            /* a FIELDED name (a struct variable) reads by field through the qualified
+               walk below, not the method table; a timer only exists by field at all */
+            const bool fielded = found->second.shape == Shape::Struct ||
+                                 found->second.shape == Shape::Timer;
+            if (found->second.shape == Shape::Timer && token_.kind != TokenKind::Dot) {
+                fail("'" + name + "' is a timer; read a field (" + name +
+                     ".running / .remaining / .duration)");
+                return Shape::Unknown;
+            }
+            if (!fielded || token_.kind != TokenKind::Dot)
+                return load_binding(found->second);
+        }
 
         std::string qualified = name;
         while (token_.kind == TokenKind::Dot) {

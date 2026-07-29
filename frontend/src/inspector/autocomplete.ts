@@ -89,9 +89,10 @@ function accept(input: HTMLInputElement, row: Row): void {
   if (row.insert.endsWith("(")) refresh(input, contexts.get(input)!);
 }
 
-/* shared keyboard handling while a menu is open: arrows move, Enter/Tab accept,
- * Escape only closes (capture phase, so commitInput's Enter-blur and Escape-revert
- * stand once the menu is gone) */
+/* shared keyboard handling while a menu is open: arrows move, Tab accepts, Enter
+ * SUBMITS the text as typed (it is the commit key everywhere else, so the menu only
+ * gets out of its way), Escape only closes (capture phase, so commitInput's
+ * Enter-blur and Escape-revert stand once the menu is gone) */
 function menuKeydown(input: HTMLInputElement) {
   return (ev: KeyboardEvent) => {
     if (!pop || popFor !== input) return;
@@ -100,10 +101,12 @@ function menuKeydown(input: HTMLInputElement) {
       const shown = Math.min(rows.length, 14);
       active = (active + (ev.key === "ArrowDown" ? 1 : shown - 1)) % shown;
       render(input);
-    } else if (ev.key === "Enter" || ev.key === "Tab") {
+    } else if (ev.key === "Tab") {
       ev.preventDefault();
       ev.stopImmediatePropagation();
       accept(input, rows[active]);
+    } else if (ev.key === "Enter") {
+      close();
     } else if (ev.key === "Escape") {
       ev.stopImmediatePropagation();
       close();
@@ -244,9 +247,10 @@ function resolveChain(chain: string, ctx: ExprContext): Resolved | null {
     }
     if (chain[i] !== ".") return current;
     i++;
-    /* a STRUCT's dot reaches its FIELDS (flat dotted paths): consume the longest
-       field path the text spells, and continue from that field's shape */
-    if (current.shape === "struct" && current.fields?.length) {
+    /* a FIELDED receiver's dot (a struct, a timer) reaches its FIELDS (flat dotted
+       paths): consume the longest field path the text spells, and continue from
+       that field's shape */
+    if (current.fields?.length) {
       const run =
         /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/.exec(chain.slice(i));
       if (!run) return current;
@@ -391,8 +395,9 @@ function refresh(input: HTMLInputElement, ctx: ExprContext): void {
     }
     const start = chainStart(text, chainEnd);
     const receiver = resolveChain(text.slice(start, chainEnd), ctx);
-    /* a struct's dot offers its FIELDS; methods belong to the scalars they land on */
-    rows = receiver?.shape === "struct" && receiver.fields?.length
+    /* a fielded receiver's dot offers its FIELDS; methods belong to the scalars
+       they land on */
+    rows = receiver?.fields?.length
       ? fieldRows(receiver.fields, prefix)
       : methodRows(ctx, receiver, prefix);
   } else {
@@ -412,8 +417,15 @@ const contexts = new WeakMap<HTMLInputElement, ExprContext>();
 
 const VAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
 
+/* a timer reads by field: what the dot offers on one */
+const TIMER_FIELDS: MeshField[] = [
+  { path: "running", shape: "bool" },
+  { path: "remaining", shape: "num" },
+  { path: "duration", shape: "num" },
+];
+
 /* the standing name vocabulary at a widget: its slots as widget.<name>, then every
- * variable in scope (timers excluded: expressions cannot read one yet) */
+ * variable in scope */
 function scopeNames(editor: Editor, widget: Widget | null): NameRow[] {
   const rows: NameRow[] = [];
   const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
@@ -425,7 +437,15 @@ function scopeNames(editor: Editor, widget: Widget | null): NameRow[] {
     });
   const locals = new Set((widget?.locals ?? []).map((v) => v.id));
   for (const variable of variablesInScope(editor, widget)) {
-    if (variable.type === "timer") continue;
+    if (variable.type === "timer") {
+      rows.push({
+        label: variable.name,
+        shape: "timer",
+        note: locals.has(variable.id) ? "local" : "global",
+        fields: TIMER_FIELDS,
+      });
+      continue;
+    }
     /* beyond the scalars, a variable's type is a TypeRef (spec 2.7): a dotted ref is
        an enum, a root name a struct carrying its field table */
     const scalar = VAR_SHAPE[variable.type];
@@ -519,10 +539,10 @@ export function exprContext(
   };
 }
 
-/* Attach completion to an expression input. Keyboard: arrows move, Enter/Tab accept,
- * Escape closes (and only closes: the input's own Escape-revert fires when no menu is
- * open). The commit-on-Enter behavior of commitInput still stands once the menu is
- * closed. */
+/* Attach completion to an expression input. Keyboard: arrows move, Tab accepts,
+ * Enter commits the typed text (the menu closes and commitInput's Enter stands),
+ * Escape closes (and only closes: the input's own Escape-revert fires when no menu
+ * is open). */
 export function attachAutocomplete(input: HTMLInputElement, ctx: ExprContext): void {
   contexts.set(input, ctx);
   input.autocomplete = "off";

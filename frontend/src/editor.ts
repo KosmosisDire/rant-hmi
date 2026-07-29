@@ -123,6 +123,13 @@ export function liveText(live: Live | null, cell: string): string {
   if (value === undefined || value === null) return "--";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return String(Math.round(value * 1000) / 1000);
+  if (typeof value === "object") {
+    /* a timer reads as its time left; the card's `on` treatment says running */
+    const remaining = (value as Json).remaining;
+    if (typeof remaining === "number")
+      return String(Math.round(remaining * 1000) / 1000) + " s";
+    return "--";
+  }
   return String(value);
 }
 
