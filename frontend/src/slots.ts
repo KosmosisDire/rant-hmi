@@ -157,6 +157,12 @@ export function cellsFor(
         const count = optionNames(mesh, resolveSlot(widget, type, live, fed, name)).length;
         return count >= 2 ? count : null;
       }
+      case "optnames": {
+        /* "optnames:<options slot>": the resolved option names themselves (a
+           Selector's per-tick labels); null when unresolvable */
+        const names = optionNames(mesh, resolveSlot(widget, type, live, fed, name));
+        return names.length >= 2 ? names : null;
+      }
       case "optfrac": {
         /* "optfrac:<value slot>@<options slot>": where the value slot's NAME sits in
            the options slot's list, as a 0..1 fraction (a Selector's pointer angle).

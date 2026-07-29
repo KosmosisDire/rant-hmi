@@ -674,6 +674,8 @@ export class App implements Editor {
          moves emits nothing at all and the knob ignores it */
       this.emitDrag(widget, type, interact, at.x, at.y);
     else if (interact.primitive === "drag_radial")
+      /* linear mode emits nothing at the down edge: the value moves relative to the
+         drag, and a click that never drags jumps at the UP edge instead */
       this.emitRadial(widget, type, interact, ev.clientX, ev.clientY);
     this.queueCanvas(true);
     ev.preventDefault();
@@ -700,16 +702,18 @@ export class App implements Editor {
   /* The drag_radial primitive: the pointer's bearing from the control's center, mapped
    * onto the sweep the params declare (degrees, 0 = up, clockwise; the same convention
    * the arc parts draw with). A bearing outside the sweep clamps to the nearer end, so
-   * dragging past the stop holds it there. With `mode` "linear" the same control drags
-   * like a fader instead: horizontal motion moves the value RELATIVE to where it stood
-   * at pointer-down (the `fraction` param), full range over ~220 px. With `options`,
-   * the range is a detent per option and the gesture reports the SELECTED NAME (on
-   * change only); without, it reports the min..max value like drag1d. */
+   * dragging past the stop holds it there. With `mode` "linear" (the default) the same
+   * control DRAGS like a fader instead: horizontal motion moves the value RELATIVE to
+   * where it stood at pointer-down (the `fraction` param), full range over ~220 px; a
+   * CLICK that never drags still jumps to the clicked bearing (`jump`, sent from the
+   * up edge), so pointing at a position works in both modes. With `options`, the range
+   * is a detent per option and the gesture reports the SELECTED NAME (on change only);
+   * without, it reports the min..max value like drag1d. */
   private emitRadial(widget: Widget, type: WidgetType, interact: Interact,
-                     clientX: number, clientY: number): void {
+                     clientX: number, clientY: number, jump = false): void {
     const cells = this.controlCells(widget, type);
     let fraction: number;
-    if (String(run(interact.params.mode, cells) ?? "radial") === "linear") {
+    if (!jump && String(run(interact.params.mode, cells) ?? "radial") === "linear") {
       const moved = clientX - Number(this.control?.downX ?? clientX);
       if (!moved) return;
       fraction = Math.max(0, Math.min(1, Number(this.control?.f0 ?? 0) + moved / 220));
@@ -750,8 +754,13 @@ export class App implements Editor {
     const control = this.control;
     if (!control || control.pointer !== ev.pointerId || !this.viewport) return;
     if (control.interact.primitive === "drag_radial") {
-      this.emitRadial(control.widget as Widget, control.type as WidgetType,
-                      control.interact, ev.clientX, ev.clientY);
+      /* a real drag, once the pointer has left the click slop */
+      const slopX = ev.clientX - Number(control.downX ?? ev.clientX);
+      const slopY = ev.clientY - Number(control.downY ?? ev.clientY);
+      if (control.moved || slopX * slopX + slopY * slopY > 16) control.moved = true;
+      if (control.moved)
+        this.emitRadial(control.widget as Widget, control.type as WidgetType,
+                        control.interact, ev.clientX, ev.clientY);
       ev.preventDefault();
       return;
     }
@@ -764,7 +773,8 @@ export class App implements Editor {
   private onControlUp(ev: PointerEvent, cancelled: boolean): void {
     const control = this.control;
     if (!control || (ev.pointerId !== undefined && control.pointer !== ev.pointerId)) return;
-    this.control = null;
+    /* the gesture stays current until the end of this handler: the click-jump below
+       still needs its pivot (cx/cy) and down point */
     const widget = control.widget as Widget;
     const type = control.type as WidgetType;
     const interact = control.interact as Interact;
@@ -778,6 +788,10 @@ export class App implements Editor {
         this.emitInput(widget, interact.emits.tap,
           this.eventValue(type, interact.emits.tap, true));
     } else if (interact.primitive === "drag1d" || interact.primitive === "drag_radial") {
+      /* a CLICK on a radial control (nothing emitted yet) jumps to the clicked
+         bearing, whatever the drag mode: pointing at a position always works */
+      if (interact.primitive === "drag_radial" && !cancelled && control.value === undefined)
+        this.emitRadial(widget, type, interact, ev.clientX, ev.clientY, true);
       if (!cancelled && control.value !== undefined)
         this.emitInput(widget, interact.emits.commit, control.value);
     } else if (interact.primitive === "pick" && !cancelled) {
@@ -792,6 +806,7 @@ export class App implements Editor {
           this.emitInput(widget, interact.emits.select, option));
       }
     }
+    this.control = null;
     this.queueCanvas(true);
   }
 

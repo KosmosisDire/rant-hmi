@@ -155,7 +155,7 @@ vocabulary learnable:
 | `text`, `text_color` | the control's own text and its color; `text` defaults EMPTY and is bindable like any slot |
 | `control_radius` | corner rounding of the control's own shape; the frame's `radius` rounds the panel around it |
 | `value`, `min`, `max`, `step` | the process value and its range |
-| `show_scale`, `divisions`, `decimals` | the toggleable range ticks and their labeling |
+| `show_scale`, `scale_values`, `divisions`, `decimals` | the toggleable range ticks; `scale_values` toggles their labels separately (marks alone, or marks with values) |
 | `start_angle`, `sweep_angle` | a radial control's sweep (degrees, 0 = up, clockwise) |
 | `thickness` | an arc's stroke, as a fraction of the radius |
 | `body_color` | a rotary control's circular body |
@@ -314,16 +314,20 @@ text is integral to the control):
 There is deliberately NO Indicator type: a lamp is a Panel with a bound `surface`
 (colors bind anywhere), and NO built-in value readout on any control: `text` slots
 default empty, and a value display is the user's own Label or Readout placed beside
-(or on) the control. What every value control DOES carry is a toggleable SCALE
-(`show_scale`, with `divisions` / `decimals` where the scale is numeric): range
-ticks drawn by the shared ticks part, under a Slider's bar, around a radial's arc,
-one detent mark per option on a Selector.
+(or on) the control (the Selector shows no current-selection text either). What
+every value control DOES carry is a toggleable SCALE (`show_scale`, with
+`divisions` / `decimals` where the scale is numeric, and `scale_values` gating the
+labels separately, so marks can stand alone): range ticks drawn by the shared
+ticks part, under a Slider's bar, around a radial's arc OUTSIDE it (the Knob's arc
+pulls inward when the scale shows), and one detent mark per option on a Selector,
+labeled with the option NAMES when `scale_values` is on.
 
 The radial controls share `start_angle` / `sweep_angle` (degrees, 0 = up, clockwise)
-and a `drag` mode: `radial` (the value points at the pointer) or `linear` (dragging
-horizontally moves the value relative to where it stood at pointer-down, a fader in
-knob's clothing). The mode is an ordinary enum slot read by the interact's params,
-so it can even be bound.
+and a `drag` mode: `linear` (the default: dragging horizontally moves the value
+relative to where it stood at pointer-down, a fader in knob's clothing, while a
+CLICK that never drags still jumps to the clicked bearing) or `radial` (the value
+points at the pointer from the down edge). The mode is an ordinary enum slot read
+by the interact's params, so it can even be bound.
 
 Every type additionally gets the synthetic trigger `timer <name> ends`. Everything a
 widget does BEYOND its own value echo is authored per instance as feeds and flows: a
@@ -407,11 +411,16 @@ generic, parameterized by template data:
 
 `drag_radial` maps the pointer's BEARING from the center of what the interact
 painted (measured once at the down edge) onto the declared sweep, clamping a
-bearing outside it to the nearer stop; with `options` the sweep is a detent per
-option and the gesture reports the selected NAME on change, which is how a
-discrete Selector spins. The Selector's pointer angle is the shared machinery's
-`optfrac:<value>@<options>` cell: where the value's name sits in the resolved
-option list, as a 0..1 fraction, null (no pointer) when unresolvable.
+bearing outside it to the nearer stop; in `linear` mode (the `mode` param, wired
+to the `drag` slot, and the default) it instead moves the value RELATIVE to the
+down-edge fraction over horizontal motion, and a click inside the ~4 px slop
+jumps to the clicked bearing from the up edge, so pointing at a position works in
+both modes. With `options` the sweep is a detent per option and the gesture
+reports the selected NAME on change, which is how a discrete Selector spins. The
+Selector's pointer angle is the shared machinery's `optfrac:<value>@<options>`
+cell (where the value's name sits in the resolved option list, as a 0..1
+fraction, null = no pointer); `optcount:` and `optnames:` similarly resolve the
+option count and names for its detent marks and their labels.
 
 The primitive emits the widget's declared events as input events to the backend
 (4.4); any per-view state it keeps (pressed, drag position) is animation-only,

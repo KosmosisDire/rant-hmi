@@ -259,7 +259,12 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const hi = attrNum(attr(attrs, "max", cells), 1);
   const decimals = Math.max(0, Math.min(6, attrNum(attr(attrs, "decimals", cells), 0)));
   const textFill = attrColor(attr(attrs, "text_fill", cells)) ?? "#8a8a8a";
-  const label = (i: number) => (lo + ((hi - lo) * i) / (count - 1)).toFixed(decimals);
+  /* `names` labels each tick with its own text (a Selector's options) instead of the
+     numeric min..max interpolation */
+  const rawNames = attrs && attrs.names ? attr(attrs, "names", cells) : null;
+  const names = Array.isArray(rawNames) ? rawNames.map(String) : null;
+  const label = (i: number) =>
+    names ? names[i] ?? "" : (lo + ((hi - lo) * i) / (count - 1)).toFixed(decimals);
 
   if (attrText(attr(attrs, "dir", cells)) === "h") {
     /* linear: marks along the top of this rect (the row under a slider's bar), labels
@@ -284,7 +289,8 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const outer = f.radius * attrNum(attr(attrs, "outer", cells), 1);
   const len = f.radius * attrNum(attr(attrs, "len", cells), 0.1);
   const width = Math.max(0.75, f.radius * 0.018);
-  const size = Math.max(5, f.radius * 0.16);
+  /* option names run longer than numbers, so they set a little smaller */
+  const size = Math.max(5, f.radius * (names ? 0.11 : 0.16));
   for (let i = 0; i < count; ++i) {
     const angle = f.start + (f.sweep * i) / (count - 1);
     const [x0, y0] = polar(f.cx, f.cy, outer - len, angle);

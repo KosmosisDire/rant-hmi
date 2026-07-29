@@ -330,6 +330,7 @@ Json slider_type() {
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
                     slot("show_scale", "bool", false, "appearance"),
+                    slot("scale_values", "bool", true, "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("col", Json::object(),
@@ -375,7 +376,7 @@ Json slider_type() {
                         /* the toggleable scale: marks + range labels under the bar */
                         part("ticks", Json{{"dir", lit("h")},
                                            {"count", ref("slot:divisions")},
-                                           {"labels", lit(true)},
+                                           {"labels", ref("slot:scale_values")},
                                            {"min", ref("slot:min")},
                                            {"max", ref("slot:max")},
                                            {"decimals", ref("slot:decimals")},
@@ -520,24 +521,26 @@ Json knob_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
     Json angles = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
     Json show_scale = ref("slot:show_scale");
+    /* with the scale on, the ARC pulls inward so the marks and their labels sit
+       OUTSIDE it, at the rim */
     Json arc = Json{{"track", ref("slot:track_color")},
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
-                    {"width", ref("slot:thickness")}};
+                    {"width", ref("slot:thickness")},
+                    {"pad", pick(show_scale, lit(0.15), lit(0))}};
     Json ticks = Json{{"count", ref("slot:divisions")},
-                      {"labels", lit(true)},
+                      {"labels", ref("slot:scale_values")},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
-                      {"outer", sub(lit(1), ref("slot:thickness"))},
-                      {"len", lit(0.06)},
+                      {"outer", lit(1.0)},
+                      {"len", lit(0.07)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
-    /* with the scale on, the face and its dot pull in so the labels have a ring */
     Json mark = Json{{"value", fraction},
                      {"fill", ref("slot:handle_color")},
-                     {"at", pick(show_scale, lit(0.34), lit(0.52))},
+                     {"at", pick(show_scale, lit(0.3), lit(0.52))},
                      {"size", pick(show_scale, lit(0.07), lit(0.09))}};
     for (auto& item : angles.items()) {
         arc[item.key()] = item.value();
@@ -554,7 +557,7 @@ Json knob_type() {
                     slot("decimals", "num", 0, "config"),
                     slot("start_angle", "num", -135, "config"),
                     slot("sweep_angle", "num", 270, "config"),
-                    slot_enum("drag", {"radial", "linear"}, "radial", "config"),
+                    slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),
@@ -563,6 +566,7 @@ Json knob_type() {
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("thickness", "num", 0.14, "appearance"),
                     slot("show_scale", "bool", false, "appearance"),
+                    slot("scale_values", "bool", true, "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
@@ -576,7 +580,7 @@ Json knob_type() {
                                 part("rect", Json{{"fill", ref("slot:body_color")},
                                                   {"radius", lit(999)},
                                                   {"aspect", lit(1.0)},
-                                                  {"pad", pick(show_scale, lit(0.31),
+                                                  {"pad", pick(show_scale, lit(0.26),
                                                                lit(0.12))}}),
                                 part("mark", mark),
                                 part("text", Json{{"text", ref("slot:text")},
@@ -609,7 +613,7 @@ Json radial_slider_type() {
                      {"at", sub(lit(1), mul(ref("slot:thickness"), lit(0.5)))},
                      {"size", mul(ref("slot:thickness"), lit(0.72))}};
     Json ticks = Json{{"count", ref("slot:divisions")},
-                      {"labels", lit(true)},
+                      {"labels", ref("slot:scale_values")},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
@@ -633,7 +637,7 @@ Json radial_slider_type() {
                     slot("decimals", "num", 0, "config"),
                     slot("start_angle", "num", -135, "config"),
                     slot("sweep_angle", "num", 270, "config"),
-                    slot_enum("drag", {"radial", "linear"}, "radial", "config"),
+                    slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),
@@ -641,6 +645,7 @@ Json radial_slider_type() {
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("thickness", "num", 0.18, "appearance"),
                     slot("show_scale", "bool", false, "appearance"),
+                    slot("scale_values", "bool", true, "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
@@ -674,7 +679,7 @@ Json gauge_type() {
                     {"value", fraction},
                     {"width", ref("slot:thickness")}};
     Json ticks = Json{{"count", ref("slot:divisions")},
-                      {"labels", lit(true)},
+                      {"labels", ref("slot:scale_values")},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
@@ -710,6 +715,7 @@ Json gauge_type() {
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("thickness", "num", 0.1, "appearance"),
                     slot("show_scale", "bool", true, "appearance"),
+                    slot("scale_values", "bool", true, "appearance"),
                 }),
                 /* a press on a Gauge is about the value it is showing, like a Readout */
                 Json::array({event("tap", "num", "widget.value"),
@@ -749,14 +755,19 @@ Json selector_type() {
        unknown value or unresolvable options draw no pointer at all */
     Json needle = Json{{"value", ref("optfrac:value@options")},
                        {"fill", ref("slot:handle_color")},
-                       {"inner", lit(0.3)},
-                       {"outer", lit(0.85)},
+                       {"inner", lit(0.25)},
+                       {"outer", pick(ref("slot:show_scale"), lit(0.58), lit(0.78))},
                        {"width", lit(0.09)}};
-    /* one detent mark per option, on the body's rim */
+    /* one detent mark per option on the rim; scale_values sets each option's NAME
+       beside its mark (the Selector never shows the current selection as text: a
+       value readout is the user's own Label, fed from the value slot) */
     Json ticks = Json{{"count", ref("optcount:options")},
+                      {"names", ref("optnames:options")},
+                      {"labels", ref("slot:scale_values")},
                       {"outer", lit(1.0)},
-                      {"len", lit(0.1)},
+                      {"len", lit(0.08)},
                       {"fill", lit("#5a5a5a")},
+                      {"text_fill", ref("slot:text_color")},
                       {"show", ref("slot:show_scale")}};
     for (auto& item : angles.items()) {
         needle[item.key()] = item.value();
@@ -769,39 +780,33 @@ Json selector_type() {
                     slot("value", "text", "", "value"),
                     slot("start_angle", "num", -135, "config"),
                     slot("sweep_angle", "num", 270, "config"),
-                    slot_enum("drag", {"radial", "linear"}, "radial", "config"),
+                    slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("body_color", "color", "#262626", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("show_scale", "bool", true, "appearance"),
+                    slot("scale_values", "bool", true, "appearance"),
                 }),
                 Json::array({event("select", "text")}),
-                box("col", Json::object(),
+                box("stack", Json::object(),
                     Json::array({
-                        box("stack", Json{{"weight", lit(1.0)}},
+                        box("stack", Json{{"aspect", lit(1.0)}},
                             Json::array({
-                                box("stack", Json{{"aspect", lit(1.0)}},
-                                    Json::array({
-                                        part("rect", Json{{"fill", ref("slot:body_color")},
-                                                          {"radius", lit(999)},
-                                                          {"aspect", lit(1.0)},
-                                                          {"pad", lit(0.08)}}),
-                                        part("ticks", ticks),
-                                        part("needle", needle),
-                                    }),
-                                    radial_interact(
-                                        Json{{"options", ref("slot:options")},
-                                             {"mode", ref("slot:drag")},
-                                             {"fraction", ref("optfrac:value@options")}},
-                                        Json{{"select", "select"}})),
-                            })),
-                        part("text", Json{{"text", ref("slot:value")},
-                                          {"fill", ref("slot:text_color")},
-                                          {"scale", ref("slot:text_scale")},
-                                          {"oneline", lit(true)},
-                                          {"weight", lit(0.35)},
-                                          {"min_px", lit(11)},
-                                          {"show", ne(ref("slot:value"), lit(""))}}),
+                                /* the body pulls in when the scale shows, so the
+                                   option names ring it */
+                                part("rect", Json{{"fill", ref("slot:body_color")},
+                                                  {"radius", lit(999)},
+                                                  {"aspect", lit(1.0)},
+                                                  {"pad", pick(ref("slot:show_scale"),
+                                                               lit(0.17), lit(0.08))}}),
+                                part("ticks", ticks),
+                                part("needle", needle),
+                            }),
+                            radial_interact(
+                                Json{{"options", ref("slot:options")},
+                                     {"mode", ref("slot:drag")},
+                                     {"fraction", ref("optfrac:value@options")}},
+                                Json{{"select", "select"}})),
                     })),
                 Json::array({on_event("select", {sets_slot("value", "x")})}));
 }
