@@ -141,7 +141,22 @@ Json on_event(const char* name, std::initializer_list<Json> steps) {
  * gives the type a settable body: for a Button the surface IS the button face, for a
  * Dropdown the field, for a Panel the card. A type whose control is a shape drawn inside
  * the tile (a pill, a bar, a lamp) still declares FRAME for its optional background and
- * names that shape's colours as its own slots. */
+ * names that shape's colours as its own slots.
+ *
+ * Group "frame" is the PANEL vocabulary (the shared box around the content) and group
+ * "appearance" the CONTENT vocabulary; the inspector sections them separately, and a
+ * future multi-select edits a name across types at once, so a slot name is a SEMANTIC
+ * CONTRACT shared by every type that declares it:
+ *
+ *   fill_color    the value-carrying part (a toggle's on state, a slider's fill, a lit
+ *                 lamp, a knob's swept arc, a trend's line)
+ *   track_color   the inert part behind it (an off pill, a slider's track, an arc's
+ *                 track, an unlit lamp)
+ *   handle_color  the grabbable marker (a toggle's knob, a radial control's handle)
+ *   text /        the control's own text and its color; `text` defaults empty and is
+ *   text_color    bindable like any slot
+ *   control_radius  corner rounding of the control's own shape (the frame's `radius`
+ *                 rounds the panel; this rounds the thing drawn inside it) */
 Json state_slots() {
     return Json::array({
         slot("visible", "bool", true, "config"),
@@ -151,18 +166,18 @@ Json state_slots() {
 
 Json frame_slots() {
     return Json::array({
-        slot("merge", "bool", true, "appearance"),
-        slot("surface", "color", "#00000000", "appearance", "color"),
-        slot("border", "color", "#00000000", "appearance", "color"),
+        slot("merge", "bool", true, "frame"),
+        slot("surface", "color", "#00000000", "frame", "color"),
+        slot("border", "color", "#00000000", "frame", "color"),
         /* -1 = auto: the radius that nests concentrically inside the island's corner
          * at this frame's inset (the view computes island radius minus panel_pad) */
-        slot("radius", "num", -1, "appearance"),
+        slot("radius", "num", -1, "frame"),
         /* a multiplier on the self-fitting text size, so autoscaling is preserved;
          * consumed by the template's text parts (hidden where the type has none) */
         slot("text_scale", "num", 1, "appearance"),
-        slot("panel_pad", "num", -1, "appearance"),
-        slot("pad", "num", -1, "appearance"),
-        slot("aspect", "text", "", "config"),
+        slot("panel_pad", "num", -1, "frame"),
+        slot("pad", "num", -1, "frame"),
+        slot("aspect", "text", "", "frame"),
         align_slot("center"),
     });
 }
@@ -210,7 +225,7 @@ Json button_type() {
                 compose_slots(tile_base(), {
                     /* the button's face IS its frame: surface, border and radius all
                      * land on the thing the user presses */
-                    slot("surface", "color", "#4e8ef7", "appearance", "color"),
+                    slot("surface", "color", "#4e8ef7", "frame", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#0d0d0d", "appearance", "color"),
                 }),
@@ -236,9 +251,9 @@ Json toggle_type() {
     return type("Toggle",
                 compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
-                    slot("on_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("off_color", "color", "#2a2a2a", "appearance", "color"),
-                    slot("knob_color", "color", "#ececec", "appearance", "color"),
+                    slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
+                    slot("track_color", "color", "#2a2a2a", "appearance", "color"),
+                    slot("handle_color", "color", "#ececec", "appearance", "color"),
                 }),
                 /* what a Toggle proposes is the opposite of its value, for EVERY gesture
                    on it, not just the tap that commits: an author who gates a press on
@@ -256,8 +271,8 @@ Json toggle_type() {
                     Json::array({
                         box("stack", Json{{"aspect", lit(2.0)}},
                             Json::array({
-                                part("rect", Json{{"fill", pick(on, ref("slot:on_color"),
-                                                                ref("slot:off_color"))},
+                                part("rect", Json{{"fill", pick(on, ref("slot:fill_color"),
+                                                                ref("slot:track_color"))},
                                                   {"radius", lit(999)}}),
                                 /* the knob rides between two spacers whose weights swap
                                  * with the value: position from data, no per-type code */
@@ -266,7 +281,7 @@ Json toggle_type() {
                                         box("stack",
                                             Json{{"weight", pick(on, lit(1), lit(0))}},
                                             Json::array()),
-                                        part("rect", Json{{"fill", ref("slot:knob_color")},
+                                        part("rect", Json{{"fill", ref("slot:handle_color")},
                                                           {"radius", lit(999)},
                                                           {"aspect", lit(1.0)}}),
                                         box("stack",
@@ -283,19 +298,20 @@ Json toggle_type() {
 
 Json slider_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
-    /* whether the fill region can hold the value text: both sides in tile units. The
+    /* whether the fill region can hold the head text: both sides in tile units. The
        text box is 1.8 x the bar height; 1.9 leaves it a little air before flipping */
     Json fill_w = mul(fraction, ref("tile:w"));
     Json text_w = mul(lit(1.9), ref("tile:h"));
-    Json value_text = Json{{"text", to_fixed(ref("slot:value"), ref("slot:decimals"))},
-                           {"fill", ref("slot:text_color")},
-                           {"scale", ref("slot:text_scale")},
-                           {"strong", lit(true)},
-                           {"aspect", lit(1.8)},
-                           {"pad", lit(0.1)}};
-    Json inside_text = value_text;
+    Json has_text = ne(ref("slot:text"), lit(""));
+    Json head_text = Json{{"text", ref("slot:text")},
+                          {"fill", ref("slot:text_color")},
+                          {"scale", ref("slot:text_scale")},
+                          {"strong", lit(true)},
+                          {"aspect", lit(1.8)},
+                          {"pad", lit(0.1)}};
+    Json inside_text = head_text;
     inside_text["align"] = lit("end");
-    Json outside_text = std::move(value_text);
+    Json outside_text = std::move(head_text);
     outside_text["align"] = lit("start");
     return type("Slider",
                 compose_slots(tile_base(), {
@@ -303,11 +319,14 @@ Json slider_type() {
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
-                    slot("decimals", "num", 0, "config"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("show_value", "bool", true, "appearance"),
+                    /* the HEAD TEXT rides the fill edge; empty (the default) draws
+                     * nothing, and a binding fills it (a computed feed over
+                     * widget.value restores the old value readout) */
+                    slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("control_radius", "num", 4, "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
@@ -317,12 +336,12 @@ Json slider_type() {
                         part("bar", Json{{"value", fraction},
                                          {"fill", ref("slot:fill_color")},
                                          {"track", ref("slot:track_color")},
-                                         {"radius", lit(4)},
+                                         {"radius", ref("slot:control_radius")},
                                          {"dir", lit("h")}}),
-                        /* the value readout hugs the fill edge from the inside: a box
+                        /* the head text hugs the fill edge from the inside: a box
                            whose weight IS the fraction ends exactly at the edge, and
                            the text right-aligns in it, so it tracks the edge 1:1 */
-                        box("row", Json{{"show", pick(ref("slot:show_value"),
+                        box("row", Json{{"show", pick(has_text,
                                                       ge(fill_w, text_w), lit(false))}},
                             Json::array({
                                 box("row", Json{{"weight", fraction}},
@@ -335,7 +354,7 @@ Json slider_type() {
                             })),
                         /* ...and flips to just past the edge when the fill is too
                            narrow to hold it */
-                        box("row", Json{{"show", pick(ref("slot:show_value"),
+                        box("row", Json{{"show", pick(has_text,
                                                       lt(fill_w, text_w), lit(false))}},
                             Json::array({
                                 box("stack", Json{{"weight", fraction}}, Json::array()),
@@ -395,8 +414,8 @@ Json indicator_type() {
     return type("Indicator",
                 compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
-                    slot("on_color", "color", "#e0857c", "appearance", "color"),
-                    slot("off_color", "color", "#2a2a2a", "appearance", "color"),
+                    slot("fill_color", "color", "#e0857c", "appearance", "color"),
+                    slot("track_color", "color", "#2a2a2a", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                 }),
                 /* the lamp's value is bool, so its events are: the shape a type reports
@@ -411,8 +430,8 @@ Json indicator_type() {
                         box("stack", Json{{"weight", lit(1.0)}},
                             Json::array({part("rect",
                                               Json{{"fill", pick(ref("slot:value"),
-                                                                 ref("slot:on_color"),
-                                                                 ref("slot:off_color"))},
+                                                                 ref("slot:fill_color"),
+                                                                 ref("slot:track_color"))},
                                                    {"radius", lit(999)},
                                                    {"aspect", lit(1.0)}})})),
                         part("text", Json{{"text", ref("slot:text")},
@@ -434,8 +453,8 @@ Json dropdown_type() {
                     slot("options", "text", "", "value", "enum-type"),
                     slot("value", "text", "", "value"),
                     /* the field itself is the frame */
-                    slot("surface", "color", "#141414", "appearance", "color"),
-                    slot("border", "color", "#2e2e2e", "appearance", "color"),
+                    slot("surface", "color", "#141414", "frame", "color"),
+                    slot("border", "color", "#2e2e2e", "frame", "color"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                 }),
                 /* the selection is the gesture's own payload; opening proposes nothing new */
@@ -488,8 +507,8 @@ Json panel_type() {
      * press vocabulary, exactly like a Button */
     return type("Panel",
                 compose_slots(tile_base(), {
-                    slot("surface", "color", "#1d1d1d", "appearance", "color"),
-                    slot("border", "color", "#2a2a2a", "appearance", "color"),
+                    slot("surface", "color", "#1d1d1d", "frame", "color"),
+                    slot("border", "color", "#2a2a2a", "frame", "color"),
                 }),
                 Json::array({event("tap", "bool"), event("release", "bool"),
                              event("press", "bool"), event("pressrelease", "bool"),

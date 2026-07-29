@@ -139,7 +139,7 @@ export interface SlotSpec {
   name: string;
   shape: string;
   default: Json;
-  group: "value" | "appearance" | "config";
+  group: "value" | "appearance" | "config" | "frame";
   editor?: string;
   variants?: string[]; /* enum slots carry their own picker */
 }

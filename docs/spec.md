@@ -134,9 +134,30 @@ a slot, whether it is the live process value or a corner radius. Any slot may ta
 a feed (one per slot, 2.4) or hold an authored per-instance value in the document.
 Resolution is fail-safe: a slot WITH a feed resolves to the live value or UNKNOWN
 (never a fabricated fallback); a slot without one resolves to the instance value,
-else the type's default. `group` (value / appearance / config) drives inspector
-sectioning only; `editor` is a UI hint (color, multiline). So a status-driven
-panel color is not a feature, it is just a feed on an appearance slot.
+else the type's default. `group` (value / appearance / config / frame) drives
+inspector sectioning only; `editor` is a UI hint (color, multiline). So a
+status-driven panel color is not a feature, it is just a feed on an appearance
+slot. The `frame` group is the PANEL vocabulary (the shared box around the
+content) and `appearance` the CONTENT vocabulary; the inspector shows them as two
+sections (Appearance, Panel), so the panel's dressing never mixes with the
+control's own.
+
+**Slot names are semantic contracts.** A slot name means the SAME thing on every
+type that declares it, which is what makes a future multi-select edit coherent
+(select a Toggle and a Slider, set one `fill_color`, both move) and keeps the
+vocabulary learnable:
+
+| Name | Semantics |
+|---|---|
+| `fill_color` | the value-carrying part: a toggle's on state, a slider's fill, a lit lamp, a swept arc, a trend's line |
+| `track_color` | the inert part behind it: the off pill, the slider's track, an arc's track, the unlit lamp |
+| `handle_color` | the grabbable marker: a toggle's knob, a radial control's handle |
+| `text`, `text_color` | the control's own text and its color; `text` defaults EMPTY and is bindable like any slot |
+| `control_radius` | corner rounding of the control's own shape; the frame's `radius` rounds the panel around it |
+| `value`, `min`, `max`, `step` | the process value and its range |
+
+A new type reuses these names wherever the semantic matches and invents a name
+only for a genuinely new concept.
 
 **The base slots.** There are two base SETS, and a type composes in the ones it
 uses before its own slots. A property a widget does not use must not appear in its
@@ -151,14 +172,15 @@ STATE, composed by anything that renders at all:
 | `visible` | bool | true | false or Nil: not rendered, not interactive |
 | `enabled` | bool | true | false or Nil: interaction primitives emit NOTHING, rendered dimmed. An UNKNOWN interlock disables: Nil-poisoning as fail-safe |
 
-FRAME, composed by anything that lives in a tile:
+FRAME, composed by anything that lives in a tile (group `frame`, except the two
+content-placing slots `text_scale` and `align`, which are `appearance`):
 
 | Slot | Shape | Default | Semantics |
 |---|---|---|---|
 | `merge` | bool | true | join the fused island surface (3.1) |
 | `surface` | color | transparent | the widget's own panel fill |
 | `border` | color | transparent | panel border color |
-| `radius` | num | -1 | panel corner radius; -1 = auto (nests concentrically inside the island corner at this inset) |
+| `radius` | num | -1 | panel corner radius, in canvas units; -1 = auto (nests concentrically inside the island corner at this inset). Caps at half the frame's SHORT side, so a big value makes a pill, never an oval |
 | `text_scale` | num | 1 | multiplier on the self-fitting text size (autoscaling preserved); consumed by the template's text parts, hidden where the type has none |
 | `panel_pad` | num | -1 | tile-to-panel padding; -1 = auto |
 | `pad` | num | -1 | panel-to-content padding; -1 = auto |

@@ -444,7 +444,7 @@ Json timer_read_root(const std::string& surface_xf) {
     Json toggle = {
         {"type", "Toggle"},
         {"slots", Json::object()},
-        {"feeds", Json::array({Json{{"slot", "off_color"},
+        {"feeds", Json::array({Json{{"slot", "track_color"},
                                     {"src", Json{{"kind", "L"}, {"name", "blink"}}},
                                     {"path", ""},
                                     {"cases", Json::array({Json{{"test", "x.running"},
@@ -476,19 +476,19 @@ void test_timer_reads() {
     const uint32_t surface = scheduler.program().feeds[0].cell;
     const uint32_t remaining = scheduler.program().feeds[1].cell;
     const uint32_t duration = scheduler.program().feeds[2].cell;
-    const uint32_t off_color = scheduler.program().feeds[3].cell;
+    const uint32_t track_color = scheduler.program().feeds[3].cell;
 
     tick(scheduler, 1);
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().values[remaining].data.num == 0);
     CHECK(scheduler.state().values[duration].data.num == 4);
-    CHECK(scheduler.state().values[off_color].data.rgba == 0x2e2e2effu);
+    CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
 
     scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(scheduler.state().timers[0].running);
     CHECK(scheduler.state().values[surface].data.rgba == 0x00ff00ffu);
-    CHECK(scheduler.state().values[off_color].data.rgba == 0x885a1fffu);
+    CHECK(scheduler.state().values[track_color].data.rgba == 0x885a1fffu);
     const double started = scheduler.state().values[remaining].data.num;
     CHECK(started >= 3 && started <= 4);
     tick(scheduler, 2);
@@ -498,7 +498,7 @@ void test_timer_reads() {
     CHECK(!scheduler.state().timers[0].running);
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().values[remaining].data.num == 0);
-    CHECK(scheduler.state().values[off_color].data.rgba == 0x2e2e2effu);
+    CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
 
     /* a BARE timer (named or as x) has no scalar to be, and an unknown field is named */
     auto refuses = [&](uint32_t widget_index, const std::string& xf, const char* needle) {

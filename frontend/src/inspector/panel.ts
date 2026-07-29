@@ -215,7 +215,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     ]),
   );
 
-  /* 4. Appearance: placement, then every appearance and config slot. A slot the
+  /* 4. Appearance: the CONTENT's properties (colors, text, per-type config). A slot the
    *    template consumes nowhere is hidden rather than shown dead: align also counts
    *    the aspect-locked content box it places, so it stays once an aspect is set. */
   const template = JSON.stringify(type?.template ?? null);
@@ -224,16 +224,29 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const hasAspect = String(authoredSlot(widget, type, "aspect") ?? "") !== "";
   body.append(
     ...section("appearance", "Appearance", String(fed.size), () => [
+      el("div", { class: "prop-grid" }, [
+        ...otherSlots
+          .filter((s) => s.group === "appearance")
+          .concat(otherSlots.filter((s) => s.group === "config"))
+          .filter((s) => s.name !== "align" || usesAlign || hasAspect)
+          .filter((s) => s.name !== "text_scale" || usesTextScale)
+          .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
+      ]),
+    ]),
+  );
+
+  /* 5. Panel: placement plus the shared frame vocabulary (the box around the content:
+   *    island merge, surface, border, radius, paddings, aspect). Separated from
+   *    Appearance so the panel's dressing never mixes with the control's own. */
+  body.append(
+    ...section("panel", "Panel", null, () => [
       /* placement shares the slots' grid so its row sits on the same rhythm */
       el("div", { class: "prop-grid" }, [
         el("label", { text: "Place" }),
         geomRow(editor, widget),
         el("span"),
         ...otherSlots
-          .filter((s) => s.group === "appearance")
-          .concat(otherSlots.filter((s) => s.group === "config"))
-          .filter((s) => s.name !== "align" || usesAlign || hasAspect)
-          .filter((s) => s.name !== "text_scale" || usesTextScale)
+          .filter((s) => s.group === "frame")
           .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
       ]),
     ]),

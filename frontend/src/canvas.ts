@@ -295,7 +295,7 @@ export function renderContent(
     const pad = Number(slot("pad") ?? -1);
     /* radius < 0 = auto: nest concentrically inside the island's corner at this inset */
     const rawRadius = Number(slot("radius") ?? -1);
-    const radius =
+    const uncapped =
       rawRadius < 0 ? Math.max(0, ISLAND_RADIUS - (panelPad < 0 ? 5 : panelPad)) : rawRadius;
 
     out.push(`<g class="widget${enabled ? "" : " disabled"}" data-id="${widget.id}">`);
@@ -312,6 +312,9 @@ export function renderContent(
       String(slot("aspect") ?? ""),
       String(slot("align") ?? "center"),
     );
+    /* the radius caps at half the SHORT side, so a big value makes a pill: an uncapped
+       rx would let SVG clamp rx and ry separately and round the frame into an oval */
+    const radius = Math.min(uncapped, Math.min(frame.w, frame.h) / 2);
     const surface = opaqueEnough(slot("surface"));
     const border = opaqueEnough(slot("border"));
     /* an interact on the template ROOT owns the widget's whole face, so the generic
