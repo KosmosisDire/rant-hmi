@@ -472,10 +472,19 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
      the one crowding measure marks and labels both size against */
   const pitch = (span / (count - 1)) * (Math.PI / 180);
   const roomAt = (r: number) => 2 * r * Math.sin(Math.min(Math.PI / 2, pitch / 2));
+  /* `outer` names the edge the marks HUG (the arc's inner edge for an inside scale),
+     but a mark is a round-capped STROKE: its paint reaches half its width past its
+     endpoint, so the arc-facing end pulls back by that half plus a whisker of gap,
+     never touching the arc it hugs. An inside scale's whole mark shifts in; an
+     outside scale's mark keeps its far end and shortens instead. */
+  const outSide = attrBool(attr(attrs, "labels_out", cells), false);
+  const clear = width / 2 + f.radius * 0.015;
+  const rOut = outSide ? outer : outer - clear;
+  const rIn = outSide ? Math.min(rOut - 1, outer - len + clear) : rOut - len;
   for (let i = 0; i < count; ++i) {
     const angle = angleOf(i);
-    const [x0, y0] = polar(f.cx, f.cy, outer - len, angle);
-    const [x1, y1] = polar(f.cx, f.cy, outer, angle);
+    const [x0, y0] = polar(f.cx, f.cy, rIn, angle);
+    const [x1, y1] = polar(f.cx, f.cy, rOut, angle);
     out.push(`<path d="M${n(x0)} ${n(y0)} L${n(x1)} ${n(y1)}" stroke="${fill}" ` +
              `stroke-width="${n(width)}" stroke-linecap="round"/>`);
   }
@@ -492,15 +501,15 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
      3. neighboring labels never collide: the size shrinks toward a readable floor
         first, and past the floor labels are THINNED (every k-th drawn, the last
         always) rather than made illegible. */
-  const outSide = attrBool(attr(attrs, "labels_out", cells), false);
   /* option names run longer than numbers, so they start a little smaller */
   let size = Math.max(5, f.radius * (names ? 0.11 : 0.16));
   if (outSide)
     size = Math.min(size, Math.max(6, (f.radius - outer) / (0.35 + 0.58 * chars)));
-  const room = roomAt(outSide ? outer : Math.max(1, outer - len)) * 0.9;
+  const room = roomAt(outSide ? rOut : Math.max(1, rIn)) * 0.9;
   if (0.58 * size * chars > room) size = Math.max(6, room / (0.58 * chars));
   const every = Math.max(1, Math.ceil((0.58 * size * chars) / Math.max(1, room)));
-  const anchorR = outSide ? outer + size * 0.35 : outer - len - size * 0.35;
+  /* labels anchor off the marks' ACTUAL far end, wherever the clearance put it */
+  const anchorR = outSide ? rOut + size * 0.35 : rIn - size * 0.35;
   for (let i = 0; i < count; ++i) {
     if (every > 1 && i % every !== 0 && i !== count - 1) continue;
     const angle = angleOf(i);
