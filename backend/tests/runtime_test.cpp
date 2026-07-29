@@ -309,7 +309,7 @@ void test_tiers() {
     CHECK(compile_expression("x.r", ExprTier::Wire, scope, program, code, result, error));
     CHECK(result.shape == Shape::Num);
 
-    /* the word operators are the symbol operators, and `.not` still names the method */
+    /* the word operators are the symbol operators, and `.not()` still names the method */
     error.clear();
     code.clear();
     scope.x_shape = Shape::Num;
@@ -319,9 +319,27 @@ void test_tiers() {
     error.clear();
     code.clear();
     scope.x_shape = Shape::Bool;
-    CHECK_MSG(compile_expression("x.not", ExprTier::Wire, scope, program, code, result,
+    CHECK_MSG(compile_expression("x.not()", ExprTier::Wire, scope, program, code, result,
                                  error), error);
     CHECK(result.shape == Shape::Bool);
+
+    /* plain is data, parens is work: a property refuses (), a method demands them */
+    error.clear();
+    code.clear();
+    scope.x_shape = Shape::Text;
+    CHECK(!compile_expression("x.length()", ExprTier::Wire, scope, program, code,
+                              result, error));
+    CHECK_MSG(error.find("property") != std::string::npos, error);
+    error.clear();
+    code.clear();
+    CHECK(!compile_expression("x.trim", ExprTier::Display, scope, program, code,
+                              result, error));
+    CHECK_MSG(error.find("call it") != std::string::npos, error);
+    error.clear();
+    code.clear();
+    CHECK_MSG(compile_expression("x.trim().length", ExprTier::Display, scope, program,
+                                 code, result, error), error);
+    CHECK(result.shape == Shape::Num);
 }
 
 void test_replay() {
@@ -1115,7 +1133,7 @@ void test_colors() {
                   Json{{"slot", "text_color"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
-                       {"xf", "(#204060 * 2).invert"}},
+                       {"xf", "(#204060 * 2).invert()"}},
                   Json{{"slot", "units_color"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
@@ -1165,7 +1183,7 @@ void test_colors() {
     CHECK(state.values[channels.cell].tag == ValueTag::Num);
     CHECK_EQ(state.values[channels.cell].data.num, 129.0);   /* 0x80 + a of 1.0 */
 
-    /* `*` doubles the channels (alpha kept), `.invert` / `invert()` flip them */
+    /* `*` doubles the channels (alpha kept), `.invert()` / `invert()` flip them */
     run_feed(compiled.program, scaled, state, Value::number(0));
     CHECK_EQ(rgba_of(scaled), 0xbf7f3fffu);
     run_feed(compiled.program, inverted, state, Value::number(0));

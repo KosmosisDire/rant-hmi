@@ -221,6 +221,11 @@ struct MethodSpec {
     Shape arg_shape[4];
     Shape result;
     bool display_only;
+    /* a PROPERTY reads bare (`x.length`, `#f00.r`): a value view of the receiver,
+     * never written with (). A method is an operation and is always CALLED
+     * (`x.trim()`, even with no arguments): plain after a dot is data, parens is
+     * work, and the parser holds the line both ways. */
+    bool property = false;
 };
 
 constexpr Shape ANY = Shape::Unknown;
@@ -235,20 +240,20 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Num, "clamp", MethodId::NumClamp, 2, {NUM, NUM}, Shape::Num, false},
         {Shape::Num, "mapRange", MethodId::NumMapRange, 4, {NUM, NUM, NUM, NUM}, Shape::Num, false},
         {Shape::Num, "sign", MethodId::NumSign, 0, {}, Shape::Num, false},
-        {Shape::Bool, "int", MethodId::BoolInt, 0, {}, Shape::Num, false},
+        {Shape::Bool, "int", MethodId::BoolInt, 0, {}, Shape::Num, false, true},
         {Shape::Bool, "not", MethodId::BoolNot, 0, {}, Shape::Bool, false},
         {Shape::Bool, "pick", MethodId::BoolPick, 2, {ANY, ANY}, Shape::Unknown, false},
-        {Shape::Color, "r", MethodId::ColorR, 0, {}, Shape::Num, false},
-        {Shape::Color, "g", MethodId::ColorG, 0, {}, Shape::Num, false},
-        {Shape::Color, "b", MethodId::ColorB, 0, {}, Shape::Num, false},
-        {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false},
+        {Shape::Color, "r", MethodId::ColorR, 0, {}, Shape::Num, false, true},
+        {Shape::Color, "g", MethodId::ColorG, 0, {}, Shape::Num, false, true},
+        {Shape::Color, "b", MethodId::ColorB, 0, {}, Shape::Num, false, true},
+        {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false, true},
         {Shape::Color, "alpha", MethodId::ColorAlpha, 1, {NUM}, Shape::Color, true},
         {Shape::Color, "mix", MethodId::ColorMix, 2, {Shape::Color, NUM}, Shape::Color, true},
         {Shape::Color, "invert", MethodId::ColorInvert, 0, {}, Shape::Color, true},
         {Shape::Num, "toFixed", MethodId::NumToFixed, 1, {NUM}, Shape::Text, true},
         /* text: the predicates and length are wire-legal (a gate may test an alarm
          * code); everything text-PRODUCING is formatting and stays display-side */
-        {Shape::Text, "length", MethodId::TextLength, 0, {}, Shape::Num, false},
+        {Shape::Text, "length", MethodId::TextLength, 0, {}, Shape::Num, false, true},
         {Shape::Text, "upper", MethodId::TextUpper, 0, {}, Shape::Text, true},
         {Shape::Text, "lower", MethodId::TextLower, 0, {}, Shape::Text, true},
         {Shape::Text, "title", MethodId::TextTitle, 0, {}, Shape::Text, true},
@@ -259,25 +264,25 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Text, "contains", MethodId::TextContains, 1, {Shape::Text}, Shape::Bool, false},
         {Shape::Text, "replace", MethodId::TextReplace, 2, {Shape::Text, Shape::Text}, Shape::Text, true},
         {Shape::Text, "padStart", MethodId::TextPadStart, 2, {NUM, Shape::Text}, Shape::Text, true},
-        {Shape::Enum, "int", MethodId::EnumInt, 0, {}, Shape::Num, false},
-        {Shape::Enum, "name", MethodId::EnumName, 0, {}, Shape::Text, false},
+        {Shape::Enum, "int", MethodId::EnumInt, 0, {}, Shape::Num, false, true},
+        {Shape::Enum, "name", MethodId::EnumName, 0, {}, Shape::Text, false, true},
         {Shape::Text, "split", MethodId::TextSplit, 1, {Shape::Text}, Shape::List, true},
         /* aggregates ride mid-expression on either tier (max over a list is a wire
          * value); the wire-result rule alone keeps a LIST from going to a machine */
-        {Shape::List, "length", MethodId::ListLength, 0, {}, Shape::Num, false},
-        {Shape::List, "first", MethodId::ListFirst, 0, {}, Shape::Unknown, false},
-        {Shape::List, "last", MethodId::ListLast, 0, {}, Shape::Unknown, false},
-        {Shape::List, "sum", MethodId::ListSum, 0, {}, Shape::Num, false},
-        {Shape::List, "avg", MethodId::ListAvg, 0, {}, Shape::Num, false},
-        {Shape::List, "max", MethodId::ListMax, 0, {}, Shape::Num, false},
-        {Shape::List, "min", MethodId::ListMin, 0, {}, Shape::Num, false},
+        {Shape::List, "length", MethodId::ListLength, 0, {}, Shape::Num, false, true},
+        {Shape::List, "first", MethodId::ListFirst, 0, {}, Shape::Unknown, false, true},
+        {Shape::List, "last", MethodId::ListLast, 0, {}, Shape::Unknown, false, true},
+        {Shape::List, "sum", MethodId::ListSum, 0, {}, Shape::Num, false, true},
+        {Shape::List, "avg", MethodId::ListAvg, 0, {}, Shape::Num, false, true},
+        {Shape::List, "max", MethodId::ListMax, 0, {}, Shape::Num, false, true},
+        {Shape::List, "min", MethodId::ListMin, 0, {}, Shape::Num, false, true},
         {Shape::List, "join", MethodId::ListJoin, 1, {Shape::Text}, Shape::Text, true},
         {Shape::List, "sort", MethodId::ListSort, 0, {}, Shape::List, false},
         {Shape::List, "reverse", MethodId::ListReverse, 0, {}, Shape::List, false},
         {Shape::List, "slice", MethodId::ListSlice, 2, {NUM, NUM}, Shape::List, false},
         {Shape::List, "contains", MethodId::ListContains, 1, {ANY}, Shape::Bool, false},
         {Shape::List, "indexOf", MethodId::ListIndexOf, 1, {ANY}, Shape::Num, false},
-        {Shape::Map, "length", MethodId::MapLength, 0, {}, Shape::Num, false},
+        {Shape::Map, "length", MethodId::MapLength, 0, {}, Shape::Num, false, true},
         {Shape::Map, "keys", MethodId::MapKeys, 0, {}, Shape::List, false},
         {Shape::Map, "values", MethodId::MapValues, 0, {}, Shape::List, false},
         {Shape::Map, "has", MethodId::MapHas, 1, {Shape::Text}, Shape::Bool, false},
@@ -665,7 +670,7 @@ class Parser {
                 continue;
             }
             advance();
-            /* the word operators still name methods after a dot: `x.not` stands */
+            /* the word operators still name methods after a dot: `x.not()` stands */
             const bool wordy = (token_.kind == TokenKind::Bang ||
                                 token_.kind == TokenKind::AndAnd ||
                                 token_.kind == TokenKind::OrOr) &&
@@ -695,6 +700,18 @@ class Parser {
                 fail("shape " + std::string(shape_name(receiver)) +
                      " has no method '" + name + "'" +
                      (meant.empty() ? "" : "; did you mean '" + meant + "'?"));
+                return Shape::Unknown;
+            }
+            /* plain is DATA, parens is WORK: a property never takes (), a method is
+               always called with them, so what a dotted name is stays visible */
+            if (spec->property && token_.kind == TokenKind::LParen) {
+                fail("'" + name + "' is a property; write it without parentheses (" +
+                     name + ")");
+                return Shape::Unknown;
+            }
+            if (!spec->property && token_.kind != TokenKind::LParen) {
+                fail("'" + name + "' is a method; call it with parentheses (" + name +
+                     "())");
                 return Shape::Unknown;
             }
             if (tier_ == ExprTier::Wire && spec->display_only) {
@@ -1064,6 +1081,7 @@ const std::vector<LangRow>& language_reference() {
                              ? "elem"
                              : doc_shape(spec.result);
             row.display_only = spec.display_only;
+            row.property = spec.property;
             rows.push_back(row);
         }
         /* the one special form the tables do not carry: enum .is(variant) */

@@ -53,6 +53,8 @@ struct LangRow {
     const char* args[5] = {};
     const char* result = "";
     bool display_only = false;
+    /* method rows: a property reads bare (x.length); a method is called (x.trim()) */
+    bool property = false;
 };
 
 const std::vector<LangRow>& language_reference();

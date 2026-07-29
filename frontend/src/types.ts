@@ -50,6 +50,7 @@ export interface LangEntry {
   result: string;      /* result shape; "elem" = the receiver's element shape */
   tier: "display" | "both";
   receiver?: string;   /* method rows only */
+  property?: boolean;  /* method rows: reads bare (x.length) vs called (x.trim()) */
 }
 
 export interface Lang {

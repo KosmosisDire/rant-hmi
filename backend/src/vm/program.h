@@ -254,7 +254,7 @@ enum class MethodId : uint16_t {
      * render them, joined into the site's own slot */
     TextConcat,
     /* color channel arithmetic: `color * n` / `color / n` scale r,g,b (alpha kept),
-     * `.invert` flips them */
+     * `.invert()` flips them */
     ColorScale,
     ColorDiv,
     ColorInvert,

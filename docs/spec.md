@@ -1355,7 +1355,7 @@ LAMBDA  := IDENT "=>" expr        // one parameter, one expression, no capture o
 `and`, `or` and `not` are the word spellings of the symbol operators, byte for byte
 the same programs. `==`/`!=` with an ENUM side accepts a `.Variant` literal (resolved
 against the left side's vocabulary at compile, an unknown name a finding), a variant
-NAME as text, or the backing integer; ordered comparisons stay numeric (`x.int()` is
+NAME as text, or the backing integer; ordered comparisons stay numeric (`x.int` is
 the bridge).
 
 Free functions are the whole of the wire tier's vocabulary: `clamp mapRange roundTo
@@ -1408,6 +1408,16 @@ returns, and therefore what the next call in the chain may be. Autocomplete afte
 
 The table is capped deliberately, and this is the list. Adding to it is a decision,
 not a reflex.
+
+**Plain is data, parens is work.** A bare dotted name is a PROPERTY or a field: a
+value view of the receiver (`x.length`, `#f00.r`, `x.int`, `x.max`, a struct's
+`m.speed`, a timer's `t.running`), never written with parentheses. A METHOD is an
+operation and is always called, even with no arguments (`x.trim()`, `x.sort()`,
+`c.invert()`); autocomplete inserts the parentheses. The parser holds the line both
+ways ("length is a property, drop the parentheses" / "trim is a method, call it"),
+so what a dotted name is stays visible in the expression. Properties: `length`
+(text/list/map), `first last sum avg max min` (list), `r g b a` (color), `int`
+(bool), `int name` (enum); everything else in the table is a method.
 
 | Receiver | Methods | Tier |
 |---|---|---|

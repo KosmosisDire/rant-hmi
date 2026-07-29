@@ -369,6 +369,7 @@ Json App::lang_json() {
                    {"tier", row.display_only ? "display" : "both"}};
         if (std::string(row.kind) == "method") {
             entry["receiver"] = row.receiver;
+            entry["property"] = row.property;
             methods.push_back(std::move(entry));
         } else {
             builtins.push_back(std::move(entry));

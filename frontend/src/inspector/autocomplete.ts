@@ -277,9 +277,12 @@ function resolveChain(chain: string, ctx: ExprContext): Resolved | null {
     if (!m) return current;
     const method = m[0];
     i += m[0].length;
-    if (chain[i] === "(") skipBalanced("(", ")");
+    /* plain is a property, parens is a method: resolve in the matching class only */
+    const called = chain[i] === "(";
+    if (called) skipBalanced("(", ")");
     const entry = lang?.methods.find(
-      (row) => row.receiver === current!.shape && row.name === method,
+      (row) => row.receiver === current!.shape && row.name === method &&
+               !!row.property === !called,
     );
     if (!entry) return null;
     if (entry.result === "elem") {
@@ -317,10 +320,13 @@ function methodRows(ctx: ExprContext, receiver: Resolved | null, prefix: string)
     if (receiver && entry.receiver !== receiver.shape) continue;
     if (wire && entry.tier === "display") continue;
     if (prefix && !entry.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
+    /* a property inserts bare; a METHOD is always called, so even a no-arg one
+       completes with its parentheses in place */
     out.push({
-      insert: entry.name + (entry.args.length ? "(" : ""),
+      insert: entry.property ? entry.name
+            : entry.name + (entry.args.length ? "(" : "()"),
       label: entry.name,
-      signature: signature(entry),
+      signature: entry.property ? "" : signature(entry) || "()",
       result:
         entry.result === "elem" && receiver?.elem ? receiver.elem : entry.result,
       note: receiver ? "" : entry.receiver ?? "",
