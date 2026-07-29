@@ -773,13 +773,17 @@ Json gauge_type() {
                     {"width", ref("slot:thickness")},
                     {"radius", ref("slot:control_radius")},
                     {"outer", pick(show_scale, pick(outside, lit(0.7), lit(1)), lit(1))}};
+    /* marks hug the arc, like the other radial scales: an inside scale rides the
+       arc's inner edge, so the thickness moves it; an outside one rings the
+       pulled-in arc */
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
                       {"labels_out", outside},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
-                      {"outer", lit(0.8)},
+                      {"outer", pick(outside, lit(0.8),
+                                     sub(lit(1), ref("slot:thickness")))},
                       {"len", lit(0.07)},
                       {"cap_radius", ref("slot:control_radius")},
                       {"cap_width", ref("slot:thickness")},
