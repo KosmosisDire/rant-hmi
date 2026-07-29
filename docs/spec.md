@@ -1187,10 +1187,17 @@ window.
 A struct value is a fixed array of Value plus a set-bit per field, sized from its
 type at compile time (5.2). Every struct is BORN as its type's zero with no bit set
 (a declared variable's start, 2.7); `READ_ENT` copies the entity's last known value
-(from its subscription, or from what the HMI last wrote) with every bit set. On a
-move out, the value is encoded with the reflected layout (the wire format always
+(from its subscription, or from what the HMI last wrote) with every bit set. An
+entity a flow reads is CONSUMED exactly like one a feed names (the compiler stamps
+it, the mesh adapter subscribes it), so the cache is live before the first read; a
+read before anything has arrived yields Nil fields, and a gate over them closes. On
+a move out, the value is encoded with the reflected layout (the wire format always
 comes from the owner, never from an assumption here) and cached as that entity's
-last value.
+last value WHEN THE EFFECT FLUSHES at the end of the tick, never mid-run: every
+flow in a tick reads the tick-start snapshot (the PLC-scan rule), so two flows on
+one event can gate on the same value one of them is about to change (the
+read - gate - force / read - gate - unforce toggle pair), while the next tick still
+reads its own write without waiting for the owner's echo.
 
 Read-modify-write is therefore not a mode any more, it is which source the author
 chose: `read` then write is RMW, filling a zero-born variable then writing is a full

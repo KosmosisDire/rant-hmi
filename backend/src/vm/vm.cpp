@@ -1243,6 +1243,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     effect.value = Value::nil();
                     break;
                 }
+                /* the last-value mirror takes this write when the effect FLUSHES (end
+                 * of tick, flush_effects), never here: every flow that runs in this
+                 * tick reads the tick-start snapshot (the PLC-scan rule), so a second
+                 * flow on the same event can gate on the value the event found, and
+                 * the next tick still reads its own write without an owner echo */
                 const Value source = pop();
                 if (source.tag == ValueTag::Struct) {
                     if (source.ref >= state.structs.size() ||
@@ -1250,15 +1255,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         fail(ins.c);
                         break;
                     }
-                    if (ins.a < state.last.size()) {
-                        state.last[ins.a].known = true;
-                        state.last[ins.a].fields = state.structs[source.ref].fields;
-                    }
                 } else if (!emit_bare(program, state, verb, ins.a, ins.b, source)) {
                     fail(ins.c);
-                } else if (ins.a < state.last.size() && ins.b < state.last[ins.a].fields.size()) {
-                    state.last[ins.a].known = true;
-                    state.last[ins.a].fields[ins.b] = source;
                 }
                 break;
             }

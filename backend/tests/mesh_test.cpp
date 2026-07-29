@@ -142,6 +142,20 @@ int main() {
     dart::VariableDefinition<> hist(peer, "history", &*hist_schema, hist_options);
     CHECK(hist.valid());
 
+    /* a forceable bool the document only reads from FLOWS (no feed names it): the
+     * flow_reads subscription is the only thing that can fill its mirror */
+    auto suck_schema = dart::Schema::compile("Suck { on: bool }");
+    CHECK(suck_schema.has_value());
+    if (!suck_schema) return check::summary("mesh_test");
+    dart::MessageBuilder suck_initial(*suck_schema);
+    suck_initial.set_bool("on", false);
+    CHECK(suck_initial.ok());
+    dart::VariableOptions<> suction_options;
+    suction_options.initial = suck_initial.bytes();
+    suction_options.allow_force = true;
+    dart::VariableDefinition<> suction(peer, "suction", &*suck_schema, suction_options);
+    CHECK(suction.valid());
+
     std::atomic<int> calls{0};
     dart::FunctionDefinition<> status(
         peer, "status", &*req_schema, &*rsp_schema,
@@ -185,7 +199,8 @@ int main() {
     CHECK_MSG(mesh.start(err), err);
 
     /* reflection settles once discovery + detail fetches land */
-    const char* wanted[] = {"tank_level", "history", "belt", "status", "alarm", "cmd"};
+    const char* wanted[] = {"tank_level", "history", "belt", "status",
+                            "alarm",      "cmd",     "suction"};
     constexpr size_t kWanted = sizeof(wanted) / sizeof(wanted[0]);
     bool reflected = false;
     for (int i = 0; i < 100 && !reflected; ++i) {
@@ -319,6 +334,38 @@ int main() {
         })},
     };
 
+    /* the toggle-off-the-plant idiom: read the value, gate on it, force / unforce.
+     * Deliberately NO feed references `suction` anywhere in this document. */
+    Json suction_widget = {
+        {"type", "Button"},
+        {"label", "Suction"},
+        {"geom", Json{{"x", 390}, {"y", 0}, {"w", 120}, {"h", 60}}},
+        {"flows", Json::array({
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"when_mode", "first"},
+                 {"do", Json::array({
+                     Json{{"kind", "move"}, {"mode", "write"},
+                          {"from", entity_ref("V", "suction")},
+                          {"to", Json{{"local", "current"}, {"path", ""}}}},
+                     Json{{"kind", "gate"}, {"a", "current.on == false"}},
+                     Json{{"kind", "move"}, {"mode", "force"},
+                          {"from", Json{{"expr", "true"}}},
+                          {"to", entity_ref("V", "suction")}},
+                 })}},
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"when_mode", "first"},
+                 {"do", Json::array({
+                     Json{{"kind", "move"}, {"mode", "write"},
+                          {"from", entity_ref("V", "suction")},
+                          {"to", Json{{"local", "current"}, {"path", ""}}}},
+                     Json{{"kind", "gate"}, {"a", "current.on == true"}},
+                     Json{{"kind", "move"}, {"mode", "unforce"},
+                          {"from", Json{{"expr", "x"}}},
+                          {"to", entity_ref("V", "suction")}},
+                 })}},
+        })},
+    };
+
     Json root = {
         {"version", 1},
         {"next_id", 1},
@@ -326,7 +373,8 @@ int main() {
         {"pages", Json::array({Json{{"name", "Main"},
                                     {"widgets", Json::array({level_widget, label_widget,
                                                              speed_widget, temp_widget,
-                                                             alarm_widget, hist_widget})}}})},
+                                                             alarm_widget, hist_widget,
+                                                             suction_widget})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -455,6 +503,24 @@ int main() {
         CHECK_MSG(run_until(sched, [&] { return alarms_seen.load() > 0; }, 2000),
                   "the emit never reached the peer");
         CHECK_EQ(alarm_code.load(), 7);
+    }
+
+    /* the flow-read toggle: the gates only ever pass once the flow_reads subscription
+     * fills the mirror, so a landed force IS the proof of consumption */
+    {
+        const uint64_t suction_id = page["widgets"][6].value("id", 0);
+        bool forced_on = false;
+        for (int i = 0; i < 40 && !forced_on; ++i) {
+            sched.post(InputEvent{1, suction_id, "tap", Value::boolean(true), seq++});
+            forced_on = run_until(sched, [&] { return suction.forced(); }, 200);
+        }
+        CHECK_MSG(forced_on, "the flow-read gate never saw the value; force never landed");
+        bool released = false;
+        for (int i = 0; i < 40 && !released; ++i) {
+            sched.post(InputEvent{1, suction_id, "tap", Value::boolean(true), seq++});
+            released = run_until(sched, [&] { return !suction.forced(); }, 200);
+        }
+        CHECK_MSG(released, "the unforce never landed");
     }
 
     return check::summary("mesh_test");

@@ -537,6 +537,90 @@ void test_timer_reads() {
     }
 }
 
+/* A FLOW that reads an entity (the read -> gate -> force/unforce toggle-off-the-plant
+ * idiom): the read takes the last-value mirror, so the mirror must fill from arrivals
+ * even though NO feed names the entity. The compiler stamps `flow_reads` so the mesh
+ * adapter subscribes it exactly like a fed one. */
+void test_flow_entity_read() {
+    Json button = {
+        {"type", "Button"},
+        {"slots", Json::object()},
+        {"flows", Json::array({
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"when_mode", "first"},
+                 {"do", Json::array({
+                     Json{{"kind", "move"}, {"mode", "write"},
+                          {"from", Json{{"kind", "V"}, {"name", "suction"}, {"path", ""}}},
+                          {"to", Json{{"local", "current"}, {"path", ""}}}},
+                     Json{{"kind", "gate"}, {"a", "current.value == false"}},
+                     Json{{"kind", "move"}, {"mode", "force"},
+                          {"from", Json{{"expr", "true"}}},
+                          {"to", Json{{"kind", "V"}, {"name", "suction"}, {"path", ""}}}},
+                 })}},
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"when_mode", "first"},
+                 {"do", Json::array({
+                     Json{{"kind", "move"}, {"mode", "write"},
+                          {"from", Json{{"kind", "V"}, {"name", "suction"}, {"path", ""}}},
+                          {"to", Json{{"local", "current"}, {"path", ""}}}},
+                     Json{{"kind", "gate"}, {"a", "current.value == true"}},
+                     Json{{"kind", "move"}, {"mode", "unforce"},
+                          {"from", Json{{"expr", "x"}}},
+                          {"to", Json{{"kind", "V"}, {"name", "suction"}, {"path", ""}}}},
+                 })}},
+        })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages",
+                  Json::array({Json{{"name", "Main"}, {"widgets", Json::array({button})}}})}};
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+
+    EntityDef suction;
+    suction.kind = EntityKind::Variable;
+    suction.name = "suction";
+    suction.readable = true;
+    suction.writable = true;
+    suction.forceable = true;
+    suction.fields = {FieldDef{"value", Shape::Bool}};
+    EntityDef bystander = suction;
+    bystander.name = "bystander";
+    FakeMesh mesh({suction, bystander});
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    /* the stamp the mesh adapter keys its subscriptions on: the read entity carries
+       it, an unreferenced one does not */
+    CHECK(compiled.program.entities[0].flow_reads);
+    CHECK(!compiled.program.entities[1].flow_reads);
+
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+
+    /* before any arrival the mirror is unknown: both gates close, nothing sends */
+    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 1});
+    tick(scheduler, 1);
+    CHECK(mesh.transcript().empty());
+
+    /* the plant reports false: the tap forces true (and only that; no unforce) */
+    mesh.push_update(EntityKind::Variable, "suction", {Value::boolean(false)});
+    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 2});
+    tick(scheduler, 1);
+    CHECK(mesh.transcript().size() == 1);
+    CHECK_MSG(mesh.transcript()[0] == "force V:suction.value=true", mesh.transcript()[0]);
+
+    /* the forced value echoes back true: the next tap unforces */
+    mesh.push_update(EntityKind::Variable, "suction", {Value::boolean(true)});
+    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 3});
+    tick(scheduler, 1);
+    CHECK(mesh.transcript().size() == 2);
+    CHECK_MSG(mesh.transcript()[1] == "unforce V:suction", mesh.transcript()[1]);
+}
+
 } // namespace
 
 int main() {
@@ -546,5 +630,6 @@ int main() {
     test_gesture_pin();
     test_held_proposal();
     test_timer_reads();
+    test_flow_entity_read();
     return check::summary("scheduler_test");
 }

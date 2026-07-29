@@ -640,25 +640,16 @@ void DartMesh::apply(const Program& program) {
         item.second->poll_ms = 0;
         item.second->pages.clear();
     }
-    for (const FeedProgram& feed : program.feeds) {
-        if (feed.source_cell != UINT32_MAX) continue;
-        if (feed.entity >= program.entities.size()) continue;
-        const EntityDef& def = program.entities[feed.entity];
+    /* consume one entity, returning its rec. A recompile starts from a fresh
+     * RuntimeState: re-deliver the variable state we already hold, so its cells and
+     * RMW seed refill on the next drain instead of waiting for the owner's next write */
+    auto consume = [&](const EntityDef& def) -> Rec* {
         Rec* rec = impl_->ensure_rec(def);
         std::string err;
         if (!impl_->ensure_consumption(*rec, err)) {
             impl_->log("subscription failed", rec_key(def.kind, def.name) + ": " + err);
-            continue;
+            return nullptr;
         }
-        if (def.kind == EntityKind::Function && feed.poll_ms) {
-            rec->poll_ms = rec->poll_ms ? std::min(rec->poll_ms, feed.poll_ms) : feed.poll_ms;
-            if (std::find(rec->pages.begin(), rec->pages.end(), feed.page_id) ==
-                rec->pages.end())
-                rec->pages.push_back(feed.page_id);
-        }
-        /* a recompile starts from a fresh RuntimeState: re-deliver the variable state
-         * we already hold, so its cells and RMW seed refill on the next drain instead
-         * of waiting for the owner's next write */
         if (def.kind == EntityKind::Variable && !rec->last_payload.empty() &&
             rec->last_schema) {
             std::lock_guard<std::mutex> hold(rec->slot_mu);
@@ -666,7 +657,26 @@ void DartMesh::apply(const Program& program) {
             rec->slot_schema = rec->last_schema;
             rec->slot_dirty = true;
         }
+        return rec;
+    };
+    for (const FeedProgram& feed : program.feeds) {
+        if (feed.source_cell != UINT32_MAX) continue;
+        if (feed.entity >= program.entities.size()) continue;
+        const EntityDef& def = program.entities[feed.entity];
+        Rec* rec = consume(def);
+        if (!rec) continue;
+        if (def.kind == EntityKind::Function && feed.poll_ms) {
+            rec->poll_ms = rec->poll_ms ? std::min(rec->poll_ms, feed.poll_ms) : feed.poll_ms;
+            if (std::find(rec->pages.begin(), rec->pages.end(), feed.page_id) ==
+                rec->pages.end())
+                rec->pages.push_back(feed.page_id);
+        }
     }
+    /* an entity a FLOW reads (`read <entity> -> local`, a single-field source) needs
+     * the same consumption as a fed one: without a live subscription its last-value
+     * mirror never fills and every read yields Nil, so a gate over it can never pass */
+    for (const EntityDef& def : program.entities)
+        if (def.flow_reads) consume(def);
 }
 
 /* ============================== drain ======================================= */

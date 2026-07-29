@@ -53,6 +53,10 @@ struct EntityDef {
     std::vector<FieldDef> fields;
     /* FUNCTION only: the response fields (what a function feed reads and decodes) */
     std::vector<FieldDef> rsp_fields;
+    /* stamped by the compiler when a FLOW reads this entity (`read <entity>` or a
+     * single-field source): the mesh must consume it so the last-value mirror is live,
+     * exactly as it does for an entity a feed names */
+    bool flow_reads = false;
 };
 
 /* the field table a FEED reads from: the response side of a function, else the value */

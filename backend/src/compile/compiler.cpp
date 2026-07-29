@@ -1198,6 +1198,7 @@ class Compiler {
                      DiagGrade::Error, "from");
                 return false;
             }
+            program_.entities[entity].flow_reads = true;
             Instruction load;
             load.op = OpCode::LoadEnt;
             load.a = static_cast<uint32_t>(entity);
@@ -1449,6 +1450,7 @@ class Compiler {
             const uint32_t cell = ensure_struct_local(widget, flow, locals, scope, name,
                                                       struct_type, step_id);
             if (cell == UINT32_MAX) return false;
+            program_.entities[read_entity].flow_reads = true;
             Instruction ins;
             ins.op = OpCode::ReadEnt;
             ins.a = cell;
