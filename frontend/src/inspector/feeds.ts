@@ -176,7 +176,8 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
   });
 
   const line = el("div", { class: "feed-line" }, [
-    el("span", { class: "arrow", html: iconMarkup("arrow-left", 10, 1.5) }),
+    /* the feed sits UNDER the slot it fills, so the arrow points back up at it */
+    el("span", { class: "arrow", html: iconMarkup("arrow-up", 10, 1.5) }),
     source,
     ...(cases.length
       ? []
