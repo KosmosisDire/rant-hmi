@@ -426,12 +426,12 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
        the endpoint, so the bar-facing end drops by that half plus a whisker of
        gap, never touching the bar above (same clearance as the radial scales) */
     const clear = width / 2 + rect.h * 0.06;
-    const x0 = rect.x + inset;
-    const spanW = Math.max(1, rect.w - 2 * inset);
-    const spacing = spanW / (count - 1);
+    /* true value positions, only the end marks slid inward: as on the radial scale */
+    const spacing = rect.w / (count - 1);
+    const xOf = (i: number) =>
+      Math.min(rect.x + rect.w - inset, Math.max(rect.x + inset, rect.x + spacing * i));
     for (let i = 0; i < count; ++i) {
-      const x = x0 + spacing * i;
-      out.push(`<path d="M${n(x)} ${n(rect.y + clear)} v${n(mark)}" stroke="${fill}" ` +
+      out.push(`<path d="M${n(xOf(i))} ${n(rect.y + clear)} v${n(mark)}" stroke="${fill}" ` +
                `stroke-width="${n(width)}" stroke-linecap="round"/>`);
     }
     if (!labels) return;
@@ -443,7 +443,7 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     for (let i = 0; i < count; ++i) {
       if (every > 1 && i % every !== 0 && i !== count - 1) continue;
       const half = (0.58 * size * texts[i].length) / 2;
-      const x = Math.max(rect.x + half, Math.min(rect.x + rect.w - half, x0 + spacing * i));
+      const x = Math.max(rect.x + half, Math.min(rect.x + rect.w - half, xOf(i)));
       out.push(`<text x="${n(x)}" y="${n(rect.y + clear + mark + size * 0.65)}" ` +
                `fill="${textFill}" font-size="${n(size)}" text-anchor="middle" ` +
                `dominant-baseline="central">${escapeXml(texts[i])}</text>`);
@@ -469,12 +469,16 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     ? Math.min(f.sweep / 4,
         deg * (Math.asin(Math.min(1, rc / outer)) + Math.asin(Math.min(1, width / 2 / outer))))
     : 0;
-  const a0 = f.start + inset;
-  const span = Math.max(1, f.sweep - 2 * inset);
-  const angleOf = (i: number) => a0 + (span * i) / (count - 1);
+  /* every tick sits at its TRUE value position, so a click on a tick lands exactly
+     on that tick's value; only the ticks the end rounding would swallow (the
+     endpoints) shift inward by the inset. The end marks lie by a couple degrees;
+     the ends clamp to min/max under the finger anyway, so nothing else does. */
+  const angleOf = (i: number) =>
+    Math.min(f.start + f.sweep - inset,
+      Math.max(f.start + inset, f.start + (f.sweep * i) / (count - 1)));
   /* the angular pitch between marks, and the tangential room it leaves at a radius:
      the one crowding measure marks and labels both size against */
-  const pitch = (span / (count - 1)) * (Math.PI / 180);
+  const pitch = pitch0;
   const roomAt = (r: number) => 2 * r * Math.sin(Math.min(Math.PI / 2, pitch / 2));
   /* `outer` names the edge the marks HUG (the arc's inner edge for an inside scale),
      but a mark is a round-capped STROKE: its paint reaches half its width past its
