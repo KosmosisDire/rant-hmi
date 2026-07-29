@@ -1074,11 +1074,12 @@ button:focus-visible {
   inset: 1px 0 0 0;
   padding: 0 7px;   /* the field's 1px border + 6px padding: the text must sit EXACTLY
                        under the caret's text */
-  display: flex;
-  align-items: center;
+  /* centered by line-height, NEVER flex: flex layout drops whitespace-only text nodes
+     between the token spans, and the underlay must keep every space the input has */
   white-space: pre;
+  overflow: hidden;
   pointer-events: none;
-  font: 600 12px var(--mono);
+  font: 600 12px/22px var(--mono);
   color: var(--ink-2);
   z-index: 1;
 }
