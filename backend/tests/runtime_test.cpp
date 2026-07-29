@@ -797,6 +797,60 @@ void test_feed_cases() {
     CHECK(fallback.values[covered.program.feeds[0].cell].data.rgba == 0x444444ffu);
 }
 
+/* A WHOLE entity as a feed's source: x is the message, its fields read as x.<field>
+ * off the last-value cache, so a struct comes in as whatever the transform makes of
+ * it (a color struct as a color). */
+void test_whole_source() {
+    Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                 {"pages", Json::array()}};
+    Json readout = {
+        {"type", "Readout"},
+        {"label", "motor"},
+        {"slots", Json::object()},
+        {"feeds", Json::array({Json{{"slot", "value"},
+                                    {"src", entity("V", "motor")},
+                                    {"path", ""},
+                                    {"xf", "x.speed * 2 + x.enabled.int"}}})},
+        {"flows", Json::array()},
+    };
+    root["pages"].push_back(Json{{"name", "Main"}, {"widgets", Json::array({readout})}});
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    FakeMesh mesh(reflection());
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    const FeedProgram& feed = compiled.program.feeds[0];
+    CHECK(feed.field == UINT32_MAX);
+
+    RuntimeState state(compiled.program);
+    int motor = -1;
+    for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
+        if (compiled.program.entities[i].name == "motor") motor = static_cast<int>(i);
+    CHECK(motor >= 0);
+    state.last[motor].known = true;
+    state.last[motor].fields[0] = Value::number(21);
+    state.last[motor].fields[1] = Value::boolean(true);
+    RunResult ran = run_feed(compiled.program, feed, state, Value::nil());
+    CHECK(!ran.faulted);
+    CHECK(state.values[feed.cell].data.num == 43);
+
+    /* a whole message with no transform cannot fill a scalar slot: a finding */
+    Document bare = document;
+    bare.root["pages"][0]["widgets"][0]["feeds"][0]["xf"] = "";
+    bare.reindex();
+    CompileResult refused = compile_document(bare, registry(), mesh);
+    CHECK(!refused.ok);
+    bool found = false;
+    for (const Diag& diag : refused.program.diagnostics)
+        if (diag.code == "feed_source" &&
+            diag.message.find("whole message") != std::string::npos)
+            found = true;
+    CHECK(found);
+}
+
 void test_compile_fault() {
     Document document = runtime_document();
     document.root["pages"][0]["widgets"][0]["flows"][0]["do"][2]["to"]["name"] = "missing";
@@ -1597,6 +1651,7 @@ int main() {
     test_typed_temporaries();
     test_enum_names();
     test_feed_cases();
+    test_whole_source();
     test_compile_fault();
     test_expression_rejection();
     test_tiers();

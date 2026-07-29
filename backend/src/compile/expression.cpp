@@ -837,6 +837,28 @@ class Parser {
             return Shape::Bool;
         }
         if (name == "x") {
+            /* a STRUCT x (a whole-entity feed): its fields are qualified bindings
+               (`x.r`, `x.head.state`), and bare x has no scalar to be */
+            if (scope_.x_shape == Shape::Struct) {
+                if (token_.kind != TokenKind::Dot) {
+                    fail("x is a whole message here; pick a field (x.<field>)");
+                    return Shape::Unknown;
+                }
+                std::string qualified = name;
+                while (token_.kind == TokenKind::Dot) {
+                    advance();
+                    if (token_.kind != TokenKind::Ident) {
+                        fail("expected a field after '.'");
+                        return Shape::Unknown;
+                    }
+                    qualified += "." + token_.text;
+                    advance();
+                    auto q = scope_.qualified.find(qualified);
+                    if (q != scope_.qualified.end()) return load_binding(q->second);
+                }
+                fail("unknown field '" + qualified + "'");
+                return Shape::Unknown;
+            }
             emit(OpCode::LoadX);
             pushed();
             enum_type_ = scope_.x_shape == Shape::Enum ? scope_.x_enum : 0;

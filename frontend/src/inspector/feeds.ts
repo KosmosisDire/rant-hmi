@@ -17,10 +17,45 @@ import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField }
 import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { bindChoice, bindField } from "../reconcile.js";
-import { Feed, Json, Widget, WidgetType } from "../types.js";
+import { Feed, Json, SlotSpec, Widget, WidgetType } from "../types.js";
 import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
-import { sourceField } from "./editors.js";
+import { sourceField, valueEditor } from "./editors.js";
 import { highlighted } from "../highlight.js";
+
+/* which case-result keys the author pushed into EXPRESSION mode; per view, like folds */
+const exprMode = new Set<string>();
+
+/* A result literal: the value a native picker edits IS an expression literal, so the
+ * document stays expression-only and the picker is sugar over it. `undefined` = the
+ * text is a real expression (or unparseable), so only the expression editor fits. */
+function literalOf(shape: string, text: string): Json | undefined {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  if (shape === "color")
+    return /^#[0-9a-fA-F]{3,8}$/.test(trimmed) ? trimmed : undefined;
+  if (shape === "bool")
+    return trimmed === "true" ? true : trimmed === "false" ? false : undefined;
+  if (shape === "num") {
+    const numeric = Number(trimmed);
+    return /^[-+0-9.eE]+$/.test(trimmed) && Number.isFinite(numeric) ? numeric : undefined;
+  }
+  /* text / enum / align: a quoted literal */
+  const quoted = /^"((?:\\.|[^"\\])*)"$/.exec(trimmed);
+  return quoted ? quoted[1].replace(/\\(.)/g, "$1") : undefined;
+}
+
+function literalText(shape: string, value: Json): string {
+  if (value === null || value === undefined) return "";
+  if (shape === "color" || shape === "bool" || shape === "num") return String(value);
+  return '"' + String(value).replace(/(["\\])/g, "\\$1") + '"';
+}
+
+/* the shapes with a native picker worth offering */
+function pickable(spec: SlotSpec | undefined): boolean {
+  if (!spec) return false;
+  return spec.shape === "color" || spec.shape === "bool" || spec.shape === "num" ||
+         spec.shape === "enum" || spec.editor === "align";
+}
 
 export function feedShape(feed: Feed): Json {
   return [feed.id, feed.slot, feed.src?.kind ?? "V",
@@ -57,7 +92,9 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     feed.id + ":src",
     editor,
     widget,
-    { fields: true, hmi: true },
+    /* an entity is also pickable WHOLE (path ""): the transform then reads x.<field>,
+       which is how a color struct comes in as a color */
+    { fields: true, hmi: true, wholeEntity: true },
     () => ({ ref: at().src, path: at().path }),
     /* one pick, one batch: the source and the field land together, and the value type
        follows from what was picked rather than a dropdown */
@@ -76,6 +113,42 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     /* a feed's transform is DISPLAY tier: the full formatting vocabulary */
     attachAutocomplete(input, exprContext(editor, widget, "display", feedX(editor, widget, at)));
     return highlighted(input);
+  };
+
+  /* A RESULT cell: the slot's native picker where the text is a plain literal (a color
+     swatch beats typing hex), the expression editor for everything else, a button
+     between the two. Picking writes the LITERAL as the expression. */
+  const spec = (type?.slots ?? []).find((s) => s.name === feed.slot);
+  const resultCell = (key: string, read: () => string,
+                      commit: (text: string) => void): HTMLElement => {
+    const cell = el("span", { class: "case-result" });
+    const render = () => {
+      cell.innerHTML = "";
+      const text = read();
+      const literal = spec ? literalOf(spec.shape, text) : undefined;
+      const valued = pickable(spec) && !exprMode.has(key) && literal !== undefined;
+      if (valued) {
+        cell.appendChild(valueEditor(
+          spec!, spec!.shape, key + ".value",
+          () => literalOf(spec!.shape, read()) ?? null,
+          (value) => commit(literalText(spec!.shape, value)),
+          /*unknown=*/ true, editor));
+        cell.appendChild(iconButton("pencil", "write an expression instead", () => {
+          exprMode.add(key);
+          render();
+        }));
+      } else {
+        cell.appendChild(xfInput(key, read, commit, "expression"));
+        if (pickable(spec))
+          cell.appendChild(iconButton("check", "pick a value instead", () => {
+            exprMode.delete(key);
+            if (spec && literalOf(spec.shape, read()) === undefined) commit("");
+            render();
+          }));
+      }
+    };
+    render();
+    return cell;
   };
 
   const rate = isFunction
@@ -152,10 +225,12 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
       block.appendChild(
         el("div", { class: "feed-case" }, [
           highlighted(test, "when"),
+          /* the way BACK from a predicate to value matching */
+          iconButton("check", "match a value instead", () =>
+            editCase(index, { when: null, xf: heldCase(index).xf })),
           el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
-          xfInput(key + ".xf", () => String(heldCase(index).xf ?? ""),
-                  (text) => editCase(index, { ...heldCase(index), xf: text }),
-                  "expression"),
+          resultCell(key + ".xf", () => String(heldCase(index).xf ?? ""),
+                     (text) => editCase(index, { ...heldCase(index), xf: text })),
           diagIcon(editor.diagAt(feed.id, "case" + index)),
           iconButton("x", "remove this case", () => {
             const list = ((at().cases ?? []) as Json[]).slice();
@@ -210,10 +285,9 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
         iconButton("pencil", "match with a condition instead", () =>
           editCase(index, { test: "", xf: heldCase(index).xf })),
         el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
-        xfInput(key + ".xf",
-                () => String((at().cases ?? [])[index]?.xf ?? ""),
-                (text) => editCase(index, { ...heldCase(index), xf: text }),
-                "expression"),
+        resultCell(key + ".xf",
+                   () => String((at().cases ?? [])[index]?.xf ?? ""),
+                   (text) => editCase(index, { ...heldCase(index), xf: text })),
         diagIcon(editor.diagAt(feed.id, "case" + index)),
         iconButton("x", "remove this case", () => {
           const list = ((at().cases ?? []) as Json[]).slice();

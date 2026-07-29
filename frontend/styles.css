@@ -1147,6 +1147,30 @@ button:focus-visible {
   flex: none;
 }
 
+/* a case's RESULT: the slot's own picker or the expression editor, one at a time */
+.feed-case > .case-result {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1 1 40px;
+  min-width: 34px;
+}
+
+.case-result > .hl-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.case-result > .field,
+.case-result > .select-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.case-result > .icon-btn {
+  flex: none;
+}
+
 /* the WHEN block's label + editor grid (spec 3.5) */
 .sub-grid {
   display: grid;

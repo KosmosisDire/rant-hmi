@@ -717,15 +717,44 @@ class Compiler {
                     const int entity = resolve_entity(ref, feed.feed_id, "src");
                     if (entity < 0) continue;
                     feed.entity = static_cast<uint32_t>(entity);
-                    const int field = find_field(feed.entity, str_or(node, "path", ""),
-                                                 feed.feed_id, "path", /*response=*/true);
-                    if (field < 0) continue;
-                    feed.field = static_cast<uint32_t>(field);
-                    const FieldDef& source_field =
-                        feed_fields(program_.entities[feed.entity])[feed.field];
-                    scope.x_shape = source_field.shape;
-                    scope.x_enum = source_field.type_id;
-                    scope.x_elem = source_field.elem;
+                    const std::vector<FieldDef>& readable =
+                        feed_fields(program_.entities[feed.entity]);
+                    const std::string path = str_or(node, "path", "");
+                    if (path.empty() && readable.size() > 1) {
+                        /* the WHOLE message as the source: x is a struct, its fields
+                           qualified bindings reading the entity's last-value cache, so
+                           `rgb(x.r, x.g, x.b)` pulls a color struct in as a color. A
+                           function's response is not cached, so it stays per-field. */
+                        if (program_.entities[feed.entity].kind == EntityKind::Function) {
+                            diag(feed.feed_id, "feed_source",
+                                 "a function's response is read field by field; pick one",
+                                 DiagGrade::Error, "path");
+                            continue;
+                        }
+                        feed.field = UINT32_MAX;
+                        scope.x_shape = Shape::Struct;
+                        for (uint32_t i = 0; i < readable.size(); ++i)
+                            scope.qualified["x." + readable[i].path] =
+                                Binding{readable[i].shape, OpCode::LoadEnt, feed.entity,
+                                        i, readable[i].type_id};
+                        if (str_or(node, "xf", "").empty() &&
+                            node.value("cases", Json::array()).empty()) {
+                            diag(feed.feed_id, "feed_source",
+                                 "a whole message cannot fill a slot by itself; write a "
+                                 "transform over x.<field>",
+                                 DiagGrade::Error, "xf");
+                            continue;
+                        }
+                    } else {
+                        const int field = find_field(feed.entity, path, feed.feed_id,
+                                                     "path", /*response=*/true);
+                        if (field < 0) continue;
+                        feed.field = static_cast<uint32_t>(field);
+                        const FieldDef& source_field = readable[feed.field];
+                        scope.x_shape = source_field.shape;
+                        scope.x_enum = source_field.type_id;
+                        scope.x_elem = source_field.elem;
+                    }
                     if (program_.entities[feed.entity].kind == EntityKind::Function) {
                         const double hz = num_or(node, "poll_hz", 0.0);
                         feed.poll_ms = hz > 0.0
@@ -807,9 +836,14 @@ class Compiler {
         std::set<int64_t> covered;
         bool covered_true = false, covered_false = false;
 
-        feed.code.push_back(Instruction{OpCode::LoadX});
-        const uint32_t bail = static_cast<uint32_t>(feed.code.size());
-        feed.code.push_back(Instruction{OpCode::JmpNil});
+        /* the Nil bail guards a SCALAR x; a whole-message feed's x is Nil by design
+           (its fields ride qualified bindings) and only runs on a delivery */
+        uint32_t bail = UINT32_MAX;
+        if (source != Shape::Struct) {
+            feed.code.push_back(Instruction{OpCode::LoadX});
+            bail = static_cast<uint32_t>(feed.code.size());
+            feed.code.push_back(Instruction{OpCode::JmpNil});
+        }
         feed.max_stack = std::max(feed.max_stack, 2u);
 
         uint32_t index = 0;
@@ -853,6 +887,13 @@ class Compiler {
 
             const Json when = entry.is_object() && entry.contains("when") ? entry["when"]
                                                                           : Json();
+            if (source == Shape::Struct) {
+                diag(feed.feed_id, "case_when",
+                     "the value is a whole message; match with a condition over "
+                     "x.<field>",
+                     DiagGrade::Error, where);
+                return false;
+            }
             Value key = Value::nil();
             bool ok = false;
             if (source == Shape::Enum && when.is_string()) {
@@ -963,7 +1004,8 @@ class Compiler {
         }
 
         /* the Nil bail-out, which full coverage also falls into if it is ever wrong */
-        feed.code[bail].a = static_cast<uint32_t>(feed.code.size());
+        if (bail != UINT32_MAX)
+            feed.code[bail].a = static_cast<uint32_t>(feed.code.size());
         Instruction nil;
         nil.op = OpCode::Const;
         nil.a = program_.add_constant(Value::nil());

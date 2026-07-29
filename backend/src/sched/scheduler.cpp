@@ -218,6 +218,13 @@ void Scheduler::on_update(const MeshUpdate& update) {
     for (const FeedProgram& feed : program_.feeds) {
         if (feed.source_cell != UINT32_MAX || feed.entity != static_cast<uint32_t>(entity))
             continue;
+        /* a WHOLE-message feed: its transform reads the fields off the last-value
+           cache just refreshed above, so x carries nothing */
+        if (feed.field == UINT32_MAX) {
+            state_.reset_scratch();
+            run_feed(program_, feed, state_, Value::nil());
+            continue;
+        }
         if (feed.field >= count) continue;
         state_.reset_scratch();
         Value x = update.fields[feed.field];
