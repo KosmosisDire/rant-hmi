@@ -112,8 +112,9 @@ function sourceShape(
 export interface FlowScope {
   /* every name legal at this row: the declared variables plus the temporaries above it */
   locals: LocalInfo[];
-  /* what `x` holds at this row, or null when it could not be inferred */
-  x: { shape: string; elem?: string } | null;
+  /* what `x` holds at this row, or null when it could not be inferred; a struct x
+     carries its field table so completion offers fields */
+  x: { shape: string; elem?: string; fields?: MeshField[] } | null;
 }
 
 /* Walk the DO list down to `stepId` (or to the end when it names no step) and report the
@@ -131,7 +132,7 @@ export function scopeAt(
   const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
   const trigger = (flow?.when ?? []).find((w: Json) => w?.kind === "event");
   const event = trigger ? type?.events.find((e) => e.name === trigger.name) : null;
-  let x: { shape: string; elem?: string } | null = event?.x ? { shape: event.x } : null;
+  let x: FlowScope["x"] = event?.x ? { shape: event.x } : null;
 
   for (const step of (flow?.do ?? []) as Json[]) {
     if (step?.id === stepId) break;
@@ -141,7 +142,9 @@ export function scopeAt(
     const produced = sourceShape(editor, step.from ?? {}, scope);
 
     if (to.local === "x" && !to.path) {
-      x = produced ? { shape: produced.shape, elem: produced.elem } : null;
+      x = produced
+        ? { shape: produced.shape, elem: produced.elem, fields: produced.fields }
+        : null;
       continue;
     }
     /* a TYPED destination declares a fresh temporary right here (spec 2.7), zeroed

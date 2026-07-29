@@ -244,6 +244,7 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false},
         {Shape::Color, "alpha", MethodId::ColorAlpha, 1, {NUM}, Shape::Color, true},
         {Shape::Color, "mix", MethodId::ColorMix, 2, {Shape::Color, NUM}, Shape::Color, true},
+        {Shape::Color, "invert", MethodId::ColorInvert, 0, {}, Shape::Color, true},
         {Shape::Num, "toFixed", MethodId::NumToFixed, 1, {NUM}, Shape::Text, true},
         /* text: the predicates and length are wire-legal (a gate may test an alarm
          * code); everything text-PRODUCING is formatting and stays display-side */
@@ -310,6 +311,7 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"values", {Builtin::Values, 1, 1, {ANY}, Shape::List, false}},
         {"keys", {Builtin::Keys, 1, 1, {ANY}, Shape::List, false}},
         {"color", {Builtin::Color, 1, 1, {Shape::Text}, Shape::Color, true}},
+        {"invert", {Builtin::Invert, 1, 1, {Shape::Color}, Shape::Color, true}},
         {"jet", {Builtin::Jet, 1, 1, {NUM}, Shape::Color, true}},
         {"hot", {Builtin::Hot, 1, 1, {NUM}, Shape::Color, true}},
         {"coolWarm", {Builtin::CoolWarm, 1, 1, {NUM}, Shape::Color, true}},
@@ -583,6 +585,30 @@ class Parser {
             const TokenKind op = token_.kind;
             advance();
             Shape right = parse_unary();
+            /* `*` and `/` SCALE a color's channels by a number (alpha kept), so
+               `#ff8040 * 0.5` darkens without spelling three channels out. Color is
+               display vocabulary, refused on the wire like the rest of it. */
+            const bool color_scale =
+                (op == TokenKind::Star &&
+                 (left == Shape::Color || right == Shape::Color)) ||
+                (op == TokenKind::Slash && left == Shape::Color);
+            if (color_scale) {
+                if (tier_ == ExprTier::Wire) {
+                    fail("color arithmetic is display vocabulary; this value is for "
+                         "a machine");
+                    return Shape::Unknown;
+                }
+                const Shape other = left == Shape::Color ? right : left;
+                if (!require(other, Shape::Num,
+                             op == TokenKind::Star ? "color *" : "color /"))
+                    return Shape::Unknown;
+                emit(OpCode::Method, 0, 1,
+                     static_cast<uint16_t>(op == TokenKind::Star ? MethodId::ColorScale
+                                                                 : MethodId::ColorDiv));
+                if (depth_) --depth_;
+                left = Shape::Color;
+                continue;
+            }
             require(left, Shape::Num, "arithmetic");
             require(right, Shape::Num, "arithmetic");
             emit(op == TokenKind::Star ? OpCode::Mul

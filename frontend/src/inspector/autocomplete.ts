@@ -11,7 +11,7 @@
 
 import { el } from "../dom.js";
 import { Editor, variablesInScope } from "../editor.js";
-import { Feed, Flow, Lang, LangEntry, Widget } from "../types.js";
+import { Feed, Flow, Lang, LangEntry, MeshField, Widget } from "../types.js";
 import { localAt, scopeAt } from "./flowscope.js";
 
 export interface NameRow {
@@ -19,13 +19,15 @@ export interface NameRow {
   shape?: string;  /* its shape, when known: "num" "bool" "text" "list" ... */
   note?: string;   /* a short origin tag: "local", "global", "slot" */
   elem?: string;   /* aggregate names: the element shape */
+  fields?: MeshField[];   /* struct names: the field table behind the dot */
 }
 
 export interface ExprContext {
   tier: "display" | "wire";
   lang(): Lang | null;
-  /* the shape of x at this position, or null when unknown */
-  x(): { shape: string; elem?: string } | null;
+  /* the shape of x at this position, or null when unknown; a struct x carries its
+     field table so the dot offers FIELDS, not methods */
+  x(): { shape: string; elem?: string; fields?: MeshField[] } | null;
   /* every other name legal here (widget.<slot>, variables) */
   names(): NameRow[];
 }
@@ -146,6 +148,7 @@ function render(input: HTMLInputElement): void {
 interface Resolved {
   shape: string;
   elem?: string;
+  fields?: MeshField[];   /* struct receivers: what the dot reaches */
 }
 
 /* find where the primary CHAIN before `at` starts: walk back over identifiers, dots,
@@ -227,7 +230,8 @@ function resolveChain(chain: string, ctx: ExprContext): Resolved | null {
       current = row?.shape ? { shape: row.shape, elem: row.elem } : null;
     } else {
       const row = ctx.names().find((n) => n.label === name);
-      current = row?.shape ? { shape: row.shape, elem: row.elem } : null;
+      current = row?.shape ? { shape: row.shape, elem: row.elem, fields: row.fields }
+                           : null;
     }
   }
 
@@ -240,6 +244,31 @@ function resolveChain(chain: string, ctx: ExprContext): Resolved | null {
     }
     if (chain[i] !== ".") return current;
     i++;
+    /* a STRUCT's dot reaches its FIELDS (flat dotted paths): consume the longest
+       field path the text spells, and continue from that field's shape */
+    if (current.shape === "struct" && current.fields?.length) {
+      const run =
+        /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/.exec(chain.slice(i));
+      if (!run) return current;
+      let best: MeshField | null = null;
+      for (const field of current.fields)
+        if ((run[0] === field.path || run[0].startsWith(field.path + ".")) &&
+            (!best || field.path.length > best.path.length))
+          best = field;
+      if (!best) {
+        /* a partial path ("x.head."): the tail fields become the receiver */
+        const tail = current.fields
+          .filter((field) => field.path.startsWith(run[0] + "."))
+          .map((field) => ({ ...field, path: field.path.slice(run[0].length + 1) }));
+        if (!tail.length) return null;
+        i += run[0].length;
+        current = { shape: "struct", fields: tail };
+        continue;
+      }
+      i += best.path.length;
+      current = { shape: best.variants?.length ? "enum" : best.shape, elem: best.elem };
+      continue;
+    }
     const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(chain.slice(i));
     if (!m) return current;
     const method = m[0];
@@ -297,6 +326,19 @@ function methodRows(ctx: ExprContext, receiver: Resolved | null, prefix: string)
   return out;
 }
 
+function fieldRows(fields: MeshField[], prefix: string): Row[] {
+  const lower = prefix.toLowerCase();
+  return fields
+    .filter((field) => !prefix || field.path.toLowerCase().startsWith(lower))
+    .map((field) => ({
+      insert: field.path,
+      label: field.path,
+      signature: "",
+      result: field.variants?.length ? "enum" : field.shape,
+      note: "field",
+    }));
+}
+
 function nameRows(ctx: ExprContext, prefix: string): Row[] {
   const lang = ctx.lang();
   const wire = ctx.tier === "wire";
@@ -349,7 +391,10 @@ function refresh(input: HTMLInputElement, ctx: ExprContext): void {
     }
     const start = chainStart(text, chainEnd);
     const receiver = resolveChain(text.slice(start, chainEnd), ctx);
-    rows = methodRows(ctx, receiver, prefix);
+    /* a struct's dot offers its FIELDS; methods belong to the scalars they land on */
+    rows = receiver?.shape === "struct" && receiver.fields?.length
+      ? fieldRows(receiver.fields, prefix)
+      : methodRows(ctx, receiver, prefix);
   } else {
     /* offer names only once something was typed, or on explicit focus in an empty box */
     rows = nameRows(ctx, prefix);
@@ -381,41 +426,53 @@ function scopeNames(editor: Editor, widget: Widget | null): NameRow[] {
   const locals = new Set((widget?.locals ?? []).map((v) => v.id));
   for (const variable of variablesInScope(editor, widget)) {
     if (variable.type === "timer") continue;
+    /* beyond the scalars, a variable's type is a TypeRef (spec 2.7): a dotted ref is
+       an enum, a root name a struct carrying its field table */
+    const scalar = VAR_SHAPE[variable.type];
+    const isEnum = !scalar && variable.type.includes(".");
+    const fields = scalar || isEnum
+      ? undefined
+      : editor.mesh.types.find((t) => t.name === variable.type)?.fields;
     rows.push({
       label: variable.name,
-      shape: VAR_SHAPE[variable.type] ?? "num",
+      shape: scalar ?? (isEnum ? "enum" : "struct"),
       note: locals.has(variable.id) ? "local" : "global",
+      fields,
     });
   }
   return rows;
 }
 
 /* what x IS in a feed's transform: the source field's shape, from reflection (mesh
- * sources) or the variable's declared type (HMI sources) */
+ * sources) or the variable's declared type (HMI sources); a WHOLE-entity source makes
+ * x the message, its field table riding along so the dot completes fields */
 export function feedX(editor: Editor, widget: Widget | null, feed: () => Feed) {
-  return (): { shape: string; elem?: string } | null => {
+  return (): { shape: string; elem?: string; fields?: MeshField[] } | null => {
     const at = feed();
     if (!at.src) return null;
     if (at.src.kind === "L") {
       const row = scopeNames(editor, widget).find((n) => n.label === at.src.name);
-      return row?.shape ? { shape: row.shape } : null;
+      return row?.shape ? { shape: row.shape, fields: row.fields } : null;
     }
     const entity = editor.mesh.entities.find(
       (e) => e.kind === at.src.kind && e.name === at.src.name,
     );
     if (!entity) return null;
     const fields = entity.kind === "F" ? entity.returns ?? [] : entity.fields;
+    if (!(at.path ?? "") && fields.length > 1)
+      return { shape: "struct", fields };
     const field =
       fields.find((f) => f.path === (at.path ?? "")) ??
       (fields.length === 1 ? fields[0] : null);
-    return field ? { shape: field.shape, elem: field.elem } : null;
+    if (!field) return null;
+    return { shape: field.variants?.length ? "enum" : field.shape, elem: field.elem };
   };
 }
 
 /* what x IS at one row of a flow: the trigger's proposal, retyped by every `set x = ...`
  * above this row (spec 2.6). An earlier row can change it, so the row matters. */
 export function flowX(editor: Editor, widget: Widget | null, flow: () => Flow, stepId = 0) {
-  return (): { shape: string; elem?: string } | null =>
+  return (): { shape: string; elem?: string; fields?: MeshField[] } | null =>
     scopeAt(editor, widget, flow(), stepId).x;
 }
 
@@ -433,6 +490,7 @@ export function flowNames(editor: Editor, widget: Widget | null, flow: () => Flo
           shape: local.shape,
           elem: local.elem,
           note: local.note,
+          fields: local.fields,
         });
       for (const field of local.fields ?? [])
         rows.push({

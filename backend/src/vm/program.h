@@ -192,6 +192,7 @@ enum class Builtin : uint16_t {
     Grayscale,
     Values,
     Keys,
+    Invert,
 };
 
 enum class MethodId : uint16_t {
@@ -248,6 +249,11 @@ enum class MethodId : uint16_t {
     /* `a + b` with a text operand (display tier): both sides rendered as str() would
      * render them, joined into the site's own slot */
     TextConcat,
+    /* color channel arithmetic: `color * n` / `color / n` scale r,g,b (alpha kept),
+     * `.invert` flips them */
+    ColorScale,
+    ColorDiv,
+    ColorInvert,
 };
 
 struct Instruction {

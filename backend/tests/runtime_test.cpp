@@ -1111,6 +1111,15 @@ void test_colors() {
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
                        {"xf", "#ff8040.g + #ffffff.a"}},
+                  /* channel arithmetic and inversion: scale keeps alpha, invert flips */
+                  Json{{"slot", "text_color"},
+                       {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
+                       {"path", "value"},
+                       {"xf", "(#204060 * 2).invert"}},
+                  Json{{"slot", "units_color"},
+                       {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
+                       {"path", "value"},
+                       {"xf", "invert(#204080 / 2)"}},
               })}});
     CompileResult compiled = compile_document(document, registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
@@ -1123,12 +1132,14 @@ void test_colors() {
         const Value& value = state.values[feed.cell];
         return value.tag == ValueTag::Color ? value.data.rgba : 0u;
     };
-    if (!CHECK(compiled.program.feeds.size() == 5)) return;
+    if (!CHECK(compiled.program.feeds.size() == 7)) return;
     const FeedProgram& picked = compiled.program.feeds[0];
     const FeedProgram& mixed = compiled.program.feeds[1];
     const FeedProgram& built = compiled.program.feeds[2];
     const FeedProgram& swept = compiled.program.feeds[3];
     const FeedProgram& channels = compiled.program.feeds[4];
+    const FeedProgram& scaled = compiled.program.feeds[5];
+    const FeedProgram& inverted = compiled.program.feeds[6];
 
     run_feed(compiled.program, picked, state, Value::boolean(true));
     CHECK_EQ(rgba_of(picked), 0x7fc4a0ffu);
@@ -1153,6 +1164,24 @@ void test_colors() {
     run_feed(compiled.program, channels, state, Value::number(0));
     CHECK(state.values[channels.cell].tag == ValueTag::Num);
     CHECK_EQ(state.values[channels.cell].data.num, 129.0);   /* 0x80 + a of 1.0 */
+
+    /* `*` doubles the channels (alpha kept), `.invert` / `invert()` flip them */
+    run_feed(compiled.program, scaled, state, Value::number(0));
+    CHECK_EQ(rgba_of(scaled), 0xbf7f3fffu);
+    run_feed(compiled.program, inverted, state, Value::number(0));
+    CHECK_EQ(rgba_of(inverted), 0xefdfbfffu);
+
+    /* color arithmetic is display vocabulary, refused on the wire */
+    {
+        ExpressionScope wire_scope;
+        wire_scope.x_shape = Shape::Color;
+        std::vector<Instruction> code;
+        ExpressionResult result;
+        std::string error;
+        CHECK(!compile_expression("x * 2", ExprTier::Wire, wire_scope, compiled.program,
+                                  code, result, error));
+        CHECK_MSG(error.find("display") != std::string::npos, error);
+    }
 
     /* a color where the slot wants one is fine; a number there is a shape diagnostic */
     Document wrong = widget_document(

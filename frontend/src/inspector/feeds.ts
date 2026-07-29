@@ -22,8 +22,8 @@ import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
 import { sourceField, valueEditor } from "./editors.js";
 import { highlighted } from "../highlight.js";
 
-/* which case-result keys the author pushed into EXPRESSION mode; per view, like folds */
-const exprMode = new Set<string>();
+/* a result cell's chosen mode, per view like folds; unset = decide from the text */
+const resultMode = new Map<string, "expr" | "value">();
 
 /* A result literal: the value a native picker edits IS an expression literal, so the
  * document stays expression-only and the picker is sugar over it. `undefined` = the
@@ -117,16 +117,19 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
 
   /* A RESULT cell: the slot's native picker where the text is a plain literal (a color
      swatch beats typing hex), the expression editor for everything else, a button
-     between the two. Picking writes the LITERAL as the expression. */
+     between the two. Picking writes the LITERAL as the expression. The else prefers
+     the expression editor while EMPTY, so "passes through" stays readable. */
   const spec = (type?.slots ?? []).find((s) => s.name === feed.slot);
-  const resultCell = (key: string, read: () => string,
-                      commit: (text: string) => void): HTMLElement => {
+  const resultCell = (key: string, read: () => string, commit: (text: string) => void,
+                      placeholder = "expression", emptyExpr = false): HTMLElement => {
     const cell = el("span", { class: "case-result" });
     const render = () => {
       cell.innerHTML = "";
       const text = read();
       const literal = spec ? literalOf(spec.shape, text) : undefined;
-      const valued = pickable(spec) && !exprMode.has(key) && literal !== undefined;
+      const override = resultMode.get(key);
+      const valued = pickable(spec) && literal !== undefined && override !== "expr" &&
+                     (override === "value" || text.trim() !== "" || !emptyExpr);
       if (valued) {
         cell.appendChild(valueEditor(
           spec!, spec!.shape, key + ".value",
@@ -134,14 +137,14 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
           (value) => commit(literalText(spec!.shape, value)),
           /*unknown=*/ true, editor));
         cell.appendChild(iconButton("pencil", "write an expression instead", () => {
-          exprMode.add(key);
+          resultMode.set(key, "expr");
           render();
         }));
       } else {
-        cell.appendChild(xfInput(key, read, commit, "expression"));
+        cell.appendChild(xfInput(key, read, commit, placeholder));
         if (pickable(spec))
           cell.appendChild(iconButton("check", "pick a value instead", () => {
-            exprMode.delete(key);
+            resultMode.set(key, "value");
             if (spec && literalOf(spec.shape, read()) === undefined) commit("");
             render();
           }));
@@ -301,8 +304,8 @@ export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null
     el("div", { class: "feed-case" }, [
       chip("else", "ghost-chip"),
       el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
-      xfInput(feed.id + ":xf", () => at().xf ?? "",
-              (text) => set("xf", text), "passes through"),
+      resultCell(feed.id + ":xf", () => at().xf ?? "",
+                 (text) => set("xf", text), "passes through", /*emptyExpr=*/ true),
       diagIcon(editor.diagAt(feed.id, "xf").concat(editor.diagAt(feed.id, "cases"))),
     ]),
   );

@@ -226,6 +226,11 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
                 enum_variant_name(ctx.program, args[0].type_id, args[0].data.integer);
             return name.empty() ? Value::nil() : text_result(ctx, site, name);
         }
+        case Builtin::Invert: {
+            if (n != 1 || args[0].tag != ValueTag::Color) return Value::nil();
+            const uint32_t rgba = args[0].data.rgba;
+            return Value::color((~rgba & 0xffffff00u) | (rgba & 0xffu));
+        }
         case Builtin::FmtTime: {
             if (n != 1 || args[0].tag != ValueTag::Num) return Value::nil();
             const double us = args[0].data.num;
@@ -739,6 +744,32 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const std::string_view name =
                 enum_variant_name(ctx.program, receiver.type_id, receiver.data.integer);
             return name.empty() ? Value::nil() : text_result(ctx, site, name);
+        }
+        /* color channel arithmetic: r,g,b scaled or flipped, alpha kept */
+        case MethodId::ColorScale:
+        case MethodId::ColorDiv: {
+            if (n != 1) return Value::nil();
+            const Value& other = args[0];
+            const Value* tint = receiver.tag == ValueTag::Color ? &receiver
+                                : other.tag == ValueTag::Color ? &other : nullptr;
+            const Value* factor = tint == &receiver ? &other : &receiver;
+            if (!tint || factor->tag != ValueTag::Num) return Value::nil();
+            double f = factor->data.num;
+            if (method == MethodId::ColorDiv) {
+                /* division reads only one way: the color came first */
+                if (receiver.tag != ValueTag::Color || f == 0) return Value::nil();
+                f = 1.0 / f;
+            }
+            const uint32_t rgba = tint->data.rgba;
+            return Value::color(pack_rgba(((rgba >> 24) & 0xff) * f,
+                                          ((rgba >> 16) & 0xff) * f,
+                                          ((rgba >> 8) & 0xff) * f,
+                                          (rgba & 0xff) / 255.0));
+        }
+        case MethodId::ColorInvert: {
+            if (receiver.tag != ValueTag::Color || n != 0) return Value::nil();
+            const uint32_t rgba = receiver.data.rgba;
+            return Value::color((~rgba & 0xffffff00u) | (rgba & 0xffu));
         }
         /* text joining (`a + b` with a text side, display tier): both operands rendered
          * as str() renders them; an aggregate or a Nil side is Nil, never "" quietly */
