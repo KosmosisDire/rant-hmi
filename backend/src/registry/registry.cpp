@@ -458,6 +458,12 @@ Json trend_type() {
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("decimals", "num", 0, "config"),
+                    /* display-tier smoothing knobs, both 0..1 and composable: `kalman`
+                       weighs a constant-velocity model against the measurements (noise
+                       rejection with little lag), `smoothing` is a plain exponential
+                       moving average on top. 0 = off; the ring keeps the raw truth */
+                    fine(slot("kalman", "num", 0, "config"), 0.05),
+                    fine(slot("smoothing", "num", 0, "config"), 0.05),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("text_color", "color", "#8a8a8a", "appearance", "color"),
@@ -471,6 +477,8 @@ Json trend_type() {
                                           {"min", ref("slot:min")},
                                           {"max", ref("slot:max")},
                                           {"decimals", ref("slot:decimals")},
+                                          {"kalman", ref("slot:kalman")},
+                                          {"smoothing", ref("slot:smoothing")},
                                           {"fill", ref("slot:fill_color")},
                                           {"track", ref("slot:track_color")},
                                           {"text_fill", ref("slot:text_color")},
@@ -542,6 +550,7 @@ Json knob_type() {
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
                     {"width", t},
+                    {"radius", ref("slot:control_radius")},
                     {"pad", pick(show_scale, pick(outside, lit(0.15), lit(0)), lit(0))}};
     /* a scale reads control-outward either way: marks hug the arc, values beyond */
     Json ticks = Json{{"count", ref("slot:divisions")},
@@ -590,6 +599,7 @@ Json knob_type() {
                     slot("body_color", "color", "#262626", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("control_radius", "num", 4, "appearance"),
                     fine(slot("thickness", "num", 0.14, "appearance"), 0.05),
                     slot("show_scale", "bool", false, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
@@ -726,6 +736,7 @@ Json gauge_type() {
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
                     {"width", ref("slot:thickness")},
+                    {"radius", ref("slot:control_radius")},
                     {"outer", pick(show_scale, pick(outside, lit(0.7), lit(1)), lit(1))}};
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
@@ -763,6 +774,7 @@ Json gauge_type() {
                     slot("handle_color", "color", "#ececec", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("control_radius", "num", 4, "appearance"),
                     fine(slot("thickness", "num", 0.1, "appearance"), 0.05),
                     slot("show_scale", "bool", true, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),

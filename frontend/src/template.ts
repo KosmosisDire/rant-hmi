@@ -318,25 +318,46 @@ function drawArc(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   }
 }
 
-/* a pointer line from `inner` to `outer` (radius fractions) at value's angle, with an
- * optional center hub; no needle when the value is UNKNOWN */
+/* a clockwise circle subpath (matches the capsule's winding, so a nonzero fill takes
+ * the union of the two, never punches a hole) */
+function circleSub(cx: number, cy: number, r: number): string {
+  return `M${n(cx)} ${n(cy - r)} A${n(r)} ${n(r)} 0 1 1 ${n(cx)} ${n(cy + r)} ` +
+         `A${n(r)} ${n(r)} 0 1 1 ${n(cx)} ${n(cy - r)} Z`;
+}
+
+/* the round-capped needle body as a filled clockwise capsule from p0 to p1 */
+function capsuleSub(x0: number, y0: number, x1: number, y1: number, half: number): string {
+  const len = Math.max(1e-6, Math.hypot(x1 - x0, y1 - y0));
+  const qx = ((y1 - y0) / len) * half;
+  const qy = (-(x1 - x0) / len) * half;
+  return `M${n(x0 + qx)} ${n(y0 + qy)} L${n(x1 + qx)} ${n(y1 + qy)} ` +
+         `A${n(half)} ${n(half)} 0 0 1 ${n(x1 - qx)} ${n(y1 - qy)} ` +
+         `L${n(x0 - qx)} ${n(y0 - qy)} ` +
+         `A${n(half)} ${n(half)} 0 0 1 ${n(x0 + qx)} ${n(y0 + qy)} Z`;
+}
+
+/* a pointer from `inner` to `outer` (radius fractions) at value's angle, with an
+ * optional center hub. The hub and the needle body are ONE filled path, so a
+ * translucent handle color reads as one object instead of darkening where the two
+ * pieces overlap; no needle when the value is UNKNOWN (the hub alone, if any). */
 function drawNeedle(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const f = radialFrame(rect, attrs, cells);
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#ececec";
-  const hub = attrNum(attr(attrs, "hub", cells), 0);
-  if (hub > 0)
-    out.push(`<circle cx="${n(f.cx)}" cy="${n(f.cy)}" r="${n(f.radius * hub)}" fill="${fill}"/>`);
+  const hub = f.radius * attrNum(attr(attrs, "hub", cells), 0);
+  const parts: string[] = [];
+  if (hub > 0) parts.push(circleSub(f.cx, f.cy, hub));
   const raw = attr(attrs, "value", cells);
-  if (raw === null) return;
-  const value = Math.max(0, Math.min(1, attrNum(raw, 0)));
-  const angle = f.start + f.sweep * value;
-  const inner = f.radius * attrNum(attr(attrs, "inner", cells), 0);
-  const outer = f.radius * attrNum(attr(attrs, "outer", cells), 0.78);
-  const width = Math.max(1, f.radius * attrNum(attr(attrs, "width", cells), 0.06));
-  const [x0, y0] = polar(f.cx, f.cy, inner, angle);
-  const [x1, y1] = polar(f.cx, f.cy, outer, angle);
-  out.push(`<path d="M${n(x0)} ${n(y0)} L${n(x1)} ${n(y1)}" stroke="${fill}" ` +
-           `stroke-width="${n(width)}" stroke-linecap="round"/>`);
+  if (raw !== null) {
+    const value = Math.max(0, Math.min(1, attrNum(raw, 0)));
+    const angle = f.start + f.sweep * value;
+    const inner = f.radius * attrNum(attr(attrs, "inner", cells), 0);
+    const outer = f.radius * attrNum(attr(attrs, "outer", cells), 0.78);
+    const half = Math.max(0.5, (f.radius * attrNum(attr(attrs, "width", cells), 0.06)) / 2);
+    const [x0, y0] = polar(f.cx, f.cy, inner, angle);
+    const [x1, y1] = polar(f.cx, f.cy, outer, angle);
+    parts.push(capsuleSub(x0, y0, x1, y1, half));
+  }
+  if (parts.length) out.push(`<path d="${parts.join(" ")}" fill="${fill}"/>`);
 }
 
 /* the grabbable dot at value's angle, riding radius fraction `at`; nothing when UNKNOWN */
@@ -444,15 +465,76 @@ function rotateHue(hex: string, index: number): string {
   return `#${to(rr)}${to(gg)}${to(bb)}`;
 }
 
+/* Display-tier SMOOTHING over the history ring, recomputed per render so it holds no
+ * state and needs no wire change: an optional 1D constant-velocity Kalman filter (the
+ * `kalman` knob 0..1 sets how much the model outweighs the measurements, 0 = off)
+ * followed by an exponential moving average (the `smoothing` knob 0..1 is its weight,
+ * 0 = off). The two compose: Kalman rejects measurement noise with little lag,
+ * the EMA adds plain temporal smoothing on top. A null sample resets both and still
+ * breaks the line: a gap is a gap, never bridged by a filter's memory. */
+export function smoothSamples(
+  samples: (number | null)[][],
+  series: number,
+  kalman: number,
+  smoothing: number,
+): (number | null)[][] {
+  const out = samples.map((row) => row.slice());
+  /* r fixed at 1, q from the knob: small q trusts the model (smooth), large q the data */
+  const q = Math.pow(10, 1 - 5 * kalman);
+  const q00 = q / 4, q01 = q / 2;
+  for (let s = 0; s < series; ++s) {
+    let started = false;
+    let x = 0, v = 0, p00 = 1, p01 = 0, p10 = 0, p11 = 1, ema = 0;
+    for (let i = 0; i < samples.length; ++i) {
+      const z = samples[i][s];
+      if (typeof z !== "number" || !isFinite(z)) {
+        started = false;
+        continue;
+      }
+      if (!started) {
+        started = true;
+        x = z; v = 0; p00 = 1; p01 = 0; p10 = 0; p11 = 1; ema = z;
+        continue; /* the first sample of a run passes through unchanged */
+      }
+      let filtered = z;
+      if (kalman > 0) {
+        /* predict (constant velocity, dt = 1 sample) ... */
+        x += v;
+        const a00 = p00 + p10 + p01 + p11 + q00;
+        const a01 = p01 + p11 + q01;
+        const a10 = p10 + p11 + q01;
+        const a11 = p11 + q;
+        /* ... then update against the measurement */
+        const gain = a00 + 1;
+        const k0 = a00 / gain, k1 = a10 / gain;
+        const resid = z - x;
+        x += k0 * resid;
+        v += k1 * resid;
+        p00 = (1 - k0) * a00; p01 = (1 - k0) * a01;
+        p10 = a10 - k1 * a00; p11 = a11 - k1 * a01;
+        filtered = x;
+      }
+      ema += (1 - smoothing) * (filtered - ema);
+      out[i][s] = smoothing > 0 ? ema : filtered;
+    }
+  }
+  return out;
+}
+
 /* the TREND plot: polylines over the history view riding the `values` attr (a HistView:
  * rate/series/cap/samples, built by the shell from the wire's deltas). Newest at the
  * right edge; a ring that is not yet full starts partway in; a null sample breaks the
- * line (unknown is a gap, not a zero). Text: the hi/lo scale markers only. */
+ * line (unknown is a gap, not a zero). Text: the hi/lo scale markers only. Smoothing
+ * (and the autoscale over it) runs on the drawn copy; the ring keeps the truth. */
 function drawPlot(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const raw = attr(attrs, "values", cells) as Json;
-  const view = raw && typeof raw === "object" && Array.isArray((raw as Json).samples)
+  let view = raw && typeof raw === "object" && Array.isArray((raw as Json).samples)
     ? (raw as { series: number; cap: number; samples: (number | null)[][] })
     : null;
+  const kalman = Math.max(0, Math.min(1, attrNum(attr(attrs, "kalman", cells), 0)));
+  const smoothing = Math.max(0, Math.min(0.98, attrNum(attr(attrs, "smoothing", cells), 0)));
+  if (view && (kalman > 0 || smoothing > 0))
+    view = { ...view, samples: smoothSamples(view.samples, view.series, kalman, smoothing) };
   const track = attrColor(attr(attrs, "track", cells));
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#4e8ef7";
   const labels = attrBool(attr(attrs, "labels", cells), true);

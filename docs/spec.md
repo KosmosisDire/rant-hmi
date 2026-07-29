@@ -160,7 +160,7 @@ vocabulary learnable:
 | `track_color` | the inert part behind it: the off pill, the slider's track, an arc's track, the unlit lamp |
 | `handle_color` | the grabbable or pointing marker: a toggle's knob, a knob's dot, a gauge or selector needle. The RadialSlider has none: like the linear Slider, its fill's leading edge IS the value |
 | `text`, `text_color` | the control's own text and its color; `text` defaults EMPTY and is bindable like any slot |
-| `control_radius` | corner rounding of the control's own shape (the Slider's bar, the RadialSlider's arc ends); the frame's `radius` rounds the panel around it |
+| `control_radius` | corner rounding of the control's own shape (the Slider's bar; the arc ends of a Knob, Gauge or RadialSlider); the frame's `radius` rounds the panel around it |
 | `value`, `min`, `max`, `step` | the process value and its range |
 | `show_scale`, `scale_values`, `divisions`, `decimals` | the toggleable range ticks; `scale_values` toggles their labels separately (marks alone, or marks with values) |
 | `scale_position` | a radial scale's side: `outside` pulls the arc inward and rings it; `inside` keeps the arc at the rim and sets the scale within |
@@ -379,8 +379,10 @@ square-ended sector over the value's fraction, CLIPPED by the track, so its star
 follows the track's rounding, its leading edge stays straight, and it shrinks
 continuously to nothing (a round stroke cap would bottom out as a dot). `width`
 is the stroke as a radius fraction; `outer` scales the arc inward without moving
-its center (an outside scale's inset). `needle` is a pointer line from `inner`
-to `outer` with an optional center `hub`; `mark` is the grabbable dot at radius
+its center (an outside scale's inset). `needle` is a pointer capsule from `inner`
+to `outer` with an optional center `hub`, emitted as ONE filled path so a
+translucent handle color reads as one object, never darker where hub and body
+overlap; `mark` is the grabbable dot at radius
 fraction `at`; `ticks` spreads `count` scale markers over the sweep with optional
 labels: numeric min..max interpolation, or per-tick text via `names` (the one
 text a radial control renders besides its own `text` slot). A scale reads
@@ -757,6 +759,17 @@ snapshot (and the first frame after a recompile) carries each ring whole; a clie
 appends contiguous deltas, pads a forward gap with unknowns, and replaces its view
 on anything else. The plot part (2.3) draws whatever the `hist:<slot>` cell
 resolves to; its only text is the hi/lo scale markers.
+
+**Smoothing is display-tier.** The ring always keeps the raw truth; the Trend's
+two knobs shape only the drawn copy, recomputed per render (deriving pixels from
+backend-authoritative values is rendering, not truth), so they cost no state, no
+wire change, and no history migration. `kalman` (0..1, 0 = off) runs a 1D
+constant-velocity Kalman filter per series, the knob setting how much the model
+outweighs the measurements (noise rejection with little lag); `smoothing` (0..1,
+0 = off) is an exponential moving average on top, plain temporal smoothing. They
+compose, autoscale reads the smoothed values (the plot fits what it shows), and
+a null sample resets both filters and still breaks the line: a gap is never
+bridged by a filter's memory.
 
 ## 3. The frontend
 

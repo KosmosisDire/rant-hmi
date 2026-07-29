@@ -217,7 +217,11 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
 
   /* 4. Appearance: the CONTENT's properties (colors, text, per-type config). A slot the
    *    template consumes nowhere is hidden rather than shown dead: align also counts
-   *    the aspect-locked content box it places, so it stays once an aspect is set. */
+   *    the aspect-locked content box it places, so it stays once an aspect is set.
+   *    RELATED properties sit together, in ONE canonical order on every type (the
+   *    semantic contract extended to position): colors, text, the control's own shape,
+   *    range, the scale, options, sampling, then state. A name outside the table keeps
+   *    its declaration order at the end. */
   const template = JSON.stringify(type?.template ?? null);
   const usesAlign = template.includes("slot:align");
   const usesTextScale = template.includes("slot:text_scale");
@@ -226,10 +230,10 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     ...section("appearance", "Appearance", String(fed.size), () => [
       el("div", { class: "prop-grid" }, [
         ...otherSlots
-          .filter((s) => s.group === "appearance")
-          .concat(otherSlots.filter((s) => s.group === "config"))
+          .filter((s) => s.group === "appearance" || s.group === "config")
           .filter((s) => s.name !== "align" || usesAlign || hasAspect)
           .filter((s) => s.name !== "text_scale" || usesTextScale)
+          .sort((a, b) => slotRank(a.name) - slotRank(b.name))
           .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
       ]),
     ]),
@@ -251,6 +255,32 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       ]),
     ]),
   );
+}
+
+/* the canonical property order (see the Appearance section): clusters of related names,
+ * shared across every type so the same property is always found in the same place */
+const SLOT_ORDER = [
+  /* the content colors */
+  "fill_color", "track_color", "handle_color", "body_color",
+  /* text */
+  "text", "text_color", "text_scale", "align",
+  /* the control's own shape */
+  "control_radius", "thickness", "start_angle", "sweep_angle", "fit",
+  /* range + gesture */
+  "min", "max", "step", "drag",
+  /* the scale */
+  "show_scale", "scale_values", "scale_position", "divisions", "decimals",
+  /* options */
+  "shown_options",
+  /* sampling + smoothing (Trend) */
+  "rate", "window", "autoscale", "kalman", "smoothing",
+  /* state, last: interlocks, not styling */
+  "visible", "enabled",
+];
+
+function slotRank(name: string): number {
+  const at = SLOT_ORDER.indexOf(name);
+  return at < 0 ? SLOT_ORDER.length : at;
 }
 
 function geomRow(editor: Editor, widget: Widget): HTMLElement {

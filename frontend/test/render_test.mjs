@@ -544,6 +544,30 @@ view.faults = {};
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 check(!svg.includes('class="fault'), "and unmarked when the finding clears");
 
+/* trend smoothing is pure math on the drawn copy: noisy input comes out with less
+   spread, a null still breaks the run (never bridged), and knobs at 0 pass through */
+{
+  const { smoothSamples } = await import(mod("template.js"));
+  const noisy = [];
+  for (let i = 0; i < 60; ++i) noisy.push([50 + (i % 2 ? 8 : -8)]);
+  noisy[30] = [null];
+  const spread = (rows) => {
+    let lo = Infinity, hi = -Infinity;
+    for (const [v] of rows.slice(10, 30))
+      if (typeof v === "number") { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return hi - lo;
+  };
+  const smoothed = smoothSamples(noisy, 1, 0.8, 0.8);
+  check(spread(smoothed) < spread(noisy) / 3, "kalman+ema shrink a noisy spread");
+  check(smoothed[30][0] === null, "a null sample survives smoothing as a gap");
+  check(smoothed[31][0] === noisy[31][0], "the run after a gap restarts from its own sample");
+  const identity = smoothSamples(noisy, 1, 0, 0);
+  check(
+    identity.every((row, i) => row[0] === noisy[i][0]),
+    "knobs at 0 pass samples through unchanged",
+  );
+}
+
 ws.close();
 backend.kill();
 if (backend.exitCode === null)
