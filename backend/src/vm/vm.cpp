@@ -1244,6 +1244,21 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     effect.value = Value::nil();
                     break;
                 }
+                if (ins.b == UINT32_MAX) {
+                    /* a parameterless send (call/emit with no request fields): nothing
+                       was pushed, nothing pops; the default message goes as-is */
+                    if (state.effect_count >= state.effects.size()) {
+                        fail(ins.c);
+                        break;
+                    }
+                    EffectRecord& effect = state.effects[state.effect_count++];
+                    effect.verb = verb;
+                    effect.entity = ins.a;
+                    effect.bare = true;
+                    effect.field = UINT32_MAX;
+                    effect.value = Value::nil();
+                    break;
+                }
                 /* the last-value mirror takes this write when the effect FLUSHES (end
                  * of tick, flush_effects), never here: every flow that runs in this
                  * tick reads the tick-start snapshot (the PLC-scan rule), so a second

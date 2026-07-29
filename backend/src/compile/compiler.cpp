@@ -1470,6 +1470,18 @@ class Compiler {
             return true;
         }
 
+        /* a PARAMETERLESS target (a function whose request has no fields, a
+           payload-less signal): the send itself is the whole message, so no field and
+           no source are required — the schema's default (empty) request goes out.
+           b = UINT32_MAX tells the VM to emit without popping a value. */
+        if (target.fields.empty() && str_or(to, "path", "").empty() &&
+            (target.kind == EntityKind::Function || target.kind == EntityKind::Signal)) {
+            out.b = UINT32_MAX;
+            flow.code.push_back(out);
+            ++program_.layout.effect_capacity;
+            return true;
+        }
+
         /* a whole struct goes out as the message; anything else fills one field. The
            holder is a flow temporary or a declared struct variable, same as any other
            name in scope. */

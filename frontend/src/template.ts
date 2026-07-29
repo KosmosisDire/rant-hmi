@@ -426,11 +426,19 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
        the endpoint, so the bar-facing end drops by that half plus a whisker of
        gap, never touching the bar above (same clearance as the radial scales) */
     const clear = width / 2 + rect.h * 0.06;
-    /* true value positions, only the end marks slid inward: as on the radial scale */
+    /* true value positions, only the end marks slid inward: as on the radial scale;
+       a mid mark that lands against a shifted endpoint is dropped with its label */
     const spacing = rect.w / (count - 1);
     const xOf = (i: number) =>
       Math.min(rect.x + rect.w - inset, Math.max(rect.x + inset, rect.x + spacing * i));
+    const minSep = width * 2.5;
+    const keepL = (i: number): boolean => {
+      if (i === 0 || i === count - 1) return true;
+      const x = rect.x + spacing * i;
+      return x >= rect.x + inset + minSep && x <= rect.x + rect.w - inset - minSep;
+    };
     for (let i = 0; i < count; ++i) {
+      if (!keepL(i)) continue;
       out.push(`<path d="M${n(xOf(i))} ${n(rect.y + clear)} v${n(mark)}" stroke="${fill}" ` +
                `stroke-width="${n(width)}" stroke-linecap="round"/>`);
     }
@@ -441,6 +449,7 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     if (size < 6) size = 6;
     const every = Math.max(1, Math.ceil((0.58 * size * chars) / Math.max(1, spacing * 0.95)));
     for (let i = 0; i < count; ++i) {
+      if (!keepL(i)) continue;
       if (every > 1 && i % every !== 0 && i !== count - 1) continue;
       const half = (0.58 * size * texts[i].length) / 2;
       const x = Math.max(rect.x + half, Math.min(rect.x + rect.w - half, xOf(i)));
@@ -476,6 +485,14 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const angleOf = (i: number) =>
     Math.min(f.start + f.sweep - inset,
       Math.max(f.start + inset, f.start + (f.sweep * i) / (count - 1)));
+  /* a mid tick whose true position lands against a SHIFTED endpoint mark is dropped
+     (with its label): the endpoint owns that spot, two marks there read as a smudge */
+  const minSep = deg * ((width * 2.5) / Math.max(1, outer));
+  const keep = (i: number): boolean => {
+    if (i === 0 || i === count - 1) return true;
+    const a = f.start + (f.sweep * i) / (count - 1);
+    return a >= f.start + inset + minSep && a <= f.start + f.sweep - inset - minSep;
+  };
   /* the angular pitch between marks, and the tangential room it leaves at a radius:
      the one crowding measure marks and labels both size against */
   const pitch = pitch0;
@@ -490,6 +507,7 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const rOut = outSide ? outer : outer - clear;
   const rIn = outSide ? Math.min(rOut - 1, outer - len + clear) : rOut - len;
   for (let i = 0; i < count; ++i) {
+    if (!keep(i)) continue;
     const angle = angleOf(i);
     const [x0, y0] = polar(f.cx, f.cy, rIn, angle);
     const [x1, y1] = polar(f.cx, f.cy, rOut, angle);
@@ -519,6 +537,7 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   /* labels anchor off the marks' ACTUAL far end, wherever the clearance put it */
   const anchorR = outSide ? rOut + size * 0.35 : rIn - size * 0.35;
   for (let i = 0; i < count; ++i) {
+    if (!keep(i)) continue;
     if (every > 1 && i % every !== 0 && i !== count - 1) continue;
     const angle = angleOf(i);
     const rad = angle * (Math.PI / 180);

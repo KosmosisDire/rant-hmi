@@ -1003,7 +1003,10 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
     };
 
     if (effect.bare) {
-        if (!set_one(effect.field, effect.value, effect.bare_text)) return false;
+        /* field UINT32_MAX = a parameterless send: the base (default) message as-is */
+        if (effect.field != UINT32_MAX &&
+            !set_one(effect.field, effect.value, effect.bare_text))
+            return false;
     } else {
         const uint32_t count =
             std::min<uint32_t>(effect.field_count, static_cast<uint32_t>(rec.enc.size()));
