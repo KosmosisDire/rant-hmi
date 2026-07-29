@@ -15,7 +15,38 @@
  *                      (spec 3.10), and editing it restates where the runtime starts. */
 
 import { Cells } from "./program.js";
-import { Json, Live, Registry, SlotSpec, WidgetType, Widget } from "./types.js";
+import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, WidgetType, Widget } from "./types.js";
+
+/* What a TypeRef lands on, from the served table: the same resolution the compiler runs
+ * (find_type_ref), so what the view expands and what compiles can never disagree. Lives
+ * here (the pure slot layer) because the canvas resolves option lists too; the type
+ * tree re-exports it. */
+export function resolveTypeRef(
+  mesh: Mesh,
+  ref: string,
+): { kind: "struct" | "enum"; type: MeshType; field?: MeshField } | null {
+  if (!ref) return null;
+  const dot = ref.indexOf(".");
+  const root = mesh.types.find((t) => t.name && t.name === (dot < 0 ? ref : ref.slice(0, dot)));
+  if (!root) return null;
+  if (dot < 0) return { kind: "struct", type: root };
+  const field = root.fields.find((f) => f.path === ref.slice(dot + 1));
+  return field?.variants?.length ? { kind: "enum", type: root, field } : null;
+}
+
+/* the variant names a TypeRef expands to (a Dropdown's options; spec 6.2) */
+export function variantNames(mesh: Mesh, ref: string): string[] {
+  const found = resolveTypeRef(mesh, ref);
+  return found?.field?.variants?.map((v) => v.name) ?? [];
+}
+
+/* an options slot resolves to a name list: a literal array, or a TypeRef expanded
+ * against the served type table */
+export function optionNames(mesh: Mesh | null, raw: Json): string[] {
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === "string" && raw && mesh) return variantNames(mesh, raw);
+  return [];
+}
 
 export function typeOf(registry: Registry | null, name: string): WidgetType | null {
   if (!registry) return null;
@@ -98,6 +129,7 @@ export function cellsFor(
   type: WidgetType | null,
   live: Live | null,
   state: Record<string, Json>,
+  mesh: Mesh | null = null,
 ): Cells {
   const fed = fedSlots(widget);
   return (cell: string): Json => {
@@ -115,6 +147,19 @@ export function cellsFor(
         if (name === "h") return widget.geom.h;
         if (name === "aspect") return widget.geom.h ? widget.geom.w / widget.geom.h : 1;
         return null;
+      case "optfrac": {
+        /* "optfrac:<value slot>@<options slot>": where the value slot's NAME sits in
+           the options slot's list, as a 0..1 fraction (a Selector's pointer angle).
+           Unknown value, unknown options or a name outside the list resolve to null,
+           and the pointer part draws nothing: never an invented position. */
+        const at = name.indexOf("@");
+        if (at < 0) return null;
+        const value = resolveSlot(widget, type, live, fed, name.slice(0, at));
+        const options = optionNames(mesh, resolveSlot(widget, type, live, fed, name.slice(at + 1)));
+        if (typeof value !== "string" || options.length < 2) return null;
+        const index = options.indexOf(value);
+        return index < 0 ? null : index / (options.length - 1);
+      }
       default:
         return null;
     }

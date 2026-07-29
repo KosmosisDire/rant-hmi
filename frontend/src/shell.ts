@@ -15,11 +15,10 @@ import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
-import { variantNames } from "./inspector/typetree.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
-import { cellsFor, fedSlots, resolveSlot, typeOf } from "./slots.js";
+import { cellsFor, fedSlots, optionNames, resolveSlot, typeOf } from "./slots.js";
 import { Rect } from "./template.js";
 import { Diag, Doc, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
@@ -273,7 +272,7 @@ export class App implements Editor {
     const viewBox = `0 0 ${doc.canvas.unit_w} ${doc.canvas.unit_h}`;
     if (this.contentDirty) {
       this.contentDirty = false;
-      const content = renderContent(doc, page, this.registry, this.live, this.view);
+      const content = renderContent(doc, page, this.registry, this.live, this.view, this.mesh);
       if (content !== this.lastContent) {
         this.lastContent = content;
         this.nodes.art.setAttribute("viewBox", viewBox);
@@ -563,7 +562,7 @@ export class App implements Editor {
   }
 
   private controlCells(widget: Widget, type: WidgetType): (cell: string) => Json {
-    return cellsFor(widget, type, this.live, this.view.state[widget.id] ?? {});
+    return cellsFor(widget, type, this.live, this.view.state[widget.id] ?? {}, this.mesh);
   }
 
   /* What the gesture itself reports. Where the type declares where `x` comes from, that
@@ -598,17 +597,22 @@ export class App implements Editor {
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     const fed = fedSlots(widget);
     if (resolveSlot(widget, type, this.live, fed, "enabled") !== true) return;
+    /* a radial gesture pivots on the CENTER of what the interact painted (the knob's
+       face, the arc), measured in client pixels once at the down edge */
+    const pivot = hit.getBoundingClientRect();
     this.control = {
       pointer: ev.pointerId,
       widget,
       type,
       interact,
       started: performance.now(),
+      cx: pivot.left + pivot.width / 2,
+      cy: pivot.top + pivot.height / 2,
     };
     this.view.state[widget.id] = {
       ...(this.view.state[widget.id] ?? {}),
       pressed: interact.primitive === "press",
-      dragging: interact.primitive === "drag1d",
+      dragging: interact.primitive === "drag1d" || interact.primitive === "drag_radial",
       open: interact.primitive === "pick",
     };
     if (interact.primitive === "press")
@@ -621,6 +625,8 @@ export class App implements Editor {
       /* a press on the track IS a drag to that point: without this, a click that never
          moves emits nothing at all and the knob ignores it */
       this.emitDrag(widget, type, interact, at.x, at.y);
+    else if (interact.primitive === "drag_radial")
+      this.emitRadial(widget, type, interact, ev.clientX, ev.clientY);
     this.queueCanvas(true);
     ev.preventDefault();
     ev.stopPropagation();
@@ -643,9 +649,55 @@ export class App implements Editor {
     this.emitInput(widget, interact.emits.input, value);
   }
 
+  /* The drag_radial primitive: the pointer's bearing from the control's center, mapped
+   * onto the sweep the params declare (degrees, 0 = up, clockwise; the same convention
+   * the arc parts draw with). A bearing outside the sweep clamps to the nearer end, so
+   * dragging past the stop holds it there. With `options`, the sweep is a detent per
+   * option and the gesture reports the SELECTED NAME (on change only); without, it
+   * reports the min..max value like drag1d. */
+  private emitRadial(widget: Widget, type: WidgetType, interact: Interact,
+                     clientX: number, clientY: number): void {
+    const cells = this.controlCells(widget, type);
+    const start = Number(run(interact.params.start, cells) ?? -135);
+    const sweep = Math.max(1, Math.min(360, Number(run(interact.params.sweep, cells) ?? 270)));
+    const dx = clientX - Number(this.control?.cx ?? 0);
+    const dy = clientY - Number(this.control?.cy ?? 0);
+    if (dx * dx + dy * dy < 9) return;                /* dead zone: no bearing yet */
+    const bearing = (Math.atan2(dx, -dy) * 180) / Math.PI;   /* [-180, 180], 0 = up */
+    let rel = ((bearing - start) % 360 + 360) % 360;          /* into [0, 360) */
+    /* past the open end: snap to whichever stop is closer around the gap */
+    if (rel > sweep) rel = rel - sweep < (360 - rel) ? sweep : 0;
+    const fraction = rel / sweep;
+
+    if (interact.params.options) {
+      const options = optionNames(this.mesh, run(interact.params.options, cells));
+      if (options.length < 2) return;
+      const name = options[Math.round(fraction * (options.length - 1))];
+      if (this.control && this.control.value !== name) {
+        this.control.value = name;
+        this.emitInput(widget, interact.emits.select, name);
+      }
+      return;
+    }
+
+    const lo = Number(run(interact.params.min, cells) ?? 0);
+    const hi = Number(run(interact.params.max, cells) ?? 1);
+    const step = Math.max(0, Number(run(interact.params.step, cells) ?? 0));
+    let value = lo + fraction * (hi - lo);
+    if (step > 0) value = lo + Math.round((value - lo) / step) * step;
+    if (this.control) this.control.value = value;
+    this.emitInput(widget, interact.emits.input, value);
+  }
+
   private onControlMove(ev: PointerEvent): void {
     const control = this.control;
     if (!control || control.pointer !== ev.pointerId || !this.viewport) return;
+    if (control.interact.primitive === "drag_radial") {
+      this.emitRadial(control.widget as Widget, control.type as WidgetType,
+                      control.interact, ev.clientX, ev.clientY);
+      ev.preventDefault();
+      return;
+    }
     if (control.interact.primitive !== "drag1d") return;
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     this.emitDrag(control.widget as Widget, control.type as WidgetType, control.interact, at.x, at.y);
@@ -668,19 +720,14 @@ export class App implements Editor {
       if (!cancelled && performance.now() - control.started < hold)
         this.emitInput(widget, interact.emits.tap,
           this.eventValue(type, interact.emits.tap, true));
-    } else if (interact.primitive === "drag1d") {
+    } else if (interact.primitive === "drag1d" || interact.primitive === "drag_radial") {
       if (!cancelled && control.value !== undefined)
         this.emitInput(widget, interact.emits.commit, control.value);
     } else if (interact.primitive === "pick" && !cancelled) {
       /* a REAL menu: the options slot holds a TypeRef naming an enum (spec 6.2), and
          the variant names come off the served type table, so the list can never drift
          from the schema. Selection is an input event like any other. */
-      const raw = run(interact.params.options, this.controlCells(widget, type));
-      const options = Array.isArray(raw)
-        ? raw.map(String)
-        : typeof raw === "string" && raw
-          ? variantNames(this.mesh, raw)
-          : [];
+      const options = optionNames(this.mesh, run(interact.params.options, this.controlCells(widget, type)));
       if (options.length) {
         const current = String(
           resolveSlot(widget, type, this.live, fedSlots(widget), "value") ?? "");

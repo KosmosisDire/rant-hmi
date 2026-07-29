@@ -143,6 +143,138 @@ function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   });
 }
 
+/* ---- the radial vocabulary ----
+ *
+ * One angle convention for every radial part and the drag_radial primitive: DEGREES,
+ * 0 = straight up, clockwise positive. A part reads `start` and `sweep` (the registry
+ * wires them to the shared start_angle / sweep_angle slots), maps value fractions onto
+ * that sweep, and draws inside the largest circle the rect holds. */
+
+function polar(cx: number, cy: number, r: number, deg: number): [number, number] {
+  const rad = (deg * Math.PI) / 180;
+  return [cx + r * Math.sin(rad), cy - r * Math.cos(rad)];
+}
+
+function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
+  const [x0, y0] = polar(cx, cy, r, a0);
+  const [x1, y1] = polar(cx, cy, r, a1);
+  const large = a1 - a0 > 180 ? 1 : 0;
+  return `M${n(x0)} ${n(y0)} A${n(r)} ${n(r)} 0 ${large} 1 ${n(x1)} ${n(y1)}`;
+}
+
+interface RadialFrame {
+  cx: number;
+  cy: number;
+  radius: number;      /* the outer circle the rect holds */
+  start: number;
+  sweep: number;
+}
+
+function radialFrame(rect: Rect, attrs: Attrs, cells: Cells): RadialFrame {
+  return {
+    cx: rect.x + rect.w / 2,
+    cy: rect.y + rect.h / 2,
+    radius: Math.min(rect.w, rect.h) / 2,
+    start: attrNum(attr(attrs, "start", cells), -135),
+    sweep: Math.max(1, Math.min(360, attrNum(attr(attrs, "sweep", cells), 270))),
+  };
+}
+
+/* an annular arc: the track over the whole sweep, the fill over `value`'s fraction of
+ * it. `width` is the stroke as a fraction of the radius; a null value fills nothing
+ * (UNKNOWN is drawn as the bare track, never as an invented zero). */
+function drawArc(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
+  const f = radialFrame(rect, attrs, cells);
+  const track = attrColor(attr(attrs, "track", cells));
+  const fill = attrColor(attr(attrs, "fill", cells));
+  const stroke = Math.max(1, f.radius * Math.max(0.02, attrNum(attr(attrs, "width", cells), 0.18)));
+  const cap = attrText(attr(attrs, "cap", cells)) === "butt" ? "butt" : "round";
+  const r = Math.max(0.5, f.radius - stroke / 2);
+  const raw = attr(attrs, "value", cells);
+  const value = raw === null ? null : Math.max(0, Math.min(1, attrNum(raw, 0)));
+  const line = (path: string, color: string) =>
+    out.push(`<path d="${path}" fill="none" stroke="${color}" stroke-width="${n(stroke)}" ` +
+             `stroke-linecap="${cap}"/>`);
+  const whole = f.sweep >= 360;
+  if (track) {
+    if (whole)
+      out.push(`<circle cx="${n(f.cx)}" cy="${n(f.cy)}" r="${n(r)}" fill="none" ` +
+               `stroke="${track}" stroke-width="${n(stroke)}"/>`);
+    else line(arcPath(f.cx, f.cy, r, f.start, f.start + f.sweep), track);
+  }
+  if (fill && value !== null && value > 0) {
+    if (whole && value >= 1)
+      out.push(`<circle cx="${n(f.cx)}" cy="${n(f.cy)}" r="${n(r)}" fill="none" ` +
+               `stroke="${fill}" stroke-width="${n(stroke)}"/>`);
+    else line(arcPath(f.cx, f.cy, r, f.start, f.start + Math.min(f.sweep, 359.9) * value), fill);
+  }
+}
+
+/* a pointer line from `inner` to `outer` (radius fractions) at value's angle, with an
+ * optional center hub; no needle when the value is UNKNOWN */
+function drawNeedle(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
+  const f = radialFrame(rect, attrs, cells);
+  const fill = attrColor(attr(attrs, "fill", cells)) ?? "#ececec";
+  const hub = attrNum(attr(attrs, "hub", cells), 0);
+  if (hub > 0)
+    out.push(`<circle cx="${n(f.cx)}" cy="${n(f.cy)}" r="${n(f.radius * hub)}" fill="${fill}"/>`);
+  const raw = attr(attrs, "value", cells);
+  if (raw === null) return;
+  const value = Math.max(0, Math.min(1, attrNum(raw, 0)));
+  const angle = f.start + f.sweep * value;
+  const inner = f.radius * attrNum(attr(attrs, "inner", cells), 0);
+  const outer = f.radius * attrNum(attr(attrs, "outer", cells), 0.78);
+  const width = Math.max(1, f.radius * attrNum(attr(attrs, "width", cells), 0.06));
+  const [x0, y0] = polar(f.cx, f.cy, inner, angle);
+  const [x1, y1] = polar(f.cx, f.cy, outer, angle);
+  out.push(`<path d="M${n(x0)} ${n(y0)} L${n(x1)} ${n(y1)}" stroke="${fill}" ` +
+           `stroke-width="${n(width)}" stroke-linecap="round"/>`);
+}
+
+/* the grabbable dot at value's angle, riding radius fraction `at`; nothing when UNKNOWN */
+function drawMarkPart(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
+  const f = radialFrame(rect, attrs, cells);
+  const raw = attr(attrs, "value", cells);
+  if (raw === null) return;
+  const value = Math.max(0, Math.min(1, attrNum(raw, 0)));
+  const fill = attrColor(attr(attrs, "fill", cells)) ?? "#ececec";
+  const at = f.radius * attrNum(attr(attrs, "at", cells), 0.78);
+  const size = Math.max(1, f.radius * attrNum(attr(attrs, "size", cells), 0.12));
+  const [x, y] = polar(f.cx, f.cy, at, f.start + f.sweep * value);
+  out.push(`<circle cx="${n(x)}" cy="${n(y)}" r="${n(size)}" fill="${fill}"/>`);
+}
+
+/* the SCALE MARKERS: `count` marks spread over the sweep, each a short radial line
+ * ending at the outer edge, with optional numeric labels (min..max interpolated) set
+ * inside them. The one text a radial control renders besides its own `text` slot. */
+function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
+  const f = radialFrame(rect, attrs, cells);
+  const count = Math.max(2, Math.min(51, Math.round(attrNum(attr(attrs, "count", cells), 5))));
+  const fill = attrColor(attr(attrs, "fill", cells)) ?? "#5a5a5a";
+  const outer = f.radius * attrNum(attr(attrs, "outer", cells), 1);
+  const len = f.radius * attrNum(attr(attrs, "len", cells), 0.1);
+  const width = Math.max(0.75, f.radius * 0.018);
+  const labels = attrBool(attr(attrs, "labels", cells), false);
+  const lo = attrNum(attr(attrs, "min", cells), 0);
+  const hi = attrNum(attr(attrs, "max", cells), 1);
+  const decimals = Math.max(0, Math.min(6, attrNum(attr(attrs, "decimals", cells), 0)));
+  const textFill = attrColor(attr(attrs, "text_fill", cells)) ?? "#8a8a8a";
+  const size = Math.max(5, f.radius * 0.16);
+  for (let i = 0; i < count; ++i) {
+    const angle = f.start + (f.sweep * i) / (count - 1);
+    const [x0, y0] = polar(f.cx, f.cy, outer - len, angle);
+    const [x1, y1] = polar(f.cx, f.cy, outer, angle);
+    out.push(`<path d="M${n(x0)} ${n(y0)} L${n(x1)} ${n(y1)}" stroke="${fill}" ` +
+             `stroke-width="${n(width)}" stroke-linecap="round"/>`);
+    if (!labels) continue;
+    const [tx, ty] = polar(f.cx, f.cy, outer - len - size * 0.9, angle);
+    const value = lo + ((hi - lo) * i) / (count - 1);
+    out.push(`<text x="${n(tx)}" y="${n(ty)}" fill="${textFill}" font-size="${n(size)}" ` +
+             `text-anchor="middle" dominant-baseline="central">` +
+             `${escapeXml(value.toFixed(decimals))}</text>`);
+  }
+}
+
 function drawIcon(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const name = attrText(attr(attrs, "name", cells)) ?? "";
   const path = ICONS[name];
@@ -215,6 +347,10 @@ function renderBody(
       case "bar": drawBar(area, attrs, cells, out); return;
       case "text": drawText(area, attrs, cells, out); return;
       case "icon": drawIcon(area, attrs, cells, out); return;
+      case "arc": drawArc(area, attrs, cells, out); return;
+      case "needle": drawNeedle(area, attrs, cells, out); return;
+      case "mark": drawMarkPart(area, attrs, cells, out); return;
+      case "ticks": drawTicks(area, attrs, cells, out); return;
     }
     return;
   }

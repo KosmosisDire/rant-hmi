@@ -155,14 +155,14 @@ export interface EventSpec {
 export type Attrs = Record<string, Program>;
 
 export interface Interact {
-  primitive: "press" | "drag1d" | "pick";
+  primitive: "press" | "drag1d" | "drag_radial" | "pick";
   params: Attrs;
   emits: Record<string, string>;
 }
 
 export type TemplateNode =
   | { kind: "box"; dir: "row" | "col" | "stack" | "auto"; attrs: Attrs; children: TemplateNode[]; interact?: Interact }
-  | { kind: "part"; draw: "rect" | "bar" | "text" | "icon"; attrs: Attrs };
+  | { kind: "part"; draw: "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "mark" | "ticks" | "plot"; attrs: Attrs };
 
 export interface WidgetType {
   name: string;

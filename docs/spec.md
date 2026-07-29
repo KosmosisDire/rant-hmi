@@ -295,6 +295,11 @@ text is integral to the control):
 | Button | none | `press, release, pressrelease, tap, held` | the edge, bool |
 | Toggle | `value` (bool) | `press, release, tap, held` | `!widget.value` on tap, else the edge |
 | Slider | `value` (num) | `input, commit` | the dragged value, num |
+| Knob | `value` (num) | `input, commit` | the dragged value, num (drag_radial) |
+| RadialSlider | `value` (num) | `input, commit` | the dragged value, num (drag_radial) |
+| Selector | `options` (TypeRef), `value` (text) | `select` | the selected name (drag_radial detents) |
+| Gauge | `value` (num) | `press, release, tap, held` | `widget.value` |
+| Trend | `value` (num or list) | none | display only; history-backed (2.10) |
 | Dropdown | `options` (list), `value` (text/enum) | `select, open` | the selection; `widget.value` on open |
 | Readout | `value` (num) | `press, release, tap, held` | `widget.value` |
 | Indicator | `value` (bool) | `press, tap` | `widget.value` |
@@ -311,12 +316,26 @@ widget), so nothing that touches the plant is ever implied by a type.
 ```
 Node = box  { dir: row|col|stack|auto, weight, min_px?, aspect?, show?,
               children: [Node], interact?: Interact }
-     | part { draw: rect | bar | text | icon,     // arc/line/plot join with the
-              weight, min_px?, show?,             // widget types that need them
+     | part { draw: rect | bar | text | icon
+                  | arc | needle | mark | ticks | plot,
+              weight, min_px?, show?,
               attrs: { attr: program } }
-Interact = { primitive: press | drag1d | pick, params: {...},
+Interact = { primitive: press | drag1d | drag_radial | pick, params: {...},
              emits: { primitive event -> declared event } }
 ```
+
+**The radial vocabulary.** One angle convention for every radial part and the
+drag_radial primitive: DEGREES, 0 = straight up, clockwise positive. Each radial
+part reads `start` and `sweep` attrs (the registry wires them to the shared
+`start_angle` / `sweep_angle` slots) and draws inside the largest circle its rect
+holds; value fractions map onto the sweep. `arc` strokes the track over the whole
+sweep and the fill over the value's fraction of it (`width` = stroke as a radius
+fraction); `needle` is a pointer line from `inner` to `outer` with an optional
+center `hub`; `mark` is the grabbable dot at radius fraction `at`; `ticks` spreads
+`count` scale markers over the sweep with optional numeric labels interpolated
+min..max (the one text a radial control renders besides its own `text` slot). A
+null value draws no fill, no needle and no mark: UNKNOWN is never an invented
+position.
 
 **Layout: scale to fit, always.** Template geometry is proportional, never
 absolute: a box lays out its children by `dir` with per-child `weight` and
@@ -364,7 +383,16 @@ generic, parameterized by template data:
 |---|---|---|
 | `press` | tap/hold thresholds | press, release, tap, held (+ per-view pressed state) |
 | `drag1d` | axis, range mapping (min/max/step from props) | input (continuous), commit (release) |
+| `drag_radial` | start/sweep angles + range mapping, or `options` | input (continuous) and commit, or select (on change) |
 | `pick` | option source (a list slot or prop) | open, select |
+
+`drag_radial` maps the pointer's BEARING from the center of what the interact
+painted (measured once at the down edge) onto the declared sweep, clamping a
+bearing outside it to the nearer stop; with `options` the sweep is a detent per
+option and the gesture reports the selected NAME on change, which is how a
+discrete Selector spins. The Selector's pointer angle is the shared machinery's
+`optfrac:<value>@<options>` cell: where the value's name sits in the resolved
+option list, as a 0..1 fraction, null (no pointer) when unresolvable.
 
 The primitive emits the widget's declared events as input events to the backend
 (4.4); any per-view state it keeps (pressed, drag position) is animation-only,

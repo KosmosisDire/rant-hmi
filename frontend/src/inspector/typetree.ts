@@ -17,7 +17,11 @@
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
-import { Mesh, MeshField, MeshType } from "../types.js";
+import { resolveTypeRef, variantNames } from "../slots.js";
+
+/* resolution moved to slots.ts (the canvas needs it too); re-exported so pickers and
+ * editors keep importing it from the type-tree module they already know */
+export { resolveTypeRef, variantNames };
 
 export interface TypeTreeOptions {
   scalars?: boolean;   /* offer f64 / bool / str / timer */
@@ -29,27 +33,6 @@ export interface TypePick {
   ref: string;                          /* what the document stores: "f64", "ValveCmd",
                                            "ValveCmd.mode" */
   kind: "scalar" | "struct" | "enum";
-}
-
-/* What a TypeRef lands on, from the served table: the same resolution the compiler runs
- * (find_type_ref), so what the view expands and what compiles can never disagree. */
-export function resolveTypeRef(
-  mesh: Mesh,
-  ref: string,
-): { kind: "struct" | "enum"; type: MeshType; field?: MeshField } | null {
-  if (!ref) return null;
-  const dot = ref.indexOf(".");
-  const root = mesh.types.find((t) => t.name && t.name === (dot < 0 ? ref : ref.slice(0, dot)));
-  if (!root) return null;
-  if (dot < 0) return { kind: "struct", type: root };
-  const field = root.fields.find((f) => f.path === ref.slice(dot + 1));
-  return field?.variants?.length ? { kind: "enum", type: root, field } : null;
-}
-
-/* the variant names a TypeRef expands to (a Dropdown's options; spec 6.2) */
-export function variantNames(mesh: Mesh, ref: string): string[] {
-  const found = resolveTypeRef(mesh, ref);
-  return found?.field?.variants?.map((v) => v.name) ?? [];
 }
 
 const SCALARS = [

@@ -12,7 +12,7 @@
 import { dividerPath, unionPath } from "./islands.js";
 import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.js";
 import { escapeXml, Rect, renderNode } from "./template.js";
-import { Canvas, Doc, Json, Live, Page, Registry, Widget } from "./types.js";
+import { Canvas, Doc, Json, Live, Mesh, Page, Registry, Widget } from "./types.js";
 
 export type Mode = "edit" | "run" | "operate";
 
@@ -235,6 +235,7 @@ export function renderContent(
   registry: Registry | null,
   live: Live | null,
   view: ViewState,
+  mesh: Mesh | null = null,
 ): string {
   const canvas = doc.canvas;
   const cell = cellSize(canvas);
@@ -334,7 +335,8 @@ export function renderContent(
 
     if (type) {
       const rect = contentRect(frame, pad);
-      renderNode(type.template, rect, cellsFor(widget, type, live, view.state[widget.id] ?? {}), out,
+      renderNode(type.template, rect,
+                 cellsFor(widget, type, live, view.state[widget.id] ?? {}, mesh), out,
                  { next: 0 });
     } else {
       out.push(

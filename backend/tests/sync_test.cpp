@@ -152,7 +152,7 @@ int main() {
     CHECK((*welcome)["proto"] == kProto);
     CHECK((*snapshot)["version"] == app.document().version());
     CHECK((*snapshot)["doc"]["pages"][0]["widgets"].size() == 7);
-    CHECK((*snapshot)["registry"]["types"].size() == 8);
+    CHECK((*snapshot)["registry"]["types"].size() == 12);
     CHECK((*snapshot)["live"]["values"].is_object());
     /* Compile findings ride the snapshot. They are produced once, at startup, so a view
      * that joins later has no other frame to learn them from and would sit looking at a

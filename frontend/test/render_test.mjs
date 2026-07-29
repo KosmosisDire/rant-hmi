@@ -106,7 +106,7 @@ function next(type, timeout = 3000) {
 ws.send(JSON.stringify({ type: "hello", proto: 2, client_name: "render_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
-check(snapshot.registry.types.length === 8, "eight widget types");
+check(snapshot.registry.types.length === 12, "twelve widget types");
 const interactionOf = (node) =>
   node?.interact ?? (node?.children ?? []).map(interactionOf).find(Boolean) ?? null;
 check(
