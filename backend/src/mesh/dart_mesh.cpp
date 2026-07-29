@@ -901,7 +901,15 @@ void DartMesh::drain(MeshSink& sink) {
 /* ============================== effects ===================================== */
 
 bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fault) {
+    /* a PARAMETERLESS send (bare, field UINT32_MAX: a no-argument call or a
+       payload-less emit) has nothing to encode: an untyped target gets an empty
+       payload, a typed one its schema's default message */
+    const bool empty_send = effect.bare && effect.field == UINT32_MAX;
     if (!rec.compiled) {
+        if (empty_send) {
+            rec.out.clear();
+            return true;
+        }
         fault = "entity '" + rec.name + "' has no reflected schema to encode with";
         return false;
     }

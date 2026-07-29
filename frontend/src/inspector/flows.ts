@@ -136,9 +136,11 @@ export function flowShape(flow: Flow): Json {
       sideOf(step.to),
       step.from?.kind ?? "",
       step.to?.kind ?? "",
-      /* the NAMES a side holds pick its scope mark, so a repick rebuilds the row */
+      /* the NAMES a side holds pick its scope mark (and whether the target is a
+         parameterless call, which hides the source), so a repick rebuilds the row */
       step.from?.local ?? "",
       step.to?.local ?? "",
+      step.to?.name ?? "",
       verbOf(step),
     ]),
   ];
@@ -550,11 +552,23 @@ function stepCell(
         set("to", { kind: pick.kind, name: pick.name, path: pick.path });
     };
 
+    /* a PARAMETERLESS target (a function with no request fields, a payload-less
+       signal) takes no value at all: the send is the whole message, so the source
+       side disappears from the row */
+    const dest = at().to ?? {};
+    const bareSend =
+      (dest.kind === "F" || dest.kind === "S") && !dest.path &&
+      (editor.mesh?.entities.find((e) => e.kind === dest.kind && e.name === dest.name)
+        ?.fields.length ?? 1) === 0;
+
     /* the source: a typed expression with the tree a small button away, or the picked
        thing as a chip whose click re-opens the tree (the tree's own "expression" row is
        the way back). A reset's source IS the target's own declared start, so it renders
        as the word rather than a pick. */
-    if (from === "init") {
+    if (bareSend) {
+      /* nothing before the target: just the verb's arrow into it */
+      cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
+    } else if (from === "init") {
       const word = el("button", {
         class: "chip pad-mark source-chip",
         title: "the target's own declared start; pick something else to change the source",
