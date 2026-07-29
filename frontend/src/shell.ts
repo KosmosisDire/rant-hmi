@@ -655,7 +655,10 @@ export class App implements Editor {
     if (interact.params.fit) {
       const start = Number(run(interact.params.start, cells) ?? -135);
       const sweep = Math.max(1, Math.min(360, Number(run(interact.params.sweep, cells) ?? 270)));
-      const b = radialExtent(start, sweep);
+      const core = interact.params.core
+        ? Math.max(0, Math.min(1, Number(run(interact.params.core, cells) ?? 0)))
+        : 0;
+      const b = radialExtent(start, sweep, core);
       cx = pivot.left + ((0 - b.x) / b.w) * pivot.width;
       cy = pivot.top + ((0 - b.y) / b.h) * pivot.height;
     }

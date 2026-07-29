@@ -566,21 +566,30 @@ Json knob_type() {
                       {"show", show_scale}};
     /* the FACE derives from the thickness and where the scale sits, so a fat arc or
        an inside scale can never overlap it: face radius = whatever is innermost,
-       less a gap, spelled as the pad that produces it */
+       less a gap, spelled as the fraction of the circle it keeps */
     Json face_pad = pick(show_scale,
                          pick(outside, add(lit(0.185), mul(t, lit(0.35))),
                               add(lit(0.17), mul(t, lit(0.5)))),
                          add(lit(0.05), mul(t, lit(0.5))));
+    Json face = sub(lit(1), mul(face_pad, lit(2)));
+    /* the fit slot, as on the RadialSlider/Gauge, with the face as the extent's CORE:
+       a partial-sweep knob fills its tile but always keeps room for the whole face */
+    Json fit = pick(eq(ref("slot:fit"), lit("center")), lit("circle"), lit("extent"));
+    angles["fit"] = fit;
+    angles["core"] = face;
     /* ...and the dot rides at a fixed fraction of that face, however big it is */
-    Json mark_at = mul(lit(0.68), sub(lit(1), mul(face_pad, lit(2))));
     Json mark = Json{{"value", fraction},
                      {"fill", ref("slot:handle_color")},
-                     {"at", mark_at},
+                     {"at", mul(lit(0.68), face)},
                      {"size", pick(show_scale, lit(0.07), lit(0.09))}};
+    /* the face itself is a radial part (a bare hub), so it rides the fitted circle
+       exactly like the arc and the dot, wherever the fit places it */
+    Json body = Json{{"fill", ref("slot:body_color")}, {"hub", face}};
     for (auto& item : angles.items()) {
         arc[item.key()] = item.value();
         ticks[item.key()] = item.value();
         mark[item.key()] = item.value();
+        body[item.key()] = item.value();
     }
     return type("Knob",
                 compose_slots(tile_base(), {
@@ -605,20 +614,19 @@ Json knob_type() {
                     slot("scale_values", "bool", true, "appearance"),
                     slot_enum("scale_position", {"inside", "outside"}, "outside",
                               "appearance"),
+                    slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
                     Json::array({
                         /* the body carries the interact so the whole face turns, not
-                           just the arc's stroke */
-                        box("stack", Json{{"aspect", lit(1.0)}},
+                           just the arc's stroke; no aspect lock: the fit places the
+                           circle in the raw rect */
+                        box("stack", Json::object(),
                             Json::array({
                                 part("arc", arc),
                                 part("ticks", ticks),
-                                part("rect", Json{{"fill", ref("slot:body_color")},
-                                                  {"radius", lit(999)},
-                                                  {"aspect", lit(1.0)},
-                                                  {"pad", face_pad}}),
+                                part("needle", body),
                                 part("mark", mark),
                                 part("text", Json{{"text", ref("slot:text")},
                                                   {"fill", ref("slot:text_color")},
@@ -631,6 +639,8 @@ Json knob_type() {
                                                  {"max", ref("slot:max")},
                                                  {"step", ref("slot:step")},
                                                  {"mode", ref("slot:drag")},
+                                                 {"fit", fit},
+                                                 {"core", face},
                                                  {"fraction", fraction}},
                                             Json{{"input", "input"}, {"commit", "commit"}})),
                     })),

@@ -179,15 +179,16 @@ function polar(cx: number, cy: number, r: number, deg: number): [number, number]
   return [cx + r * Math.sin(rad), cy - r * Math.cos(rad)];
 }
 
-/* The unit-circle bounding box of what a sweep actually USES: the center plus the arc
- * from `start` over `sweep` degrees (its endpoints, and every cardinal the sweep
- * crosses). Extent-fitted parts scale and place their circle so THIS box fills the
- * rect, so a half-circle slider fills its tile instead of floating in the top half of
- * an inscribed full circle. Shared with the shell, whose radial drag pivots on the
- * same circle center. */
-export function radialExtent(start: number, sweep: number): Rect {
-  const xs = [0];
-  const ys = [0];
+/* The unit-circle bounding box of what a sweep actually USES: the arc from `start`
+ * over `sweep` degrees (its endpoints, and every cardinal the sweep crosses), plus the
+ * disc of radius `core` around the center (0 = just the center point) for a control
+ * whose middle is always present whatever the sweep: a knob's face. Extent-fitted
+ * parts scale and place their circle so THIS box fills the rect, so a half-circle
+ * control fills its tile instead of floating in the top half of an inscribed full
+ * circle. Shared with the shell, whose radial drag pivots on the same circle center. */
+export function radialExtent(start: number, sweep: number, core = 0): Rect {
+  const xs = [-core, core];
+  const ys = [-core, core];
   const add = (deg: number) => {
     const rad = (deg * Math.PI) / 180;
     xs.push(Math.sin(rad));
@@ -217,7 +218,8 @@ function radialFrame(rect: Rect, attrs: Attrs, cells: Cells): RadialFrame {
   const start = attrNum(attr(attrs, "start", cells), -135);
   const sweep = Math.max(1, Math.min(360, attrNum(attr(attrs, "sweep", cells), 270)));
   if (attrText(attr(attrs, "fit", cells)) === "extent") {
-    const b = radialExtent(start, sweep);
+    const core = Math.max(0, Math.min(1, attrNum(attr(attrs, "core", cells), 0)));
+    const b = radialExtent(start, sweep, core);
     const scale = Math.min(rect.w / b.w, rect.h / b.h);
     return {
       cx: rect.x + (rect.w - scale * b.w) / 2 - scale * b.x,

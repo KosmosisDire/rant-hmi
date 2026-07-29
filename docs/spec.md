@@ -169,7 +169,7 @@ vocabulary learnable:
 | `thickness` | an arc's stroke, as a fraction of the radius |
 | `body_color` | a rotary control's circular body |
 | `drag` | radial vs linear gesture mapping on a radial control |
-| `fit` | where a partial sweep's circle sits: `fill` (default) places it so the swept extent fills the tile, `center` pins the circle's center to the widget's center |
+| `fit` | where a partial sweep's circle sits: `fill` (default) places it so the swept extent fills the tile (a Knob's extent always includes its face), `center` pins the circle's center to the widget's center |
 
 A new type reuses these names wherever the semantic matches and invents a name
 only for a genuinely new concept.
@@ -392,16 +392,20 @@ null value draws no fill, no needle and no mark: UNKNOWN is never an invented
 position.
 
 **Radial fit.** Where the circle sits in the part's rect is the `fit` attr. The
-default, `circle`, inscribes the full circle centered: right for the round-bodied
-types (a Knob's face and a Selector's body stay physically round whatever their
-sweep). `extent` scales and places the circle so the swept extent (the arc plus
-the center) fills the rect, so a half-circle RadialSlider or Gauge spreads over
-its whole tile instead of floating in half of an inscribed circle; those types
-drop the square aspect lock for the same reason. On the RadialSlider and Gauge
-the choice is the user's, a `fit` slot: `fill` (the default, the extent fit) or
+default, `circle`, inscribes the full circle centered (the Selector's round body
+stays physically round whatever its sweep). `extent` scales and places the circle
+so the swept extent fills the rect: the arc, plus the disc of radius `core`
+around the center: 0 (RadialSlider, Gauge: just the center point) or the face
+fraction (Knob: a partial-sweep knob fills its tile but always keeps room for
+the whole face, whose part is a frame-riding hub so it follows the fitted circle
+exactly). So a half-circle control spreads over its whole tile instead of
+floating in half of an inscribed circle; the extent-fitting types drop the
+square aspect lock for the same reason. On the Knob, RadialSlider and Gauge the
+choice is the user's, a `fit` slot: `fill` (the default, the extent fit) or
 `center`, which pins the circle's center to the widget's center for layouts that
 need exact concentricity. The shell recovers the fitted circle center for the
-drag pivot from the interact's own `fit` param, valid at either setting.
+drag pivot from the interact's own `fit` + `core` params, valid at either
+setting.
 
 **Layout: scale to fit, always.** Template geometry is proportional, never
 absolute: a box lays out its children by `dir` with per-child `weight` and
