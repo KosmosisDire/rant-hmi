@@ -6,7 +6,11 @@
  * shrinks. Every attribute is a program (program.ts), including the layout ones. */
 
 import { attrBool, attrColor, attrNum, attrText, Cells, run } from "./program.js";
+import { LUCIDE } from "./lucide.js";
+import { escapeXml, parseRich, richMarkup, richUnits } from "./rich.js";
 import { Attrs, Json, TemplateNode } from "./types.js";
+
+export { escapeXml } from "./rich.js";
 
 export interface Rect {
   x: number;
@@ -15,22 +19,8 @@ export interface Rect {
   h: number;
 }
 
-const ICONS: Record<string, string> = {
-  /* 24x24 viewBox paths (Lucide geometry), scaled into the part's rect */
-  "chevron-down": "M6 9l6 6 6-6",
-  "chevron-right": "M9 6l6 6-6 6",
-  check: "M20 6L9 17l-5-5",
-  x: "M18 6L6 18M6 6l12 12",
-};
-
 /* the UNKNOWN treatment: a value the backend does not have is never invented */
 export const UNKNOWN_TEXT = "--";
-
-export function escapeXml(text: string): string {
-  return text.replace(/[&<>"]/g, (c) =>
-    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;",
-  );
-}
 
 function attr(attrs: Attrs, key: string, cells: Cells): Json {
   return attrs && attrs[key] ? run(attrs[key], cells) : null;
@@ -130,6 +120,10 @@ function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   if (attrBool(attr(attrs, "oneline", cells), false)) text = text.replace(/\n/g, " ");
   if (!text.length) return;
   const lines = text.split("\n");
+  /* inline markup (rich.ts): a parsed line sizes by its VISIBLE units (markers cost
+     nothing, an icon costs its fixed width) and renders through richMarkup */
+  const rich = lines.map(parseRich);
+  const unitsOf = (i: number) => (rich[i] ? richUnits(rich[i]) : lines[i].length);
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#e7ecf5";
   /* either vocabulary: start/center/end, or the shared align slot's 9 positions
      (top-left .. bottom-right), which place the line on both axes */
@@ -140,7 +134,7 @@ function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
      knob biases autoscaling instead of replacing it */
   const scaleRaw = attrNum(attr(attrs, "scale", cells), 1);
   const scale = scaleRaw > 0 ? scaleRaw : 1;
-  const longest = lines.reduce((len, line) => Math.max(len, line.length), 1);
+  const longest = lines.reduce((len, _line, i) => Math.max(len, unitsOf(i)), 1);
   const byHeight = (rect.h * 0.66) / lines.length;
   const byWidth = rect.w / (0.58 * longest);
   const size = Math.max(6, Math.min(byHeight, byWidth) * scale);
@@ -157,6 +151,11 @@ function drawText(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
       : rect.y + rect.h / 2 - (step * (lines.length - 1)) / 2;
   lines.forEach((line, i) => {
     if (!line.length) return;
+    if (rich[i]) {
+      out.push(richMarkup(rich[i], x, y + step * i, size, anchor, fill,
+                          strong ? 650 : 450, unknown ? ` opacity="0.45"` : ""));
+      return;
+    }
     out.push(
       `<text x="${n(x)}" y="${n(y + step * i)}" fill="${fill}" font-size="${n(size)}" ` +
         `text-anchor="${anchor}" dominant-baseline="central" ` +
@@ -402,7 +401,11 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
 
   const texts: string[] = [];
   for (let i = 0; i < count; ++i) texts.push(label(i));
-  const chars = Math.max(1, ...texts.map((t) => t.length));
+  /* labels understand the inline markup too (a Selector option can carry an icon),
+     so widths measure in VISIBLE units, not raw characters */
+  const rich = texts.map(parseRich);
+  const unitsOf = (i: number) => (rich[i] ? richUnits(rich[i]) : texts[i].length);
+  const units = Math.max(1, ...texts.map((_t, i) => unitsOf(i)));
 
   if (attrText(attr(attrs, "dir", cells)) === "h") {
     /* linear: marks along the top of this rect (the row under a slider's bar),
@@ -423,15 +426,21 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     if (!labels) return;
     /* same label rules as below: sized against the spacing, thinned past the floor,
        each centered on its tick (slid inward only if the tile would cut it) */
-    let size = Math.max(5, Math.min(rect.h * 0.55, (spacing * 0.9) / (0.58 * chars)));
+    let size = Math.max(5, Math.min(rect.h * 0.55, (spacing * 0.9) / (0.58 * units)));
     if (size < 6) size = 6;
-    const every = Math.max(1, Math.ceil((0.58 * size * chars) / Math.max(1, spacing * 0.95)));
+    const every = Math.max(1, Math.ceil((0.58 * size * units) / Math.max(1, spacing * 0.95)));
     for (let i = 0; i < count; ++i) {
       if (every > 1 && i % every !== 0 && i !== count - 1) continue;
-      const half = (0.58 * size * texts[i].length) / 2;
+      const half = (0.58 * size * unitsOf(i)) / 2;
       const x = Math.max(rect.x + half,
         Math.min(rect.x + rect.w - half, rect.x + spacing * i));
-      out.push(`<text x="${n(x)}" y="${n(rect.y + clear + mark + size * 0.65)}" ` +
+      const y = rect.y + clear + mark + size * 0.65;
+      const segs = rich[i];
+      if (segs) {
+        out.push(richMarkup(segs, x, y, size, "middle", textFill));
+        continue;
+      }
+      out.push(`<text x="${n(x)}" y="${n(y)}" ` +
                `fill="${textFill}" font-size="${n(size)}" text-anchor="middle" ` +
                `dominant-baseline="central">${escapeXml(texts[i])}</text>`);
     }
@@ -482,10 +491,10 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   /* option names run longer than numbers, so they start a little smaller */
   let size = Math.max(5, f.radius * (names ? 0.11 : 0.16));
   if (outSide)
-    size = Math.min(size, Math.max(6, (f.radius - outer) / (0.35 + 0.58 * chars)));
+    size = Math.min(size, Math.max(6, (f.radius - outer) / (0.35 + 0.58 * units)));
   const room = roomAt(outSide ? rOut : Math.max(1, rIn)) * 0.9;
-  if (0.58 * size * chars > room) size = Math.max(6, room / (0.58 * chars));
-  const every = Math.max(1, Math.ceil((0.58 * size * chars) / Math.max(1, room)));
+  if (0.58 * size * units > room) size = Math.max(6, room / (0.58 * units));
+  const every = Math.max(1, Math.ceil((0.58 * size * units) / Math.max(1, room)));
   /* labels anchor off the marks' ACTUAL far end, wherever the clearance put it */
   const anchorR = outSide ? rOut + size * 0.35 : rIn - size * 0.35;
   for (let i = 0; i < count; ++i) {
@@ -496,8 +505,13 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     const dy = -Math.cos(rad);
     const push = outSide ? 1 : -1;
     const [px, py] = polar(f.cx, f.cy, anchorR, angle);
-    const cx = px + push * dx * ((0.58 * size * texts[i].length) / 2);
+    const cx = px + push * dx * ((0.58 * size * unitsOf(i)) / 2);
     const cy = py + push * dy * (size * 0.6);
+    const segs = rich[i];
+    if (segs) {
+      out.push(richMarkup(segs, cx, cy, size, "middle", textFill));
+      continue;
+    }
     out.push(`<text x="${n(cx)}" y="${n(cy)}" fill="${textFill}" font-size="${n(size)}" ` +
              `text-anchor="middle" dominant-baseline="central">` +
              `${escapeXml(texts[i])}</text>`);
@@ -723,15 +737,15 @@ function drawPlot(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
 
 function drawIcon(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void {
   const name = attrText(attr(attrs, "name", cells)) ?? "";
-  const path = ICONS[name];
-  if (!path) return;
+  const markup = LUCIDE[name];
+  if (!markup) return;
   const fill = attrColor(attr(attrs, "fill", cells)) ?? "#8b95a7";
   const box = fitAspect(rect, 1);
   const scale = box.w / 24;
   out.push(
     `<g transform="translate(${n(box.x)} ${n(box.y)}) scale(${n(scale)})" ` +
       `fill="none" stroke="${fill}" stroke-width="2" stroke-linecap="round" ` +
-      `stroke-linejoin="round"><path d="${path}"/></g>`,
+      `stroke-linejoin="round">${markup}</g>`,
   );
 }
 
