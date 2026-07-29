@@ -854,9 +854,10 @@ class Compiler {
         bool covered_true = false, covered_false = false;
 
         /* the Nil bail guards a SCALAR x; a whole-message feed's x is Nil by design
-           (its fields ride qualified bindings) and only runs on a delivery */
+           (its fields ride qualified bindings), and a TIMER's state lives in the
+           timer table rather than the x value, so neither is gated on it */
         uint32_t bail = UINT32_MAX;
-        if (source != Shape::Struct) {
+        if (source != Shape::Struct && source != Shape::Timer) {
             feed.code.push_back(Instruction{OpCode::LoadX});
             bail = static_cast<uint32_t>(feed.code.size());
             feed.code.push_back(Instruction{OpCode::JmpNil});
@@ -908,6 +909,13 @@ class Compiler {
                 diag(feed.feed_id, "case_when",
                      "the value is a whole message; match with a condition over "
                      "x.<field>",
+                     DiagGrade::Error, where);
+                return false;
+            }
+            if (source == Shape::Timer) {
+                diag(feed.feed_id, "case_when",
+                     "the value is a timer; match with a condition over x.running / "
+                     "x.remaining",
                      DiagGrade::Error, where);
                 return false;
             }

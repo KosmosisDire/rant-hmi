@@ -438,13 +438,27 @@ Json timer_read_root(const std::string& surface_xf) {
                                     {"xf", "blink.duration * 1000"}}})},
         {"flows", Json::array()},
     };
+    /* the pressed-recently treatment (a CASED feed over the timer): the arm is a
+       condition over x.running, the else the resting color; the Nil bail must not
+       eat it (a timer cell's stored value is always Nil) */
+    Json toggle = {
+        {"type", "Toggle"},
+        {"slots", Json::object()},
+        {"feeds", Json::array({Json{{"slot", "off_color"},
+                                    {"src", Json{{"kind", "L"}, {"name", "blink"}}},
+                                    {"path", ""},
+                                    {"cases", Json::array({Json{{"test", "x.running"},
+                                                                {"xf", "#885a1f"}}})},
+                                    {"xf", "#2e2e2e"}}})},
+        {"flows", Json::array()},
+    };
     return Json{{"version", 1},
                 {"next_id", 1},
                 {"globals",
                  Json::array({Json{{"name", "blink"}, {"type", "timer"}, {"init", 0.004}}})},
                 {"pages",
                  Json::array({Json{{"name", "Main"},
-                                   {"widgets", Json::array({button, readout})}}})}};
+                                   {"widgets", Json::array({button, readout, toggle})}}})}};
 }
 
 void test_timer_reads() {
@@ -462,16 +476,19 @@ void test_timer_reads() {
     const uint32_t surface = scheduler.program().feeds[0].cell;
     const uint32_t remaining = scheduler.program().feeds[1].cell;
     const uint32_t duration = scheduler.program().feeds[2].cell;
+    const uint32_t off_color = scheduler.program().feeds[3].cell;
 
     tick(scheduler, 1);
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().values[remaining].data.num == 0);
     CHECK(scheduler.state().values[duration].data.num == 4);
+    CHECK(scheduler.state().values[off_color].data.rgba == 0x2e2e2effu);
 
     scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(scheduler.state().timers[0].running);
     CHECK(scheduler.state().values[surface].data.rgba == 0x00ff00ffu);
+    CHECK(scheduler.state().values[off_color].data.rgba == 0x885a1fffu);
     const double started = scheduler.state().values[remaining].data.num;
     CHECK(started >= 3 && started <= 4);
     tick(scheduler, 2);
@@ -481,6 +498,7 @@ void test_timer_reads() {
     CHECK(!scheduler.state().timers[0].running);
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().values[remaining].data.num == 0);
+    CHECK(scheduler.state().values[off_color].data.rgba == 0x2e2e2effu);
 
     /* a BARE timer (named or as x) has no scalar to be, and an unknown field is named */
     auto refuses = [&](uint32_t widget_index, const std::string& xf, const char* needle) {
@@ -500,6 +518,23 @@ void test_timer_reads() {
     refuses(0, "blink == true", "is a timer");
     refuses(1, "x * 2", "x is a timer");
     refuses(1, "x.expired * 2", "unknown field");
+
+    /* a VALUE arm cannot match a timer: the finding points at conditions */
+    {
+        Json root = timer_read_root("blink.running.pick(#00ff00, #102030)");
+        root["pages"][0]["widgets"][2]["feeds"][0]["cases"] =
+            Json::array({Json{{"when", true}, {"xf", "#885a1f"}}});
+        Document bad;
+        std::string adopt_error;
+        CHECK_MSG(bad.adopt(std::move(root), adopt_error), adopt_error);
+        CompileResult result = compile_document(bad, registry(), mesh);
+        CHECK(!result.ok);
+        bool found = false;
+        for (const auto& diagnostic : result.program.diagnostics)
+            if (diagnostic.message.find("match with a condition") != std::string::npos)
+                found = true;
+        CHECK_MSG(found, "no value-arm-on-timer diagnostic");
+    }
 }
 
 } // namespace
