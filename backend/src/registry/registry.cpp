@@ -395,7 +395,6 @@ Json slider_type() {
                             })),
                         /* the toggleable scale: marks + range labels under the bar */
                         part("ticks", Json{{"dir", lit("h")},
-                                           {"cap_radius", ref("slot:control_radius")},
                                            {"count", ref("slot:divisions")},
                                            {"labels", ref("slot:scale_values")},
                                            {"min", ref("slot:min")},
@@ -571,8 +570,6 @@ Json knob_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.07)},
-                      {"cap_radius", ref("slot:control_radius")},
-                      {"cap_width", t},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
@@ -694,8 +691,6 @@ Json radial_slider_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.06)},
-                      {"cap_radius", ref("slot:control_radius")},
-                      {"cap_width", t},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
@@ -785,8 +780,6 @@ Json gauge_type() {
                       {"outer", pick(outside, lit(0.8),
                                      sub(lit(1), ref("slot:thickness")))},
                       {"len", lit(0.07)},
-                      {"cap_radius", ref("slot:control_radius")},
-                      {"cap_width", ref("slot:thickness")},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};

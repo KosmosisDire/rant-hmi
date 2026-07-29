@@ -404,43 +404,21 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   for (let i = 0; i < count; ++i) texts.push(label(i));
   const chars = Math.max(1, ...texts.map((t) => t.length));
 
-  /* the END ticks sit fully INSIDE the ends: past the control's own end rounding
-     (`cap_radius` = the control_radius slot, clamped exactly as the arc/bar clamps
-     it) plus half the tick's own stroke. At radius 0 that is just the stroke; as
-     the radius grows the end tick starts where the rounding stops. Deliberately a
-     hair inside the true endpoint: the end labels read as the endpoints' marks
-     either way, and a tick riding the cap's curve looks broken. */
-  const capOf = (stroke: number) => {
-    const raw = attrs && attrs.cap_radius ? attr(attrs, "cap_radius", cells) : null;
-    return Math.max(0, Math.min(raw === null ? stroke / 2 : attrNum(raw, 0), stroke / 2));
-  };
-
   if (attrText(attr(attrs, "dir", cells)) === "h") {
     /* linear: marks along the top of this rect (the row under a slider's bar),
-       labels set beneath them, under the same rules as the radial scale */
+       labels set beneath them, under the same rules as the radial scale. Every
+       mark sits at its TRUE value position, ends included: this is an instrument,
+       and a shifted mark is a wrong reading. */
     const mark = rect.h * (labels ? 0.4 : 0.8);
     const width = Math.max(0.75, rect.h * 0.07);
-    /* the bar is roughly the row above this one; its stroke for the cap clamp */
-    const inset = Math.min(rect.w / 4, capOf(rect.h * 2.2) + width / 2);
     /* the marks are round-capped strokes: their paint reaches half the width past
        the endpoint, so the bar-facing end drops by that half plus a whisker of
        gap, never touching the bar above (same clearance as the radial scales) */
     const clear = width / 2 + rect.h * 0.06;
-    /* true value positions, only the end marks slid inward: as on the radial scale;
-       a mid mark that lands against a shifted endpoint is dropped with its label */
     const spacing = rect.w / (count - 1);
-    const xOf = (i: number) =>
-      Math.min(rect.x + rect.w - inset, Math.max(rect.x + inset, rect.x + spacing * i));
-    const minSep = width * 2.5;
-    const keepL = (i: number): boolean => {
-      if (i === 0 || i === count - 1) return true;
-      const x = rect.x + spacing * i;
-      return x >= rect.x + inset + minSep && x <= rect.x + rect.w - inset - minSep;
-    };
     for (let i = 0; i < count; ++i) {
-      if (!keepL(i)) continue;
-      out.push(`<path d="M${n(xOf(i))} ${n(rect.y + clear)} v${n(mark)}" stroke="${fill}" ` +
-               `stroke-width="${n(width)}" stroke-linecap="round"/>`);
+      out.push(`<path d="M${n(rect.x + spacing * i)} ${n(rect.y + clear)} v${n(mark)}" ` +
+               `stroke="${fill}" stroke-width="${n(width)}" stroke-linecap="round"/>`);
     }
     if (!labels) return;
     /* same label rules as below: sized against the spacing, thinned past the floor,
@@ -449,10 +427,10 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
     if (size < 6) size = 6;
     const every = Math.max(1, Math.ceil((0.58 * size * chars) / Math.max(1, spacing * 0.95)));
     for (let i = 0; i < count; ++i) {
-      if (!keepL(i)) continue;
       if (every > 1 && i % every !== 0 && i !== count - 1) continue;
       const half = (0.58 * size * texts[i].length) / 2;
-      const x = Math.max(rect.x + half, Math.min(rect.x + rect.w - half, xOf(i)));
+      const x = Math.max(rect.x + half,
+        Math.min(rect.x + rect.w - half, rect.x + spacing * i));
       out.push(`<text x="${n(x)}" y="${n(rect.y + clear + mark + size * 0.65)}" ` +
                `fill="${textFill}" font-size="${n(size)}" text-anchor="middle" ` +
                `dominant-baseline="central">${escapeXml(texts[i])}</text>`);
@@ -463,40 +441,15 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const f = radialFrame(rect, attrs, cells);
   const outer = f.radius * attrNum(attr(attrs, "outer", cells), 1);
   const len = f.radius * attrNum(attr(attrs, "len", cells), 0.1);
-  /* mark width first (from the un-inset pitch: the inset is a few degrees and must
-     not feed back into it), then the end inset it contributes to */
-  const pitch0 = (f.sweep / (count - 1)) * (Math.PI / 180);
-  const width = Math.max(0.75, Math.min(f.radius * 0.018,
-    (2 * outer * Math.sin(Math.min(Math.PI / 2, pitch0 / 2))) / 3));
-  /* the arc's end fillet, in the ticks' own angular terms: rc from cap_radius
-     clamped to the arc's stroke (`cap_width`, the thickness fraction), converted
-     to the angle it subtends at the marks' radius */
-  const capW = f.radius * Math.max(0, attrNum(attr(attrs, "cap_width", cells), 0));
-  const rc = capW > 0 ? capOf(capW) : 0;
-  const deg = 180 / Math.PI;
-  const inset = outer > 0
-    ? Math.min(f.sweep / 4,
-        deg * (Math.asin(Math.min(1, rc / outer)) + Math.asin(Math.min(1, width / 2 / outer))))
-    : 0;
-  /* every tick sits at its TRUE value position, so a click on a tick lands exactly
-     on that tick's value; only the ticks the end rounding would swallow (the
-     endpoints) shift inward by the inset. The end marks lie by a couple degrees;
-     the ends clamp to min/max under the finger anyway, so nothing else does. */
-  const angleOf = (i: number) =>
-    Math.min(f.start + f.sweep - inset,
-      Math.max(f.start + inset, f.start + (f.sweep * i) / (count - 1)));
-  /* a mid tick whose true position lands against a SHIFTED endpoint mark is dropped
-     (with its label): the endpoint owns that spot, two marks there read as a smudge */
-  const minSep = deg * ((width * 2.5) / Math.max(1, outer));
-  const keep = (i: number): boolean => {
-    if (i === 0 || i === count - 1) return true;
-    const a = f.start + (f.sweep * i) / (count - 1);
-    return a >= f.start + inset + minSep && a <= f.start + f.sweep - inset - minSep;
-  };
+  /* every tick sits at its TRUE value position, ends included: this is an
+     instrument, and a shifted mark is a wrong reading */
+  const angleOf = (i: number) => f.start + (f.sweep * i) / (count - 1);
   /* the angular pitch between marks, and the tangential room it leaves at a radius:
      the one crowding measure marks and labels both size against */
-  const pitch = pitch0;
+  const pitch = (f.sweep / (count - 1)) * (Math.PI / 180);
   const roomAt = (r: number) => 2 * r * Math.sin(Math.min(Math.PI / 2, pitch / 2));
+  /* marks never overlap each other: their width caps at a third of their spacing */
+  const width = Math.max(0.75, Math.min(f.radius * 0.018, roomAt(outer) / 3));
   /* `outer` names the edge the marks HUG (the arc's inner edge for an inside scale),
      but a mark is a round-capped STROKE: its paint reaches half its width past its
      endpoint, so the arc-facing end pulls back by that half plus a whisker of gap,
@@ -507,7 +460,6 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   const rOut = outSide ? outer : outer - clear;
   const rIn = outSide ? Math.min(rOut - 1, outer - len + clear) : rOut - len;
   for (let i = 0; i < count; ++i) {
-    if (!keep(i)) continue;
     const angle = angleOf(i);
     const [x0, y0] = polar(f.cx, f.cy, rIn, angle);
     const [x1, y1] = polar(f.cx, f.cy, rOut, angle);
@@ -537,7 +489,6 @@ function drawTicks(rect: Rect, attrs: Attrs, cells: Cells, out: string[]): void 
   /* labels anchor off the marks' ACTUAL far end, wherever the clearance put it */
   const anchorR = outSide ? rOut + size * 0.35 : rIn - size * 0.35;
   for (let i = 0; i < count; ++i) {
-    if (!keep(i)) continue;
     if (every > 1 && i % every !== 0 && i !== count - 1) continue;
     const angle = angleOf(i);
     const rad = angle * (Math.PI / 180);
