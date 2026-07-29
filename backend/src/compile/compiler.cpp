@@ -723,6 +723,13 @@ class Compiler {
                     feed.source_cell = source;
                     scope.x_shape = program_.cells[source].shape;
                     scope.x_enum = program_.cells[source].type_id;
+                    /* a TIMER source: x reads the timer table by field, so the
+                       scope carries which timer this is */
+                    if (scope.x_shape == Shape::Timer) {
+                        const int timer = resolve_timer(widget, name, feed.feed_id);
+                        if (timer < 0) continue;
+                        scope.x_timer = static_cast<uint32_t>(timer);
+                    }
                 } else {
                     const int entity = resolve_entity(ref, feed.feed_id, "src");
                     if (entity < 0) continue;

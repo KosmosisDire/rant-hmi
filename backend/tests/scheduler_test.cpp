@@ -427,10 +427,11 @@ Json timer_read_root(const std::string& surface_xf) {
     Json readout = {
         {"type", "Readout"},
         {"slots", Json::object()},
+        /* the value feed's SOURCE is the timer itself: x is the timer, read by field */
         {"feeds", Json::array({Json{{"slot", "value"},
-                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
+                                    {"src", Json{{"kind", "L"}, {"name", "blink"}}},
                                     {"path", ""},
-                                    {"xf", "blink.remaining * 1000"}},
+                                    {"xf", "x.remaining * 1000"}},
                                Json{{"slot", "decimals"},
                                     {"src", Json{{"kind", "V"}, {"name", ""}}},
                                     {"path", ""},
@@ -481,11 +482,13 @@ void test_timer_reads() {
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().values[remaining].data.num == 0);
 
-    /* a BARE timer name has no scalar to be, and an unknown field is named */
-    auto refuses = [&](const std::string& xf, const char* needle) {
+    /* a BARE timer (named or as x) has no scalar to be, and an unknown field is named */
+    auto refuses = [&](uint32_t widget_index, const std::string& xf, const char* needle) {
+        Json root = timer_read_root("blink.running.pick(#00ff00, #102030)");
+        root["pages"][0]["widgets"][widget_index]["feeds"][0]["xf"] = xf;
         Document bad;
         std::string adopt_error;
-        CHECK_MSG(bad.adopt(timer_read_root(xf), adopt_error), adopt_error);
+        CHECK_MSG(bad.adopt(std::move(root), adopt_error), adopt_error);
         CompileResult result = compile_document(bad, registry(), mesh);
         CHECK(!result.ok);
         bool found = false;
@@ -493,8 +496,10 @@ void test_timer_reads() {
             if (diagnostic.message.find(needle) != std::string::npos) found = true;
         CHECK_MSG(found, "no diagnostic mentions '" + std::string(needle) + "'");
     };
-    refuses("blink.pick(#00ff00, #102030)", "unknown field");
-    refuses("blink == true", "is a timer");
+    refuses(0, "blink.pick(#00ff00, #102030)", "unknown field");
+    refuses(0, "blink == true", "is a timer");
+    refuses(1, "x * 2", "x is a timer");
+    refuses(1, "x.expired * 2", "unknown field");
 }
 
 } // namespace

@@ -863,6 +863,38 @@ class Parser {
             return Shape::Bool;
         }
         if (name == "x") {
+            /* a TIMER x (the feed's source is a timer variable): its fields read the
+               timer table, and bare x has no scalar to be. Without the timer's
+               identity (a timer-triggered flow) the variable's own name is the way. */
+            if (scope_.x_shape == Shape::Timer) {
+                if (scope_.x_timer == UINT32_MAX) {
+                    fail("x is a timer event here; read the timer variable's fields "
+                         "instead (t.running / t.remaining / t.duration)");
+                    return Shape::Unknown;
+                }
+                if (token_.kind != TokenKind::Dot) {
+                    fail("x is a timer here; pick a field "
+                         "(x.running / x.remaining / x.duration)");
+                    return Shape::Unknown;
+                }
+                advance();
+                if (token_.kind != TokenKind::Ident) {
+                    fail("expected a field after '.'");
+                    return Shape::Unknown;
+                }
+                const std::string field = token_.text;
+                advance();
+                const uint32_t which = field == "running" ? 0u
+                                     : field == "remaining" ? 1u
+                                     : field == "duration" ? 2u : 3u;
+                if (which == 3u) {
+                    fail("unknown field 'x." + field + "'");
+                    return Shape::Unknown;
+                }
+                emit(OpCode::TmrRead, scope_.x_timer, which);
+                pushed();
+                return which == 0 ? Shape::Bool : Shape::Num;
+            }
             /* a STRUCT x (a whole-entity feed): its fields are qualified bindings
                (`x.r`, `x.head.state`), and bare x has no scalar to be */
             if (scope_.x_shape == Shape::Struct) {

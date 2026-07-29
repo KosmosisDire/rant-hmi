@@ -22,6 +22,9 @@ struct ExpressionScope {
     Shape x_shape = Shape::Unknown;
     uint16_t x_enum = 0;      /* when x_shape is Enum: its Program.enum_types id */
     Shape x_elem = Shape::Unknown;   /* when x_shape is List/Map: the element shape */
+    /* when x_shape is Timer (the feed's source IS a timer variable): which timer,
+       so x.running / x.remaining / x.duration compile to timer-table reads */
+    uint32_t x_timer = UINT32_MAX;
     std::unordered_map<std::string, Binding> names;
     std::unordered_map<std::string, Binding> qualified;
 };
