@@ -1002,8 +1002,10 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
+                /* with no arguments the slice would start one past the end when the
+                   stack is exactly full: never form that address */
                 const Value value = call(ctx, static_cast<Builtin>(ins.small), ins.a,
-                                         &state.stack[sp - argc], argc);
+                                         argc ? &state.stack[sp - argc] : nullptr, argc);
                 sp -= argc;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -1017,7 +1019,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const uint32_t receiver_at = sp - argc - 1;
                 const Value value =
                     method(ctx, static_cast<MethodId>(ins.small), ins.a,
-                           state.stack[receiver_at], &state.stack[receiver_at + 1], argc);
+                           state.stack[receiver_at],
+                           argc ? &state.stack[receiver_at + 1] : nullptr, argc);
                 sp = receiver_at;
                 if (!push(value)) fail(ins.c);
                 break;
