@@ -69,6 +69,7 @@ export function valueEditor(
     case "num": {
       const field = numberInput(typeof value === "number" ? value : 0, commit, {
         class: "field grow",
+        ...(spec?.step ? { step: String(spec.step) } : {}),
         ...placeholder,
       });
       bindField(key, field, () => {

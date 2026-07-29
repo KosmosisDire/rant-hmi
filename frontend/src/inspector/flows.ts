@@ -807,7 +807,10 @@ function stepMenu(
 }
 
 export function addFlowButton(editor: Editor, widget: Widget, type: WidgetType | null): HTMLElement {
-  const event = (type?.events ?? [{ name: "press" }])[0].name;
+  /* an event-less type (a Trend) still takes behavior: a flow can trigger on a
+     timer, so the new flow starts with NO trigger and the finding walks the user
+     to picking one */
+  const event = type?.events?.[0]?.name;
   return el("button", {
     class: "dashed-btn",
     text: "+ Behavior",
@@ -817,7 +820,11 @@ export function addFlowButton(editor: Editor, widget: Widget, type: WidgetType |
           op: "insert",
           parent: widget.id,
           list: "flows",
-          node: { when: [{ kind: "event", name: event }], when_mode: "first", do: [] },
+          node: {
+            when: event ? [{ kind: "event", name: event }] : [],
+            when_mode: "first",
+            do: [],
+          },
         },
       ]),
   });

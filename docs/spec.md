@@ -121,7 +121,9 @@ same kind of row, so custom components need no plugin mechanism.
 ```
 WidgetType {
   name,                          // registry key; never referenced by code
-  slots:  [ {name, shape, default, group, editor?} ],
+  slots:  [ {name, shape, default, group, editor?, step?} ],  // step: the caret
+                                 // increment for num slots (fractions step 0.05,
+                                 // angles 5, not the number input's default 1)
   events: [ {name, x: shape, value?: Expr} ],  // what flows can trigger on; x is the
                                  // seed shape, `value` where x comes FROM (below)
   behavior: [ Flow ],            // the type's DEFAULT flows (below)
@@ -156,6 +158,8 @@ vocabulary learnable:
 | `control_radius` | corner rounding of the control's own shape; the frame's `radius` rounds the panel around it |
 | `value`, `min`, `max`, `step` | the process value and its range |
 | `show_scale`, `scale_values`, `divisions`, `decimals` | the toggleable range ticks; `scale_values` toggles their labels separately (marks alone, or marks with values) |
+| `scale_position` | a radial scale's side: `outside` pulls the arc inward and rings it; `inside` keeps the arc at the rim and sets the scale within |
+| `shown_options` | an option WHITELIST (comma or space separated variant names; empty = all) filtering what a Selector or Dropdown offers, in the listed order |
 | `start_angle`, `sweep_angle` | a radial control's sweep (degrees, 0 = up, clockwise) |
 | `thickness` | an arc's stroke, as a fraction of the radius |
 | `body_color` | a rotary control's circular body |

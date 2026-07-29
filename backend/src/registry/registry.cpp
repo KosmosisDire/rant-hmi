@@ -37,10 +37,12 @@ Json emit(const char* op, std::initializer_list<Json> args) {
 }
 
 Json pick(Json cond, Json a, Json b) { return emit("PICK", {cond, a, b}); }
+Json add(Json a, Json b) { return emit("ADD", {a, b}); }
 Json sub(Json a, Json b) { return emit("SUB", {a, b}); }
 Json mul(Json a, Json b) { return emit("MUL", {a, b}); }
 Json div(Json a, Json b) { return emit("DIV", {a, b}); }
 Json ne(Json a, Json b) { return emit("NE", {a, b}); }
+Json eq(Json a, Json b) { return emit("EQ", {a, b}); }
 Json ge(Json a, Json b) { return emit("GE", {a, b}); }
 Json lt(Json a, Json b) { return emit("LT", {a, b}); }
 Json to_fixed(Json v, Json dp) { return emit("TO_FIXED", {v, dp}); }
@@ -75,6 +77,13 @@ Json slot(const char* name, const char* shape, Json def, const char* group,
     Json s = Json{{"name", name}, {"shape", shape}, {"default", std::move(def)},
                   {"group", group}};
     if (editor) s["editor"] = editor;
+    return s;
+}
+
+/* a FINE slot steps its caret by `step` instead of the number input's default 1:
+ * a 0..1 fraction or a scale factor is unusable at whole steps */
+Json fine(Json s, double step) {
+    s["step"] = step;
     return s;
 }
 
@@ -174,7 +183,7 @@ Json frame_slots() {
         slot("radius", "num", -1, "frame"),
         /* a multiplier on the self-fitting text size, so autoscaling is preserved;
          * consumed by the template's text parts (hidden where the type has none) */
-        slot("text_scale", "num", 1, "appearance"),
+        fine(slot("text_scale", "num", 1, "appearance"), 0.05),
         slot("panel_pad", "num", -1, "frame"),
         slot("pad", "num", -1, "frame"),
         slot("aspect", "text", "", "frame"),
@@ -473,6 +482,7 @@ Json dropdown_type() {
                     /* a TypeRef naming an enum (spec 6.2): the view expands it to the
                      * variant names, so the options can never drift from the schema */
                     slot("options", "text", "", "value", "enum-type"),
+                    slot("shown_options", "text", "", "config"),
                     slot("value", "text", "", "value"),
                     /* the field itself is the frame */
                     slot("surface", "color", "#141414", "frame", "color"),
@@ -521,29 +531,40 @@ Json knob_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
     Json angles = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
     Json show_scale = ref("slot:show_scale");
-    /* with the scale on, the ARC pulls inward so the marks and their labels sit
-       OUTSIDE it, at the rim */
+    Json t = ref("slot:thickness");
+    /* scale_position picks the layout: OUTSIDE pulls the arc inward so marks and
+       values ring it at the rim; INSIDE keeps the arc at the rim and sets the scale
+       between the arc and the face */
+    Json outside = eq(ref("slot:scale_position"), lit("outside"));
     Json arc = Json{{"track", ref("slot:track_color")},
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
-                    {"width", ref("slot:thickness")},
-                    {"pad", pick(show_scale, lit(0.15), lit(0))}};
-    /* the outside scale reads control-outward: marks hug the arc, values sit beyond
-       the marks */
+                    {"width", t},
+                    {"pad", pick(show_scale, pick(outside, lit(0.15), lit(0)), lit(0))}};
+    /* a scale reads control-outward either way: marks hug the arc, values beyond */
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
-                      {"labels_out", lit(true)},
+                      {"labels_out", outside},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
-                      {"outer", lit(0.8)},
+                      {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.07)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
                       {"show", show_scale}};
+    /* the FACE derives from the thickness and where the scale sits, so a fat arc or
+       an inside scale can never overlap it: face radius = whatever is innermost,
+       less a gap, spelled as the pad that produces it */
+    Json face_pad = pick(show_scale,
+                         pick(outside, add(lit(0.185), mul(t, lit(0.35))),
+                              add(lit(0.17), mul(t, lit(0.5)))),
+                         add(lit(0.05), mul(t, lit(0.5))));
+    /* ...and the dot rides at a fixed fraction of that face, however big it is */
+    Json mark_at = mul(lit(0.68), sub(lit(1), mul(face_pad, lit(2))));
     Json mark = Json{{"value", fraction},
                      {"fill", ref("slot:handle_color")},
-                     {"at", pick(show_scale, lit(0.3), lit(0.52))},
+                     {"at", mark_at},
                      {"size", pick(show_scale, lit(0.07), lit(0.09))}};
     for (auto& item : angles.items()) {
         arc[item.key()] = item.value();
@@ -558,8 +579,8 @@ Json knob_type() {
                     slot("step", "num", 0, "config"),
                     slot("divisions", "num", 5, "config"),
                     slot("decimals", "num", 0, "config"),
-                    slot("start_angle", "num", -135, "config"),
-                    slot("sweep_angle", "num", 270, "config"),
+                    fine(slot("start_angle", "num", -135, "config"), 5),
+                    fine(slot("sweep_angle", "num", 270, "config"), 5),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
@@ -567,9 +588,11 @@ Json knob_type() {
                     slot("body_color", "color", "#262626", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
-                    slot("thickness", "num", 0.14, "appearance"),
+                    fine(slot("thickness", "num", 0.14, "appearance"), 0.05),
                     slot("show_scale", "bool", false, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
+                    slot_enum("scale_position", {"inside", "outside"}, "outside",
+                              "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
@@ -583,8 +606,7 @@ Json knob_type() {
                                 part("rect", Json{{"fill", ref("slot:body_color")},
                                                   {"radius", lit(999)},
                                                   {"aspect", lit(1.0)},
-                                                  {"pad", pick(show_scale, lit(0.26),
-                                                               lit(0.12))}}),
+                                                  {"pad", face_pad}}),
                                 part("mark", mark),
                                 part("text", Json{{"text", ref("slot:text")},
                                                   {"fill", ref("slot:text_color")},
@@ -606,25 +628,33 @@ Json knob_type() {
 Json radial_slider_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
     Json angles = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
+    Json show_scale = ref("slot:show_scale");
+    Json t = ref("slot:thickness");
+    Json outside = eq(ref("slot:scale_position"), lit("outside"));
+    /* an OUTSIDE scale pulls the arc inward and rings it; an INSIDE one keeps the
+       arc at the rim and sets the scale within */
+    Json arc_scale = pick(show_scale, pick(outside, lit(0.7), lit(1)), lit(1));
     Json arc = Json{{"track", ref("slot:track_color")},
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
-                    {"width", ref("slot:thickness")}};
-    /* the handle rides ON the arc's centreline, sized a little past its stroke */
+                    {"width", t},
+                    {"pad", pick(show_scale, pick(outside, lit(0.15), lit(0)), lit(0))}};
+    /* the handle rides ON the arc's centreline, wherever the arc sits */
     Json mark = Json{{"value", fraction},
                      {"fill", ref("slot:handle_color")},
-                     {"at", sub(lit(1), mul(ref("slot:thickness"), lit(0.5)))},
-                     {"size", mul(ref("slot:thickness"), lit(0.72))}};
+                     {"at", mul(arc_scale, sub(lit(1), mul(t, lit(0.5))))},
+                     {"size", mul(t, lit(0.72))}};
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
+                      {"labels_out", outside},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
-                      {"outer", sub(lit(1), ref("slot:thickness"))},
+                      {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.06)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
-                      {"show", ref("slot:show_scale")}};
+                      {"show", show_scale}};
     for (auto& item : angles.items()) {
         arc[item.key()] = item.value();
         mark[item.key()] = item.value();
@@ -638,17 +668,19 @@ Json radial_slider_type() {
                     slot("step", "num", 0, "config"),
                     slot("divisions", "num", 5, "config"),
                     slot("decimals", "num", 0, "config"),
-                    slot("start_angle", "num", -135, "config"),
-                    slot("sweep_angle", "num", 270, "config"),
+                    fine(slot("start_angle", "num", -135, "config"), 5),
+                    fine(slot("sweep_angle", "num", 270, "config"), 5),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
-                    slot("thickness", "num", 0.18, "appearance"),
+                    fine(slot("thickness", "num", 0.18, "appearance"), 0.05),
                     slot("show_scale", "bool", false, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
+                    slot_enum("scale_position", {"inside", "outside"}, "inside",
+                              "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", Json::object(),
@@ -677,12 +709,16 @@ Json radial_slider_type() {
 Json gauge_type() {
     Json fraction = norm(ref("slot:value"), ref("slot:min"), ref("slot:max"));
     Json angles = Json{{"start", ref("slot:start_angle")}, {"sweep", ref("slot:sweep_angle")}};
+    Json show_scale = ref("slot:show_scale");
+    Json outside = eq(ref("slot:scale_position"), lit("outside"));
     Json arc = Json{{"track", ref("slot:track_color")},
                     {"fill", ref("slot:fill_color")},
                     {"value", fraction},
-                    {"width", ref("slot:thickness")}};
+                    {"width", ref("slot:thickness")},
+                    {"pad", pick(show_scale, pick(outside, lit(0.15), lit(0)), lit(0))}};
     Json ticks = Json{{"count", ref("slot:divisions")},
                       {"labels", ref("slot:scale_values")},
+                      {"labels_out", outside},
                       {"min", ref("slot:min")},
                       {"max", ref("slot:max")},
                       {"decimals", ref("slot:decimals")},
@@ -690,7 +726,7 @@ Json gauge_type() {
                       {"len", lit(0.07)},
                       {"fill", lit("#5a5a5a")},
                       {"text_fill", lit("#8a8a8a")},
-                      {"show", ref("slot:show_scale")}};
+                      {"show", show_scale}};
     Json needle = Json{{"value", fraction},
                        {"fill", ref("slot:handle_color")},
                        {"inner", lit(0.0)},
@@ -709,16 +745,18 @@ Json gauge_type() {
                     slot("max", "num", 100, "config"),
                     slot("divisions", "num", 5, "config"),
                     slot("decimals", "num", 0, "config"),
-                    slot("start_angle", "num", -135, "config"),
-                    slot("sweep_angle", "num", 270, "config"),
+                    fine(slot("start_angle", "num", -135, "config"), 5),
+                    fine(slot("sweep_angle", "num", 270, "config"), 5),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
-                    slot("thickness", "num", 0.1, "appearance"),
+                    fine(slot("thickness", "num", 0.1, "appearance"), 0.05),
                     slot("show_scale", "bool", true, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
+                    slot_enum("scale_position", {"inside", "outside"}, "inside",
+                              "appearance"),
                 }),
                 /* a press on a Gauge is about the value it is showing, like a Readout */
                 Json::array({event("tap", "num", "widget.value"),
@@ -781,9 +819,10 @@ Json selector_type() {
                 compose_slots(tile_base(), {
                     /* options is a TypeRef naming an enum, exactly as on Dropdown */
                     slot("options", "text", "", "value", "enum-type"),
+                    slot("shown_options", "text", "", "config"),
                     slot("value", "text", "", "value"),
-                    slot("start_angle", "num", -135, "config"),
-                    slot("sweep_angle", "num", 270, "config"),
+                    fine(slot("start_angle", "num", -135, "config"), 5),
+                    fine(slot("sweep_angle", "num", 270, "config"), 5),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("body_color", "color", "#262626", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),

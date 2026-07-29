@@ -140,6 +140,7 @@ export interface SlotSpec {
   group: "value" | "appearance" | "config" | "frame";
   editor?: string;
   variants?: string[]; /* enum slots carry their own picker */
+  step?: number;       /* num slots: the caret step (fractions step fine, not by 1) */
 }
 
 export interface EventSpec {

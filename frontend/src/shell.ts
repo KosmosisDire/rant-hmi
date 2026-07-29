@@ -18,7 +18,7 @@ import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
-import { cellsFor, fedSlots, optionNames, resolveSlot, typeOf } from "./slots.js";
+import { cellsFor, fedSlots, resolveSlot, typeOf, widgetOptions } from "./slots.js";
 import { Rect } from "./template.js";
 import { Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
@@ -731,7 +731,8 @@ export class App implements Editor {
     }
 
     if (interact.params.options) {
-      const options = optionNames(this.mesh, run(interact.params.options, cells));
+      const options = widgetOptions(widget, type, this.live, fedSlots(widget), this.mesh,
+                                    run(interact.params.options, cells));
       if (options.length < 2) return;
       const name = options[Math.round(fraction * (options.length - 1))];
       if (this.control && this.control.value !== name) {
@@ -798,7 +799,8 @@ export class App implements Editor {
       /* a REAL menu: the options slot holds a TypeRef naming an enum (spec 6.2), and
          the variant names come off the served type table, so the list can never drift
          from the schema. Selection is an input event like any other. */
-      const options = optionNames(this.mesh, run(interact.params.options, this.controlCells(widget, type)));
+      const options = widgetOptions(widget, type, this.live, fedSlots(widget), this.mesh,
+                                    run(interact.params.options, this.controlCells(widget, type)));
       if (options.length) {
         const current = String(
           resolveSlot(widget, type, this.live, fedSlots(widget), "value") ?? "");

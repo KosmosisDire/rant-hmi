@@ -48,6 +48,29 @@ export function optionNames(mesh: Mesh | null, raw: Json): string[] {
   return [];
 }
 
+/* The option list a widget OFFERS: the options slot resolved, then filtered by its
+ * `shown_options` slot where the type declares one (comma or space separated variant
+ * names; empty = all). The filter is a WHITELIST in the listed order, so it can also
+ * reorder; names outside the enum are dropped. Every consumer (the pick tray, the
+ * drag detents, the pointer angle, the tick marks and their labels) resolves through
+ * here, so the offered list can never disagree with the drawn one. */
+export function widgetOptions(
+  widget: Widget,
+  type: WidgetType | null,
+  live: Live | null,
+  fed: Set<string>,
+  mesh: Mesh | null,
+  raw: Json,
+): string[] {
+  const names = optionNames(mesh, raw);
+  if (!type?.slots.some((s) => s.name === "shown_options")) return names;
+  const filter = String(resolveSlot(widget, type, live, fed, "shown_options") ?? "")
+    .split(/[\s,]+/)
+    .filter(Boolean);
+  if (!filter.length) return names;
+  return filter.filter((name) => names.indexOf(name) >= 0);
+}
+
 export function typeOf(registry: Registry | null, name: string): WidgetType | null {
   if (!registry) return null;
   return registry.types.find((t) => t.name === name) ?? null;
@@ -152,26 +175,30 @@ export function cellsFor(
         /* "hist:<slot>": the slot's accumulated history view (a Trend's plot data) */
         return (hists?.[widget.id + "." + name] as unknown as Json) ?? null;
       case "optcount": {
-        /* "optcount:<options slot>": how many options resolve (a Selector's detent
-           marks); null when the list is unresolvable or trivially small */
-        const count = optionNames(mesh, resolveSlot(widget, type, live, fed, name)).length;
+        /* "optcount:<options slot>": how many OFFERED options resolve (a Selector's
+           detent marks); null when the list is unresolvable or trivially small */
+        const count = widgetOptions(widget, type, live, fed, mesh,
+                                    resolveSlot(widget, type, live, fed, name)).length;
         return count >= 2 ? count : null;
       }
       case "optnames": {
-        /* "optnames:<options slot>": the resolved option names themselves (a
+        /* "optnames:<options slot>": the OFFERED option names themselves (a
            Selector's per-tick labels); null when unresolvable */
-        const names = optionNames(mesh, resolveSlot(widget, type, live, fed, name));
+        const names = widgetOptions(widget, type, live, fed, mesh,
+                                    resolveSlot(widget, type, live, fed, name));
         return names.length >= 2 ? names : null;
       }
       case "optfrac": {
         /* "optfrac:<value slot>@<options slot>": where the value slot's NAME sits in
-           the options slot's list, as a 0..1 fraction (a Selector's pointer angle).
-           Unknown value, unknown options or a name outside the list resolve to null,
-           and the pointer part draws nothing: never an invented position. */
+           the OFFERED options (resolved, shown_options-filtered), as a 0..1 fraction
+           (a Selector's pointer angle). Unknown value, unknown options or a name
+           outside the offered list resolve to null, and the pointer part draws
+           nothing: never an invented position. */
         const at = name.indexOf("@");
         if (at < 0) return null;
         const value = resolveSlot(widget, type, live, fed, name.slice(0, at));
-        const options = optionNames(mesh, resolveSlot(widget, type, live, fed, name.slice(at + 1)));
+        const options = widgetOptions(widget, type, live, fed, mesh,
+                                      resolveSlot(widget, type, live, fed, name.slice(at + 1)));
         if (typeof value !== "string" || options.length < 2) return null;
         const index = options.indexOf(value);
         return index < 0 ? null : index / (options.length - 1);
