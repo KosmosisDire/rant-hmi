@@ -87,6 +87,15 @@ Json fine(Json s, double step) {
     return s;
 }
 
+/* a BOUNDED slot: min/max stamped on the spec. The inspector edits it as a slider
+ * beside the number field (the Unity treatment) and clamps typed values into the
+ * range; the compiler does not enforce it (a feed may still deliver anything). */
+Json range(Json s, double lo, double hi) {
+    s["min"] = lo;
+    s["max"] = hi;
+    return s;
+}
+
 /* an enum slot carries its variants, so the inspector generates the picker from data */
 Json slot_enum(const char* name, std::vector<std::string> variants, const char* def,
                const char* group, const char* editor = nullptr) {
@@ -462,8 +471,8 @@ Json trend_type() {
                        weighs a constant-velocity model against the measurements (noise
                        rejection with little lag), `smoothing` is a plain exponential
                        moving average on top. 0 = off; the ring keeps the raw truth */
-                    fine(slot("kalman", "num", 0, "config"), 0.05),
-                    fine(slot("smoothing", "num", 0, "config"), 0.05),
+                    range(fine(slot("kalman", "num", 0, "config"), 0.05), 0, 1),
+                    range(fine(slot("smoothing", "num", 0, "config"), 0.05), 0, 1),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("text_color", "color", "#8a8a8a", "appearance", "color"),
@@ -618,8 +627,8 @@ Json knob_type() {
                     slot("step", "num", 0, "config"),
                     slot("divisions", "num", 5, "config"),
                     slot("decimals", "num", 0, "config"),
-                    fine(slot("start_angle", "num", -135, "config"), 5),
-                    fine(slot("sweep_angle", "num", 270, "config"), 5),
+                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
@@ -628,7 +637,7 @@ Json knob_type() {
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
-                    fine(slot("thickness", "num", 0.14, "appearance"), 0.05),
+                    range(fine(slot("thickness", "num", 0.14, "appearance"), 0.05), 0.02, 0.6),
                     slot("show_scale", "bool", false, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
                     slot_enum("scale_position", {"inside", "outside"}, "outside",
@@ -717,15 +726,15 @@ Json radial_slider_type() {
                     slot("step", "num", 0, "config"),
                     slot("divisions", "num", 5, "config"),
                     slot("decimals", "num", 0, "config"),
-                    fine(slot("start_angle", "num", -135, "config"), 5),
-                    fine(slot("sweep_angle", "num", 270, "config"), 5),
+                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
-                    fine(slot("thickness", "num", 0.18, "appearance"), 0.05),
+                    range(fine(slot("thickness", "num", 0.18, "appearance"), 0.05), 0.02, 0.6),
                     slot("show_scale", "bool", false, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
                     slot_enum("scale_position", {"inside", "outside"}, "inside",
@@ -800,15 +809,15 @@ Json gauge_type() {
                     slot("max", "num", 100, "config"),
                     slot("divisions", "num", 5, "config"),
                     slot("decimals", "num", 0, "config"),
-                    fine(slot("start_angle", "num", -135, "config"), 5),
-                    fine(slot("sweep_angle", "num", 270, "config"), 5),
+                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
                     slot("track_color", "color", "#242424", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
                     slot("text_color", "color", "#ececec", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
-                    fine(slot("thickness", "num", 0.1, "appearance"), 0.05),
+                    range(fine(slot("thickness", "num", 0.1, "appearance"), 0.05), 0.02, 0.6),
                     slot("show_scale", "bool", true, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
                     slot_enum("scale_position", {"inside", "outside"}, "inside",
@@ -891,8 +900,8 @@ Json selector_type() {
                     slot("options", "text", "", "value", "enum-type"),
                     slot("shown_options", "text", "", "config"),
                     slot("value", "text", "", "value"),
-                    fine(slot("start_angle", "num", -135, "config"), 5),
-                    fine(slot("sweep_angle", "num", 270, "config"), 5),
+                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                     slot("body_color", "color", "#262626", "appearance", "color"),
                     slot("handle_color", "color", "#ececec", "appearance", "color"),

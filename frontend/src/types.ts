@@ -141,6 +141,8 @@ export interface SlotSpec {
   editor?: string;
   variants?: string[]; /* enum slots carry their own picker */
   step?: number;       /* num slots: the caret step (fractions step fine, not by 1) */
+  min?: number;        /* num slots: a BOUNDED slot edits as a slider beside the */
+  max?: number;        /* field (the Unity treatment) and clamps typed values */
 }
 
 export interface EventSpec {

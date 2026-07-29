@@ -121,14 +121,17 @@ same kind of row, so custom components need no plugin mechanism.
 ```
 WidgetType {
   name,                          // registry key; never referenced by code
-  slots:  [ {name, shape, default, group, editor?, step?} ],  // step: the caret and
-                                 // SCRUB increment for num slots (fractions step
-                                 // 0.05, angles 5, not the number input's default
-                                 // 1). Every number field scrubs: dragging an
-                                 // unfocused field slides its value one step per
-                                 // pixel, Shift scrubs at a tenth-step for
-                                 // precision, and a plain click still focuses it
-                                 // for typing.
+  slots:  [ {name, shape, default, group, editor?, step?, min?, max?} ],
+                                 // step: the caret and SCRUB increment for num
+                                 // slots (fractions step 0.05, angles 5, not the
+                                 // number input's default 1). Every number field
+                                 // scrubs: dragging an unfocused field slides its
+                                 // value one step per pixel, Shift scrubs at a
+                                 // tenth-step for precision, and a plain click
+                                 // still focuses it for typing. min/max make a
+                                 // BOUNDED slot: the inspector edits it as a
+                                 // slider beside the field (the Unity treatment)
+                                 // and clamps typed values into the range.
   events: [ {name, x: shape, value?: Expr} ],  // what flows can trigger on; x is the
                                  // seed shape, `value` where x comes FROM (below)
   behavior: [ Flow ],            // the type's DEFAULT flows (below)

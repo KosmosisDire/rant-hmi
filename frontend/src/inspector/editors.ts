@@ -67,16 +67,39 @@ export function valueEditor(
       return pair;
     }
     case "num": {
-      const field = numberInput(typeof value === "number" ? value : 0, commit, {
-        class: "field grow",
+      const lo = typeof spec?.min === "number" ? spec.min : null;
+      const hi = typeof spec?.max === "number" ? spec.max : null;
+      const bounded = lo !== null && hi !== null && hi > lo;
+      /* a bounded slot clamps whatever is typed: the range is the contract */
+      const put = bounded
+        ? (n: number) => commit(Math.max(lo, Math.min(hi, n)))
+        : commit;
+      const field = numberInput(typeof value === "number" ? value : 0, put, {
+        class: bounded ? "field num" : "field grow",
         ...(spec?.step ? { step: String(spec.step) } : {}),
         ...placeholder,
       });
-      bindField(key, field, () => {
+      const reader = () => {
         const next = read();
         return typeof next === "number" ? String(next) : unknown ? "" : "0";
-      });
-      return field;
+      };
+      bindField(key, field, reader);
+      if (!bounded) return field;
+      /* the Unity treatment: a slider carries the range, the field stays for typing */
+      const slider = el("input", {
+        class: "range",
+        type: "range",
+        min: String(lo),
+        max: String(hi),
+        step: String(spec?.step ?? (hi - lo) / 100),
+        value: String(typeof value === "number" ? value : lo),
+        oninput: (ev: Event) => {
+          const n = Number((ev.target as HTMLInputElement).value);
+          if (Number.isFinite(n)) put(n);
+        },
+      }) as HTMLInputElement;
+      bindField(key + ".range", slider, reader);
+      return el("span", { class: "range-pair" }, [slider, field]);
     }
     case "color":
       return colorField(text(value), commit, key, () => text(read()));
