@@ -112,6 +112,12 @@ void test_template_expr() {
              "LOAD(slot:value) CONST(0.0) GT LOAD(slot:min) CONST(1.0) ADD "
              "LOAD(slot:max) CONST(2.0) MUL PICK");
     CHECK(refuses("value > 0 ? 1", scope, "expected ':'"));
+
+    /* Lambdas are SCALAR-tier only (spec 6.4): the view interpreter has no sub-programs
+       and no list values, and a template attr has nothing to iterate over. The arrow
+       lexes everywhere, so this must be refused by the parser, not by the lexer. */
+    CHECK(refuses("options.map(v => v)", scope, "no encoding in the view"));
+    CHECK(refuses("value => value", scope, "unexpected"));
     CHECK_EQ(lower("pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) POW");
     CHECK_EQ(lower("floor(value)", scope), "LOAD(slot:value) FLOOR");
 

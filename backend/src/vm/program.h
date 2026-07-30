@@ -111,6 +111,16 @@ struct CellDef {
     uint64_t owner_flow = 0;
 };
 
+/* A lambda body (spec 6.4), compiled once and invoked per element by Iterate. It is a
+ * plain instruction run like any other -- the only thing that makes it a "sub" program
+ * is that it executes on a stack frame ABOVE its caller's and reads its parameter where
+ * a flow reads `x`. `max_stack` is its own frame's depth, which the layout pass adds on
+ * top of the enclosing run's so the two never overlap. */
+struct SubProgram {
+    std::vector<Instruction> code;
+    uint32_t max_stack = 0;
+};
+
 /* One struct slot in the run: which type it holds, so RuntimeState can size its fields.
  * `temp` marks a flow temporary's slot: only those are snapshot and restored around a
  * suspension (a declared variable is stable storage, and restoring it would roll back
@@ -208,6 +218,9 @@ struct ProgramLayout {
      * the schemas' bounds plus each list-producing expression site's worst case */
     uint32_t elem_values = 0;
     uint32_t elem_texts = 0;
+    /* the deepest lambda body's frame, already included in stack_values above: a body
+     * executes on top of its caller, so the stack is sized for both (spec 6.4) */
+    uint32_t sub_stack = 0;
 };
 
 struct Program {
@@ -222,6 +235,8 @@ struct Program {
     std::vector<CellDef> cells;
     std::vector<EntityDef> entities;
     std::vector<StructDef> structs;
+    /* lambda bodies, indexed by Iterate's `a` operand */
+    std::vector<SubProgram> subs;
     std::vector<FlowProgram> flows;
     std::vector<FeedProgram> feeds;
     std::vector<HistoryDef> histories;
@@ -258,6 +273,24 @@ struct ProgramEmit final : EmitSink {
     void reserve_elems(uint32_t values, uint32_t texts) override {
         program.layout.elem_values += values;
         program.layout.elem_texts += texts;
+    }
+
+    /* A body runs on a frame ABOVE its caller's, so the one stack must hold the deepest
+     * run PLUS the deepest body. The high-water mark lives on the layout, not on this
+     * adapter: a fresh ProgramEmit is constructed per expression compiled, so an adapter
+     * member would reset between lambdas and each one would re-add its own depth.
+     * Bodies never nest (spec 6.4 forbids a lambda inside a lambda), so two frames is
+     * the whole depth this has to cover. */
+    uint32_t add_sub(std::vector<Instruction> code, uint32_t max_stack) override {
+        SubProgram sub;
+        sub.code = std::move(code);
+        sub.max_stack = max_stack;
+        program.subs.push_back(std::move(sub));
+        if (max_stack > program.layout.sub_stack) {
+            program.layout.stack_values += max_stack - program.layout.sub_stack;
+            program.layout.sub_stack = max_stack;
+        }
+        return static_cast<uint32_t>(program.subs.size() - 1);
     }
 
     Program& program;

@@ -104,6 +104,25 @@ bool equal_values(const ExecContext& ctx, const Value& a, const Value& b) noexce
     return same_value(ctx, a, b);
 }
 
+/* sortBy's ordering over the keys the lambda produced: numbers ascending, text
+ * lexicographic by CONTENT (refs differ across slots). A Nil key sorts last rather than
+ * comparing false against everything, so an UNKNOWN never quietly leads the list. */
+bool sorts_before(const ExecContext& ctx, const Value& a, const Value& b) noexcept {
+    if (a.tag == ValueTag::Nil) return false;
+    if (b.tag == ValueTag::Nil) return true;
+    if (a.tag == ValueTag::Text && b.tag == ValueTag::Text)
+        return text_of(ctx, a) < text_of(ctx, b);
+    const double an = a.tag == ValueTag::Num       ? a.data.num
+                      : a.tag == ValueTag::Enum    ? static_cast<double>(a.data.integer)
+                      : a.tag == ValueTag::Bool    ? (a.data.boolean ? 1.0 : 0.0)
+                                                   : 0.0;
+    const double bn = b.tag == ValueTag::Num       ? b.data.num
+                      : b.tag == ValueTag::Enum    ? static_cast<double>(b.data.integer)
+                      : b.tag == ValueTag::Bool    ? (b.data.boolean ? 1.0 : 0.0)
+                                                   : 0.0;
+    return an < bn;
+}
+
 /* copy `count` values taken every `stride` entries from src into a fresh pool range */
 Value copied_list(const ExecContext& ctx, const Value* src, uint32_t count,
                   uint32_t stride, uint32_t first, ValueTag elem) noexcept {
@@ -925,21 +944,28 @@ bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_
 
 } // namespace
 
+/* `stack_base` is where this run's frame starts in the ONE shared stack. It is 0 for a
+ * flow, a feed or an event value, and the caller's current top for a lambda body invoked
+ * by Iterate (spec 6.4) -- without it a body would write over the operands of the very
+ * expression that invoked it, silently, since the stack is shared state rather than a
+ * local. The layout sizes the stack for a run plus the deepest body, and bodies never
+ * nest, so two frames is the whole depth. */
 static RunResult run_code(const Program& program, const std::vector<Instruction>& code,
                           const FlowProgram* flow, RuntimeState& state, Value event_value,
-                          uint32_t start_pc = 0, Value* out_x = nullptr) noexcept {
+                          uint32_t start_pc = 0, Value* out_x = nullptr,
+                          uint32_t stack_base = 0) noexcept {
     RunResult result;
     const ExecContext ctx{program, state};
     Value x = event_value;
     uint32_t sp = 0;
     uint32_t pc = start_pc;
     auto push = [&](Value value) {
-        if (sp >= state.stack.size()) return false;
-        state.stack[sp++] = value;
+        if (stack_base + sp >= state.stack.size()) return false;
+        state.stack[stack_base + sp++] = value;
         return true;
     };
     auto pop = [&]() {
-        return sp ? state.stack[--sp] : Value::nil();
+        return sp ? state.stack[stack_base + --sp] : Value::nil();
     };
     auto fail = [&](uint32_t site) {
         state.fault(site);
@@ -1037,7 +1063,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 /* with no arguments the slice would start one past the end when the
                    stack is exactly full: never form that address */
                 const Value value = call(ctx, static_cast<Builtin>(ins.small), ins.a,
-                                         argc ? &state.stack[sp - argc] : nullptr, argc);
+                                         argc ? &state.stack[stack_base + sp - argc] : nullptr, argc);
                 sp -= argc;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -1048,12 +1074,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
-                const uint32_t receiver_at = sp - argc - 1;
+                const uint32_t receiver_at = stack_base + sp - argc - 1;
                 const Value value =
                     method(ctx, static_cast<MethodId>(ins.small), ins.a,
                            state.stack[receiver_at],
                            argc ? &state.stack[receiver_at + 1] : nullptr, argc);
-                sp = receiver_at;
+                sp = sp - argc - 1;
                 if (!push(value)) fail(ins.c);
                 break;
             }
@@ -1378,7 +1404,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 ValueTag elem = ValueTag::Nil;
                 bool uniform = true;
                 for (uint32_t k = 0; k < count; ++k) {
-                    const Value v = state.stack[sp - count + k];
+                    const Value v = state.stack[stack_base + sp - count + k];
                     state.elems[offset + k] = v;
                     if (k == 0) elem = v.tag;
                     else if (v.tag != elem) uniform = false;
@@ -1386,6 +1412,148 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 sp -= count;
                 if (!push(Value::list(offset, count, uniform && count ? elem : ValueTag::Nil)))
                     fail(ins.c);
+                break;
+            }
+            /* Bounded iteration (spec 6.4): run the lambda body once per element on a
+             * frame ABOVE this one, and fold the results per the mode. `ins.b` is the
+             * trip bound the compiler took from the schema, so the worst-case step count
+             * of the whole run is still a compile-time constant; a list longer than the
+             * bound is truncated and faulted rather than iterated, which is the one
+             * hazard 6.4 names for an uncapped varr. */
+            case OpCode::Iterate: {
+                if (sp == 0 || ins.a >= program.subs.size()) {
+                    fail(ins.c);
+                    break;
+                }
+                const Value source = pop();
+                const IterateMode mode = static_cast<IterateMode>(ins.small);
+                const bool folds_to_bool =
+                    mode == IterateMode::Any || mode == IterateMode::All;
+                if (source.tag != ValueTag::List) {
+                    /* Nil in, Nil out: UNKNOWN poisons rather than iterating nothing and
+                       reporting a confident empty answer */
+                    if (!push(folds_to_bool ? Value::nil() : Value::nil())) fail(ins.c);
+                    break;
+                }
+                const AggView view = agg_view(ctx, source);
+                bool truncated = false;
+                uint32_t count = view.count;
+                if (count > ins.b) {
+                    count = ins.b;
+                    truncated = true;
+                }
+                const std::vector<Instruction>& body = program.subs[ins.a].code;
+                /* the body's frame starts at this run's current top, so it cannot reach
+                   the operands of the expression that invoked it */
+                const uint32_t frame = stack_base + sp;
+
+                /* Map / Filter / SortBy build a list; sortBy also needs a key per
+                   element, taken as a second block so the two sort together. */
+                uint32_t out_at = UINT32_MAX;
+                uint32_t keys_at = UINT32_MAX;
+                if (!folds_to_bool) {
+                    out_at = state.alloc_elems(count);
+                    if (out_at == UINT32_MAX) {
+                        fail(ins.c);
+                        break;
+                    }
+                    if (mode == IterateMode::SortBy) {
+                        keys_at = state.alloc_elems(count);
+                        if (keys_at == UINT32_MAX) {
+                            fail(ins.c);
+                            break;
+                        }
+                    }
+                }
+
+                uint32_t kept = 0;
+                bool any_true = false;
+                bool all_true = true;
+                bool body_faulted = false;
+                ValueTag elem_tag = ValueTag::Nil;
+                bool uniform = true;
+                for (uint32_t i = 0; i < count && !body_faulted; ++i) {
+                    const Value element = view.data[i];
+                    const RunResult sub =
+                        run_code(program, body, nullptr, state, element, 0, nullptr, frame);
+                    result.steps += sub.steps;
+                    if (sub.faulted) {
+                        body_faulted = true;
+                        break;
+                    }
+                    /* a body is ONE expression, so it leaves exactly one value at the
+                       bottom of its own frame */
+                    const Value value =
+                        frame < state.stack.size() ? state.stack[frame] : Value::nil();
+                    switch (mode) {
+                        case IterateMode::Map: {
+                            /* A text-producing body writes into the ONE slot its site was
+                               assigned at compile, so storing the value as-is would make
+                               every element alias the last iteration's text. Re-home it
+                               into its own element text slot, exactly as split does. */
+                            Value stored = value;
+                            if (value.tag == ValueTag::Text) {
+                                const uint32_t slot = state.alloc_elem_text();
+                                if (slot == UINT32_MAX) {
+                                    body_faulted = true;
+                                    break;
+                                }
+                                state.texts[slot].set(text_of(ctx, value));
+                                stored = Value::text(slot);
+                            }
+                            if (kept == 0) elem_tag = stored.tag;
+                            else if (stored.tag != elem_tag) uniform = false;
+                            state.elems[out_at + kept++] = stored;
+                            break;
+                        }
+                        case IterateMode::Filter:
+                            if (value_truth(value)) {
+                                if (kept == 0) elem_tag = element.tag;
+                                else if (element.tag != elem_tag) uniform = false;
+                                state.elems[out_at + kept++] = element;
+                            }
+                            break;
+                        case IterateMode::SortBy:
+                            if (kept == 0) elem_tag = element.tag;
+                            else if (element.tag != elem_tag) uniform = false;
+                            state.elems[keys_at + kept] = value;
+                            state.elems[out_at + kept++] = element;
+                            break;
+                        case IterateMode::Any:
+                            if (value_truth(value)) any_true = true;
+                            break;
+                        case IterateMode::All:
+                            if (!value_truth(value)) all_true = false;
+                            break;
+                    }
+                }
+                if (body_faulted) {
+                    fail(ins.c);
+                    break;
+                }
+                if (mode == IterateMode::SortBy) {
+                    /* insertion sort over the two parallel blocks: n is bounded by the
+                       trip bound, and this needs no scratch of its own */
+                    for (uint32_t i = 1; i < kept; ++i) {
+                        const Value key = state.elems[keys_at + i];
+                        const Value val = state.elems[out_at + i];
+                        uint32_t j = i;
+                        while (j > 0 && sorts_before(ctx, key, state.elems[keys_at + j - 1])) {
+                            state.elems[keys_at + j] = state.elems[keys_at + j - 1];
+                            state.elems[out_at + j] = state.elems[out_at + j - 1];
+                            --j;
+                        }
+                        state.elems[keys_at + j] = key;
+                        state.elems[out_at + j] = val;
+                    }
+                }
+                const bool pushed_ok =
+                    folds_to_bool
+                        ? push(Value::boolean(mode == IterateMode::Any ? any_true
+                                                                      : all_true))
+                        : push(Value::list(out_at, kept,
+                                           uniform && kept ? elem_tag : ValueTag::Nil));
+                if (!pushed_ok || truncated) fail(ins.c);
                 break;
             }
             /* the compile-inserted text -> enum coercion: the top of stack must be one
@@ -1396,7 +1564,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
-                Value& top = state.stack[sp - 1];
+                Value& top = state.stack[stack_base + sp - 1];
                 bool matched = false;
                 if (top.tag == ValueTag::Text && ins.b < program.types.size()) {
                     const std::string_view name = state.text(program, top);

@@ -12,6 +12,7 @@
  * called on the tick. */
 #pragma once
 
+#include "lang/ir.h"
 #include "lang/value.h"
 
 #include <cstdint>
@@ -41,6 +42,11 @@ struct EmitSink {
 
     /* a list-producing site reserves its worst case in the run's element pool */
     virtual void reserve_elems(uint32_t values, uint32_t texts) = 0;
+
+    /* intern a compiled lambda body (spec 6.4), returning the index Iterate names in its
+     * `a` operand. `max_stack` is the body's own frame depth: the sink reports it upward
+     * so the layout can size one stack tall enough for a run plus a body on top of it. */
+    virtual uint32_t add_sub(std::vector<Instruction> code, uint32_t max_stack) = 0;
 };
 
 } // namespace hmi

@@ -46,6 +46,9 @@ Token Lexer::next() {
             if (at_ < source_.size() && source_[at_] == '=') {
                 ++at_;
                 token.kind = TokenKind::EqEq;
+            } else if (at_ < source_.size() && source_[at_] == '>') {
+                ++at_;
+                token.kind = TokenKind::Arrow;
             } else {
                 token.kind = TokenKind::Invalid;
             }

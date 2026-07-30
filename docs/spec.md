@@ -2089,9 +2089,11 @@ likely moment of frustration into a lesson.
 
 ### 6.4 Lambdas and bounded iteration
 
-Specified here so the design is settled; BUILT only if the method table proves
-insufficient on real layouts (see PLAN.md, build order 3b). The only genuine
-language addition, and it is deliberately crippled:
+BUILT, on the SCALAR tier only: a feed's transform, a flow guard, a move source. The
+view tier has neither sub-programs nor list values, and a template attribute has
+nothing to iterate over, so `map` there is a compile finding like any other
+vocabulary the view cannot run (2.3). The only genuine language addition, and it is
+deliberately crippled:
 
 - Exactly one parameter, exactly one expression body. No block, no statements, no
   return.
@@ -2103,11 +2105,26 @@ language addition, and it is deliberately crippled:
   `x` inside a comprehension is the kind of cleverness that
   produces unreadable rows.
 
-Compilation: the body becomes a sub-program with its own tiny stack frame, invoked
-by MAP / FILTER / SORT_BY once per element, reading its parameter via LOAD_ARG. The
+Compilation: the body becomes a sub-program with its own stack frame, invoked by ONE
+`Iterate` opcode (the mode — map / filter / any / all / sortBy — rides the
+instruction, since the five differ only in what they do with each body result). The
 trip count is bounded by the schema (an arr's count, a varr's cap), so the
 worst-case instruction count of the whole flow is still a compile-time constant
-(5.4). Results land in the scratch arena and die with the run.
+(5.4); an over-length list is truncated and faulted rather than iterated. Results
+land in the scratch arena and die with the run.
+
+Two things fall out of the parameter riding the same slot a flow's `x` rides, which
+is why there is no LOAD_ARG opcode: reading the parameter is an ordinary LoadX, and
+`x` being out of scope in a body (above) stops the two from ever being confused.
+The body executes on a frame ABOVE its caller's — the stack is one shared array, so
+a body that started at zero would overwrite the operands of the expression that
+invoked it — and the layout sizes that stack for a run plus the deepest body. Two
+frames is the whole depth, which is the no-nesting rule paying for itself.
+
+One consequence worth stating, because it is invisible until a list of text hits it:
+a text-producing body writes into the ONE text slot its site was assigned at compile,
+so `map` re-homes each result into its own element text slot as it collects. Without
+that every element of the mapped list aliases the last iteration's text.
 
 A varr with no declared cap is the one hazard: it needs a configured ceiling (a few
 hundred elements) with an over-length list truncated and faulted, rather than an

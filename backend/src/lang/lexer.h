@@ -43,6 +43,10 @@ enum class TokenKind {
      * always there -- no opcode, no VM case, no view-interpreter case. */
     Question,
     Colon,
+    /* `=>`: the lambda arrow (spec 6.4). One parameter, one expression body, legal only
+     * as a direct argument to an iterating method -- the parser refuses it anywhere
+     * else, so the token being lexable everywhere costs nothing. */
+    Arrow,
 };
 
 struct Token {

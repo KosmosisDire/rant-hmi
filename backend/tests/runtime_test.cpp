@@ -1550,6 +1550,27 @@ void test_lists_and_maps() {
         {"feeds", Json::array({
             feed("value", "config", "values(x).length"),
         })}});
+    /* lambdas (spec 6.4): every mode, end to end through the scheduler. temps is
+       [30, 10, 20]; names is ["b", "c", "a"]. */
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "g"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("value", "temps", "x.map(v => v * 2).sum"),
+            feed("reading.decimals", "temps", "x.filter(v => v > 15).length"),
+            feed("units.text", "names", "x.map(v => v.upper()).join(\",\")"),
+        })}});
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "h"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            feed("value", "temps", "x.any(v => v > 25).pick(1, 0)"),
+            feed("reading.decimals", "temps", "x.all(v => v > 25).pick(1, 0)"),
+            feed("units.text", "names", "x.sortBy(v => v).join(\"\")"),
+        })}});
+    widgets.push_back(Json{{"type", "Readout"}, {"label", "i"}, {"slots", Json::object()},
+        {"feeds", Json::array({
+            /* the body's own value orders the elements, so a negated key reverses */
+            feed("value", "temps", "x.sortBy(v => -v).first"),
+            /* chaining: a lambda result is an ordinary list */
+            feed("reading.decimals", "temps", "x.filter(v => v > 15).map(v => v / 10).sum"),
+        })}});
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
@@ -1562,8 +1583,11 @@ void test_lists_and_maps() {
         if (diag.grade == DiagGrade::Error)
             std::printf("list compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
-    if (!CHECK(compiled.program.feeds.size() == 13)) return;
+    if (!CHECK(compiled.program.feeds.size() == 21)) return;
     CHECK(compiled.program.layout.elem_values > 0);
+    /* one sub-program per lambda, and the stack is sized for a run plus a body */
+    CHECK(compiled.program.subs.size() == 9);
+    CHECK(compiled.program.layout.sub_stack > 0);
 
     Scheduler scheduler(std::move(compiled.program), mesh);
     const Program& program = scheduler.program();
@@ -1601,6 +1625,15 @@ void test_lists_and_maps() {
     CHECK_EQ(cell_text(10), "y");           /* has("mode").pick */
     CHECK_EQ(cell_text(11), "a+b");         /* split.slice.join */
     CHECK_EQ(cell_num(12), 2.0);            /* values(x).length */
+    /* lambdas, spec 6.4 */
+    CHECK_EQ(cell_num(13), 120.0);          /* map(v => v * 2).sum  = (30+10+20)*2 */
+    CHECK_EQ(cell_num(14), 2.0);            /* filter(v => v > 15).length = 30, 20 */
+    CHECK_EQ(cell_text(15), "B,C,A");       /* map over TEXT elements, order preserved */
+    CHECK_EQ(cell_num(16), 1.0);            /* any(v => v > 25)  -> 30 qualifies */
+    CHECK_EQ(cell_num(17), 0.0);            /* all(v => v > 25)  -> 10 does not */
+    CHECK_EQ(cell_text(18), "abc");         /* sortBy ascending, by the element itself */
+    CHECK_EQ(cell_num(19), 30.0);           /* sortBy(v => -v).first -> the largest */
+    CHECK_EQ(cell_num(20), 5.0);            /* filter then map: (30+20)/10 */
 
     /* compile-time element checking: sum over a text list names the problem */
     Program scratch;
@@ -1610,6 +1643,68 @@ void test_lists_and_maps() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
+
+    /* ---- the lambda's deliberate limits (spec 6.4) ---- */
+    {
+        ExpressionScope nums;
+        nums.x_shape = Shape::List;
+        nums.x_elem = Shape::Num;
+        auto refused = [&](const char* text, const char* needle) {
+            code.clear();
+            error.clear();
+            const bool ok = compile_expr(text, ExprTier::Display, nums, scratch, code,
+                                         result, error);
+            return !ok && error.find(needle) != std::string::npos;
+        };
+        /* One level of iteration, ever. Needs a list OF lists to reach the guard at all:
+           over a list of numbers the inner `v.map` dies earlier, at "num has no method
+           map", which proves nothing about nesting. */
+        {
+            ExpressionScope nested;
+            nested.x_shape = Shape::List;
+            nested.x_elem = Shape::List;
+            code.clear();
+            error.clear();
+            CHECK(!compile_expr("x.map(v => v.map(w => w))", ExprTier::Display, nested,
+                                scratch, code, result, error));
+            CHECK_MSG(error.find("another lambda") != std::string::npos, error);
+        }
+        /* x is out of scope inside a body: the parameter is the element */
+        CHECK(refused("x.map(v => x.length)", "not in scope"));
+        CHECK(refused("x.map(x => x)", "cannot name a lambda parameter"));
+        /* the body is ONE expression, and the arrow is not optional */
+        CHECK(refused("x.map(v => v, 2)", "ONE expression"));
+        CHECK(refused("x.map(v)", "expected '=>'"));
+        CHECK(refused("x.map(2 => 2)", "parameter name"));
+        /* the modes that test a condition say so when handed a value */
+        CHECK(refused("x.filter(v => v + 1)", "condition"));
+        CHECK(refused("x.any(v => v + 1)", "condition"));
+        /* A lambda is legal ONLY as an iterating method's argument. Everywhere else the
+           parameter name is just an unbound identifier, so it dies on the name rather
+           than on the arrow -- the message differs by position, the refusal does not. */
+        code.clear();
+        error.clear();
+        CHECK(!compile_expr("x.contains(v => v)", ExprTier::Display, nums, scratch, code,
+                            result, error));
+        code.clear();
+        error.clear();
+        CHECK(!compile_expr("(v => v)", ExprTier::Display, nums, scratch, code, result,
+                            error));
+        /* and the wire tier's one-scalar rule still holds over a lambda result */
+        code.clear();
+        error.clear();
+        CHECK(!compile_expr("x.map(v => v * 2)", ExprTier::Wire, nums, scratch, code,
+                            result, error));
+        CHECK_MSG(error.find("one scalar") != std::string::npos, error);
+        /* but reducing one is fine, on either tier */
+        code.clear();
+        error.clear();
+        CHECK_MSG(compile_expr("x.filter(v => v > 1).sum", ExprTier::Wire, nums, scratch,
+                               code, result, error), error);
+        CHECK(result.shape == Shape::Num);
+        code.clear();
+        error.clear();
+    }
     CHECK(!compile_expr("x.sum", ExprTier::Display, scope, scratch, code, result, error));
     CHECK_MSG(error.find("numbers") != std::string::npos, error);
     /* and a LIST can never be the wire's final value */

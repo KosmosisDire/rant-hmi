@@ -89,6 +89,25 @@ enum class OpCode : uint8_t {
      * multi-series value. A Nil element stays Nil (a gap in that one series), it
      * does not poison the whole list. */
     MakeList,
+    /* The ONE iterating opcode (spec 6.4): pop a list, run sub-program `a` once per
+     * element with that element bound as the body's parameter, and push the result the
+     * mode in `small` asks for. `b` is the TRIP BOUND taken from the schema at compile,
+     * so the worst-case step count of the whole program stays computable and this is
+     * still not a loop in any sense the determinism checklist (5.10) forbids.
+     *
+     * One opcode rather than five because the modes differ only in what they do with
+     * each body result, and a single VM case keeps the sub-program plumbing -- the
+     * stack frame, the trip bound, the element window -- written once. */
+    Iterate,
+};
+
+/* what Iterate does with each element's body result (rides Instruction::small) */
+enum class IterateMode : uint16_t {
+    Map,      /* the body result becomes the element        -> list */
+    Filter,   /* keep the element where the body is true    -> list */
+    Any,      /* true if the body is true for any element   -> bool */
+    All,      /* true if the body is true for every element -> bool */
+    SortBy,   /* order the elements by the body's value     -> list */
 };
 
 enum class Builtin : uint16_t {

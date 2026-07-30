@@ -292,6 +292,140 @@ class Parser {
         return cond;
     }
 
+    /* the iterating methods, by name (spec 6.4). Not table rows: every other method
+     * takes values through one generic argument loop, and these take a lambda. */
+    static bool iterate_mode(const std::string& name, IterateMode& out) {
+        if (name == "map") { out = IterateMode::Map; return true; }
+        if (name == "filter") { out = IterateMode::Filter; return true; }
+        if (name == "any") { out = IterateMode::Any; return true; }
+        if (name == "all") { out = IterateMode::All; return true; }
+        if (name == "sortBy") { out = IterateMode::SortBy; return true; }
+        return false;
+    }
+
+    /* `list.<mode>(p => body)`. The body compiles to its own instruction run, held aside
+     * as a sub-program and invoked once per element; the enclosing run emits ONE Iterate
+     * naming it. Deliberately crippled per spec 6.4: one parameter, one expression body,
+     * legal only here, and never nested — which is also what lets the stack be sized for
+     * exactly two frames.
+     *
+     * The trip bound is the element ceiling, the same worst case every other
+     * list-producing site reserves, so the run's step count stays a compile-time
+     * constant and this remains bounded iteration rather than a loop. */
+    Shape parse_iterate(IterateMode mode, const std::string& name, Shape elem,
+                        Shape& out_elem) {
+        if (in_lambda_) {
+            fail("a lambda body may not contain another lambda (spec 6.4): one level of "
+                 "iteration, ever");
+            return Shape::Unknown;
+        }
+        if (token_.kind != TokenKind::LParen) {
+            fail(name + " takes a lambda, called with parentheses (" + name +
+                 "(p => ...))");
+            return Shape::Unknown;
+        }
+        advance();
+        if (token_.kind != TokenKind::Ident) {
+            fail(name + " takes a lambda: a parameter name, then '=>', then one "
+                        "expression");
+            return Shape::Unknown;
+        }
+        const std::string param = token_.text;
+        if (param == "x") {
+            fail("'x' cannot name a lambda parameter (spec 6.4)");
+            return Shape::Unknown;
+        }
+        if (scope_.names.count(param)) {
+            fail("the lambda parameter '" + param +
+                 "' shadows a variable of the same name; pick another name");
+            return Shape::Unknown;
+        }
+        advance();
+        if (token_.kind != TokenKind::Arrow) {
+            fail("expected '=>' after the lambda parameter");
+            return Shape::Unknown;
+        }
+        advance();
+
+        /* The body emits into its OWN buffer and its own depth accounting, so nothing it
+           does reaches the enclosing run's code or stack bookkeeping. code_ is a
+           reference, so this parks the caller's instructions in `outer` and hands the
+           body an empty buffer to fill; both are put back below. */
+        std::vector<Instruction> outer;
+        outer.swap(code_);
+        const uint32_t saved_depth = depth_;
+        const uint32_t saved_max = max_depth_;
+        depth_ = 0;
+        max_depth_ = 0;
+        in_lambda_ = true;
+        lambda_param_ = param;
+        lambda_elem_ = elem;
+        lambda_enum_ = 0;
+
+        const Shape body_shape = parse_ternary();
+
+        in_lambda_ = false;
+        lambda_param_.clear();
+        const uint32_t body_stack = max_depth_ ? max_depth_ : 1;
+        depth_ = saved_depth;
+        max_depth_ = saved_max;
+        std::vector<Instruction> body;
+        body.swap(code_);        /* take the compiled body */
+        code_.swap(outer);       /* and give the caller its run back */
+
+        if (!error_.empty()) return Shape::Unknown;
+        if (token_.kind != TokenKind::RParen) {
+            fail("expected ')' after the lambda; a body is ONE expression (spec 6.4)");
+            return Shape::Unknown;
+        }
+        advance();
+
+        if ((mode == IterateMode::Any || mode == IterateMode::All) &&
+            body_shape != Shape::Unknown && body_shape != Shape::Bool) {
+            fail(name + " needs a lambda returning a condition, this one returns " +
+                 shape_name(body_shape));
+            return Shape::Unknown;
+        }
+        if (mode == IterateMode::Filter && body_shape != Shape::Unknown &&
+            body_shape != Shape::Bool) {
+            fail("filter needs a lambda returning a condition, this one returns " +
+                 std::string(shape_name(body_shape)));
+            return Shape::Unknown;
+        }
+        if (mode == IterateMode::SortBy && body_shape != Shape::Unknown &&
+            body_shape != Shape::Num && body_shape != Shape::Text) {
+            fail("sortBy needs a lambda returning a number or text to order by, this one "
+                 "returns " + std::string(shape_name(body_shape)));
+            return Shape::Unknown;
+        }
+
+        const uint32_t sub = sink_.add_sub(std::move(body), body_stack);
+        if (mode != IterateMode::Any && mode != IterateMode::All) {
+            /* A TEXT-producing body writes into the one slot its site was assigned at
+               compile, so every mapped element would alias the last iteration's text.
+               Map re-homes each result into its own element text slot at run time (the
+               same thing split does for its pieces), which has to be reserved here.
+               Filter and sortBy store the ELEMENT, which already owns its text. */
+            const bool texts =
+                mode == IterateMode::Map && body_shape == Shape::Text;
+            sink_.reserve_elems(kVarrCeiling, texts ? kVarrCeiling : 0);
+        }
+        emit(OpCode::Iterate, sub, kVarrCeiling, static_cast<uint16_t>(mode));
+        /* the list was on the stack and the result replaces it: depth is unchanged */
+        switch (mode) {
+            case IterateMode::Any:
+            case IterateMode::All:
+                out_elem = Shape::Unknown;
+                return Shape::Bool;
+            case IterateMode::Map:
+                out_elem = body_shape;
+                return Shape::List;
+            default:                  /* Filter and SortBy keep the element they took */
+                out_elem = elem;
+                return Shape::List;
+        }
+    }
+
     Shape parse_or() {
         Shape left = parse_and();
         while (error_.empty() && token_.kind == TokenKind::OrOr) {
@@ -545,6 +679,19 @@ class Parser {
                 enum_type_ = 0;
                 continue;
             }
+            /* The iterating methods (spec 6.4) take a LAMBDA rather than a value, so they
+               are parsed here instead of through the table's generic argument loop. */
+            IterateMode mode = IterateMode::Map;
+            if (receiver == Shape::List && iterate_mode(name, mode)) {
+                Shape out_elem = Shape::Unknown;
+                const Shape out = parse_iterate(mode, name, receiver_elem, out_elem);
+                if (out == Shape::Unknown) return Shape::Unknown;
+                receiver = out;
+                /* the loop re-reads receiver_elem / receiver_enum from these next pass */
+                enum_type_ = 0;
+                elem_ = out == Shape::List ? out_elem : Shape::Unknown;
+                continue;
+            }
             const MethodSpec* spec = nullptr;
             for (const MethodSpec& row : methods())
                 if (row.receiver == receiver && name == row.name) {
@@ -765,6 +912,24 @@ class Parser {
             pushed();
             return Shape::Bool;
         }
+        /* Inside a lambda body the PARAMETER shadows everything and rides the slot a
+         * flow's `x` rides, so reading it is an ordinary LoadX and needs no opcode of
+         * its own. Checked before `x` itself, which spec 6.4 puts out of scope here:
+         * shadowing x inside a comprehension is the kind of cleverness that produces
+         * unreadable rows, and with the parameter occupying x's slot it would also be
+         * a lie about which value you were reading. */
+        if (in_lambda_ && name == lambda_param_) {
+            emit(OpCode::LoadX);
+            pushed();
+            enum_type_ = lambda_elem_ == Shape::Enum ? lambda_enum_ : 0;
+            elem_ = Shape::Unknown;
+            return lambda_elem_;
+        }
+        if (in_lambda_ && name == "x") {
+            fail("x is not in scope inside a lambda (spec 6.4); the parameter '" +
+                 lambda_param_ + "' is the element being visited");
+            return Shape::Unknown;
+        }
         if (name == "x") {
             /* a TIMER x (the feed's source is a timer variable): its fields read the
                timer table, and bare x has no scalar to be. Without the timer's
@@ -919,7 +1084,16 @@ class Parser {
     ExprTier tier_;
     const ExpressionScope& scope_;
     EmitSink& sink_;
+    /* the run being emitted into; parse_iterate swaps a lambda's own buffer in here
+       while it compiles the body, so a body's code never lands in its caller's run */
     std::vector<Instruction>& code_;
+    /* lambda state (spec 6.4). in_lambda_ doubles as the no-nesting guard and as what
+       puts `x` out of scope; the parameter rides x's slot, so lambda_elem_ is the shape
+       a bare read of it reports. */
+    bool in_lambda_ = false;
+    std::string lambda_param_;
+    Shape lambda_elem_ = Shape::Unknown;
+    uint16_t lambda_enum_ = 0;
     std::string& error_;
     uint32_t depth_ = 0;
     uint32_t max_depth_ = 0;
@@ -997,6 +1171,23 @@ const std::vector<LangRow>& language_reference() {
         is_row.args[0] = "variant";
         is_row.result = "bool";
         rows.push_back(is_row);
+        /* The iterating methods (spec 6.4) are not table rows either -- they take a
+           LAMBDA where every other method takes values, so the parser handles them
+           directly. Autocomplete still has to know they exist, and that the argument is
+           a lambda rather than a value, so they are declared here. */
+        struct IterRow { const char* name; const char* result; };
+        for (const IterRow& iter : {IterRow{"map", "list"}, IterRow{"filter", "list"},
+                                    IterRow{"any", "bool"}, IterRow{"all", "bool"},
+                                    IterRow{"sortBy", "list"}}) {
+            LangRow row;
+            row.kind = "method";
+            row.receiver = "list";
+            row.name = iter.name;
+            row.min_args = row.max_args = 1;
+            row.args[0] = "lambda";
+            row.result = iter.result;
+            rows.push_back(row);
+        }
         return rows;
     }();
     return table;
