@@ -30,6 +30,7 @@ const { Panel } = await import(mod("reconcile.js"));
 const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
   await import(mod("inspector/panel.js"));
 const { renderOverlay } = await import(mod("canvas.js"));
+const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.js"));
 
 let failures = 0;
 let checks = 0;
@@ -135,7 +136,7 @@ check(
 
 const store = new DocStore();
 store.load(snapshot.doc);
-const view = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {} };
+const view = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
 const page = store.pages()[0];
 let svg = renderContent(store.doc, page, snapshot.registry, snapshot.live, view);
 
@@ -232,6 +233,7 @@ const editor = {
   setPage: () => undefined,
   select: () => undefined,
   selectPart: () => undefined,
+  setThemeMode: () => undefined,
   refresh: () => undefined,
   diagFor: () => [],
   diagAt: () => [],
@@ -646,6 +648,74 @@ check(!renderOverlay(store.pages()[0], view, partRects).includes('class="part-ri
       "a part that did not render gets no ring");
 view.selection = [];
 view.part = "";
+
+/* ---- theme tokens (spec 2.10) ----
+   The document carries the seeded semantic set; an authored "$name" color slot resolves
+   per this VIEW's theme mode, preferring the document over the live echo (the echo is
+   the backend's canonical-dark copy, which would defeat per-view theming); the Style
+   workspace lists the tokens as an editable table. */
+
+check(Array.isArray(snapshot.doc.tokens) && snapshot.doc.tokens.length === 12,
+      "the default document seeds the semantic token set");
+const accentToken = snapshot.doc.tokens.find((t) => t.name === "accent");
+check(accentToken?.dark === "#4e8ef7", "accent's dark value is the reference palette");
+check(typeof accentToken?.light === "string" && accentToken.light.startsWith("#"),
+      "and it carries a light counterpart");
+
+/* the Fault lamp is a Panel whose surface we author to a token; its live echo still
+   holds the OLD compiled literal, which must not win over the document */
+const faultPanel = store.pages()[0].widgets.find((w) => w.label === "Fault");
+store.apply(store.version() + 1, [
+  { op: "set_prop", node: faultPanel.id, key: "slots", value: { surface: "$accent" } },
+]);
+view.themeMode = "dark";
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
+check(groupOf(faultPanel.id).includes('fill="' + accentToken.dark + '"'),
+      "an authored $accent surface paints the token's dark value in dark mode");
+view.themeMode = "light";
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
+check(groupOf(faultPanel.id).includes('fill="' + accentToken.light + '"'),
+      "and the light value once the view's mode flips");
+check(!groupOf(faultPanel.id).includes('fill="' + accentToken.dark + '"'),
+      "the live echo's canonical-dark copy does not defeat the flip");
+view.themeMode = "dark";
+
+/* an unknown token paints transparent: opaqueEnough drops it, so the frame vanishes */
+store.apply(store.version() + 1, [
+  { op: "set_prop", node: faultPanel.id, key: "slots",
+    value: { surface: "$nope", border: "$nope" } },
+]);
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
+check(!groupOf(faultPanel.id).includes("<rect x"),
+      "an unknown token resolves transparent and paints nothing");
+store.apply(store.version() + 1, [
+  { op: "set_prop", node: faultPanel.id, key: "slots", value: { surface: "#2a2a2a" } },
+]);
+
+/* the Style workspace: a token table over the same reconcile idiom */
+const stylePanel = new Panel(new Element("main"));
+const drawStyle = () =>
+  stylePanel.render(styleShape(editor), (host) => renderStyleWorkspace(host, editor));
+drawStyle();
+const tokenNames = () =>
+  stylePanel.host.querySelectorAll("input").filter((i) => !i.className.includes("cpick-hex"));
+check(tokenNames().length === 12,
+      "the Style workspace lists every seeded token, got " + tokenNames().length);
+check(tokenNames().some((i) => i.value === "accent"), "with its name editable in place");
+check(stylePanel.host.querySelectorAll(".token-group").length === 2,
+      "grouped by the tokens' groups (core, status)");
+const styleShapeBefore = styleShape(editor);
+store.apply(store.version() + 1, [
+  {
+    op: "insert",
+    parent: 0,
+    list: "tokens",
+    node: { id: 9100, name: "custom", group: "core", light: "#111111", dark: "#eeeeee" },
+  },
+]);
+check(styleShape(editor) !== styleShapeBefore, "a new token moves the workspace's shape");
+drawStyle();
+check(tokenNames().some((i) => i.value === "custom"), "and the table lists it");
 
 /* trend smoothing is pure math on the drawn copy: noisy input comes out with less
    spread, a null still breaks the run (never bridged), and knobs at 0 pass through */

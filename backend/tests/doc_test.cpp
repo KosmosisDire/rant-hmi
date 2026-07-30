@@ -35,6 +35,12 @@ Json* global_named(Document& d, const std::string& name) {
     return nullptr;
 }
 
+Json* token_named(Document& d, const std::string& name) {
+    for (Json& t : d.root["tokens"])
+        if (t["name"] == name) return &t;
+    return nullptr;
+}
+
 void test_defaults() {
     Document d = Document::make_default();
     CHECK(d.version() == 1);
@@ -299,6 +305,86 @@ void test_retype() {
     CHECK(global_named(kept, "on")->at("init").is_null());
 }
 
+/* Theme tokens (spec 2.10): the seeded set, generic ops over the Token kind, and the
+ * rename fan-out over "$name" slot values. */
+void test_tokens() {
+    Document d = Document::make_default();
+    std::string err;
+
+    /* the default document seeds the semantic set, dark = the reference palette */
+    CHECK(d.root["tokens"].is_array());
+    CHECK(d.root["tokens"].size() == 12);
+    Json* accent = token_named(d, "accent");
+    CHECK(accent != nullptr);
+    if (!accent) return;
+    CHECK(accent->at("dark") == "#4e8ef7");
+    CHECK(accent->at("light").is_string());
+    CHECK(accent->at("group") == "core");
+    CHECK(token_named(d, "ink-muted") != nullptr);
+    const uint64_t accent_id = id_of(*accent);
+
+    /* insert + set_prop are the generic machinery; defaults fill in */
+    ApplyResult r;
+    Json add = Json::array({Json{{"op", "insert"},
+                                 {"parent", kDocId},
+                                 {"list", "tokens"},
+                                 {"node", {{"name", "alarm"}, {"dark", "#ff0000"}}}}});
+    CHECK_MSG(apply_ops(d, add, r, err), err);
+    const uint64_t alarm_id = r.ops[0]["node"]["id"].get<uint64_t>();
+    CHECK(d.node(alarm_id)->at("group") == "core");
+    CHECK(d.node(alarm_id)->at("light") == "#000000");
+    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", alarm_id}, {"key", "light"},
+                             {"value", "#cc2222"}}},
+                    err),
+              err);
+    CHECK(token_named(d, "alarm")->at("light") == "#cc2222");
+
+    /* an authored "$accent" follows a rename; a literal that happens to match the
+       token's value does not */
+    const uint64_t wid = id_of(first_widget(d));
+    Json slots = first_widget(d)["slots"];
+    slots["text_color"] = "$accent";
+    slots["surface"] = "#4e8ef7";
+    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", wid}, {"key", "slots"},
+                             {"value", slots}}},
+                    err),
+              err);
+    ApplyResult rr;
+    Json rename = Json::array({Json{{"op", "rename"}, {"node", accent_id}, {"name", "brand"}}});
+    CHECK_MSG(apply_ops(d, rename, rr, err), err);
+    CHECK(token_named(d, "brand") != nullptr);
+    CHECK(token_named(d, "accent") == nullptr);
+    CHECK(first_widget(d)["slots"]["text_color"] == "$brand");
+    CHECK(first_widget(d)["slots"]["surface"] == "#4e8ef7");
+    /* the fan-out is echoed as ONE set_prop of the whole slots object per touched widget */
+    int set_props = 0;
+    for (const Json& op : rr.ops)
+        if (op["op"] == "set_prop") {
+            ++set_props;
+            CHECK(op["key"] == "slots");
+            CHECK(op["value"]["text_color"] == "$brand");
+        }
+    CHECK(set_props == 1);
+
+    /* collisions and invalid names are refused; a hyphen is a legal token name */
+    CHECK(!apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "alarm"}}}, err));
+    CHECK(!apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "9lives"}}}, err));
+    CHECK(!apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "$brand"}}}, err));
+    CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "brand-2"}}}, err),
+              err);
+    CHECK(first_widget(d)["slots"]["text_color"] == "$brand-2");
+    /* the name changes only through the rename op, like a variable's */
+    CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", accent_id}, {"key", "name"},
+                          {"value", "x"}}},
+                 err));
+
+    /* removing a token leaves "$name" references in place: they resolve unknown ->
+       transparent and the compiler flags them (spec 2.10) */
+    CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", accent_id}}}, err), err);
+    CHECK(token_named(d, "brand-2") == nullptr);
+    CHECK(first_widget(d)["slots"]["text_color"] == "$brand-2");
+}
+
 } // namespace
 
 int main() {
@@ -309,5 +395,6 @@ int main() {
     test_rename();
     test_expr_rewrite();
     test_retype();
+    test_tokens();
     return check::summary("doc_test");
 }

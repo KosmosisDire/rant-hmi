@@ -28,6 +28,11 @@ Json ref(const std::string& cell) {
     return prog(Json::array({Json{{"op", "LOAD"}, {"cell", cell}}}));
 }
 
+/* a theme token as a template attr: "theme:<name>" resolves to the token's value in the
+ * view's own mode (spec 2.10), so a template can carry a theme color no slot names.
+ * (ref) suppresses ADL: a std::string argument would otherwise draw in std::ref. */
+Json theme(const char* name) { return (ref)(std::string("theme:") + name); }
+
 Json emit(const char* op, std::initializer_list<Json> args) {
     Json code = Json::array();
     for (const Json& arg : args)
@@ -252,8 +257,10 @@ Json button_type() {
                 compose_slots(tile_base(), {
                     /* the button's face IS its frame: surface, border and radius all
                      * land on the thing the user presses */
-                    slot("surface", "color", "#4e8ef7", "frame", "color"),
+                    slot("surface", "color", "$accent", "frame", "color"),
                     slot("text", "text", "", "appearance"),
+                    /* a literal, not $ink: the label sits on the accent face, which is
+                     * the same color in both modes, so the ink must not flip with them */
                     slot("text_color", "color", "#0d0d0d", "appearance", "color"),
                 }),
                 /* tap leads: it is the commit gesture and what an author usually means
@@ -278,9 +285,9 @@ Json toggle_type() {
     return type("Toggle",
                 compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
-                    slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("track_color", "color", "#2a2a2a", "appearance", "color"),
-                    slot("handle_color", "color", "#ececec", "appearance", "color"),
+                    slot("fill_color", "color", "$accent", "appearance", "color"),
+                    slot("track_color", "color", "$track", "appearance", "color"),
+                    slot("handle_color", "color", "$handle", "appearance", "color"),
                 }),
                 /* what a Toggle proposes is the opposite of its value, for EVERY gesture
                    on it, not just the tap that commits: an author who gates a press on
@@ -350,13 +357,13 @@ Json slider_type() {
                     slot("step", "num", 0, "config"),
                     slot("divisions", "num", 5, "config"),
                     slot("decimals", "num", 0, "config"),
-                    slot("track_color", "color", "#242424", "appearance", "color"),
-                    slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
+                    slot("track_color", "color", "$track", "appearance", "color"),
+                    slot("fill_color", "color", "$accent", "appearance", "color"),
                     /* the HEAD TEXT rides the fill edge; empty (the default) draws
                      * nothing, and a binding fills it (a computed feed over
                      * widget.value restores the old value readout) */
                     slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
                     slot("show_scale", "bool", false, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
@@ -412,8 +419,8 @@ Json slider_type() {
                                                     {"min", ref("slot:min")},
                                                     {"max", ref("slot:max")},
                                                     {"decimals", ref("slot:decimals")},
-                                                    {"fill", lit("#5a5a5a")},
-                                                    {"text_fill", lit("#8a8a8a")},
+                                                    {"fill", theme("scale")},
+                                                    {"text_fill", theme("ink-muted")},
                                                     {"weight", lit(0.42)},
                                                     {"min_px", lit(9)},
                                                     {"show", ref("slot:show_scale")}}),
@@ -435,8 +442,8 @@ Json readout_type() {
                     slot("value", "num", 0, "value"),
                     slot("units", "text", "", "appearance"),
                     slot("decimals", "num", 1, "config"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
-                    slot("units_color", "color", "#8a8a8a", "appearance", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
+                    slot("units_color", "color", "$ink-muted", "appearance", "color"),
                 }),
                 /* a press on a Readout is about the value it is SHOWING, and the backend
                    knows that value: the view never has to supply its own copy */
@@ -463,7 +470,7 @@ Json readout_type() {
                     press_interact()));
 }
 
-/* A TREND (spec 2.10): the one display whose truth is a PAST, not a value. The backend
+/* A TREND (spec 2.9): the one display whose truth is a PAST, not a value. The backend
  * keeps the history (the `history` flag on `value`), sampling at `rate` into a `window`
  * ring whether or not anyone is viewing; the plot part draws whatever rides the hist
  * cell. No text of its own beyond the scale markers. */
@@ -485,9 +492,9 @@ Json trend_type() {
                        moving average on top. 0 = off; the ring keeps the raw truth */
                     range(fine(slot("kalman", "num", 0, "config"), 0.05), 0, 1),
                     range(fine(slot("smoothing", "num", 0, "config"), 0.05), 0, 1),
-                    slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("track_color", "color", "#242424", "appearance", "color"),
-                    slot("text_color", "color", "#8a8a8a", "appearance", "color"),
+                    slot("fill_color", "color", "$accent", "appearance", "color"),
+                    slot("track_color", "color", "$track", "appearance", "color"),
+                    slot("text_color", "color", "$ink-muted", "appearance", "color"),
                     slot("show_scale", "bool", true, "appearance"),
                 }),
                 Json::array(),
@@ -516,9 +523,9 @@ Json dropdown_type() {
                     slot("shown_options", "text", "", "config"),
                     slot("value", "text", "", "value"),
                     /* the field itself is the frame */
-                    slot("surface", "color", "#141414", "frame", "color"),
-                    slot("border", "color", "#2e2e2e", "frame", "color"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("surface", "color", "$surface-2", "frame", "color"),
+                    slot("border", "color", "$line", "frame", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
                 }),
                 /* the selection is the gesture's own payload; opening proposes nothing new */
                 Json::array({event("select", "text"), event("open", "text", "widget.value")}),
@@ -535,7 +542,7 @@ Json dropdown_type() {
                                                            {"oneline", lit(true)},
                                                            {"weight", lit(1.0)}}),
                                 part("icon", "chevron", Json{{"name", lit("chevron-down")},
-                                                             {"fill", lit("#8a8a8a")},
+                                                             {"fill", theme("ink-muted")},
                                                              {"aspect", lit(1.0)}}),
                             })),
                     }),
@@ -582,8 +589,8 @@ Json knob_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.07)},
-                      {"fill", lit("#5a5a5a")},
-                      {"text_fill", lit("#8a8a8a")},
+                      {"fill", theme("scale")},
+                      {"text_fill", theme("ink-muted")},
                       {"show", show_scale}};
     /* the FACE derives from the thickness and where the scale sits, so a fat arc or
        an inside scale can never overlap it: face radius = whatever is innermost,
@@ -632,12 +639,12 @@ Json knob_type() {
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
-                    slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("track_color", "color", "#242424", "appearance", "color"),
-                    slot("handle_color", "color", "#ececec", "appearance", "color"),
-                    slot("body_color", "color", "#262626", "appearance", "color"),
+                    slot("fill_color", "color", "$accent", "appearance", "color"),
+                    slot("track_color", "color", "$track", "appearance", "color"),
+                    slot("handle_color", "color", "$handle", "appearance", "color"),
+                    slot("body_color", "color", "$surface-2", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
                     range(fine(slot("thickness", "num", 0.14, "appearance"), 0.05), 0.02, 0.6),
                     slot("show_scale", "bool", false, "appearance"),
@@ -703,8 +710,8 @@ Json radial_slider_type() {
                       {"decimals", ref("slot:decimals")},
                       {"outer", pick(outside, lit(0.8), sub(lit(1), t))},
                       {"len", lit(0.06)},
-                      {"fill", lit("#5a5a5a")},
-                      {"text_fill", lit("#8a8a8a")},
+                      {"fill", theme("scale")},
+                      {"text_fill", theme("ink-muted")},
                       {"show", show_scale}};
     /* the label pins itself to the fitted circle: with `fit` fill the circle's
        center is not the tile's */
@@ -730,10 +737,10 @@ Json radial_slider_type() {
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
-                    slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("track_color", "color", "#242424", "appearance", "color"),
+                    slot("fill_color", "color", "$accent", "appearance", "color"),
+                    slot("track_color", "color", "$track", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
                     range(fine(slot("thickness", "num", 0.18, "appearance"), 0.05), 0.02, 0.6),
                     slot("show_scale", "bool", false, "appearance"),
@@ -792,8 +799,8 @@ Json gauge_type() {
                       {"outer", pick(outside, lit(0.8),
                                      sub(lit(1), ref("slot:thickness")))},
                       {"len", lit(0.07)},
-                      {"fill", lit("#5a5a5a")},
-                      {"text_fill", lit("#8a8a8a")},
+                      {"fill", theme("scale")},
+                      {"text_fill", theme("ink-muted")},
                       {"show", show_scale}};
     Json needle = Json{{"value", fraction},
                        {"fill", ref("slot:handle_color")},
@@ -815,11 +822,11 @@ Json gauge_type() {
                     slot("decimals", "num", 0, "config"),
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
-                    slot("fill_color", "color", "#4e8ef7", "appearance", "color"),
-                    slot("track_color", "color", "#242424", "appearance", "color"),
-                    slot("handle_color", "color", "#ececec", "appearance", "color"),
+                    slot("fill_color", "color", "$accent", "appearance", "color"),
+                    slot("track_color", "color", "$track", "appearance", "color"),
+                    slot("handle_color", "color", "$handle", "appearance", "color"),
                     slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
                     slot("control_radius", "num", 4, "appearance"),
                     range(fine(slot("thickness", "num", 0.1, "appearance"), 0.05), 0.02, 0.6),
                     slot("show_scale", "bool", true, "appearance"),
@@ -887,7 +894,7 @@ Json selector_type() {
                       {"labels_out", lit(true)},
                       {"outer", lit(0.78)},
                       {"len", lit(0.08)},
-                      {"fill", lit("#5a5a5a")},
+                      {"fill", theme("scale")},
                       {"text_fill", ref("slot:text_color")},
                       {"show", ref("slot:show_scale")}};
     /* the body pulls in when the scale shows, so the option names ring it; a radial
@@ -907,9 +914,9 @@ Json selector_type() {
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
-                    slot("body_color", "color", "#262626", "appearance", "color"),
-                    slot("handle_color", "color", "#ececec", "appearance", "color"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("body_color", "color", "$surface-2", "appearance", "color"),
+                    slot("handle_color", "color", "$handle", "appearance", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
                     slot("show_scale", "bool", true, "appearance"),
                     slot("scale_values", "bool", true, "appearance"),
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
@@ -939,7 +946,7 @@ Json label_type() {
     return type("Label",
                 compose_slots(tile_base(), {
                     slot("text", "text", "", "value"),
-                    slot("text_color", "color", "#ececec", "appearance", "color"),
+                    slot("text_color", "color", "$ink", "appearance", "color"),
                     /* a label reads like a line of text, so it starts left, not center */
                     align_slot("left"),
                 }),
@@ -962,8 +969,8 @@ Json panel_type() {
      * press vocabulary, exactly like a Button */
     return type("Panel",
                 compose_slots(tile_base(), {
-                    slot("surface", "color", "#1d1d1d", "frame", "color"),
-                    slot("border", "color", "#2a2a2a", "frame", "color"),
+                    slot("surface", "color", "$surface", "frame", "color"),
+                    slot("border", "color", "$line", "frame", "color"),
                 }),
                 Json::array({event("tap", "bool"), event("release", "bool"),
                              event("press", "bool"), event("pressrelease", "bool"),

@@ -1677,6 +1677,64 @@ void test_document_tolerance() {
     CHECK(compiled.program.feeds.empty() || compiled.program.feeds[0].poll_ms == 1000);
 }
 
+/* Theme tokens (spec 2.10): a "$name" color slot value — authored, or a registry
+ * default — seeds the token's DARK value (the canonical runtime mode); an unknown
+ * token is a warning on the slot and seeds transparent, never a fault. */
+void test_theme_tokens() {
+    Json panel = Json{{"type", "Panel"},
+                      {"label", "lamp"},
+                      {"slots", Json{{"surface", "$accent"}, {"border", "$nope"}}}};
+    Json toggle = Json{{"type", "Toggle"}, {"label", "sw"}, {"slots", Json::object()}};
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"tokens", Json::array({
+                     Json{{"name", "accent"}, {"group", "core"},
+                          {"dark", "#4e8ef7"}, {"light", "#2f6bd8"}},
+                     Json{{"name", "track"}, {"dark", "#242424"}, {"light", "#d9d9d9"}},
+                     Json{{"name", "handle"}, {"dark", "#ececec"}, {"light", "#333333"}},
+                 })},
+                 {"pages", Json::array({Json{
+                     {"name", "P"},
+                     {"widgets", Json::array({std::move(panel), std::move(toggle)})}}})}};
+    Document document;
+    std::string err;
+    CHECK_MSG(document.adopt(std::move(root), err), err);
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, registry(), mesh);
+    CHECK(compiled.ok);   /* an unknown token degrades the paint, never the program */
+
+    const uint64_t lamp = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    const uint64_t sw = json_u64_or(document.root["pages"][0]["widgets"][1]["id"], 0);
+    auto slot_initial = [&](uint64_t widget, const char* name) -> const Value* {
+        for (const CellDef& cell : compiled.program.cells)
+            if (cell.kind == CellKind::Slot && cell.owner_widget == widget &&
+                cell.name == name)
+                return &cell.initial;
+        return nullptr;
+    };
+
+    /* the authored "$accent" seeds the dark literal */
+    const Value* surface = slot_initial(lamp, "surface");
+    CHECK(surface != nullptr);
+    CHECK(surface && surface->tag == ValueTag::Color);
+    CHECK(surface && surface->data.rgba == 0x4e8ef7ffu);
+
+    /* "$nope" seeds transparent and flags the slot */
+    const Value* border = slot_initial(lamp, "border");
+    CHECK(border && border->tag == ValueTag::Color && border->data.rgba == 0u);
+    bool flagged = false;
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.code == "unknown_token" && diag.node_id == lamp && diag.where == "border" &&
+            diag.grade == DiagGrade::Warning)
+            flagged = true;
+    CHECK(flagged);
+
+    /* a registry DEFAULT may be a token reference too: the untouched Toggle's fill */
+    const Value* fill = slot_initial(sw, "fill_color");
+    CHECK(fill && fill->tag == ValueTag::Color && fill->data.rgba == 0x4e8ef7ffu);
+}
+
 } // namespace
 
 int main() {
@@ -1700,5 +1758,6 @@ int main() {
     test_lists_and_maps();
     test_suspend_holds_text();
     test_document_tolerance();
+    test_theme_tokens();
     return check::summary("runtime_test");
 }

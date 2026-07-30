@@ -10,6 +10,10 @@ uint64_t read_id(const Json& node) {
     return it == node.end() ? 0 : json_u64_or(*it, 0);
 }
 
+Json token(const char* name, const char* group, const char* dark, const char* light) {
+    return Json{{"name", name}, {"group", group}, {"dark", dark}, {"light", light}};
+}
+
 /* geometry is continuous canvas units; the demo places on the 22-unit cell grid */
 Json widget(const char* type, const char* label, int cx, int cy, int cw, int ch, Json slots) {
     const int cell = 22;
@@ -204,6 +208,24 @@ Document Document::make_default() {
         Json{{"name", "setpoint"}, {"type", "f64"}, {"init", 42.0}, {"persist", true}},
         Json{{"name", "flow"}, {"type", "f64"}, {"init", 0.0}},
         Json{{"name", "blink"}, {"type", "timer"}, {"init", 1.0}},
+    });
+
+    /* The semantic token set (spec 2.10). DARK is today's editor-reference palette and
+     * the canonical runtime mode; LIGHT is a print-like counterpart. The registry's
+     * built-in slot defaults reference these by role. */
+    j["tokens"] = Json::array({
+        token("accent", "core", "#4e8ef7", "#2f6bd8"),
+        token("surface", "core", "#1d1d1d", "#f2f2f2"),
+        token("surface-2", "core", "#141414", "#e9e9e9"),
+        token("track", "core", "#242424", "#d9d9d9"),
+        token("handle", "core", "#ececec", "#333333"),
+        token("ink", "core", "#ececec", "#1a1a1a"),
+        token("ink-muted", "core", "#8a8a8a", "#6a6a6a"),
+        token("scale", "core", "#5a5a5a", "#9a9a9a"),
+        token("line", "core", "#2a2a2a", "#cfcfcf"),
+        token("ok", "status", "#7fc4a0", "#2f7d55"),
+        token("warn", "status", "#d7b562", "#8f6f1c"),
+        token("bad", "status", "#e0857c", "#b2443b"),
     });
 
     Json page = Json{{"name", "Overview"}, {"widgets", Json::array()}};

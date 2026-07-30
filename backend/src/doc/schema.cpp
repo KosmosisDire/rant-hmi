@@ -62,7 +62,7 @@ const std::vector<NodeSpec>& table() {
              * snapped coordinate on a half unit and the inspector rounds it back off */
             object("canvas", Json{{"unit_w", 1408}, {"unit_h", 792}, {"cols", 64}, {"rows", 36}}),
         };
-        doc.lists = {{"globals", Kind::Var}, {"pages", Kind::Page}};
+        doc.lists = {{"globals", Kind::Var}, {"tokens", Kind::Token}, {"pages", Kind::Page}};
         t.push_back(doc);
 
         NodeSpec page;
@@ -157,6 +157,20 @@ const std::vector<NodeSpec>& table() {
             {"tmr_cancel", {text("timer", "", Role::VarName)}},
         };
         t.push_back(step);
+
+        /* A theme token (spec 2.10): a named color role with one value per theme mode.
+         * A color slot value may be "$<name>"; the backend compiles the DARK value (the
+         * canonical runtime mode) and each view resolves per its own mode. */
+        NodeSpec token;
+        token.kind = Kind::Token;
+        token.name = "token";
+        token.props = {
+            text("name"),
+            text("group", "core"),
+            text("light", "#000000"),
+            text("dark", "#ffffff"),
+        };
+        t.push_back(token);
 
         return t;
     }();

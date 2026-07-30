@@ -35,4 +35,9 @@ int count_refs(Kind kind, Json& node, const std::string& name);
 /* a valid variable identifier */
 bool valid_name(const std::string& name);
 
+/* a valid theme token name: an identifier that may also carry '-' ("ink-muted").
+ * Tokens are never expression identifiers ("$name" lives only in color slot values),
+ * so the hyphen cannot collide with subtraction. */
+bool valid_token_name(const std::string& name);
+
 } // namespace hmi

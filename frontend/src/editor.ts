@@ -28,6 +28,9 @@ export interface Editor {
   /* select one widget and narrow to one of its template parts (a part path, spec 2.3);
      "" steps back to the widget. `select` always clears any part. */
   selectPart(id: number, path: string): void;
+  /* the theme preview mode (spec 2.10): sets view.themeMode, persists it locally and
+     repaints the artboard; the Style workspace's toggle is the only caller for now */
+  setThemeMode(mode: "dark" | "light"): void;
   /* what the compiler said about this widget or anything inside it */
   diagFor(widget: number): Diag[];
   /* the findings pinned to one node, or to one field of it (spec 3.8: a finding sits on

@@ -12,13 +12,32 @@
  * different control: swapping in a different control would change the row's height, and a
  * row that changes height moves everything under it. */
 
-import { colorField } from "../colorpicker.js";
+import { colorField, TokenAccess } from "../colorpicker.js";
 import { alignGrid, boolPair, chip, commitTextInput, el, numberInput, pickerOf, selectField } from "../dom.js";
 import { Editor } from "../editor.js";
 import { kindMark } from "../icons.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
+import { resolveColor } from "../slots.js";
 import { UNKNOWN_TEXT } from "../template.js";
 import { Json, SlotSpec, Widget } from "../types.js";
+
+/* what a color editor needs to speak tokens: resolution in this view's mode, and the
+ * grouped offer list for the $ menu (spec 2.10) */
+function tokenAccess(editor: Editor): TokenAccess {
+  const mode = () => editor.view.themeMode ?? "dark";
+  return {
+    resolve: (raw) => {
+      const resolved = resolveColor(raw, editor.store.tokens(), mode());
+      return typeof resolved === "string" ? resolved : raw;
+    },
+    list: () =>
+      editor.store.tokens().map((t) => ({
+        name: t.name,
+        group: t.group || "core",
+        hex: mode() === "light" ? t.light : t.dark,
+      })),
+  };
+}
 import { openSourceTree, resolveShape, SourcePick, SourceTreeOptions } from "./sourcetree.js";
 import { openTypeTree } from "./typetree.js";
 
@@ -102,7 +121,10 @@ export function valueEditor(
       return el("span", { class: "range-pair" }, [slider, field]);
     }
     case "color":
-      return colorField(text(value), commit, key, () => text(read()));
+      /* the value may be "$token": the swatch shows the resolved color, the field the
+         honest reference, and the $ button offers the document's tokens */
+      return colorField(text(value), commit, key, () => text(read()),
+                        editor ? tokenAccess(editor) : undefined);
     case "enum": {
       const wrap = selectField(
         (spec?.variants ?? []).map((v) => ({ value: v })),

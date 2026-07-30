@@ -10,7 +10,7 @@
  * any zoom. */
 
 import { dividerPath, unionPath } from "./islands.js";
-import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.js";
+import { cellsFor, opaqueEnough, resolveSlot, fedSlots, runtimeSlots, Theme, themedSlot, ThemeMode, typeOf } from "./slots.js";
 import { escapeXml, PartHits, Rect, renderNode } from "./template.js";
 import { Canvas, Doc, HistView, Json, Live, Mesh, Page, Registry, Widget, WidgetType } from "./types.js";
 
@@ -26,6 +26,9 @@ export interface ViewState {
   ghost: Rect | null;                           /* drag/resize preview */
   state: Record<number, Record<string, Json>>;  /* per-widget interaction state */
   faults: Record<number, string>;               /* worst compile grade, per widget */
+  /* which side of every theme token this view paints (spec 2.10): a local preview
+     preference, persisted per browser, never synced */
+  themeMode?: ThemeMode;
 }
 
 const ISLAND_RADIUS = 16;
@@ -281,6 +284,8 @@ export function renderContent(
   const cell = cellSize(canvas);
   const out: string[] = [];
   const editing = view.mode !== "operate";
+  /* every authored color on this page resolves through the theme in this view's mode */
+  const theme: Theme = { tokens: doc.tokens ?? [], mode: view.themeMode ?? "dark" };
 
   /* The artboard's depth cue rides on its own background rect: a CSS filter on the whole
      SVG would re-introduce the clipping this deliberately avoids. The grid is one tiled
@@ -330,7 +335,10 @@ export function renderContent(
   for (const widget of visible) {
     const type = typeOf(registry, widget.type);
     const fed = fedSlots(widget);
+    const runtime = runtimeSlots(widget, type);
     const slot = (name: string) => resolveSlot(widget, type, live, fed, name);
+    /* colors go through the theme: document value in this view's mode unless fed/written */
+    const color = (name: string) => themedSlot(widget, type, live, fed, runtime, theme, name);
     const enabled = slot("enabled") !== false && slot("enabled") !== null;
     const panelPad = Number(slot("panel_pad") ?? -1);
     const pad = Number(slot("pad") ?? -1);
@@ -360,8 +368,8 @@ export function renderContent(
     /* the radius caps at half the SHORT side, so a big value makes a pill: an uncapped
        rx would let SVG clamp rx and ry separately and round the frame into an oval */
     const radius = Math.min(uncapped, Math.min(frame.w, frame.h) / 2);
-    const surface = opaqueEnough(slot("surface"));
-    const border = opaqueEnough(slot("border"));
+    const surface = opaqueEnough(color("surface"));
+    const border = opaqueEnough(color("border"));
     /* an interact on the template ROOT owns the widget's whole face, so the generic
        frame paint joins its element (a Panel's card, a Button's face are the thing the
        operator presses); a nested interact leaves the frame inert (a Toggle's pill) */
@@ -382,8 +390,8 @@ export function renderContent(
       const parts: PartHits | undefined =
         partRects ? { rects: new Map<string, Rect>(), path: "" } : undefined;
       renderNode(type.template, rect,
-                 cellsFor(widget, type, live, view.state[widget.id] ?? {}, mesh, hists), out,
-                 { next: 0 }, parts);
+                 cellsFor(widget, type, live, view.state[widget.id] ?? {}, mesh, hists, theme),
+                 out, { next: 0 }, parts);
       if (partRects && parts) partRects.set(widget.id, parts.rects);
     } else {
       out.push(

@@ -25,11 +25,12 @@ function placeholder(id: WorkspaceId, label: string, note: string): Workspace {
   };
 }
 
-/* content is the three-column editor the shell builds; the rest land in later steps */
-export function buildWorkspaces(content: HTMLElement): Workspace[] {
+/* content is the three-column editor the shell builds; style is the theme token editor
+ * (workspaces/style.ts, reconciled by the shell like a sidebar); Data lands later */
+export function buildWorkspaces(content: HTMLElement, style: HTMLElement): Workspace[] {
   return [
     { id: "content", label: "Content", root: content },
     placeholder("data", "Data", "DATA — network explorer lands here"),
-    placeholder("style", "Style", "STYLE — theme editor lands here"),
+    { id: "style", label: "Style", root: style },
   ];
 }

@@ -15,7 +15,26 @@
  *                      (spec 3.10), and editing it restates where the runtime starts. */
 
 import { Cells } from "./program.js";
-import { HistView, Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, WidgetType, Widget } from "./types.js";
+import { HistView, Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Widget } from "./types.js";
+
+/* ---- theme tokens (spec 2.10) ---- */
+
+export type ThemeMode = "dark" | "light";
+
+/* the document's tokens plus this view's mode: everything token resolution needs */
+export interface Theme {
+  tokens: Token[];
+  mode: ThemeMode;
+}
+
+/* "$<name>" -> the token's value in this mode; a literal passes through untouched; an
+ * unknown token is transparent, matching the backend's compile-time fallback */
+export function resolveColor(value: Json, tokens: Token[], mode: ThemeMode): Json {
+  if (typeof value !== "string" || !value.startsWith("$")) return value;
+  const token = tokens.find((t) => t.name === value.slice(1));
+  if (!token) return "#00000000";
+  return mode === "light" ? token.light : token.dark;
+}
 
 /* What a TypeRef lands on, from the served table: the same resolution the compiler runs
  * (find_type_ref), so what the view expands and what compiles can never disagree. Lives
@@ -129,6 +148,30 @@ export function authoredSlot(widget: Widget, type: WidgetType | null, name: stri
   return spec ? spec.default : null;
 }
 
+/* A COLOR slot, resolved theme-aware. The live frame echoes the backend's compiled copy
+ * of every slot cell — resolved in the canonical DARK mode — which would defeat per-view
+ * theming for a slot the user merely authored. So a color slot nothing writes resolves
+ * from the DOCUMENT (token-aware, in this view's mode); a fed or flow-written one keeps
+ * live precedence (dynamic data wins: the backend computed it, and it is mode-agnostic).
+ * For literals the document value and the live echo are identical, so this changes
+ * nothing until a token is involved. Every paint site resolves through here. */
+export function themedSlot(
+  widget: Widget,
+  type: WidgetType | null,
+  live: Live | null,
+  fed: Set<string>,
+  runtime: Set<string>,
+  theme: Theme,
+  name: string,
+): Json {
+  const spec = slotSpec(type, name);
+  if (spec?.shape !== "color") return resolveSlot(widget, type, live, fed, name);
+  const raw = runtime.has(name)
+    ? resolveSlot(widget, type, live, fed, name)
+    : authoredSlot(widget, type, name);
+  return resolveColor(raw, theme.tokens, theme.mode);
+}
+
 /* What an INSPECTOR field shows. `runtime` is the set of slots something writes
  * (runtimeSlots): for those the field is a live view of the cell, and its authored value is
  * only where that cell started. For the rest the document IS the value and the field shows
@@ -145,8 +188,8 @@ export function editedSlot(
   return value === undefined ? null : value;
 }
 
-/* the cell space a template program reads: slots, this view's interaction state, and
- * the tile's own metrics */
+/* the cell space a template program reads: slots, this view's interaction state, the
+ * tile's own metrics, and the theme's tokens */
 export function cellsFor(
   widget: Widget,
   type: WidgetType | null,
@@ -154,15 +197,23 @@ export function cellsFor(
   state: Record<string, Json>,
   mesh: Mesh | null = null,
   hists: Record<string, HistView> | null = null,
+  theme: Theme | null = null,
 ): Cells {
   const fed = fedSlots(widget);
+  const runtime = theme ? runtimeSlots(widget, type) : fed;
   return (cell: string): Json => {
     const colon = cell.indexOf(":");
     const kind = colon < 0 ? "" : cell.slice(0, colon);
     const name = colon < 0 ? cell : cell.slice(colon + 1);
     switch (kind) {
       case "slot":
-        return resolveSlot(widget, type, live, fed, name);
+        return theme
+          ? themedSlot(widget, type, live, fed, runtime, theme, name)
+          : resolveSlot(widget, type, live, fed, name);
+      case "theme":
+        /* "theme:<name>": a token straight from the theme, for template colors no slot
+           names (scale marks); UNKNOWN without a theme rather than a wrong pixel */
+        return theme ? resolveColor("$" + name, theme.tokens, theme.mode) : null;
       case "state":
         /* per-view, animation only; interaction lands with the scheduler stage */
         return state[name] ?? false;

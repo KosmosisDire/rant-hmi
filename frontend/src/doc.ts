@@ -3,10 +3,10 @@
  * set_props its fan-out performed), so there is nothing to decide here and no rule that
  * can drift out of step with the server. */
 
-import { Doc, Json, Op, Page, Var, Widget } from "./types.js";
+import { Doc, Json, Op, Page, Token, Var, Widget } from "./types.js";
 
 /* which lists a node kind holds, so the index can walk without knowing the schema */
-const CHILD_LISTS = ["globals", "pages", "widgets", "locals", "feeds", "flows", "do"];
+const CHILD_LISTS = ["globals", "tokens", "pages", "widgets", "locals", "feeds", "flows", "do"];
 
 interface Entry {
   node: Json;
@@ -48,6 +48,10 @@ export class DocStore {
 
   globals(): Var[] {
     return this.doc ? this.doc.globals : [];
+  }
+
+  tokens(): Token[] {
+    return this.doc ? this.doc.tokens ?? [] : [];
   }
 
   widget(id: number): Widget | null {

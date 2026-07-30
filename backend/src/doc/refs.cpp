@@ -179,4 +179,11 @@ bool valid_name(const std::string& name) {
     return true;
 }
 
+bool valid_token_name(const std::string& name) {
+    if (name.empty() || !ident_start(name[0])) return false;
+    for (char c : name)
+        if (!ident_char(c) && c != '-') return false;
+    return true;
+}
+
 } // namespace hmi

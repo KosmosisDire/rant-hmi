@@ -141,6 +141,15 @@ class Compiler {
         : document_(document), registry_(registry), mesh_(mesh) {
         program_.document_version = document.version();
         program_.add_text("");
+        /* The theme tokens (spec 2.10), name -> DARK value: the backend has no view and
+         * therefore no theme mode, so dark is the canonical runtime resolution; light is
+         * a per-view rendering the frontend applies. */
+        auto tokens = document.root.find("tokens");
+        if (tokens != document.root.end() && tokens->is_array())
+            for (const Json& token : *tokens) {
+                const std::string name = str_or(token, "name", "");
+                if (!name.empty()) tokens_[name] = str_or(token, "dark", "");
+            }
     }
 
     CompileResult run() {
@@ -467,12 +476,13 @@ class Compiler {
                         Json initial = slot.value("default", Json());
                         auto override = authored.find(name);
                         if (override != authored.end()) initial = *override;
+                        if (shape == Shape::Color) initial = resolve_token(info.id, name, initial);
                         check_variants(info.id, name, slot, initial);
                         check_enum_type_slot(info.id, name, slot, initial);
                         info.slots[name] =
                             add_cell(CellKind::Slot, info.id, info.id, name, shape, initial, false);
                         /* a slot the type flags `history` gets a sampling ring (spec
-                         * 2.10): rate and window read from the sibling slots' authored
+                         * 2.9): rate and window read from the sibling slots' authored
                          * values (an edit recompiles, so compile-time is live enough) */
                         if (slot.value("history", false))
                             add_history(info, name, info.slots[name], authored);
@@ -506,6 +516,24 @@ class Compiler {
         def.capacity = static_cast<uint32_t>(
             std::min(4096.0, std::max(2.0, std::round(rate * window))));
         program_.histories.push_back(std::move(def));
+    }
+
+    /* A color slot value may be a token reference, "$<name>" (spec 2.10), authored or a
+     * registry default alike. It compiles to the token's DARK value; an unknown token is
+     * a finding on the slot and falls back to transparent — a stale reference must never
+     * fault, it just paints nothing until the token exists again. A WARNING, not an
+     * error: a missing styling name degrades the paint, it does not invalidate the
+     * program the way an unresolved entity does. */
+    Json resolve_token(uint64_t widget_id, const std::string& slot, const Json& value) {
+        if (!value.is_string()) return value;
+        const std::string text = value.get<std::string>();
+        if (text.empty() || text[0] != '$') return value;
+        auto found = tokens_.find(text.substr(1));
+        if (found != tokens_.end()) return Json(found->second);
+        diag(widget_id, "unknown_token",
+             "unknown token '" + text + "': the slot paints transparent",
+             DiagGrade::Warning, slot);
+        return Json("#00000000");
     }
 
     /* A registry slot declared `enum` is CONSTRAINED TEXT: its values are the variant NAMES
@@ -1828,6 +1856,7 @@ class Compiler {
     bool has_errors_ = false;
     Json empty_object_ = Json::object();
     std::unordered_map<std::string, uint32_t> globals_;
+    std::unordered_map<std::string, std::string> tokens_;     /* token name -> dark value */
     std::unordered_map<std::string, uint16_t> struct_keys_;   /* schema key -> type id */
     std::unordered_map<std::string, uint16_t> struct_names_;  /* root name -> type id */
     std::set<std::string> ambiguous_;                         /* reported once each */

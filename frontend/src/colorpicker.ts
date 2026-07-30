@@ -2,10 +2,28 @@
  * square, a hue bar and an alpha bar. Generic on purpose: value in, commit out, no
  * knowledge of slots or the inspector. Values are "#rrggbb", or "#rrggbbaa" when the
  * alpha is not full. Like the context menu, the popup sits on a full-screen dismiss
- * overlay, so any click outside closes it and nobody tracks "is a picker open". */
+ * overlay, so any click outside closes it and nobody tracks "is a picker open".
+ *
+ * A value may also be a theme token reference, "$<name>" (spec 2.10). A caller that
+ * hands in a TokenAccess gets the tokenized treatment: the swatch paints the RESOLVED
+ * color (this view's mode) with a corner notch saying "this is a token", the text field
+ * shows and accepts the honest "$name", and a small $ button opens the token menu —
+ * grouped swatch+name rows plus "custom…", which falls back to the ordinary picker. */
 
 import { commitInput, el } from "./dom.js";
 import { bind, bindField } from "./reconcile.js";
+
+/* what the token features need from the caller; resolution stays the caller's (slots.ts) */
+export interface TokenOffer {
+  name: string;
+  group: string;
+  hex: string; /* resolved in the current view mode */
+}
+
+export interface TokenAccess {
+  resolve: (raw: string) => string; /* "$name" -> hex; a literal passes through */
+  list: () => TokenOffer[];
+}
 
 interface Rgba {
   r: number; /* 0..255 */
@@ -232,6 +250,7 @@ function openColorPicker(
 ): void {
   ensure();
   const box = popover as HTMLElement;
+  box.classList.remove("tokens");
   box.innerHTML = "";
 
   /* session state is HSV so the hue survives s = 0 or v = 0 (a grey or black picked
@@ -357,6 +376,53 @@ function openColorPicker(
     (at.bottom + height + 8 > window.innerHeight ? at.top - height - 4 : at.bottom + 4) + "px";
 }
 
+/* the token menu: the same dismiss overlay as the picker, listing tokens by group */
+function openTokenMenu(
+  anchor: HTMLElement,
+  access: TokenAccess,
+  current: string,
+  onToken: (ref: string) => void,
+  onCustom: () => void,
+): void {
+  ensure();
+  const box = popover as HTMLElement;
+  box.classList.add("tokens");
+  box.innerHTML = "";
+
+  let group = "";
+  for (const offer of access.list()) {
+    if (offer.group !== group) {
+      group = offer.group;
+      box.appendChild(el("div", { class: "tok-group", text: group }));
+    }
+    const swatch = el("span", { class: "swatch" });
+    paintSwatch(swatch, parseHex(offer.hex) ?? { r: 0, g: 0, b: 0, a: 0 });
+    const row = el("button", {
+      class: "tok-row" + (current === "$" + offer.name ? " on" : ""),
+      onclick: () => {
+        closeColorPicker();
+        onToken("$" + offer.name);
+      },
+    }, [swatch, el("span", { class: "tok-name", text: "$" + offer.name })]);
+    box.appendChild(row);
+  }
+  box.appendChild(
+    el("button", {
+      class: "tok-row tok-custom",
+      text: "custom…",
+      onclick: () => onCustom(),
+    }),
+  );
+
+  (overlay as HTMLElement).classList.add("on");
+  const at = anchor.getBoundingClientRect();
+  const width = box.offsetWidth || 180;
+  const height = box.offsetHeight || 200;
+  box.style.left = Math.max(8, Math.min(at.left, window.innerWidth - width - 8)) + "px";
+  box.style.top =
+    (at.bottom + height + 8 > window.innerHeight ? Math.max(8, at.top - height - 4) : at.bottom + 4) + "px";
+}
+
 /* ---- the field control ---- */
 
 /* The anchor row a caller embeds: a swatch that opens the popup, and the hex text form.
@@ -369,11 +435,17 @@ export function colorField(
   commit: (hex: string) => void,
   key?: string,
   read?: () => string,
+  tokens?: TokenAccess,
 ): HTMLElement {
   const swatch = el("button", { class: "swatch", title: "pick a color" });
   const current = () => (read ? read() : (hex as HTMLInputElement).value);
-  /* the anchor field takes hex, and a pasted rgba tuple as a courtesy */
+  /* the anchor field takes hex, a pasted rgba tuple as a courtesy, and — where the
+     caller speaks tokens — an honest "$name" */
   const hex = commitInput(value, (text) => {
+    if (tokens && text.startsWith("$")) {
+      commit(text.trim());
+      return;
+    }
     const parsed = parseHex(text) ?? parseRgbaText(text);
     if (!parsed) {
       (hex as HTMLInputElement).value = read ? read() : value;
@@ -382,21 +454,36 @@ export function colorField(
     commit(formatHex(parsed));
   }, { class: "field grow cpick-hex" });
 
-  const paintAnchor = (text: string) =>
-    paintSwatch(swatch, parseHex(text) ?? { r: 0, g: 0, b: 0, a: 0 });
+  /* the swatch paints the RESOLVED color; the notch class marks a tokenized value */
+  const paintAnchor = (text: string) => {
+    const resolved = tokens ? tokens.resolve(text) : text;
+    paintSwatch(swatch, parseHex(resolved) ?? { r: 0, g: 0, b: 0, a: 0 });
+    swatch.classList.toggle("token", Boolean(tokens) && text.startsWith("$"));
+  };
   paintAnchor(value);
   if (key && read) {
     bindField(key, hex as HTMLInputElement, read);
     bind(key + ".swatch", swatch, () => paintAnchor(read()));
   }
-  swatch.addEventListener("click", () =>
-    openColorPicker(swatch, current(), (picked) => {
+  const openCustom = () =>
+    openColorPicker(swatch, tokens ? tokens.resolve(current()) : current(), (picked) => {
       /* the drag paints the anchor as it goes; the echo confirms it through the binding */
       paintAnchor(picked);
       (hex as HTMLInputElement).value = picked;
       commit(picked);
-    }),
-  );
+    });
+  swatch.addEventListener("click", openCustom);
 
-  return el("span", { class: "value-cell grow" }, [swatch, hex]);
+  if (!tokens) return el("span", { class: "value-cell grow" }, [swatch, hex]);
+
+  /* the compact token entry: a $ button opening the grouped token menu */
+  const pick = el("button", { class: "token-btn", text: "$", title: "pick a theme token" });
+  pick.addEventListener("click", () =>
+    openTokenMenu(pick, tokens, current(), (ref) => {
+      paintAnchor(ref);
+      (hex as HTMLInputElement).value = ref;
+      commit(ref);
+    }, openCustom),
+  );
+  return el("span", { class: "value-cell grow" }, [swatch, hex, pick]);
 }

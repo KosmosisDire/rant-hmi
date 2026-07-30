@@ -21,11 +21,12 @@ import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
-import { cellsFor, fedSlots, resolveSlot, typeOf, widgetOptions } from "./slots.js";
+import { cellsFor, fedSlots, resolveSlot, runtimeSlots, themedSlot, typeOf, widgetOptions } from "./slots.js";
 import { radialExtent, Rect } from "./template.js";
-import { Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
+import { Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
+import { renderStyleWorkspace, styleShape } from "./workspaces/style.js";
 
 type Mode = "edit" | "test" | "operate";
 
@@ -49,6 +50,8 @@ export class App implements Editor {
   partRects: Map<number, Map<string, Rect>> = new Map();
   view: ViewState = {
     mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {},
+    /* the theme preview mode is a local preference, like the sidebar widths */
+    themeMode: localStorage.getItem("theme-mode") === "light" ? "light" : "dark",
   };
 
   private conn: Connection;
@@ -70,6 +73,8 @@ export class App implements Editor {
     pill: HTMLElement;
   };
   private sidebars!: { left: Panel; inspector: Panel };
+  /* the Style workspace's reconciled panel (workspaces/style.ts); null when operating */
+  private stylePanel: Panel | null = null;
   private drag: Json = null;
   private control: Json = null;
   private inputSequence = 0;
@@ -146,6 +151,22 @@ export class App implements Editor {
     this.view.part = path;
     this.queueCanvas();
     this.queueSidebars();
+  }
+
+  /* the theme preview mode (spec 2.10): the artboard repaints in the other half of
+     every token; the editor's own chrome is deliberately untouched */
+  setThemeMode(mode: "dark" | "light"): void {
+    if (this.view.themeMode === mode) return;
+    this.view.themeMode = mode;
+    localStorage.setItem("theme-mode", mode);
+    this.queueCanvas(true);
+    this.queueSidebars();
+  }
+
+  /* the theme every paint site resolves colors through: this view's mode over the
+     document's tokens */
+  private theme(): { tokens: Token[]; mode: "dark" | "light" } {
+    return { tokens: this.store.tokens(), mode: this.view.themeMode ?? "dark" };
   }
 
   /* the artboard and its editing overlay are separate layers: only the overlay depends on
@@ -363,6 +384,8 @@ export class App implements Editor {
     if (this.operate) return; /* the deployed view has no sidebars to keep current */
     this.sidebars.left.render(leftShape(this), (host) => renderLeftSidebar(host, this));
     this.sidebars.inspector.render(inspectorShape(this), (host) => renderInspector(host, this));
+    /* the Style workspace reconciles like a sidebar: kept alive hidden, always current */
+    this.stylePanel?.render(styleShape(this), (host) => renderStyleWorkspace(host, this));
   }
 
   /* ---- shell construction ---- */
@@ -399,7 +422,9 @@ export class App implements Editor {
         this.gutter("right"),
         inspector,
       ]);
-      this.workspaces = buildWorkspaces(content);
+      const style = el("main", { class: "workspace-style", "data-input": "scroll" });
+      this.stylePanel = new Panel(style);
+      this.workspaces = buildWorkspaces(content, style);
 
       const modes = el(
         "div",
@@ -688,7 +713,8 @@ export class App implements Editor {
   }
 
   private controlCells(widget: Widget, type: WidgetType): (cell: string) => Json {
-    return cellsFor(widget, type, this.live, this.view.state[widget.id] ?? {}, this.mesh);
+    return cellsFor(widget, type, this.live, this.view.state[widget.id] ?? {}, this.mesh,
+                    null, this.theme());
   }
 
   /* What the gesture itself reports. Where the type declares where `x` comes from, that
@@ -922,7 +948,12 @@ export class App implements Editor {
     const rect = anchor?.getBoundingClientRect();
     if (!rect || !rect.width) return;
     const fed = fedSlots(widget);
+    const runtime = runtimeSlots(widget, type);
+    const theme = this.theme();
     const slot = (name: string) => resolveSlot(widget, type, this.live, fed, name);
+    /* the tray wears the widget's colors, so they resolve exactly as the canvas does */
+    const color = (name: string) =>
+      themedSlot(widget, type, this.live, fed, runtime, theme, name);
     /* the frame's radius rule (canvas.ts): auto nests inside the island's corner at
        the panel inset; units become pixels at the widget's own on-screen scale */
     const panelPad = Number(slot("panel_pad") ?? -1);
@@ -937,10 +968,10 @@ export class App implements Editor {
     tray.style.top = rect.bottom + 4 + "px";
     tray.style.width = rect.width + "px";
     tray.style.maxHeight = Math.max(60, window.innerHeight - rect.bottom - 16) + "px";
-    tray.style.background = String(slot("surface") ?? "#141414");
-    tray.style.border = "1px solid " + String(slot("border") ?? "#2e2e2e");
+    tray.style.background = String(color("surface") ?? "#141414");
+    tray.style.border = "1px solid " + String(color("border") ?? "#2e2e2e");
     tray.style.borderRadius = Math.round(units * scale) + "px";
-    tray.style.color = String(slot("text_color") ?? "#ececec");
+    tray.style.color = String(color("text_color") ?? "#ececec");
     const close = () => overlay.remove();
     overlay.addEventListener("pointerdown", (pd) => {
       if (pd.target === overlay) close();

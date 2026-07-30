@@ -758,7 +758,8 @@ explicit property (the array order), so a reorder is one op and a concurrent edi
 a moved row still lands on the right row.
 
 ```
-Doc    { version: u64, next_id: u64, canvas: Canvas, globals: [Var], pages: [Page] }
+Doc    { version: u64, next_id: u64, canvas: Canvas,
+         globals: [Var], tokens: [Token], pages: [Page] }
 Canvas { unit_w, unit_h, cols, rows }    // ONE fixed artboard shape per HMI
                                          // (default 1408x792 units, 64x36 cells)
 Page   { id, name, widgets: [Widget] }
@@ -766,6 +767,7 @@ Widget { id, type, label, geom: {x,y,w,h},               // continuous canvas un
          slots: {name: value},                           // unfed overrides
          locals: [Var], feeds: [Feed], flows: [Flow] }
 Var    { id, name, type, init, persist: bool }
+Token  { id, name, group, light, dark }                  // a theme color role (2.10)
 ```
 
 The canvas shape is document data, set once per HMI (a portrait handheld HMI picks
@@ -823,6 +825,41 @@ newly arrived samples: refiltering the window from scratch would re-seed at
 whatever sample rides the window's edge, and the whole drawn line would re-shape
 as the ring scrolls. A knob change or a replaced ring refilters once, from the
 oldest sample still held.
+
+### 2.10 Theme tokens
+
+A token is a named color role with one value per theme mode: `Token { id, name,
+group, light, dark }`, living in the document's `tokens` list. Names are short
+identifiers that may carry `-` (`ink-muted`); `group` is free text for the Style
+workspace's table. The default document seeds a semantic set (`accent`, `surface`,
+`surface-2`, `track`, `handle`, `ink`, `ink-muted`, `scale`, `line`, `ok`, `warn`,
+`bad`) whose dark values are the editor-reference palette.
+
+**References.** A color-shaped slot value may be the string `"$<name>"` instead of a
+literal — authored per instance or as a registry slot DEFAULT (the built-in types
+reference the semantic set, so a whole project retints from the Style workspace).
+Templates may also reference a token directly through the `theme:<name>` cell,
+for theme colors no slot names (scale marks).
+
+**Resolution is per view.** Each view holds a `themeMode` ("dark" | "light", a local
+preference, never synced); token references resolve against the document's tokens in
+that mode at paint time. The BACKEND has no view and therefore no mode: wherever it
+turns a color slot value into a runtime Value (slot cell seeding), `"$name"` compiles
+to the token's DARK value — the canonical runtime mode. Anything the runtime computed
+(a fed or flow-written color) is therefore mode-agnostic and wins over per-view
+theming; a slot nothing writes resolves from the DOCUMENT value, token-aware, in the
+view's mode. An unknown token is a compile finding on the slot (`unknown_token`) and
+paints transparent — never a fault.
+
+**Rename** is the same op variables use, dispatched on the node's kind: collision and
+name validity checked, then every widget slot holding exactly `"$old"` is rewritten to
+`"$new"` and echoed as an ordinary `set_prop` of that widget's `slots`, so clients stay
+mechanical. Deleting an in-use token leaves its references resolving unknown →
+transparent, flagged by the compile finding.
+
+**Expressions are token-free.** Feeds and flows never see `"$"`: `#hex` literals,
+`rgb()`/`hsv()` and the tonemaps are the expression language's whole color vocabulary
+(6.2). A token is a document-level styling name, not a runtime value.
 
 ## 3. The frontend
 

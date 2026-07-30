@@ -83,6 +83,16 @@ export interface Var {
   persist: boolean;
 }
 
+/* a theme token (spec 2.10): a named color role with one value per theme mode; a
+   color slot value "$<name>" resolves through it in the view's own mode */
+export interface Token {
+  id: number;
+  name: string;
+  group: string;
+  light: string;
+  dark: string;
+}
+
 export interface Feed {
   id: number;
   slot: string;
@@ -125,6 +135,7 @@ export interface Doc {
   next_id: number;
   canvas: Canvas;
   globals: Var[];
+  tokens: Token[];
   pages: Page[];
 }
 

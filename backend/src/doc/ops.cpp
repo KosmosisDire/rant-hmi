@@ -77,8 +77,8 @@ bool op_set_prop(Document& d, const Json& op, ApplyResult& r, std::string& err) 
     if (!node_at(d, id, e, err)) return false;
 
     const NodeSpec& spec = node_spec(e->kind);
-    if (e->kind == Kind::Var && key == "name") {
-        err = "a variable name changes through the rename op";
+    if ((e->kind == Kind::Var || e->kind == Kind::Token) && key == "name") {
+        err = "a " + spec.name + " name changes through the rename op";
         return false;
     }
     const Prop* p = find_prop(spec, node_variant(spec, *e->node), key);
@@ -195,16 +195,60 @@ bool op_move(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     return true;
 }
 
+/* Rename a theme token and rewrite every color slot value holding "$<old>" (spec 2.10).
+ * A token reference lives only in `widget.slots`, and the inspector edits slots by
+ * replacing the whole object, so each rewrite echoes the same way: one set_prop of the
+ * widget's `slots`. */
+bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& name,
+                  ApplyResult& r, std::string& err) {
+    if (!valid_token_name(name)) {
+        err = "'" + name + "' is not a valid token name";
+        return false;
+    }
+    auto siblings = d.root.find("tokens");
+    if (siblings == d.root.end()) { err = "token list is gone"; return false; }
+    if (has_var(*siblings, name, e.node)) {
+        err = "'" + name + "' is already taken";
+        return false;
+    }
+
+    const std::string from = "$" + str_field(*e.node, "name");
+    const std::string to = "$" + name;
+    (*e.node)["name"] = name;
+    r.ops.push_back(Json{{"op", "rename"}, {"node", id}, {"name", name}});
+    r.touched.push_back(id);
+
+    for (Document::WidgetRef wr : d.widgets()) {
+        Json& w = *wr.widget;
+        auto slots = w.find("slots");
+        if (slots == w.end() || !slots->is_object()) continue;
+        bool hit = false;
+        for (auto& item : slots->items())
+            if (item.value().is_string() && item.value().get<std::string>() == from) {
+                item.value() = to;
+                hit = true;
+            }
+        if (!hit) continue;
+        const uint64_t wid = json_u64_or(w["id"], 0);
+        r.ops.push_back(
+            Json{{"op", "set_prop"}, {"node", wid}, {"key", "slots"}, {"value", *slots}});
+        r.touched.push_back(wid);
+    }
+    return true;
+}
+
 /* Rename a variable and rewrite every reference to it, in one transaction (spec 2.7).
  * Rejected when the new name collides with a sibling, or when it would capture a
- * reference that currently resolves to a different variable. */
+ * reference that currently resolves to a different variable. Dispatches on the node's
+ * kind: a theme token has its own fan-out (rename_token). */
 bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     uint64_t id = 0;
     if (!id_field(op, "node", id, err)) return false;
     const std::string name = str_field(op, "name");
     NodeEntry* e = nullptr;
     if (!node_at(d, id, e, err)) return false;
-    if (e->kind != Kind::Var) { err = "only a variable is renamed"; return false; }
+    if (e->kind == Kind::Token) return rename_token(d, *e, id, name, r, err);
+    if (e->kind != Kind::Var) { err = "only a variable or a token is renamed"; return false; }
     if (!valid_name(name)) { err = "'" + name + "' is not a valid variable name"; return false; }
 
     NodeEntry* pe = d.find(e->parent);
