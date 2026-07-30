@@ -56,9 +56,11 @@ const std::vector<NodeSpec>& table() {
         doc.props = {
             num("version", 0),
             num("next_id", 1),
-            /* one fixed artboard per HMI; 48 x 27 cells of exactly 30 units keeps
-             * snapped geometry readable in the file */
-            object("canvas", Json{{"unit_w", 1440}, {"unit_h", 810}, {"cols", 48}, {"rows", 27}}),
+            /* one fixed artboard per HMI, 16:9; 64 x 36 cells of exactly 22 units. The
+             * pitch must divide BOTH axes evenly (unit_w/cols == unit_h/rows): the
+             * editor snaps on that one number, so a fractional pitch puts every
+             * snapped coordinate on a half unit and the inspector rounds it back off */
+            object("canvas", Json{{"unit_w", 1408}, {"unit_h", 792}, {"cols", 64}, {"rows", 36}}),
         };
         doc.lists = {{"globals", Kind::Var}, {"pages", Kind::Page}};
         t.push_back(doc);
@@ -76,7 +78,7 @@ const std::vector<NodeSpec>& table() {
         widget.props = {
             text("type", "Button"),
             text("label", ""),
-            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 180}, {"h", 90}}),   /* canvas units */
+            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 132}, {"h", 66}}),   /* canvas units: 6 x 3 cells */
             object("slots", Json::object()),   /* unfed per-instance slot values */
         };
         widget.lists = {{"locals", Kind::Var}, {"feeds", Kind::Feed}, {"flows", Kind::Flow}};

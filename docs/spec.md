@@ -755,7 +755,7 @@ a moved row still lands on the right row.
 ```
 Doc    { version: u64, next_id: u64, canvas: Canvas, globals: [Var], pages: [Page] }
 Canvas { unit_w, unit_h, cols, rows }    // ONE fixed artboard shape per HMI
-                                         // (default 1280x720 units, 48x27 cells)
+                                         // (default 1408x792 units, 64x36 cells)
 Page   { id, name, widgets: [Widget] }
 Widget { id, type, label, geom: {x,y,w,h},               // continuous canvas units
          slots: {name: value},                           // unfed overrides
@@ -764,7 +764,11 @@ Var    { id, name, type, init, persist: bool }
 ```
 
 The canvas shape is document data, set once per HMI (a portrait handheld HMI picks
-9:16 once), never per device: every view renders the same artboard (3.1).
+9:16 once), never per device: every view renders the same artboard (3.1). `cols` and
+`rows` must divide their own axis to the SAME integer pitch (`unit_w/cols ==
+unit_h/rows`): the editor snaps both axes on that one number, so a pitch that does not
+divide evenly lands every snapped coordinate on a fraction the inspector then rounds
+back off the grid.
 
 `version` is the sole sync authority (see PLAN.md for the op protocol and the
 persistence split between the authored document and runtime state).

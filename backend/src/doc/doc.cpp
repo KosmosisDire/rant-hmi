@@ -10,9 +10,9 @@ uint64_t read_id(const Json& node) {
     return it == node.end() ? 0 : json_u64_or(*it, 0);
 }
 
-/* geometry is continuous canvas units; the demo places on the 30-unit cell grid */
+/* geometry is continuous canvas units; the demo places on the 22-unit cell grid */
 Json widget(const char* type, const char* label, int cx, int cy, int cw, int ch, Json slots) {
-    const int cell = 30;
+    const int cell = 22;
     return Json{{"type", type},
                 {"label", label},
                 {"geom", {{"x", cx * cell}, {"y", cy * cell},

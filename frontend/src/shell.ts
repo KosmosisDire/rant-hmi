@@ -891,7 +891,7 @@ export class App implements Editor {
    * is passed in, never read from the field: the release path clears the field first. */
   private targetBox(drag: Json, dx: number, dy: number, free: boolean): Rect {
     const doc = this.store.doc;
-    const cell = doc ? cellSize(doc.canvas) : 30;
+    const cell = doc ? cellSize(doc.canvas) : 22;
     const snap = (v: number) => (free ? Math.round(v) : Math.round(v / cell) * cell);
     const from: Rect = drag.start;
     const mode: string = drag.mode;

@@ -27,8 +27,8 @@ export class Viewport {
   private zoom = 1;
   private panX = 0;
   private panY = 0;
-  private unitW = 1440;
-  private unitH = 810;
+  private unitW = 1408;
+  private unitH = 792;
   private artboardSet = false;
   private locked = false;
   private pointers = new Map<number, { x: number; y: number }>();

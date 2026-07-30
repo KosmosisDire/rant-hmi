@@ -40,7 +40,7 @@ void test_defaults() {
     CHECK(d.version() == 1);
     CHECK(d.root["pages"].size() == 1);
     CHECK(d.root["pages"][0]["widgets"].size() == 7);
-    CHECK(d.root["canvas"]["cols"] == 48);
+    CHECK(d.root["canvas"]["cols"] == 64);
 
     /* every node got an id, and the index resolves each one to its place */
     Json& w = first_widget(d);
@@ -86,7 +86,7 @@ void test_round_trip() {
     CHECK(new_id != 0);
     CHECK(d.find(new_id) != nullptr);
     CHECK(first_widget(d)["label"] == "New");
-    CHECK(first_widget(d)["geom"]["w"] == 180);   /* default filled, in canvas units */
+    CHECK(first_widget(d)["geom"]["w"] == 132);   /* default filled, in canvas units */
 
     const char* path = "hmi_doc_test.tmp.json";
     CHECK_MSG(d.to_file(path, err), err);
