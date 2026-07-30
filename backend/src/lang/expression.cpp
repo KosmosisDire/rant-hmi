@@ -22,6 +22,17 @@ struct BuiltinSpec {
     Shape arg_shape[5];
     Shape result;
     bool display_only;
+    /* The VIEW's encoding of this builtin: the opcode frontend/src/program.ts executes,
+     * "" where the view has none (a template expression refuses it by name and says to
+     * bind through a feed instead), "@" where the template compiler folds it itself.
+     * This column is why there is one builtin table and not two: the view side used to
+     * carry its own name->opcode arrays plus a hand-written refusal list, which is three
+     * more places to remember when a builtin is added. */
+    const char* view = "";
+    /* a builtin the VIEW has and the scalar language does not (clamp01). The scalar
+     * parser skips these rows, so one table can describe both vocabularies without
+     * inventing a scalar builtin that has no Builtin id and no VM implementation. */
+    bool view_only = false;
 };
 
 struct MethodSpec {
@@ -104,20 +115,23 @@ const std::vector<MethodSpec>& methods() {
 
 const std::unordered_map<std::string, BuiltinSpec>& builtins() {
     static const std::unordered_map<std::string, BuiltinSpec> table = {
-        {"clamp", {Builtin::Clamp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false}},
+        {"clamp", {Builtin::Clamp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false, "@"}},
         {"mapRange", {Builtin::MapRange, 5, 5, {NUM, NUM, NUM, NUM, NUM}, Shape::Num, false}},
         {"roundTo", {Builtin::RoundTo, 2, 2, {NUM, NUM}, Shape::Num, false}},
         {"lerp", {Builtin::Lerp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false}},
-        {"abs", {Builtin::Abs, 1, 1, {NUM}, Shape::Num, false}},
-        {"round", {Builtin::Round, 1, 1, {NUM}, Shape::Num, false}},
-        {"floor", {Builtin::Floor, 1, 1, {NUM}, Shape::Num, false}},
-        {"ceil", {Builtin::Ceil, 1, 1, {NUM}, Shape::Num, false}},
-        {"sqrt", {Builtin::Sqrt, 1, 1, {NUM}, Shape::Num, false}},
-        {"pow", {Builtin::Pow, 2, 2, {NUM, NUM}, Shape::Num, false}},
-        {"min", {Builtin::Min, 2, 2, {NUM, NUM}, Shape::Num, false}},
-        {"max", {Builtin::Max, 2, 2, {NUM, NUM}, Shape::Num, false}},
-        {"int", {Builtin::Int, 1, 1, {ANY}, Shape::Num, false}},
+        {"abs", {Builtin::Abs, 1, 1, {NUM}, Shape::Num, false, "ABS"}},
+        {"round", {Builtin::Round, 1, 1, {NUM}, Shape::Num, false, "ROUND"}},
+        {"floor", {Builtin::Floor, 1, 1, {NUM}, Shape::Num, false, "FLOOR"}},
+        {"ceil", {Builtin::Ceil, 1, 1, {NUM}, Shape::Num, false, "CEIL"}},
+        {"sqrt", {Builtin::Sqrt, 1, 1, {NUM}, Shape::Num, false, "SQRT"}},
+        {"pow", {Builtin::Pow, 2, 2, {NUM, NUM}, Shape::Num, false, "POW"}},
+        {"min", {Builtin::Min, 2, 2, {NUM, NUM}, Shape::Num, false, "MIN"}},
+        {"max", {Builtin::Max, 2, 2, {NUM, NUM}, Shape::Num, false, "MAX"}},
+        {"int", {Builtin::Int, 1, 1, {ANY}, Shape::Num, false, "INT"}},
         {"num", {Builtin::Num, 1, 1, {ANY}, Shape::Num, false}},
+        /* view-only: the template tier's saturating 0..1 fold, which the scalar language
+           spells clamp(x, 0, 1) and has no separate opcode for */
+        {"clamp01", {Builtin::Clamp, 1, 1, {NUM}, Shape::Num, false, "CLAMP01", true}},
         {"rgb", {Builtin::Rgb, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
         {"hsv", {Builtin::Hsv, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
         {"str", {Builtin::Str, 1, 1, {ANY}, Shape::Text, false}},
@@ -822,7 +836,9 @@ class Parser {
 
     Shape parse_call(const std::string& name) {
         auto found = builtins().find(name);
-        if (found == builtins().end()) {
+        /* a view_only row describes the TEMPLATE tier's vocabulary and carries no
+           Builtin id the VM could execute, so it is not a name this language knows */
+        if (found == builtins().end() || found->second.view_only) {
             fail("unknown function '" + name + "'");
             return Shape::Unknown;
         }
@@ -886,6 +902,19 @@ class Parser {
 
 } // namespace
 
+ViewBuiltin view_builtin(const std::string& name) {
+    ViewBuiltin out;
+    const auto found = builtins().find(name);
+    if (found == builtins().end()) return out;
+    const BuiltinSpec& spec = found->second;
+    out.known = true;
+    out.bespoke = spec.view[0] == '@';
+    out.op = out.bespoke ? "" : spec.view;
+    out.min_args = spec.min_args;
+    out.max_args = spec.max_args;
+    return out;
+}
+
 const std::vector<LangRow>& language_reference() {
     static const std::vector<LangRow> table = [] {
         auto doc_shape = [](Shape shape) {
@@ -894,6 +923,9 @@ const std::vector<LangRow>& language_reference() {
         std::vector<LangRow> rows;
         for (const auto& item : builtins()) {
             const BuiltinSpec& spec = item.second;
+            /* a view-only row is not part of the authored scalar vocabulary, so it must
+               not be offered by autocomplete in a feed or a flow */
+            if (spec.view_only) continue;
             LangRow row;
             row.kind = "builtin";
             row.receiver = "";

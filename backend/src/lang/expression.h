@@ -67,4 +67,18 @@ struct LangRow {
 
 const std::vector<LangRow>& language_reference();
 
+/* What the VIEW tier may do with a builtin name, read off the same table the scalar
+ * compiler parses with (lang/expression.cpp). The template-expression compiler used to
+ * carry its own unary/binary opcode arrays plus a hand-written refusal list; three
+ * copies of one fact, and adding a builtin meant remembering all of them. */
+struct ViewBuiltin {
+    bool known = false;        /* names a builtin at all (else "unknown function") */
+    const char* op = "";       /* the view opcode; "" = no view encoding */
+    bool bespoke = false;      /* the template compiler folds this one itself (clamp) */
+    uint32_t min_args = 0;
+    uint32_t max_args = 0;
+};
+
+ViewBuiltin view_builtin(const std::string& name);
+
 } // namespace hmi

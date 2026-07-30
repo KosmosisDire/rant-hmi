@@ -305,6 +305,18 @@ void test_tiers() {
     CHECK_MSG(error.find("display") != std::string::npos, error);
     CHECK(code.empty());
     error.clear();
+    /* One builtin table describes two vocabularies (lang/expression.cpp): a row marked
+     * view_only belongs to TEMPLATE expressions and carries no Builtin id the VM could
+     * execute, so the scalar language must not know the name on either tier. clamp01 is
+     * the only such row today; spell it out, because a row that leaked would compile to
+     * a Call the VM has no case for. */
+    CHECK(!compile_expr("clamp01(x)", ExprTier::Display, scope, program, code, result,
+                        error));
+    CHECK_MSG(error.find("unknown function") != std::string::npos, error);
+    error.clear();
+    CHECK(!compile_expr("clamp01(x)", ExprTier::Wire, scope, program, code, result,
+                        error));
+    error.clear();
     /* an unknown method on a known shape suggests the neighbour */
     CHECK(!compile_expr("x.Round(1)", ExprTier::Display, scope, program, code,
                               result, error));

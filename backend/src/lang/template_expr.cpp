@@ -1,5 +1,7 @@
 #include "lang/template_expr.h"
 
+/* for view_builtin(): the builtin vocabulary is one table, shared with the scalar tier */
+#include "lang/expression.h"
 #include "lang/lexer.h"
 
 #include <cstring>
@@ -13,30 +15,11 @@ namespace {
 
 /* the numeric builtins with a 1:1 view opcode; same names and semantics as the scalar
  * language's builtin table, so an expression moves between tiers unchanged */
-struct UnaryBuiltin { const char* name; const char* op; };
-const UnaryBuiltin kUnaryBuiltins[] = {
-    {"abs", "ABS"},   {"round", "ROUND"}, {"floor", "FLOOR"}, {"ceil", "CEIL"},
-    {"sqrt", "SQRT"}, {"int", "INT"},     {"clamp01", "CLAMP01"},
-};
-
-struct BinaryBuiltin { const char* name; const char* op; };
-const BinaryBuiltin kBinaryBuiltins[] = {
-    {"pow", "POW"}, {"min", "MIN"}, {"max", "MAX"},
-};
-
-/* scalar-language vocabulary the view CANNOT run: named so the error explains the
- * tier instead of claiming the word does not exist */
-const char* kRefusedBuiltins[] = {
-    "rgb", "hsv", "color", "invert", "jet", "hot", "coolWarm", "viridis",
-    "grayscale", "str", "name", "fmtTime", "fmtDuration", "values", "keys",
-    "num", "mapRange", "roundTo", "lerp",
-};
-
-bool refused_builtin(const std::string& name) {
-    for (const char* r : kRefusedBuiltins)
-        if (name == r) return true;
-    return false;
-}
+/* The builtin vocabulary lives in ONE table (lang/expression.cpp) and this tier reads
+ * its `view` column through view_builtin(). What used to be here — a unary opcode array,
+ * a binary opcode array, and a hand-maintained list of scalar names to refuse — was three
+ * copies of facts that table already held, and adding a builtin meant remembering all
+ * three or getting "unknown function" where "no view encoding" was meant. */
 
 const char* kStates[] = {"pressed", "dragging", "open", "hover"};
 const char* kTileFields[] = {"w", "h", "aspect"};
@@ -296,19 +279,15 @@ class Parser {
             emit_load("optfrac:" + value_prop + "@" + options_prop);
             return;
         }
-        for (const UnaryBuiltin& b : kUnaryBuiltins) {
-            if (name != b.name) continue;
-            if (!arguments(name, 1)) return;
-            emit(b.op);
+        const ViewBuiltin view = view_builtin(name);
+        if (view.known && view.op[0]) {
+            /* every direct-opcode builtin the view has is fixed-arity, so min == max and
+               one arity serves both the parse and the message */
+            if (!arguments(name, static_cast<int>(view.min_args))) return;
+            emit(view.op);
             return;
         }
-        for (const BinaryBuiltin& b : kBinaryBuiltins) {
-            if (name != b.name) continue;
-            if (!arguments(name, 2)) return;
-            emit(b.op);
-            return;
-        }
-        if (name == "clamp") {
+        if (view.known && view.bespoke) {
             /* clamp(x, lo, hi) == min(max(x, lo), hi), folded onto the stack */
             if (!expect(TokenKind::LParen, "clamp takes 3 arguments")) return;
             advance();
@@ -325,7 +304,7 @@ class Parser {
             advance();
             return;
         }
-        if (refused_builtin(name)) {
+        if (view.known) {
             fail("'" + name + "' has no encoding in the view; a template expression "
                  "cannot use it (bind the value through a feed instead)");
             return;
