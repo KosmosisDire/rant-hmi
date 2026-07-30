@@ -9,8 +9,11 @@ import { installInputGuard } from "./input.js";
    and the app opts back in where it means to (input.ts) */
 installInputGuard();
 
+/* ?operate is the deployed view: the same app under a minimal frame (no topbar, no
+   sidebars), started straight in operate mode. Reached by the topbar's play button. */
+const operate = /[?&]operate(&|=|$)/.test(location.search);
 const url = syncUrl(location);
-const app = new App(document.getElementById("app") as HTMLElement, url);
+const app = new App(document.getElementById("app") as HTMLElement, url, operate);
 app.start();
 /* exposed for headless drives and console debugging; nothing in the app reads it */
 (window as any).app = app;

@@ -14,7 +14,7 @@ import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.j
 import { escapeXml, Rect, renderNode } from "./template.js";
 import { Canvas, Doc, HistView, Json, Live, Mesh, Page, Registry, Widget, WidgetType } from "./types.js";
 
-export type Mode = "edit" | "run" | "operate";
+export type Mode = "edit" | "test" | "operate";
 
 export interface ViewState {
   mode: Mode;
@@ -87,7 +87,7 @@ function contentRect(frame: Rect, pad: number): Rect {
  * own counts; so does a type default (behavior) that writes a slot the author left
  * unfed. A FED slot makes the default write moot: the feed owns the value, so a
  * value-owning control whose value is fed is read-only. An inert widget is made
- * pointer-transparent in run/operate, so a read-only progress slider laid over other
+ * pointer-transparent in test/operate, so a read-only progress slider laid over other
  * controls lets the clicks through to them instead of swallowing them. */
 function widgetInteractive(widget: Widget, type: WidgetType | null, fed: Set<string>): boolean {
   const byEvent = (flow: Json) =>

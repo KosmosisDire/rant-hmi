@@ -1,8 +1,8 @@
 /* The canvas viewport: the artboard is a fixed-aspect SVG in canvas units, and this
- * scales it to fit and never stretches it (spec 3.1). Edit mode adds pan and zoom on
- * every device (wheel, drag on empty space, pinch); operate mode locks to fit on
- * desktop, so an accidental zoom on a wall panel cannot happen. Pan and zoom are one
- * CSS transform, so they never repaint the artboard. */
+ * scales it to fit and never stretches it (spec 3.1). Authoring (edit and test modes)
+ * adds pan and zoom on every device (wheel, drag on empty space, pinch); the operate
+ * view locks to fit on desktop, so an accidental zoom on a wall panel cannot happen.
+ * Pan and zoom are one CSS transform, so they never repaint the artboard. */
 
 import { armSwallow } from "./menu.js";
 
@@ -61,7 +61,7 @@ export class Viewport {
     this.fit(true);
   }
 
-  /* lock to fit (operate mode on a desktop) */
+  /* lock to fit (the operate view on a desktop) */
   setLocked(locked: boolean): void {
     this.locked = locked;
     this.fit(true);
@@ -79,6 +79,9 @@ export class Viewport {
   }
 
   fit(reset: boolean): void {
+    /* a hidden stage (another workspace in front) has no size: keep the camera as it
+       is, and the resize observer refits when it comes back */
+    if (!this.stage.clientWidth || !this.stage.clientHeight) return;
     const w = this.stage.clientWidth || 1;
     const h = this.stage.clientHeight || 1;
     this.fitScale = Math.min((w - 2 * MARGIN) / this.unitW, (h - 2 * MARGIN) / this.unitH);

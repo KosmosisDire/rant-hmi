@@ -1,7 +1,10 @@
-/* The application shell: three columns, the mode switch, and the wiring between the
- * connection, the document mirror and the sidebars. The shell holds only view state
- * (selection, hover, mode, sidebar widths); every edit leaves as an op and comes back as a
- * broadcast, so two windows are always looking at the same document.
+/* The application shell: the frame (topbar, workspace tabs, mode switch) around the
+ * workspaces, and the wiring between the connection, the document mirror and the
+ * sidebars. The content workspace is the three-column editor; the shell holds only view
+ * state (selection, hover, mode, active workspace, sidebar widths); every edit leaves as
+ * an op and comes back as a broadcast, so two windows are always looking at the same
+ * document. An `?operate` URL is the deployed view: the same app with a minimal frame,
+ * just the artboard, started straight in operate mode.
  *
  * Direct manipulation follows the old designer: click selects, shift-click extends, drag
  * moves the whole selection, the grips resize its bbox, and a dashed ghost shows where it
@@ -9,7 +12,7 @@
 
 import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
-import { clear, el, svg } from "./dom.js";
+import { clear, el, iconButton, svg } from "./dom.js";
 import { Editor } from "./editor.js";
 import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
@@ -22,8 +25,9 @@ import { cellsFor, fedSlots, resolveSlot, typeOf, widgetOptions } from "./slots.
 import { radialExtent, Rect } from "./template.js";
 import { Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
+import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 
-type Mode = "edit" | "run" | "operate";
+type Mode = "edit" | "test" | "operate";
 
 const SIDEBAR_MIN = 200;
 const SIDEBAR_MAX = 640;
@@ -47,6 +51,10 @@ export class App implements Editor {
   private conn: Connection;
   private viewport: Viewport | null = null;
   private pageId = 0;
+  private workspaces: Workspace[] = [];
+  private workspace: WorkspaceId = "content";
+  /* the topbar controls that act on the artboard: hidden over Data and Style */
+  private stageTools: HTMLElement[] = [];
   private nodes!: {
     left: HTMLElement;
     inspector: HTMLElement;
@@ -68,8 +76,10 @@ export class App implements Editor {
   private lastContent = "";
   private lastOverlay = "";
 
-  constructor(private root: HTMLElement, url: string) {
+  /* `operate` is the deployed view: no topbar, no sidebars, the artboard alone */
+  constructor(private root: HTMLElement, url: string, private operate = false) {
     this.build();
+    if (this.operate) this.setMode("operate");
     this.conn = new Connection(url, {
       snapshot: (doc, registry, live, diag, mesh, lang) =>
         this.onSnapshot(doc, registry, live, diag, mesh, lang),
@@ -333,6 +343,7 @@ export class App implements Editor {
    * re-reads and assigns. So an arriving value does no layout, keeps focus, hover, open
    * dropdowns and scroll untouched, and needs nothing put back afterwards. */
   private renderSidebars(): void {
+    if (this.operate) return; /* the deployed view has no sidebars to keep current */
     this.sidebars.left.render(leftShape(this), (host) => renderLeftSidebar(host, this));
     this.sidebars.inspector.render(inspectorShape(this), (host) => renderInspector(host, this));
   }
@@ -352,41 +363,72 @@ export class App implements Editor {
     const stage = el("section", { class: "stage" }, [layer]);
     const banner = el("div", { class: "banner" });
 
-    const modes = el(
-      "div",
-      { class: "seg" },
-      (["edit", "run", "operate"] as Mode[]).map((mode) =>
-        el("button", {
-          class: mode === this.view.mode ? "on" : "",
-          text: mode === "run" ? "debug" : mode,
-          "data-mode": mode,
-          onclick: () => this.setMode(mode),
-        }),
-      ),
-    );
+    this.nodes = {
+      left, inspector, stage, layer, art, overlay, banner, problems, pill,
+    };
+    this.sidebars = { left: new Panel(left), inspector: new Panel(inspector) };
 
-    this.root.appendChild(
-      el("header", { class: "topbar" }, [
-        modes,
-        el("div", { class: "status" }, [problems, pill]),
-      ]),
-    );
-    this.root.appendChild(
-      el("main", { class: "workspace" }, [
+    if (this.operate) {
+      /* the deployed view: the artboard alone. The banner stays: reconnects and refused
+         edits still need a voice. The problems button and pill exist unattached, so the
+         status handlers have somewhere to write. */
+      this.root.appendChild(el("main", { class: "workspace" }, [stage]));
+      this.root.appendChild(banner);
+    } else {
+      const content = el("main", { class: "workspace" }, [
         left,
         this.gutter("left"),
         stage,
         this.gutter("right"),
         inspector,
-      ]),
-    );
-    this.root.appendChild(banner);
+      ]);
+      this.workspaces = buildWorkspaces(content);
 
-    this.nodes = {
-      left, inspector, stage, layer, art, overlay, banner, problems, pill,
-    };
-    this.sidebars = { left: new Panel(left), inspector: new Panel(inspector) };
-    this.restoreSidebarWidths();
+      const modes = el(
+        "div",
+        { class: "seg" },
+        (["edit", "test"] as Mode[]).map((mode) =>
+          el("button", {
+            class: mode === this.view.mode ? "on" : "",
+            text: mode,
+            "data-mode": mode,
+            onclick: () => this.setMode(mode),
+          }),
+        ),
+      );
+      /* operate is a destination, not a mode chip: play opens the deployed view */
+      const play = iconButton("play", "open the operate view in a new tab", () =>
+        window.open(window.location.pathname + "?operate", "_blank"), true);
+      play.classList.add("play");
+      this.stageTools = [modes, play];
+
+      const tabs = el(
+        "nav",
+        { class: "tabs" },
+        this.workspaces.map((ws) =>
+          el("button", {
+            class: ws.id === this.workspace ? "on" : "",
+            text: ws.label,
+            "data-workspace": ws.id,
+            onclick: () => this.setWorkspace(ws.id),
+          }),
+        ),
+      );
+
+      this.root.appendChild(
+        el("header", { class: "topbar" }, [
+          el("div", { class: "wordmark", text: "DART HMI" }),
+          tabs,
+          el("div", { class: "status" }, [modes, play, problems, pill]),
+        ]),
+      );
+      for (const ws of this.workspaces) {
+        ws.root.hidden = ws.id !== this.workspace;
+        this.root.appendChild(ws.root);
+      }
+      this.root.appendChild(banner);
+      this.restoreSidebarWidths();
+    }
 
     this.viewport = new Viewport(stage, layer, {
       canPan: (ev) => !this.grabbable(ev),
@@ -452,11 +494,22 @@ export class App implements Editor {
     }
   }
 
+  /* pure view routing: the hidden workspaces stay alive (viewport transform, reconciled
+     sidebars), and the connection and document never notice a switch */
+  private setWorkspace(id: WorkspaceId): void {
+    this.workspace = id;
+    for (const ws of this.workspaces) ws.root.hidden = ws.id !== id;
+    for (const tab of Array.from(this.root.querySelectorAll("button[data-workspace]")))
+      tab.classList.toggle("on", (tab as HTMLElement).dataset.workspace === id);
+    /* the mode switch and play act on the artboard: they mean nothing over Data or Style */
+    for (const tool of this.stageTools) tool.hidden = id !== "content";
+  }
+
   private setMode(mode: Mode): void {
     this.view.mode = mode;
     this.view.ghost = null;
     this.root.setAttribute("data-mode", mode);
-    for (const button of Array.from(this.root.querySelectorAll(".seg button[data-mode]")))
+    for (const button of Array.from(this.root.querySelectorAll("button[data-mode]")))
       button.classList.toggle("on", (button as HTMLElement).dataset.mode === mode);
     /* an operator surface stays still; editing wants pan and zoom everywhere */
     this.viewport?.setLocked(mode === "operate" && window.innerWidth > 900);
@@ -921,7 +974,9 @@ export class App implements Editor {
       closeMenu();
       this.select([]);
     }
-    if (this.view.mode !== "edit") return;
+    /* edit shortcuts only over the artboard: a Delete in another workspace must not
+       silently remove the selection it cannot show */
+    if (this.view.mode !== "edit" || this.workspace !== "content") return;
     if (ev.key === "Delete" || ev.key === "Backspace") {
       this.removeSelection();
       ev.preventDefault();

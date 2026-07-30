@@ -849,25 +849,29 @@ and a widget may sit off-grid or fully outside the artboard on the
 **pasteboard**: a staging area visible only while editing. The merged-background
 islands carried over from the prototype (touching tiles fuse into one rounded
 surface) form from grid-snapped widgets; a free-placed widget draws its own
-background and never merges. Operate mode renders the artboard rect only:
+background and never merges. The operate view renders the artboard rect only:
 pasteboard content is staging, not deployment.
 
-**Modes.** The backend always runs; frontend modes only route input.
+**Modes.** The backend always runs; frontend modes only route input. Edit and
+Test are the two authoring modes, a segment in the topbar.
 
 - **Edit**: click selects, drag moves and resizes, palette and inspector live.
   Widgets still RENDER live values (the backend never stopped); they do not react
   to interaction.
-- **Debug run**: a toggle inside edit mode. Canvas editing locks, widgets become
+- **Test**: the other half of the segment. Canvas editing locks, widgets become
   interactive, sidebars and inspector stay up: author and observe side by side, with
   `x`, NOW and fault markers moving in place.
-- **Operate**: the deployed view. Artboard fitted to the window, no sidebars, no
-  selection outline, nothing editable.
+- **Operate**: the deployed view, not a mode switch. The topbar's play button
+  opens it in a new tab, and any `?operate` URL boots straight into it: the
+  artboard alone, fitted to the window, under a minimal frame with no topbar and
+  no sidebars — no selection outline, nothing editable.
 
-**Pan and zoom.** Edit mode has pan/zoom on every device (wheel/trackpad, pinch,
-drag): editing wants it everywhere. Operate mode: mobile keeps pan/zoom (a small
-screen over a fixed-aspect artboard needs it); desktop locks to fit-to-window: an
-operator surface should be stable, and an accidental zoom on a wall panel is a
-hazard, not a feature. A per-HMI override can be added if a real deployment asks.
+**Pan and zoom.** Edit and Test have pan/zoom on every device (wheel/trackpad,
+pinch, drag): authoring wants it everywhere. The operate view: mobile keeps
+pan/zoom (a small screen over a fixed-aspect artboard needs it); desktop locks to
+fit-to-window: an operator surface should be stable, and an accidental zoom on a
+wall panel is a hazard, not a feature. A per-HMI override can be added if a real
+deployment asks.
 
 ### 3.2 The section stack
 

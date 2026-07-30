@@ -217,6 +217,64 @@ button:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+/* the document has no name yet: the frame is titled by the product, small caps mono */
+.wordmark {
+  font: 700 11.5px var(--mono);
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+/* the workspace tabs: the same segment language as .seg, but a full-height tab whose
+   active state is an accent underline rather than a fill */
+.tabs {
+  display: flex;
+  align-self: stretch;
+  gap: 2px;
+}
+
+.tabs > button {
+  padding: 0 12px;
+  border: 0;
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  font: 600 12px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tabs > button:hover {
+  color: var(--ink-2);
+}
+
+.tabs > button.on {
+  color: var(--ink);
+  border-bottom-color: var(--acc);
+}
+
+/* the artboard tools (mode seg, play) hide over Data and Style: their own display
+   rules must not win over the hidden attribute */
+.topbar [hidden] {
+  display: none;
+}
+
+/* play opens the deployed (operate) view in its own tab */
+.topbar .play {
+  width: 26px;
+  height: 24px;
+  background: var(--input);
+  color: var(--acc);
+}
+
+.topbar .play:hover {
+  border-color: var(--acc);
+  color: var(--acc-ink);
+}
+
 /* a two-state control is one icon or one segmented pair: the active half carries the
    accent fill (Build Sheet), never a second label */
 .seg {
@@ -312,6 +370,28 @@ button:focus-visible {
   min-height: 0;
   display: grid;
   grid-template-columns: var(--sidebar-left) 5px 1fr 5px var(--sidebar-right);
+}
+
+/* an inactive workspace is hidden, never torn down: its display rule must not win
+   over the hidden attribute */
+#app > main[hidden] {
+  display: none;
+}
+
+/* a workspace that has not landed yet (workspaces.ts): one honest line, centered */
+.workspace-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--stage);
+}
+
+.workspace-empty > .empty-note {
+  font: 500 12px var(--mono);
+  letter-spacing: 0.1em;
+  color: var(--dim);
 }
 
 .sidebar {
@@ -1915,19 +1995,19 @@ button.swatch {
   background: var(--acc-deep);
 }
 
-[data-mode="run"] .widget,
+[data-mode="test"] .widget,
 [data-mode="operate"] .widget {
   touch-action: none;
 }
 
 /* the pointer cursor follows the hit test exactly: only what an interact element
    PAINTED invites a press; a widget's inert background reads as surface */
-[data-mode="run"] .widget [data-act],
+[data-mode="test"] .widget [data-act],
 [data-mode="operate"] .widget [data-act] {
   cursor: pointer;
 }
 
-[data-mode="run"] .widget.disabled [data-act],
+[data-mode="test"] .widget.disabled [data-act],
 [data-mode="operate"] .widget.disabled [data-act] {
   cursor: not-allowed;
 }
