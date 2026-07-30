@@ -3,7 +3,7 @@
  * set_props its fan-out performed), so there is nothing to decide here and no rule that
  * can drift out of step with the server. */
 
-import { Doc, Json, Op, Page, Token, Var, Widget } from "./types.js";
+import { ComponentDef, Doc, Json, Op, Page, Token, Var, Widget } from "./types.js";
 
 /* which lists a node kind holds, so the index can walk without knowing the schema
    ("components"/"props"/"parts"/"behavior"/"children" are the component subtree) */
@@ -54,6 +54,10 @@ export class DocStore {
 
   tokens(): Token[] {
     return this.doc ? this.doc.tokens ?? [] : [];
+  }
+
+  components(): ComponentDef[] {
+    return this.doc ? this.doc.components ?? [] : [];
   }
 
   widget(id: number): Widget | null {

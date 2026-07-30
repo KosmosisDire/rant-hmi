@@ -23,7 +23,7 @@ import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, runtimeSlots, themedSlot, typeOf, widgetOptions } from "./slots.js";
 import { radialExtent, Rect } from "./template.js";
-import { Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
+import { BuiltinDef, Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { renderStyleWorkspace, styleShape } from "./workspaces/style.js";
@@ -42,6 +42,11 @@ export class App implements Editor {
   mesh: Mesh = { entities: [], types: [] };
   /* the served expression vocabulary: autocomplete reads exactly what compiles */
   lang: Lang | null = null;
+  /* the built-ins' editable document form, snapshot-only (it never changes at runtime):
+     the Components tree browses it and a fork copies one entry into doc.components */
+  builtins: BuiltinDef[] = [];
+  /* the component-edit selection; mutually exclusive with the widget selection */
+  componentSel: { component: number; node: number } | null = null;
   live: Live | null = null;
   hists: Record<string, HistView> = {};
   diagnostics: Diag[] = [];
@@ -77,6 +82,9 @@ export class App implements Editor {
   private stylePanel: Panel | null = null;
   private drag: Json = null;
   private control: Json = null;
+  /* a just-forked or just-added component's name: its insert is in flight, and the ids
+     the backend issues arrive with the echo, so selection resolves there by name */
+  private pendingComponent: string | null = null;
   private inputSequence = 0;
   private frame = 0;
   private contentDirty = true;
@@ -89,8 +97,8 @@ export class App implements Editor {
     this.build();
     if (this.operate) this.setMode("operate");
     this.conn = new Connection(url, {
-      snapshot: (doc, registry, live, diag, mesh, lang) =>
-        this.onSnapshot(doc, registry, live, diag, mesh, lang),
+      snapshot: (doc, registry, live, diag, mesh, lang, builtins) =>
+        this.onSnapshot(doc, registry, live, diag, mesh, lang, builtins),
       mesh: (mesh) => {
         this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
         refreshSourceTree();
@@ -140,6 +148,7 @@ export class App implements Editor {
   select(ids: number[]): void {
     this.view.selection = ids;
     this.view.part = "";
+    this.componentSel = null;
     this.queueCanvas();
     this.queueSidebars();
   }
@@ -149,8 +158,66 @@ export class App implements Editor {
   selectPart(id: number, path: string): void {
     this.view.selection = [id];
     this.view.part = path;
+    this.componentSel = null;
     this.queueCanvas();
     this.queueSidebars();
+  }
+
+  /* component selection: the inspector scopes to the component (or one part node in
+     it) and the widget selection clears — the overlay owns instance space only, so no
+     part ring is drawn for a component part (partRects are per instance) */
+  selectComponent(component: number, node: number): void {
+    this.componentSel = component ? { component, node: node || component } : null;
+    this.view.selection = [];
+    this.view.part = "";
+    this.queueCanvas();
+    this.queueSidebars();
+  }
+
+  /* fork a built-in: ONE ordinary insert of its served document form (the backend
+     issues every id through prepare); the echo resolves the selection by name */
+  forkBuiltin(name: string): void {
+    const held = this.store.components().find((c) => c.name === name);
+    if (held) {
+      this.selectComponent(held.id, held.id);
+      return;
+    }
+    const source = this.builtins.find((b) => b?.name === name);
+    if (!source) return;
+    this.pendingComponent = name;
+    this.apply([
+      { op: "insert", parent: 0, list: "components", node: JSON.parse(JSON.stringify(source)) },
+    ]);
+  }
+
+  /* a minimal fresh component: a body box holding one text part wired to one starter
+     property, so the new type renders (and binds) something the moment it is placed */
+  addComponent(): void {
+    const taken = new Set<string>(this.store.components().map((c) => c.name));
+    for (const type of this.registry?.types ?? []) taken.add(type.name);
+    let name = "Custom1";
+    for (let n = 1; taken.has(name); n++) name = "Custom" + n;
+    this.pendingComponent = name;
+    this.apply([
+      {
+        op: "insert",
+        parent: 0,
+        list: "components",
+        node: {
+          name,
+          props: [{ name: "text", shape: "text", default: "new", group: "appearance" }],
+          parts: [
+            {
+              kind: "box",
+              name: "body",
+              dir: "stack",
+              attrs: {},
+              children: [{ kind: "text", name: "label", attrs: { text: "text" } }],
+            },
+          ],
+        },
+      },
+    ]);
   }
 
   /* the theme preview mode (spec 2.10): the artboard repaints in the other half of
@@ -239,7 +306,7 @@ export class App implements Editor {
   }
 
   private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
-                     lang: Lang): void {
+                     lang: Lang, builtins: BuiltinDef[]): void {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
@@ -247,6 +314,7 @@ export class App implements Editor {
     this.absorbHist(live.hist);
     this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
     this.lang = lang;
+    this.builtins = Array.isArray(builtins) ? builtins : [];
     this.onDiag(diag, false);
     const page = this.page();
     this.pageId = page ? page.id : 0;
@@ -254,6 +322,7 @@ export class App implements Editor {
     this.conn.view(this.pageId, true);
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
     if (!this.view.selection.length) this.view.part = "";
+    this.settleComponentSel();
     this.renderAll();
   }
 
@@ -262,7 +331,26 @@ export class App implements Editor {
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
     if (!this.view.selection.length) this.view.part = "";
     if (!this.page()) this.pageId = this.store.pages()[0]?.id ?? 0;
+    this.settleComponentSel();
     this.renderAll();
+  }
+
+  /* a fork or add resolves to its selection here (the echo carries the issued ids);
+     a component selection whose nodes an edit removed steps out rather than dangling */
+  private settleComponentSel(): void {
+    if (this.pendingComponent) {
+      const held = this.store.components().find((c) => c.name === this.pendingComponent);
+      if (held) {
+        this.pendingComponent = null;
+        this.componentSel = { component: held.id, node: held.id };
+        this.view.selection = [];
+        this.view.part = "";
+      }
+    }
+    if (!this.componentSel) return;
+    if (!this.store.node(this.componentSel.component)) this.componentSel = null;
+    else if (!this.store.node(this.componentSel.node))
+      this.componentSel.node = this.componentSel.component;
   }
 
   /* Diagnostics arrive addressed to a document node, which may be a feed, a step or a
@@ -1034,8 +1122,13 @@ export class App implements Editor {
     if (typing) return;
     if (ev.key === "Escape") {
       closeMenu();
-      /* a selected part is the inner level: the first Escape steps back to the widget */
-      if (this.view.part && this.view.selection.length)
+      /* the inner level steps out first: component part -> component -> none, and a
+         selected widget part -> widget -> none, one level per press */
+      if (this.componentSel) {
+        if (this.componentSel.node !== this.componentSel.component)
+          this.selectComponent(this.componentSel.component, this.componentSel.component);
+        else this.selectComponent(0, 0);
+      } else if (this.view.part && this.view.selection.length)
         this.selectPart(this.view.selection[0], "");
       else this.select([]);
     }

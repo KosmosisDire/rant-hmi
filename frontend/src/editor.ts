@@ -9,7 +9,7 @@ import { ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
-import { Diag, Json, Lang, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
+import { BuiltinDef, Diag, Json, Lang, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
 
 export interface Editor {
   store: DocStore;
@@ -19,6 +19,12 @@ export interface Editor {
   mesh: Mesh;
   /* the served expression vocabulary (builtins + shape-scoped methods) */
   lang: Lang | null;
+  /* the built-in components' editable document form (no ids): what the Components
+     tree browses and what a fork copies into doc.components */
+  builtins: BuiltinDef[];
+  /* the component-edit selection, SEPARATE from the widget selection (the two are
+     mutually exclusive): `node` is the component id itself, or a Part node id in it */
+  componentSel: { component: number; node: number } | null;
   view: ViewState;
   page(): Page | null;
   selectedWidget(): Widget | null;
@@ -28,6 +34,14 @@ export interface Editor {
   /* select one widget and narrow to one of its template parts (a part path, spec 2.3);
      "" steps back to the widget. `select` always clears any part. */
   selectPart(id: number, path: string): void;
+  /* select a document component (or one part node in it) for editing; clears the
+     widget selection, as selecting a widget clears this */
+  selectComponent(component: number, node: number): void;
+  /* copy a built-in's document form into doc.components (ONE insert op; the backend
+     issues ids) and select the fork once its echo lands */
+  forkBuiltin(name: string): void;
+  /* insert a minimal fresh component (unique name) and select it */
+  addComponent(): void;
   /* the theme preview mode (spec 2.10): sets view.themeMode, persists it locally and
      repaints the artboard; the Style workspace's toggle is the only caller for now */
   setThemeMode(mode: "dark" | "light"): void;

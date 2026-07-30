@@ -1754,6 +1754,33 @@ select.field {
   text-overflow: ellipsis;
 }
 
+/* ---------- left sidebar: the Components tree ---------- */
+
+/* a doc component that SHADOWS a built-in: the accent says instances follow it */
+.layer-row .layer-label.shadows {
+  color: var(--acc-ink-2);
+}
+
+/* built-ins are browsable but read-only: dimmer than editable rows */
+.layer-row.builtin {
+  color: var(--dim);
+}
+
+.layer-row.builtin .layer-glyph {
+  color: var(--dim);
+}
+
+/* the fork affordance on a built-in row; a span (the row is already a button) */
+.layer-fork {
+  margin-left: auto;
+  opacity: 0.45;
+}
+
+.layer-row:hover .layer-fork {
+  opacity: 1;
+  color: var(--acc-ink);
+}
+
 /* one label column for NOW, TYPE and INIT; the column is as wide as the widest of them */
 .var-grid {
   display: grid;
@@ -1838,6 +1865,87 @@ select.field {
 
 .inspector-body {
   padding: 2px 16px 18px;
+}
+
+/* ---------- the component-editing inspector ---------- */
+
+/* the head's "this is a type, not an instance" tag */
+.inspector-head .head-tag {
+  font: 600 9.5px var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.part-def {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.part-def .spacer {
+  flex: 1;
+}
+
+/* one PropDef: name + shape + delete, then default + group */
+.propdef {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.propdef:last-of-type {
+  border-bottom: 0;
+}
+
+/* one attr (or interact param): name | expression | mark | delete */
+.attr-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 3px 0;
+  min-width: 0;
+}
+
+.attr-row .attr-name {
+  flex: 0 0 84px;
+  min-width: 0;
+}
+
+.attr-row .attr-name.static {
+  color: var(--muted);
+  font: 500 11.5px/20px var(--mono);
+  padding: 0 6px;
+  border: 1px solid transparent;
+  background: none;
+}
+
+.attr-row > .hl-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+/* read-only summary lines: a component's events and default behavior */
+.event-line,
+.flow-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font: 500 11.5px var(--mono);
+  color: var(--muted);
+  min-width: 0;
+}
+
+.event-line .event-expr {
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .prop-grid {

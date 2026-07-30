@@ -159,6 +159,16 @@ int main() {
      * dead widget with nothing to explain it. */
     CHECK((*snapshot)["diag"]["compile"].is_array());
 
+    /* the built-ins' editable DOCUMENT form rides beside the derived registry: parts
+     * with expression-text attrs, no compiled template, no ids (a fork inserts one
+     * into doc.components and the backend issues ids through prepare) */
+    CHECK((*snapshot)["builtins"].is_array());
+    CHECK((*snapshot)["builtins"].size() == 12);
+    CHECK((*snapshot)["builtins"][0]["name"] == "Button");
+    CHECK((*snapshot)["builtins"][0]["parts"].is_array());
+    CHECK(!(*snapshot)["builtins"][0].contains("template"));
+    CHECK(!(*snapshot)["builtins"][0].contains("id"));
+
     /* every template attribute arrives as a compiled program */
     const Json& button = (*snapshot)["registry"]["types"][0];
     CHECK(button["name"] == "Button");

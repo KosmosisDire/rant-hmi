@@ -20,8 +20,8 @@
 namespace hmi {
 
 /* bumped when a frame shape changes; a client with another number is refused
- * (2: the snapshot carries `mesh` and the server pushes `mesh` frames) */
-constexpr int kProto = 2;
+ * (3: the snapshot carries `builtins`, the built-ins' editable document form) */
+constexpr int kProto = 3;
 
 struct AppOptions {
     ServerOptions server;

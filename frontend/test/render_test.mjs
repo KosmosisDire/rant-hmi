@@ -122,10 +122,15 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 2, client_name: "render_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 3, client_name: "render_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
+/* the built-ins' editable document form rides beside the derived registry */
+check(Array.isArray(snapshot.builtins) && snapshot.builtins.length === 12,
+      "the snapshot serves the twelve built-ins' document form");
+check(Array.isArray(snapshot.builtins[0]?.parts) && !snapshot.builtins[0]?.template,
+      "a served built-in is doc-form: parts with expression text, no compiled template");
 const interactionOf = (node) =>
   node?.interact ?? (node?.children ?? []).map(interactionOf).find(Boolean) ?? null;
 check(
@@ -226,6 +231,8 @@ const editor = {
   live: { epoch: 1, values: {} },
   mesh: { entities: [], types: [] },
   lang: null,
+  builtins: snapshot.builtins ?? [],
+  componentSel: null,
   view,
   page: () => store.pages()[0],
   selectedWidget: () => store.widget(readout.id),
@@ -233,6 +240,9 @@ const editor = {
   setPage: () => undefined,
   select: () => undefined,
   selectPart: () => undefined,
+  selectComponent: () => undefined,
+  forkBuiltin: () => undefined,
+  addComponent: () => undefined,
   setThemeMode: () => undefined,
   refresh: () => undefined,
   diagFor: () => [],
@@ -648,6 +658,123 @@ check(!renderOverlay(store.pages()[0], view, partRects).includes('class="part-ri
       "a part that did not render gets no ring");
 view.selection = [];
 view.part = "";
+
+/* ---- the Components section: browse built-ins, edit doc components ----
+   Below Layers, the left sidebar lists the document's components (their PART trees,
+   real doc nodes) and then the built-ins not shadowed by one, browsable from the
+   served doc form and carrying a fork affordance. Selecting a part node scopes the
+   inspector to that node's attrs, and a component compile finding (addressed to the
+   part node, where = the attr) pins to the attr's own row. */
+
+drawLeft();
+const builtinToggleRow = rowByKey("b:Toggle");
+check(builtinToggleRow !== null, "the Components section lists unshadowed built-ins");
+check(builtinToggleRow.querySelectorAll(".layer-fork").length === 1,
+      "a built-in row carries the fork affordance");
+check(builtinToggleRow.className.includes("builtin"), "and is marked read-only");
+fire(builtinToggleRow.children[0], "click");
+drawLeft();
+check(rowByKey("b:Toggle/body") !== null,
+      "an expanded built-in lists its part tree from the served doc form");
+
+/* a doc component, injected as an echo would deliver it (ids issued) */
+store.apply(store.version() + 1, [
+  {
+    op: "insert",
+    parent: 0,
+    list: "components",
+    node: {
+      id: 9200,
+      name: "Lamp",
+      events: [{ name: "tap", x: "bool" }],
+      props: [
+        { id: 9201, name: "tint", shape: "color", default: "#ff0000", group: "appearance" },
+      ],
+      parts: [
+        {
+          id: 9210,
+          kind: "box",
+          name: "body",
+          dir: "stack",
+          attrs: {},
+          interact: null,
+          children: [
+            { id: 9211, kind: "text", name: "label", attrs: { text: "'hi'" },
+              interact: null, children: [] },
+          ],
+        },
+      ],
+      behavior: [],
+    },
+  },
+]);
+drawLeft();
+const lampRow = rowByKey("c9200");
+check(lampRow !== null, "a doc component appears in the Components tree");
+fire(lampRow.children[0], "click");
+drawLeft();
+check(rowByKey("c9200/9210") !== null, "an expanded component lists its part nodes");
+check(rowByKey("c9200/9211") !== null, "nested parts too (boxes default open)");
+
+/* selecting the component edits the TYPE: name field and the properties table */
+const lampEditor = {
+  ...editor,
+  selectedWidget: () => null,
+  componentSel: { component: 9200, node: 9200 },
+};
+const lampPanel = new Panel(new Element("aside"));
+lampPanel.render(inspectorShape(lampEditor), (host) => renderInspector(host, lampEditor));
+check(lampPanel.host.querySelector(".inspector-head").children[0].value === "Lamp",
+      "a selected component's head edits its name");
+check(
+  lampPanel.host.querySelectorAll(".propdef").length === 1 &&
+    lampPanel.host.querySelectorAll(".propdef")[0].querySelectorAll("input")
+      .some((i) => i.value === "tint"),
+  "the properties table lists the PropDef rows",
+);
+
+/* selecting a part edits its attrs: the expression text in an editable row */
+const labelEditor = { ...lampEditor, componentSel: { component: 9200, node: 9211 } };
+const labelPanel = new Panel(new Element("aside"));
+check(inspectorShape(labelEditor) !== inspectorShape(lampEditor),
+      "the selected part node moves the inspector's shape");
+labelPanel.render(inspectorShape(labelEditor), (host) => renderInspector(host, labelEditor));
+const attrRows = labelPanel.host.querySelectorAll(".attr-row");
+check(attrRows.length === 1, "the part view lists one row per attr");
+check(attrRows[0].querySelectorAll("input").some((i) => i.value === "'hi'"),
+      "with the attr's expression text editable in place");
+
+/* a component finding is addressed to the part node, where = the attr: it pins to
+   that attr's own row, exactly as the backend's template_expr diags arrive */
+const attrDiagRows = [
+  { node: 9211, grade: "error", code: "template_expr", message: "unknown name 'nope'",
+    where: "text" },
+];
+const attrDiagEditor = {
+  ...labelEditor,
+  diagFor: () => attrDiagRows,
+  diagAt: (node, where) =>
+    attrDiagRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
+  diagNode: (node) => attrDiagRows.filter((d) => d.node === node),
+};
+const attrDiagPanel = new Panel(new Element("aside"));
+attrDiagPanel.render(inspectorShape(attrDiagEditor), (host) =>
+  renderInspector(host, attrDiagEditor));
+const diagAttrRow = attrDiagPanel.host.querySelectorAll(".attr-row")[0];
+check(diagAttrRow.querySelectorAll(".diag-dot.error").length === 1,
+      "a component finding pins to the attr row the compiler named");
+
+/* the doc component SHADOWS a built-in by name: the built-in row folds away */
+store.apply(store.version() + 1, [
+  { op: "set_prop", node: 9200, key: "name", value: "Toggle" },
+]);
+drawLeft();
+check(rowByKey("b:Toggle") === null, "a shadowed built-in leaves the built-ins list");
+check(rowByKey("c9200").querySelector(".shadows") !== null,
+      "and the doc component is marked as overriding it");
+store.apply(store.version() + 1, [{ op: "remove", node: 9200 }]);
+drawLeft();
+check(rowByKey("b:Toggle") !== null, "removing the fork restores the built-in row");
 
 /* ---- theme tokens (spec 2.10) ----
    The document carries the seeded semantic set; an authored "$name" color slot resolves

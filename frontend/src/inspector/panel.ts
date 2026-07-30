@@ -19,8 +19,9 @@ import { ICONS, iconMarkup } from "../icons.js";
 import { PartNode, partIndex, subtreeSlots } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf } from "../slots.js";
-import { Json, Page, SlotSpec, Widget, WidgetType } from "../types.js";
+import { ComponentDef, Json, Page, SlotSpec, Widget, WidgetType } from "../types.js";
 
+import { componentInspectorShape, renderComponentInspector } from "./components.js";
 import { valueEditor } from "./editors.js";
 import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
@@ -45,8 +46,35 @@ function toggleLayer(editor: Editor, key: string, dflt: boolean): void {
   editor.refresh();
 }
 
+/* a doc component's part tree as structure (names are bound values; ids, kinds and
+ * nesting decide which rows exist) */
+function docPartShape(part: Json): Json {
+  return [part?.id, part?.kind, part?.dir ?? "",
+          ((part?.children ?? []) as Json[]).map(docPartShape)];
+}
+
+/* every finding under a component subtree, flattened: they pin marks on tree rows */
+function componentDiagShape(editor: Editor, comp: ComponentDef): string[] {
+  const out: string[] = [];
+  const add = (id: number) => {
+    for (const d of editor.diagNode(id))
+      out.push(id + ":" + (d.where ?? "") + ":" + d.code + ":" + d.message);
+  };
+  add(comp.id);
+  for (const prop of comp.props ?? []) add(prop.id);
+  const walk = (part: Json): void => {
+    if (typeof part?.id === "number") add(part.id);
+    for (const child of (part?.children ?? []) as Json[]) walk(child);
+  };
+  for (const part of comp.parts ?? []) walk(part);
+  return out;
+}
+
 export function leftShape(editor: Editor): string {
   const page = editor.page();
+  const comps = editor.store.components();
+  const shadowed = new Set(comps.map((c) => c.name));
+  const builtinNames = new Set(editor.builtins.map((b: Json) => b?.name));
   return JSON.stringify({
     pages: editor.store.pages().map((p) => [p.id, (p.widgets ?? []).map((w) => [w.id, w.type])]),
     current: page ? page.id : 0,
@@ -55,6 +83,15 @@ export function leftShape(editor: Editor): string {
     part: editor.view.part,
     fold: layerRevision,
     globals: editor.store.globals().map(varShape),
+    /* the Components tree: the doc components (their part trees are rows), the
+       unshadowed built-ins (browsable, forkable), and the component selection */
+    components: comps.map((c) => [c.id, builtinNames.has(c.name),
+                                  (c.parts ?? []).map(docPartShape)]),
+    builtins: editor.builtins.map((b: Json) => b?.name).filter((n: Json) => !shadowed.has(n)),
+    componentSel: editor.componentSel
+      ? [editor.componentSel.component, editor.componentSel.node]
+      : null,
+    cdiag: comps.flatMap((c) => componentDiagShape(editor, c)),
     /* findings pin icons on rows and cards, so their coming and going is structure */
     wdiag: editor.store.pages().flatMap((p) =>
       (p.widgets ?? []).flatMap((w) =>
@@ -87,6 +124,8 @@ export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
       }),
     ]),
   );
+
+  host.append(...componentSection(editor));
 
   host.append(
     ...section("globals", "Global Variables", String(store.globals().length), () => [
@@ -233,6 +272,139 @@ function partRows(
   return rows;
 }
 
+/* ---- the Components section: doc components (editable), then the unshadowed
+ * built-ins (browsable, forkable). Same tree idiom as Layers; a doc component that
+ * shadows a built-in wears the accent, a built-in row is dimmed and read-only. ---- */
+
+function componentSection(editor: Editor): HTMLElement[] {
+  const comps = editor.store.components();
+  const shadowed = new Set(comps.map((c) => c.name));
+  const builtinNames = new Set(editor.builtins.map((b: Json) => b?.name));
+  const unshadowed = editor.builtins.filter((b: Json) => b?.name && !shadowed.has(b.name));
+  return section("components", "Components", String(comps.length), () => [
+    el("div", { class: "layers" }, [
+      ...comps.flatMap((c) => docComponentRows(editor, c, builtinNames.has(c.name))),
+      ...unshadowed.flatMap((b: Json) => builtinComponentRows(editor, b)),
+    ]),
+    el("button", {
+      class: "dashed-btn",
+      text: "+ Component",
+      onclick: () => editor.addComponent(),
+    }),
+  ]);
+}
+
+function docComponentRows(editor: Editor, comp: ComponentDef, shadows: boolean): HTMLElement[] {
+  const key = "c" + comp.id;
+  const open = layerOpen(key, false);
+  const parts = comp.parts ?? [];
+  const label = el("span", { class: "layer-label" + (shadows ? " shadows" : "") });
+  bindText(comp.id + ":name.layer", label, () =>
+    (editor.store.node(comp.id) as Json)?.name ?? "");
+  const row = treeRow(
+    key,
+    0,
+    "component" + (editor.componentSel?.node === comp.id ? " current" : ""),
+    parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
+    [
+      el("span", {
+        class: "layer-glyph",
+        html: iconMarkup(ICONS[comp.name] ? comp.name : "layers", 11, 1.7),
+      }),
+      label,
+      diagIcon(editor.diagNode(comp.id)),
+    ],
+    () => editor.selectComponent(comp.id, comp.id),
+    shadows ? "overrides built-in" : comp.name,
+  );
+  const rows = [row];
+  if (open) for (const part of parts) rows.push(...docPartTreeRows(editor, comp, part, 1));
+  return rows;
+}
+
+function docPartTreeRows(editor: Editor, comp: ComponentDef, part: Json, depth: number): HTMLElement[] {
+  const key = "c" + comp.id + "/" + part.id;
+  const open = layerOpen(key, true);
+  const children = (part.children ?? []) as Json[];
+  const glyph = PART_GLYPH[part.kind === "box" ? (part.dir ?? "stack") : part.kind] ?? "·";
+  const label = el("span", { class: "layer-label" });
+  bindText(part.id + ":name.layer", label, () =>
+    (editor.store.node(part.id) as Json)?.name ?? "");
+  const row = treeRow(
+    key,
+    depth,
+    "part" + (editor.componentSel?.node === part.id ? " current" : ""),
+    children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
+    [el("span", { class: "layer-glyph draw", text: glyph }), label,
+     diagIcon(editor.diagNode(part.id))],
+    () => editor.selectComponent(comp.id, part.id),
+    part.name + " (" + part.kind + ")",
+  );
+  const rows = [row];
+  if (open)
+    for (const child of children) rows.push(...docPartTreeRows(editor, comp, child, depth + 1));
+  return rows;
+}
+
+function builtinComponentRows(editor: Editor, comp: Json): HTMLElement[] {
+  const name = String(comp?.name ?? "");
+  const key = "b:" + name;
+  const open = layerOpen(key, false);
+  const parts = Array.isArray(comp?.parts) ? (comp.parts as Json[]) : [];
+  /* a span, not a button: the row itself is one (nesting buttons is invalid) */
+  const fork = el("span", {
+    class: "icon-btn layer-fork",
+    title: "fork to edit — instances follow the fork",
+    html: iconMarkup("git-branch", 11),
+  });
+  fork.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    editor.forkBuiltin(name);
+  });
+  const row = treeRow(
+    key,
+    0,
+    "component builtin",
+    parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
+    [
+      el("span", {
+        class: "layer-glyph",
+        html: iconMarkup(ICONS[name] ? name : "layers", 11, 1.7),
+      }),
+      el("span", { class: "layer-label", text: name }),
+      fork,
+    ],
+    () => toggleLayer(editor, key, false),
+    name + " (built-in, read-only)",
+  );
+  const rows = [row];
+  if (open) for (const part of parts) rows.push(...builtinPartRows(editor, key, part, 1));
+  return rows;
+}
+
+function builtinPartRows(editor: Editor, prefix: string, part: Json, depth: number): HTMLElement[] {
+  const name = String(part?.name ?? "");
+  const key = prefix + "/" + name;
+  const open = layerOpen(key, true);
+  const children = Array.isArray(part?.children) ? (part.children as Json[]) : [];
+  const glyph = PART_GLYPH[part?.kind === "box" ? (part?.dir ?? "stack") : part?.kind] ?? "·";
+  const row = treeRow(
+    key,
+    depth,
+    "part builtin",
+    children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
+    [el("span", { class: "layer-glyph draw", text: glyph }),
+     el("span", { class: "layer-label", text: name })],
+    () => toggleLayer(editor, key, true),
+    name + " (" + part?.kind + ", read-only)",
+  );
+  const rows = [row];
+  if (open)
+    for (const child of children)
+      rows.push(...builtinPartRows(editor, key, child, depth + 1));
+  return rows;
+}
+
 function pageNameRow(editor: Editor, page: Page): HTMLElement {
   const at = () => editor.store.page(page.id);
   const name = commitInput(
@@ -262,6 +434,10 @@ function selectedPart(editor: Editor, type: WidgetType | null): string {
 }
 
 export function inspectorShape(editor: Editor): string {
+  /* a component selection owns the inspector; it and the widget selection are
+     mutually exclusive by construction (each clears the other) */
+  const component = componentInspectorShape(editor);
+  if (component) return component;
   const widget = editor.selectedWidget();
   if (!widget) return "empty";
   const type = typeOf(editor.registry, widget.type);
@@ -291,6 +467,10 @@ export function inspectorShape(editor: Editor): string {
 
 export function renderInspector(host: HTMLElement, editor: Editor): void {
   clear(host);
+  if (componentInspectorShape(editor)) {
+    renderComponentInspector(host, editor);
+    return;
+  }
   const widget = editor.selectedWidget();
   if (!widget) {
     host.appendChild(

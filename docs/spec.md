@@ -117,9 +117,19 @@ the tables), not in the inspector (sections, menus and pickers are generated fro
 the tables), not in the renderer (one template engine plus a closed set of
 interaction primitives). The built-ins ship as component definitions in exactly
 this form; a document's own `components` list holds more of them, and a document
-component with a built-in's name SHADOWS it (which is what a future "edit a copy of
-Toggle" forks into). The REGISTRY the backend serves is a COMPILE PRODUCT derived
-from the two: it changes when components change, never independently.
+component with a built-in's name SHADOWS it. The REGISTRY the backend serves is a
+COMPILE PRODUCT derived from the two: it changes when components change, never
+independently.
+
+**Forking.** Editing a built-in IS shadowing it: a fork copies the built-in's
+document form (the snapshot serves it as `builtins`, ids stripped) into
+`doc.components` with one ordinary insert — the backend issues every id through
+prepare — and every instance typed by that name follows the fork automatically,
+because instances reference types by NAME and the doc component now wins the
+derivation. Deleting the fork restores the built-in the same way. Renaming a
+component is a plain `set_prop` (nothing references a component by id); instances
+typed by the old name lose their type and show the missing-type marker, which is
+the honest reading of what happened.
 
 ```
 Component {                      // one document node (Doc.components[], spec 2.8)
@@ -915,13 +925,28 @@ Build Sheet mock, minus its traffic panel.
 Three columns, full height, no page scroll; each column scrolls independently.
 Both sidebars are resizable by drag handles (widths persisted per view):
 
-- **Left sidebar**, scrolling: the **Layers** tree, then **Global Variables** (one
-  card per variable, always visible regardless of selection, because they are the
-  HMI's state). The Layers tree nests pages → the widgets on each page → each
-  widget's named template parts (its part paths, 2.3), read from the registry type,
-  so every named node is listed whether the current render shows it or not. A page
-  row switches pages, a widget row selects the widget, a part row selects that
-  part; expansion state is per view and never synced.
+- **Left sidebar**, scrolling: the **Layers** tree, then **Components**, then
+  **Global Variables** (one card per variable, always visible regardless of
+  selection, because they are the HMI's state). The Layers tree nests pages → the
+  widgets on each page → each widget's named template parts (its part paths, 2.3),
+  read from the registry type, so every named node is listed whether the current
+  render shows it or not. A page row switches pages, a widget row selects the
+  widget, a part row selects that part; expansion state is per view and never
+  synced.
+- **Components** lists the document's own components (editable: a row selects the
+  component, its expanded part tree selects a part node) and then the built-ins not
+  shadowed by one — dimmed, browsable to their part trees, read-only, each carrying
+  a fork affordance (2.3). A doc component that shadows a built-in is marked (its
+  instances follow it). "+ Component" inserts a minimal fresh component. Component
+  selection is SEPARATE from widget selection and each clears the other; Escape
+  steps part → component → none. With a component selected the inspector edits the
+  TYPE: its name, a read-only events summary, the properties table (one PropDef
+  row: name, shape, default — the ordinary slot editors — group, delete), and a
+  read-only behavior summary. With a PART selected it edits that node: name, a
+  box's dir, the attrs table (attr name + expression text, findings pinned per attr
+  exactly as the compiler addresses them), the interact's params, add-child /
+  move / delete. Every edit is an ordinary op; the recompile's registry-changed
+  snapshot repaints every instance, which is the honest live preview.
 - **Canvas**: the artboard and its surrounding pasteboard (below).
 - **Inspector** (right). A sticky header shows the widget's label and its type +
   id; below it, the folding section stack.

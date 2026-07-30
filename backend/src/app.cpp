@@ -4,6 +4,7 @@
 #include "compile/components.h"
 #include "compile/expression.h"
 #include "doc/ops.h"
+#include "registry/registry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -472,6 +473,10 @@ Json App::snapshot() const {
                 {"version", doc_.version()},
                 {"doc", doc_.root},
                 {"registry", registry_},
+                /* the built-ins' EDITABLE document form (no ids): the registry serves
+                 * compiled programs, so forking a built-in into doc.components needs
+                 * this. It never changes at runtime, so the snapshot is enough. */
+                {"builtins", builtin_components()},
                 {"live", std::move(live_frame)},
                 {"mesh", mesh_json()},
                 {"lang", lang_json()},

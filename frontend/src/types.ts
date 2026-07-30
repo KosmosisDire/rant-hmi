@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 2;
+export const PROTO = 3;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 
@@ -169,6 +169,11 @@ export interface ComponentDef {
   parts: PartNode[]; /* the template's one root node */
   behavior: Flow[];
 }
+
+/* A built-in component as the snapshot serves it: exactly the ComponentDef document
+ * form, minus every id (nothing in the document carries it). Forking one is inserting
+ * it into doc.components as-is; the backend issues ids recursively through prepare. */
+export type BuiltinDef = Json;
 
 export interface Doc {
   version: number;
