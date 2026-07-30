@@ -15,24 +15,52 @@
 
 import { clear, commitInput, el, iconButton, numberInput } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
-import { bindField, bindFlag, bindText } from "../reconcile.js";
+import { ICONS, iconMarkup } from "../icons.js";
+import { PartNode, partIndex, subtreeSlots } from "../parts.js";
+import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf } from "../slots.js";
-import { Json, Page, SlotSpec, Widget } from "../types.js";
+import { Json, Page, SlotSpec, Widget, WidgetType } from "../types.js";
 
 import { valueEditor } from "./editors.js";
 import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 
-/* ---- left sidebar ---- */
+/* ---- left sidebar: the Layers tree, then the globals ---- */
+
+/* The tree's expansion state: module-persistent, keyed "p<id>", "w<id>",
+ * "w<id>/<part path>". Defaults: pages and part boxes open, widgets closed. A toggle
+ * bumps the revision, which rides the shape string: expansion decides which rows EXIST,
+ * unlike a section fold, which only hides standing rows. */
+const layerFold = new Map<string, boolean>();
+let layerRevision = 0;
+
+function layerOpen(key: string, dflt: boolean): boolean {
+  return layerFold.get(key) ?? dflt;
+}
+
+function toggleLayer(editor: Editor, key: string, dflt: boolean): void {
+  layerFold.set(key, !layerOpen(key, dflt));
+  layerRevision++;
+  editor.refresh();
+}
 
 export function leftShape(editor: Editor): string {
   const page = editor.page();
   return JSON.stringify({
-    pages: editor.store.pages().map((p) => p.id),
+    pages: editor.store.pages().map((p) => [p.id, (p.widgets ?? []).map((w) => [w.id, w.type])]),
     current: page ? page.id : 0,
+    /* the tree highlights the selection and lists rows per expansion state */
+    selection: editor.view.selection,
+    part: editor.view.part,
+    fold: layerRevision,
     globals: editor.store.globals().map(varShape),
-    /* a global's findings pin icons on its card, so their coming and going is structure */
+    /* findings pin icons on rows and cards, so their coming and going is structure */
+    wdiag: editor.store.pages().flatMap((p) =>
+      (p.widgets ?? []).flatMap((w) =>
+        editor.diagFor(w.id).map((d) => w.id + ":" + d.code + ":" + d.message),
+      ),
+    ),
     diag: editor.store.globals().flatMap((v) =>
       editor
         .diagAt(v.id)
@@ -48,12 +76,8 @@ export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   const page = editor.page();
 
   host.append(
-    ...section("pages", "Pages", String(store.pages().length), () => [
-      el(
-        "div",
-        { class: "pages" },
-        store.pages().map((p) => pageChip(editor, p)),
-      ),
+    ...section("layers", "Layers", String(store.pages().length), () => [
+      el("div", { class: "layers" }, store.pages().flatMap((p) => pageRows(editor, p))),
       page ? pageNameRow(editor, page) : null,
       el("button", {
         class: "dashed-btn",
@@ -77,17 +101,136 @@ export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   );
 }
 
-/* the chip's name and its selected state both move without the chip being replaced, so
-   picking a page never disturbs the list under the pointer */
-function pageChip(editor: Editor, page: Page): HTMLElement {
-  const at = () => editor.store.page(page.id);
-  const chip = el("button", {
-    class: "page-chip",
-    onclick: () => editor.setPage(page.id),
+/* one tree row: indent, a caret when it expands, then the caller's cells. The caret owns
+ * its own click, so a fold never changes the selection. */
+function treeRow(
+  key: string,
+  depth: number,
+  cls: string,
+  fold: { open: boolean; toggle: () => void } | null,
+  kids: (HTMLElement | null)[],
+  onclick: () => void,
+  title?: string,
+): HTMLElement {
+  const caret = el("span", {
+    class: "layer-caret",
+    html: fold ? iconMarkup("chevron-down", 9, 2) : "",
+    style: fold && !fold.open ? "transform:rotate(-90deg)" : "",
   });
-  bindText(page.id + ":name.chip", chip, () => at()?.name ?? "");
-  bindFlag(page.id + ":current", chip, "on", () => editor.page()?.id === page.id);
-  return chip;
+  if (fold)
+    caret.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      fold.toggle();
+    });
+  return el(
+    "button",
+    {
+      class: "layer-row " + cls,
+      "data-key": key,
+      style: "padding-left:" + (4 + depth * 12) + "px",
+      title,
+      onclick,
+    },
+    [caret, ...kids],
+  );
+}
+
+/* pages -> widgets -> the widget's template part tree */
+function pageRows(editor: Editor, page: Page): HTMLElement[] {
+  const key = "p" + page.id;
+  const open = layerOpen(key, true);
+  const widgets = page.widgets ?? [];
+  const label = el("span", { class: "layer-label" });
+  bindText(page.id + ":name.layer", label, () => editor.store.page(page.id)?.name ?? "");
+  const row = treeRow(
+    key,
+    0,
+    "page" + (editor.page()?.id === page.id ? " here" : ""),
+    widgets.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
+    [label, el("span", { class: "badge", text: String(widgets.length) })],
+    () => editor.setPage(page.id),
+  );
+  const rows = [row];
+  if (open) for (const widget of widgets) rows.push(...widgetRows(editor, page, widget));
+  return rows;
+}
+
+function widgetRows(editor: Editor, page: Page, widget: Widget): HTMLElement[] {
+  const key = "w" + widget.id;
+  const type = typeOf(editor.registry, widget.type);
+  const parts = type ? partIndex(type).roots : [];
+  const open = layerOpen(key, false);
+  const cls =
+    "widget" +
+    (editor.view.selection.indexOf(widget.id) >= 0 && !editor.view.part ? " current" : "");
+  const label = el("span", { class: "layer-label" });
+  bindText(widget.id + ":label.layer", label, () => {
+    const at = editor.store.widget(widget.id);
+    return at ? at.label || at.type : "";
+  });
+  const row = treeRow(
+    key,
+    1,
+    cls,
+    parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
+    [
+      el("span", {
+        class: "layer-glyph",
+        html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 11, 1.7),
+      }),
+      label,
+      diagIcon(editor.diagFor(widget.id)),
+    ],
+    () => {
+      if (editor.page()?.id !== page.id) editor.setPage(page.id);
+      editor.select([widget.id]);
+    },
+  );
+  const rows = [row];
+  if (open) for (const part of parts) rows.push(...partRows(editor, page, widget, part, 2));
+  return rows;
+}
+
+/* draw-kind glyphs: one mono mark per box direction / part draw */
+const PART_GLYPH: Record<string, string> = {
+  row: "→", col: "↓", stack: "▤", auto: "⇆",
+  rect: "▭", bar: "▮", text: "T", icon: "✦",
+  arc: "◠", needle: "↗", mark: "●", ticks: "‖", plot: "∿",
+};
+
+function partRows(
+  editor: Editor,
+  page: Page,
+  widget: Widget,
+  node: PartNode,
+  depth: number,
+): HTMLElement[] {
+  const key = "w" + widget.id + "/" + node.path;
+  const open = layerOpen(key, true);
+  const current =
+    editor.view.selection.length === 1 &&
+    editor.view.selection[0] === widget.id &&
+    editor.view.part === node.path;
+  const row = treeRow(
+    key,
+    depth,
+    "part" + (current ? " current" : ""),
+    node.children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
+    [
+      el("span", { class: "layer-glyph draw", text: PART_GLYPH[node.kind] ?? "·" }),
+      el("span", { class: "layer-label", text: node.name }),
+    ],
+    () => {
+      if (editor.page()?.id !== page.id) editor.setPage(page.id);
+      editor.selectPart(widget.id, node.path);
+    },
+    node.path + " (" + node.kind + ")",
+  );
+  const rows = [row];
+  if (open)
+    for (const child of node.children)
+      rows.push(...partRows(editor, page, widget, child, depth + 1));
+  return rows;
 }
 
 function pageNameRow(editor: Editor, page: Page): HTMLElement {
@@ -111,6 +254,13 @@ function pageNameRow(editor: Editor, page: Page): HTMLElement {
 
 /* ---- inspector ---- */
 
+/* the selected part, but only when this type can actually name it; anything else (a
+ * stale path, an unknown type) falls back to the widget view */
+function selectedPart(editor: Editor, type: WidgetType | null): string {
+  const path = editor.view.part;
+  return path && type && partIndex(type).byPath.has(path) ? path : "";
+}
+
 export function inspectorShape(editor: Editor): string {
   const widget = editor.selectedWidget();
   if (!widget) return "empty";
@@ -120,6 +270,7 @@ export function inspectorShape(editor: Editor): string {
   return JSON.stringify({
     id: widget.id,
     type: widget.type,
+    part: selectedPart(editor, type),
     slots: (type?.slots ?? []).map((s) => [
       s.name, s.shape, s.group, s.editor ?? "", (s.variants ?? []).join("|"),
     ]),
@@ -157,6 +308,11 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
 
   const at = () => editor.store.widget(widget.id) ?? widget;
   const type = typeOf(editor.registry, widget.type);
+  const part = selectedPart(editor, type);
+  if (part && type) {
+    renderPartInspector(host, editor, widget, type, part);
+    return;
+  }
   const fed = fedSlots(widget);
   const feeds = widget.feeds ?? [];
   const valueSlots = (type?.slots ?? []).filter((s) => s.group === "value");
@@ -281,6 +437,57 @@ const SLOT_ORDER = [
 function slotRank(name: string): number {
   const at = SLOT_ORDER.indexOf(name);
   return at < 0 ? SLOT_ORDER.length : at;
+}
+
+/* The part-scoped inspector: the head reads widget › part (the widget's name is the way
+ * back), and ONE section lists exactly the slots the part's subtree consumes — value
+ * slots included, and the frame slots only when the subtree actually reads them (it
+ * mostly will not: the frame is painted by the canvas, not the template). Behavior,
+ * variables and placement belong to the widget view. Slot rows come from the same
+ * slotCells with the same keys, so text half-typed in the widget view survives here. */
+function renderPartInspector(
+  host: HTMLElement,
+  editor: Editor,
+  widget: Widget,
+  type: WidgetType,
+  path: string,
+): void {
+  const node = partIndex(type).byPath.get(path)!;
+  const back = el("button", {
+    class: "part-back",
+    title: "back to the widget",
+    onclick: () => editor.select([widget.id]),
+  });
+  bindText(widget.id + ":label.part", back, () => {
+    const at = editor.store.widget(widget.id);
+    return at ? at.label || at.type : "";
+  });
+  host.appendChild(
+    el("div", { class: "inspector-head" }, [
+      back,
+      el("span", { class: "part-sep", text: "›" }),
+      el("span", { class: "part-name", text: node.name, title: path }),
+    ]),
+  );
+
+  const fed = fedSlots(widget);
+  const consumed = new Set(subtreeSlots(type, path));
+  const specs = (type.slots ?? [])
+    .filter((spec) => consumed.has(spec.name))
+    .sort((a, b) => slotRank(a.name) - slotRank(b.name));
+  const body = el("div", { class: "inspector-body" }, []);
+  host.appendChild(body);
+  body.append(
+    ...section("part", node.name, String(specs.length), () => [
+      specs.length
+        ? el(
+            "div",
+            { class: "prop-grid" },
+            specs.flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
+          )
+        : el("p", { class: "empty", text: "this part consumes no properties" }),
+    ]),
+  );
 }
 
 function geomRow(editor: Editor, widget: Widget): HTMLElement {

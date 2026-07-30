@@ -45,10 +45,10 @@ export class App implements Editor {
   hists: Record<string, HistView> = {};
   diagnostics: Diag[] = [];
   /* where every named template node landed on the last content render: widget id ->
-     part path -> rect in artboard units (the coming part selection reads this) */
+     part path -> rect in artboard units (the overlay's part ring reads this) */
   partRects: Map<number, Map<string, Rect>> = new Map();
   view: ViewState = {
-    mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {}, faults: {},
+    mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {},
   };
 
   private conn: Connection;
@@ -127,12 +127,23 @@ export class App implements Editor {
   setPage(id: number): void {
     this.pageId = id;
     this.view.selection = [];
+    this.view.part = "";
     this.conn.view(id, true);
     this.renderAll();
   }
 
   select(ids: number[]): void {
     this.view.selection = ids;
+    this.view.part = "";
+    this.queueCanvas();
+    this.queueSidebars();
+  }
+
+  /* part selection: the widget is selected and the focus narrows to one named template
+     node; the inspector scopes to it and the overlay rings where it landed */
+  selectPart(id: number, path: string): void {
+    this.view.selection = [id];
+    this.view.part = path;
     this.queueCanvas();
     this.queueSidebars();
   }
@@ -221,12 +232,14 @@ export class App implements Editor {
     this.viewport?.setArtboard(doc.canvas.unit_w, doc.canvas.unit_h);
     this.conn.view(this.pageId, true);
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
+    if (!this.view.selection.length) this.view.part = "";
     this.renderAll();
   }
 
   private onOps(version: number, ops: Op[]): void {
     this.store.apply(version, ops);
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
+    if (!this.view.selection.length) this.view.part = "";
     if (!this.page()) this.pageId = this.store.pages()[0]?.id ?? 0;
     this.renderAll();
   }
@@ -335,7 +348,7 @@ export class App implements Editor {
         this.nodes.art.innerHTML = content;
       }
     }
-    const overlay = renderOverlay(page, this.view);
+    const overlay = renderOverlay(page, this.view, this.partRects);
     if (overlay === this.lastOverlay) return;
     this.lastOverlay = overlay;
     this.nodes.overlay.setAttribute("viewBox", viewBox);
@@ -568,11 +581,20 @@ export class App implements Editor {
     if (!handle && !widgetNode) return;
 
     let selection = this.view.selection.slice();
+    let descend: string | null = null;
     if (!handle && widgetNode) {
       const id = Number(widgetNode.dataset.id);
       if (selection.indexOf(id) < 0) {
         this.clickSelect(id, ev.shiftKey);
         selection = this.view.selection.slice();
+      } else if (!ev.shiftKey && selection.length === 1 && selection[0] === id) {
+        /* a second click on the already-selected widget descends into the part under
+           the pointer: the browser's own hit test names it (the overlay is
+           click-through, so the target rides the art SVG). Committed at the up edge,
+           so a drag never descends. */
+        const partNode = target?.closest?.("[data-part]") as Element | null;
+        if (partNode && partNode.closest("[data-id]") === widgetNode)
+          descend = partNode.getAttribute("data-part");
       }
     }
     const widgets = selection
@@ -583,6 +605,7 @@ export class App implements Editor {
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     this.drag = {
       mode: handle?.dataset.handle ?? "move",
+      part: descend,
       widgets,
       start: bboxOf(widgets),
       geoms: widgets.map((w) => ({ ...w.geom })),
@@ -619,6 +642,10 @@ export class App implements Editor {
     this.drag = null;
     this.view.ghost = null;
     if (!drag.moved || !this.viewport) {
+      /* the second click that never dragged: descend into the noted part; with no part
+         under the pointer the widget selection simply stands */
+      if (typeof drag.part === "string" && drag.part)
+        this.selectPart((drag.widgets as Widget[])[0].id, drag.part);
       this.queueCanvas();
       return;
     }
@@ -976,7 +1003,10 @@ export class App implements Editor {
     if (typing) return;
     if (ev.key === "Escape") {
       closeMenu();
-      this.select([]);
+      /* a selected part is the inner level: the first Escape steps back to the widget */
+      if (this.view.part && this.view.selection.length)
+        this.selectPart(this.view.selection[0], "");
+      else this.select([]);
     }
     /* edit shortcuts only over the artboard: a Delete in another workspace must not
        silently remove the selection it cannot show */

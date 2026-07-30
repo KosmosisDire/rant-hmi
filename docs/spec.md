@@ -835,11 +835,23 @@ Build Sheet mock, minus its traffic panel.
 Three columns, full height, no page scroll; each column scrolls independently.
 Both sidebars are resizable by drag handles (widths persisted per view):
 
-- **Left sidebar**, scrolling: **Global Variables**, one card per variable, always
-  visible regardless of selection, because they are the HMI's state.
+- **Left sidebar**, scrolling: the **Layers** tree, then **Global Variables** (one
+  card per variable, always visible regardless of selection, because they are the
+  HMI's state). The Layers tree nests pages → the widgets on each page → each
+  widget's named template parts (its part paths, 2.3), read from the registry type,
+  so every named node is listed whether the current render shows it or not. A page
+  row switches pages, a widget row selects the widget, a part row selects that
+  part; expansion state is per view and never synced.
 - **Canvas**: the artboard and its surrounding pasteboard (below).
 - **Inspector** (right). A sticky header shows the widget's label and its type +
   id; below it, the folding section stack.
+
+**Part selection.** A part is selected from the Layers tree, or on the canvas by a
+second click on the already-selected widget: the browser's own hit test names the
+part under the pointer (no data-part there leaves the widget selection standing).
+The overlay draws a thin solid accent ring where the part landed in the last render;
+a part hidden by `show` rendered nothing and gets no ring. Escape steps back one
+level: part first, then selection. Selecting another widget clears any part.
 
 **The artboard.** A page is authored against the document's one fixed-aspect
 artboard (2.8). Rendering SCALES TO FIT and never stretches: on every device the
@@ -896,6 +908,14 @@ across selection changes and reloads (per view, not synced). The ordering is
 deliberate: what comes in, then what it does, then what it remembers, then what it
 looks like, then the code that means. Appearance last, because it is the part that
 never breaks a machine.
+
+**The part-scoped view.** With a part selected (3.1) the stack narrows to ONE
+section, named for the part: exactly the slots the part's template subtree consumes
+(any program under it that reads `slot:<name>`, interact params included), value
+slots too, ordered as in Appearance. Behavior, variables and the Panel section stay
+with the widget view — the frame is painted by the canvas, not the template, so its
+slots appear here only if the subtree actually reads them. The head reads
+widget › part, and the widget's name is the way back.
 
 ### 3.3 Feed rows
 

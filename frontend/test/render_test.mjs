@@ -27,7 +27,9 @@ const { unionPath } = await import(mod("islands.js"));
 const { syncUrl } = await import(mod("endpoint.js"));
 const { parseRich, richMarkup, richUnits } = await import(mod("rich.js"));
 const { Panel } = await import(mod("reconcile.js"));
-const { inspectorShape, renderInspector } = await import(mod("inspector/panel.js"));
+const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
+  await import(mod("inspector/panel.js"));
+const { renderOverlay } = await import(mod("canvas.js"));
 
 let failures = 0;
 let checks = 0;
@@ -133,7 +135,7 @@ check(
 
 const store = new DocStore();
 store.load(snapshot.doc);
-const view = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {}, faults: {} };
+const view = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {} };
 const page = store.pages()[0];
 let svg = renderContent(store.doc, page, snapshot.registry, snapshot.live, view);
 
@@ -221,12 +223,15 @@ const editor = {
   store,
   registry: snapshot.registry,
   live: { epoch: 1, values: {} },
+  mesh: { entities: [], types: [] },
+  lang: null,
   view,
   page: () => store.pages()[0],
   selectedWidget: () => store.widget(readout.id),
   apply: () => undefined,
   setPage: () => undefined,
   select: () => undefined,
+  selectPart: () => undefined,
   refresh: () => undefined,
   diagFor: () => [],
   diagAt: () => [],
@@ -583,6 +588,64 @@ check(toggleParts instanceof Map && toggleParts.has("body/pill/lane/knob"),
 }
 /* the slider's scale is hidden (show_scale defaults off), so it records nothing */
 check(!partRects.get(slider.id).has("body/scale"), "a node hidden by `show` records no rect");
+
+/* ---- the Layers tree, part selection and the part-scoped inspector ----
+   The left sidebar's tree lists pages, their widgets, and each widget's named template
+   parts from the REGISTRY type (all of them, rendered or not). Selecting a part scopes
+   the inspector to exactly the slots the part's subtree consumes, and the overlay rings
+   the part where the last render put it. */
+
+const left = new Element("aside");
+const leftPanel = new Panel(left);
+const drawLeft = () => leftPanel.render(leftShape(editor), (host) => renderLeftSidebar(host, editor));
+const rowByKey = (key) =>
+  left.querySelectorAll(".layer-row").find((r) => r.getAttribute("data-key") === key) ?? null;
+
+drawLeft();
+const toggleRow = rowByKey("w" + toggle.id);
+check(toggleRow !== null, "the Layers tree lists the page's widgets under the page row");
+check(left.querySelector(".page-chip") === null, "the Pages chip row is gone");
+/* expanding the widget row (its caret) reveals the type's whole part tree */
+fire(toggleRow.children[0], "click");
+drawLeft();
+check(rowByKey("w" + toggle.id + "/body/pill/lane/knob") !== null,
+      "an expanded widget lists its template parts by path");
+fire(rowByKey("w" + slider.id).children[0], "click");
+drawLeft();
+check(rowByKey("w" + slider.id + "/body/scale") !== null,
+      "a part hidden by `show` is still listed: the tree reads the type, not the render");
+
+/* a selected part scopes the inspector: widget › part head, ONE section, and only the
+   slots the part's subtree consumes (the knob paints with handle_color and nothing else) */
+const toggleEditor2 = { ...editor, selectedWidget: () => store.widget(toggle.id) };
+view.selection = [toggle.id];
+view.part = "body/pill/lane/knob";
+const widgetShape = (() => { view.part = ""; const s = inspectorShape(toggleEditor2); view.part = "body/pill/lane/knob"; return s; })();
+check(inspectorShape(toggleEditor2) !== widgetShape, "the selected part moves the inspector's shape");
+const partPanel = new Panel(new Element("aside"));
+partPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
+const partLabels = [];
+for (const grid of partPanel.host.querySelectorAll(".prop-grid"))
+  for (const kid of grid.children) if (kid.tagName === "LABEL") partLabels.push(kid.textContent);
+check(partLabels.includes("handle_color"),
+      "the part view lists a slot the part's subtree consumes");
+check(!partLabels.includes("fill_color") && !partLabels.includes("track_color"),
+      "and not its siblings' slots, got " + partLabels.join(","));
+check(partPanel.host.querySelector(".geom-grid") === null,
+      "the part view carries no Panel/placement section");
+check(partPanel.host.querySelector(".part-name")?.textContent === "knob",
+      "the head names the part");
+
+/* the overlay rings the selected part at its recorded rect; a hidden part has none */
+view.part = "body/pill";
+const ringed = renderOverlay(store.pages()[0], view, partRects);
+check(ringed.includes('class="part-ring"'), "the overlay rings the selected part");
+view.selection = [slider.id];
+view.part = "body/scale";
+check(!renderOverlay(store.pages()[0], view, partRects).includes('class="part-ring"'),
+      "a part that did not render gets no ring");
+view.selection = [];
+view.part = "";
 
 /* trend smoothing is pure math on the drawn copy: noisy input comes out with less
    spread, a null still breaks the run (never bridged), and knobs at 0 pass through */

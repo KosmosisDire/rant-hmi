@@ -504,6 +504,7 @@ button:focus-visible {
 .sel-ring,
 .sel-grip,
 .sel-arc,
+.part-ring,
 .ghost {
   pointer-events: none;
 }
@@ -516,6 +517,11 @@ button:focus-visible {
   opacity: 0.7;
 }
 .sel-ring {
+  fill: none;
+  stroke: var(--acc);
+}
+/* the selected part's ring: thin, solid, over the widget ring */
+.part-ring {
   fill: none;
   stroke: var(--acc);
 }
@@ -1591,30 +1597,85 @@ select.field {
   color: var(--ink-2);
 }
 
-/* ---------- left sidebar ---------- */
+/* ---------- left sidebar: the Layers tree ---------- */
 
-.pages {
+.layers {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
+  flex-direction: column;
+  margin: 0 -8px 6px;
 }
 
-.page-chip {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--line-in);
-  border-radius: 2px;
-  background: var(--chip);
-  color: var(--muted);
-  font: 500 12px var(--mono);
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: calc(100% + 16px);
+  height: 21px;
+  padding-right: 8px;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.page-chip.on {
-  background: var(--acc-deep);
-  border-color: var(--acc-deep-line);
-  color: var(--acc-ink);
+.layer-row:hover {
+  background: #232323;
+  color: var(--ink);
+}
+
+/* the selected widget or part, the same treatment as the source tree's current row */
+.layer-row.current {
+  background: rgba(78, 142, 247, 0.14);
+  color: var(--ink);
+}
+
+.layer-row.current:hover {
+  background: rgba(78, 142, 247, 0.2);
+}
+
+.layer-row.page {
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.layer-row.page.here {
+  color: var(--ink);
+}
+
+.layer-row.part {
+  color: var(--muted);
+}
+
+.layer-row .badge {
+  margin-left: auto;
+}
+
+.layer-caret {
+  flex: 0 0 10px;
+  display: inline-flex;
+  color: var(--dim);
+}
+
+.layer-glyph {
+  flex: 0 0 13px;
+  display: inline-flex;
+  justify-content: center;
+  color: #8a8a8a;
+}
+
+.layer-glyph.draw {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.layer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* one label column for NOW, TYPE and INIT; the column is as wide as the widest of them */
@@ -1671,6 +1732,32 @@ select.field {
   letter-spacing: 0.06em;
   color: var(--dim);
   white-space: nowrap;
+}
+
+/* the part-scoped head: widget › part; the widget's name is the way back */
+.inspector-head .part-back {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 500 12px var(--mono);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.inspector-head .part-back:hover {
+  color: var(--acc-ink);
+}
+
+.inspector-head .part-sep {
+  color: var(--dim);
+}
+
+.inspector-head .part-name {
+  font: 600 12.5px var(--mono);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .inspector-body {

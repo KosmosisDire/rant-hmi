@@ -19,6 +19,8 @@ export type Mode = "edit" | "test" | "operate";
 export interface ViewState {
   mode: Mode;
   selection: number[];
+  /* the selected PART of the selected widget: a part path into its template, "" = none */
+  part: string;
   hover: number;
   scale: number;                                /* px per canvas unit */
   ghost: Rect | null;                           /* drag/resize preview */
@@ -193,7 +195,11 @@ function grips(box: Rect, radius: number, unit: number): string {
   return out.join("");
 }
 
-function overlay(page: Page, view: ViewState): string {
+function overlay(
+  page: Page,
+  view: ViewState,
+  partRects: Map<number, Map<string, Rect>> | null,
+): string {
   const unit = 1 / Math.max(0.05, view.scale);   /* one screen pixel, in canvas units */
   const out: string[] = [];
 
@@ -220,6 +226,17 @@ function overlay(page: Page, view: ViewState): string {
         `y="${num(box.y)}" width="${num(box.w)}" height="${num(box.h)}" rx="${num(radius)}"/>`,
     );
     out.push(grips(box, radius, unit));
+  }
+
+  /* the selected part, ringed where it actually landed this render (App.partRects); a
+     part hidden by `show` recorded no rect and gets no ring */
+  if (view.part && view.selection.length === 1) {
+    const rect = partRects?.get(view.selection[0])?.get(view.part);
+    if (rect)
+      out.push(
+        `<rect class="part-ring" stroke-width="${num(1.5 * unit)}" x="${num(rect.x)}" ` +
+          `y="${num(rect.y)}" width="${num(rect.w)}" height="${num(rect.h)}"/>`,
+      );
   }
 
   if (view.ghost) {
@@ -388,8 +405,12 @@ export function renderContent(
 
 /* The editing overlay is its own layer: it is the only thing that depends on the view
  * scale, so a pan or a zoom redraws these few shapes instead of the whole artboard. */
-export function renderOverlay(page: Page, view: ViewState): string {
-  return view.mode === "operate" ? "" : overlay(page, view);
+export function renderOverlay(
+  page: Page,
+  view: ViewState,
+  partRects: Map<number, Map<string, Rect>> | null = null,
+): string {
+  return view.mode === "operate" ? "" : overlay(page, view, partRects);
 }
 
 /* the topmost widget under an artboard point, or 0 */
