@@ -4,8 +4,6 @@
  * survive a round trip through Data or Style. Nothing here touches the connection or the
  * document: a tab is pure view routing. */
 
-import { el } from "./dom.js";
-
 export type WorkspaceId = "content" | "data" | "style";
 
 export interface Workspace {
@@ -14,23 +12,13 @@ export interface Workspace {
   root: HTMLElement;
 }
 
-/* a workspace that has not landed yet: an honest empty state under a real tab */
-function placeholder(id: WorkspaceId, label: string, note: string): Workspace {
-  return {
-    id,
-    label,
-    root: el("main", { class: "workspace-empty" }, [
-      el("div", { class: "empty-note", text: note }),
-    ]),
-  };
-}
-
-/* content is the three-column editor the shell builds; style is the theme token editor
- * (workspaces/style.ts, reconciled by the shell like a sidebar); Data lands later */
-export function buildWorkspaces(content: HTMLElement, style: HTMLElement): Workspace[] {
+/* content is the three-column editor the shell builds; data is the network/variable
+ * explorer (workspaces/data.ts) and style the theme token editor (workspaces/style.ts),
+ * both reconciled by the shell like sidebars */
+export function buildWorkspaces(content: HTMLElement, data: HTMLElement, style: HTMLElement): Workspace[] {
   return [
     { id: "content", label: "Content", root: content },
-    placeholder("data", "Data", "DATA — network explorer lands here"),
+    { id: "data", label: "Data", root: data },
     { id: "style", label: "Style", root: style },
   ];
 }

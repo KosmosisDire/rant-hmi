@@ -19,7 +19,7 @@ import { ICONS, iconMarkup } from "../icons.js";
 import { PartNode, partIndex, subtreeSlots } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf } from "../slots.js";
-import { ComponentDef, Json, Page, SlotSpec, Widget, WidgetType } from "../types.js";
+import { ComponentDef, Json, SlotSpec, Widget, WidgetType } from "../types.js";
 
 import { componentInspectorShape, renderComponentInspector } from "./components.js";
 import { valueEditor } from "./editors.js";
@@ -27,12 +27,13 @@ import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 
-/* ---- left sidebar: the Layers tree, then the globals ---- */
+/* ---- left sidebar: the Layers tree (the CURRENT page's widgets; pages live in the
+ * topbar selector), then Components. Globals live in the Data workspace. ---- */
 
-/* The tree's expansion state: module-persistent, keyed "p<id>", "w<id>",
- * "w<id>/<part path>". Defaults: pages and part boxes open, widgets closed. A toggle
- * bumps the revision, which rides the shape string: expansion decides which rows EXIST,
- * unlike a section fold, which only hides standing rows. */
+/* The tree's expansion state: module-persistent, keyed "w<id>", "w<id>/<part path>",
+ * "c<id>...". Defaults: part boxes open, widgets closed. A toggle bumps the revision,
+ * which rides the shape string: expansion decides which rows EXIST, unlike a section
+ * fold, which only hides standing rows. */
 const layerFold = new Map<string, boolean>();
 let layerRevision = 0;
 
@@ -76,13 +77,13 @@ export function leftShape(editor: Editor): string {
   const shadowed = new Set(comps.map((c) => c.name));
   const builtinNames = new Set(editor.builtins.map((b: Json) => b?.name));
   return JSON.stringify({
-    pages: editor.store.pages().map((p) => [p.id, (p.widgets ?? []).map((w) => [w.id, w.type])]),
-    current: page ? page.id : 0,
+    /* the CURRENT page's widgets only: pages live in the topbar selector */
+    page: page ? page.id : 0,
+    widgets: (page?.widgets ?? []).map((w) => [w.id, w.type]),
     /* the tree highlights the selection and lists rows per expansion state */
     selection: editor.view.selection,
     part: editor.view.part,
     fold: layerRevision,
-    globals: editor.store.globals().map(varShape),
     /* the Components tree: the doc components (their part trees are rows), the
        unshadowed built-ins (browsable, forkable), and the component selection */
     components: comps.map((c) => [c.id, builtinNames.has(c.name),
@@ -93,51 +94,24 @@ export function leftShape(editor: Editor): string {
       : null,
     cdiag: comps.flatMap((c) => componentDiagShape(editor, c)),
     /* findings pin icons on rows and cards, so their coming and going is structure */
-    wdiag: editor.store.pages().flatMap((p) =>
-      (p.widgets ?? []).flatMap((w) =>
-        editor.diagFor(w.id).map((d) => w.id + ":" + d.code + ":" + d.message),
-      ),
-    ),
-    diag: editor.store.globals().flatMap((v) =>
-      editor
-        .diagAt(v.id)
-        .concat(editor.diagAt(v.id, "init"))
-        .map((d) => v.id + ":" + d.code + ":" + d.message),
+    wdiag: (page?.widgets ?? []).flatMap((w) =>
+      editor.diagFor(w.id).map((d) => w.id + ":" + d.code + ":" + d.message),
     ),
   });
 }
 
 export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   clear(host);
-  const store = editor.store;
-  const page = editor.page();
+  const widgets = editor.page()?.widgets ?? [];
 
   host.append(
-    ...section("layers", "Layers", String(store.pages().length), () => [
-      el("div", { class: "layers" }, store.pages().flatMap((p) => pageRows(editor, p))),
-      page ? pageNameRow(editor, page) : null,
-      el("button", {
-        class: "dashed-btn",
-        text: "+ Page",
-        onclick: () =>
-          editor.apply([{ op: "insert", parent: 0, list: "pages", node: { name: "Page" } }]),
-      }),
+    ...section("layers", "Layers", String(widgets.length), () => [
+      el("div", { class: "layers" }, widgets.flatMap((w) => widgetRows(editor, w))),
+      widgets.length ? null : el("p", { class: "empty", text: "no widgets on this page" }),
     ]),
   );
 
   host.append(...componentSection(editor));
-
-  host.append(
-    ...section("globals", "Global Variables", String(store.globals().length), () => [
-      ...store.globals().map((variable) => varCard(editor, variable, "global")),
-      store.globals().length ? null : el("p", { class: "empty", text: "no globals yet" }),
-      el("button", {
-        class: "dashed-btn",
-        text: "+ Variable",
-        onclick: () => newVariable(editor, 0, "globals", store.globals()),
-      }),
-    ]),
-  );
 }
 
 /* one tree row: indent, a caret when it expands, then the caller's cells. The caret owns
@@ -174,27 +148,8 @@ function treeRow(
   );
 }
 
-/* pages -> widgets -> the widget's template part tree */
-function pageRows(editor: Editor, page: Page): HTMLElement[] {
-  const key = "p" + page.id;
-  const open = layerOpen(key, true);
-  const widgets = page.widgets ?? [];
-  const label = el("span", { class: "layer-label" });
-  bindText(page.id + ":name.layer", label, () => editor.store.page(page.id)?.name ?? "");
-  const row = treeRow(
-    key,
-    0,
-    "page" + (editor.page()?.id === page.id ? " here" : ""),
-    widgets.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
-    [label, el("span", { class: "badge", text: String(widgets.length) })],
-    () => editor.setPage(page.id),
-  );
-  const rows = [row];
-  if (open) for (const widget of widgets) rows.push(...widgetRows(editor, page, widget));
-  return rows;
-}
-
-function widgetRows(editor: Editor, page: Page, widget: Widget): HTMLElement[] {
+/* widgets -> the widget's template part tree (the page level lives in the topbar) */
+function widgetRows(editor: Editor, widget: Widget): HTMLElement[] {
   const key = "w" + widget.id;
   const type = typeOf(editor.registry, widget.type);
   const parts = type ? partIndex(type).roots : [];
@@ -209,7 +164,7 @@ function widgetRows(editor: Editor, page: Page, widget: Widget): HTMLElement[] {
   });
   const row = treeRow(
     key,
-    1,
+    0,
     cls,
     parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
     [
@@ -220,13 +175,10 @@ function widgetRows(editor: Editor, page: Page, widget: Widget): HTMLElement[] {
       label,
       diagIcon(editor.diagFor(widget.id)),
     ],
-    () => {
-      if (editor.page()?.id !== page.id) editor.setPage(page.id);
-      editor.select([widget.id]);
-    },
+    () => editor.select([widget.id]),
   );
   const rows = [row];
-  if (open) for (const part of parts) rows.push(...partRows(editor, page, widget, part, 2));
+  if (open) for (const part of parts) rows.push(...partRows(editor, widget, part, 1));
   return rows;
 }
 
@@ -239,7 +191,6 @@ const PART_GLYPH: Record<string, string> = {
 
 function partRows(
   editor: Editor,
-  page: Page,
   widget: Widget,
   node: PartNode,
   depth: number,
@@ -259,16 +210,13 @@ function partRows(
       el("span", { class: "layer-glyph draw", text: PART_GLYPH[node.kind] ?? "·" }),
       el("span", { class: "layer-label", text: node.name }),
     ],
-    () => {
-      if (editor.page()?.id !== page.id) editor.setPage(page.id);
-      editor.selectPart(widget.id, node.path);
-    },
+    () => editor.selectPart(widget.id, node.path),
     node.path + " (" + node.kind + ")",
   );
   const rows = [row];
   if (open)
     for (const child of node.children)
-      rows.push(...partRows(editor, page, widget, child, depth + 1));
+      rows.push(...partRows(editor, widget, child, depth + 1));
   return rows;
 }
 
@@ -403,25 +351,6 @@ function builtinPartRows(editor: Editor, prefix: string, part: Json, depth: numb
     for (const child of children)
       rows.push(...builtinPartRows(editor, key, child, depth + 1));
   return rows;
-}
-
-function pageNameRow(editor: Editor, page: Page): HTMLElement {
-  const at = () => editor.store.page(page.id);
-  const name = commitInput(
-    page.name,
-    (text) => editor.apply([{ op: "set_prop", node: page.id, key: "name", value: text }]),
-    { class: "field grow" },
-  );
-  bindField(page.id + ":name", name, () => at()?.name ?? "");
-  return el("div", { class: "row" }, [
-    el("span", { class: "row-label", text: "NAME" }),
-    name,
-    editor.store.pages().length > 1
-      ? iconButton("trash", "remove this page", () =>
-          editor.apply([{ op: "remove", node: page.id }]),
-        )
-      : null,
-  ]);
 }
 
 /* ---- inspector ---- */

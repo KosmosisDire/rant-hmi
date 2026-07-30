@@ -37,7 +37,7 @@ const opened = new Set<number>();
 /* which FORM a move's side takes, discriminated by key exactly as the backend does */
 type Side = "expr" | "local" | "entity" | "slot" | "init" | "";
 
-function sideOf(side: Json): Side {
+export function sideOf(side: Json): Side {
   if (!side || typeof side !== "object") return "";
   if (typeof side.expr === "string") return "expr";
   if (typeof side.slot === "string") return "slot";
@@ -50,7 +50,7 @@ function sideOf(side: Json): Side {
 /* TWO words for a move: data comes off the mesh (`read`) or a value goes somewhere
  * (`write`), with force/unforce surfacing a variable destination's mode. The chip's kind
  * mark says WHAT the target is; the verb no longer restates it. */
-function verbOf(step: Json): string {
+export function verbOf(step: Json): string {
   switch (step?.kind) {
     case "move": {
       const to = step.to ?? {};

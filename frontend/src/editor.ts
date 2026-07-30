@@ -30,6 +30,12 @@ export interface Editor {
   selectedWidget(): Widget | null;
   apply(ops: Op[]): void;
   setPage(id: number): void;
+  /* insert a fresh page and switch to it once the echo issues its id (the topbar page
+     selector's "+ New page") */
+  addPage(): void;
+  /* land the author on a consumer found elsewhere (the Data workspace's where-used):
+     switch to the widget's page, select it, and show the content workspace */
+  reveal(widget: number): void;
   select(ids: number[]): void;
   /* select one widget and narrow to one of its template parts (a part path, spec 2.3);
      "" steps back to the widget. `select` always clears any part. */

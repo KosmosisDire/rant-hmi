@@ -31,6 +31,9 @@ const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
   await import(mod("inspector/panel.js"));
 const { renderOverlay } = await import(mod("canvas.js"));
 const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.js"));
+const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
+  await import(mod("workspaces/data.js"));
+const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
 
 let failures = 0;
 let checks = 0;
@@ -243,6 +246,8 @@ const editor = {
   selectComponent: () => undefined,
   forkBuiltin: () => undefined,
   addComponent: () => undefined,
+  addPage: () => undefined,
+  reveal: () => undefined,
   setThemeMode: () => undefined,
   refresh: () => undefined,
   diagFor: () => [],
@@ -602,10 +607,11 @@ check(toggleParts instanceof Map && toggleParts.has("body/pill/lane/knob"),
 check(!partRects.get(slider.id).has("body/scale"), "a node hidden by `show` records no rect");
 
 /* ---- the Layers tree, part selection and the part-scoped inspector ----
-   The left sidebar's tree lists pages, their widgets, and each widget's named template
-   parts from the REGISTRY type (all of them, rendered or not). Selecting a part scopes
-   the inspector to exactly the slots the part's subtree consumes, and the overlay rings
-   the part where the last render put it. */
+   The left sidebar's tree lists the CURRENT page's widgets and each widget's named
+   template parts from the REGISTRY type (all of them, rendered or not); pages live in
+   the topbar selector, not here. Selecting a part scopes the inspector to exactly the
+   slots the part's subtree consumes, and the overlay rings the part where the last
+   render put it. */
 
 const left = new Element("aside");
 const leftPanel = new Panel(left);
@@ -615,8 +621,9 @@ const rowByKey = (key) =>
 
 drawLeft();
 const toggleRow = rowByKey("w" + toggle.id);
-check(toggleRow !== null, "the Layers tree lists the page's widgets under the page row");
-check(left.querySelector(".page-chip") === null, "the Pages chip row is gone");
+check(toggleRow !== null, "the Layers tree lists the current page's widgets");
+check(left.querySelectorAll(".layer-row.page").length === 0, "the Layers tree has no page rows");
+check(rowByKey("p" + page.id) === null, "not even the current page's");
 /* expanding the widget row (its caret) reveals the type's whole part tree */
 fire(toggleRow.children[0], "click");
 drawLeft();
@@ -843,6 +850,125 @@ store.apply(store.version() + 1, [
 check(styleShape(editor) !== styleShapeBefore, "a new token moves the workspace's shape");
 drawStyle();
 check(tokenNames().some((i) => i.value === "custom"), "and the table lists it");
+
+/* ---- the topbar page selector ----
+   Pages moved out of the sidebar: the selector names the current page (a value, moved
+   in place by a rename echo), and which pages exist is its shape. */
+
+const pagePanel = new Panel(new Element("div"));
+const drawPageSel = () =>
+  pagePanel.render(pageSelectShape(editor), (host) => renderPageSelect(host, editor));
+drawPageSel();
+const pageButton = pagePanel.host.querySelector(".page-select");
+check(pageButton !== null, "the topbar page selector built");
+check(pageButton.textContent === "Overview",
+      "and names the current page, got " + pageButton?.textContent);
+store.apply(store.version() + 1, [
+  { op: "set_prop", node: page.id, key: "name", value: "Main" },
+]);
+drawPageSel();
+check(pagePanel.host.querySelector(".page-select") === pageButton,
+      "a rename echo does not rebuild the selector");
+check(pageButton.textContent === "Main", "it moves the name in place");
+const pageSelBefore = pageSelectShape(editor);
+store.apply(store.version() + 1, [
+  { op: "insert", parent: 0, list: "pages", node: { id: 9400, name: "Page 2", widgets: [] } },
+]);
+check(pageSelectShape(editor) !== pageSelBefore, "a new page moves the selector's shape");
+
+/* ---- the Data workspace: explorer tree, detail pane, where-used ----
+   The tree browses the reflected mesh (foldered by / segments), the globals and the
+   type table; the detail pane answers what a thing is and where the DOCUMENT uses it.
+   A mesh entity has no broadcast value: the only live values shown are the fed cells
+   of its consumers, labeled by the widget.slot they arrive through. */
+
+const flowVar = store.globals().find((v) => v.name === "flow");
+const meshEditor = {
+  ...editor,
+  mesh: {
+    entities: [
+      { kind: "V", name: "plant/temp", type: "", writable: true, forceable: false,
+        fields: [{ path: "value", shape: "num" }] },
+    ],
+    types: [
+      { name: "ValveCmd", fields: [{ path: "on", shape: "bool" }],
+        entities: [{ kind: "V", name: "plant/valve" }] },
+    ],
+  },
+};
+/* a feed consuming the mesh entity, injected as an echo would deliver it */
+store.apply(store.version() + 1, [
+  {
+    op: "insert", parent: toggle.id, list: "feeds",
+    node: { id: 9300, slot: "value", src: { kind: "V", name: "plant/temp" },
+            path: "value", xf: "", poll_hz: null, stale_ms: null },
+  },
+]);
+
+const dataTreePanel = new Panel(new Element("aside"));
+const drawDataTree = () =>
+  dataTreePanel.render(dataShape(meshEditor), (host) => renderDataTree(host, meshEditor));
+const dataRow = (key) =>
+  dataTreePanel.host.querySelectorAll(".data-row")
+    .find((r) => r.getAttribute("data-key") === key) ?? null;
+drawDataTree();
+check(dataRow("network") !== null, "the explorer tree has the network root");
+check(dataRow("d:plant") !== null, "mesh entities folder by their / name segments");
+check(dataRow("v:" + flowVar.id) !== null, "the hmi root lists the global variables");
+check(dataTreePanel.host.querySelectorAll(".data-add").length === 1,
+      "with the + Variable affordance");
+check(dataRow("hmi/types") !== null, "and a types folder");
+
+/* a global's live value rides its tree row, moved by the value sync alone */
+const treeShapeBefore = dataShape(meshEditor);
+meshEditor.live = { epoch: 9, values: { ["v" + flowVar.id]: 3.25 } };
+check(dataShape(meshEditor) === treeShapeBefore, "a live frame does not move the tree's shape");
+drawDataTree();
+const flowLive = dataRow("v:" + flowVar.id).querySelector(".data-live");
+check(flowLive.textContent === "3.25",
+      "a global's live value renders in its row, got " + flowLive.textContent);
+
+/* the entity detail: head, field table, and the clickable where-used rows */
+dataSelect("e:V:plant/temp");
+const dataDetailPanel = new Panel(new Element("section"));
+const drawDataDetail = () =>
+  dataDetailPanel.render(dataShape(meshEditor), (host) => renderDataDetail(host, meshEditor));
+drawDataDetail();
+check(dataDetailPanel.host.querySelector(".detail-name")?.textContent === "plant/temp",
+      "the detail head names the selected entity");
+const entityUses = dataDetailPanel.host.querySelectorAll(".used-row");
+check(entityUses.length === 1, "where-used finds the one feed consumer, got " + entityUses.length);
+check(entityUses[0].textContent.includes("Pump.value"),
+      "and names it by widget.slot, got " + entityUses[0].textContent);
+meshEditor.live = {
+  epoch: 10,
+  values: { ["v" + flowVar.id]: 3.25, [toggle.id + ".value"]: true },
+};
+drawDataDetail();
+check(entityUses[0].querySelector(".data-live").textContent === "true",
+      "the fed cell's live value rides the consumer row");
+
+/* the global detail: the full card plus its structural uses */
+dataSelect("v:" + flowVar.id);
+drawDataDetail();
+check(dataDetailPanel.host.querySelector(".card") !== null,
+      "a selected global shows its variable card");
+check(dataDetailPanel.host.querySelector(".now-value")?.textContent === "3.25",
+      "with its live value");
+const globalUses = dataDetailPanel.host.querySelectorAll(".used-row");
+check(globalUses.some((r) => r.textContent.includes("Flow.value")),
+      "where-used lists the feed reading the global");
+check(globalUses.some((r) => r.textContent.includes("Reset flow: write")),
+      "and the flow step writing it");
+
+/* the type detail: fields plus the entities carrying it */
+dataSelect("t:ValveCmd");
+drawDataDetail();
+check(dataDetailPanel.host.querySelector(".detail-name")?.textContent === "ValveCmd",
+      "a selected type names itself");
+check(dataDetailPanel.host.querySelectorAll(".used-row")
+        .some((r) => r.textContent.includes("plant/valve")),
+      "and lists its carrier entities");
 
 /* trend smoothing is pure math on the drawn copy: noisy input comes out with less
    spread, a null still breaks the run (never bridged), and knobs at 0 pass through */

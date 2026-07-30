@@ -18,6 +18,7 @@ import { iconMarkup } from "./icons.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
+import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
@@ -26,6 +27,7 @@ import { radialExtent, Rect } from "./template.js";
 import { BuiltinDef, Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
+import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
 import { renderStyleWorkspace, styleShape } from "./workspaces/style.js";
 
 type Mode = "edit" | "test" | "operate";
@@ -78,8 +80,14 @@ export class App implements Editor {
     pill: HTMLElement;
   };
   private sidebars!: { left: Panel; inspector: Panel };
-  /* the Style workspace's reconciled panel (workspaces/style.ts); null when operating */
+  /* the Style and Data workspaces' reconciled panels and the topbar page selector's
+     (pageselect.ts); all null when operating */
   private stylePanel: Panel | null = null;
+  private dataTreePanel: Panel | null = null;
+  private dataDetailPanel: Panel | null = null;
+  private pagePanel: Panel | null = null;
+  /* our "+ New page" is in flight: the echo carries the issued id, switch to it there */
+  private pendingPage = false;
   private drag: Json = null;
   private control: Json = null;
   /* a just-forked or just-added component's name: its insert is in flight, and the ids
@@ -143,6 +151,24 @@ export class App implements Editor {
     this.view.part = "";
     this.conn.view(id, true);
     this.renderAll();
+  }
+
+  /* the backend issues the id, so the switch happens on the echo (onOps) */
+  addPage(): void {
+    const taken = new Set(this.store.pages().map((p) => p.name));
+    let n = this.store.pages().length + 1;
+    while (taken.has("Page " + n)) n++;
+    this.pendingPage = true;
+    this.apply([{ op: "insert", parent: 0, list: "pages", node: { name: "Page " + n } }]);
+  }
+
+  /* land on a consumer named elsewhere (the Data workspace's where-used) */
+  reveal(widget: number): void {
+    const parent = this.store.parentOf(widget);
+    if (parent && typeof parent.id === "number" && this.page()?.id !== parent.id)
+      this.setPage(parent.id);
+    this.select([widget]);
+    this.setWorkspace("content");
   }
 
   select(ids: number[]): void {
@@ -331,6 +357,15 @@ export class App implements Editor {
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
     if (!this.view.selection.length) this.view.part = "";
     if (!this.page()) this.pageId = this.store.pages()[0]?.id ?? 0;
+    /* our "+ New page" echo names the issued id: switch to the fresh page */
+    if (this.pendingPage)
+      for (const op of ops)
+        if (op.op === "insert" && op.list === "pages" &&
+            typeof (op.node as Json)?.id === "number") {
+          this.pendingPage = false;
+          this.setPage((op.node as Json).id);
+          break;
+        }
     this.settleComponentSel();
     this.renderAll();
   }
@@ -472,8 +507,12 @@ export class App implements Editor {
     if (this.operate) return; /* the deployed view has no sidebars to keep current */
     this.sidebars.left.render(leftShape(this), (host) => renderLeftSidebar(host, this));
     this.sidebars.inspector.render(inspectorShape(this), (host) => renderInspector(host, this));
-    /* the Style workspace reconciles like a sidebar: kept alive hidden, always current */
+    /* the topbar page selector and the hidden workspaces reconcile like sidebars:
+       kept alive, always current (a mesh frame or page op lands here too) */
+    this.pagePanel?.render(pageSelectShape(this), (host) => renderPageSelect(host, this));
     this.stylePanel?.render(styleShape(this), (host) => renderStyleWorkspace(host, this));
+    this.dataTreePanel?.render(dataShape(this), (host) => renderDataTree(host, this));
+    this.dataDetailPanel?.render(dataShape(this), (host) => renderDataDetail(host, this));
   }
 
   /* ---- shell construction ---- */
@@ -512,7 +551,14 @@ export class App implements Editor {
       ]);
       const style = el("main", { class: "workspace-style", "data-input": "scroll" });
       this.stylePanel = new Panel(style);
-      this.workspaces = buildWorkspaces(content, style);
+      /* the Data workspace: two independently scrolling columns, each its own panel so
+         an expansion rebuild in the tree keeps the detail pane's scroll (and vice versa) */
+      const dataTree = el("aside", { class: "data-tree", "data-input": "scroll" });
+      const dataDetail = el("section", { class: "data-detail", "data-input": "scroll" });
+      const data = el("main", { class: "workspace-data" }, [dataTree, dataDetail]);
+      this.dataTreePanel = new Panel(dataTree);
+      this.dataDetailPanel = new Panel(dataDetail);
+      this.workspaces = buildWorkspaces(content, data, style);
 
       const modes = el(
         "div",
@@ -530,7 +576,12 @@ export class App implements Editor {
       const play = iconButton("play", "open the operate view in a new tab", () =>
         window.open(window.location.pathname + "?operate", "_blank"), true);
       play.classList.add("play");
-      this.stageTools = [modes, play];
+
+      /* the page selector sits between the wordmark and the tabs and, like the mode
+         seg and play, means nothing over Data or Style */
+      const pageHost = el("div", { class: "page-host" });
+      this.pagePanel = new Panel(pageHost);
+      this.stageTools = [pageHost, modes, play];
 
       const tabs = el(
         "nav",
@@ -548,6 +599,7 @@ export class App implements Editor {
       this.root.appendChild(
         el("header", { class: "topbar" }, [
           el("div", { class: "wordmark", text: "DART HMI" }),
+          pageHost,
           tabs,
           el("div", { class: "status" }, [modes, play, problems, pill]),
         ]),

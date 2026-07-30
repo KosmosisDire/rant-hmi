@@ -11,6 +11,8 @@ export interface MenuItem {
   danger?: boolean;
   separator?: boolean;
   run?: () => void;
+  /* a custom row (an inline edit field): appended as-is, and it owns its own clicks */
+  node?: HTMLElement;
 }
 
 let overlay: HTMLElement | null = null;
@@ -48,6 +50,12 @@ export function openMenu(x: number, y: number, head: string, items: MenuItem[]):
   for (const item of items) {
     if (item.separator) {
       box.appendChild(el("div", { class: "menu-sep" }));
+      continue;
+    }
+    if (item.node) {
+      /* a click inside the row must not fall through to the dismiss overlay */
+      item.node.addEventListener("click", (ev) => ev.stopPropagation());
+      box.appendChild(item.node);
       continue;
     }
     box.appendChild(

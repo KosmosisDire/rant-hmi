@@ -922,17 +922,29 @@ Build Sheet mock, minus its traffic panel.
 
 ### 3.1 Window layout, the artboard, and modes
 
-Three columns, full height, no page scroll; each column scrolls independently.
-Both sidebars are resizable by drag handles (widths persisted per view):
+**The topbar** carries the wordmark, the **page selector**, the workspace tabs
+(Content / Data / Style) and the artboard tools (the Edit/Test segment, the play
+button, the findings chip, the connection light). The page selector and the
+artboard tools show only over Content. The page selector is a quiet button naming
+the current page; its menu lists every page (a check marks the current one, a
+click switches), an inline rename field for the current page, "+ New page"
+(inserted, then switched to when the echo issues its id) and — while more than
+one page exists — a remove entry. Pages are managed ONLY here: the sidebar has no
+page rows. Every workspace is built once and kept alive hidden; a tab switch is
+pure view routing, so the viewport transform, the selection and the reconciled
+panels survive a round trip through Data or Style.
 
-- **Left sidebar**, scrolling: the **Layers** tree, then **Components**, then
-  **Global Variables** (one card per variable, always visible regardless of
-  selection, because they are the HMI's state). The Layers tree nests pages → the
-  widgets on each page → each widget's named template parts (its part paths, 2.3),
+The Content workspace is three columns, full height, no page scroll; each column
+scrolls independently. Both sidebars are resizable by drag handles (widths
+persisted per view):
+
+- **Left sidebar**, scrolling: the **Layers** tree, then **Components** (global
+  variables live in the Data workspace). The Layers tree lists the CURRENT
+  page's widgets → each widget's named template parts (its part paths, 2.3),
   read from the registry type, so every named node is listed whether the current
-  render shows it or not. A page row switches pages, a widget row selects the
-  widget, a part row selects that part; expansion state is per view and never
-  synced.
+  render shows it or not; the section header carries the widget count. A widget
+  row selects the widget, a part row selects that part; expansion state is per
+  view and never synced.
 - **Components** lists the document's own components (editable: a row selects the
   component, its expanded part tree selects a part node) and then the built-ins not
   shadowed by one — dimmed, browsable to their part trees, read-only, each carrying
@@ -994,6 +1006,34 @@ pan/zoom (a small screen over a fixed-aspect artboard needs it); desktop locks t
 fit-to-window: an operator surface should be stable, and an accidental zoom on a
 wall panel is a hazard, not a feature. A per-HMI override can be added if a real
 deployment asks.
+
+**The Data workspace** is a full-page BROWSER (no pick-commit; the source picker
+stays its own overlay) over everything the HMI can name: a fixed explorer tree
+left, a detail pane right, both scrolling. The tree's roots: `network` — the
+reflected mesh entities foldered by the `/` segments of their names, each row a
+kind mark, the name tail and the root type, expandable to its fields (a
+function's two tables labeled call / returns, enum variants on the field's
+tooltip); and `hmi` — the document's global variables (one row per global, its
+live value beside it; the "+ Variable" affordance lives here) and a `types`
+folder over the served type table. A search box filters the whole tree flat by
+name and field path. Selecting a row fills the detail pane; the data selection
+is its own axis and never touches the canvas/widget selection.
+
+The detail pane: an **entity** shows its head (kind mark, full name, type,
+writable/forceable chips), its field table, and **where used** — every feed
+whose source names it and every flow move step whose side names it, each row
+clickable, landing the author on the consuming widget in the Content workspace.
+A **global variable** shows its full card (the same card as everywhere,
+editable) plus where-used and its live value; where-used is STRUCTURAL
+references only — feeds and flow sides naming it, never an expression
+identifier scan, and a widget whose own local shadows the name does not count.
+A **type** shows its field table and the entities carrying it, each clickable.
+
+**The honest live-value rule.** A mesh entity broadcasts no value of its own —
+what exists is what feeds deliver into slot cells. So the pane shows live values
+only where derivable: each consuming feed's fed cell, labeled by the
+`widget.slot` it arrives through; nothing is ever fabricated for the entity
+itself.
 
 ### 3.2 The section stack
 
@@ -1270,7 +1310,7 @@ correct expression destroys trust in every other diagnostic.
 A variable card shows name (editable, rename-refactors), NOW (its live value,
 visually distinct when true/running), TYPE, and INIT (or SECS for a timer, whose NOW
 reads "2.4s left" or "idle"). Global and local cards are identical except for scope;
-the local section sits inside the inspector, the global list in the left sidebar.
+the local section sits inside the inspector, the global list in the Data workspace.
 
 There is no generated code view. A one-way pretty print of the feeds and flows
 existed briefly and was removed: it could not be trusted (it dropped move
