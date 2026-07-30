@@ -62,9 +62,10 @@ add_library(hmi_core STATIC
   src/sync/server.cpp
   src/app.cpp
 )
-# DART: the single-header C++ wrapper (dist/dart.hpp) from the surrounding repo;
-# override HMI_DART_DIST when building elsewhere.
-set(HMI_DART_DIST "${HMI_ROOT}/../dist" CACHE PATH "directory holding dart.hpp")
+# DART: the vendored single-header C++ wrapper (vendor/dart.hpp); refresh it by
+# copying a newer dist/dart.hpp over it. Override HMI_DART_DIST to build against
+# an un-vendored copy.
+set(HMI_DART_DIST "${HMI_ROOT}/vendor" CACHE PATH "directory holding dart.hpp")
 if(NOT EXISTS "${HMI_DART_DIST}/dart.hpp")
   message(FATAL_ERROR "dart.hpp not found in ${HMI_DART_DIST} (set HMI_DART_DIST)")
 endif()
