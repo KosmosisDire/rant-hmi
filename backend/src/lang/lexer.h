@@ -38,6 +38,11 @@ enum class TokenKind {
     Ge,
     AndAnd,
     OrOr,
+    /* the conditional operator, `c ? a : b` (spec 6.2). Both tiers lower it to the same
+     * thing `.pick()` already lowers to, so it is surface sugar over machinery that was
+     * always there -- no opcode, no VM case, no view-interpreter case. */
+    Question,
+    Colon,
 };
 
 struct Token {

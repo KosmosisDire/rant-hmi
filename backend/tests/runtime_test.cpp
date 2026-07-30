@@ -317,6 +317,27 @@ void test_tiers() {
     CHECK(!compile_expr("clamp01(x)", ExprTier::Wire, scope, program, code, result,
                         error));
     error.clear();
+    /* `c ? a : b` (spec 6.2): sugar over the pick the language already had, so it needs
+     * no opcode. Arms that agree give the conditional their shape; a mix reports Unknown
+     * exactly as `.pick()` does. */
+    CHECK_MSG(compile_expr("x > 0 ? 1 : 2", ExprTier::Wire, scope, program, code, result,
+                           error), error);
+    CHECK(result.shape == Shape::Num);
+    code.clear();
+    error.clear();
+    /* right-associative, and legal on the wire tier: nothing here is formatting */
+    CHECK_MSG(compile_expr("x > 2 ? 1 : x > 1 ? 2 : 3", ExprTier::Wire, scope, program,
+                           code, result, error), error);
+    code.clear();
+    error.clear();
+    /* the condition must be a bool, like every other boolean position */
+    CHECK(!compile_expr("x ? 1 : 2", ExprTier::Wire, scope, program, code, result, error));
+    error.clear();
+    code.clear();
+    CHECK(!compile_expr("x > 0 ? 1", ExprTier::Wire, scope, program, code, result, error));
+    CHECK_MSG(error.find("expected ':'") != std::string::npos, error);
+    error.clear();
+    code.clear();
     /* an unknown method on a known shape suggests the neighbour */
     CHECK(!compile_expr("x.Round(1)", ExprTier::Display, scope, program, code,
                               result, error));

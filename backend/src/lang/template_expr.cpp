@@ -38,7 +38,7 @@ class Parser {
     }
 
     bool parse(Json& program, std::string& error) {
-        parse_or();
+        parse_ternary();
         if (error_.empty() && token_.kind != TokenKind::End)
             fail("unexpected '" + token_.text + "'");
         if (!error_.empty()) {
@@ -64,6 +64,24 @@ class Parser {
     }
     void emit_load(const std::string& cell) {
         code_.push_back(Json{{"op", "LOAD"}, {"cell", cell}});
+    }
+
+    /* `c ? a : b` (spec 6.2), lowering to the PICK this tier already used for `.pick()`
+     * and for the boolean operators below -- the same sugar, over the same opcode, as
+     * the scalar tier's. Right-associative, so `a ? b : c ? d : e` chains. */
+    void parse_ternary() {
+        parse_or();
+        if (!error_.empty() || token_.kind != TokenKind::Question) return;
+        advance();
+        parse_ternary();
+        if (!error_.empty()) return;
+        if (token_.kind != TokenKind::Colon) {
+            fail("expected ':' to complete the conditional");
+            return;
+        }
+        advance();
+        parse_ternary();
+        if (error_.empty()) emit("PICK");
     }
 
     /* The view has no jumps, so the boolean operators lower to PICK, which evaluates
@@ -167,11 +185,11 @@ class Parser {
                 /* x.clamp(lo, hi): MAX then MIN, the same fold the builtin uses */
                 if (!expect(TokenKind::LParen, "clamp takes 2 arguments")) return;
                 advance();
-                parse_or();
+                parse_ternary();
                 emit("MAX");
                 if (!expect(TokenKind::Comma, "clamp takes 2 arguments")) return;
                 advance();
-                parse_or();
+                parse_ternary();
                 emit("MIN");
                 if (!expect(TokenKind::RParen, "expected ')'")) return;
                 advance();
@@ -199,7 +217,7 @@ class Parser {
             return false;
         advance();
         for (int i = 0; i < count; ++i) {
-            parse_or();
+            parse_ternary();
             if (!error_.empty()) return false;
             if (i + 1 < count) {
                 if (!expect(TokenKind::Comma, (name + " takes " + std::to_string(count) +
@@ -291,14 +309,14 @@ class Parser {
             /* clamp(x, lo, hi) == min(max(x, lo), hi), folded onto the stack */
             if (!expect(TokenKind::LParen, "clamp takes 3 arguments")) return;
             advance();
-            parse_or();
+            parse_ternary();
             if (!expect(TokenKind::Comma, "clamp takes 3 arguments")) return;
             advance();
-            parse_or();
+            parse_ternary();
             emit("MAX");
             if (!expect(TokenKind::Comma, "clamp takes 3 arguments")) return;
             advance();
-            parse_or();
+            parse_ternary();
             emit("MIN");
             if (!expect(TokenKind::RParen, "expected ')'")) return;
             advance();
@@ -340,7 +358,7 @@ class Parser {
         }
         if (token_.kind == TokenKind::LParen) {
             advance();
-            parse_or();
+            parse_ternary();
             if (!expect(TokenKind::RParen, "expected ')'")) return;
             advance();
             return;

@@ -1960,7 +1960,8 @@ source (2.6), which is what keeps the set of entities a program consumes readabl
 the document rather than recovered by scanning expression text.
 
 ```
-expr    := or
+expr    := ternary
+ternary := or ( "?" ternary ":" ternary )?
 or      := and ( ("||" | "or") and )*
 and     := cmp ( ("&&" | "and") cmp )*
 cmp     := sum ( ("=="|"!="|"<"|"<="|">"|">=") ( sum | "." IDENT ) )?
@@ -1976,7 +1977,13 @@ LAMBDA  := IDENT "=>" expr        // one parameter, one expression, no capture o
 ```
 
 `and`, `or` and `not` are the word spellings of the symbol operators, byte for byte
-the same programs. `==`/`!=` with an ENUM side accepts a `.Variant` literal (resolved
+the same programs. `c ? a : b` is likewise the symbol spelling of `c.pick(a, b)`,
+compiling to that exact program on BOTH tiers: it binds looser than every other
+operator (so the arms need no parentheses) and is right-associative, so
+`a ? b : c ? d : e` chains as it reads. Like `pick`, both arms are evaluated — an
+expression has no effects, so a short circuit would protect nothing, and the two
+spellings staying identical is worth more than the saved branch. Arms of one shape
+give the conditional that shape; a mix is Unknown, exactly as `pick` reports. `==`/`!=` with an ENUM side accepts a `.Variant` literal (resolved
 against the left side's vocabulary at compile, an unknown name a finding), a variant
 NAME as text, or the backing integer; ordered comparisons stay numeric (`x.int` is
 the bridge). `[a, b, c]` is an ARRAY literal building a list — how a feed hands a

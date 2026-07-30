@@ -39,6 +39,8 @@ Token Lexer::next() {
         case '*': token.kind = TokenKind::Star; return token;
         case '/': token.kind = TokenKind::Slash; return token;
         case '%': token.kind = TokenKind::Percent; return token;
+        case '?': token.kind = TokenKind::Question; return token;
+        case ':': token.kind = TokenKind::Colon; return token;
         case '!': two('=', TokenKind::Ne, TokenKind::Bang); return token;
         case '=':
             if (at_ < source_.size() && source_[at_] == '=') {

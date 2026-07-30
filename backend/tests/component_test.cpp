@@ -95,6 +95,23 @@ void test_template_expr() {
     CHECK_EQ(lower("clamp(value, 0, 100)", scope),
              "LOAD(slot:value) CONST(0.0) MAX CONST(100.0) MIN");
     CHECK_EQ(lower("min(value, 10)", scope), "LOAD(slot:value) CONST(10.0) MIN");
+
+    /* `c ? a : b` is sugar over the PICK `.pick()` already lowered to, so the two
+       spellings must produce byte-identical programs */
+    CHECK_EQ(lower("value > 0 ? fill_color : track_color", scope),
+             "LOAD(slot:value) CONST(0.0) GT LOAD(slot:fill_color) "
+             "LOAD(slot:track_color) PICK");
+    CHECK_EQ(lower("(value > 0).pick(fill_color, track_color)", scope),
+             lower("value > 0 ? fill_color : track_color", scope));
+    /* right-associative: the second conditional is the FALSE arm of the first */
+    CHECK_EQ(lower("value > 2 ? 'hi' : value > 1 ? 'mid' : 'lo'", scope),
+             "LOAD(slot:value) CONST(2.0) GT CONST(\"hi\") "
+             "LOAD(slot:value) CONST(1.0) GT CONST(\"mid\") CONST(\"lo\") PICK PICK");
+    /* it binds looser than everything else, so the arms need no parentheses */
+    CHECK_EQ(lower("value > 0 ? min + 1 : max * 2", scope),
+             "LOAD(slot:value) CONST(0.0) GT LOAD(slot:min) CONST(1.0) ADD "
+             "LOAD(slot:max) CONST(2.0) MUL PICK");
+    CHECK(refuses("value > 0 ? 1", scope, "expected ':'"));
     CHECK_EQ(lower("pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) POW");
     CHECK_EQ(lower("floor(value)", scope), "LOAD(slot:value) FLOOR");
 

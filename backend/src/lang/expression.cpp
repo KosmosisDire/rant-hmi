@@ -222,7 +222,7 @@ class Parser {
     }
 
     bool parse(ExpressionResult& result) {
-        Shape shape = parse_or();
+        Shape shape = parse_ternary();
         if (!error_.empty()) return false;
         if (token_.kind != TokenKind::End) return fail("unexpected '" + token_.text + "'");
         if (depth_ != 1) return fail("expression stack is unbalanced");
@@ -259,6 +259,37 @@ class Parser {
         if (actual == Shape::Unknown || actual == Shape::Nil || actual == wanted) return true;
         return fail(std::string(operation) + " wants " + shape_name(wanted) + ", got " +
                     shape_name(actual));
+    }
+
+    /* `c ? a : b` (spec 6.2). Sugar over the pick this language already had: the
+     * lowering is exactly what `c.pick(a, b)` lowers to, so there is no opcode, no VM
+     * case and no view-interpreter case to add. Both arms evaluate, as pick has always
+     * done -- an expression has no effects, so there is nothing a short circuit could
+     * protect, and keeping the two spellings identical matters more. Right-associative,
+     * so `a ? b : c ? d : e` chains the way it reads. */
+    Shape parse_ternary() {
+        Shape cond = parse_or();
+        if (error_.empty() && token_.kind == TokenKind::Question) {
+            if (!require(cond, Shape::Bool, "?:")) return Shape::Unknown;
+            advance();
+            const Shape a = parse_ternary();
+            if (token_.kind != TokenKind::Colon) {
+                fail("expected ':' to complete the conditional");
+                return Shape::Unknown;
+            }
+            advance();
+            const Shape b = parse_ternary();
+            if (!error_.empty()) return Shape::Unknown;
+            emit(OpCode::Method, 0, 2, static_cast<uint16_t>(MethodId::BoolPick));
+            /* three pushed (condition, arm, arm), one left */
+            if (depth_ >= 2) depth_ -= 2;
+            /* arms that agree give the conditional their shape; a mix is Unknown, which
+               is what `.pick()` already reports. An agreeing pair keeps enum_type_ from
+               the arm just parsed, so `x ? .fast : .slow` stays a typed enum. */
+            if (a != b) enum_type_ = 0;
+            return a == b ? a : Shape::Unknown;
+        }
+        return cond;
     }
 
     Shape parse_or() {
@@ -475,7 +506,7 @@ class Parser {
             const Shape receiver_elem = elem_;
             if (token_.kind == TokenKind::LBracket) {
                 advance();
-                Shape key = parse_or();
+                Shape key = parse_ternary();
                 if (token_.kind != TokenKind::RBracket) {
                     fail("expected ']'");
                     return Shape::Unknown;
@@ -549,7 +580,7 @@ class Parser {
                 advance();
                 if (token_.kind != TokenKind::RParen) {
                     for (;;) {
-                        Shape argument = parse_or();
+                        Shape argument = parse_ternary();
                         if (argc < spec->args && spec->arg_shape[argc] != Shape::Unknown)
                             require(argument, spec->arg_shape[argc], name.c_str());
                         ++argc;
@@ -684,7 +715,7 @@ class Parser {
         }
         if (token_.kind == TokenKind::LParen) {
             advance();
-            Shape shape = parse_or();
+            Shape shape = parse_ternary();
             if (token_.kind != TokenKind::RParen) {
                 fail("expected ')'");
                 return Shape::Unknown;
@@ -701,7 +732,7 @@ class Parser {
             bool uniform = true;
             if (token_.kind != TokenKind::RBracket) {
                 for (;;) {
-                    const Shape one = parse_or();
+                    const Shape one = parse_ternary();
                     if (!error_.empty()) return Shape::Unknown;
                     if (count == 0) elem = one;
                     else if (one != elem) uniform = false;
@@ -853,7 +884,7 @@ class Parser {
         Shape first_arg_elem = Shape::Unknown;
         if (token_.kind != TokenKind::RParen) {
             for (;;) {
-                Shape arg = parse_or();
+                Shape arg = parse_ternary();
                 if (argc == 0) first_arg_elem = elem_;
                 if (argc < spec.max_args && spec.arg_shape[argc] != Shape::Unknown)
                     require(arg, spec.arg_shape[argc], name.c_str());
