@@ -1,7 +1,7 @@
 #include "components.h"
 
 #include "registry/registry.h"
-#include "template_expr.h"
+#include "lang/template_expr.h"
 
 #include <cctype>
 #include <cstdio>

@@ -1,6 +1,6 @@
-#include "expression.h"
+#include "lang/expression.h"
 
-#include "lexer.h"
+#include "lang/lexer.h"
 
 #include <algorithm>
 #include <cctype>
@@ -201,8 +201,8 @@ std::string method_suggestion(Shape receiver, const std::string& name) {
 class Parser {
   public:
     Parser(const std::string& source, ExprTier tier, const ExpressionScope& scope,
-           Program& program, std::vector<Instruction>& code, std::string& error)
-        : lexer_(source), tier_(tier), scope_(scope), program_(program), code_(code),
+           EmitSink& sink, std::vector<Instruction>& code, std::string& error)
+        : lexer_(source), tier_(tier), scope_(scope), sink_(sink), code_(code),
           error_(error) {
         token_ = lexer_.next();
     }
@@ -263,7 +263,7 @@ class Parser {
             emit(OpCode::Jmp);
             code_[branch].a = static_cast<uint32_t>(code_.size());
             depth_ = base;
-            emit(OpCode::Const, program_.add_constant(Value::boolean(true)));
+            emit(OpCode::Const, sink_.add_constant(Value::boolean(true)));
             pushed();
             code_[done].a = static_cast<uint32_t>(code_.size());
             left = Shape::Bool;
@@ -286,7 +286,7 @@ class Parser {
             emit(OpCode::Jmp);
             code_[branch].a = static_cast<uint32_t>(code_.size());
             depth_ = base;
-            emit(OpCode::Const, program_.add_constant(Value::boolean(false)));
+            emit(OpCode::Const, sink_.add_constant(Value::boolean(false)));
             pushed();
             code_[done].a = static_cast<uint32_t>(code_.size());
             left = Shape::Bool;
@@ -316,8 +316,8 @@ class Parser {
             advance();
             bool found = false;
             int64_t value = 0;
-            if (left_enum && left_enum < program_.types.size())
-                for (const auto& row : program_.types[left_enum].variants)
+            if (const EnumVariants* variants = sink_.enum_variants(left_enum))
+                for (const auto& row : *variants)
                     if (row.first == variant) {
                         value = row.second;
                         found = true;
@@ -329,7 +329,7 @@ class Parser {
                                  "take its vocabulary from");
                 return Shape::Unknown;
             }
-            emit(OpCode::Const, program_.add_constant(Value::enumeration(value, left_enum)));
+            emit(OpCode::Const, sink_.add_constant(Value::enumeration(value, left_enum)));
             pushed();
             right = Shape::Enum;
         } else {
@@ -378,7 +378,7 @@ class Parser {
                          "for a machine");
                     return Shape::Unknown;
                 }
-                emit(OpCode::Method, program_.layout.text_slots++, 1,
+                emit(OpCode::Method, sink_.alloc_text_slot(), 1,
                      static_cast<uint16_t>(MethodId::TextConcat));
                 if (depth_) --depth_;
                 left = Shape::Text;
@@ -564,11 +564,11 @@ class Parser {
              * so runtime text costs no allocation and no cursor; a list-producing site
              * reserves its worst case in the element pool */
             const uint32_t site =
-                spec->result == Shape::Text ? program_.layout.text_slots++ : 0;
+                spec->result == Shape::Text ? sink_.alloc_text_slot() : 0;
             if (spec->result == Shape::List) {
                 const bool split = spec->method == MethodId::TextSplit;
-                program_.layout.elem_values += split ? kSplitCeiling : kVarrCeiling;
-                if (split) program_.layout.elem_texts += kSplitCeiling;
+                sink_.reserve_elems(split ? kSplitCeiling : kVarrCeiling,
+                                    split ? kSplitCeiling : 0);
             }
             emit(OpCode::Method, site, argc, static_cast<uint16_t>(spec->method));
             if (argc) depth_ -= argc;
@@ -614,8 +614,8 @@ class Parser {
         advance();
         bool found = false;
         int64_t value = 0;
-        if (receiver_enum && receiver_enum < program_.types.size())
-            for (const auto& row : program_.types[receiver_enum].variants)
+        if (const EnumVariants* variants = sink_.enum_variants(receiver_enum))
+            for (const auto& row : *variants)
                 if (row.first == variant) {
                     value = row.second;
                     found = true;
@@ -626,7 +626,7 @@ class Parser {
                             ? "the enum has no variant '" + variant + "'"
                             : "the enum's variants are not known here");
         emit(OpCode::Const,
-             program_.add_constant(Value::enumeration(value, receiver_enum)));
+             sink_.add_constant(Value::enumeration(value, receiver_enum)));
         pushed();
         emit(OpCode::Eq);
         --depth_;
@@ -644,14 +644,14 @@ class Parser {
         enum_type_ = 0;
         elem_ = Shape::Unknown;
         if (token_.kind == TokenKind::Number) {
-            emit(OpCode::Const, program_.add_constant(Value::number(token_.number)));
+            emit(OpCode::Const, sink_.add_constant(Value::number(token_.number)));
             pushed();
             advance();
             return Shape::Num;
         }
         if (token_.kind == TokenKind::String) {
             emit(OpCode::Const,
-                 program_.add_constant(Value::text(program_.add_text(token_.text))));
+                 sink_.add_constant(Value::text(sink_.add_text(token_.text))));
             pushed();
             advance();
             return Shape::Text;
@@ -663,7 +663,7 @@ class Parser {
                 fail("invalid color literal");
                 return Shape::Unknown;
             }
-            emit(OpCode::Const, program_.add_constant(Value::color(rgba)));
+            emit(OpCode::Const, sink_.add_constant(Value::color(rgba)));
             pushed();
             advance();
             return Shape::Color;
@@ -716,7 +716,7 @@ class Parser {
         const std::string name = token_.text;
         advance();
         if (name == "true" || name == "false") {
-            emit(OpCode::Const, program_.add_constant(Value::boolean(name == "true")));
+            emit(OpCode::Const, sink_.add_constant(Value::boolean(name == "true")));
             pushed();
             return Shape::Bool;
         }
@@ -856,9 +856,8 @@ class Parser {
             return Shape::Unknown;
         }
         const uint32_t site =
-            spec.result == Shape::Text ? program_.layout.text_slots++ : 0;
-        if (spec.result == Shape::List)
-            program_.layout.elem_values += kVarrCeiling;
+            spec.result == Shape::Text ? sink_.alloc_text_slot() : 0;
+        if (spec.result == Shape::List) sink_.reserve_elems(kVarrCeiling, 0);
         emit(OpCode::Call, site, argc, static_cast<uint16_t>(spec.builtin));
         if (argc) depth_ -= argc - 1;
         enum_type_ = 0;
@@ -872,7 +871,7 @@ class Parser {
     Token token_;
     ExprTier tier_;
     const ExpressionScope& scope_;
-    Program& program_;
+    EmitSink& sink_;
     std::vector<Instruction>& code_;
     std::string& error_;
     uint32_t depth_ = 0;
@@ -941,11 +940,11 @@ const std::vector<LangRow>& language_reference() {
 }
 
 bool compile_expression(const std::string& text, ExprTier tier,
-                        const ExpressionScope& scope, Program& program,
+                        const ExpressionScope& scope, EmitSink& sink,
                         std::vector<Instruction>& code, ExpressionResult& result,
                         std::string& error) {
     const size_t start = code.size();
-    Parser parser(text, tier, scope, program, code, error);
+    Parser parser(text, tier, scope, sink, code, error);
     if (!parser.parse(result)) {
         code.resize(start);
         return false;

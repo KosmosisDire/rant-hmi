@@ -47,7 +47,13 @@ add_library(hmi_core STATIC
   src/doc/ops.cpp
   src/doc/refs.cpp
   src/doc/store.cpp
-  src/vm/value.cpp
+  # lang/: the authored language — lexer, scalar compiler, template-expression
+  # compiler, and the value/IR form both tiers lower to. Depends on nothing above it;
+  # vm/ and compile/ depend on IT (src/lang/emit.h is the whole seam).
+  src/lang/value.cpp
+  src/lang/lexer.cpp
+  src/lang/expression.cpp
+  src/lang/template_expr.cpp
   src/vm/program.cpp
   src/vm/state.cpp
   src/vm/vm.cpp
@@ -55,9 +61,6 @@ add_library(hmi_core STATIC
   src/mesh/fake.cpp
   src/mesh/dart_mesh.cpp
   src/mesh/dart_impl.cpp
-  src/compile/lexer.cpp
-  src/compile/expression.cpp
-  src/compile/template_expr.cpp
   src/compile/components.cpp
   src/compile/compiler.cpp
   src/sched/scheduler.cpp

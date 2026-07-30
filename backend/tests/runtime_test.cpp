@@ -1,7 +1,7 @@
 #include "check.h"
 #include "steps.h"
 #include "compile/compiler.h"
-#include "compile/expression.h"
+#include "lang/expression.h"
 #include "doc/doc.h"
 #include "mesh/fake.h"
 #include "compile/components.h"
@@ -11,6 +11,17 @@
 #include <atomic>
 #include <cstdlib>
 #include <new>
+
+/* These tests exercise the language against a real Program, which the language itself no
+ * longer knows about: it emits through an EmitSink (lang/emit.h) and ProgramEmit is the
+ * adapter. Wrapping it here keeps every call site reading as the expression under test. */
+static bool compile_expr(const std::string& text, hmi::ExprTier tier,
+                         const hmi::ExpressionScope& scope, hmi::Program& program,
+                         std::vector<hmi::Instruction>& code, hmi::ExpressionResult& result,
+                         std::string& error) {
+    hmi::ProgramEmit emit(program);
+    return hmi::compile_expression(text, tier, scope, emit, code, result, error);
+}
 
 static std::atomic<uint64_t> allocation_count{0};
 static std::atomic<bool> allocation_trace{false};
@@ -268,10 +279,10 @@ void test_expression_rejection() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(!compile_expression("x = 1", ExprTier::Wire, scope, program, code, result, error));
+    CHECK(!compile_expr("x = 1", ExprTier::Wire, scope, program, code, result, error));
     CHECK(code.empty());
     error.clear();
-    CHECK(!compile_expression("\"open", ExprTier::Wire, scope, program, code, result, error));
+    CHECK(!compile_expr("\"open", ExprTier::Wire, scope, program, code, result, error));
     CHECK(code.empty());
 }
 
@@ -285,41 +296,41 @@ void test_tiers() {
     std::string error;
     /* the color constructors are display vocabulary: fine in a transform, refused
      * where the result is for a machine */
-    CHECK(compile_expression("rgb(1, 0, 0)", ExprTier::Display, scope, program, code,
+    CHECK(compile_expr("rgb(1, 0, 0)", ExprTier::Display, scope, program, code,
                              result, error));
     code.clear();
     error.clear();
-    CHECK(!compile_expression("rgb(1, 0, 0)", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expr("rgb(1, 0, 0)", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
     CHECK(code.empty());
     error.clear();
     /* an unknown method on a known shape suggests the neighbour */
-    CHECK(!compile_expression("x.Round(1)", ExprTier::Display, scope, program, code,
+    CHECK(!compile_expr("x.Round(1)", ExprTier::Display, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("'round'") != std::string::npos, error);
     error.clear();
     scope.x_shape = Shape::Color;
-    CHECK(!compile_expression("x.mix(#fff, 0.5)", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expr("x.mix(#fff, 0.5)", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
     /* the accessors are the sanctioned wire bridge (an RGB LED takes channels) */
     error.clear();
     code.clear();
-    CHECK(compile_expression("x.r", ExprTier::Wire, scope, program, code, result, error));
+    CHECK(compile_expr("x.r", ExprTier::Wire, scope, program, code, result, error));
     CHECK(result.shape == Shape::Num);
 
     /* the word operators are the symbol operators, and `.not()` still names the method */
     error.clear();
     code.clear();
     scope.x_shape = Shape::Num;
-    CHECK_MSG(compile_expression("x > 0 and not (x > 10) or x == 42", ExprTier::Wire,
+    CHECK_MSG(compile_expr("x > 0 and not (x > 10) or x == 42", ExprTier::Wire,
                                  scope, program, code, result, error), error);
     CHECK(result.shape == Shape::Bool);
     error.clear();
     code.clear();
     scope.x_shape = Shape::Bool;
-    CHECK_MSG(compile_expression("x.not()", ExprTier::Wire, scope, program, code, result,
+    CHECK_MSG(compile_expr("x.not()", ExprTier::Wire, scope, program, code, result,
                                  error), error);
     CHECK(result.shape == Shape::Bool);
 
@@ -327,17 +338,17 @@ void test_tiers() {
     error.clear();
     code.clear();
     scope.x_shape = Shape::Text;
-    CHECK(!compile_expression("x.length()", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expr("x.length()", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("property") != std::string::npos, error);
     error.clear();
     code.clear();
-    CHECK(!compile_expression("x.trim", ExprTier::Display, scope, program, code,
+    CHECK(!compile_expr("x.trim", ExprTier::Display, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("call it") != std::string::npos, error);
     error.clear();
     code.clear();
-    CHECK_MSG(compile_expression("x.trim().length", ExprTier::Display, scope, program,
+    CHECK_MSG(compile_expr("x.trim().length", ExprTier::Display, scope, program,
                                  code, result, error), error);
     CHECK(result.shape == Shape::Num);
 }
@@ -623,14 +634,14 @@ void test_enum_names() {
     escope.x_enum = mode_type;
     ExpressionResult eresult;
     std::string eerror;
-    CHECK(!compile_expression("x == .bogus", ExprTier::Display, escope, compiled.program,
+    CHECK(!compile_expr("x == .bogus", ExprTier::Display, escope, compiled.program,
                               bad, eresult, eerror));
     CHECK_MSG(eerror.find("no variant") != std::string::npos, eerror);
     bad.clear();
     eerror.clear();
     escope.x_shape = Shape::Num;
     escope.x_enum = 0;
-    CHECK(!compile_expression("x == .fast", ExprTier::Display, escope, compiled.program,
+    CHECK(!compile_expr("x == .fast", ExprTier::Display, escope, compiled.program,
                               bad, eresult, eerror));
     CHECK_MSG(eerror.find("vocabulary") != std::string::npos, eerror);
 
@@ -687,11 +698,11 @@ void test_enum_names() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string expr_error;
-    CHECK(compile_expression("\"Run \" + x", ExprTier::Display, scope, compiled.program,
+    CHECK(compile_expr("\"Run \" + x", ExprTier::Display, scope, compiled.program,
                              code, result, expr_error));
     CHECK(result.shape == Shape::Text);
     code.clear();
-    CHECK(!compile_expression("\"Run \" + x", ExprTier::Wire, scope, compiled.program,
+    CHECK(!compile_expr("\"Run \" + x", ExprTier::Wire, scope, compiled.program,
                               code, result, expr_error));
     CHECK_MSG(expr_error.find("display") != std::string::npos, expr_error);
 }
@@ -1185,7 +1196,7 @@ void test_colors() {
         std::vector<Instruction> code;
         ExpressionResult result;
         std::string error;
-        CHECK(!compile_expression("x * 2", ExprTier::Wire, wire_scope, compiled.program,
+        CHECK(!compile_expr("x * 2", ExprTier::Wire, wire_scope, compiled.program,
                                   code, result, error));
         CHECK_MSG(error.find("display") != std::string::npos, error);
     }
@@ -1206,7 +1217,7 @@ void test_colors() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(compile_expression("hsv(x, 1, 1).mix(rgb(0, 0, 0), 0.5).alpha(x / 360)",
+    CHECK(compile_expr("hsv(x, 1, 1).mix(rgb(0, 0, 0), 0.5).alpha(x / 360)",
                              ExprTier::Display, scope, program, code, result, error));
     CHECK(result.shape == Shape::Color);
 }
@@ -1298,7 +1309,7 @@ void test_tonemaps() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(!compile_expression("jet(x)", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(!compile_expr("jet(x)", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
 }
 
@@ -1434,12 +1445,12 @@ void test_text_and_enums() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(!compile_expression("x.is(bogus)", ExprTier::Display, scope, scratch, code,
+    CHECK(!compile_expr("x.is(bogus)", ExprTier::Display, scope, scratch, code,
                               result, error));
     CHECK_MSG(error.find("variant") != std::string::npos, error);
     error.clear();
     code.clear();
-    CHECK(compile_expression("x.is(running)", ExprTier::Wire, scope, scratch, code,
+    CHECK(compile_expr("x.is(running)", ExprTier::Wire, scope, scratch, code,
                              result, error));
     CHECK(result.shape == Shape::Bool);
 }
@@ -1566,18 +1577,18 @@ void test_lists_and_maps() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(!compile_expression("x.sum", ExprTier::Display, scope, scratch, code, result, error));
+    CHECK(!compile_expr("x.sum", ExprTier::Display, scope, scratch, code, result, error));
     CHECK_MSG(error.find("numbers") != std::string::npos, error);
     /* and a LIST can never be the wire's final value */
     error.clear();
     code.clear();
-    CHECK(!compile_expression("x.sort()", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(!compile_expr("x.sort()", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK_MSG(error.find("one scalar") != std::string::npos, error);
     /* but reducing one on the wire tier is fine */
     error.clear();
     code.clear();
     scope.x_elem = Shape::Num;
-    CHECK(compile_expression("x.max + 1", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(compile_expr("x.max + 1", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK(result.shape == Shape::Num);
 }
 

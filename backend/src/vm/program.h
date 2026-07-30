@@ -1,7 +1,9 @@
 #pragma once
 
 #include "diag.h"
-#include "value.h"
+#include "lang/emit.h"
+#include "lang/ir.h"
+#include "lang/value.h"
 
 #include <cstdint>
 #include <string>
@@ -14,12 +16,6 @@ enum class Verb : uint8_t { Write, Force, Publish, Call, Emit, Unforce };
 
 const char* entity_kind_name(EntityKind kind);
 const char* verb_name(Verb verb);
-
-/* safety ceilings on genuinely unbounded inputs (PLAN.md: computed bounds, not
- * configured ceilings): an uncapped varr or map truncates here with a fault, and a
- * split can yield at most one piece per input byte */
-constexpr uint32_t kVarrCeiling = 512;
-constexpr uint32_t kSplitCeiling = 256;
 
 struct FieldDef {
     std::string path;
@@ -114,176 +110,6 @@ struct CellDef {
     /* Temp only: the flow it belongs to, so two flows may reuse a name */
     uint64_t owner_flow = 0;
 };
-
-enum class OpCode : uint8_t {
-    Const,
-    LoadX,
-    Load,
-    LoadField,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Neg,
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    Not,
-    Jmp,
-    JmpFalse,
-    Call,
-    Method,
-    StoreX,
-    Gate,
-    Deadband,
-    Throttle,
-    Suspend,
-    /* the move step's four forms (spec 5.4). New and ReadEnt fill a struct cell;
-     * StoreField sets one field of one; MoveOut emits the effect. A move into a scalar
-     * cell is an ordinary expression plus Store, so it needs no opcode of its own. */
-    New,
-    ReadEnt,
-    LoadEnt,
-    StoreField,
-    MoveOut,
-    Store,
-    TmrStart,
-    TmrCancel,
-    Fault,
-    Halt,
-    /* appended only: the frontend's attribute interpreter mirrors these ids */
-    Index,
-    /* text -> the enum value whose variant name it is, over the type table entry in
-     * `b`: the compile-inserted coercion at a move into an enum-typed field, so a
-     * Dropdown's selected name writes back with no authored transform (spec 6.2) */
-    EnumFromName,
-    /* pop; jump to `a` when it was Nil: a cased feed's bail-out, so an UNKNOWN input
-     * stores UNKNOWN instead of faulting its way down the arms (spec 2.4) */
-    JmpNil,
-    /* push one FIELD of timer `a` from the timer table (`b`: 0 running, 1 remaining
-     * seconds, 2 duration seconds): expressions read a timer only by field, the way
-     * `myTimer.remaining` spells it; the state lives beside the cells, not in one */
-    TmrRead,
-    /* pop into history `a`'s LATEST buffer (a scalar, or every element of a numeric
-     * list, captured while the run's element pool is still valid): the tail of a feed
-     * whose slot the type flagged `history`. The rate timer commits the latest into
-     * the ring; the cell itself is never stored (a series is not a scalar). */
-    StoreHist,
-    /* pop `b` values (pushed left to right) into a fresh element run and push the
-     * list: the `[a, b, c]` array literal, how an expression builds a Trend's
-     * multi-series value. A Nil element stays Nil (a gap in that one series), it
-     * does not poison the whole list. */
-    MakeList,
-};
-
-enum class Builtin : uint16_t {
-    Clamp,
-    MapRange,
-    RoundTo,
-    Lerp,
-    Abs,
-    Round,
-    Floor,
-    Ceil,
-    Sqrt,
-    Pow,
-    Min,
-    Max,
-    Int,
-    Num,
-    Rgb,
-    Hsv,
-    /* appended only: the frontend's attribute interpreter mirrors these ids */
-    Str,
-    Name,
-    FmtTime,
-    FmtDuration,
-    Color,
-    Jet,
-    Hot,
-    CoolWarm,
-    Viridis,
-    Grayscale,
-    Values,
-    Keys,
-    Invert,
-};
-
-enum class MethodId : uint16_t {
-    NumRound,
-    NumFloor,
-    NumCeil,
-    NumAbs,
-    NumClamp,
-    NumMapRange,
-    NumSign,
-    BoolInt,
-    BoolNot,
-    BoolPick,
-    ColorR,
-    ColorG,
-    ColorB,
-    ColorA,
-    ColorAlpha,
-    ColorMix,
-    /* appended only: the frontend's attribute interpreter mirrors these ids */
-    NumToFixed,
-    TextLength,
-    TextUpper,
-    TextLower,
-    TextTitle,
-    TextTrim,
-    TextSlice,
-    TextStartsWith,
-    TextEndsWith,
-    TextContains,
-    TextReplace,
-    TextPadStart,
-    EnumInt,
-    EnumName,
-    TextSplit,
-    ListLength,
-    ListFirst,
-    ListLast,
-    ListSum,
-    ListAvg,
-    ListMax,
-    ListMin,
-    ListJoin,
-    ListSort,
-    ListReverse,
-    ListSlice,
-    ListContains,
-    ListIndexOf,
-    MapLength,
-    MapKeys,
-    MapValues,
-    MapHas,
-    MapGet,
-    /* `a + b` with a text operand (display tier): both sides rendered as str() would
-     * render them, joined into the site's own slot */
-    TextConcat,
-    /* color channel arithmetic: `color * n` / `color / n` scale r,g,b (alpha kept),
-     * `.invert()` flips them */
-    ColorScale,
-    ColorDiv,
-    ColorInvert,
-};
-
-struct Instruction {
-    OpCode op = OpCode::Halt;
-    uint8_t flags = 0;
-    uint16_t small = 0;
-    uint32_t a = 0;
-    uint32_t b = 0;
-    uint32_t c = 0;
-};
-
-static_assert(sizeof(Instruction) == 16, "Instruction must stay compact");
 
 /* One struct slot in the run: which type it holds, so RuntimeState can size its fields.
  * `temp` marks a flow temporary's slot: only those are snapshot and restored around a
@@ -410,6 +236,31 @@ struct Program {
     uint32_t add_constant(Value value);
     const char* disassemble() const = delete;
     std::string disassembly() const;
+};
+
+/* A Program, as the language's EmitSink (lang/emit.h). An adapter rather than making
+ * Program implement the interface directly: Program is plain data that gets copied into
+ * the scheduler by value, and it has no business carrying a vtable for the sake of a
+ * compile-time interface. */
+struct ProgramEmit final : EmitSink {
+    explicit ProgramEmit(Program& program) : program(program) {}
+
+    uint32_t add_constant(Value value) override { return program.add_constant(value); }
+    uint32_t add_text(const std::string& text) override { return program.add_text(text); }
+
+    const EnumVariants* enum_variants(uint16_t type_id) const override {
+        if (!type_id || type_id >= program.types.size()) return nullptr;
+        return &program.types[type_id].variants;
+    }
+
+    uint32_t alloc_text_slot() override { return program.layout.text_slots++; }
+
+    void reserve_elems(uint32_t values, uint32_t texts) override {
+        program.layout.elem_values += values;
+        program.layout.elem_texts += texts;
+    }
+
+    Program& program;
 };
 
 } // namespace hmi

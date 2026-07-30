@@ -1,6 +1,14 @@
+/* The scalar expression compiler: the authored language of feeds, flow guards and move
+ * sources (spec 6), lowered to the instruction form in lang/ir.h.
+ *
+ * It knows nothing about widgets, entities, cells or flows. Names arrive already
+ * resolved as Bindings — the CALLER decided what `setpoint` addresses — and everything
+ * emitted lands through an EmitSink (lang/emit.h). That is what lets the same compiler
+ * serve the backend's Program and anything else that can hold a constant pool. */
 #pragma once
 
-#include "vm/program.h"
+#include "lang/emit.h"
+#include "lang/ir.h"
 
 #include <string>
 #include <unordered_map>
@@ -36,7 +44,7 @@ struct ExpressionResult {
 };
 
 bool compile_expression(const std::string& text, ExprTier tier,
-                        const ExpressionScope& scope, Program& program,
+                        const ExpressionScope& scope, EmitSink& sink,
                         std::vector<Instruction>& code, ExpressionResult& result,
                         std::string& error);
 

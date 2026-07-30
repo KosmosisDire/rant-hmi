@@ -1,6 +1,6 @@
 #include "compiler.h"
 
-#include "expression.h"
+#include "lang/expression.h"
 
 #include <algorithm>
 #include <cmath>
@@ -709,7 +709,8 @@ class Compiler {
                     uint16_t* enum_out = nullptr) {
         ExpressionResult result;
         std::string error;
-        if (!compile_expression(text, tier, scope, program_, code, result, error)) {
+        ProgramEmit emit(program_);
+        if (!compile_expression(text, tier, scope, emit, code, result, error)) {
             diag(node, "expression", error, DiagGrade::Error, where);
             return false;
         }

@@ -1,0 +1,199 @@
+/* The language's INSTRUCTION FORM: the opcode banks, the builtin and method ids, and
+ * the instruction struct every tier is lowered to.
+ *
+ * This lives with the language rather than with the VM because the language DEFINES the
+ * IR and the VM merely executes it — so the dependency runs vm/ -> lang/ and never the
+ * reverse, which is what keeps EntityDef, CellDef and the feed/flow tables out of the
+ * compiler's headers.
+ *
+ * One wart, named rather than hidden: OpCode carries both banks (spec 5.4) — the
+ * expression opcodes the language emits, and the EFFECT opcodes (MoveOut, CallEnt,
+ * TmrStart, Suspend, Fault, Halt) that only the DO-list lowering in compile/ emits and
+ * only the VM executes. Splitting the enum means touching the VM's dispatch switch and
+ * Instruction's encoding for no behavioural gain, so the language declares opcodes it
+ * never emits. */
+#pragma once
+
+#include "lang/value.h"
+
+#include <cstdint>
+
+namespace hmi {
+
+/* safety ceilings on genuinely unbounded inputs (PLAN.md: computed bounds, not
+ * configured ceilings): an uncapped varr or map truncates here with a fault, and a
+ * split can yield at most one piece per input byte */
+constexpr uint32_t kVarrCeiling = 512;
+constexpr uint32_t kSplitCeiling = 256;
+
+enum class OpCode : uint8_t {
+    Const,
+    LoadX,
+    Load,
+    LoadField,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Neg,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Not,
+    Jmp,
+    JmpFalse,
+    Call,
+    Method,
+    StoreX,
+    Gate,
+    Deadband,
+    Throttle,
+    Suspend,
+    /* the move step's four forms (spec 5.4). New and ReadEnt fill a struct cell;
+     * StoreField sets one field of one; MoveOut emits the effect. A move into a scalar
+     * cell is an ordinary expression plus Store, so it needs no opcode of its own. */
+    New,
+    ReadEnt,
+    LoadEnt,
+    StoreField,
+    MoveOut,
+    Store,
+    TmrStart,
+    TmrCancel,
+    Fault,
+    Halt,
+    /* appended only: the frontend's attribute interpreter mirrors these ids */
+    Index,
+    /* text -> the enum value whose variant name it is, over the type table entry in
+     * `b`: the compile-inserted coercion at a move into an enum-typed field, so a
+     * Dropdown's selected name writes back with no authored transform (spec 6.2) */
+    EnumFromName,
+    /* pop; jump to `a` when it was Nil: a cased feed's bail-out, so an UNKNOWN input
+     * stores UNKNOWN instead of faulting its way down the arms (spec 2.4) */
+    JmpNil,
+    /* push one FIELD of timer `a` from the timer table (`b`: 0 running, 1 remaining
+     * seconds, 2 duration seconds): expressions read a timer only by field, the way
+     * `myTimer.remaining` spells it; the state lives beside the cells, not in one */
+    TmrRead,
+    /* pop into history `a`'s LATEST buffer (a scalar, or every element of a numeric
+     * list, captured while the run's element pool is still valid): the tail of a feed
+     * whose slot the type flagged `history`. The rate timer commits the latest into
+     * the ring; the cell itself is never stored (a series is not a scalar). */
+    StoreHist,
+    /* pop `b` values (pushed left to right) into a fresh element run and push the
+     * list: the `[a, b, c]` array literal, how an expression builds a Trend's
+     * multi-series value. A Nil element stays Nil (a gap in that one series), it
+     * does not poison the whole list. */
+    MakeList,
+};
+
+enum class Builtin : uint16_t {
+    Clamp,
+    MapRange,
+    RoundTo,
+    Lerp,
+    Abs,
+    Round,
+    Floor,
+    Ceil,
+    Sqrt,
+    Pow,
+    Min,
+    Max,
+    Int,
+    Num,
+    Rgb,
+    Hsv,
+    /* appended only: the frontend's attribute interpreter mirrors these ids */
+    Str,
+    Name,
+    FmtTime,
+    FmtDuration,
+    Color,
+    Jet,
+    Hot,
+    CoolWarm,
+    Viridis,
+    Grayscale,
+    Values,
+    Keys,
+    Invert,
+};
+
+enum class MethodId : uint16_t {
+    NumRound,
+    NumFloor,
+    NumCeil,
+    NumAbs,
+    NumClamp,
+    NumMapRange,
+    NumSign,
+    BoolInt,
+    BoolNot,
+    BoolPick,
+    ColorR,
+    ColorG,
+    ColorB,
+    ColorA,
+    ColorAlpha,
+    ColorMix,
+    /* appended only: the frontend's attribute interpreter mirrors these ids */
+    NumToFixed,
+    TextLength,
+    TextUpper,
+    TextLower,
+    TextTitle,
+    TextTrim,
+    TextSlice,
+    TextStartsWith,
+    TextEndsWith,
+    TextContains,
+    TextReplace,
+    TextPadStart,
+    EnumInt,
+    EnumName,
+    TextSplit,
+    ListLength,
+    ListFirst,
+    ListLast,
+    ListSum,
+    ListAvg,
+    ListMax,
+    ListMin,
+    ListJoin,
+    ListSort,
+    ListReverse,
+    ListSlice,
+    ListContains,
+    ListIndexOf,
+    MapLength,
+    MapKeys,
+    MapValues,
+    MapHas,
+    MapGet,
+    /* `a + b` with a text operand (display tier): both sides rendered as str() would
+     * render them, joined into the site's own slot */
+    TextConcat,
+    /* color channel arithmetic: `color * n` / `color / n` scale r,g,b (alpha kept),
+     * `.invert()` flips them */
+    ColorScale,
+    ColorDiv,
+    ColorInvert,
+};
+
+struct Instruction {
+    OpCode op = OpCode::Halt;
+    uint8_t flags = 0;
+    uint16_t small = 0;
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t c = 0;
+};
+
+static_assert(sizeof(Instruction) == 16, "Instruction must stay compact");
+
+} // namespace hmi

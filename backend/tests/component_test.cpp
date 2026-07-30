@@ -5,7 +5,7 @@
 #include "check.h"
 #include "compile/compiler.h"
 #include "compile/components.h"
-#include "compile/template_expr.h"
+#include "lang/template_expr.h"
 #include "doc/doc.h"
 #include "mesh/fake.h"
 #include "registry/registry.h"

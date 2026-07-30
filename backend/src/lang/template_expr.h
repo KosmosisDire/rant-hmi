@@ -13,7 +13,7 @@
  * wrong shape as UNKNOWN rather than a wrong pixel. */
 #pragma once
 
-#include "doc/schema.h"
+#include <nlohmann/json.hpp>
 
 #include <memory>
 #include <set>
@@ -21,6 +21,12 @@
 #include <vector>
 
 namespace hmi {
+
+/* The alias doc/schema.h also declares, repeated rather than included: this is the one
+ * language header that names a JSON value (a view program is served as one), and
+ * including the document's node schema to get it would put the whole document model
+ * above lang/ back inside it. Identical aliases may coexist. */
+using Json = nlohmann::json;
 
 /* What identifiers mean inside ONE PART's attrs.
  *

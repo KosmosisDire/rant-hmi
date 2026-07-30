@@ -2,7 +2,7 @@
 
 #include "compile/compiler.h"
 #include "compile/components.h"
-#include "compile/expression.h"
+#include "lang/expression.h"
 #include "doc/ops.h"
 #include "registry/registry.h"
 
