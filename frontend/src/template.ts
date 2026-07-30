@@ -768,22 +768,49 @@ export interface ActCounter {
   next: number;
 }
 
+/* Collects where each NAMED node landed, keyed by its part path (the names joined
+ * with "/" from the template root, spec 2.3), in the same artboard units the renderer
+ * works in. `path` is the walk's own prefix threading, "" at the root, like the
+ * counter in ActCounter. A node hidden by `show` records nothing: it did not render.
+ * When a collector rides along, every named node that renders is also wrapped in
+ * `<g data-part="<path>">` (INSIDE any data-act group it carries), so the DOM knows
+ * the same addresses; without one the output is exactly what it always was. */
+export interface PartHits {
+  rects: Map<string, Rect>;
+  path: string;
+}
+
 export function renderNode(
   node: TemplateNode,
   rect: Rect,
   cells: Cells,
   out: string[],
   acts?: ActCounter,
+  parts?: PartHits,
 ): void {
   if (!node) return;
   const act = (node as Json).interact && acts ? acts.next++ : -1;
   const attrs = (node as Json).attrs ?? {};
   if (attrs.show && !attrBool(attr(attrs, "show", cells), false)) return;
 
+  const name = parts ? (node as Json).name : undefined;
+  const path = typeof name === "string" && name.length
+    ? (parts!.path ? parts!.path + "/" + name : name)
+    : "";
+
   /* the browser's own SVG hit test resolves gestures: everything this node PAINTS is
      the interactive element, whatever its shape, so the group carries the ordinal */
   if (act >= 0) out.push(`<g data-act="${act}">`);
-  renderBody(node, rect, attrs, cells, out, acts);
+  if (path) {
+    out.push(`<g data-part="${path}">`);
+    const above = parts!.path;
+    parts!.path = path;
+    renderBody(node, rect, attrs, cells, out, acts, parts, path);
+    parts!.path = above;
+    out.push(`</g>`);
+  } else {
+    renderBody(node, rect, attrs, cells, out, acts, parts, "");
+  }
   if (act >= 0) out.push(`</g>`);
 }
 
@@ -794,6 +821,8 @@ function renderBody(
   cells: Cells,
   out: string[],
   acts?: ActCounter,
+  parts?: PartHits,
+  path = "",
 ): void {
   let area = rect;
   /* a node with `at: "center"` pins its area to the FITTED CIRCLE (the square around
@@ -808,16 +837,19 @@ function renderBody(
   const pad = attrNum(attr(attrs, "pad", cells), 0);
   if (pad > 0) area = inset(area, pad * Math.min(area.w, area.h));
 
+  /* a named node records where it landed: the resolved area, after at/aspect/pad */
+  if (parts && path) parts.rects.set(path, area);
+
   /* generic clipping: a node with `clip` keeps everything it paints inside its own
      area (true = square, a number = that corner radius) */
   const clipRaw = attrs && attrs.clip ? attr(attrs, "clip", cells) : null;
   if (clipRaw !== null && clipRaw !== false) {
     const close = clipTo(area, clipRaw === true ? 0 : attrNum(clipRaw, 0), out);
-    renderClipped(node, area, attrs, cells, out, acts);
+    renderClipped(node, area, attrs, cells, out, acts, parts);
     out.push(close);
     return;
   }
-  renderClipped(node, area, attrs, cells, out, acts);
+  renderClipped(node, area, attrs, cells, out, acts, parts);
 }
 
 function renderClipped(
@@ -827,6 +859,7 @@ function renderClipped(
   cells: Cells,
   out: string[],
   acts?: ActCounter,
+  parts?: PartHits,
 ): void {
   if (node.kind === "part") {
     switch (node.draw) {
@@ -850,7 +883,7 @@ function renderClipped(
   if (!children.length) return;
 
   if (dir === "stack") {
-    for (const child of children) renderNode(child, area, cells, out, acts);
+    for (const child of children) renderNode(child, area, cells, out, acts, parts);
     return;
   }
 
@@ -888,6 +921,6 @@ function renderClipped(
       ? { x: at, y: area.y, w: c.main, h: area.h }
       : { x: area.x, y: at, w: area.w, h: c.main };
     at += c.main;
-    if (c.main > 0.5) renderNode(c.node, childRect, cells, out, acts);
+    if (c.main > 0.5) renderNode(c.node, childRect, cells, out, acts, parts);
   }
 }

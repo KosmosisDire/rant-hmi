@@ -44,6 +44,9 @@ export class App implements Editor {
   live: Live | null = null;
   hists: Record<string, HistView> = {};
   diagnostics: Diag[] = [];
+  /* where every named template node landed on the last content render: widget id ->
+     part path -> rect in artboard units (the coming part selection reads this) */
+  partRects: Map<number, Map<string, Rect>> = new Map();
   view: ViewState = {
     mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {}, faults: {},
   };
@@ -323,8 +326,9 @@ export class App implements Editor {
     const viewBox = `0 0 ${doc.canvas.unit_w} ${doc.canvas.unit_h}`;
     if (this.contentDirty) {
       this.contentDirty = false;
+      this.partRects = new Map();
       const content = renderContent(doc, page, this.registry, this.live, this.view, this.mesh,
-                                    this.hists);
+                                    this.hists, this.partRects);
       if (content !== this.lastContent) {
         this.lastContent = content;
         this.nodes.art.setAttribute("viewBox", viewBox);

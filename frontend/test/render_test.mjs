@@ -560,6 +560,30 @@ view.faults = {};
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 check(!svg.includes('class="fault'), "and unmarked when the finding clears");
 
+/* ---- part identity ----
+   Every named template node has a part path (names joined with "/" from the template
+   root). A render handed a collector wraps each named node in a data-part group (inside
+   any data-act group) and records its laid-out rect per widget; without one the SVG is
+   exactly what it always was. */
+check(!svg.includes("data-part"), "no collector, no data-part groups");
+const partRects = new Map();
+svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view,
+                    null, null, partRects);
+has(svg, '<g data-act="0"><g data-part="body/pill">', "a data-part group nests inside its data-act group");
+has(svg, '<g data-part="body/pill/lane/knob">', "the toggle's knob renders as a data-part group");
+const toggleParts = partRects.get(toggle.id);
+check(toggleParts instanceof Map && toggleParts.has("body/pill/lane/knob"),
+      "part rects are recorded per widget by part path");
+{
+  const knob = toggleParts.get("body/pill/lane/knob");
+  const g = store.widget(toggle.id).geom;
+  check(knob && knob.x >= g.x && knob.y >= g.y &&
+        knob.x + knob.w <= g.x + g.w && knob.y + knob.h <= g.y + g.h,
+        "a recorded part rect lies inside its widget's tile");
+}
+/* the slider's scale is hidden (show_scale defaults off), so it records nothing */
+check(!partRects.get(slider.id).has("body/scale"), "a node hidden by `show` records no rect");
+
 /* trend smoothing is pure math on the drawn copy: noisy input comes out with less
    spread, a null still breaks the run (never bridged), and knobs at 0 pass through */
 {

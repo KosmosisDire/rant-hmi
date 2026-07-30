@@ -161,9 +161,12 @@ export interface Interact {
   emits: Record<string, string>;
 }
 
+/* `name` is unique among siblings; the names joined with "/" from the template root
+   are the node's part path, its stable address (spec 2.3). Built-ins always carry
+   one; the renderer tolerates its absence (the node just has no path). */
 export type TemplateNode =
-  | { kind: "box"; dir: "row" | "col" | "stack" | "auto"; attrs: Attrs; children: TemplateNode[]; interact?: Interact }
-  | { kind: "part"; draw: "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "mark" | "ticks" | "plot"; attrs: Attrs };
+  | { kind: "box"; name?: string; dir: "row" | "col" | "stack" | "auto"; attrs: Attrs; children: TemplateNode[]; interact?: Interact }
+  | { kind: "part"; name?: string; draw: "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "mark" | "ticks" | "plot"; attrs: Attrs };
 
 export interface WidgetType {
   name: string;

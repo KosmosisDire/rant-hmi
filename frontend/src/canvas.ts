@@ -11,7 +11,7 @@
 
 import { dividerPath, unionPath } from "./islands.js";
 import { cellsFor, opaqueEnough, resolveSlot, fedSlots, typeOf } from "./slots.js";
-import { escapeXml, Rect, renderNode } from "./template.js";
+import { escapeXml, PartHits, Rect, renderNode } from "./template.js";
 import { Canvas, Doc, HistView, Json, Live, Mesh, Page, Registry, Widget, WidgetType } from "./types.js";
 
 export type Mode = "edit" | "test" | "operate";
@@ -256,6 +256,9 @@ export function renderContent(
   view: ViewState,
   mesh: Mesh | null = null,
   hists: Record<string, HistView> | null = null,
+  /* when supplied, filled with each widget's part rects (widget id -> part path ->
+     laid-out rect, artboard units) and the SVG gains `data-part` groups to match */
+  partRects: Map<number, Map<string, Rect>> | null = null,
 ): string {
   const canvas = doc.canvas;
   const cell = cellSize(canvas);
@@ -359,9 +362,12 @@ export function renderContent(
 
     if (type) {
       const rect = contentRect(frame, pad);
+      const parts: PartHits | undefined =
+        partRects ? { rects: new Map<string, Rect>(), path: "" } : undefined;
       renderNode(type.template, rect,
                  cellsFor(widget, type, live, view.state[widget.id] ?? {}, mesh, hists), out,
-                 { next: 0 });
+                 { next: 0 }, parts);
+      if (partRects && parts) partRects.set(widget.id, parts.rects);
     } else {
       out.push(
         `<text x="${num(widget.geom.x + widget.geom.w / 2)}" ` +

@@ -52,17 +52,24 @@ Json norm(Json v, Json lo, Json hi) {
     return emit("CLAMP01", {div(sub(v, lo), sub(hi, lo))});
 }
 
-/* ---- template builders ---- */
+/* ---- template builders ----
+ *
+ * Every node carries a NAME: short, semantic, mono lower-case, what a layers panel
+ * would show. Names are UNIQUE AMONG SIBLINGS, and a node's address is the names
+ * joined with "/" from the template root (its "part path"), so the editor can select
+ * and scope a part with no per-node ids and the address survives re-serving. */
 
-Json box(const char* dir, Json attrs, Json children, Json interact = nullptr) {
-    Json node = Json{{"kind", "box"}, {"dir", dir}, {"attrs", std::move(attrs)},
-                     {"children", std::move(children)}};
+Json box(const char* dir, const char* name, Json attrs, Json children,
+         Json interact = nullptr) {
+    Json node = Json{{"kind", "box"}, {"name", name}, {"dir", dir},
+                     {"attrs", std::move(attrs)}, {"children", std::move(children)}};
     if (!interact.is_null()) node["interact"] = std::move(interact);
     return node;
 }
 
-Json part(const char* draw, Json attrs) {
-    return Json{{"kind", "part"}, {"draw", draw}, {"attrs", std::move(attrs)}};
+Json part(const char* draw, const char* name, Json attrs) {
+    return Json{{"kind", "part"}, {"name", name}, {"draw", draw},
+                {"attrs", std::move(attrs)}};
 }
 
 Json interact(const char* primitive, Json params, Json emits) {
@@ -255,13 +262,13 @@ Json button_type() {
                 Json::array({event("tap", "bool"), event("release", "bool"),
                              event("press", "bool"), event("pressrelease", "bool"),
                              event("held", "bool")}),
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
-                        part("text", Json{{"text", ref("slot:text")},
-                                          {"fill", ref("slot:text_color")},
-                                          {"align", ref("slot:align")},
-                                          {"scale", ref("slot:text_scale")},
-                                          {"strong", lit(true)}}),
+                        part("text", "label", Json{{"text", ref("slot:text")},
+                                                   {"fill", ref("slot:text_color")},
+                                                   {"align", ref("slot:align")},
+                                                   {"scale", ref("slot:text_scale")},
+                                                   {"strong", lit(true)}}),
                     }),
                     press_interact()));
 }
@@ -287,24 +294,26 @@ Json toggle_type() {
                    its knob) is the element the pointer must be inside, so a visible
                    frame behind the toggle never toggles (a root interact would fold the
                    frame into the element, which is right for Button/Panel, wrong here) */
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
-                        box("stack", Json{{"aspect", lit(2.0)}},
+                        box("stack", "pill", Json{{"aspect", lit(2.0)}},
                             Json::array({
-                                part("rect", Json{{"fill", pick(on, ref("slot:fill_color"),
-                                                                ref("slot:track_color"))},
-                                                  {"radius", lit(999)}}),
+                                part("rect", "track",
+                                     Json{{"fill", pick(on, ref("slot:fill_color"),
+                                                        ref("slot:track_color"))},
+                                          {"radius", lit(999)}}),
                                 /* the knob rides between two spacers whose weights swap
                                  * with the value: position from data, no per-type code */
-                                box("row", Json{{"pad", lit(0.08)}},
+                                box("row", "lane", Json{{"pad", lit(0.08)}},
                                     Json::array({
-                                        box("stack",
+                                        box("stack", "gap-a",
                                             Json{{"weight", pick(on, lit(1), lit(0))}},
                                             Json::array()),
-                                        part("rect", Json{{"fill", ref("slot:handle_color")},
-                                                          {"radius", lit(999)},
-                                                          {"aspect", lit(1.0)}}),
-                                        box("stack",
+                                        part("rect", "knob",
+                                             Json{{"fill", ref("slot:handle_color")},
+                                                  {"radius", lit(999)},
+                                                  {"aspect", lit(1.0)}}),
+                                        box("stack", "gap-b",
                                             Json{{"weight", pick(on, lit(0), lit(1))}},
                                             Json::array()),
                                     })),
@@ -353,58 +362,61 @@ Json slider_type() {
                     slot("scale_values", "bool", true, "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
-                box("col", Json::object(),
+                box("col", "body", Json::object(),
                     Json::array({
-                        box("stack", Json{{"weight", lit(1.0)}},
+                        box("stack", "control", Json{{"weight", lit(1.0)}},
                             Json::array({
                                 /* the fill IS the handle: one full-width bar, its
                                    leading edge marking the value */
-                                part("bar", Json{{"value", fraction},
-                                                 {"fill", ref("slot:fill_color")},
-                                                 {"track", ref("slot:track_color")},
-                                                 {"radius", ref("slot:control_radius")},
-                                                 {"dir", lit("h")}}),
+                                part("bar", "bar", Json{{"value", fraction},
+                                                        {"fill", ref("slot:fill_color")},
+                                                        {"track", ref("slot:track_color")},
+                                                        {"radius", ref("slot:control_radius")},
+                                                        {"dir", lit("h")}}),
                                 /* the head text hugs the fill edge from the inside: a
                                    box whose weight IS the fraction ends exactly at the
                                    edge, and the text right-aligns in it */
-                                box("row", Json{{"show", pick(has_text,
+                                box("row", "head-in", Json{{"show", pick(has_text,
                                                               ge(fill_w, text_w), lit(false))}},
                                     Json::array({
-                                        box("row", Json{{"weight", fraction}},
+                                        box("row", "lead", Json{{"weight", fraction}},
                                             Json::array({
-                                                box("stack", Json{{"weight", lit(1)}},
+                                                box("stack", "gap", Json{{"weight", lit(1)}},
                                                     Json::array()),
-                                                part("text", inside_text),
+                                                part("text", "text", inside_text),
                                             })),
-                                        box("stack", Json{{"weight", sub(lit(1), fraction)}},
+                                        box("stack", "tail",
+                                            Json{{"weight", sub(lit(1), fraction)}},
                                             Json::array()),
                                     })),
                                 /* ...and flips to just past the edge when the fill is
                                    too narrow to hold it */
-                                box("row", Json{{"show", pick(has_text,
+                                box("row", "head-out", Json{{"show", pick(has_text,
                                                               lt(fill_w, text_w), lit(false))}},
                                     Json::array({
-                                        box("stack", Json{{"weight", fraction}}, Json::array()),
-                                        box("row", Json{{"weight", sub(lit(1), fraction)}},
+                                        box("stack", "lead", Json{{"weight", fraction}},
+                                            Json::array()),
+                                        box("row", "tail",
+                                            Json{{"weight", sub(lit(1), fraction)}},
                                             Json::array({
-                                                part("text", outside_text),
-                                                box("stack", Json{{"weight", lit(1)}},
+                                                part("text", "text", outside_text),
+                                                box("stack", "gap", Json{{"weight", lit(1)}},
                                                     Json::array()),
                                             })),
                                     })),
                             })),
                         /* the toggleable scale: marks + range labels under the bar */
-                        part("ticks", Json{{"dir", lit("h")},
-                                           {"count", ref("slot:divisions")},
-                                           {"labels", ref("slot:scale_values")},
-                                           {"min", ref("slot:min")},
-                                           {"max", ref("slot:max")},
-                                           {"decimals", ref("slot:decimals")},
-                                           {"fill", lit("#5a5a5a")},
-                                           {"text_fill", lit("#8a8a8a")},
-                                           {"weight", lit(0.42)},
-                                           {"min_px", lit(9)},
-                                           {"show", ref("slot:show_scale")}}),
+                        part("ticks", "scale", Json{{"dir", lit("h")},
+                                                    {"count", ref("slot:divisions")},
+                                                    {"labels", ref("slot:scale_values")},
+                                                    {"min", ref("slot:min")},
+                                                    {"max", ref("slot:max")},
+                                                    {"decimals", ref("slot:decimals")},
+                                                    {"fill", lit("#5a5a5a")},
+                                                    {"text_fill", lit("#8a8a8a")},
+                                                    {"weight", lit(0.42)},
+                                                    {"min_px", lit(9)},
+                                                    {"show", ref("slot:show_scale")}}),
                     }),
                     interact("drag1d",
                              Json{{"axis", lit("x")},
@@ -432,21 +444,21 @@ Json readout_type() {
                              event("release", "num", "widget.value"),
                              event("press", "num", "widget.value"),
                              event("held", "num", "widget.value")}),
-                box("auto", Json::object(),
+                box("auto", "body", Json::object(),
                     Json::array({
-                        part("text", Json{{"text", to_fixed(ref("slot:value"),
-                                                            ref("slot:decimals"))},
-                                          {"fill", ref("slot:text_color")},
-                                          {"align", ref("slot:align")},
-                                          {"scale", ref("slot:text_scale")},
-                                          {"strong", lit(true)},
-                                          {"weight", lit(1.0)}}),
-                        part("text", Json{{"text", ref("slot:units")},
-                                          {"fill", ref("slot:units_color")},
-                                          {"align", ref("slot:align")},
-                                          {"scale", ref("slot:text_scale")},
-                                          {"weight", lit(0.4)},
-                                          {"show", ne(ref("slot:units"), lit(""))}}),
+                        part("text", "value", Json{{"text", to_fixed(ref("slot:value"),
+                                                                     ref("slot:decimals"))},
+                                                   {"fill", ref("slot:text_color")},
+                                                   {"align", ref("slot:align")},
+                                                   {"scale", ref("slot:text_scale")},
+                                                   {"strong", lit(true)},
+                                                   {"weight", lit(1.0)}}),
+                        part("text", "units", Json{{"text", ref("slot:units")},
+                                                   {"fill", ref("slot:units_color")},
+                                                   {"align", ref("slot:align")},
+                                                   {"scale", ref("slot:text_scale")},
+                                                   {"weight", lit(0.4)},
+                                                   {"show", ne(ref("slot:units"), lit(""))}}),
                     }),
                     press_interact()));
 }
@@ -479,19 +491,19 @@ Json trend_type() {
                     slot("show_scale", "bool", true, "appearance"),
                 }),
                 Json::array(),
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
-                        part("plot", Json{{"values", ref("hist:value")},
-                                          {"autoscale", ref("slot:autoscale")},
-                                          {"min", ref("slot:min")},
-                                          {"max", ref("slot:max")},
-                                          {"decimals", ref("slot:decimals")},
-                                          {"kalman", ref("slot:kalman")},
-                                          {"smoothing", ref("slot:smoothing")},
-                                          {"fill", ref("slot:fill_color")},
-                                          {"track", ref("slot:track_color")},
-                                          {"text_fill", ref("slot:text_color")},
-                                          {"labels", ref("slot:show_scale")}}),
+                        part("plot", "plot", Json{{"values", ref("hist:value")},
+                                                  {"autoscale", ref("slot:autoscale")},
+                                                  {"min", ref("slot:min")},
+                                                  {"max", ref("slot:max")},
+                                                  {"decimals", ref("slot:decimals")},
+                                                  {"kalman", ref("slot:kalman")},
+                                                  {"smoothing", ref("slot:smoothing")},
+                                                  {"fill", ref("slot:fill_color")},
+                                                  {"track", ref("slot:track_color")},
+                                                  {"text_fill", ref("slot:text_color")},
+                                                  {"labels", ref("slot:show_scale")}}),
                     })));
 }
 
@@ -510,21 +522,21 @@ Json dropdown_type() {
                 }),
                 /* the selection is the gesture's own payload; opening proposes nothing new */
                 Json::array({event("select", "text"), event("open", "text", "widget.value")}),
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
-                        box("row", Json{{"pad", lit(0.18)}},
+                        box("row", "field", Json{{"pad", lit(0.18)}},
                             Json::array({
                                 /* oneline: a picked value never line-breaks, however
                                    the fed text spells it */
-                                part("text", Json{{"text", ref("slot:value")},
-                                                  {"fill", ref("slot:text_color")},
-                                                  {"align", lit("start")},
-                                                  {"scale", ref("slot:text_scale")},
-                                                  {"oneline", lit(true)},
-                                                  {"weight", lit(1.0)}}),
-                                part("icon", Json{{"name", lit("chevron-down")},
-                                                  {"fill", lit("#8a8a8a")},
-                                                  {"aspect", lit(1.0)}}),
+                                part("text", "value", Json{{"text", ref("slot:value")},
+                                                           {"fill", ref("slot:text_color")},
+                                                           {"align", lit("start")},
+                                                           {"scale", ref("slot:text_scale")},
+                                                           {"oneline", lit(true)},
+                                                           {"weight", lit(1.0)}}),
+                                part("icon", "chevron", Json{{"name", lit("chevron-down")},
+                                                             {"fill", lit("#8a8a8a")},
+                                                             {"aspect", lit(1.0)}}),
                             })),
                     }),
                     interact("pick", Json{{"options", ref("slot:options")}},
@@ -635,18 +647,18 @@ Json knob_type() {
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
                         /* the body carries the interact so the whole face turns, not
                            just the arc's stroke; no aspect lock: the fit places the
                            circle in the raw rect */
-                        box("stack", Json::object(),
+                        box("stack", "control", Json::object(),
                             Json::array({
-                                part("arc", arc),
-                                part("ticks", ticks),
-                                part("needle", body),
-                                part("mark", mark),
-                                part("text", title),
+                                part("arc", "arc", arc),
+                                part("ticks", "scale", ticks),
+                                part("needle", "face", body),
+                                part("mark", "dot", mark),
+                                part("text", "label", title),
                             }),
                             radial_interact(Json{{"min", ref("slot:min")},
                                                  {"max", ref("slot:max")},
@@ -731,15 +743,15 @@ Json radial_slider_type() {
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
                         /* no aspect lock: the extent fit places the circle, so a half
                            sweep spreads over the whole (possibly oblong) tile */
-                        box("stack", Json::object(),
+                        box("stack", "control", Json::object(),
                             Json::array({
-                                part("arc", arc),
-                                part("ticks", ticks),
-                                part("text", title),
+                                part("arc", "arc", arc),
+                                part("ticks", "scale", ticks),
+                                part("text", "label", title),
                             }),
                             radial_interact(Json{{"min", ref("slot:min")},
                                                  {"max", ref("slot:max")},
@@ -821,22 +833,22 @@ Json gauge_type() {
                              event("release", "num", "widget.value"),
                              event("press", "num", "widget.value"),
                              event("held", "num", "widget.value")}),
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
-                        box("stack", Json::object(),
+                        box("stack", "control", Json::object(),
                             Json::array({
-                                part("arc", arc),
-                                part("ticks", ticks),
-                                part("needle", needle),
+                                part("arc", "arc", arc),
+                                part("ticks", "scale", ticks),
+                                part("needle", "needle", needle),
                                 /* the default sweep leaves the bottom gap free, which
                                    is exactly where the label sits: a bottom strip, so
                                    the self-fitting text sizes to the strip, not the
                                    whole face */
-                                box("col", Json::object(),
+                                box("col", "strip", Json::object(),
                                     Json::array({
-                                        box("stack", Json{{"weight", lit(0.76)}},
+                                        box("stack", "gap", Json{{"weight", lit(0.76)}},
                                             Json::array()),
-                                        part("text",
+                                        part("text", "label",
                                              Json{{"text", ref("slot:text")},
                                                   {"fill", ref("slot:text_color")},
                                                   {"scale", ref("slot:text_scale")},
@@ -903,13 +915,13 @@ Json selector_type() {
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("select", "text")}),
-                box("stack", Json::object(),
+                box("stack", "body", Json::object(),
                     Json::array({
-                        box("stack", Json::object(),
+                        box("stack", "control", Json::object(),
                             Json::array({
-                                part("needle", body),
-                                part("ticks", ticks),
-                                part("needle", needle),
+                                part("needle", "body", body),
+                                part("ticks", "scale", ticks),
+                                part("needle", "needle", needle),
                             }),
                             radial_interact(
                                 Json{{"options", ref("slot:options")},
@@ -935,11 +947,12 @@ Json label_type() {
                              event("release", "text", "widget.text"),
                              event("press", "text", "widget.text"),
                              event("held", "text", "widget.text")}),
-                box("stack", Json::object(),
-                    Json::array({part("text", Json{{"text", ref("slot:text")},
-                                                   {"fill", ref("slot:text_color")},
-                                                   {"align", ref("slot:align")},
-                                                   {"scale", ref("slot:text_scale")}})}),
+                box("stack", "body", Json::object(),
+                    Json::array({part("text", "text",
+                                      Json{{"text", ref("slot:text")},
+                                           {"fill", ref("slot:text_color")},
+                                           {"align", ref("slot:align")},
+                                           {"scale", ref("slot:text_scale")}})}),
                     press_interact()));
 }
 
@@ -955,7 +968,7 @@ Json panel_type() {
                 Json::array({event("tap", "bool"), event("release", "bool"),
                              event("press", "bool"), event("pressrelease", "bool"),
                              event("held", "bool")}),
-                box("stack", Json::object(), Json::array(), press_interact()));
+                box("stack", "body", Json::object(), Json::array(), press_interact()));
 }
 
 } // namespace

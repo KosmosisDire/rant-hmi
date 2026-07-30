@@ -361,15 +361,20 @@ widget), so nothing that touches the plant is ever implied by a type.
 **Templates.** A template is a tree of layout boxes and draw parts:
 
 ```
-Node = box  { dir: row|col|stack|auto, weight, min_px?, aspect?, show?,
+Node = box  { name, dir: row|col|stack|auto, weight, min_px?, aspect?, show?,
               children: [Node], interact?: Interact }
-     | part { draw: rect | bar | text | icon
+     | part { name, draw: rect | bar | text | icon
                   | arc | needle | mark | ticks | plot,
               weight, min_px?, show?,
               attrs: { attr: program } }
 Interact = { primitive: press | drag1d | drag_radial | pick, params: {...},
              emits: { primitive event -> declared event } }
 ```
+
+Every node carries a `name`: short, semantic, lower-case, what a layers panel
+would show. Names are unique among siblings, and the names joined with `/` from
+the template root form the node's **part path**, its stable address (how the
+editor selects and scopes a part without per-node ids).
 
 **The radial vocabulary.** One angle convention for every radial part and the
 drag_radial primitive: DEGREES, 0 = straight up, clockwise positive. Each radial
