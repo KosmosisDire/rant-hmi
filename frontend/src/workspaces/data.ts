@@ -51,7 +51,7 @@ function select(editor: Editor, key: string): void {
 function refShape(editor: Editor): Json[] {
   const out: Json[] = [];
   for (const page of editor.store.pages())
-    for (const widget of page.widgets ?? []) {
+    for (const widget of editor.store.widgetsOn(page)) {
       for (const feed of widget.feeds ?? [])
         out.push(["f", widget.id, feed.slot, feed.src?.kind ?? "", feed.src?.name ?? "",
                   feed.path ?? "", (feed.xf ?? "") !== ""]);
@@ -371,7 +371,8 @@ function widgetLabel(widget: Widget): string {
 }
 
 function eachWidget(editor: Editor, visit: (widget: Widget) => void): void {
-  for (const page of editor.store.pages()) for (const widget of page.widgets ?? []) visit(widget);
+  for (const page of editor.store.pages())
+    for (const widget of editor.store.widgetsOn(page)) visit(widget);
 }
 
 function feedUses(editor: Editor, wants: (feed: Feed, widget: Widget) => boolean): FeedUse[] {

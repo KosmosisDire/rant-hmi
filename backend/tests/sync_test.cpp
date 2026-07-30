@@ -109,7 +109,7 @@ void write_statics() {
     write_file_atomic(std::string(kStatics) + "/index.html", "<h1>hmi</h1>\n", err);
 }
 
-Json widget_of(const Json& doc, size_t index) { return doc["pages"][0]["widgets"][index]; }
+Json widget_of(const Json& doc, size_t index) { return doc["pages"][0]["children"][index]; }
 
 } // namespace
 
@@ -151,7 +151,8 @@ int main() {
     if (!welcome || !snapshot) return check::summary("sync_test");
     CHECK((*welcome)["proto"] == kProto);
     CHECK((*snapshot)["version"] == app.document().version());
-    CHECK((*snapshot)["doc"]["pages"][0]["widgets"].size() == 7);
+    /* seven flat widgets plus the demo frame (spec 2.8) */
+    CHECK((*snapshot)["doc"]["pages"][0]["children"].size() == 8);
     CHECK((*snapshot)["registry"]["types"].size() == 12);
     CHECK((*snapshot)["live"]["values"].is_object());
     /* Compile findings ride the snapshot. They are produced once, at startup, so a view
@@ -207,15 +208,16 @@ int main() {
                 {"base_version", app.document().version()},
                 {"ops", Json::array({Json{{"op", "insert"},
                                           {"parent", page},
-                                          {"list", "widgets"},
-                                          {"node", {{"type", "Toggle"}}}}})}});
+                                          {"list", "children"},
+                                          {"node", {{"kind", "widget"}, {"type", "Toggle"}}}}})}});
     frames = pump(app, b, 1);
     echo = frame_of(frames, "ops_applied");
     CHECK(echo != nullptr);
     if (echo) {
         CHECK((*echo)["ops"][0]["node"]["id"].is_number());
         CHECK((*echo)["ops"][0]["node"]["slots"].is_object());
-        CHECK((*echo)["ops"][0]["index"] == 7);
+        /* appended after the 7 flat widgets AND the demo frame */
+        CHECK((*echo)["ops"][0]["index"] == 8);
     }
 
     /* a rejection always brings a snapshot with it, so a view can never sit desynced */

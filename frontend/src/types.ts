@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 3;
+export const PROTO = 4;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 
@@ -56,6 +56,32 @@ export interface LangEntry {
 export interface Lang {
   builtins: LangEntry[];
   methods: LangEntry[];
+}
+
+/* ---- the closed attr vocabulary, as a served table (spec 2.3) ----
+ *
+ * The DECLARATION of every attr name the renderer (template.ts) actually reads off a
+ * template node's `attrs`, mirrored from backend/src/registry/attrs.h — that header is
+ * the source of truth and carries the full reasoning; this is its wire shape. Snapshot-
+ * only, like `builtins`: it never changes at runtime. `perKind.code` is always empty —
+ * `code` is the one open kind, its attrs read by whatever names the author's own JS
+ * body chose, so it keeps the free-form attrs UI instead of this table. */
+export interface AttrDef {
+  name: string;
+  shape: "num" | "bool" | "text" | "color" | "series";
+  /* absent = no computed default: the attr is structural (show, repeat, clip, zoom,
+     rotate, at, fit) and `note` explains what absence means instead */
+  default?: Json;
+  note: string;
+}
+
+export interface AttrTable {
+  /* the single declared list of part kinds: box, the draw kinds, and code */
+  kinds: string[];
+  /* honoured on every kind */
+  common: AttrDef[];
+  /* one kind's own attrs, on top of the common set */
+  perKind: Record<string, AttrDef[]>;
 }
 
 /* ---- document ---- */
@@ -115,6 +141,9 @@ export interface Flow {
 
 export interface Widget {
   id: number;
+  /* the discriminator a page or frame's `children` reads to tell a widget from a
+     frame sitting in the same ordered list (spec 2.8); always "widget" */
+  kind: "widget";
   type: string;
   label: string;
   geom: Geom;
@@ -127,10 +156,29 @@ export interface Widget {
   flows: Flow[];
 }
 
+/* A FRAME (spec 2.8, one level up from the component-internal node model docs/proto/
+   procedural-ui.md 2.2/2.4 previews): a page-level container grouping widgets and other
+   frames in ONE ordered list (z-order and flow order are the same order). A child's
+   `geom` is in ITS PARENT's coordinates: a page child in canvas units exactly like a
+   bare widget, a frame's child relative to that frame's own x/y — so moving a frame
+   moves its children for free, with no op written to them. `layout` is resolved at
+   RENDER time only (frame.ts): the authored geom never changes for a laid-out child. */
+export interface Frame {
+  id: number;
+  kind: "frame";
+  name: string;
+  geom: Geom;
+  layout: "none" | "row" | "col";
+  gap: number;
+  pad: number;
+  align: "start" | "center" | "end" | "stretch";
+  children: (Frame | Widget)[];
+}
+
 export interface Page {
   id: number;
   name: string;
-  widgets: Widget[];
+  children: (Frame | Widget)[];
 }
 
 /* ---- components: widget types as document data (spec 2.3) ----
@@ -177,6 +225,12 @@ export interface ComponentDef {
   props: PropDef[];
   parts: PartNode[]; /* the template's one root node */
   behavior: Flow[];
+  /* the DESIGN FRAME (spec 3.1): the size the Design workspace's own preview viewport
+     draws this component at, canvas units. NOT an instance size — nothing that renders
+     a PLACED widget (canvas.ts's page path) may read these; only the Design preview
+     does. A built-in carries neither field, and the viewport falls back to 240 x 120. */
+  design_w: number;
+  design_h: number;
 }
 
 /* A built-in component as the snapshot serves it: exactly the ComponentDef document

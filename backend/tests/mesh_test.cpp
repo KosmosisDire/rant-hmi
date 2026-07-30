@@ -256,6 +256,7 @@ int main() {
 
     /* ---- the document: feeds from every kind, flows back out ---- */
     Json level_widget = {
+        {"kind", "widget"},
         {"type", "Readout"},
         {"label", "Level"},
         {"geom", Json{{"x", 0}, {"y", 0}, {"w", 120}, {"h", 60}}},
@@ -282,6 +283,7 @@ int main() {
         })},
     };
     Json label_widget = {
+        {"kind", "widget"},
         {"type", "Label"},
         {"label", "Tag"},
         {"geom", Json{{"x", 130}, {"y", 0}, {"w", 120}, {"h", 60}}},
@@ -290,6 +292,7 @@ int main() {
                                     {"path", "label"}}})},
     };
     Json speed_widget = {
+        {"kind", "widget"},
         {"type", "Readout"},
         {"label", "Speed"},
         {"geom", Json{{"x", 0}, {"y", 70}, {"w", 120}, {"h", 60}}},
@@ -298,6 +301,7 @@ int main() {
                                     {"path", "speed"}}})},
     };
     Json temp_widget = {
+        {"kind", "widget"},
         {"type", "Readout"},
         {"label", "Temp"},
         {"geom", Json{{"x", 130}, {"y", 70}, {"w", 120}, {"h", 60}}},
@@ -307,6 +311,7 @@ int main() {
                                     {"poll_hz", 20}}})},
     };
     Json alarm_widget = {
+        {"kind", "widget"},
         {"type", "Readout"},
         {"label", "Alarm"},
         {"geom", Json{{"x", 260}, {"y", 0}, {"w", 120}, {"h", 60}}},
@@ -315,6 +320,7 @@ int main() {
                                     {"path", "code"}}})},
     };
     Json hist_widget = {
+        {"kind", "widget"},
         {"type", "Readout"},
         {"label", "Hist"},
         {"geom", Json{{"x", 260}, {"y", 70}, {"w", 120}, {"h", 60}}},
@@ -337,6 +343,7 @@ int main() {
     /* the toggle-off-the-plant idiom: read the value, gate on it, force / unforce.
      * Deliberately NO feed references `suction` anywhere in this document. */
     Json suction_widget = {
+        {"kind", "widget"},
         {"type", "Button"},
         {"label", "Suction"},
         {"geom", Json{{"x", 390}, {"y", 0}, {"w", 120}, {"h", 60}}},
@@ -371,10 +378,10 @@ int main() {
         {"next_id", 1},
         {"globals", Json::array()},
         {"pages", Json::array({Json{{"name", "Main"},
-                                    {"widgets", Json::array({level_widget, label_widget,
-                                                             speed_widget, temp_widget,
-                                                             alarm_widget, hist_widget,
-                                                             suction_widget})}}})},
+                                    {"children", Json::array({level_widget, label_widget,
+                                                              speed_widget, temp_widget,
+                                                              alarm_widget, hist_widget,
+                                                              suction_widget})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -388,12 +395,12 @@ int main() {
 
     const Json& page = document.root["pages"][0];
     const uint64_t page_id = page.value("id", 0);
-    const uint64_t level_id = page["widgets"][0].value("id", 0);
-    const uint64_t label_id = page["widgets"][1].value("id", 0);
-    const uint64_t speed_id = page["widgets"][2].value("id", 0);
-    const uint64_t temp_id = page["widgets"][3].value("id", 0);
-    const uint64_t alarm_id = page["widgets"][4].value("id", 0);
-    const uint64_t hist_id = page["widgets"][5].value("id", 0);
+    const uint64_t level_id = page["children"][0].value("id", 0);
+    const uint64_t label_id = page["children"][1].value("id", 0);
+    const uint64_t speed_id = page["children"][2].value("id", 0);
+    const uint64_t temp_id = page["children"][3].value("id", 0);
+    const uint64_t alarm_id = page["children"][4].value("id", 0);
+    const uint64_t hist_id = page["children"][5].value("id", 0);
 
     Scheduler sched(std::move(compiled.program), mesh);
     mesh.apply(sched.program());
@@ -508,7 +515,7 @@ int main() {
     /* the flow-read toggle: the gates only ever pass once the flow_reads subscription
      * fills the mirror, so a landed force IS the proof of consumption */
     {
-        const uint64_t suction_id = page["widgets"][6].value("id", 0);
+        const uint64_t suction_id = page["children"][6].value("id", 0);
         bool forced_on = false;
         for (int i = 0; i < 40 && !forced_on; ++i) {
             sched.post(InputEvent{1, suction_id, "tap", Value::boolean(true), seq++});

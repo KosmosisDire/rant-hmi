@@ -3,12 +3,14 @@
  * set_props its fan-out performed), so there is nothing to decide here and no rule that
  * can drift out of step with the server. */
 
-import { ComponentDef, Doc, Json, Op, Page, Token, Var, Widget } from "./types.js";
+import { ComponentDef, Doc, Frame, Json, Op, Page, Token, Var, Widget } from "./types.js";
 
 /* which lists a node kind holds, so the index can walk without knowing the schema
-   ("components"/"props"/"parts"/"behavior"/"children" are the component subtree) */
+   ("components"/"props"/"parts"/"behavior" are the component subtree; "children" is
+   shared by a page, a frame AND a part — a page or frame's holds widgets and frames
+   in one heterogeneous list, spec 2.8) */
 const CHILD_LISTS = ["globals", "tokens", "components", "props", "parts", "behavior",
-                     "children", "pages", "widgets", "locals", "feeds", "flows", "do"];
+                     "children", "pages", "locals", "feeds", "flows", "do"];
 
 interface Entry {
   node: Json;
@@ -62,7 +64,26 @@ export class DocStore {
 
   widget(id: number): Widget | null {
     const node = this.node(id);
-    return node && node.type !== undefined && node.geom !== undefined ? (node as Widget) : null;
+    return node && node.kind === "widget" ? (node as Widget) : null;
+  }
+
+  frame(id: number): Frame | null {
+    const node = this.node(id);
+    return node && node.kind === "frame" ? (node as Frame) : null;
+  }
+
+  /* every widget on this page, wherever it nests: a page-level where-used scan (Data,
+     Style) wants every widget regardless of frame grouping, never a frame itself */
+  widgetsOn(page: Page): Widget[] {
+    const out: Widget[] = [];
+    const walk = (children: (Frame | Widget)[]) => {
+      for (const node of children) {
+        if (node.kind === "widget") out.push(node);
+        else walk(node.children);
+      }
+    };
+    walk(page.children ?? []);
+    return out;
   }
 
   apply(version: number, ops: Op[]): void {

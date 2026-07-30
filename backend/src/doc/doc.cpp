@@ -14,14 +14,48 @@ Json token(const char* name, const char* group, const char* dark, const char* li
     return Json{{"name", name}, {"group", group}, {"dark", dark}, {"light", light}};
 }
 
-/* geometry is continuous canvas units; the demo places on the 22-unit cell grid */
+/* geometry is continuous canvas units; the demo places on the 22-unit cell grid.
+ * `kind` is the discriminator page.children and frame.children read (schema.cpp): a
+ * literal here rather than left to prepare()'s default fill, because a heterogeneous
+ * list rejects a child whose kind is absent (spec: never silently defaulted). */
 Json widget(const char* type, const char* label, int cx, int cy, int cw, int ch, Json slots) {
     const int cell = 22;
-    return Json{{"type", type},
+    return Json{{"kind", "widget"},
+                {"type", type},
                 {"label", label},
                 {"geom", {{"x", cx * cell}, {"y", cy * cell},
                           {"w", cw * cell}, {"h", ch * cell}}},
                 {"slots", std::move(slots)}};
+}
+
+/* a FRAME, in the same 22-unit demo grid; `children` is filled in by the caller once
+   the widgets it groups exist, so it composes with `widget()` above */
+Json frame(const char* name, int cx, int cy, int cw, int ch, const char* layout, Json children) {
+    const int cell = 22;
+    return Json{{"kind", "frame"},
+                {"name", name},
+                {"geom", {{"x", cx * cell}, {"y", cy * cell},
+                          {"w", cw * cell}, {"h", ch * cell}}},
+                {"layout", layout},
+                {"gap", 8},
+                {"pad", 6},
+                {"align", "center"},
+                {"children", std::move(children)}};
+}
+
+/* Every widget on a page, wherever it nests: DFS through frames, collecting each widget
+ * along with the PAGE it belongs to (never the frame) — page identity is what gates mesh
+ * polling and rename fan-out, so a widget three frames deep must still resolve to its
+ * page, not its immediate parent. */
+void collect_widgets(Json& page, Json& node, std::vector<Document::WidgetRef>& out) {
+    auto it = node.find("children");
+    if (it == node.end() || !it->is_array()) return;
+    for (Json& child : *it) {
+        auto kind = child.find("kind");
+        const std::string k = kind != child.end() && kind->is_string() ? kind->get<std::string>() : "";
+        if (k == "widget") out.push_back({&page, &child});
+        else if (k == "frame") collect_widgets(page, child, out);
+    }
 }
 
 } // namespace
@@ -103,8 +137,11 @@ bool Document::prepare(Kind kind, Json& node, std::string& err) {
         auto it = node.find(l.key);
         if (it == node.end()) { node[l.key] = Json::array(); continue; }
         if (!it->is_array()) { err = l.key + " must be an array"; return false; }
-        for (Json& child : *it)
-            if (!prepare(l.child, child, err)) return false;
+        for (Json& child : *it) {
+            Kind ck = Kind::Doc;
+            if (!child_kind(l, child, ck, err)) return false;
+            if (!prepare(ck, child, err)) return false;
+        }
     }
 
     /* anything left over is not part of the model */
@@ -134,7 +171,14 @@ void Document::index_subtree(Json& node, Kind kind, uint64_t parent, const std::
         auto it = node.find(l.key);
         if (it == node.end() || !it->is_array()) continue;
         size_t i = 0;
-        for (Json& child : *it) index_subtree(child, l.child, id, l.key, i++);
+        for (Json& child : *it) {
+            /* prepare() already rejected any child whose discriminator does not resolve,
+               so this always succeeds here; the check is defensive, not load-bearing */
+            Kind ck = Kind::Doc;
+            std::string ignored;
+            if (child_kind(l, child, ck, ignored)) index_subtree(child, ck, id, l.key, i);
+            ++i;
+        }
     }
 }
 
@@ -167,11 +211,7 @@ std::vector<Document::WidgetRef> Document::widgets() {
     std::vector<WidgetRef> out;
     auto pages = root.find("pages");
     if (pages == root.end() || !pages->is_array()) return out;
-    for (Json& page : *pages) {
-        auto ws = page.find("widgets");
-        if (ws == page.end() || !ws->is_array()) continue;
-        for (Json& w : *ws) out.push_back({&page, &w});
-    }
+    for (Json& page : *pages) collect_widgets(page, page, out);
     return out;
 }
 
@@ -191,7 +231,12 @@ bool Document::adopt(Json j, std::string& err) {
         for (const ChildList& l : node_spec(kind).lists) {
             auto it = n->find(l.key);
             if (it == n->end() || !it->is_array()) continue;
-            for (Json& child : *it) stack.push_back({&child, l.child});
+            for (Json& child : *it) {
+                /* the same defensive no-op as index_subtree: prepare() already validated */
+                Kind ck = Kind::Doc;
+                std::string ignored;
+                if (child_kind(l, child, ck, ignored)) stack.push_back({&child, ck});
+            }
         }
     }
     if (counted != index_.size()) { err = "duplicate node ids in document"; return false; }
@@ -228,8 +273,8 @@ Document Document::make_default() {
         token("bad", "status", "#e0857c", "#b2443b"),
     });
 
-    Json page = Json{{"name", "Overview"}, {"widgets", Json::array()}};
-    Json& ws = page["widgets"];
+    Json page = Json{{"name", "Overview"}, {"children", Json::array()}};
+    Json& ws = page["children"];
     ws.push_back(widget("Label", "Title", 2, 1, 14, 2, Json{{"text", "Line 1 Overview"}}));
     ws.push_back(widget("Panel", "Pump group", 2, 4, 22, 11, Json::object()));
     ws.push_back(widget("Toggle", "Pump", 3, 5, 9, 3, Json{{"value", true}}));
@@ -253,6 +298,14 @@ Document Document::make_default() {
         {"do", Json::array({Json{{"kind", "move"},
                                  {"from", {{"expr", "0"}}},
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
+
+    /* a FRAME so the feature has a real example the moment the document opens (spec
+     * 2.8): a label grouped with a switch, laid out in a row — exactly the composition
+     * that used to need two independently-placed widgets and now has real hierarchy. */
+    Json group_children = Json::array();
+    group_children.push_back(widget("Label", "Status", 0, 0, 8, 4, Json{{"text", "Status"}}));
+    group_children.push_back(widget("Toggle", "Enabled", 9, 0, 9, 4, Json{{"value", false}}));
+    ws.push_back(frame("Status group", 2, 17, 20, 4, "row", std::move(group_children)));
 
     j["pages"] = Json::array({page});
 

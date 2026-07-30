@@ -36,6 +36,7 @@ namespace {
 
 Document timed_document() {
     Json button = {
+        {"kind", "widget"},
         {"type", "Button"},
         {"slots", Json{{"text", "Run"}}},
         {"flows",
@@ -73,7 +74,7 @@ Document timed_document() {
              Json{{"name", "watchdog"}, {"type", "timer"}, {"init", 0.005}},
          })},
         {"pages",
-         Json::array({Json{{"name", "Main"}, {"widgets", Json::array({button})}}})},
+         Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})},
     };
     Document document;
     std::string error;
@@ -83,6 +84,7 @@ Document timed_document() {
 
 Document filter_document() {
     Json slider = {
+        {"kind", "widget"},
         {"type", "Slider"},
         {"flows",
          Json::array({
@@ -113,7 +115,7 @@ Document filter_document() {
         {"version", 1},
         {"next_id", 1},
         {"globals", Json::array({Json{{"name", "count"}, {"type", "f64"}, {"init", 0}}})},
-        {"pages", Json::array({Json{{"name", "Main"}, {"widgets", Json::array({slider})}}})},
+        {"pages", Json::array({Json{{"name", "Main"}, {"children", Json::array({slider})}}})},
     };
     Document document;
     std::string error;
@@ -123,6 +125,7 @@ Document filter_document() {
 
 Document first_document() {
     Json button = {
+        {"kind", "widget"},
         {"type", "Button"},
         {"flows",
          Json::array({
@@ -149,7 +152,7 @@ Document first_document() {
              Json{{"name", "count"}, {"type", "f64"}, {"init", 0}},
              Json{{"name", "window"}, {"type", "timer"}, {"init", 0.003}},
          })},
-        {"pages", Json::array({Json{{"name", "Main"}, {"widgets", Json::array({button})}}})},
+        {"pages", Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})},
     };
     Document document;
     std::string error;
@@ -176,7 +179,7 @@ void test_timing() {
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
     const uint64_t widget =
-        json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t cell = count_cell(scheduler.program());
     std::string idle_fault;
@@ -225,7 +228,7 @@ void test_filters() {
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(compiled.ok);
     const uint64_t widget =
-        json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t cell = count_cell(scheduler.program());
 
@@ -253,7 +256,7 @@ void test_first_of_rearm() {
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(compiled.ok);
     const uint64_t widget =
-        json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t cell = count_cell(scheduler.program());
 
@@ -294,7 +297,7 @@ void test_gesture_pin() {
     sw.fields = {FieldDef{"on", Shape::Bool}};
     FakeMesh mesh({sw});
 
-    Json toggle = {{"type", "Toggle"},
+    Json toggle = {{"kind", "widget"}, {"type", "Toggle"},
                    {"slots", Json::object()},
                    {"feeds", Json::array({Json{{"slot", "value"},
                                                {"src", Json{{"kind", "V"}, {"name", "switch"}}},
@@ -309,7 +312,7 @@ void test_gesture_pin() {
                  {"next_id", 1},
                  {"globals", Json::array()},
                  {"pages",
-                  Json::array({Json{{"name", "Main"}, {"widgets", Json::array({toggle})}}})}};
+                  Json::array({Json{{"name", "Main"}, {"children", Json::array({toggle})}}})}};
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
@@ -317,7 +320,7 @@ void test_gesture_pin() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t slot = scheduler.program().feeds[0].cell;
 
@@ -354,7 +357,7 @@ void test_gesture_pin() {
  * back from that variable. The held firing must carry the gesture's proposal, pinned
  * at pointer-down, never a bare `true`: the second hold has to write FALSE. */
 void test_held_proposal() {
-    Json toggle = {{"type", "Toggle"},
+    Json toggle = {{"kind", "widget"}, {"type", "Toggle"},
                    {"slots", Json::object()},
                    {"feeds", Json::array({Json{{"slot", "value"},
                                                {"src", Json{{"kind", "L"}, {"name", "state"}}},
@@ -372,7 +375,7 @@ void test_held_proposal() {
                  {"globals",
                   Json::array({Json{{"name", "state"}, {"type", "bool"}, {"init", false}}})},
                  {"pages",
-                  Json::array({Json{{"name", "Main"}, {"widgets", Json::array({toggle})}}})}};
+                  Json::array({Json{{"name", "Main"}, {"children", Json::array({toggle})}}})}};
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
@@ -381,7 +384,7 @@ void test_held_proposal() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     uint32_t state_cell = UINT32_MAX;
     for (uint32_t i = 0; i < scheduler.program().cells.size(); ++i)
@@ -413,6 +416,7 @@ void test_held_proposal() {
  * computed bindings re-run every tick, so a readout tracks the countdown live. */
 Json timer_read_root(const std::string& surface_xf) {
     Json button = {
+        {"kind", "widget"},
         {"type", "Button"},
         {"slots", Json{{"text", "Run"}}},
         {"feeds", Json::array({Json{{"slot", "surface"},
@@ -425,6 +429,7 @@ Json timer_read_root(const std::string& surface_xf) {
             {"do", Json::array({Json{{"kind", "tmr_start"}, {"timer", "blink"}}})}}})},
     };
     Json readout = {
+        {"kind", "widget"},
         {"type", "Readout"},
         {"slots", Json::object()},
         /* the value feed's SOURCE is the timer itself: x is the timer, read by field */
@@ -448,6 +453,7 @@ Json timer_read_root(const std::string& surface_xf) {
        condition over x.running, the else the resting color; the Nil bail must not
        eat it (a timer cell's stored value is always Nil) */
     Json toggle = {
+        {"kind", "widget"},
         {"type", "Toggle"},
         {"slots", Json::object()},
         {"feeds", Json::array({Json{{"slot", "pill.track.track_color"},
@@ -464,7 +470,7 @@ Json timer_read_root(const std::string& surface_xf) {
                  Json::array({Json{{"name", "blink"}, {"type", "timer"}, {"init", 0.004}}})},
                 {"pages",
                  Json::array({Json{{"name", "Main"},
-                                   {"widgets", Json::array({button, readout, toggle})}}})}};
+                                   {"children", Json::array({button, readout, toggle})}}})}};
 }
 
 void test_timer_reads() {
@@ -477,7 +483,7 @@ void test_timer_reads() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t surface = scheduler.program().feeds[0].cell;
     const uint32_t remaining = scheduler.program().feeds[1].cell;
@@ -516,7 +522,7 @@ void test_timer_reads() {
     /* a BARE timer (named or as x) has no scalar to be, and an unknown field is named */
     auto refuses = [&](uint32_t widget_index, const std::string& xf, const char* needle) {
         Json root = timer_read_root("blink.running.pick(#00ff00, #102030)");
-        root["pages"][0]["widgets"][widget_index]["feeds"][0]["xf"] = xf;
+        root["pages"][0]["children"][widget_index]["feeds"][0]["xf"] = xf;
         Document bad;
         std::string adopt_error;
         CHECK_MSG(bad.adopt(std::move(root), adopt_error), adopt_error);
@@ -540,6 +546,7 @@ void test_timer_reads() {
  * adapter subscribes it exactly like a fed one. */
 void test_flow_entity_read() {
     Json button = {
+        {"kind", "widget"},
         {"type", "Button"},
         {"slots", Json::object()},
         {"flows", Json::array({
@@ -571,7 +578,7 @@ void test_flow_entity_read() {
                  {"next_id", 1},
                  {"globals", Json::array()},
                  {"pages",
-                  Json::array({Json{{"name", "Main"}, {"widgets", Json::array({button})}}})}};
+                  Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})}};
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
@@ -595,7 +602,7 @@ void test_flow_entity_read() {
     CHECK(compiled.program.entities[0].flow_reads);
     CHECK(!compiled.program.entities[1].flow_reads);
 
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
 
     /* before any arrival the mirror is unknown: both gates close, nothing sends */
@@ -641,7 +648,7 @@ void test_trend_history() {
     FakeMesh mesh({temp, temps});
 
     auto trend = [](const char* source, const char* path) {
-        return Json{{"type", "Trend"},
+        return Json{{"kind", "widget"}, {"type", "Trend"},
                     {"slots", Json{{"rate", 100}, {"window", 1}}},
                     {"feeds", Json::array({Json{{"slot", "value"},
                                                 {"src", Json{{"kind", "V"}, {"name", source}}},
@@ -654,8 +661,8 @@ void test_trend_history() {
                  {"globals", Json::array()},
                  {"pages",
                   Json::array({Json{{"name", "Main"},
-                                    {"widgets", Json::array({trend("temp", ""),
-                                                             trend("temps", "vals")})}}})}};
+                                    {"children", Json::array({trend("temp", ""),
+                                                              trend("temps", "vals")})}}})}};
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);

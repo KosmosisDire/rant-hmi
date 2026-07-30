@@ -22,7 +22,7 @@ uint64_t json_u64_or(const Json& value, uint64_t fallback);
 /* addressable node kinds (spec 2.8); every instance carries a stable id.
  * node_spec() indexes the table by this enum, so the order here MUST match the order
  * the NodeSpecs are pushed in table(): append new kinds at the END of both. */
-enum class Kind { Doc, Page, Widget, Var, Feed, Flow, Step, Token, Component, PropDef, Part };
+enum class Kind { Doc, Page, Widget, Var, Feed, Flow, Step, Token, Component, PropDef, Part, Frame };
 
 enum class PropType {
     Text,    /* string */
@@ -59,9 +59,17 @@ struct Prop {
     std::vector<Json> variant_defaults;  /* parallel to `variants`; the shape to coerce to */
 };
 
+/* One child list. Almost every list holds exactly one kind (`children` = {kind}, a
+ * uniform vector); a PAGE or a FRAME's `children` holds several, because z-order and
+ * flow order must be the SAME order, so a frame's widgets and sub-frames cannot live in
+ * two separate arrays. A heterogeneous list's children carry a discriminator PROP (its
+ * name in `discriminator`, always "kind") whose value names the target NodeSpec, so
+ * `child_kind` below can tell a `{"kind":"frame", ...}` from a `{"kind":"widget", ...}`
+ * sitting in the same array. `discriminator` is empty exactly when `children.size()==1`. */
 struct ChildList {
     std::string key;
-    Kind child;
+    std::vector<Kind> children;
+    std::string discriminator;
 };
 
 /* A node kind. `variant_key` names the prop that selects a variant (DO steps switch
@@ -85,8 +93,35 @@ std::string node_variant(const NodeSpec& spec, const Json& node);
 std::vector<const Prop*> node_props(const NodeSpec& spec, const std::string& variant);
 const Prop* find_prop(const NodeSpec& spec, const std::string& variant, const std::string& key);
 
-/* the child kind of `parent`.`list`, or false when that list does not exist */
+/* the ChildList row for `parent`.`list`, or null when that list does not exist */
+const ChildList* find_list(Kind parent, const std::string& list);
+
+/* the child kind of `parent`.`list`, valid for a SINGLE-kind list (out = children[0]);
+ * false when the list does not exist or holds several kinds (use child_kind for those,
+ * which resolves per NODE rather than per list). */
 bool list_child(Kind parent, const std::string& list, Kind& out);
+
+/* Resolve the Kind of one child node sitting in `list`. A uniform list (children.size()
+ * == 1) always resolves to that one kind; a heterogeneous list (a page or frame's
+ * `children`) reads the node's own `kind` prop and matches it against each candidate's
+ * NodeSpec::name. False, with `err` naming the key and the legal values, when the
+ * discriminator is missing or names nothing in `children` — used identically by adopt
+ * (document load) and op validation (op_insert), so a malformed child is rejected rather
+ * than silently defaulted into an arbitrary shape. */
+bool child_kind(const ChildList& list, const Json& child, Kind& out, std::string& err);
+
+/* Is `key` the discriminator of some heterogeneous list that can hold `kind`? Such a prop
+ * does not describe the node, it names WHICH NODE IT IS, so it is structural: setting it
+ * in place would leave every other field belonging to the shape the node used to be (a
+ * "frame" still carrying locals/feeds/flows, a "widget" still carrying children), and the
+ * next walk would index it as the new kind and quietly read the wrong fields. Refused by
+ * op_set_prop — changing a node's kind means removing it and inserting the other one.
+ *
+ * Note this is the OPPOSITE rule to a variant_key ("kind" on a Part or a DO step), which
+ * is deliberately settable and deliberately keeps the old variant's fields: a variant
+ * flips within ONE NodeSpec, where every variant's key is a legal key. This flips BETWEEN
+ * NodeSpecs, where they are not. */
+bool is_discriminator(Kind kind, const std::string& key);
 
 /* `value` as the same JSON shape as `like`, converting where the meaning carries (a number
  * to a bool by zero/non-zero, a bool to 0/1, a numeric string either way) and falling back

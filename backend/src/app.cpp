@@ -4,6 +4,7 @@
 #include "compile/components.h"
 #include "lang/expression.h"
 #include "doc/ops.h"
+#include "registry/attrs.h"
 #include "registry/registry.h"
 
 #include <algorithm>
@@ -480,6 +481,10 @@ Json App::snapshot() const {
                 {"live", std::move(live_frame)},
                 {"mesh", mesh_json()},
                 {"lang", lang_json()},
+                /* the closed attr vocabulary (spec 2.3): declared once in C++
+                 * (registry/attrs.h), never changes at runtime, so — exactly like
+                 * `builtins` above — the snapshot is its only carrier */
+                {"attr_table", attr_table_json()},
                 {"diag", Json{{"compile", diagnostics()}}}};
 }
 

@@ -15,13 +15,57 @@ import { diagIcon, Editor, section } from "../editor.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindText, shownValue } from "../reconcile.js";
-import { ComponentDef, Json, PartNode, PropDef, SlotSpec } from "../types.js";
+import { AttrDef, ComponentDef, Json, PartNode, PropDef, SlotSpec } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "series"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
-const PART_KINDS = ["box", "rect", "bar", "text", "icon", "arc", "needle",
-                    "plot", "path", "code"];
+
+/* the closed attr vocabulary (spec 2.3): `editor.attrTable` is snapshot-only data, so
+ * these read straight off it rather than caching — a part kind with nothing of its own
+ * (box) or an offline editor with no table yet both fall back to an empty list, never
+ * a crash. `code` is the one open kind and never reads from here (see codeSection /
+ * the "code" branch of the attrs section below): its own row is deliberately never
+ * looked up by these. */
+function ownAttrsOf(editor: Editor, kind: string): AttrDef[] {
+  return editor.attrTable?.perKind[kind] ?? [];
+}
+function commonAttrs(editor: Editor): AttrDef[] {
+  return editor.attrTable?.common ?? [];
+}
+function partKinds(editor: Editor): string[] {
+  return editor.attrTable?.kinds ?? [];
+}
+
+/* What an unset attr's field shows so its effect is visible without typing anything: the
+ * renderer's own default, verbatim. Where the vocabulary declares none — because absence
+ * means "not applied" rather than any value (show, repeat, clip, zoom, rotate, at, fit) —
+ * it says just that. The NOTE is deliberately not used here: it is a sentence, and a
+ * column of clipped half-sentences reads as noise where the point of the placeholder is
+ * to be scannable. The full note rides the row's tooltip, on both the name and the
+ * field, which is where prose belongs. */
+function attrPlaceholder(def: AttrDef): string {
+  return def.default !== undefined ? literalText(def.default) : "not set";
+}
+
+/* The keys a part carries that its kind's vocabulary does NOT declare. ONE definition,
+ * because both the shape string and the render need it and they must not disagree: the
+ * declared rows are fixed by `kind` alone, but a stray adds a row, so which strays exist
+ * is structure and has to ride the shape. `code` has an open vocabulary and never strays. */
+function strayAttrs(editor: Editor, part: PartNode): string[] {
+  if (part.kind === "code") return [];
+  const declared = new Set(
+    [...ownAttrsOf(editor, part.kind), ...commonAttrs(editor)].map((d) => d.name));
+  return Object.keys((part.attrs ?? {}) as Record<string, string>)
+    .filter((key) => !declared.has(key));
+}
+
+/* the "THIS PART" / "COMMON" divider between a kind's own attrs and the set every kind
+ * shares: the existing row-label idiom (KIND, ADDRESS, DEFAULT, GROUP, ...), not a new
+ * visual language */
+function attrGroupHeading(text: string): HTMLElement {
+  return el("div", { class: "row" }, [el("span", { class: "row-label", text })]);
+}
 
 /* the selection resolved against the store: a vanished part falls back to the
  * component, a vanished component to null (the widget inspector then applies) */
@@ -88,13 +132,17 @@ function builtinAt(editor: Editor): BuiltinAt | null {
    rather than disabled so the text still selects and copies out. It carries the whole
    expression as its tooltip, because a built-in's attrs are the longest in the system
    (a Knob's `zoom` folds four properties) and this view exists to be READ — the
-   editable rows can scroll their caret, a static one cannot. */
-function exprView(text: string): HTMLElement {
+   editable rows can scroll their caret, a static one cannot. `placeholder`/`title`
+   default to the interact-param call sites' old behaviour (none, and the text itself);
+   the closed-vocabulary attr rows below pass the renderer's own default and its note
+   instead, so an unset attr reads the same way here as it does in the editable view. */
+function exprView(text: string, placeholder = "", title = text): HTMLElement {
   const input = el("input", {
     class: "field grow",
     type: "text",
     value: text,
-    title: text,
+    placeholder,
+    title,
     spellcheck: "false",
     readonly: "readonly",
   }) as HTMLInputElement;
@@ -241,16 +289,42 @@ function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt)
                            "no properties of its own"),
   );
 
+  /* the closed vocabulary (spec 2.3): every attr this KIND declares, own first then
+   * common, with the built-in's authored text where it set one — same idiom as the
+   * editable part view below, minus the commit wiring. `code` alone keeps the old
+   * free-form listing (its own attrs are never in the table at all). */
+  const attrDefRow = (def: AttrDef): HTMLElement => {
+    const raw = attrs[def.name];
+    return el("div", { class: "attr-row" }, [
+      el("span", { class: "field attr-name static", text: def.name, title: def.note }),
+      exprView(typeof raw === "string" ? raw : "", attrPlaceholder(def), def.note),
+    ]);
+  };
+  const ownDefs = kind === "code" ? [] : ownAttrsOf(editor, kind);
+  const commonDefs = kind === "code" ? [] : commonAttrs(editor);
   body.append(
-    ...section("builtin-attrs", "Attrs", String(keys.length), () => [
-      ...keys.map((key) =>
-        el("div", { class: "attr-row" }, [
-          el("span", { class: "field attr-name static", text: key }),
-          exprView(String(attrs[key] ?? "")),
-        ]),
-      ),
-      keys.length ? null : el("p", { class: "empty", text: "no attrs" }),
-    ]),
+    ...section(
+      "builtin-attrs", "Attrs",
+      String(kind === "code" ? keys.length : ownDefs.length + commonDefs.length),
+      () =>
+        kind === "code"
+          ? [
+              ...keys.map((key) =>
+                el("div", { class: "attr-row" }, [
+                  el("span", { class: "field attr-name static", text: key }),
+                  exprView(String(attrs[key] ?? "")),
+                ]),
+              ),
+              keys.length ? null : el("p", { class: "empty", text: "no attrs" }),
+            ]
+          : [
+              ...(ownDefs.length
+                ? [attrGroupHeading("THIS PART"), ...ownDefs.map(attrDefRow)]
+                : []),
+              attrGroupHeading("COMMON"),
+              ...commonDefs.map(attrDefRow),
+            ],
+    ),
   );
 
   if (kind === "code") {
@@ -322,7 +396,14 @@ export function componentInspectorShape(editor: Editor): string | null {
       kind: part.kind,
       props: ((part as Json).props ?? []).map((p: PropDef) =>
         [p.id, p.shape, p.group, (p.variants ?? []).join("|"), p.editor ?? ""]),
-      attrs: Object.keys(part.attrs ?? {}),
+      /* the closed vocabulary (spec 2.3) fixes the declared row SET by kind, already
+         covered by the `kind` key above, so a value or diag change needs no shape bump
+         (bindField and the diag icon's own hover state handle those live). Two things
+         still add rows: `code`, whose vocabulary is open, and an undeclared key the
+         document carries, which gets a row of its own so it can be removed. */
+      attrs: part.kind === "code"
+        ? Object.keys(part.attrs ?? {})
+        : strayAttrs(editor, part),
       interact: interact
         ? { primitive: interact.primitive ?? "press",
             params: Object.keys(interact.params ?? {}),
@@ -416,6 +497,27 @@ function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentD
     ...section("comp-behavior", "Behavior", String(flows.length), () => [
       ...flows.map((flow) => el("div", { class: "flow-line", text: flowSummary(flow) })),
       flows.length ? null : el("p", { class: "empty", text: "no default behavior" }),
+    ]),
+  );
+
+  /* 4. Design frame (spec 3.1): the size the Design workspace's own preview viewport
+   *    draws this component at — never an instance size, so it is edited here on the
+   *    TYPE and nowhere an instance's own geom is. Same numeric idiom the frame
+   *    inspector's gap/pad fields use (panel.ts): a hand-built SlotSpec through the
+   *    ordinary value editor. */
+  const designField = (key: "design_w" | "design_h") => {
+    const spec: SlotSpec = { name: key, shape: "num", default: key === "design_w" ? 240 : 120,
+                             group: "config" };
+    return valueEditor(spec, "num", comp.id + ":" + key, () => at()[key],
+                       (v) => editor.apply([{ op: "set_prop", node: comp.id, key, value: v }]),
+                       false, editor);
+  };
+  body.append(
+    ...section("comp-design-frame", "Design frame", null, () => [
+      el("div", { class: "prop-grid" }, [
+        el("label", { text: "w" }), designField("design_w"), el("span"),
+        el("label", { text: "h" }), designField("design_h"), el("span"),
+      ]),
     ]),
   );
 }
@@ -599,25 +701,56 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
                     "no properties of its own"),
   );
 
-  /* the attrs table: one row per entry, name + expression text. Renaming rebuilds the
-   * whole object in place so the entry keeps its position. */
-  const keys = Object.keys(part.attrs ?? {});
-  body.append(
-    ...section("part-attrs", "Attrs", String(keys.length), () => [
-      ...keys.map((key) => attrRow(editor, part.id, key, attrsOf, commitAttrs)),
-      keys.length ? null : el("p", { class: "empty", text: "no attrs yet" }),
-      el("button", {
-        class: "dashed-btn",
-        text: "+ Attr",
-        onclick: () => {
-          const taken = new Set(Object.keys(attrsOf()));
-          let fresh = "attr1";
-          for (let n = 1; taken.has(fresh); n++) fresh = "attr" + n;
-          commitAttrs({ ...attrsOf(), [fresh]: "" });
-        },
-      }),
-    ]),
-  );
+  /* the attrs table (spec 2.3). The vocabulary is CLOSED: the section lists EVERY attr
+   * this kind declares — its own first, then the common set every kind shares — set or
+   * not, so what an unset one will do is visible without typing anything (its renderer
+   * default as the field's placeholder). The name is a static label now: it is picked
+   * by which row you are on, never typed, and clearing a field back to empty REMOVES
+   * the key (attrDefRow) rather than storing "", so the document keeps only what was
+   * authored. `code` is the one exception, unchanged: its body reads `view.attrs` by
+   * whatever names its own JS chose, an open set no table could close, so it alone
+   * keeps the free-form rows (add, rename, delete) this section always had. */
+  if (part.kind === "code") {
+    const keys = Object.keys(part.attrs ?? {});
+    body.append(
+      ...section("part-attrs", "Attrs", String(keys.length), () => [
+        ...keys.map((key) => attrRow(editor, part.id, key, attrsOf, commitAttrs)),
+        keys.length ? null : el("p", { class: "empty", text: "no attrs yet" }),
+        el("button", {
+          class: "dashed-btn",
+          text: "+ Attr",
+          onclick: () => {
+            const taken = new Set(Object.keys(attrsOf()));
+            let fresh = "attr1";
+            for (let n = 1; taken.has(fresh); n++) fresh = "attr" + n;
+            commitAttrs({ ...attrsOf(), [fresh]: "" });
+          },
+        }),
+      ]),
+    );
+  } else {
+    const ownDefs = ownAttrsOf(editor, part.kind);
+    const commonDefs = commonAttrs(editor);
+    /* anything the document carries that the vocabulary does not name: rendered last,
+       under its own heading, so it is visible and removable rather than an error with
+       nowhere to land (unknownAttrRow) */
+    const strays = strayAttrs(editor, part);
+    body.append(
+      ...section("part-attrs", "Attrs",
+                 String(ownDefs.length + commonDefs.length + strays.length), () => [
+        ...(ownDefs.length
+          ? [attrGroupHeading("THIS PART"),
+             ...ownDefs.map((d) => attrDefRow(editor, part.id, d, attrsOf, commitAttrs))]
+          : []),
+        attrGroupHeading("COMMON"),
+        ...commonDefs.map((d) => attrDefRow(editor, part.id, d, attrsOf, commitAttrs)),
+        ...(strays.length
+          ? [attrGroupHeading("NOT READ BY THIS KIND"),
+             ...strays.map((key) => unknownAttrRow(editor, part.id, key, attrsOf, commitAttrs))]
+          : []),
+      ]),
+    );
+  }
 
   /* the `code` kind's body (spec 2.3): user-authored JavaScript, so it gets a dedicated
    * multi-line editor instead of the one-line attr rows above (`attrs` still applies to
@@ -661,7 +794,7 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     add.addEventListener("click", () => {
       const rect = add.getBoundingClientRect();
       openMenu(rect.left, rect.bottom + 4, "Add part",
-        PART_KINDS.map((kind) => ({
+        partKinds(editor).map((kind) => ({
           label: kind,
           run: () => {
             const taken = new Set(((at() as Json).children ?? []).map((c: Json) => c?.name));
@@ -740,6 +873,72 @@ function attrRow(
   bindField(partId + ":attrs." + key, expr, () => String(attrsOf()[key] ?? ""));
   return el("div", { class: "attr-row" }, [
     name,
+    highlighted(expr),
+    diagIcon(editor.diagAt(partId, key)),
+    iconButton("x", "remove " + key, () => {
+      const next = { ...attrsOf() };
+      delete next[key];
+      commitAttrs(next);
+    }),
+  ]);
+}
+
+/* One row of the CLOSED vocabulary (spec 2.3): the name is a static label — the
+ * vocabulary is picked by which row you are on, not typed — and the value is the same
+ * highlighted expression field every attr row has always used. An unset attr shows the
+ * renderer's own default (or, where there is none, the note explaining what absence
+ * means) as the field's placeholder, so its effect is visible without filling it in.
+ * Typing a value commits it into the attrs object; clearing it back to empty REMOVES
+ * the key rather than storing "", so the document keeps only what was actually
+ * authored — unlike `attrRow` above, there is no separate remove button, because
+ * clearing the field already says the same thing. */
+function attrDefRow(
+  editor: Editor,
+  partId: number,
+  def: AttrDef,
+  attrsOf: () => Record<string, string>,
+  commitAttrs: (next: Record<string, string>) => void,
+): HTMLElement {
+  const expr = commitInput(
+    String(attrsOf()[def.name] ?? ""),
+    (text) => {
+      const next = { ...attrsOf() };
+      if (text === "") delete next[def.name];
+      else next[def.name] = text;
+      commitAttrs(next);
+    },
+    { class: "field grow", spellcheck: "false", placeholder: attrPlaceholder(def), title: def.note },
+  );
+  bindField(partId + ":attrs." + def.name, expr, () => String(attrsOf()[def.name] ?? ""));
+  return el("div", { class: "attr-row" }, [
+    el("span", { class: "field attr-name static", text: def.name, title: def.note }),
+    highlighted(expr),
+    diagIcon(editor.diagAt(partId, def.name)),
+  ]);
+}
+
+/* A key the document carries that this kind's vocabulary does NOT declare — a hand-edited
+ * document, or an attr the table dropped. The compiler flags it (`attr_name`), so without
+ * a row of its own the author would be told something is wrong and handed no way to see
+ * or remove it: the rows are generated from the vocabulary, and this name is not in it.
+ * So it gets an explicit row, marked, carrying its finding and a delete — the standing
+ * rule that nothing in the document is invisible in the editor that owns it. */
+function unknownAttrRow(
+  editor: Editor,
+  partId: number,
+  key: string,
+  attrsOf: () => Record<string, string>,
+  commitAttrs: (next: Record<string, string>) => void,
+): HTMLElement {
+  const expr = commitInput(
+    String(attrsOf()[key] ?? ""),
+    (text) => commitAttrs({ ...attrsOf(), [key]: text }),
+    { class: "field grow", spellcheck: "false" },
+  );
+  bindField(partId + ":attrs." + key, expr, () => String(attrsOf()[key] ?? ""));
+  return el("div", { class: "attr-row" }, [
+    el("span", { class: "field attr-name static unknown", text: key,
+                 title: "no part of this kind reads '" + key + "'" }),
     highlighted(expr),
     diagIcon(editor.diagAt(partId, key)),
     iconButton("x", "remove " + key, () => {

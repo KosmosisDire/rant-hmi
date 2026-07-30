@@ -207,6 +207,7 @@ button:focus-visible {
 /* ---------- top bar ---------- */
 
 .topbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -215,6 +216,14 @@ button:focus-visible {
   padding: 0 12px;
   background: var(--sidebar-2);
   border-bottom: 1px solid var(--line);
+}
+
+/* the page selector is centred on the bar rather than sitting in the flex row: it means
+   nothing over Data or Style, and taking it out of flow keeps the tabs still when it goes */
+.page-host {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 /* the document has no name yet: the frame is titled by the product, small caps mono */
@@ -479,6 +488,53 @@ button:focus-visible {
 
 .workspace-style .dashed-btn {
   margin-top: 14px;
+}
+
+/* ---------- the Design workspace (workspaces/design.ts): the component list, a live
+   preview of the selected component in its own stage (the middle column reuses the
+   Content stage's own .stage/.layer/.artboard anatomy below), and the component/part
+   inspector. ---------- */
+
+.workspace-design {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--sidebar-left) 1fr var(--sidebar-right);
+  background: var(--stage);
+}
+
+/* the two Design columns take the sidebar treatment without the sidebar's left/right
+   classes: those belong to Content's three-column grid, and sharing them would make
+   every "which tree is this" selector ambiguous */
+.design-tree {
+  padding: 8px 8px 28px;
+  border-right: 1px solid var(--line);
+}
+
+.design-inspector {
+  padding: 0 0 24px;
+  border-left: 1px solid var(--line);
+}
+
+/* the column's own heading: the tree IS the column here, so it takes a plain title
+   rather than the foldable section header a sidebar stacks several of */
+.tree-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 8px;
+}
+
+.tree-title {
+  font: 700 10.5px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tree-head .count {
+  font: 500 9.5px var(--mono);
+  color: var(--dim);
 }
 
 /* ---------- the Data workspace (workspaces/data.ts): explorer tree + detail pane ---------- */
@@ -1944,6 +2000,17 @@ select.field {
   color: var(--muted);
 }
 
+/* a frame groups widgets and other frames (spec 2.8): the same quiet, slightly bolder
+   treatment a page row gets, so a group reads as structure rather than content */
+.layer-row.frame {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.layer-row.frame.current {
+  color: var(--ink);
+}
+
 .layer-row .badge {
   margin-left: auto;
 }
@@ -2155,6 +2222,12 @@ select.field {
 .attr-row .attr-name {
   flex: 0 0 84px;
   min-width: 0;
+}
+
+/* a key the document carries that this kind's vocabulary does not declare: named in the
+   warning ink so it reads as the odd one out among the declared rows above it */
+.attr-row .attr-name.static.unknown {
+  color: var(--warn);
 }
 
 .attr-row .attr-name.static {

@@ -16,96 +16,67 @@
 import { clear, commitInput, el, iconButton, numberInput } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
-import { MenuItem, openMenu } from "../menu.js";
 import { PartNode, ownedSlots, partIndex, slotLeaf } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf, withSlot } from "../slots.js";
-import { ComponentDef, Json, SlotSpec, Widget, WidgetType } from "../types.js";
+import { makeFold, PART_GLYPH, treeRow } from "../tree.js";
+import { Frame, Geom, Json, SlotSpec, Widget, WidgetType } from "../types.js";
 
-import { componentInspectorShape, renderComponentInspector } from "./components.js";
 import { valueEditor } from "./editors.js";
 import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 
-/* ---- left sidebar: the Layers tree (the CURRENT page's widgets; pages live in the
- * topbar selector), then Components. Globals live in the Data workspace. ---- */
+/* ---- left sidebar: the Layers tree, which is PAGE COMPOSITION — the current page's
+ * widgets (pages live in the topbar selector). What is inside a component is a different
+ * tree with a different lifetime and lives in the Design workspace
+ * (workspaces/design.ts); globals live in Data. ---- */
 
-/* The tree's expansion state: module-persistent, keyed "w<id>", "w<id>/<part path>",
- * "c<id>...". Defaults: part boxes open, widgets closed. A toggle bumps the revision,
- * which rides the shape string: expansion decides which rows EXIST, unlike a section
- * fold, which only hides standing rows. */
-const layerFold = new Map<string, boolean>();
-let layerRevision = 0;
+/* the Layers tree's own expansion state, independent of the Design tree's */
+const fold = makeFold();
 
 function layerOpen(key: string, dflt: boolean): boolean {
-  return layerFold.get(key) ?? dflt;
+  return fold.open(key, dflt);
 }
 
 function toggleLayer(editor: Editor, key: string, dflt: boolean): void {
-  layerFold.set(key, !layerOpen(key, dflt));
-  layerRevision++;
-  editor.refresh();
+  fold.toggle(key, dflt, () => editor.refresh());
 }
 
-/* a doc component's part tree as structure (names are bound values; ids, kinds and
- * nesting decide which rows exist) */
-function docPartShape(part: Json): Json {
-  return [part?.id, part?.kind, part?.dir ?? "",
-          ((part?.children ?? []) as Json[]).map(docPartShape)];
-}
-
-/* every finding under a component subtree, flattened: they pin marks on tree rows */
-function componentDiagShape(editor: Editor, comp: ComponentDef): string[] {
-  const out: string[] = [];
-  const add = (id: number) => {
-    for (const d of editor.diagNode(id))
-      out.push(id + ":" + (d.where ?? "") + ":" + d.code + ":" + d.message);
-  };
-  add(comp.id);
-  for (const prop of comp.props ?? []) add(prop.id);
-  const walk = (part: Json): void => {
-    if (typeof part?.id === "number") add(part.id);
-    for (const prop of (part?.props ?? []) as Json[]) add(prop.id);
-    for (const child of (part?.children ?? []) as Json[]) walk(child);
-  };
-  for (const part of comp.parts ?? []) walk(part);
+/* every node on the page, wherever it nests: a frame groups widgets and other frames in
+   ONE ordered list (spec 2.8), so the Layers tree is a real hierarchy now, not a flat
+   widget list. Pre-order, matching document (= z/flow) order. */
+function flattenPage(children: (Frame | Widget)[]): (Frame | Widget)[] {
+  const out: (Frame | Widget)[] = [];
+  for (const node of children) {
+    out.push(node);
+    if (node.kind === "frame") out.push(...flattenPage(node.children));
+  }
   return out;
 }
 
 export function leftShape(editor: Editor): string {
   const page = editor.page();
-  const comps = editor.store.components();
-  const shadowed = new Set(comps.map((c) => c.name));
-  const builtinNames = new Set(editor.builtins.map((b: Json) => b?.name));
+  const nodes = flattenPage(page?.children ?? []);
+  const widgets = nodes.filter((n): n is Widget => n.kind === "widget");
   return JSON.stringify({
-    /* the CURRENT page's widgets only: pages live in the topbar selector */
+    /* the CURRENT page's tree only: pages live in the topbar selector */
     page: page ? page.id : 0,
-    widgets: (page?.widgets ?? []).map((w) => [w.id, w.type]),
+    nodes: nodes.map((n) => [n.id, n.kind, n.kind === "widget" ? n.type : n.name]),
     /* the tree highlights the selection and lists rows per expansion state */
     selection: editor.view.selection,
     part: editor.view.part,
     /* a switched-off part wears a different icon and a dimmed row, so which parts are
        hidden decides what the rows ARE */
-    hidden: (page?.widgets ?? []).flatMap((w) => {
+    hidden: widgets.flatMap((w) => {
       const type = typeOf(editor.registry, w.type);
       return (type?.slots ?? [])
         .filter((s) => s.name.endsWith(".shown") && authoredSlot(w, type, s.name) === false)
         .map((s) => w.id + ":" + s.name);
     }),
-    fold: layerRevision,
-    /* the Components tree: the doc components (their part trees are rows), the
-       unshadowed built-ins (browsable, forkable), and the component selection */
-    components: comps.map((c) => [c.id, builtinNames.has(c.name),
-                                  (c.parts ?? []).map(docPartShape)]),
-    builtins: editor.builtins.map((b: Json) => b?.name).filter((n: Json) => !shadowed.has(n)),
-    componentSel: editor.componentSel
-      ? [editor.componentSel.component, editor.componentSel.node]
-      : null,
-    builtinSel: editor.builtinSel ? [editor.builtinSel.name, editor.builtinSel.path] : null,
-    cdiag: comps.flatMap((c) => componentDiagShape(editor, c)),
+    fold: fold.revision(),
     /* findings pin icons on rows and cards, so their coming and going is structure */
-    wdiag: (page?.widgets ?? []).flatMap((w) =>
+    wdiag: widgets.flatMap((w) =>
       editor.diagFor(w.id).map((d) => w.id + ":" + d.code + ":" + d.message),
     ),
   });
@@ -113,54 +84,49 @@ export function leftShape(editor: Editor): string {
 
 export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   clear(host);
-  const widgets = editor.page()?.widgets ?? [];
+  const children = editor.page()?.children ?? [];
+  const count = flattenPage(children).filter((n) => n.kind === "widget").length;
 
   host.append(
-    ...section("layers", "Layers", String(widgets.length), () => [
-      el("div", { class: "layers" }, widgets.flatMap((w) => widgetRows(editor, w))),
-      widgets.length ? null : el("p", { class: "empty", text: "no widgets on this page" }),
+    ...section("layers", "Layers", String(count), () => [
+      el("div", { class: "layers" }, children.flatMap((n) => nodeRows(editor, n, 0))),
+      children.length ? null : el("p", { class: "empty", text: "no widgets on this page" }),
     ]),
   );
-
-  host.append(...componentSection(editor));
 }
 
-/* one tree row: indent, a caret when it expands, then the caller's cells. The caret owns
- * its own click, so a fold never changes the selection. */
-function treeRow(
-  key: string,
-  depth: number,
-  cls: string,
-  fold: { open: boolean; toggle: () => void } | null,
-  kids: (HTMLElement | null)[],
-  onclick: () => void,
-  title?: string,
-): HTMLElement {
-  const caret = el("span", {
-    class: "layer-caret",
-    html: fold ? iconMarkup("chevron-down", 9, 2) : "",
-    style: fold && !fold.open ? "transform:rotate(-90deg)" : "",
-  });
-  if (fold)
-    caret.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      fold.toggle();
-    });
-  return el(
-    "button",
-    {
-      class: "layer-row " + cls,
-      "data-key": key,
-      style: "padding-left:" + (4 + depth * 12) + "px",
-      title,
-      onclick,
-    },
-    [caret, ...kids],
+function nodeRows(editor: Editor, node: Frame | Widget, depth: number): HTMLElement[] {
+  return node.kind === "frame" ? frameRows(editor, node, depth) : widgetRows(editor, node, depth);
+}
+
+/* a frame row selects the frame (spec 2.8); its children are indented beneath it using
+   the same fold/treeRow idiom a widget's part tree uses, so a group reads exactly like
+   any other branch of the tree */
+function frameRows(editor: Editor, frame: Frame, depth: number): HTMLElement[] {
+  const key = "f" + frame.id;
+  const open = layerOpen(key, true);   /* a frame opens by default: it exists to show structure */
+  const current = editor.view.selection.length === 1 && editor.view.selection[0] === frame.id;
+  const label = el("span", { class: "layer-label" });
+  bindText(frame.id + ":label.layer", label, () => (editor.store.frame(frame.id) ?? frame).name);
+  const row = treeRow(
+    key,
+    depth,
+    "frame" + (current ? " current" : ""),
+    frame.children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
+    [
+      el("span", { class: "layer-glyph", html: iconMarkup("frame", 11, 1.7) }),
+      label,
+      diagIcon(editor.diagAt(frame.id)),
+    ],
+    () => editor.select([frame.id]),
   );
+  const rows = [row];
+  if (open) for (const child of frame.children) rows.push(...nodeRows(editor, child, depth + 1));
+  return rows;
 }
 
 /* widgets -> the widget's template part tree (the page level lives in the topbar) */
-function widgetRows(editor: Editor, widget: Widget): HTMLElement[] {
+function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[] {
   const key = "w" + widget.id;
   const type = typeOf(editor.registry, widget.type);
   const parts = type ? partIndex(type).roots : [];
@@ -175,7 +141,7 @@ function widgetRows(editor: Editor, widget: Widget): HTMLElement[] {
   });
   const row = treeRow(
     key,
-    0,
+    depth,
     cls,
     parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
     [
@@ -189,17 +155,11 @@ function widgetRows(editor: Editor, widget: Widget): HTMLElement[] {
     () => editor.select([widget.id]),
   );
   const rows = [row];
-  if (open) for (const part of parts) rows.push(...partRows(editor, widget, part, 1));
+  if (open) for (const part of parts) rows.push(...partRows(editor, widget, part, depth + 1));
   return rows;
 }
 
 /* draw-kind glyphs: one mono mark per box direction / part draw */
-const PART_GLYPH: Record<string, string> = {
-  row: "→", col: "↓", stack: "▤", auto: "⇆",
-  rect: "▭", bar: "▮", text: "T", icon: "✦",
-  arc: "◠", needle: "↗", plot: "∿", path: "◇", code: "λ",
-};
-
 function partRows(
   editor: Editor,
   widget: Widget,
@@ -249,200 +209,6 @@ function partRows(
   return rows;
 }
 
-/* ---- the Components section: doc components (editable), then the unshadowed
- * built-ins (browsable, forkable). Same tree idiom as Layers; a doc component that
- * shadows a built-in wears the accent, a built-in row is dimmed and read-only. ---- */
-
-function componentSection(editor: Editor): HTMLElement[] {
-  const comps = editor.store.components();
-  const shadowed = new Set(comps.map((c) => c.name));
-  const builtinNames = new Set(editor.builtins.map((b: Json) => b?.name));
-  const unshadowed = editor.builtins.filter((b: Json) => b?.name && !shadowed.has(b.name));
-  return section("components", "Components", String(comps.length), () => [
-    el("div", { class: "layers" }, [
-      ...comps.flatMap((c) => docComponentRows(editor, c, builtinNames.has(c.name))),
-      ...unshadowed.flatMap((b: Json) => builtinComponentRows(editor, b)),
-    ]),
-    el("button", {
-      class: "dashed-btn",
-      text: "+ Component",
-      onclick: () => editor.addComponent(),
-    }),
-  ]);
-}
-
-/* the row-level verb menu (spec 2.3 Forking): every doc/built-in component row gets
- * one kebab opening the menu.ts context menu at the click point, so all of a row's
- * verbs are one gesture away without crowding the row with icons — the row itself
- * stays a single click to SELECT. */
-function componentMenuButton(name: string, items: () => MenuItem[]): HTMLElement {
-  const btn = el("span", {
-    class: "icon-btn layer-menu",
-    title: "duplicate, override or revert " + name,
-    html: iconMarkup("ellipsis-vertical", 12),
-  });
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    const at = (btn as HTMLElement).getBoundingClientRect();
-    openMenu(at.left, at.bottom + 4, name, items());
-  });
-  return btn;
-}
-
-/* a doc component's own verbs: "Duplicate as…" always (it may itself be duplicated
- * again), then EITHER "Revert to built-in" — only where it actually shadows one,
- * since that is what restores the built-in — or an ordinary "Delete" otherwise,
- * deleting a component with no built-in behind it just destroys it (spec: the
- * component that shadows nothing has nothing to "revert" to). Both destructive
- * verbs read danger-styled, the menu's own confirm idiom (menu.ts). */
-function docComponentMenu(editor: Editor, comp: ComponentDef, shadows: boolean): MenuItem[] {
-  /* read the live name rather than the render-time `comp`: a rename does not change
-     the row's SHAPE (2.3/panel split), so this closure can outlive it */
-  const liveName = () => ((editor.store.node(comp.id) as Json)?.name as string) ?? comp.name;
-  const items: MenuItem[] = [
-    { label: "Duplicate as…", icon: "copy", run: () => editor.duplicateComponent(liveName()) },
-  ];
-  items.push(
-    shadows
-      ? { label: "Revert to built-in", icon: "rotate-ccw", danger: true,
-          run: () => editor.apply([{ op: "remove", node: comp.id }]) }
-      : { label: "Delete", icon: "trash", danger: true,
-          run: () => editor.apply([{ op: "remove", node: comp.id }]) },
-  );
-  return items;
-}
-
-function docComponentRows(editor: Editor, comp: ComponentDef, shadows: boolean): HTMLElement[] {
-  const key = "c" + comp.id;
-  const open = layerOpen(key, false);
-  const parts = comp.parts ?? [];
-  const label = el("span", { class: "layer-label" + (shadows ? " shadows" : "") });
-  bindText(comp.id + ":name.layer", label, () =>
-    (editor.store.node(comp.id) as Json)?.name ?? "");
-  const row = treeRow(
-    key,
-    0,
-    "component" + (editor.componentSel?.node === comp.id ? " current" : ""),
-    parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
-    [
-      el("span", {
-        class: "layer-glyph",
-        html: iconMarkup(ICONS[comp.name] ? comp.name : "layers", 11, 1.7),
-      }),
-      label,
-      diagIcon(editor.diagNode(comp.id)),
-      /* legible in the row itself, not only the tooltip below: which types are
-         customized should read from the list alone */
-      shadows ? el("span", { class: "badge shadow", text: "override" }) : null,
-      componentMenuButton(comp.name, () => docComponentMenu(editor, comp, shadows)),
-    ],
-    () => editor.selectComponent(comp.id, comp.id),
-    shadows ? "overrides built-in" : comp.name,
-  );
-  const rows = [row];
-  if (open) for (const part of parts) rows.push(...docPartTreeRows(editor, comp, part, 1));
-  return rows;
-}
-
-function docPartTreeRows(editor: Editor, comp: ComponentDef, part: Json, depth: number): HTMLElement[] {
-  const key = "c" + comp.id + "/" + part.id;
-  const open = layerOpen(key, true);
-  const children = (part.children ?? []) as Json[];
-  const glyph = PART_GLYPH[part.kind === "box" ? (part.dir ?? "stack") : part.kind] ?? "·";
-  const label = el("span", { class: "layer-label" });
-  bindText(part.id + ":name.layer", label, () =>
-    (editor.store.node(part.id) as Json)?.name ?? "");
-  const row = treeRow(
-    key,
-    depth,
-    "part" + (editor.componentSel?.node === part.id ? " current" : ""),
-    children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
-    [el("span", { class: "layer-glyph draw", text: glyph }), label,
-     diagIcon(editor.diagNode(part.id))],
-    () => editor.selectComponent(comp.id, part.id),
-    part.name + " (" + part.kind + ")",
-  );
-  const rows = [row];
-  if (open)
-    for (const child of children) rows.push(...docPartTreeRows(editor, comp, child, depth + 1));
-  return rows;
-}
-
-/* a built-in's own two verbs: "Override <Name>" shadows it under its own name (every
- * existing instance follows automatically), "Duplicate as…" copies it under a fresh
- * name instead, leaving the built-in and its instances alone — the verb the fork icon
- * alone could not say. The built-ins are snapshot-only (spec: never change at runtime),
- * so closing over `name` here is safe unlike the doc component menu above. */
-function builtinComponentMenu(editor: Editor, name: string): MenuItem[] {
-  return [
-    { label: "Override " + name, icon: "git-branch", run: () => editor.forkBuiltin(name) },
-    { label: "Duplicate as…", icon: "copy", run: () => editor.duplicateComponent(name) },
-  ];
-}
-
-/* A built-in row SELECTS, exactly as a doc component's does; what differs is only what
- * the inspector then shows (the definition, read-only) and how the row is addressed:
- * a built-in is not in the document, so there is no node id to name it by and the
- * address is its name plus a CHILD-INDEX PATH into its parts. */
-function builtinComponentRows(editor: Editor, comp: Json): HTMLElement[] {
-  const name = String(comp?.name ?? "");
-  const key = "b:" + name;
-  const open = layerOpen(key, false);
-  const parts = Array.isArray(comp?.parts) ? (comp.parts as Json[]) : [];
-  const current = editor.builtinSel?.name === name && !editor.builtinSel.path;
-  const row = treeRow(
-    key,
-    0,
-    "component builtin" + (current ? " current" : ""),
-    parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
-    [
-      el("span", {
-        class: "layer-glyph",
-        html: iconMarkup(ICONS[name] ? name : "layers", 11, 1.7),
-      }),
-      el("span", { class: "layer-label", text: name }),
-      componentMenuButton(name, () => builtinComponentMenu(editor, name)),
-    ],
-    () => editor.selectBuiltin(name, ""),
-    name + " (built-in, read-only)",
-  );
-  const rows = [row];
-  if (open)
-    parts.forEach((part, i) =>
-      rows.push(...builtinPartRows(editor, name, String(i), part, 1)));
-  return rows;
-}
-
-function builtinPartRows(
-  editor: Editor,
-  comp: string,
-  path: string,
-  part: Json,
-  depth: number,
-): HTMLElement[] {
-  const name = String(part?.name ?? "");
-  const key = "b:" + comp + "/" + path;
-  const open = layerOpen(key, true);
-  const children = Array.isArray(part?.children) ? (part.children as Json[]) : [];
-  const glyph = PART_GLYPH[part?.kind === "box" ? (part?.dir ?? "stack") : part?.kind] ?? "·";
-  const current = editor.builtinSel?.name === comp && editor.builtinSel.path === path;
-  const row = treeRow(
-    key,
-    depth,
-    "part builtin" + (current ? " current" : ""),
-    children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
-    [el("span", { class: "layer-glyph draw", text: glyph }),
-     el("span", { class: "layer-label", text: name || "(unnamed)" })],
-    () => editor.selectBuiltin(comp, path),
-    name + " (" + part?.kind + ", read-only)",
-  );
-  const rows = [row];
-  if (open)
-    children.forEach((child, i) =>
-      rows.push(...builtinPartRows(editor, comp, path + "." + i, child, depth + 1)));
-  return rows;
-}
-
 /* ---- inspector ---- */
 
 /* the selected part, but only when this type can actually name it; anything else (a
@@ -452,11 +218,17 @@ function selectedPart(editor: Editor, type: WidgetType | null): string {
   return path && type && partIndex(type).byPath.has(path) ? path : "";
 }
 
+/* The CONTENT inspector: a widget instance, one of its parts, or a selected FRAME
+   (spec 2.8, plain: name/layout/gap/pad/align/geom, no feeds or behavior — a frame is
+   pure composition). Editing a component itself belongs to the Design workspace and no
+   longer routes through here. */
 export function inspectorShape(editor: Editor): string {
-  /* a component selection owns the inspector; it and the widget selection are
-     mutually exclusive by construction (each clears the other) */
-  const component = componentInspectorShape(editor);
-  if (component) return component;
+  const frame = editor.selectedFrame();
+  if (frame)
+    return JSON.stringify({
+      frame: frame.id,
+      diag: editor.diagAt(frame.id).map((d) => d.code + ":" + d.message),
+    });
   const widget = editor.selectedWidget();
   if (!widget) return "empty";
   const type = typeOf(editor.registry, widget.type);
@@ -486,8 +258,9 @@ export function inspectorShape(editor: Editor): string {
 
 export function renderInspector(host: HTMLElement, editor: Editor): void {
   clear(host);
-  if (componentInspectorShape(editor)) {
-    renderComponentInspector(host, editor);
+  const frame = editor.selectedFrame();
+  if (frame) {
+    renderFrameInspector(host, editor, frame);
     return;
   }
   const widget = editor.selectedWidget();
@@ -607,7 +380,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       /* placement shares the slots' grid so its row sits on the same rhythm */
       el("div", { class: "prop-grid" }, [
         el("label", { text: "Place" }),
-        geomRow(editor, widget),
+        geomRow(editor, widget.id, widget.geom, () => at().geom),
         el("span"),
         ...otherSlots
           .filter((s) => s.group === "frame")
@@ -714,17 +487,16 @@ function renderPartInspector(
   );
 }
 
-function geomRow(editor: Editor, widget: Widget): HTMLElement {
-  const at = () => editor.store.widget(widget.id) ?? widget;
+/* shared by the widget inspector's Panel section and the frame inspector: four plain
+   number fields over any node's `geom` (a widget's or a frame's, both {x,y,w,h}) */
+function geomRow(editor: Editor, id: number, geom: Geom, at: () => Geom): HTMLElement {
   const field = (key: "x" | "y" | "w" | "h") => {
-    const input = numberInput(Math.round(widget.geom[key]), (n) =>
-      editor.apply([
-        { op: "set_prop", node: widget.id, key: "geom", value: { ...at().geom, [key]: n } },
-      ]),
+    const input = numberInput(Math.round(geom[key]), (n) =>
+      editor.apply([{ op: "set_prop", node: id, key: "geom", value: { ...at(), [key]: n } }]),
     );
     /* a canvas drag lands here as four value pushes: the fields track the pointer and the
        one the user happens to be typing in is left alone */
-    bindField(widget.id + ":geom." + key, input, () => String(Math.round(at().geom[key])));
+    bindField(id + ":geom." + key, input, () => String(Math.round(at()[key])));
     return input;
   };
   return el("div", { class: "geom-grid" }, [
@@ -737,6 +509,65 @@ function geomRow(editor: Editor, widget: Widget): HTMLElement {
     el("label", { text: "h" }),
     field("h"),
   ]);
+}
+
+/* The frame inspector (spec 2.8): plain and small on purpose — a frame is pure
+ * composition (name, layout, gap, pad, align, geom), never feeds or behavior. Every
+ * field reuses the ordinary slot-shaped value editor (editors.ts) with a hand-built
+ * SlotSpec, exactly the control a "config"-group widget property would get. */
+function renderFrameInspector(host: HTMLElement, editor: Editor, frame: Frame): void {
+  const at = () => editor.store.frame(frame.id) ?? frame;
+
+  const name = commitInput(
+    frame.name,
+    (text) => editor.apply([{ op: "set_prop", node: frame.id, key: "name", value: text }]),
+    { class: "field title", title: "the frame's name" },
+  );
+  bindField(frame.id + ":name", name, () => at().name ?? "");
+  host.appendChild(
+    el("div", { class: "inspector-head" }, [name, diagIcon(editor.diagAt(frame.id))]),
+  );
+
+  const body = el("div", { class: "inspector-body" }, []);
+  host.appendChild(body);
+
+  const enumField = (key: "layout" | "align", variants: string[]) => {
+    const spec: SlotSpec = { name: key, shape: "enum", default: variants[0], group: "config",
+                             variants };
+    return valueEditor(spec, "enum", frame.id + ":" + key, () => at()[key],
+                       (v) => editor.apply([{ op: "set_prop", node: frame.id, key, value: v }]),
+                       false, editor);
+  };
+  const numField = (key: "gap" | "pad") => {
+    const spec: SlotSpec = { name: key, shape: "num", default: 0, group: "config" };
+    return valueEditor(spec, "num", frame.id + ":" + key, () => at()[key],
+                       (v) => editor.apply([{ op: "set_prop", node: frame.id, key, value: v }]),
+                       false, editor);
+  };
+
+  /* `.prop-grid` is THREE columns (label, editor, trailing cell), so every row has to
+     supply all three or the next row's label slides into this one's trailing slot and the
+     pairs come apart — the same triple the widget inspector's slot rows emit. */
+  body.append(
+    ...section("frame", "Layout", null, () => [
+      el("div", { class: "prop-grid" }, [
+        el("label", { text: "layout" }), enumField("layout", ["none", "row", "col"]), el("span"),
+        el("label", { text: "gap" }), numField("gap"), el("span"),
+        el("label", { text: "pad" }), numField("pad"), el("span"),
+        el("label", { text: "align" }),
+        enumField("align", ["start", "center", "end", "stretch"]), el("span"),
+      ]),
+    ]),
+  );
+
+  /* NOT the widget inspector's "Panel" section: that one is named for the frame slots it
+     carries (surface, border, radius) and placement rides along in it. A frame node has
+     no such slots — placement is the whole section — so it is named for what it is, and
+     the geom row stands alone rather than under a redundant "Place" label. */
+  body.append(
+    ...section("frame-place", "Place", null, () =>
+      [geomRow(editor, frame.id, frame.geom, () => at().geom)]),
+  );
 }
 
 /* one Data-in row for a value slot, bound or not */

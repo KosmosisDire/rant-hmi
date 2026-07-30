@@ -5,15 +5,16 @@
  * Anti-desync rules (PLAN.md) live here: a version that is not last + 1 is a GAP, and a
  * gap discards state and asks for a snapshot rather than patching around the hole. */
 
-import { BuiltinDef, Diag, Doc, Json, Lang, Live, Mesh, Op, PROTO, Registry } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Live, Mesh, Op, PROTO, Registry } from "./types.js";
 
 export interface Handlers {
   /* the snapshot carries diagnostics too: they are computed at compile time, which is
      usually before this client existed, so there is no later frame to learn them from.
-     `builtins` is the built-ins' editable document form (the fork source); it never
-     changes at runtime, so the snapshot is its only carrier. */
+     `builtins` is the built-ins' editable document form (the fork source); `attrTable`
+     the closed attr vocabulary (spec 2.3); neither ever changes at runtime, so the
+     snapshot is their only carrier. */
   snapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
-           lang: Lang, builtins: BuiltinDef[]): void;
+           lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[]): void;
   ops(version: number, ops: Op[], origin: number): void;
   live(live: Live): void;
   diag(diag: Diag[]): void;
@@ -129,7 +130,9 @@ export class Connection {
         this.version = frame.version;
         this.handlers.snapshot(frame.doc, frame.registry, frame.live,
           frame.diag?.compile ?? [], frame.mesh ?? { entities: [] },
-          frame.lang ?? { builtins: [], methods: [] }, frame.builtins ?? []);
+          frame.lang ?? { builtins: [], methods: [] },
+          frame.attr_table ?? { kinds: [], common: [], perKind: {} },
+          frame.builtins ?? []);
         this.flush();
         return;
       case "ops_applied":

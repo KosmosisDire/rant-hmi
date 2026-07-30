@@ -65,6 +65,7 @@ add_library(hmi_core STATIC
   src/compile/compiler.cpp
   src/sched/scheduler.cpp
   src/registry/registry.cpp
+  src/registry/attrs.cpp
   src/sync/server.cpp
   src/app.cpp
 )

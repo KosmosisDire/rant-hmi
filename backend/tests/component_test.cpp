@@ -8,6 +8,7 @@
 #include "lang/template_expr.h"
 #include "doc/doc.h"
 #include "mesh/fake.h"
+#include "registry/attrs.h"
 #include "registry/registry.h"
 
 #include <set>
@@ -329,9 +330,9 @@ Document component_document() {
         {"components", Json::array({std::move(meter), std::move(shadow)})},
         {"pages", Json::array({Json{
             {"name", "Main"},
-            {"widgets", Json::array({
-                Json{{"type", "Meter"}, {"label", "M"}, {"slots", Json{{"value", 5.0}}}},
-                Json{{"type", "Toggle"}, {"label", "T"}, {"slots", Json::object()}},
+            {"children", Json::array({
+                Json{{"kind", "widget"}, {"type", "Meter"}, {"label", "M"}, {"slots", Json{{"value", 5.0}}}},
+                Json{{"kind", "widget"}, {"type", "Toggle"}, {"label", "T"}, {"slots", Json::object()}},
             })}}})},
     };
 
@@ -385,7 +386,7 @@ void test_doc_components() {
     for (const CellDef& cell : compiled.program.cells)
         if (cell.kind == CellKind::Slot && cell.name == "value" &&
             cell.owner_widget ==
-                json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0))
+                json_u64_or(document.root["pages"][0]["children"][0]["id"], 0))
             meter_cell = true;
     CHECK(meter_cell);
     CHECK(compiled.program.flows.size() == 1);   /* the shadow Toggle's default echo */
@@ -416,7 +417,11 @@ void test_part_properties() {
                                                       {"group", "appearance"}}})},
                           {"attrs", Json::object()},
                           {"children", Json::array({
-                              Json{{"id", 430}, {"kind", "rect"}, {"name", "arc"},
+                              /* kind "arc", not "rect": `track` and `value` are the arc
+                               * kind's own attrs (registry/attrs.h), not rect's — this
+                               * fixture predates the closed attr vocabulary check and
+                               * would otherwise trip it */
+                              Json{{"id", 430}, {"kind", "arc"}, {"name", "arc"},
                                    {"props", Json::array({Json{{"id", 431},
                                                                {"name", "fill_color"},
                                                                {"shape", "color"},
@@ -442,8 +447,8 @@ void test_part_properties() {
         {"components", Json::array({std::move(comp)})},
         {"pages", Json::array({Json{
             {"name", "Main"},
-            {"widgets", Json::array({Json{
-                {"type", "Dial"}, {"label", "D"},
+            {"children", Json::array({Json{
+                {"kind", "widget"}, {"type", "Dial"}, {"label", "D"},
                 /* the instance's values nest exactly like the parts do */
                 {"slots", Json{{"value", 3.0},
                                {"gauge", Json{{"shade", "#101010"},
@@ -489,7 +494,7 @@ void test_part_properties() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t id = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    const uint64_t id = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto cell_named = [&](const char* name) -> const CellDef* {
         for (const CellDef& cell : compiled.program.cells)
             if (cell.kind == CellKind::Slot && cell.owner_widget == id && cell.name == name)
@@ -579,6 +584,93 @@ void test_empty_component() {
     CHECK(registry["types"][12]["template"]["children"].empty());
 }
 
+/* The closed attr vocabulary (spec 2.3, registry/attrs.h): a name outside the common
+ * set and the part's own kind is a mistake now, not a silent no-op — `rotation` typed
+ * for `rotate` used to compile clean and simply never fire. `code` stays the one open
+ * kind, exactly as before: its attrs are read by whatever names the author's JS body
+ * chose, so nothing about it could ever be "wrong" at this level. */
+void test_attr_vocabulary() {
+    /* one misspelled attr on an ordinary (non-code) part: exactly one finding, on
+     * THAT part, `where` = the attr name — pinned the same way a bad expression is */
+    {
+        Json root = {
+            {"version", 1}, {"next_id", 900},
+            {"components", Json::array({Json{
+                {"id", 600}, {"name", "Vocab1"},
+                {"parts", Json::array({Json{
+                    {"id", 610}, {"kind", "box"}, {"name", "body"}, {"dir", "stack"},
+                    {"attrs", Json::object()},
+                    {"children", Json::array({Json{
+                        {"id", 611}, {"kind", "rect"}, {"name", "r"},
+                        {"attrs", Json{{"rotaton", "1"}}}}})}}})}}})},
+            {"pages", Json::array()},
+        };
+        Document document;
+        std::string error;
+        CHECK_MSG(document.adopt(std::move(root), error), error);
+        std::vector<Diag> diags;
+        derive_registry(document, diags);
+        CHECK_EQ(diags.size(), size_t(1));
+        if (!diags.empty()) {
+            CHECK_EQ(diags[0].node_id, uint64_t(611));
+            CHECK_EQ(diags[0].where, std::string("rotaton"));
+            CHECK_EQ(diags[0].code, std::string("attr_name"));
+        }
+    }
+
+    /* the SAME misspelling, on a `code` part: no finding at all — the open kind */
+    {
+        Json root = {
+            {"version", 1}, {"next_id", 900},
+            {"components", Json::array({Json{
+                {"id", 620}, {"name", "Vocab2"},
+                {"parts", Json::array({Json{
+                    {"id", 630}, {"kind", "box"}, {"name", "body"}, {"dir", "stack"},
+                    {"attrs", Json::object()},
+                    {"children", Json::array({Json{
+                        {"id", 631}, {"kind", "code"}, {"name", "c"}, {"code", ""},
+                        {"attrs", Json{{"rotaton", "1"}}}}})}}})}}})},
+            {"pages", Json::array()},
+        };
+        Document document;
+        std::string error;
+        CHECK_MSG(document.adopt(std::move(root), error), error);
+        std::vector<Diag> diags;
+        derive_registry(document, diags);
+        CHECK(diags.empty());
+    }
+
+    /* the legal common attr `rotate`, on every declared part kind (hmi::part_kinds(),
+     * the same list the compiler and the served table both derive from): no findings
+     * anywhere, `code` included */
+    {
+        Json children = Json::array();
+        uint64_t id = 700;
+        for (const std::string& kind : part_kinds()) {
+            Json node{{"id", id++}, {"kind", kind}, {"name", "k_" + kind},
+                     {"attrs", Json{{"rotate", "5"}}}};
+            if (kind == "box") node["dir"] = "stack";
+            if (kind == "code") node["code"] = "";
+            children.push_back(std::move(node));
+        }
+        Json root = {
+            {"version", 1}, {"next_id", 1000},
+            {"components", Json::array({Json{
+                {"id", 640}, {"name", "Vocab3"},
+                {"parts", Json::array({Json{
+                    {"id", 650}, {"kind", "box"}, {"name", "body"}, {"dir", "stack"},
+                    {"attrs", Json::object()}, {"children", std::move(children)}}})}}})},
+            {"pages", Json::array()},
+        };
+        Document document;
+        std::string error;
+        CHECK_MSG(document.adopt(std::move(root), error), error);
+        std::vector<Diag> diags;
+        derive_registry(document, diags);
+        CHECK_MSG(diags.empty(), diags.empty() ? "" : diags[0].message);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -588,5 +680,6 @@ int main() {
     test_part_properties();
     test_part_property_rules();
     test_empty_component();
+    test_attr_vocabulary();
     return check::summary("component_test");
 }

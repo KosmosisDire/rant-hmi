@@ -454,6 +454,37 @@ Node = box  { name, dir, attrs: { attr: program }, children: [Node],
      | part { name, draw, attrs: { attr: program }, children: [Node] }
 ```
 
+**The attr vocabulary is closed.** `attrs` used to be an open map: the compiler lowered
+any key typed into it and the renderer read whatever names it happened to know, so a
+misspelled `rotation` for `rotate` compiled clean and silently did nothing forever, and
+the part inspector could only list attrs already SET, because the attrs object was the
+only list that existed. The vocabulary is declared once, in C++
+(`backend/src/registry/attrs.h`), and served in the snapshot next to `lang`, unchanging
+at runtime exactly like `builtins`: a COMMON set honoured on every kind (`show`,
+`repeat`, `weight`, `min_px`, `aspect`, `pad`, `clip`, `at`, `fit`, `core`, `flare`,
+`start`, `sweep`, `zoom`, `dx`, `dy`, `rotate`, `origin_x`, `origin_y` — the transform
+and layout vocabulary above and below), plus each draw kind's own attrs on top (a
+`rect`'s `fill`/`stroke`/`stroke_w`/`radius`, a `bar`'s `track`/`fill`/`radius`/`dir`/
+`value`, and so on for `text`, `icon`, `arc`, `needle` and `plot`; `path`'s `d`/`fill`/
+`stroke`/`stroke_w` above; `box` has none of its own). Every declared attr carries its
+shape, and the renderer's own default where one exists — where absence instead means
+"not applied" (`show`, `repeat`, `clip`, `zoom`, `rotate`, `at`, `fit`) the row says so
+instead of inventing a value. `compile_attrs` (compile/components.cpp) diagnoses an
+attr name outside a part's common-plus-own set as an ERROR, pinned to that part with
+`where` = the attr name, exactly like a bad expression.
+
+`code` is the one open-ended kind and is NEVER diagnosed this way: its body reads
+`view.attrs` by whatever names its own JS chose (the registry's shared tick body alone
+reads `count`, `labels`, `min`, `max`, `outer`, `len`, `names` and more, none of which
+any other kind knows), so its attrs stay exactly as free-form as before this table
+existed — the part inspector's own "+ Attr" add/rename/delete affordance is offered
+only here (3.1).
+
+The set of part kinds itself is declared exactly once — the `kind` enum's variants in
+`doc/schema.cpp`, the one node this closed vocabulary is layered onto — and every other
+list that used to repeat it (the component compiler's draw-kind check, the part
+inspector's "+ Child part" menu) now derives from it instead.
+
 **A draw part holds children.** It paints its own shape and then renders whatever
 it holds INTO THE SAME AREA, over it — stack semantics, no `dir` of its own. This
 is what keeps the tree honest: a shape that needs a child no longer forces a
@@ -1018,8 +1049,11 @@ Doc    { version: u64, next_id: u64, canvas: Canvas,
          components: [Component], pages: [Page] }
 Canvas { unit_w, unit_h, cols, rows }    // ONE fixed artboard shape per HMI
                                          // (default 1408x792 units, 64x36 cells)
-Page   { id, name, widgets: [Widget] }
-Widget { id, type, label, geom: {x,y,w,h},               // continuous canvas units
+Page   { id, name, children: [Frame | Widget] }
+Frame  { id, kind: "frame", name, geom: {x,y,w,h},        // PARENT-relative units
+         layout: "none" | "row" | "col", gap, pad, align: "start"|"center"|"end"|"stretch",
+         children: [Frame | Widget] }
+Widget { id, kind: "widget", type, label, geom: {x,y,w,h}, // PARENT-relative units
          slots: {name: value},                           // unfed overrides
          locals: [Var], feeds: [Feed], flows: [Flow] }
 Var    { id, name, type, init, persist: bool }
@@ -1034,6 +1068,37 @@ The canvas shape is document data, set once per HMI (a portrait handheld HMI pic
 unit_h/rows`): the editor snaps both axes on that one number, so a pitch that does not
 divide evenly lands every snapped coordinate on a fraction the inspector then rounds
 back off the grid.
+
+**Frames.** A page's children are widgets AND frames in ONE ordered list, because
+z-order and flow order have to be the same order: a frame groups a subset of them (a
+label with a switch, say) and can lay that group out in a row or column, which is what
+gives the Layers tree (3.1) a real hierarchy now that a widget's own internal parts are
+edited in the Design workspace instead. `children` is heterogeneous — the only such list
+in the document — so each child carries a `kind` discriminator ("frame" or "widget")
+naming its own shape; a child with a missing or unrecognised `kind` is rejected outright,
+by both load and every op that would insert one, never silently defaulted.
+
+A child's `geom` is in its PARENT's coordinates: a page-level child in canvas units
+exactly as before, a frame's child relative to that frame's own `x`/`y` — so moving a
+frame moves every child under it for free, with no op written to any of them. Resolving
+a child's ABSOLUTE on-screen rect (for hit-testing, selection, painting) means walking
+from the page down through however many frames it sits under, summing origins; this
+walk is `frame.ts`'s `resolveTree` and every consumer goes through it rather than
+reading a nested widget's `geom` as if it were already absolute.
+
+`layout: "none"` is a plain group: every child keeps its authored `geom` untouched.
+`"row"` / `"col"` flow children in document order along the main axis, starting at
+`pad`, separated by `gap`, inside the frame's `pad` on all four sides; a child's authored
+MAIN-axis size is kept (no weights), and `align` (`start`/`center`/`end`/`stretch`) sets
+the cross axis, filling it only under `stretch`. Layout is resolved at RENDER time and
+never writes an op — the authored `geom` stays exactly what the user set, a laid-out
+child simply paints where the flow puts it this frame. Resizing a `"none"`-layout frame
+scales its direct children's authored `geom` proportionally, exactly like a multi-widget
+group resize (both share one transform, `shell.ts`'s `mapGeom`); resizing a `row`/`col`
+frame rewrites nothing, since the flow simply re-runs at the new size. Grid layout and
+Figma-style per-axis constraints are deliberately out of scope here — the same
+`frame`/`layout` model, one level down inside a component's own node tree, is where
+those questions get answered (`docs/proto/procedural-ui.md`).
 
 `version` is the sole sync authority (see PLAN.md for the op protocol and the
 persistence split between the authored document and runtime state).
@@ -1128,11 +1193,12 @@ Build Sheet mock, minus its traffic panel.
 ### 3.1 Window layout, the artboard, and modes
 
 **The topbar** carries the wordmark, the **page selector**, the workspace tabs
-(Content / Data / Style) and the artboard tools (the Edit/Test segment, the play
+(Content / Design / Data / Style) and the artboard tools (the Edit/Test segment, the play
 button, the findings chip, the connection light). The page selector and the
-artboard tools show only over Content. The page selector is a quiet button naming
-the current page; its menu lists every page (a check marks the current one, a
-click switches), an inline rename field for the current page, "+ New page"
+artboard tools show only over Content; the selector is centred on the bar, out of
+the flow, so hiding it does not shift the tabs. The page selector is a quiet
+button naming the current page; its menu lists every page (a check marks the
+current one, a click switches), an inline rename field for the current page, "+ New page"
 (inserted, then switched to when the echo issues its id) and — while more than
 one page exists — a remove entry. Pages are managed ONLY here: the sidebar has no
 page rows. Every workspace is built once and kept alive hidden; a tab switch is
@@ -1144,13 +1210,19 @@ scrolls independently. Both sidebars are resizable by drag handles (widths
 persisted per view):
 
 - **Left sidebar**, scrolling: the **Layers** tree, then **Components** (global
-  variables live in the Data workspace). The Layers tree lists the CURRENT
-  page's widgets → each widget's named template parts (its part paths, 2.3),
-  read from the registry type, so every named node is listed whether the current
-  render shows it or not; the section header carries the widget count. A widget
-  row selects the widget, a part row selects that part; a part row also carries an
-  EYE that switches that part's `shown` (2.3) — a hidden part keeps its row, dimmed,
-  with the switch standing. Expansion state is per view and never synced.
+  variables live in the Data workspace). The Layers tree is the CURRENT page's real
+  hierarchy (2.8): a page's children are frames and widgets in document order, a
+  frame's own children indented beneath it exactly like a widget's part tree, to
+  whatever depth the author nested them → each widget's named template parts (its
+  part paths, 2.3), read from the registry type, so every named node is listed
+  whether the current render shows it or not; the section header carries the WIDGET
+  count (a frame is structure, not a thing placed). A frame row selects the frame —
+  the only way to select one, since clicking the artboard always resolves to the
+  topmost WIDGET under the pointer, through however many frames it sits under; a
+  widget row selects the widget, a part row selects that part; a part row also
+  carries an EYE that switches that part's `shown` (2.3) — a hidden part keeps its
+  row, dimmed, with the switch standing. Expansion state is per view and never
+  synced.
 - **Components** lists the document's own components (editable: a row selects the
   component, its expanded part tree selects a part node) and then the built-ins not
   shadowed by one — dimmed, and browsable to their part trees the same way. A
@@ -1178,12 +1250,28 @@ persisted per view):
   WIDGET's own properties, and a read-only behavior summary. With a PART selected
   it edits that node: name, a box's dir, ITS OWN properties table (the same rows;
   what it declares here is addressed under it and edited on it, 2.3), the attrs
-  table (attr name + expression text, findings pinned per attr exactly as the
-  compiler addresses them), the interact's params, add-child / move / delete. Every edit is an ordinary op; the recompile's registry-changed
+  table, the interact's params, add-child / move / delete. Every edit is an ordinary op; the recompile's registry-changed
   snapshot repaints every instance, which is the honest live preview.
+
+  **The attrs table lists the CLOSED vocabulary in full (2.3): this kind's own attrs
+  first, then the common set every kind shares, set or not** — a `text` part shows all
+  ~23 rows the moment it is selected, not however many happen to be authored. The name
+  is a static label (the vocabulary is picked by which row you are on, never typed);
+  the value is the same highlighted expression field as ever, findings pinned per attr
+  exactly as the compiler addresses them; an UNSET attr shows the renderer's own
+  default as the field's placeholder, so what it will do is visible without filling it
+  in. Typing a value commits it; clearing one back to empty REMOVES the key rather than
+  storing an empty string, so the document keeps only what was actually authored. `code`
+  is the one exception: an open-ended kind keeps the free-form attrs UI (add, rename,
+  delete) this table always had, since its body reads `view.attrs` by whatever names
+  its own JS chose. The read-only built-in browser (2.3 Forking) shows the same full
+  list, read-only, with the shipped definition's own values where it set one.
 - **Canvas**: the artboard and its surrounding pasteboard (below).
 - **Inspector** (right). A sticky header shows the widget's label and its type +
-  id; below it, the folding section stack.
+  id; below it, the folding section stack. Selecting a FRAME instead shows a
+  deliberately plain inspector: its name, `layout`, `gap`, `pad`, `align` and its
+  `geom`, the same field idioms every other property uses — a frame authors no
+  feeds and no behavior, so those sections simply do not exist for one.
 
 **Part selection.** A part is selected from the Layers tree, or on the canvas by a
 second click on the already-selected widget: the browser's own hit test names the
@@ -1192,6 +1280,17 @@ The overlay draws a thin solid accent ring where the part landed in the last ren
 a part hidden by `show` rendered nothing and gets no ring. Escape steps back one
 level: part first, then selection. Selecting another widget clears any part.
 
+**Frame selection.** A frame is selected only from the Layers tree; clicking the
+artboard always resolves to the topmost WIDGET under the pointer (2.8), never a
+frame, so there is no click-an-empty-frame-to-select gesture. The selection overlay
+rings a selected frame at its resolved rect exactly as it would a widget's, grips and
+all: dragging a corner or edge resizes the frame (a `"none"`-layout frame scaling its
+children's authored geom proportionally as it goes, `row`/`col` re-flowing instead),
+using the same bbox-transform machinery a multi-widget group resize already uses.
+Moving a frame has no on-canvas grab surface of its own (it paints nothing to grab) —
+its `x`/`y` are ordinary inspector fields instead, and every child moves with it for
+free purely because a child's geometry is authored relative to its frame's origin.
+
 **The artboard.** A page is authored against the document's one fixed-aspect
 artboard (2.8). Rendering SCALES TO FIT and never stretches: on every device the
 artboard keeps its aspect (letterboxed on mismatch), so an HMI looks exactly as
@@ -1199,14 +1298,17 @@ designed everywhere, and the author designs against one shape instead of testing
 against many. Inside a widget's tile, the template's scale-to-fit contract (2.3)
 does the rest.
 
-**Placement.** Widget geometry is continuous artboard units; the grid is a
-snapping aid, never a constraint. Dragging snaps to cells (a modifier frees it),
-and a widget may sit off-grid or fully outside the artboard on the
+**Placement.** Widget geometry is continuous units, in its PARENT's coordinate space
+(2.8): artboard units for a page-level widget, a frame's own units for one grouped
+inside it. The grid is a snapping aid, never a constraint. Dragging snaps to cells (a
+modifier frees it), and a widget may sit off-grid or fully outside the artboard on the
 **pasteboard**: a staging area visible only while editing. The merged-background
 islands carried over from the prototype (touching tiles fuse into one rounded
-surface) form from grid-snapped widgets; a free-placed widget draws its own
-background and never merges. The operate view renders the artboard rect only:
-pasteboard content is staging, not deployment.
+surface) form from grid-snapped widgets, resolved to their absolute on-screen rect
+wherever they nest; a free-placed widget draws its own background and never merges.
+A newly placed widget always lands as a page-level child (dropping one INTO a frame
+is a Layers-tree move, not a placement default). The operate view renders the
+artboard rect only: pasteboard content is staging, not deployment.
 
 **Modes.** The backend always runs; frontend modes only route input. Edit and
 Test are the two authoring modes, a segment in the topbar.

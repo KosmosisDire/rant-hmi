@@ -21,7 +21,8 @@ installDom();
 
 const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
-const { renderContent } = await import(mod("canvas.js"));
+const { hitTest, renderContent, renderDesignPreview, resolvePage } = await import(mod("canvas.js"));
+const { placeChildren, resolveTree } = await import(mod("frame.js"));
 const { run } = await import(mod("program.js"));
 const { unionPath } = await import(mod("islands.js"));
 const { syncUrl } = await import(mod("endpoint.js"));
@@ -29,6 +30,10 @@ const { parseRich, richMarkup, richUnits } = await import(mod("rich.js"));
 const { Panel } = await import(mod("reconcile.js"));
 const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
   await import(mod("inspector/panel.js"));
+const {
+  designInspectorShape, designSelectedPath, designShape, designSubject,
+  locatePart, renderDesignInspector, renderDesignTree, selectDesignRenderedPart,
+} = await import(mod("workspaces/design.js"));
 const { renderOverlay } = await import(mod("canvas.js"));
 const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.js"));
 const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
@@ -138,13 +143,23 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 3, client_name: "render_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 4, client_name: "render_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
 /* the built-ins' editable document form rides beside the derived registry */
 check(Array.isArray(snapshot.builtins) && snapshot.builtins.length === 12,
       "the snapshot serves the twelve built-ins' document form");
+/* the closed attr vocabulary (spec 2.3): served once, next to `lang`, never changing
+   at runtime — the part inspector's Attrs section reads exactly this */
+check(Array.isArray(snapshot.attr_table?.kinds) && snapshot.attr_table.kinds.includes("code"),
+      "the snapshot serves the declared list of part kinds");
+check(Array.isArray(snapshot.attr_table?.common) &&
+        snapshot.attr_table.common.some((a) => a.name === "rotate"),
+      "and the common attrs honoured on every kind");
+check(Array.isArray(snapshot.attr_table?.perKind?.text) &&
+        snapshot.attr_table.perKind.text.some((a) => a.name === "fill" && a.default === "#e7ecf5"),
+      "and each kind's own attrs, with the renderer's own default");
 check(Array.isArray(snapshot.builtins[0]?.parts) && !snapshot.builtins[0]?.template,
       "a served built-in is doc-form: parts with expression text, no compiled template");
 const interactionOf = (node) =>
@@ -164,7 +179,9 @@ let svg = renderContent(store.doc, page, snapshot.registry, snapshot.live, view)
 has(svg, 'class="island"', "the fused island surface");
 has(svg, 'class="grid"', "the edit-mode grid");
 has(svg, "Line 1 Overview", "the label's text part");
-check((svg.match(/<g class="widget/g) ?? []).length === 7, "seven widget groups");
+/* seven flat widgets plus the demo frame's own two (spec 2.8): every widget renders
+   its own group regardless of how deep it nests under a frame */
+check((svg.match(/<g class="widget/g) ?? []).length === 9, "nine widget groups");
 
 /* the toggle is on, so PICK resolved its fill to the on colour */
 has(svg, "#4e8ef7", "the toggle's on colour from a PICK program");
@@ -174,7 +191,7 @@ const groupOf = (id) => {
   const at = svg.indexOf('data-id="' + id + '"');
   return at < 0 ? "" : svg.slice(at, svg.indexOf("</g>", at));
 };
-const slider = page.widgets.find((w) => w.type === "Slider");
+const slider = store.widgetsOn(page).find((w) => w.type === "Slider");
 const sliderSvg = groupOf(slider.id);
 const width = (color) => {
   const found = sliderSvg.match(new RegExp('<rect [^>]*width="([0-9.]+)"[^>]*fill="' + color + '"'));
@@ -186,6 +203,126 @@ check(Math.abs(fraction - 0.62) < 0.01, "the slider bar is 62 percent of its tra
 has(svg, ">0.0<", "the fed readout renders the runtime value");
 check(!svg.includes("42.5"), "a fed slot never shows its authored value");
 
+/* ---- frames (spec 2.8): a page-level container that groups widgets, laid out in a row
+   or column and resolved to absolute rects only at RENDER time — the authored geom
+   never moves. The default document seeds one ("Status group", layout "row") so the
+   feature is exercised the moment the document opens: a Label grouped with a Toggle. */
+const statusFrame = page.children.find((n) => n.kind === "frame");
+check(statusFrame !== undefined, "the default document seeds a demo frame");
+check(
+  statusFrame.children.length === 2 && statusFrame.children.every((c) => c.kind === "widget"),
+  "the frame groups two widgets",
+);
+
+/* placeChildren, unit-tested directly against synthetic frames: layout:"none" keeps
+   each child's authored geom, translated into the parent's absolute origin */
+{
+  const none = { layout: "none", children: [
+    { id: 1, kind: "widget", geom: { x: 10, y: 20, w: 30, h: 40 } },
+  ] };
+  const placed = placeChildren(none, { x: 100, y: 200, w: 500, h: 500 });
+  check(
+    placed.length === 1 && placed[0].rect.x === 110 && placed[0].rect.y === 220 &&
+      placed[0].rect.w === 30 && placed[0].rect.h === 40,
+    "layout:none translates a child's authored geom by the parent's origin, got " +
+      JSON.stringify(placed[0]?.rect),
+  );
+}
+
+/* row layout: children flow along x in order, the authored MAIN-axis size kept,
+   separated by `gap`, inside `pad` on every side */
+{
+  const row = { layout: "row", pad: 5, gap: 10, align: "start", children: [
+    { id: 1, kind: "widget", geom: { x: 0, y: 0, w: 40, h: 20 } },
+    { id: 2, kind: "widget", geom: { x: 0, y: 0, w: 60, h: 30 } },
+  ] };
+  const placed = placeChildren(row, { x: 0, y: 0, w: 300, h: 100 });
+  check(
+    placed[0].rect.x === 5 && placed[0].rect.w === 40,
+    "the first row child starts at pad, keeping its authored width, got " +
+      JSON.stringify(placed[0].rect),
+  );
+  check(
+    placed[1].rect.x === 5 + 40 + 10 && placed[1].rect.w === 60,
+    "the second row child starts after the first plus gap, got " + JSON.stringify(placed[1].rect),
+  );
+  check(
+    placed[0].rect.y === 5 && placed[0].rect.h === 20,
+    "align:start keeps the child's authored cross size at the padded edge, got " +
+      JSON.stringify(placed[0].rect),
+  );
+}
+
+/* align:"stretch" fills the cross axis, overriding the child's authored cross size */
+{
+  const stretch = { layout: "row", pad: 0, gap: 0, align: "stretch", children: [
+    { id: 1, kind: "widget", geom: { x: 0, y: 0, w: 40, h: 20 } },
+  ] };
+  const placed = placeChildren(stretch, { x: 0, y: 0, w: 300, h: 100 });
+  check(
+    placed[0].rect.y === 0 && placed[0].rect.h === 100,
+    "align:stretch fills the cross axis regardless of the authored cross size, got " +
+      JSON.stringify(placed[0].rect),
+  );
+}
+
+/* resolveTree over the REAL document: a frame's children resolve to ABSOLUTE rects —
+   never their raw frame-relative geom read as if it were already an absolute position */
+const placedPage = resolveTree(
+  page, { x: 0, y: 0, w: store.doc.canvas.unit_w, h: store.doc.canvas.unit_h },
+);
+const frameChildIds = new Set(statusFrame.children.map((c) => c.id));
+const placedChildren = placedPage.filter((p) => frameChildIds.has(p.node.id));
+check(placedChildren.length === 2, "resolveTree reaches a frame's own children");
+for (const p of placedChildren) {
+  const local = statusFrame.children.find((c) => c.id === p.node.id).geom;
+  check(
+    p.rect.x !== local.x || p.rect.y !== local.y,
+    "a frame child resolves to an absolute rect, not its frame-relative geom read raw",
+  );
+  check(
+    p.rect.x >= statusFrame.geom.x && p.rect.x < statusFrame.geom.x + statusFrame.geom.w,
+    "and lands inside its frame's own horizontal extent",
+  );
+}
+
+/* hitTest finds the WIDGET under a point, resolved through however many frames it sits
+   under, and never returns a frame itself (spec 2.8: a frame is never artboard-clickable) */
+const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
+const toggleRect = placedPage.find((p) => p.node.id === toggleChild.id).rect;
+const insideToggle = { x: toggleRect.x + toggleRect.w / 2, y: toggleRect.y + toggleRect.h / 2 };
+check(
+  hitTest(store.doc.canvas, page, insideToggle.x, insideToggle.y) === toggleChild.id,
+  "hitTest finds a widget nested inside a frame",
+);
+check(
+  hitTest(store.doc.canvas, page, insideToggle.x, insideToggle.y) !== statusFrame.id,
+  "hitTest never returns a frame, only the widget under the point",
+);
+
+/* the Layers tree shows the frame nesting: a frame row, its own children indented
+   beneath it exactly like a widget's part tree */
+{
+  const treeHost = new Element("aside");
+  const treePanel = new Panel(treeHost);
+  const treeEditor = {
+    store, registry: snapshot.registry, view,
+    page: () => page,
+    diagFor: () => [], diagAt: () => [], diagNode: () => [],
+    select: () => undefined, selectPart: () => undefined,
+  };
+  treePanel.render(leftShape(treeEditor), (host) => renderLeftSidebar(host, treeEditor));
+  const rows = treeHost.querySelectorAll(".layer-row");
+  check(
+    rows.some((r) => r.getAttribute("data-key") === "f" + statusFrame.id),
+    "the Layers tree lists a row for the frame",
+  );
+  check(
+    rows.some((r) => r.getAttribute("data-key") === "w" + toggleChild.id),
+    "and a row for the widget grouped inside it",
+  );
+}
+
 /* an edit round trip: insert an unfed Readout and watch TO_FIXED format it */
 ws.send(
   JSON.stringify({
@@ -195,8 +332,9 @@ ws.send(
       {
         op: "insert",
         parent: page.id,
-        list: "widgets",
+        list: "children",
         node: {
+          kind: "widget",
           type: "Readout",
           label: "Unfed",
           geom: { x: 1200, y: 60, w: 180, h: 120 },
@@ -210,14 +348,15 @@ ws.send(
 const applied = await next("ops_applied");
 check(applied.version === snapshot.version + 1, "the version advanced by one");
 store.apply(applied.version, applied.ops);
-check(store.pages()[0].widgets.length === 8, "the insert reached the mirror");
+/* 7 flat widgets + the demo frame + the freshly appended Readout, all top-level */
+check(store.pages()[0].children.length === 9, "the insert reached the mirror");
 
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 has(svg, ">12.3<", "TO_FIXED formatted an unfed value");
 has(svg, ">bar<", "the units part rendered");
 
 /* a text slot that is empty hides its part through the `show` attribute */
-const unfed = store.pages()[0].widgets[7];
+const unfed = store.pages()[0].children[8];
 ws.send(
   JSON.stringify({
     type: "apply_ops",
@@ -249,19 +388,21 @@ let backendVersion = second.version;
 const sidebar = new Element("aside");
 sidebar.className = "sidebar right";
 const panel = new Panel(sidebar);
-const readout = store.pages()[0].widgets[7];
+const readout = store.pages()[0].children[8];
 const editor = {
   store,
   registry: snapshot.registry,
   live: { epoch: 1, values: {} },
   mesh: { entities: [], types: [] },
   lang: null,
+  attrTable: snapshot.attr_table ?? { kinds: [], common: [], perKind: {} },
   builtins: snapshot.builtins ?? [],
   componentSel: null,
   builtinSel: null,
   view,
   page: () => store.pages()[0],
   selectedWidget: () => store.widget(readout.id),
+  selectedFrame: () => null,
   apply: () => undefined,
   setPage: () => undefined,
   select: () => undefined,
@@ -332,7 +473,7 @@ check(valueInput.value === "5.5", "an unfed slot's field follows the document, g
 
 /* 4. a FED slot has no authored value to show, so it IS the runtime: live drives it, and
       UNKNOWN until something arrives. Widget 10's `value` is fed in the seeded document. */
-const fedWidget = store.pages()[0].widgets.find((w) => (w.feeds ?? []).some((f) => f.slot === "value"));
+const fedWidget = store.widgetsOn(store.pages()[0]).find((w) => (w.feeds ?? []).some((f) => f.slot === "value"));
 const fedPanel = new Panel(new Element("aside"));
 const fedEditor = { ...editor, selectedWidget: () => store.widget(fedWidget.id) };
 const drawFed = () =>
@@ -473,7 +614,7 @@ check(Array.isArray(snapshot.diag?.compile), "the snapshot carries the compile f
 
 /* the type's defaults are the control working as expected, so the inspector does not
    list them: the Behavior section holds only what this instance authors */
-const toggle = store.pages()[0].widgets.find((w) => w.type === "Toggle");
+const toggle = store.widgetsOn(store.pages()[0]).find((w) => w.type === "Toggle");
 const togglePanel = new Panel(new Element("aside"));
 const toggleEditor = { ...editor, selectedWidget: () => store.widget(toggle.id) };
 togglePanel.render(inspectorShape(toggleEditor), (host) => renderInspector(host, toggleEditor));
@@ -558,7 +699,7 @@ check(
 
 /* a finding inside a flow is addressed to the STEP, so it traces to the exact line; a
    collapsed card cannot show that line yet, so its head carries the rollup */
-const reset = store.pages()[0].widgets.find((w) => w.label === "Reset");
+const reset = store.widgetsOn(store.pages()[0]).find((w) => w.label === "Reset");
 const stepId = reset.flows[0].do[0].id;
 const stepRows = [{ node: stepId, grade: "error", code: "expression", message: "unknown name" }];
 const stepEditor = {
@@ -579,7 +720,7 @@ check(
 
 /* a feed is ONE LINE under its slot, and a feed finding marks that line, whichever
    field of the feed the compiler named */
-const readoutW = store.pages()[0].widgets.find((w) => w.type === "Readout");
+const readoutW = store.widgetsOn(store.pages()[0]).find((w) => w.type === "Readout");
 const feedId = readoutW.feeds[0].id;
 const feedRows = [
   { node: feedId, grade: "error", code: "feed_source", message: "HMI variable 'flow' is unresolved", where: "src" },
@@ -643,6 +784,14 @@ const leftPanel = new Panel(left);
 const drawLeft = () => leftPanel.render(leftShape(editor), (host) => renderLeftSidebar(host, editor));
 const rowByKey = (key) =>
   left.querySelectorAll(".layer-row").find((r) => r.getAttribute("data-key") === key) ?? null;
+
+/* the Design workspace's own tree, with its own fold state and its own panel */
+const designHost = new Element("aside");
+const designPanel = new Panel(designHost);
+const drawDesign = () =>
+  designPanel.render(designShape(editor), (host) => renderDesignTree(host, editor));
+const designRow = (key) =>
+  designHost.querySelectorAll(".layer-row").find((r) => r.getAttribute("data-key") === key) ?? null;
 
 drawLeft();
 const toggleRow = rowByKey("w" + toggle.id);
@@ -715,11 +864,11 @@ check(widgetLabels.includes("surface") && widgetLabels.includes("Place"),
 
 /* the overlay rings the selected part at its recorded rect; a hidden part has none */
 view.part = "pill";
-const ringed = renderOverlay(store.pages()[0], view, partRects);
+const ringed = renderOverlay(store.doc.canvas, store.pages()[0], view, partRects);
 check(ringed.includes('class="part-ring"'), "the overlay rings the selected part");
 view.selection = [slider.id];
 view.part = "scale";
-check(!renderOverlay(store.pages()[0], view, partRects).includes('class="part-ring"'),
+check(!renderOverlay(store.doc.canvas, store.pages()[0], view, partRects).includes('class="part-ring"'),
       "a part that did not render gets no ring");
 view.selection = [];
 view.part = "";
@@ -731,26 +880,31 @@ view.part = "";
    inspector to that node's attrs, and a component compile finding (addressed to the
    part node, where = the attr) pins to the attr's own row. */
 
+/* the Components tree moved OUT of the left sidebar and into the Design workspace:
+   Layers is page composition, a component's internals belong to the type */
 drawLeft();
-const builtinToggleRow = rowByKey("b:Toggle");
+check(rowByKey("b:Toggle") === null && rowByKey("c9200") === null,
+      "the left sidebar lists no components: Layers is page composition alone");
+drawDesign();
+const builtinToggleRow = designRow("b:Toggle");
 check(builtinToggleRow !== null, "the Components section lists unshadowed built-ins");
 check(builtinToggleRow.querySelectorAll(".layer-menu").length === 1,
       "a built-in row carries the row-level verb menu (Override <Name>, Duplicate as…)");
 check(builtinToggleRow.className.includes("builtin"), "and is marked read-only");
 fire(builtinToggleRow.children[0], "click");
-drawLeft();
+drawDesign();
 /* a built-in is not in the document, so its rows are addressed by name + CHILD-INDEX
    path ("0" is the root part, "0.0.0" the track inside its pill) rather than node id */
-check(rowByKey("b:Toggle/0") !== null,
+check(designRow("b:Toggle/0") !== null,
       "an expanded built-in lists its part tree from the served doc form");
-check(rowByKey("b:Toggle/0.0.0") !== null, "nested built-in parts too (boxes default open)");
+check(designRow("b:Toggle/0.0.0") !== null, "nested built-in parts too (boxes default open)");
 
 /* the row SELECTS, exactly as a doc component's does: the shipped definitions are
    browsable read-only, which is how a type is read before it is overridden */
 const browsed = [];
 editor.selectBuiltin = (name, path) => browsed.push(name + ":" + path);
-fire(rowByKey("b:Toggle/0.0.0"), "click");
-fire(rowByKey("b:Toggle"), "click");
+fire(designRow("b:Toggle/0.0.0"), "click");
+fire(designRow("b:Toggle"), "click");
 check(browsed.join(" ") === "Toggle:0.0.0 Toggle:",
       "a built-in row browses it by name and part path, got " + JSON.stringify(browsed));
 
@@ -762,9 +916,12 @@ const trackEditor = {
   builtinSel: { name: "Toggle", path: "0.0.0" },
 };
 const trackPanel = new Panel(new Element("aside"));
-check(inspectorShape(trackEditor) !== inspectorShape(editor),
-      "a browsed built-in owns the inspector's shape");
-trackPanel.render(inspectorShape(trackEditor), (host) => renderInspector(host, trackEditor));
+check(designInspectorShape(trackEditor) !== designInspectorShape(editor),
+      "a browsed built-in owns the Design inspector's shape");
+check(inspectorShape(trackEditor) === "empty",
+      "and does NOT reach the Content inspector, which is instances only");
+trackPanel.render(designInspectorShape(trackEditor),
+                  (host) => renderDesignInspector(host, trackEditor));
 check(trackPanel.host.querySelector(".head-tag")?.textContent === "built-in",
       "the head marks it as the built-in definition");
 const trackAttrs = trackPanel.host.querySelectorAll(".attr-row");
@@ -778,13 +935,13 @@ check(trackPanel.host.querySelectorAll(".value-static")
       "and the ADDRESS row names the part's slot-address prefix");
 const bodyEditor = { ...trackEditor, builtinSel: { name: "Toggle", path: "0" } };
 const bodyPanel = new Panel(new Element("aside"));
-bodyPanel.render(inspectorShape(bodyEditor), (host) => renderInspector(host, bodyEditor));
+bodyPanel.render(designInspectorShape(bodyEditor), (host) => renderDesignInspector(host, bodyEditor));
 check(bodyPanel.host.querySelectorAll(".value-static")
         .some((v) => v.textContent === "the widget itself"),
       "the ROOT part adds no segment: its properties address bare");
 const toggleEditor3 = { ...trackEditor, builtinSel: { name: "Toggle", path: "" } };
 const compPanel = new Panel(new Element("aside"));
-compPanel.render(inspectorShape(toggleEditor3), (host) => renderInspector(host, toggleEditor3));
+compPanel.render(designInspectorShape(toggleEditor3), (host) => renderDesignInspector(host, toggleEditor3));
 check(compPanel.host.querySelectorAll(".dashed-btn")
         .some((b) => b.textContent === "Override Toggle"),
       "the component view offers the fork that makes it editable");
@@ -820,15 +977,15 @@ store.apply(store.version() + 1, [
     },
   },
 ]);
-drawLeft();
-const lampRow = rowByKey("c9200");
+drawDesign();
+const lampRow = designRow("c9200");
 check(lampRow !== null, "a doc component appears in the Components tree");
 check(lampRow.querySelector(".badge.shadow") === null,
       "a component that shadows nothing carries no override tag");
 fire(lampRow.children[0], "click");
-drawLeft();
-check(rowByKey("c9200/9210") !== null, "an expanded component lists its part nodes");
-check(rowByKey("c9200/9211") !== null, "nested parts too (boxes default open)");
+drawDesign();
+check(designRow("c9200/9210") !== null, "an expanded component lists its part nodes");
+check(designRow("c9200/9211") !== null, "nested parts too (boxes default open)");
 
 /* selecting the component edits the TYPE: name field and the properties table */
 const lampEditor = {
@@ -837,7 +994,7 @@ const lampEditor = {
   componentSel: { component: 9200, node: 9200 },
 };
 const lampPanel = new Panel(new Element("aside"));
-lampPanel.render(inspectorShape(lampEditor), (host) => renderInspector(host, lampEditor));
+lampPanel.render(designInspectorShape(lampEditor), (host) => renderDesignInspector(host, lampEditor));
 check(lampPanel.host.querySelector(".inspector-head").children[0].value === "Lamp",
       "a selected component's head edits its name");
 check(
@@ -847,16 +1004,100 @@ check(
   "the properties table lists the PropDef rows",
 );
 
-/* selecting a part edits its attrs: the expression text in an editable row */
+/* selecting a part edits its attrs: the CLOSED vocabulary (spec 2.3) lists every attr
+   the "text" kind declares — own attrs first, then the common set — set or not, not
+   just the one this "label" part happens to author */
 const labelEditor = { ...lampEditor, componentSel: { component: 9200, node: 9211 } };
 const labelPanel = new Panel(new Element("aside"));
-check(inspectorShape(labelEditor) !== inspectorShape(lampEditor),
+check(designInspectorShape(labelEditor) !== designInspectorShape(lampEditor),
       "the selected part node moves the inspector's shape");
-labelPanel.render(inspectorShape(labelEditor), (host) => renderInspector(host, labelEditor));
+labelPanel.render(designInspectorShape(labelEditor), (host) => renderDesignInspector(host, labelEditor));
 const attrRows = labelPanel.host.querySelectorAll(".attr-row");
-check(attrRows.length === 1, "the part view lists one row per attr");
-check(attrRows[0].querySelectorAll("input").some((i) => i.value === "'hi'"),
-      "with the attr's expression text editable in place");
+const textVocabCount =
+  editor.attrTable.perKind.text.length + editor.attrTable.common.length;
+check(attrRows.length === textVocabCount,
+      "the part view lists EVERY attr the kind declares, got " + attrRows.length +
+        " expected " + textVocabCount);
+const attrRowNamed = (rows, name) =>
+  rows.find((row) => row.querySelector(".attr-name")?.textContent === name);
+check(attrRowNamed(attrRows, "text").querySelectorAll("input")
+        .some((i) => i.value === "'hi'"),
+      "the set attr's expression text is editable in place");
+check(labelPanel.host.querySelectorAll(".attr-name.static").length === attrRows.length,
+      "every attr name is a static label now, never a typed field");
+const unsetFill = attrRowNamed(attrRows, "fill");
+check(unsetFill.querySelectorAll("input")
+        .some((i) => i.value === "" && i.getAttribute("placeholder") === "#e7ecf5"),
+      "an unset attr shows the renderer's own default as the placeholder, unfilled");
+check(labelPanel.host.querySelectorAll(".dashed-btn")
+        .filter((b) => b.textContent === "+ Attr").length === 0,
+      "the closed vocabulary offers nothing to add: no + Attr button for a text part");
+
+/* clearing a SET attr's field removes the key from the committed attrs object rather
+   than writing "": the document keeps only what was actually authored. `apply` is
+   captured rather than routed through the store (which the rest of this fixture never
+   mutates through `apply`, a no-op stub) so the committed op is inspectable directly. */
+{
+  const clearOps = [];
+  const clearEditor = { ...labelEditor, apply: (ops) => clearOps.push(...ops) };
+  const clearPanel = new Panel(new Element("aside"));
+  clearPanel.render(designInspectorShape(clearEditor),
+    (host) => renderDesignInspector(host, clearEditor));
+  const clearRows = clearPanel.host.querySelectorAll(".attr-row");
+  const textInput = attrRowNamed(clearRows, "text").querySelectorAll("input")
+    .find((i) => i.value === "'hi'");
+  typeInto(textInput, "");
+  fire(textInput, "change");
+  check(clearOps.length === 1 && clearOps[0].op === "set_prop" && clearOps[0].key === "attrs",
+        "clearing the field commits a set_prop on attrs");
+  check(clearOps[0] && !("text" in (clearOps[0].value ?? {})),
+        "and the committed attrs object has the key removed, not set to \"\"");
+}
+
+/* A key the document carries that this kind's vocabulary does NOT declare (a hand-edited
+   document, or an attr the table dropped). The compiler flags it, so it must have a row
+   of its own: generated rows come from the vocabulary, and this name is not in it, which
+   would otherwise mean an error the author can neither see nor remove. */
+{
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9211, key: "attrs",
+      value: { text: "'hi'", rotation: "45" } },   /* `rotation` — the classic typo */
+  ]);
+  const strayPanel = new Panel(new Element("aside"));
+  strayPanel.render(designInspectorShape(labelEditor),
+    (host) => renderDesignInspector(host, labelEditor));
+  const strayRow = attrRowNamed(strayPanel.host.querySelectorAll(".attr-row"), "rotation");
+  check(strayRow !== null && strayRow !== undefined,
+        "an undeclared key the document carries still gets a row");
+  check(strayRow.querySelector(".attr-name.unknown") !== null,
+        "marked as one this kind does not read");
+  check(strayRow.querySelectorAll("button").length === 1,
+        "and carrying a delete, so the finding is actionable");
+  /* it is STRUCTURE: adding or removing a stray changes which rows exist, so the shape
+     string has to move with it or the panel would never rebuild */
+  const withStray = designInspectorShape(labelEditor);
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9211, key: "attrs", value: { text: "'hi'" } },
+  ]);
+  check(designInspectorShape(labelEditor) !== withStray,
+        "a stray coming and going moves the inspector's shape");
+}
+
+/* `code` is the one open kind: it keeps the free-form attrs UI in full, "+ Attr"
+   included, because its body reads view.attrs by whatever names its own JS chose */
+store.apply(store.version() + 1, [
+  { op: "insert", parent: 9210, list: "children",
+    node: { id: 9220, kind: "code", name: "gen", code: "", attrs: { count: "5" } } },
+]);
+const genEditor = { ...lampEditor, componentSel: { component: 9200, node: 9220 } };
+const genPanel = new Panel(new Element("aside"));
+genPanel.render(designInspectorShape(genEditor), (host) => renderDesignInspector(host, genEditor));
+const genRows = genPanel.host.querySelectorAll(".attr-row");
+const genNameField = genRows[0]?.querySelectorAll(".attr-name")[0];
+check(genRows.length === 1 && genNameField?.tagName === "INPUT",
+      "a code part's existing attr is a free-form, renameable row");
+check(genPanel.host.querySelectorAll(".dashed-btn").some((b) => b.textContent === "+ Attr"),
+      "and a code part still offers + Attr");
 
 /* a component finding is addressed to the part node, where = the attr: it pins to
    that attr's own row, exactly as the backend's template_expr diags arrive */
@@ -872,8 +1113,8 @@ const attrDiagEditor = {
   diagNode: (node) => attrDiagRows.filter((d) => d.node === node),
 };
 const attrDiagPanel = new Panel(new Element("aside"));
-attrDiagPanel.render(inspectorShape(attrDiagEditor), (host) =>
-  renderInspector(host, attrDiagEditor));
+attrDiagPanel.render(designInspectorShape(attrDiagEditor), (host) =>
+  renderDesignInspector(host, attrDiagEditor));
 const diagAttrRow = attrDiagPanel.host.querySelectorAll(".attr-row")[0];
 check(diagAttrRow.querySelectorAll(".diag-dot.error").length === 1,
       "a component finding pins to the attr row the compiler named");
@@ -883,18 +1124,18 @@ check(diagAttrRow.querySelectorAll(".diag-dot.error").length === 1,
 store.apply(store.version() + 1, [
   { op: "set_prop", node: 9200, key: "name", value: "Toggle" },
 ]);
-drawLeft();
-check(rowByKey("b:Toggle") === null, "a shadowed built-in leaves the built-ins list");
-check(rowByKey("c9200").querySelector(".shadows") !== null,
+drawDesign();
+check(designRow("b:Toggle") === null, "a shadowed built-in leaves the built-ins list");
+check(designRow("c9200").querySelector(".shadows") !== null,
       "and the doc component is marked as overriding it");
-check(rowByKey("c9200").querySelector(".badge.shadow") !== null,
+check(designRow("c9200").querySelector(".badge.shadow") !== null,
       "the override tag is legible in the row itself, not only the tooltip");
 
 /* "Revert to built-in": removing the component that shadows one restores it (the same
    op the row menu's danger-styled Revert entry issues) */
 store.apply(store.version() + 1, [{ op: "remove", node: 9200 }]);
-drawLeft();
-check(rowByKey("b:Toggle") !== null, "reverting a shadowing component restores the built-in row");
+drawDesign();
+check(designRow("b:Toggle") !== null, "reverting a shadowing component restores the built-in row");
 
 /* "Duplicate as…": copies a built-in under a FRESH name, leaving the source alone —
    simulate the echo the real duplicateComponent(name) insert produces (the fresh-name
@@ -916,13 +1157,152 @@ store.apply(store.version() + 1, [
     },
   },
 ]);
-drawLeft();
-check(rowByKey("b:Knob") !== null, "duplicating a built-in leaves the built-in itself listed");
-check(rowByKey("c9300") !== null, "and a second component appears under the fresh name");
-check(rowByKey("c9300").querySelector(".badge.shadow") === null,
+drawDesign();
+check(designRow("b:Knob") !== null, "duplicating a built-in leaves the built-in itself listed");
+check(designRow("c9300") !== null, "and a second component appears under the fresh name");
+check(designRow("c9300").querySelector(".badge.shadow") === null,
       "the duplicate shadows nothing (a different name), so it carries no override tag");
 store.apply(store.version() + 1, [{ op: "remove", node: 9300 }]);
-drawLeft();
+drawDesign();
+
+/* ---- the Design viewport: the live preview and part addressing (spec 3.1) ----
+   The middle column renders the selected component's TYPE at its design frame, type
+   defaults, no live data — renderDesignPreview shares canvas.ts's own renderWidgetBody
+   with the page renderer, so a preview looks exactly like a placed instance. Part
+   addressing is the harder half: a rendered path (names only, excluding the root) must
+   translate both ways into whichever selection space is current — node id for a doc
+   component, child-index path for a built-in. */
+
+const previewView =
+  { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {} };
+const previewTheme = { tokens: [], mode: "dark" };
+
+/* a known BUILT-IN's parts render, wrapped in data-part groups exactly like a placed
+   instance's, and their rects land in the collector */
+{
+  const previewParts = { rects: new Map(), path: "", depth: 0, transform: "" };
+  const svgPreview =
+    renderDesignPreview(toggleType, "Toggle", 240, 120, previewTheme, previewView, previewParts);
+  has(svgPreview, 'data-part="pill.lane.knob"', "the preview renders a built-in's named parts");
+  check(previewParts.rects.has("pill.lane.knob"),
+        "and records the part's rect, same as a placed instance would");
+}
+
+/* the DESIGN FRAME drives the rendered size */
+{
+  const small = renderDesignPreview(toggleType, "Toggle", 240, 120, previewTheme, previewView);
+  const big = renderDesignPreview(toggleType, "Toggle", 400, 260, previewTheme, previewView);
+  has(small, 'width="240.00" height="120.00"', "the design frame's w/h size the background rect");
+  has(big, 'width="400.00" height="260.00"', "a different design frame draws at a different size");
+}
+
+/* a component with no parts yet (components.cpp: the compiler's own fallback for one
+   is a bare stack box) renders without throwing — a blank new component is a blank
+   picture, not a mistake — and a type that failed to resolve at all still draws the
+   ordinary missing-type marker rather than crashing the preview */
+{
+  const emptyType = {
+    name: "Empty", slots: [], events: [],
+    template: { kind: "box", name: "body", dir: "stack", attrs: {}, children: [] },
+  };
+  let threw = false;
+  let svgEmpty = "";
+  try {
+    svgEmpty = renderDesignPreview(emptyType, "Empty", 240, 120, previewTheme, previewView);
+  } catch {
+    threw = true;
+  }
+  check(!threw, "a component with no parts renders without throwing");
+  has(svgEmpty, 'class="artboard-bg"', "and still draws its background box");
+  const svgMissing = renderDesignPreview(null, "Nope", 240, 120, previewTheme, previewView);
+  has(svgMissing, "missing-type", "an unresolved type falls back to the missing-type marker");
+}
+
+/* rendered path <-> selection, round-tripped both ways: a DOC component (node ids)
+   and a BUILT-IN (child-index path) */
+{
+  const compId = 9600, rootId = 9601, wrapId = 9602, faceId = 9603;
+  store.apply(store.version() + 1, [
+    {
+      op: "insert", parent: 0, list: "components",
+      node: {
+        id: compId, name: "AddrProbe", events: [], props: [], behavior: [],
+        parts: [
+          {
+            id: rootId, kind: "box", name: "body", dir: "stack", attrs: {}, interact: null,
+            children: [
+              /* an UNNAMED wrapper is transparent to addressing (spec 2.3): "face"
+                 addresses straight off the root even though it is really this node's
+                 child, exactly the rule the compiler's collect_tree applies */
+              {
+                id: wrapId, kind: "box", name: "", dir: "stack", attrs: {}, interact: null,
+                children: [
+                  { id: faceId, kind: "rect", name: "face", attrs: {}, interact: null,
+                    children: [] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ]);
+
+  const docLoc = locatePart(store.node(rootId), "face");
+  check(docLoc !== null && docLoc.node.id === faceId,
+        "locatePart finds a named part past an unnamed wrapper, got " + JSON.stringify(docLoc));
+  const docEditor = { ...editor, componentSel: { component: compId, node: faceId } };
+  check(designSelectedPath(docEditor, designSubject(docEditor)) === "face",
+        "and the doc selection resolves back to the same rendered path");
+  /* the ROOT part's own selection rings nothing: it renders with no data-part wrapper
+     of its own, so it recorded no rect either (spec: the root contributes no segment) */
+  const rootEditor = { ...editor, componentSel: { component: compId, node: rootId } };
+  check(designSelectedPath(rootEditor, designSubject(rootEditor)) === "",
+        "selecting the root part resolves to no rendered path");
+  /* a stale node id (removed, or never existed) degrades to no ring rather than
+     throwing */
+  const staleEditor = { ...editor, componentSel: { component: compId, node: 999999 } };
+  check(designSelectedPath(staleEditor, designSubject(staleEditor)) === "",
+        "a stale doc selection resolves to no rendered path rather than throwing");
+
+  /* the BUILT-IN half: the same round trip, addressed by child-index path instead */
+  const builtinToggle = snapshot.builtins.find((b) => b?.name === "Toggle");
+  const builtinLoc = locatePart(builtinToggle.parts[0], "pill.lane.knob");
+  check(builtinLoc !== null, "locatePart resolves a built-in's rendered path too");
+  const builtinEditor = { ...editor, builtinSel: { name: "Toggle", path: builtinLoc.index } };
+  check(designSelectedPath(builtinEditor, designSubject(builtinEditor)) === "pill.lane.knob",
+        "and the built-in's index path resolves back to the same rendered path, got " +
+        designSelectedPath(builtinEditor, designSubject(builtinEditor)));
+  const staleBuiltin = { ...editor, builtinSel: { name: "Toggle", path: "9.9.9" } };
+  check(designSelectedPath(staleBuiltin, designSubject(staleBuiltin)) === "",
+        "a stale built-in path resolves to no rendered path rather than throwing");
+
+  /* selectDesignRenderedPart: the CLICK direction, exercised end to end for both */
+  const compSelected = [];
+  const clickEditor = {
+    ...editor,
+    componentSel: { component: compId, node: rootId },
+    selectComponent: (c, n) => compSelected.push([c, n]),
+  };
+  selectDesignRenderedPart(clickEditor, designSubject(clickEditor), "face");
+  check(compSelected.length === 1 && compSelected[0][0] === compId && compSelected[0][1] === faceId,
+        "clicking a rendered part selects its doc node, got " + JSON.stringify(compSelected));
+
+  const builtinSelected = [];
+  const clickBuiltinEditor = {
+    ...editor,
+    componentSel: null,
+    builtinSel: { name: "Toggle", path: "0" },
+    selectBuiltin: (name, path) => builtinSelected.push([name, path]),
+  };
+  selectDesignRenderedPart(clickBuiltinEditor, designSubject(clickBuiltinEditor), "pill.lane.knob");
+  check(builtinSelected.length === 1 && builtinSelected[0][0] === "Toggle" &&
+        builtinSelected[0][1] === builtinLoc.index,
+        "and clicking a built-in's rendered part selects it by index path, got " +
+        JSON.stringify(builtinSelected));
+
+  store.apply(store.version() + 1, [{ op: "remove", node: compId }]);
+}
 
 /* ---- theme tokens (spec 2.10) ----
    The document carries the seeded semantic set; an authored "$name" color slot resolves
@@ -939,7 +1319,7 @@ check(typeof accentToken?.light === "string" && accentToken.light.startsWith("#"
 
 /* the Fault lamp is a Panel whose surface we author to a token; its live echo still
    holds the OLD compiled literal, which must not win over the document */
-const faultPanel = store.pages()[0].widgets.find((w) => w.label === "Fault");
+const faultPanel = store.widgetsOn(store.pages()[0]).find((w) => w.label === "Fault");
 store.apply(store.version() + 1, [
   { op: "set_prop", node: faultPanel.id, key: "slots", value: { surface: "$accent" } },
 ]);
@@ -1013,7 +1393,7 @@ check(pagePanel.host.querySelector(".page-select") === pageButton,
 check(pageButton.textContent === "Main", "it moves the name in place");
 const pageSelBefore = pageSelectShape(editor);
 store.apply(store.version() + 1, [
-  { op: "insert", parent: 0, list: "pages", node: { id: 9400, name: "Page 2", widgets: [] } },
+  { op: "insert", parent: 0, list: "pages", node: { id: 9400, name: "Page 2", children: [] } },
 ]);
 check(pageSelectShape(editor) !== pageSelBefore, "a new page moves the selector's shape");
 
@@ -1126,7 +1506,7 @@ ws.send(JSON.stringify({
   type: "apply_ops",
   base_version: backendVersion,
   ops: [
-    { op: "insert", parent: 0, list: "pages", node: { id: 9550, name: "Repeat", widgets: [] } },
+    { op: "insert", parent: 0, list: "pages", node: { id: 9550, name: "Repeat", children: [] } },
     {
       op: "insert", parent: 0, list: "components",
       node: {
@@ -1206,10 +1586,10 @@ ws.send(JSON.stringify({
   type: "apply_ops",
   base_version: backendVersion,
   ops: [
-    { op: "insert", parent: repeatPage.id, list: "widgets",
-      node: { type: "Ring", label: "Ring", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
-    { op: "insert", parent: repeatPage.id, list: "widgets",
-      node: { type: "Bar", label: "Bar", geom: { x: 300, y: 0, w: 400, h: 80 }, slots: {} } },
+    { op: "insert", parent: repeatPage.id, list: "children",
+      node: { kind: "widget", type: "Ring", label: "Ring", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
+    { op: "insert", parent: repeatPage.id, list: "children",
+      node: { kind: "widget", type: "Bar", label: "Bar", geom: { x: 300, y: 0, w: 400, h: 80 }, slots: {} } },
   ],
 }));
 const repeatWidgetsApplied = await next("ops_applied");
@@ -1238,7 +1618,7 @@ check(new Set(zooms).size === 4,
       "repeat.fraction reached a second expression independently, got " + JSON.stringify(zooms));
 /* the ring widget's whole tile records ONE rect for "mark" (recordRepeatRect), not
    whichever of the 4 copies happened to render last */
-const ringWidget = repeatPage.widgets.find((w) => w.type === "Ring");
+const ringWidget = repeatPage.children.find((w) => w.type === "Ring");
 const ringParts = repeatParts.get(ringWidget.id);
 check(ringParts instanceof Map && ringParts.size === 1 && ringParts.has("mark"),
       "N copies share one recorded part rect, not one per copy");
@@ -1262,7 +1642,7 @@ ws.send(JSON.stringify({
   type: "apply_ops",
   base_version: backendVersion,
   ops: [
-    { op: "insert", parent: 0, list: "pages", node: { name: "Code", widgets: [] } },
+    { op: "insert", parent: 0, list: "pages", node: { name: "Code", children: [] } },
     {
       op: "insert", parent: 0, list: "components",
       node: {
@@ -1392,10 +1772,10 @@ ws.send(JSON.stringify({
   type: "apply_ops",
   base_version: backendVersion,
   ops: [
-    { op: "insert", parent: codePage.id, list: "widgets",
-      node: { type: "CodeDemo", label: "CodeDemo", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
-    { op: "insert", parent: codePage.id, list: "widgets",
-      node: { type: "CodeRepeat", label: "CodeRepeat", geom: { x: 300, y: 0, w: 200, h: 200 }, slots: {} } },
+    { op: "insert", parent: codePage.id, list: "children",
+      node: { kind: "widget", type: "CodeDemo", label: "CodeDemo", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
+    { op: "insert", parent: codePage.id, list: "children",
+      node: { kind: "widget", type: "CodeRepeat", label: "CodeRepeat", geom: { x: 300, y: 0, w: 200, h: 200 }, slots: {} } },
   ],
 }));
 const codeWidgetsApplied = await next("ops_applied");
@@ -1427,7 +1807,7 @@ has(codeSvg, 'fill="#00ffff"', "a sibling AFTER the throwing part still rendered
 has(codeSvg, 'class="fault error"', "the widget carrying the throwing code part shows the fault badge");
 has(codeSvg, "boom", "and the badge surfaces the JS error (a title tooltip), not just the console");
 const codeDemoWidgetId =
-  store.pages().find((p) => p.name === "Code").widgets.find((w) => w.label === "CodeDemo").id;
+  store.pages().find((p) => p.name === "Code").children.find((w) => w.label === "CodeDemo").id;
 const faultMsg = codeFaults.get(codeDemoWidgetId);
 check(
   typeof faultMsg === "string" && faultMsg.includes("broken") && faultMsg.includes("boom"),

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <set>
 #include <unordered_map>
 
@@ -464,56 +465,69 @@ class Compiler {
         auto pages = document_.root.find("pages");
         if (pages == document_.root.end() || !pages->is_array()) return;
         for (const Json& page : *pages) {
-            auto widgets = page.find("widgets");
-            if (widgets == page.end() || !widgets->is_array()) continue;
-            for (const Json& widget : *widgets) {
-                WidgetInfo info;
-                info.id = id_of(widget);
-                info.page = id_of(page);
-                info.node = &widget;
-                info.type = type_named(widget.value("type", ""));
-                if (!info.type)
-                    diag(info.id, "widget_type",
-                         "widget type '" + widget.value("type", "") + "' is not registered");
+            const uint64_t page_id = id_of(page);
+            /* A page's children are widgets and frames in one list (spec 2.8), a frame
+             * nesting to any depth; only the widgets carry cells, so this walks past
+             * frames rather than compiling anything for them. `info.page` is always the
+             * PAGE's id, never a frame's — page identity is what gates mesh polling
+             * (a widget three frames deep must still resolve to its page). */
+            std::function<void(const Json&)> walk_children = [&](const Json& node) {
+                auto children = node.find("children");
+                if (children == node.end() || !children->is_array()) return;
+                for (const Json& widget : *children) {
+                    const std::string kind = widget.value("kind", "");
+                    if (kind == "frame") { walk_children(widget); continue; }
+                    if (kind != "widget") continue;
 
-                auto locals = widget.find("locals");
-                if (locals != widget.end() && locals->is_array()) {
-                    for (const Json& var : *locals) {
-                        const std::string name = var.value("name", "");
-                        const uint32_t cell = declare_variable(var, CellKind::Local, info.id);
-                        if (cell == UINT32_MAX) continue;
-                        info.locals[name] = cell;
-                        if (program_.cells[cell].shape == Shape::Timer)
-                            info.timers[name] = add_timer(info.id, var);
-                    }
-                }
+                    WidgetInfo info;
+                    info.id = id_of(widget);
+                    info.page = page_id;
+                    info.node = &widget;
+                    info.type = type_named(widget.value("type", ""));
+                    if (!info.type)
+                        diag(info.id, "widget_type",
+                             "widget type '" + widget.value("type", "") + "' is not registered");
 
-                if (info.type) {
-                    const Json& authored =
-                        widget.contains("slots") && widget["slots"].is_object()
-                            ? widget["slots"] : empty_object_;
-                    for (const Json& slot : info.type->value("slots", Json::array())) {
-                        const std::string name = slot.value("name", "");
-                        const Shape shape = slot_shape(slot);
-                        Json initial = slot.value("default", Json());
-                        /* the slot's NAME is its address: a part's property is stored
-                           nested under the part, so the lookup walks the dots */
-                        if (const Json* override = authored_slot(authored, name))
-                            initial = *override;
-                        if (shape == Shape::Color) initial = resolve_token(info.id, name, initial);
-                        check_variants(info.id, name, slot, initial);
-                        check_enum_type_slot(info.id, name, slot, initial);
-                        info.slots[name] =
-                            add_cell(CellKind::Slot, info.id, info.id, name, shape, initial, false);
-                        /* a slot the type flags `history` gets a sampling ring (spec
-                         * 2.9): rate and window read from the sibling slots' authored
-                         * values (an edit recompiles, so compile-time is live enough) */
-                        if (slot.value("history", false))
-                            add_history(info, name, info.slots[name], authored);
+                    auto locals = widget.find("locals");
+                    if (locals != widget.end() && locals->is_array()) {
+                        for (const Json& var : *locals) {
+                            const std::string name = var.value("name", "");
+                            const uint32_t cell = declare_variable(var, CellKind::Local, info.id);
+                            if (cell == UINT32_MAX) continue;
+                            info.locals[name] = cell;
+                            if (program_.cells[cell].shape == Shape::Timer)
+                                info.timers[name] = add_timer(info.id, var);
+                        }
                     }
+
+                    if (info.type) {
+                        const Json& authored =
+                            widget.contains("slots") && widget["slots"].is_object()
+                                ? widget["slots"] : empty_object_;
+                        for (const Json& slot : info.type->value("slots", Json::array())) {
+                            const std::string name = slot.value("name", "");
+                            const Shape shape = slot_shape(slot);
+                            Json initial = slot.value("default", Json());
+                            /* the slot's NAME is its address: a part's property is stored
+                               nested under the part, so the lookup walks the dots */
+                            if (const Json* override = authored_slot(authored, name))
+                                initial = *override;
+                            if (shape == Shape::Color) initial = resolve_token(info.id, name, initial);
+                            check_variants(info.id, name, slot, initial);
+                            check_enum_type_slot(info.id, name, slot, initial);
+                            info.slots[name] =
+                                add_cell(CellKind::Slot, info.id, info.id, name, shape, initial, false);
+                            /* a slot the type flags `history` gets a sampling ring (spec
+                             * 2.9): rate and window read from the sibling slots' authored
+                             * values (an edit recompiles, so compile-time is live enough) */
+                            if (slot.value("history", false))
+                                add_history(info, name, info.slots[name], authored);
+                        }
+                    }
+                    widgets_.push_back(std::move(info));
                 }
-                widgets_.push_back(std::move(info));
-            }
+            };
+            walk_children(page);
         }
     }
 

@@ -10,7 +10,7 @@
  * moves the whole selection, the grips resize its bbox, and a dashed ghost shows where it
  * will land. The document is only touched on release, by one op. */
 
-import { bboxOf, cellSize, hitTest, renderContent, renderOverlay, ViewState } from "./canvas.js";
+import { bboxOf, cellSize, hitTest, renderContent, renderDesignOverlay, renderDesignPreview, renderOverlay, resolvePage, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton, svg } from "./dom.js";
 import { Editor } from "./editor.js";
@@ -23,11 +23,12 @@ import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, runtimeSlots, themedSlot, typeOf, widgetOptions } from "./slots.js";
-import { PartRect, Rect } from "./template.js";
-import { BuiltinDef, Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
+import { PartHits, PartRect, Rect } from "./template.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Frame, Geom, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
+import { designInspectorShape, designSelectedPath, designShape, designSubject, renderDesignInspector, renderDesignTree, selectDesignRenderedPart } from "./workspaces/design.js";
 import { renderStyleWorkspace, styleShape } from "./workspaces/style.js";
 
 type Mode = "edit" | "test" | "operate";
@@ -35,6 +36,22 @@ type Mode = "edit" | "test" | "operate";
 const SIDEBAR_MIN = 200;
 const SIDEBAR_MAX = 640;
 const MIN_SIZE = 20;
+
+/* Map one geom through a from-rect -> to-rect transform (a uniform scale plus the
+ * to-rect's own offset): the SAME maths a multi-widget group resize and a "none"-layout
+ * frame's child rescale both need (spec 2.8 Resize), so it lives once here rather than
+ * twice. A from/to pair anchored at (0,0) (a frame's own old/new size) rescales in the
+ * frame's LOCAL space; the selection's absolute bbox rescales in canvas-absolute space. */
+function mapGeom(geom: Geom, from: Rect, to: Rect): Geom {
+  const scaleX = from.w ? to.w / from.w : 1;
+  const scaleY = from.h ? to.h / from.h : 1;
+  return {
+    x: Math.round(to.x + (geom.x - from.x) * scaleX),
+    y: Math.round(to.y + (geom.y - from.y) * scaleY),
+    w: Math.max(MIN_SIZE, Math.round(geom.w * scaleX)),
+    h: Math.max(MIN_SIZE, Math.round(geom.h * scaleY)),
+  };
+}
 
 export class App implements Editor {
   store = new DocStore();
@@ -44,6 +61,9 @@ export class App implements Editor {
   mesh: Mesh = { entities: [], types: [] };
   /* the served expression vocabulary: autocomplete reads exactly what compiles */
   lang: Lang | null = null;
+  /* the closed attr vocabulary (spec 2.3), snapshot-only like `lang`: the part
+     inspector's Attrs section lists exactly this, set or not */
+  attrTable: AttrTable | null = null;
   /* the built-ins' editable document form, snapshot-only (it never changes at runtime):
      the Components tree browses it and a fork copies one entry into doc.components */
   builtins: BuiltinDef[] = [];
@@ -70,6 +90,11 @@ export class App implements Editor {
 
   private conn: Connection;
   private viewport: Viewport | null = null;
+  /* the Design workspace's OWN camera: a component preview is its own little artboard,
+     scaled to fit its own stage exactly like Content's, and it must pan/zoom
+     independently (spec 3.1) — one Viewport per stage, never shared. Null in the
+     operate view, which builds no Design workspace at all. */
+  private designViewport: Viewport | null = null;
   private pageId = 0;
   private workspaces: Workspace[] = [];
   private workspace: WorkspaceId = "content";
@@ -86,12 +111,20 @@ export class App implements Editor {
     problems: HTMLElement;
     pill: HTMLElement;
   };
+  private designNodes: {
+    stage: HTMLElement;
+    layer: HTMLElement;
+    art: SVGSVGElement;
+    overlay: SVGSVGElement;
+  } | null = null;
   private sidebars!: { left: Panel; inspector: Panel };
   /* the Style and Data workspaces' reconciled panels and the topbar page selector's
      (pageselect.ts); all null when operating */
   private stylePanel: Panel | null = null;
   private dataTreePanel: Panel | null = null;
   private dataDetailPanel: Panel | null = null;
+  private designTreePanel: Panel | null = null;
+  private designInspectorPanel: Panel | null = null;
   private pagePanel: Panel | null = null;
   /* our "+ New page" is in flight: the echo carries the issued id, switch to it there */
   private pendingPage = false;
@@ -106,14 +139,16 @@ export class App implements Editor {
   private sidebarsDirty = true;
   private lastContent = "";
   private lastOverlay = "";
+  private lastDesignContent = "";
+  private lastDesignOverlay = "";
 
   /* `operate` is the deployed view: no topbar, no sidebars, the artboard alone */
   constructor(private root: HTMLElement, url: string, private operate = false) {
     this.build();
     if (this.operate) this.setMode("operate");
     this.conn = new Connection(url, {
-      snapshot: (doc, registry, live, diag, mesh, lang, builtins) =>
-        this.onSnapshot(doc, registry, live, diag, mesh, lang, builtins),
+      snapshot: (doc, registry, live, diag, mesh, lang, attrTable, builtins) =>
+        this.onSnapshot(doc, registry, live, diag, mesh, lang, attrTable, builtins),
       mesh: (mesh) => {
         this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
         refreshSourceTree();
@@ -148,6 +183,13 @@ export class App implements Editor {
     return id ? this.store.widget(id) : null;
   }
 
+  /* the selected FRAME, when the (single) selection names one: selected only from the
+     Layers tree (spec 2.8), never by clicking the artboard */
+  selectedFrame(): Frame | null {
+    const id = this.view.selection[0];
+    return id ? this.store.frame(id) : null;
+  }
+
   apply(ops: Op[]): void {
     this.conn.apply(ops);
   }
@@ -178,11 +220,12 @@ export class App implements Editor {
     this.setWorkspace("content");
   }
 
+  /* The page selection and the component selection are no longer mutually exclusive:
+     they belong to different workspaces, so clearing one when the other moves would
+     lose your place in Design every time you touched the artboard. */
   select(ids: number[]): void {
     this.view.selection = ids;
     this.view.part = "";
-    this.componentSel = null;
-    this.builtinSel = null;
     this.queueCanvas();
     this.queueSidebars();
   }
@@ -192,33 +235,27 @@ export class App implements Editor {
   selectPart(id: number, path: string): void {
     this.view.selection = [id];
     this.view.part = path;
-    this.componentSel = null;
-    this.builtinSel = null;
     this.queueCanvas();
     this.queueSidebars();
   }
 
-  /* component selection: the inspector scopes to the component (or one part node in
-     it) and the widget selection clears — the overlay owns instance space only, so no
-     part ring is drawn for a component part (partRects are per instance) */
+  /* the Design workspace's selection: a component, or one part node inside it. The two
+     component selections ARE exclusive of each other (one inspector, one subject); the
+     page selection is untouched, since it belongs to another workspace. */
   selectComponent(component: number, node: number): void {
     this.componentSel = component ? { component, node: node || component } : null;
     this.builtinSel = null;
-    this.view.selection = [];
-    this.view.part = "";
-    this.queueCanvas();
+    this.setWorkspace("design");
     this.queueSidebars();
   }
 
   /* browse a built-in read-only (spec 2.3 Forking: reading the shipped definition is
      what precedes overriding it). It is not in the document, so there is nothing to
-     select by id and nothing to ring on the artboard — the inspector alone changes. */
+     select by id — the Design inspector alone changes. */
   selectBuiltin(name: string, path: string): void {
     this.builtinSel = name ? { name, path } : null;
     this.componentSel = null;
-    this.view.selection = [];
-    this.view.part = "";
-    this.queueCanvas();
+    this.setWorkspace("design");
     this.queueSidebars();
   }
 
@@ -328,6 +365,7 @@ export class App implements Editor {
         this.renderSidebars();
       }
       this.renderCanvas();
+      this.renderDesignCanvas();
     });
   }
 
@@ -375,7 +413,7 @@ export class App implements Editor {
   }
 
   private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
-                     lang: Lang, builtins: BuiltinDef[]): void {
+                     lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[]): void {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
@@ -383,6 +421,7 @@ export class App implements Editor {
     this.absorbHist(live.hist);
     this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
     this.lang = lang;
+    this.attrTable = attrTable;
     this.builtins = Array.isArray(builtins) ? builtins : [];
     this.onDiag(diag, false);
     const page = this.page();
@@ -536,11 +575,65 @@ export class App implements Editor {
         this.nodes.art.innerHTML = content;
       }
     }
-    const overlay = renderOverlay(page, this.view, this.partRects);
+    const overlay = renderOverlay(doc.canvas, page, this.view, this.partRects);
     if (overlay === this.lastOverlay) return;
     this.lastOverlay = overlay;
     this.nodes.overlay.setAttribute("viewBox", viewBox);
     this.nodes.overlay.innerHTML = overlay;
+  }
+
+  /* The Design workspace's own artboard: a TYPE preview rather than a page. Cheap
+     enough (one widget, no live data) to just recompute every frame and diff against
+     the last markup, exactly like Content's own canvas above — no separate dirty flag
+     needed since nothing here is fed by 30 Hz live frames in the first place. */
+  private renderDesignCanvas(): void {
+    if (this.operate || !this.designNodes) return;
+    const nodes = this.designNodes;
+    const subject = designSubject(this);
+    if (!subject) {
+      if (this.lastDesignContent !== "" || this.lastDesignOverlay !== "") {
+        nodes.art.innerHTML = "";
+        nodes.overlay.innerHTML = "";
+        this.lastDesignContent = this.lastDesignOverlay = "";
+      }
+      return;
+    }
+    /* a size change (switching subjects, or editing design_w/h) re-fits the camera;
+       an unchanged size is a no-op, so a standing pan/zoom survives an unrelated edit */
+    this.designViewport?.setArtboard(subject.w, subject.h);
+    const type = typeOf(this.registry, subject.name);
+    const parts: PartHits = { rects: new Map<string, PartRect>(), path: "", depth: 0, transform: "" };
+    const content = renderDesignPreview(type, subject.name, subject.w, subject.h,
+                                        this.theme(), this.view, parts);
+    const viewBox = `0 0 ${subject.w} ${subject.h}`;
+    if (content !== this.lastDesignContent) {
+      this.lastDesignContent = content;
+      nodes.art.setAttribute("viewBox", viewBox);
+      nodes.art.innerHTML = content;
+    }
+    const path = designSelectedPath(this, subject);
+    const overlay = renderDesignOverlay(path, this.designViewport?.scale() ?? 1, parts.rects);
+    if (overlay !== this.lastDesignOverlay) {
+      this.lastDesignOverlay = overlay;
+      nodes.overlay.setAttribute("viewBox", viewBox);
+      nodes.overlay.innerHTML = overlay;
+    }
+  }
+
+  /* A click in the Design viewport, resolved the same way Content resolves a second
+     click into a part (shell.ts's onStageDown): the browser's OWN hit test, never
+     geometry. The design Viewport captures the pointer for panning (canPan is
+     unconditionally true here — nothing else ever grabs a gesture in this preview), so
+     by the time this fires `ev.target` has been retargeted to the stage itself; asking
+     the browser directly for what is under the pointer (elementFromPoint) is still the
+     browser's hit test, just entered from a different door. */
+  private onDesignTap(ev: PointerEvent): void {
+    const under = document.elementFromPoint(ev.clientX, ev.clientY) as Element | null;
+    const partEl = under?.closest?.("[data-part]") as Element | null;
+    if (!partEl) return;
+    const subject = designSubject(this);
+    if (!subject) return;
+    selectDesignRenderedPart(this, subject, partEl.getAttribute("data-part") ?? "");
   }
 
   /* Each sidebar decides for itself. It is handed the shape of the document it draws from,
@@ -557,6 +650,9 @@ export class App implements Editor {
     this.stylePanel?.render(styleShape(this), (host) => renderStyleWorkspace(host, this));
     this.dataTreePanel?.render(dataShape(this), (host) => renderDataTree(host, this));
     this.dataDetailPanel?.render(dataShape(this), (host) => renderDataDetail(host, this));
+    this.designTreePanel?.render(designShape(this), (host) => renderDesignTree(host, this));
+    this.designInspectorPanel?.render(designInspectorShape(this),
+                                      (host) => renderDesignInspector(host, this));
   }
 
   /* ---- shell construction ---- */
@@ -602,7 +698,26 @@ export class App implements Editor {
       const data = el("main", { class: "workspace-data" }, [dataTree, dataDetail]);
       this.dataTreePanel = new Panel(dataTree);
       this.dataDetailPanel = new Panel(dataDetail);
-      this.workspaces = buildWorkspaces(content, data, style);
+      /* Design: the component list, a live preview of the selected component/part in
+         the middle, and the component/part inspector. The preview's stage is built
+         exactly like Content's (a .stage holding a .layer holding the content SVG and
+         its ring overlay), with its OWN Viewport (below): the two cameras are wholly
+         independent, so panning one never touches the other. */
+      const designTree = el("aside", { class: "sidebar design-tree", "data-input": "scroll" });
+      const designInspector = el("aside", { class: "sidebar design-inspector", "data-input": "scroll" });
+      const designArt =
+        svg("svg", { class: "artboard", width: "100%", height: "100%" }) as SVGSVGElement;
+      const designOverlay =
+        svg("svg", { class: "artboard overlay", width: "100%", height: "100%" }) as SVGSVGElement;
+      const designLayer = el("div", { class: "layer" },
+        [designArt as unknown as Node, designOverlay as unknown as Node]);
+      const designStage = el("section", { class: "stage" }, [designLayer]);
+      const design =
+        el("main", { class: "workspace-design" }, [designTree, designStage, designInspector]);
+      this.designTreePanel = new Panel(designTree);
+      this.designInspectorPanel = new Panel(designInspector);
+      this.designNodes = { stage: designStage, layer: designLayer, art: designArt, overlay: designOverlay };
+      this.workspaces = buildWorkspaces(content, design, data, style);
 
       const modes = el(
         "div",
@@ -621,8 +736,8 @@ export class App implements Editor {
         window.open(window.location.pathname + "?operate", "_blank"), true);
       play.classList.add("play");
 
-      /* the page selector sits between the wordmark and the tabs and, like the mode
-         seg and play, means nothing over Data or Style */
+      /* the page selector is centred on the bar (out of the flex flow, styles.css) so
+         that hiding it over Data or Style leaves the tabs where they were */
       const pageHost = el("div", { class: "page-host" });
       this.pagePanel = new Panel(pageHost);
       this.stageTools = [pageHost, modes, play];
@@ -643,8 +758,8 @@ export class App implements Editor {
       this.root.appendChild(
         el("header", { class: "topbar" }, [
           el("div", { class: "wordmark", text: "DART HMI" }),
-          pageHost,
           tabs,
+          pageHost,
           el("div", { class: "status" }, [modes, play, problems, pill]),
         ]),
       );
@@ -654,6 +769,17 @@ export class App implements Editor {
       }
       this.root.appendChild(banner);
       this.restoreSidebarWidths();
+
+      /* the preview has nothing else to grab a gesture (spec: no drag/resize/rotate in
+         the viewport yet, the inspector already owns add/delete), so canPan is
+         unconditionally true — the whole stage is background as far as this camera is
+         concerned, and a real part click is resolved separately (onDesignTap) */
+      this.designViewport = new Viewport(designStage, designLayer, {
+        canPan: () => true,
+        onTap: (_x, _y, ev) => this.onDesignTap(ev),
+        onViewChange: () => this.schedule(),
+        onLongPress: () => {},
+      });
     }
 
     this.viewport = new Viewport(stage, layer, {
@@ -661,7 +787,8 @@ export class App implements Editor {
       onTap: (x, y, ev) => {
         if (this.view.mode !== "edit") return;
         const page = this.page();
-        const id = page ? hitTest(page, x, y) : 0;
+        const doc = this.store.doc;
+        const id = page && doc ? hitTest(doc.canvas, page, x, y) : 0;
         this.clickSelect(id, ev.shiftKey);
       },
       onViewChange: () => this.queueCanvas(),
@@ -723,12 +850,22 @@ export class App implements Editor {
   /* pure view routing: the hidden workspaces stay alive (viewport transform, reconciled
      sidebars), and the connection and document never notice a switch */
   private setWorkspace(id: WorkspaceId): void {
+    /* selecting a component (or one of its parts) calls this EVERY time, even while
+       already in Design — `entering` is only true on a real tab change, which is what
+       must trigger a re-fit below; refitting on every part click would fight a
+       standing pan/zoom the moment the author touched the tree */
+    const entering = this.workspace !== id;
     this.workspace = id;
     for (const ws of this.workspaces) ws.root.hidden = ws.id !== id;
     for (const tab of Array.from(this.root.querySelectorAll("button[data-workspace]")))
       tab.classList.toggle("on", (tab as HTMLElement).dataset.workspace === id);
     /* the mode switch and play act on the artboard: they mean nothing over Data or Style */
     for (const tool of this.stageTools) tool.hidden = id !== "content";
+    /* a HIDDEN stage has zero size (viewport.ts's own fit() guard skips one with none),
+       so switching TO Design must re-fit its camera on this same tick, right as the
+       `hidden` attribute clears — waiting on the ResizeObserver instead leaves the
+       preview blank or wrongly scaled until something else happens to resize it */
+    if (entering && id === "design") this.designViewport?.fit(true);
   }
 
   private setMode(mode: Mode): void {
@@ -770,9 +907,10 @@ export class App implements Editor {
   private onStageHover(ev: PointerEvent): void {
     if (this.view.mode !== "edit" || this.drag) return;
     const page = this.page();
-    if (!page || !this.viewport) return;
+    const doc = this.store.doc;
+    if (!page || !doc || !this.viewport) return;
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const id = hitTest(page, at.x, at.y);
+    const id = hitTest(doc.canvas, page, at.x, at.y);
     if (id === this.view.hover) return;
     this.view.hover = id;
     this.queueCanvas();
@@ -806,18 +944,63 @@ export class App implements Editor {
           descend = partNode.getAttribute("data-part");
       }
     }
+
+    const page = this.page();
+    const doc = this.store.doc;
+    if (!page || !doc) return;
+    const placed = resolvePage(doc.canvas, page);
+    const byId = new Map(placed.map((p) => [p.node.id, p]));
+    /* the ABSOLUTE x/y a node's `geom` is authored relative to: the page's own origin
+       (0,0) for a top-level child, or its parent frame's resolved origin for a nested
+       one (spec 2.8). Read once at drag-start and held fixed through the drag: only the
+       dragged node itself moves, never its parent. */
+    const originOf = (id: number): { x: number; y: number } => {
+      const parent = this.store.parentOf(id);
+      const p = parent && typeof parent.id === "number" ? byId.get(parent.id) : undefined;
+      return p ? { x: p.rect.x, y: p.rect.y } : { x: 0, y: 0 };
+    };
+
+    /* a lone selected FRAME resizes as its own rect, reached only through a grip: a
+       frame paints no body of its own in the content layer (its geom is authored
+       directly in the inspector instead), so `widgetNode` is never a frame's. */
+    if (handle && selection.length === 1) {
+      const frame = this.store.frame(selection[0]);
+      if (frame) {
+        const rect = byId.get(frame.id)?.rect ?? { ...frame.geom };
+        const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
+        this.drag = {
+          mode: handle.dataset.handle,
+          part: null,
+          frame,
+          frameOrigin: originOf(frame.id),
+          start: rect,
+          x0: at.x,
+          y0: at.y,
+          moved: false,
+        };
+        ev.stopPropagation();
+        ev.preventDefault();
+        return;
+      }
+    }
+
     const widgets = selection
       .map((id) => this.store.widget(id))
       .filter(Boolean) as Widget[];
     if (!widgets.length) return;
 
+    /* the RESOLVED absolute rect, not the raw (possibly frame-relative) geom: a widget
+       nested under a frame must drag and resize in the same screen space it is drawn
+       in, exactly like a top-level one (whose resolved rect equals its geom, origin 0,0) */
+    const rects = widgets.map((w) => byId.get(w.id)?.rect ?? { ...w.geom });
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     this.drag = {
       mode: handle?.dataset.handle ?? "move",
       part: descend,
       widgets,
-      start: bboxOf(widgets),
-      geoms: widgets.map((w) => ({ ...w.geom })),
+      origins: widgets.map((w) => originOf(w.id)),
+      start: bboxOf(rects),
+      geoms: rects,
       x0: at.x,
       y0: at.y,
       moved: false,
@@ -861,21 +1044,54 @@ export class App implements Editor {
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     const box = this.targetBox(drag, at.x - drag.x0, at.y - drag.y0, ev.altKey);
     const from: Rect = drag.start;
-    const scaleX = from.w ? box.w / from.w : 1;
-    const scaleY = from.h ? box.h / from.h : 1;
+
+    if (drag.frame) {
+      const frame = drag.frame as Frame;
+      const origin = drag.frameOrigin as { x: number; y: number };
+      const ops: Op[] = [{
+        op: "set_prop",
+        node: frame.id,
+        key: "geom",
+        value: {
+          x: Math.round(box.x - origin.x),
+          y: Math.round(box.y - origin.y),
+          w: Math.max(MIN_SIZE, Math.round(box.w)),
+          h: Math.max(MIN_SIZE, Math.round(box.h)),
+        },
+      }];
+      /* a SIZE change on a "none"-layout frame scales its children's authored geom
+         proportionally (spec 2.8 Resize); a plain move needs no child op at all, since
+         a child's geom is already relative to the frame's own origin. row/col children
+         are never rewritten by this: the flow simply re-runs at the new size. */
+      if (frame.layout === "none" && (box.w !== from.w || box.h !== from.h)) {
+        const localFrom: Rect = { x: 0, y: 0, w: from.w, h: from.h };
+        const localTo: Rect = { x: 0, y: 0, w: box.w, h: box.h };
+        for (const child of frame.children ?? [])
+          ops.push({ op: "set_prop", node: child.id, key: "geom",
+                     value: mapGeom(child.geom, localFrom, localTo) });
+      }
+      this.apply(ops);
+      this.queueCanvas();
+      return;
+    }
+
     /* a group resize maps each widget through the bbox transform, so relative placement
-       survives; for a single widget it is just the new rect */
-    const ops: Op[] = drag.widgets.map((widget: Widget, index: number) => {
-      const geom = drag.geoms[index];
+       survives; for a single widget it is just the new rect. The transform runs in
+       ABSOLUTE space (drag.geoms holds resolved rects); each result is then localized
+       back into whatever origin that widget is actually authored against. */
+    const origins = drag.origins as { x: number; y: number }[];
+    const ops: Op[] = (drag.widgets as Widget[]).map((widget, index) => {
+      const abs = mapGeom(drag.geoms[index], from, box);
+      const origin = origins[index];
       return {
         op: "set_prop",
         node: widget.id,
         key: "geom",
         value: {
-          x: Math.round(box.x + (geom.x - from.x) * scaleX),
-          y: Math.round(box.y + (geom.y - from.y) * scaleY),
-          w: Math.max(MIN_SIZE, Math.round(geom.w * scaleX)),
-          h: Math.max(MIN_SIZE, Math.round(geom.h * scaleY)),
+          x: Math.round(abs.x - origin.x),
+          y: Math.round(abs.y - origin.y),
+          w: abs.w,
+          h: abs.h,
         },
       };
     });
@@ -1207,8 +1423,14 @@ export class App implements Editor {
     if (typing) return;
     if (ev.key === "Escape") {
       closeMenu();
-      /* the inner level steps out first: component part -> component -> none, and a
-         selected widget part -> widget -> none, one level per press */
+      /* Escape steps out one level WITHIN the active workspace: in Design, part ->
+         component -> none; in Content, widget part -> widget -> none. */
+      if (this.workspace !== "design") {
+        if (this.view.part && this.view.selection.length)
+          this.selectPart(this.view.selection[0], "");
+        else this.select([]);
+        return;
+      }
       if (this.componentSel) {
         if (this.componentSel.node !== this.componentSel.component)
           this.selectComponent(this.componentSel.component, this.componentSel.component);
@@ -1220,9 +1442,7 @@ export class App implements Editor {
           this.selectBuiltin(this.builtinSel.name,
                              at < 0 ? "" : this.builtinSel.path.slice(0, at));
         else this.selectBuiltin("", "");
-      } else if (this.view.part && this.view.selection.length)
-        this.selectPart(this.view.selection[0], "");
-      else this.select([]);
+      }
     }
     /* edit shortcuts only over the artboard: a Delete in another workspace must not
        silently remove the selection it cannot show */
@@ -1249,10 +1469,11 @@ export class App implements Editor {
   /* right-click on the desktop, long-press on touch: the same menu either way */
   private openContextAt(x: number, y: number, clientX: number, clientY: number): void {
     const page = this.page();
-    if (!page || this.view.mode !== "edit") return;
+    const doc = this.store.doc;
+    if (!page || !doc || this.view.mode !== "edit") return;
     const ev = { clientX, clientY };
     const at = { x, y };
-    const id = hitTest(page, at.x, at.y);
+    const id = hitTest(doc.canvas, page, at.x, at.y);
     if (id) {
       if (this.view.selection.indexOf(id) < 0) this.select([id]);
       const widget = this.store.widget(id);
@@ -1282,11 +1503,14 @@ export class App implements Editor {
     const cell = cellSize(doc.canvas);
     const w = 6 * cell;
     const h = 3 * cell;
+    /* the clash search reads every node's RESOLVED absolute rect, wherever it nests:
+       a widget grouped inside a frame occupies real screen space just like a bare one */
+    const others = resolvePage(doc.canvas, page).map((p) => p.rect);
     const clash = (px: number, py: number) =>
-      (page.widgets ?? []).some(
+      others.some(
         (other) =>
-          !(px + w <= other.geom.x || other.geom.x + other.geom.w <= px ||
-            py + h <= other.geom.y || other.geom.y + other.geom.h <= py),
+          !(px + w <= other.x || other.x + other.w <= px ||
+            py + h <= other.y || other.y + other.h <= py),
       );
     let x = atX === undefined ? cell : Math.round(atX / cell) * cell;
     let y = atY === undefined ? cell : Math.round(atY / cell) * cell;
@@ -1297,28 +1521,35 @@ export class App implements Editor {
           y = row * cell;
           if (!clash(x, y)) break;
         }
+    /* a placed-by-hand widget always lands as a top-level page child (its geom is then
+       exactly the canvas position computed above); dropping it INTO a frame is a Layers-
+       tree move, not a placement default */
     this.apply([
       {
         op: "insert",
         parent: page.id,
-        list: "widgets",
-        node: { type, label: type, geom: { x, y, w, h } },
+        list: "children",
+        node: { kind: "widget", type, label: type, geom: { x, y, w, h } },
       },
     ]);
   }
 
+  /* duplicate every selected widget OR frame, into its OWN parent (a frame's child
+     duplicates back into that same frame, keeping its frame-relative geom meaningful;
+     a page-level node duplicates back onto the page) */
   private duplicate(): void {
-    const page = this.page();
     const doc = this.store.doc;
-    if (!page || !doc) return;
+    if (!doc) return;
     const cell = cellSize(doc.canvas);
     const ops: Op[] = [];
     for (const id of this.view.selection) {
-      const widget = this.store.widget(id);
-      if (!widget) continue;
-      const copy = stripIds(JSON.parse(JSON.stringify(widget)));
-      copy.geom = { ...widget.geom, x: widget.geom.x + cell, y: widget.geom.y + cell };
-      ops.push({ op: "insert", parent: page.id, list: "widgets", node: copy });
+      const node = this.store.widget(id) ?? this.store.frame(id);
+      if (!node) continue;
+      const parent = this.store.parentOf(id);
+      if (!parent || typeof parent.id !== "number") continue;
+      const copy = stripIds(JSON.parse(JSON.stringify(node)));
+      copy.geom = { ...node.geom, x: node.geom.x + cell, y: node.geom.y + cell };
+      ops.push({ op: "insert", parent: parent.id, list: "children", node: copy });
     }
     if (ops.length) this.apply(ops);
   }

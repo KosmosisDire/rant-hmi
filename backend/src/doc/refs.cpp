@@ -51,7 +51,13 @@ void walk_refs(Kind kind, Json& node, const Site& visit) {
     for (const ChildList& l : spec.lists) {
         auto it = node.find(l.key);
         if (it == node.end() || !it->is_array()) continue;
-        for (Json& child : *it) walk_refs(l.child, child, visit);
+        for (Json& child : *it) {
+            /* the document is always valid by the time refs are walked (adopt/prepare
+               already rejected any child whose kind does not resolve) */
+            Kind ck = Kind::Doc;
+            std::string ignored;
+            if (child_kind(l, child, ck, ignored)) walk_refs(ck, child, visit);
+        }
     }
 }
 

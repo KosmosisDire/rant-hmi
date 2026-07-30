@@ -23,7 +23,7 @@ function usedCount(editor: Editor, name: string): number {
     }
   };
   for (const page of editor.store.pages())
-    for (const widget of page.widgets ?? []) walk(widget.slots);
+    for (const widget of editor.store.widgetsOn(page)) walk(widget.slots);
   return count;
 }
 

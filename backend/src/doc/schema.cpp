@@ -62,21 +62,29 @@ const std::vector<NodeSpec>& table() {
              * snapped coordinate on a half unit and the inspector rounds it back off */
             object("canvas", Json{{"unit_w", 1408}, {"unit_h", 792}, {"cols", 64}, {"rows", 36}}),
         };
-        doc.lists = {{"globals", Kind::Var}, {"tokens", Kind::Token},
-                     {"components", Kind::Component}, {"pages", Kind::Page}};
+        doc.lists = {{"globals", {Kind::Var}}, {"tokens", {Kind::Token}},
+                     {"components", {Kind::Component}}, {"pages", {Kind::Page}}};
         t.push_back(doc);
 
         NodeSpec page;
         page.kind = Kind::Page;
         page.name = "page";
         page.props = {text("name", "Page")};
-        page.lists = {{"widgets", Kind::Widget}};
+        /* a page's children are widgets AND frames in ONE ordered list (proto doc
+         * 2.2/2.4 one level up): z-order and flow order are the same order, so they
+         * cannot live in two separate arrays. `kind` on each child says which. */
+        page.lists = {{"children", {Kind::Frame, Kind::Widget}, "kind"}};
         t.push_back(page);
 
         NodeSpec widget;
         widget.kind = Kind::Widget;
         widget.name = "widget";
         widget.props = {
+            /* the discriminator a page or frame's `children` reads (schema.h); fixed to
+             * "widget" for every node of this kind, the same way a frame's is fixed to
+             * "frame" — it exists so the two shapes can share one list, not as a choice
+             * an instance makes */
+            text("kind", "widget"),
             text("type", "Button"),
             text("label", ""),
             object("geom", Json{{"x", 0}, {"y", 0}, {"w", 132}, {"h", 66}}),   /* canvas units: 6 x 3 cells */
@@ -85,7 +93,7 @@ const std::vector<NodeSpec>& table() {
              * part ({"bar": {"fill_color": "#fff"}} = slot address "bar.fill_color") */
             object("slots", Json::object()),
         };
-        widget.lists = {{"locals", Kind::Var}, {"feeds", Kind::Feed}, {"flows", Kind::Flow}};
+        widget.lists = {{"locals", {Kind::Var}}, {"feeds", {Kind::Feed}}, {"flows", {Kind::Flow}}};
         t.push_back(widget);
 
         NodeSpec var;
@@ -128,7 +136,7 @@ const std::vector<NodeSpec>& table() {
             array("when", Role::Triggers),
             enumer("when_mode", {"first", "any"}, "first"),
         };
-        flow.lists = {{"do", Kind::Step}};
+        flow.lists = {{"do", {Kind::Step}}};
         t.push_back(flow);
 
         /* One DO step per row; the common prop is `kind` and each kind adds its own
@@ -188,10 +196,19 @@ const std::vector<NodeSpec>& table() {
         component.props = {
             text("name", "Component"),
             array("events"),
+            /* the DESIGN FRAME (spec 3.1): the size the Design workspace's own viewport
+             * draws this component's preview at, in the same canvas units a widget's
+             * `geom` uses. Purely an editor convenience for picking a sensible working
+             * size — it is NOT an instance size and every placed instance keeps its own
+             * `geom` regardless, so nothing in the page renderer (canvas.ts) may read
+             * these. A built-in carries no document node and so no design frame either;
+             * the frontend falls back to this same 240 x 120 default for one. */
+            num("design_w", 240),
+            num("design_h", 120),
         };
-        component.lists = {{"props", Kind::PropDef},
-                           {"parts", Kind::Part},
-                           {"behavior", Kind::Flow}};
+        component.lists = {{"props", {Kind::PropDef}},
+                           {"parts", {Kind::Part}},
+                           {"behavior", {Kind::Flow}}};
         t.push_back(component);
 
         /* One declared property = one served SlotSpec row: the optional keys (editor,
@@ -251,8 +268,31 @@ const std::vector<NodeSpec>& table() {
         part.variants = {
             {"box", {enumer("dir", {"row", "col", "stack", "auto"}, "stack")}},
         };
-        part.lists = {{"props", Kind::PropDef}, {"children", Kind::Part}};
+        part.lists = {{"props", {Kind::PropDef}}, {"children", {Kind::Part}}};
         t.push_back(part);
+
+        /* A FRAME (proto doc 2.2/2.4, one level up from the component-internal node
+         * model it previews): a page-level container that groups widget instances and
+         * other frames, and can lay them out in a row or column. It gives the Layers
+         * tree a real hierarchy now that a widget's own internal parts are edited in the
+         * Design workspace instead. A child's `geom` is in ITS PARENT's coordinates
+         * (spec 2.8): a page child in canvas units exactly as today, a frame's child
+         * relative to that frame's own x/y — so moving a frame moves its children for
+         * free, with no op written to them. */
+        NodeSpec frame;
+        frame.kind = Kind::Frame;
+        frame.name = "frame";
+        frame.props = {
+            text("kind", "frame"),   /* the discriminator; see widget's own "kind" above */
+            text("name", "Group"),
+            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 132}, {"h", 66}}),
+            enumer("layout", {"none", "row", "col"}, "none"),
+            num("gap", 0),
+            num("pad", 0),
+            enumer("align", {"start", "center", "end", "stretch"}, "start"),
+        };
+        frame.lists = {{"children", {Kind::Frame, Kind::Widget}, "kind"}};
+        t.push_back(frame);
 
         return t;
     }();
@@ -278,6 +318,16 @@ uint64_t json_u64_or(const Json& value, uint64_t fallback) {
 }
 
 const NodeSpec& node_spec(Kind kind) { return table()[static_cast<size_t>(kind)]; }
+
+bool is_discriminator(Kind kind, const std::string& key) {
+    for (const NodeSpec& spec : table())
+        for (const ChildList& list : spec.lists) {
+            if (list.discriminator != key) continue;
+            for (Kind candidate : list.children)
+                if (candidate == kind) return true;
+        }
+    return false;
+}
 
 const char* kind_name(Kind kind) { return node_spec(kind).name.c_str(); }
 
@@ -376,9 +426,45 @@ std::vector<std::string> retype_props(const NodeSpec& spec, Json& node) {
     return changed;
 }
 
-bool list_child(Kind parent, const std::string& list, Kind& out) {
+const ChildList* find_list(Kind parent, const std::string& list) {
     for (const ChildList& l : node_spec(parent).lists)
-        if (l.key == list) { out = l.child; return true; }
+        if (l.key == list) return &l;
+    return nullptr;
+}
+
+bool list_child(Kind parent, const std::string& list, Kind& out) {
+    const ChildList* l = find_list(parent, list);
+    if (!l || l->children.size() != 1) return false;
+    out = l->children[0];
+    return true;
+}
+
+bool child_kind(const ChildList& list, const Json& child, Kind& out, std::string& err) {
+    if (list.children.size() == 1) { out = list.children[0]; return true; }
+    /* the legal-values text is built once per failure, never on the hot path */
+    auto legal = [&] {
+        std::string names;
+        for (Kind k : list.children) {
+            if (!names.empty()) names += ", ";
+            names += "'" + std::string(kind_name(k)) + "'";
+        }
+        return names;
+    };
+    if (!child.is_object()) {
+        err = "'" + list.key + "' child must be an object with a '" + list.discriminator +
+              "' naming one of: " + legal();
+        return false;
+    }
+    auto it = child.find(list.discriminator);
+    if (it == child.end() || !it->is_string()) {
+        err = "'" + list.key + "' child needs a '" + list.discriminator +
+              "' naming one of: " + legal();
+        return false;
+    }
+    const std::string want = it->get<std::string>();
+    for (Kind k : list.children)
+        if (node_spec(k).name == want) { out = k; return true; }
+    err = "'" + list.discriminator + "' '" + want + "' is not one of: " + legal();
     return false;
 }
 

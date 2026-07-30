@@ -40,7 +40,14 @@ void collect_ids(Kind kind, const Json& node, std::vector<uint64_t>& out) {
     for (const ChildList& l : node_spec(kind).lists) {
         auto it = node.find(l.key);
         if (it == node.end() || !it->is_array()) continue;
-        for (const Json& child : *it) collect_ids(l.child, child, out);
+        for (const Json& child : *it) {
+            /* the subtree being walked here was already validated by prepare() (an
+               insert's node) or by adopt (the whole document), so every child's
+               discriminator resolves; a failure here has nothing useful to collect */
+            Kind ck = Kind::Doc;
+            std::string ignored;
+            if (child_kind(l, child, ck, ignored)) collect_ids(ck, child, out);
+        }
     }
 }
 
@@ -80,6 +87,11 @@ bool op_set_prop(Document& d, const Json& op, ApplyResult& r, std::string& err) 
     const NodeSpec& spec = node_spec(e->kind);
     if ((e->kind == Kind::Var || e->kind == Kind::Token) && key == "name") {
         err = "a " + spec.name + " name changes through the rename op";
+        return false;
+    }
+    if (is_discriminator(e->kind, key)) {
+        err = "a " + spec.name + "'s '" + key + "' names which node it is, not something "
+              "about it; remove this node and insert the other kind instead";
         return false;
     }
     const Prop* p = find_prop(spec, node_variant(spec, *e->node), key);
@@ -122,13 +134,18 @@ bool op_insert(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     NodeEntry* pe = nullptr;
     if (!node_at(d, parent, pe, err)) return false;
 
-    Kind child = Kind::Doc;
-    if (!list_child(pe->kind, list, child)) {
+    const ChildList* cl = find_list(pe->kind, list);
+    if (!cl) {
         err = node_spec(pe->kind).name + " has no list '" + list + "'";
         return false;
     }
     Json node = value_field(op, "node");
     if (node.is_null()) node = Json::object();
+    /* a heterogeneous list (a page or frame's `children`) resolves the new node's kind
+       from its own discriminator BEFORE prepare fills anything in, so an insert that
+       omits or misnames `kind` is rejected exactly as adopt would reject it on load */
+    Kind child = Kind::Doc;
+    if (!child_kind(*cl, node, child, err)) return false;
     if (!d.prepare(child, node, err)) return false;
 
     auto it = pe->node->find(list);

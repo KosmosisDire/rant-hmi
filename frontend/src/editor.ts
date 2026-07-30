@@ -9,7 +9,7 @@ import { ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
-import { BuiltinDef, Diag, Json, Lang, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Frame, Json, Lang, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
 
 export interface Editor {
   store: DocStore;
@@ -19,6 +19,10 @@ export interface Editor {
   mesh: Mesh;
   /* the served expression vocabulary (builtins + shape-scoped methods) */
   lang: Lang | null;
+  /* the closed attr vocabulary (spec 2.3): common attrs plus each part kind's own,
+     with the renderer's own defaults — what the part inspector's Attrs section lists
+     in full, set or not. Snapshot-only, like `lang` and `builtins`. */
+  attrTable: AttrTable | null;
   /* the built-in components' editable document form (no ids): what the Components
      tree browses and what a fork copies into doc.components */
   builtins: BuiltinDef[];
@@ -36,6 +40,9 @@ export interface Editor {
   view: ViewState;
   page(): Page | null;
   selectedWidget(): Widget | null;
+  /* the selected FRAME, when the (single) selection names one (spec 2.8): a frame is
+     selected only from the Layers tree, never by clicking the artboard */
+  selectedFrame(): Frame | null;
   apply(ops: Op[]): void;
   setPage(id: number): void;
   /* insert a fresh page and switch to it once the echo issues its id (the topbar page

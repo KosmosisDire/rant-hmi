@@ -1,5 +1,6 @@
 #include "components.h"
 
+#include "registry/attrs.h"
 #include "registry/registry.h"
 #include "lang/template_expr.h"
 
@@ -45,11 +46,13 @@ struct Sink {
     }
 };
 
-const char* kDrawKinds[] = {"rect", "bar", "text", "icon", "arc", "needle",
-                            "plot", "path", "code"};
-
+/* every declared part kind except "box" is a draw kind; part_kinds() (registry/attrs.h)
+ * is the one hand-written list this derives from (it reads it back off doc/schema.cpp's
+ * `kind` enum, since `doc/` may not depend on `registry/` the other way around) — no
+ * second copy of the kind list lives here any more. */
 bool draw_kind(const std::string& kind) {
-    for (const char* k : kDrawKinds)
+    if (kind == "box") return false;
+    for (const std::string& k : part_kinds())
         if (kind == k) return true;
     return false;
 }
@@ -64,6 +67,24 @@ bool identifier(const std::string& name) {
     for (char c : name)
         if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) return false;
     return true;
+}
+
+/* The vocabulary is CLOSED now (registry/attrs.h): a name that is neither a common
+ * attr nor this KIND's own is a mistake, not a typo the renderer quietly shrugs off —
+ * before this check `rotation` for `rotate` compiled clean and did nothing, forever.
+ * Checked against the part's RAW authored attrs (before shown_attrs folds the `shown`
+ * property in below), which only ever matters for the key set, and `shown_attrs` never
+ * adds a key this table does not already know (`show` is common). `code` is the one
+ * open kind: its attrs are read by whatever names the author's own JS body chose, so
+ * nothing here could ever be "wrong" and the check is skipped entirely. */
+void check_attr_names(const Json& attrs, const std::string& kind, uint64_t node, Sink& sink) {
+    if (is_open_kind(kind) || !attrs.is_object()) return;
+    for (auto it = attrs.begin(); it != attrs.end(); ++it) {
+        if (attr_known(kind, it.key())) continue;
+        sink.report(node, "attr_name",
+                    "'" + it.key() + "' is not an attr a '" + kind + "' part reads",
+                    it.key());
+    }
 }
 
 /* every attr entry: expression text -> a compiled view program; a bad one is a
@@ -262,6 +283,7 @@ Json compile_part(const Json& part, const std::string& path, const Walk& walk,
     auto found = walk.scopes.find(path);
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
+    check_attr_names(part.value("attrs", Json::object()), kind, node_id, sink);
     const Json attrs = shown_attrs(part.value("attrs", Json::object()), path, walk);
 
     if (kind == "box") {
