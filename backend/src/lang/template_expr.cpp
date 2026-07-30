@@ -40,6 +40,11 @@ bool refused_builtin(const std::string& name) {
 
 const char* kStates[] = {"pressed", "dragging", "open", "hover"};
 const char* kTileFields[] = {"w", "h", "aspect"};
+/* the three cells a repeated node's copy answers (spec 2.3): 0-based index, the total
+ * copy count, and index / (count - 1) (0 when count < 2, never NaN). `repeat` needs no
+ * opcode of its own — like `tile` and `state`, it is a LOAD of a symbolic cell the
+ * renderer's per-copy overlay answers at paint time (frontend/src/template.ts). */
+const char* kRepeatFields[] = {"index", "count", "fraction"};
 
 class Parser {
   public:
@@ -225,18 +230,46 @@ class Parser {
         return true;
     }
 
-    /* a call argument that must be a BARE property name (hist / opt* address a cell,
-     * not a value) */
+    /* The dotted chain that follows an identifier, resolved against the component's
+     * address table. It stops at the FIRST complete address, so whatever follows is
+     * ordinary postfix (`arc.thickness.round()`): a property and a part beside it can
+     * never share a name, which is what makes the shortest match the only one. */
+    bool address_chain(const std::string& head, std::string& out) {
+        std::string address = head;
+        while (token_.kind == TokenKind::Dot) {
+            advance();
+            if (token_.kind != TokenKind::Ident) {
+                fail("expected a part or property name after '.'");
+                return false;
+            }
+            address += "." + token_.text;
+            advance();
+            if (scope_.addressed(address)) {
+                out = address;
+                return true;
+            }
+        }
+        fail("'" + address + "' names no property in this component; a dotted name is "
+             "a part's path plus the property it owns");
+        return false;
+    }
+
+    /* a call argument that must name a property (hist / opt* address a cell, not a
+     * value); yields its ADDRESS, which is what names the cell */
     bool prop_argument(const std::string& call, std::string& out) {
-        if (token_.kind != TokenKind::Ident || !scope_.has_prop(token_.text)) {
-            fail(call + " takes a property name" +
-                 (token_.kind == TokenKind::Ident
-                      ? "; '" + token_.text + "' is not one of this component's properties"
-                      : ""));
+        if (token_.kind != TokenKind::Ident) {
+            fail(call + " takes a property name");
             return false;
         }
-        out = token_.text;
+        const std::string head = token_.text;
         advance();
+        if (token_.kind == TokenKind::Dot) return address_chain(head, out);
+        if (!scope_.has_prop(head)) {
+            fail(call + " takes a property name; '" + head +
+                 "' is not a property in scope here");
+            return false;
+        }
+        out = scope_.address(head);
         return true;
     }
 
@@ -348,13 +381,16 @@ class Parser {
             emit_const(name == "true");
             return;
         }
-        /* the view's own inputs: the tile's geometry and this view's gesture state */
-        if (name == "tile" || name == "state") {
+        /* the view's own inputs: the tile's geometry, this view's gesture state, and —
+           inside a repeated node — which copy this one is (spec 2.3) */
+        if (name == "tile" || name == "state" || name == "repeat") {
             if (token_.kind != TokenKind::Dot) {
                 fail("'" + name + "' reads by field (" +
                      (name == "tile" ? std::string("tile.w / tile.h / tile.aspect")
-                                     : std::string("state.pressed / state.dragging / "
-                                                   "state.open / state.hover")) + ")");
+                      : name == "repeat"
+                          ? std::string("repeat.index / repeat.count / repeat.fraction")
+                          : std::string("state.pressed / state.dragging / "
+                                        "state.open / state.hover")) + ")");
                 return;
             }
             advance();
@@ -366,6 +402,8 @@ class Parser {
             bool known = false;
             if (name == "tile") {
                 for (const char* f : kTileFields) known = known || field == f;
+            } else if (name == "repeat") {
+                for (const char* f : kRepeatFields) known = known || field == f;
             } else {
                 for (const char* f : kStates) known = known || field == f;
             }
@@ -381,12 +419,24 @@ class Parser {
             parse_call(name);
             return;
         }
+        /* a name in scope is that property, and anything dotted after it is ordinary
+           postfix (`value.pick(...)`) */
         if (scope_.has_prop(name)) {
-            emit_load("slot:" + name);
+            emit_load("slot:" + scope_.address(name));
             return;
         }
-        fail("unknown name '" + name + "'; a bare identifier here is one of this "
-             "component's properties");
+        /* otherwise a DOTTED name is an address from the template root: another part's
+           property, read where it is needed rather than moved to where every reader
+           can see it */
+        if (token_.kind == TokenKind::Dot) {
+            std::string address;
+            if (!address_chain(name, address)) return;
+            emit_load("slot:" + address);
+            return;
+        }
+        fail("unknown name '" + name + "'; a bare identifier here is a property this "
+             "part declares or inherits from one above it, and a dotted one is another "
+             "part's property by address");
     }
 
     Lexer lexer_;

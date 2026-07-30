@@ -32,15 +32,222 @@ Json box(const char* dir, const char* name, Json attrs, Json children,
     return node;
 }
 
-Json part(const char* draw, const char* name, Json attrs) {
+/* a draw part paints its own shape and may hold children of its own (spec 2.3): they
+ * render into the SAME area, over it, inheriting its transform — a face's dot is a
+ * real child riding the face's rotation, not a sibling recomputing the same angle. */
+Json part(const char* draw, const char* name, Json attrs, Json children = Json::array()) {
     return Json{{"kind", draw}, {"name", name}, {"attrs", std::move(attrs)},
-                {"children", Json::array()}};
+                {"children", std::move(children)}};
+}
+
+/* a `code` part (spec 2.3): its body is JS, run by the view. The compiler treats a
+ * built-in's `code` part exactly like a document author's own — its attrs compile the
+ * same way any other part's do (compile/components.cpp draw_kind()/compile_attrs()
+ * apply generically), and its `code` string rides the wire untouched — so a built-in
+ * can carry one of these with no special-casing anywhere else. */
+Json code_part(const char* name, Json attrs, const std::string& body) {
+    return Json{{"kind", "code"}, {"name", name}, {"attrs", std::move(attrs)},
+                {"code", body}, {"children", Json::array()}};
+}
+
+/* A part OWNS properties (spec 2.3). They are addressed under its path
+ * (`bar.fill_color`), stored nested in an instance's slots, edited only while that part
+ * is selected, and read by its own expressions and its children's — so the line between
+ * a widget-level property and a part's is where it is READ, and it is drawn here:
+ *
+ *   the WIDGET owns what the widget IS: the value it carries, its range, how it is
+ *   dragged, how its scale is configured, the angles and fit its parts share, and the
+ *   frame the shared machinery paints around it.
+ *
+ *   a PART owns what it PAINTS: its colours, its own corner radius, and the text it
+ *   draws. Nothing else can read them, which is exactly why they can stop crowding the
+ *   widget's own inspector. */
+Json owns(Json node, Json props) {
+    node["props"] = std::move(props);
+    return node;
 }
 
 Json interact(const char* primitive, Json params, Json emits) {
     return Json{{"primitive", primitive}, {"params", std::move(params)},
                 {"emits", std::move(emits)}};
 }
+
+/* ---- the shared TICK-AND-LABEL body (spec 2.3, "The tick and label rules") ----
+ *
+ * One `code` body shared by all five scale-bearing built-ins (Slider, Knob,
+ * RadialSlider, Gauge, Selector) — one drawer draws them all, exactly as the old
+ * `ticks` draw kind did, except now it is an ordinary authored body shipped with the
+ * built-ins: forking any of these five gives you this exact source to read and change.
+ *
+ * Every value it needs is an ATTR the part declares (`view.attrs`), never a bare prop:
+ * `outer`, `start`, `sweep`, `count`, `names`, `min`, `max`, `decimals`, `labels_out`,
+ * `len`, `fill`, `text_fill`, `dir` are the registry's own computed inputs, wired per
+ * type below exactly as the old `ticks` kind's attrs were — `props` goes unused here
+ * because nothing this body draws is read off a bare property.
+ *
+ * The radial branch never needs `fit`/`core`/`flare`: the part's own `area` already
+ * IS the fitted circle's bounding square (the enclosing `dial` box owns the fit, spec
+ * 2.3 "The dial owns the fit"), so this body only inscribes the circle of whatever
+ * area it is handed — precisely what radialFrame() with no `fit` attr did for the old
+ * `ticks` kind, since this part never declared one either. */
+const std::string kTickBody = R"JS(
+var A = view.attrs;
+
+// the same typed-attr coercions every other draw part's attrs get (program.ts):
+// Nil-safe numeric/bool/text/color reads with a renderer fallback, so a feed that has
+// not resolved yet degrades exactly like any other attribute does.
+function toNum(v, fb) {
+  var n = typeof v === "number" ? (isFinite(v) ? v : null)
+        : typeof v === "boolean" ? (v ? 1 : 0) : null;
+  return n === null ? fb : n;
+}
+function toBool(v, fb) {
+  var t = (v === null || v === undefined) ? null
+        : typeof v === "boolean" ? v
+        : typeof v === "number" ? v !== 0
+        : typeof v === "string" ? v.length > 0 : true;
+  return t === null ? fb : t;
+}
+function toText(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return null;
+}
+function toColor(v) {
+  return (typeof v === "string" && v.charAt(0) === "#") ? v : null;
+}
+
+// a declared-but-unresolvable count (a Selector with no options yet) draws nothing
+if (A.count === null || A.count === undefined) return "";
+var count = Math.max(2, Math.min(51, Math.round(toNum(A.count, 5))));
+var fill = toColor(A.fill) || "#5a5a5a";
+var labels = toBool(A.labels, false);
+var lo = toNum(A.min, 0);
+var hi = toNum(A.max, 1);
+var decimals = Math.max(0, Math.min(6, toNum(A.decimals, 0)));
+var textFill = toColor(A.text_fill) || "#8a8a8a";
+// `names` labels each tick with its own text (a Selector's options) instead of the
+// numeric min..max interpolation
+var names = Array.isArray(A.names) ? A.names.map(String) : null;
+function label(i) {
+  return names ? (names[i] !== undefined ? names[i] : "")
+               : (lo + (hi - lo) * i / (count - 1)).toFixed(decimals);
+}
+var texts = [];
+for (var ti = 0; ti < count; ++ti) texts.push(label(ti));
+// labels understand the inline markup too (a Selector option can carry an icon), so
+// widths measure in VISIBLE units, not raw characters: draw.measure at size 1 gives a
+// width PER UNIT SIZE (it scales linearly with size), so every formula below that used
+// to multiply a character count by 0.58 just multiplies this instead
+var perUnit = texts.map(function (t) { return draw.measure(t, 1); });
+var maxUnit = Math.max(0.58, Math.max.apply(null, perUnit));
+
+var out = [];
+
+if (toText(A.dir) === "h") {
+  // linear: marks along the top of this area (the row under a slider's bar), labels
+  // set beneath them, under the same rules as the radial scale below. Every mark sits
+  // at its TRUE value position, ends included: this is an instrument, and a shifted
+  // mark is a wrong reading.
+  var hMark = area.h * (labels ? 0.4 : 0.8);
+  var hWidth = Math.max(0.75, area.h * 0.07);
+  // the marks are round-capped strokes: their paint reaches half the width past the
+  // endpoint, so the bar-facing end drops by that half plus a whisker of gap, never
+  // touching the bar above (same clearance as the radial scales)
+  var hClear = hWidth / 2 + area.h * 0.06;
+  var hSpacing = area.w / (count - 1);
+  for (var hi1 = 0; hi1 < count; ++hi1) {
+    var hx = area.x + hSpacing * hi1;
+    out.push(draw.line(hx, area.y + hClear, hx, area.y + hClear + hMark,
+                        { stroke: fill, stroke_w: hWidth, cap: "round" }));
+  }
+  if (!labels) return out;
+  // same label rules as the radial branch below: sized against the spacing, thinned
+  // past the floor, each centered on its tick (slid inward only if the tile would cut it)
+  var hSize = Math.max(5, Math.min(area.h * 0.55, (hSpacing * 0.9) / maxUnit));
+  if (hSize < 6) hSize = 6;
+  var hEvery = Math.max(1, Math.ceil((hSize * maxUnit) / Math.max(1, hSpacing * 0.95)));
+  for (var hi2 = 0; hi2 < count; ++hi2) {
+    if (hEvery > 1 && hi2 % hEvery !== 0 && hi2 !== count - 1) continue;
+    var hHalf = draw.measure(texts[hi2], hSize) / 2;
+    var hx2 = Math.max(area.x + hHalf, Math.min(area.x + area.w - hHalf, area.x + hSpacing * hi2));
+    var hy = area.y + hClear + hMark + hSize * 0.65;
+    out.push(draw.text(texts[hi2], { x: hx2, y: hy, size: hSize, fill: textFill }));
+  }
+  return out;
+}
+
+// the radial branch: `area` is already the fitted circle's bounding square (the
+// enclosing `dial` box owns the fit, spec 2.3), so this part only ever inscribes it —
+// exactly what radialFrame() did for the old `ticks` kind, since this part never
+// declares `fit`/`core`/`flare` any more than it used to.
+var cx = area.x + area.w / 2;
+var cy = area.y + area.h / 2;
+var radius = Math.min(area.w, area.h) / 2;
+var start = toNum(A.start, -135);
+var sweep = Math.max(1, Math.min(360, toNum(A.sweep, 270)));
+var outer = radius * toNum(A.outer, 1);
+var len = radius * toNum(A.len, 0.1);
+// every tick sits at its TRUE value position, ends included: this is an instrument,
+// and a shifted mark is a wrong reading
+function angleOf(i) { return start + (sweep * i) / (count - 1); }
+// the angular pitch between marks, and the tangential room it leaves at a radius: the
+// one crowding measure marks and labels both size against
+var pitch = (sweep / (count - 1)) * (Math.PI / 180);
+function roomAt(r) { return 2 * r * Math.sin(Math.min(Math.PI / 2, pitch / 2)); }
+// marks never overlap each other: their width caps at a third of their spacing
+var rWidth = Math.max(0.75, Math.min(radius * 0.018, roomAt(outer) / 3));
+// `outer` names the edge the marks HUG (the arc's inner edge for an inside scale), but
+// a mark is a round-capped STROKE: its paint reaches half its width past its endpoint,
+// so the arc-facing end pulls back by that half plus a whisker of gap, never touching
+// the arc it hugs. An inside scale's whole mark shifts in; an outside scale's mark
+// keeps its far end and shortens instead.
+var outSide = toBool(A.labels_out, false);
+var rClear = rWidth / 2 + radius * 0.015;
+var rOut = outSide ? outer : outer - rClear;
+var rIn = outSide ? Math.min(rOut - 1, outer - len + rClear) : rOut - len;
+for (var ri = 0; ri < count; ++ri) {
+  var angle = angleOf(ri);
+  var p0 = draw.polar(cx, cy, rIn, angle);
+  var p1 = draw.polar(cx, cy, rOut, angle);
+  out.push(draw.line(p0[0], p0[1], p1[0], p1[1], { stroke: fill, stroke_w: rWidth, cap: "round" }));
+}
+if (!labels) return out;
+
+// ---- the label rules, shared by every tick-bearing control ----
+// 1. a label never overlaps its mark: it anchors a small gap past the mark's end, and
+//    its box is pushed AWAY along the tick's own direction, so the edge that faces the
+//    tick is centered ON the tick (a top label sits above its tick, horizontally
+//    centered; a side label sits beside it, vertically centered);
+// 2. turning labels on shrinks the control (its `outer` reserves the rim), and the
+//    labels repay it: the size shrinks until the longest label fits between the marks
+//    and the rim, so a label never spills out of the tile;
+// 3. neighboring labels never collide: the size shrinks toward a readable floor first,
+//    and past the floor labels are THINNED (every k-th drawn, the last always) rather
+//    than made illegible.
+// option names run longer than numbers, so they start a little smaller
+var rSize = Math.max(5, radius * (names ? 0.11 : 0.16));
+if (outSide) rSize = Math.min(rSize, Math.max(6, (radius - outer) / (0.35 + maxUnit)));
+var room = roomAt(outSide ? rOut : Math.max(1, rIn)) * 0.9;
+if (rSize * maxUnit > room) rSize = Math.max(6, room / maxUnit);
+var rEvery = Math.max(1, Math.ceil((rSize * maxUnit) / Math.max(1, room)));
+// labels anchor off the marks' ACTUAL far end, wherever the clearance put it
+var anchorR = outSide ? rOut + rSize * 0.35 : rIn - rSize * 0.35;
+for (var li = 0; li < count; ++li) {
+  if (rEvery > 1 && li % rEvery !== 0 && li !== count - 1) continue;
+  var langle = angleOf(li);
+  var rad = langle * (Math.PI / 180);
+  var dx = Math.sin(rad), dy = -Math.cos(rad);
+  var push = outSide ? 1 : -1;
+  var p = draw.polar(cx, cy, anchorR, langle);
+  var lx = p[0] + push * dx * (draw.measure(texts[li], rSize) / 2);
+  var ly = p[1] + push * dy * (rSize * 0.6);
+  out.push(draw.text(texts[li], { x: lx, y: ly, size: rSize, fill: textFill }));
+}
+return out;
+)JS";
 
 /* ---- interface tables (document PropDef form) ---- */
 
@@ -137,7 +344,9 @@ Json on_event(const char* name, std::initializer_list<Json> steps) {
  * Group "frame" is the PANEL vocabulary (the shared box around the content) and group
  * "appearance" the CONTENT vocabulary; the inspector sections them separately, and a
  * future multi-select edits a name across types at once, so a slot name is a SEMANTIC
- * CONTRACT shared by every type that declares it:
+ * CONTRACT shared by every type that declares it. The contract is now read WITH the
+ * part that owns the property (`bar.fill_color`, `label.text`), and it is the same
+ * contract: the name says the role, the part says which one of them:
  *
  *   fill_color    the value-carrying part (a toggle's on state, a slider's fill, a lit
  *                 lamp, a knob's swept arc, a trend's line)
@@ -226,10 +435,6 @@ Json button_component() {
                     /* the button's face IS its frame: surface, border and radius all
                      * land on the thing the user presses */
                     slot("surface", "color", "$accent", "frame", "color"),
-                    slot("text", "text", "", "appearance"),
-                    /* a literal, not $ink: the label sits on the accent face, which is
-                     * the same color in both modes, so the ink must not flip with them */
-                    slot("text_color", "color", "#0d0d0d", "appearance", "color"),
                 }),
                 /* tap leads: it is the commit gesture and what an author usually means
                    by "when clicked", so it is the dropdown's first offer and the new
@@ -239,11 +444,18 @@ Json button_component() {
                              event("held", "bool")}),
                 box("stack", "body", Json::object(),
                     Json::array({
-                        part("text", "label", Json{{"text", "text"},
-                                                   {"fill", "text_color"},
-                                                   {"align", "align"},
-                                                   {"scale", "text_scale"},
-                                                   {"strong", "true"}}),
+                        /* the caption is the LABEL's, not the button's: it is the one
+                         * part that draws text, so it owns the text and its colour */
+                        owns(part("text", "label", Json{{"text", "text"},
+                                                        {"fill", "text_color"},
+                                                        {"align", "align"},
+                                                        {"scale", "text_scale"},
+                                                        {"strong", "true"}}),
+                             Json::array({slot("text", "text", "", "appearance"),
+                              /* a literal, not $ink: the label sits on the accent face,
+                               * which is the same colour in both modes, so the ink must
+                               * not flip with them */
+                              slot("text_color", "color", "#0d0d0d", "appearance", "color")})),
                     }),
                     press_interact()));
 }
@@ -252,9 +464,6 @@ Json toggle_component() {
     return component("Toggle",
                 compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
-                    slot("fill_color", "color", "$accent", "appearance", "color"),
-                    slot("track_color", "color", "$track", "appearance", "color"),
-                    slot("handle_color", "color", "$handle", "appearance", "color"),
                 }),
                 /* what a Toggle proposes is the opposite of its value, for EVERY gesture
                    on it, not just the tap that commits: an author who gates a press on
@@ -272,21 +481,27 @@ Json toggle_component() {
                     Json::array({
                         box("stack", "pill", Json{{"aspect", "2"}},
                             Json::array({
-                                part("rect", "track",
-                                     Json{{"fill", "value.pick(fill_color, track_color)"},
-                                          {"radius", "999"}}),
+                                /* the track shows BOTH states, so it owns both colours:
+                                 * `fill_color` is what it wears when the value is on */
+                                owns(part("rect", "track",
+                                          Json{{"fill", "value.pick(fill_color, track_color)"},
+                                               {"radius", "999"}}),
+                                     Json::array({slot("fill_color", "color", "$accent", "appearance", "color"),
+                                      slot("track_color", "color", "$track", "appearance", "color")})),
                                 /* the knob rides between two spacers whose weights swap
                                  * with the value: position from data, no per-type code */
                                 box("row", "lane", Json{{"pad", "0.08"}},
                                     Json::array({
-                                        box("stack", "gap-a",
+                                        box("stack", "gap_a",
                                             Json{{"weight", "value.pick(1, 0)"}},
                                             Json::array()),
-                                        part("rect", "knob",
-                                             Json{{"fill", "handle_color"},
-                                                  {"radius", "999"},
-                                                  {"aspect", "1"}}),
-                                        box("stack", "gap-b",
+                                        owns(part("rect", "knob",
+                                                  Json{{"fill", "handle_color"},
+                                                       {"radius", "999"},
+                                                       {"aspect", "1"}}),
+                                             Json::array({slot("handle_color", "color", "$handle",
+                                                   "appearance", "color")})),
+                                        box("stack", "gap_b",
                                             Json{{"weight", "value.pick(0, 1)"}},
                                             Json::array()),
                                     })),
@@ -319,35 +534,29 @@ Json slider_component() {
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
-                    slot("divisions", "num", 5, "config"),
-                    slot("decimals", "num", 0, "config"),
-                    slot("track_color", "color", "$track", "appearance", "color"),
-                    slot("fill_color", "color", "$accent", "appearance", "color"),
-                    /* the HEAD TEXT rides the fill edge; empty (the default) draws
-                     * nothing, and a binding fills it (a computed feed over
-                     * widget.value restores the old value readout) */
-                    slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
-                    slot("control_radius", "num", 4, "appearance"),
-                    slot("show_scale", "bool", false, "appearance"),
-                    slot("scale_values", "bool", true, "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("col", "body", Json::object(),
                     Json::array({
-                        box("stack", "control", Json{{"weight", "1"}},
+                        /* the head text is drawn by two alternative parts (inside the
+                           fill, or just past it), so it belongs to the control that
+                           holds them both: a property is owned where it is READ */
+                        owns(box("stack", "control", Json{{"weight", "1"}},
                             Json::array({
                                 /* the fill IS the handle: one full-width bar, its
                                    leading edge marking the value */
-                                part("bar", "bar", Json{{"value", kFraction},
+                                owns(part("bar", "bar", Json{{"value", kFraction},
                                                         {"fill", "fill_color"},
                                                         {"track", "track_color"},
                                                         {"radius", "control_radius"},
                                                         {"dir", "'h'"}}),
+                                     {slot("fill_color", "color", "$accent", "appearance", "color"),
+                                      slot("track_color", "color", "$track", "appearance", "color"),
+                                      slot("control_radius", "num", 4, "appearance")}),
                                 /* the head text hugs the fill edge from the inside: a
                                    box whose weight IS the fraction ends exactly at the
                                    edge, and the text right-aligns in it */
-                                box("row", "head-in",
+                                box("row", "head_in",
                                     Json{{"show", "(text != '').pick(" + fill_w +
                                                       " >= " + text_w + ", false)"}},
                                     Json::array({
@@ -363,7 +572,7 @@ Json slider_component() {
                                     })),
                                 /* ...and flips to just past the edge when the fill is
                                    too narrow to hold it */
-                                box("row", "head-out",
+                                box("row", "head_out",
                                     Json{{"show", "(text != '').pick(" + fill_w +
                                                       " < " + text_w + ", false)"}},
                                     Json::array({
@@ -378,18 +587,27 @@ Json slider_component() {
                                             })),
                                     })),
                             })),
-                        /* the toggleable scale: marks + range labels under the bar */
-                        part("ticks", "scale", Json{{"dir", "'h'"},
+                            /* empty (the default) draws nothing, and a binding fills it:
+                               a computed feed over widget.value is the old readout */
+                            Json::array({
+                                slot("text", "text", "", "appearance"),
+                                slot("text_color", "color", "$ink", "appearance", "color")})),
+                        /* the scale under the bar: its own part, so it is turned on by
+                           selecting it, and it owns how it is divided and labelled */
+                        owns(code_part("scale", Json{{"dir", "'h'"},
                                                     {"count", "divisions"},
-                                                    {"labels", "scale_values"},
+                                                    {"labels", "labels"},
                                                     {"min", "min"},
                                                     {"max", "max"},
                                                     {"decimals", "decimals"},
                                                     {"fill", "$scale"},
                                                     {"text_fill", "$ink-muted"},
                                                     {"weight", "0.42"},
-                                                    {"min_px", "9"},
-                                                    {"show", "show_scale"}}),
+                                                    {"min_px", "9"}}, kTickBody),
+                             Json::array({slot("shown", "bool", false, "config"),
+                                          slot("divisions", "num", 5, "config"),
+                                          slot("decimals", "num", 0, "config"),
+                                          slot("labels", "bool", true, "appearance")})),
                     }),
                     interact("drag1d",
                              Json{{"axis", "'x'"},
@@ -406,10 +624,6 @@ Json readout_component() {
     return component("Readout",
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
-                    slot("units", "text", "", "appearance"),
-                    slot("decimals", "num", 1, "config"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
-                    slot("units_color", "color", "$ink-muted", "appearance", "color"),
                 }),
                 /* a press on a Readout is about the value it is SHOWING, and the backend
                    knows that value: the view never has to supply its own copy */
@@ -419,18 +633,29 @@ Json readout_component() {
                              event("held", "num", "widget.value")}),
                 box("auto", "body", Json::object(),
                     Json::array({
-                        part("text", "value", Json{{"text", "value.toFixed(decimals)"},
-                                                   {"fill", "text_color"},
-                                                   {"align", "align"},
-                                                   {"scale", "text_scale"},
-                                                   {"strong", "true"},
-                                                   {"weight", "1"}}),
-                        part("text", "units", Json{{"text", "units"},
-                                                   {"fill", "units_color"},
-                                                   {"align", "align"},
-                                                   {"scale", "text_scale"},
-                                                   {"weight", "0.4"},
-                                                   {"show", "units != ''"}}),
+                        /* named `reading`, not `value`: a part's name and a widget-level
+                           property share the slots object's top level, so a part named
+                           for the property it displays would collide with it */
+                        owns(part("text", "reading",
+                                  Json{{"text", "value.toFixed(decimals)"},
+                                       {"fill", "text_color"},
+                                       {"align", "align"},
+                                       {"scale", "text_scale"},
+                                       {"strong", "true"},
+                                       {"weight", "1"}}),
+                             Json::array({slot("text_color", "color", "$ink", "appearance", "color"),
+                              slot("decimals", "num", 1, "config")})),
+                        /* the units are their own part, so they are its own text and
+                           its own colour: no `units_color` name needed to tell them
+                           apart from the reading's */
+                        owns(part("text", "units", Json{{"text", "text"},
+                                                        {"fill", "text_color"},
+                                                        {"align", "align"},
+                                                        {"scale", "text_scale"},
+                                                        {"weight", "0.4"},
+                                                        {"show", "text != ''"}}),
+                             Json::array({slot("text", "text", "", "appearance"),
+                              slot("text_color", "color", "$ink-muted", "appearance", "color")})),
                     }),
                     press_interact()));
 }
@@ -445,37 +670,41 @@ Json trend_component() {
     return component("Trend",
                 compose_slots(tile_base(), {
                     value,
+                    /* the SAMPLING is the widget's: the backend reads rate and window to
+                       size the ring, whether or not anything is drawing it */
                     slot("rate", "num", 10, "config"),
                     slot("window", "num", 60, "config"),
-                    slot("autoscale", "bool", true, "config"),
-                    slot("min", "num", 0, "config"),
-                    slot("max", "num", 100, "config"),
-                    slot("decimals", "num", 0, "config"),
-                    /* display-tier smoothing knobs, both 0..1 and composable: `kalman`
-                       weighs a constant-velocity model against the measurements (noise
-                       rejection with little lag), `smoothing` is a plain exponential
-                       moving average on top. 0 = off; the ring keeps the raw truth */
-                    range(fine(slot("kalman", "num", 0, "config"), 0.05), 0, 1),
-                    range(fine(slot("smoothing", "num", 0, "config"), 0.05), 0, 1),
-                    slot("fill_color", "color", "$accent", "appearance", "color"),
-                    slot("track_color", "color", "$track", "appearance", "color"),
-                    slot("text_color", "color", "$ink-muted", "appearance", "color"),
-                    slot("show_scale", "bool", true, "appearance"),
                 }),
                 Json::array(),
                 box("stack", "body", Json::object(),
                     Json::array({
-                        part("plot", "plot", Json{{"values", "hist(value)"},
-                                                  {"autoscale", "autoscale"},
-                                                  {"min", "min"},
-                                                  {"max", "max"},
-                                                  {"decimals", "decimals"},
-                                                  {"kalman", "kalman"},
-                                                  {"smoothing", "smoothing"},
-                                                  {"fill", "fill_color"},
-                                                  {"track", "track_color"},
-                                                  {"text_fill", "text_color"},
-                                                  {"labels", "show_scale"}}),
+                        /* everything else is how the PLOT draws that history */
+                        owns(part("plot", "plot", Json{{"values", "hist(value)"},
+                                                       {"autoscale", "autoscale"},
+                                                       {"min", "min"},
+                                                       {"max", "max"},
+                                                       {"decimals", "decimals"},
+                                                       {"kalman", "kalman"},
+                                                       {"smoothing", "smoothing"},
+                                                       {"fill", "fill_color"},
+                                                       {"track", "track_color"},
+                                                       {"text_fill", "text_color"},
+                                                       {"labels", "labels"}}),
+                             Json::array({slot("fill_color", "color", "$accent", "appearance", "color"),
+                              slot("track_color", "color", "$track", "appearance", "color"),
+                              slot("text_color", "color", "$ink-muted", "appearance", "color"),
+                              slot("autoscale", "bool", true, "config"),
+                              slot("min", "num", 0, "config"),
+                              slot("max", "num", 100, "config"),
+                              slot("decimals", "num", 0, "config"),
+                              /* display-tier smoothing knobs, both 0..1 and composable:
+                                 `kalman` weighs a constant-velocity model against the
+                                 measurements (noise rejection with little lag),
+                                 `smoothing` is a plain exponential moving average on
+                                 top. 0 = off; the ring keeps the raw truth */
+                              range(fine(slot("kalman", "num", 0, "config"), 0.05), 0, 1),
+                              range(fine(slot("smoothing", "num", 0, "config"), 0.05), 0, 1),
+                              slot("labels", "bool", true, "appearance")})),
                     })));
 }
 
@@ -490,7 +719,6 @@ Json dropdown_component() {
                     /* the field itself is the frame */
                     slot("surface", "color", "$surface-2", "frame", "color"),
                     slot("border", "color", "$line", "frame", "color"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
                 }),
                 /* the selection is the gesture's own payload; opening proposes nothing new */
                 Json::array({event("select", "text"), event("open", "text", "widget.value")}),
@@ -500,12 +728,14 @@ Json dropdown_component() {
                             Json::array({
                                 /* oneline: a picked value never line-breaks, however
                                    the fed text spells it */
-                                part("text", "value", Json{{"text", "value"},
-                                                           {"fill", "text_color"},
-                                                           {"align", "'start'"},
-                                                           {"scale", "text_scale"},
-                                                           {"oneline", "true"},
-                                                           {"weight", "1"}}),
+                                owns(part("text", "label", Json{{"text", "value"},
+                                                                {"fill", "text_color"},
+                                                                {"align", "'start'"},
+                                                                {"scale", "text_scale"},
+                                                                {"oneline", "true"},
+                                                                {"weight", "1"}}),
+                                     Json::array({slot("text_color", "color", "$ink", "appearance",
+                                           "color")})),
                                 part("icon", "chevron", Json{{"name", "'chevron-down'"},
                                                              {"fill", "$ink-muted"},
                                                              {"aspect", "1"}}),
@@ -521,8 +751,59 @@ Json dropdown_component() {
  * One vocabulary: `start_angle` / `sweep_angle` (degrees, 0 = up, clockwise) place the
  * sweep, `thickness` is the arc stroke as a fraction of the radius, and the unified
  * color slots keep their meanings (fill = the swept value, track = the arc behind it,
- * handle = the grabbable marker). The drag_radial primitive reads the same two angle
- * slots the parts draw with, so the finger and the paint can never disagree. */
+ * handle = the grabbable marker).
+ *
+ * A TRUE HIERARCHY, not four siblings that separately agree on the same numbers
+ * (spec 2.3): one box named `dial` OWNS THE CIRCLE. It carries `fit`/`start`/`sweep`
+ * (plus `core`/`flare` where a face or a scale needs the room) and computes ITS OWN
+ * area as the fitted circle's bounding square; the drag_radial interact rides it too,
+ * because that square IS the pivot. Every child below it needs only `start`/`sweep`
+ * for its own angle maths — radialFrame() with no `fit` attr returns the inscribed
+ * circle of whatever rect it is given, which is exactly the dial's circle once the
+ * dial has already done the fitting, so nothing repeats the fit/core/flare copy.
+ *
+ * A part that TURNS carries no angle maths of its own: it is a plain shape (a rect, or
+ * a needle drawn pointing straight up) with a `rotate` attr computed like any other
+ * slot, `start_angle + fraction * sweep_angle`. Everything it paints — its own drawing
+ * AND its children — turns with it, because that is what a `<g transform>` hierarchy
+ * already does: a Knob's dot is the FACE's child, not a sibling that recomputes the
+ * same angle, so it orbits because the face does. */
+
+/* The arc's own properties, identical on all four radial types: the swept value's
+ * colour, the track behind it, how its ends are rounded and HOW THICK IT IS. Thickness
+ * is the arc's, not the widget's, even though the face and the scale size themselves
+ * from it — they read `arc.thickness` by address, which is what lets a property live
+ * where it belongs instead of where every reader can see it (spec 2.3). */
+Json radial_arc_props(double thickness) {
+    return Json::array({
+        slot("fill_color", "color", "$accent", "appearance", "color"),
+        slot("track_color", "color", "$track", "appearance", "color"),
+        slot("control_radius", "num", 4, "appearance"),
+        range(fine(slot("thickness", "num", thickness, "appearance"), 0.05), 0.02, 0.6),
+    });
+}
+
+/* The scale's own properties. `shown` is the part's switch (every named part has one,
+ * synthesized where it is not declared): turning a scale on is selecting the scale and
+ * ticking it, so there is no `show_scale` anywhere. Declared here only to start the
+ * scales that should start off, and to give the numbers their own names. */
+Json radial_scale_props(const char* position, bool shown = false) {
+    return Json::array({
+        slot("shown", "bool", shown, "config"),
+        slot("divisions", "num", 5, "config"),
+        slot("decimals", "num", 0, "config"),
+        slot("labels", "bool", true, "appearance"),
+        slot_enum("position", {"inside", "outside"}, position, "appearance"),
+    });
+}
+
+/* a radial control's own caption, owned by the `label` part that draws it */
+Json radial_label_props() {
+    return Json::array({
+        slot("text", "text", "", "appearance"),
+        slot("text_color", "color", "$ink", "appearance", "color"),
+    });
+}
 
 Json radial_interact(Json extra_params, Json emits) {
     Json params = Json{{"start", "start_angle"}, {"sweep", "sweep_angle"}};
@@ -531,129 +812,143 @@ Json radial_interact(Json extra_params, Json emits) {
 }
 
 Json knob_component() {
-    const Str show_scale = "show_scale";
-    const Str t = "thickness";
-    /* scale_position picks the layout: OUTSIDE pulls the arc inward so marks and
-       values ring it at the rim; INSIDE keeps the arc at the rim and sets the scale
-       between the arc and the face */
-    const Str outside = "scale_position == 'outside'";
+    /* Addresses, not bare names: `thickness` is the ARC's thickness and lives on the
+       arc, and the parts that merely lay themselves out around it say so (spec 2.3).
+       `shown` is every part's own switch, so the scale is turned on by selecting the
+       scale — there is no `show_scale` on the widget. */
+    const Str show_scale = "dial.scale.shown";
+    const Str t = "dial.arc.thickness";
+    /* the scale's `position` picks the layout: OUTSIDE pulls the arc inward so marks
+       and values ring it at the rim; INSIDE keeps the arc at the rim and sets the
+       scale between the arc and the face */
+    const Str outside = "dial.scale.position == 'outside'";
+    const Str fit = "(fit == 'center').pick('circle', 'extent')";
     Json arc = Json{{"track", "track_color"},
                     {"fill", "fill_color"},
                     {"value", kFraction},
-                    {"width", t},
+                    {"start", "start_angle"},
+                    {"sweep", "sweep_angle"},
+                    {"width", "thickness"},
                     {"radius", "control_radius"},
-                    {"pad", "show_scale.pick((" + outside + ").pick(0.15, 0), 0)"}};
-    /* a scale reads control-outward either way: marks hug the arc, values beyond */
+                    {"pad", show_scale + ".pick((" + outside + ").pick(0.15, 0), 0)"}};
+    /* a scale reads dial-outward either way: marks hug the arc, values beyond */
     Json ticks = Json{{"count", "divisions"},
-                      {"labels", "scale_values"},
-                      {"labels_out", outside},
+                      {"labels", "labels"},
+                      {"labels_out", "position == 'outside'"},
                       {"min", "min"},
                       {"max", "max"},
                       {"decimals", "decimals"},
-                      {"outer", "(" + outside + ").pick(0.8, 1 - " + t + ")"},
+                      {"start", "start_angle"},
+                      {"sweep", "sweep_angle"},
+                      {"outer", "(position == 'outside').pick(0.8, 1 - " + t + ")"},
                       {"len", "0.07"},
                       {"fill", "$scale"},
-                      {"text_fill", "$ink-muted"},
-                      {"show", show_scale}};
+                      {"text_fill", "$ink-muted"}};
     /* the FACE derives from the thickness and where the scale sits, so a fat arc or
        an inside scale can never overlap it: face radius = whatever is innermost,
-       less a gap, spelled as the fraction of the circle it keeps */
-    const Str face_pad = "show_scale.pick((" + outside +
-                         ").pick(0.185 + thickness * 0.35, 0.17 + thickness * 0.5), "
-                         "0.05 + thickness * 0.5)";
-    const Str face = "1 - (" + face_pad + ") * 2";
-    /* the fit slot, as on the RadialSlider/Gauge, with the face as the extent's CORE:
-       a partial-sweep knob fills its tile but always keeps room for the whole face */
-    const Str fit = "(fit == 'center').pick('circle', 'extent')";
-    Json angles = Json{{"start", "start_angle"},
-                       {"sweep", "sweep_angle"},
-                       {"fit", fit},
-                       {"core", face},
-                       {"flare", "show_scale.pick(9, 0)"}};
-    /* ...and the dot rides at a fixed fraction of that face, however big it is */
-    Json mark = Json{{"value", kFraction},
-                     {"fill", "handle_color"},
-                     {"at", "0.68 * (" + face + ")"},
-                     {"size", "show_scale.pick(0.07, 0.09)"}};
-    /* the face itself is a radial part (a bare hub), so it rides the fitted circle
-       exactly like the arc and the dot, wherever the fit places it; the label pins
-       itself to the same circle (`at` center) for the same reason */
-    Json body = Json{{"fill", "body_color"}, {"hub", face}};
+       less a gap, spelled as the fraction of the dial's own circle it keeps. It is
+       the same fraction the dial reserves as the extent fit's `core`, so the face
+       never shrinks the tile beyond what the fit already made room for. */
+    const Str face_pad = show_scale + ".pick((" + outside + ").pick(0.185 + " + t +
+                         " * 0.35, 0.17 + " + t + " * 0.5), 0.05 + " + t + " * 0.5)";
+    const Str face_frac = "1 - (" + face_pad + ") * 2";
+    /* the FACE is a plain round shape riding the dial's own square: `zoom` scales it
+       about its own centre to `face_frac` of that square (a circle, `radius` 999,
+       clamps to half the square's side, same as the old hub fraction of the fitted
+       radius), and `rotate` turns it to the value's angle. It carries no angle maths
+       of its own — the dial already fitted the circle — so THE FACE IS WHAT TURNS,
+       and its dot, painted as its child below, turns with it for free. */
+    Json face = Json{{"fill", "body_color"},
+                     {"radius", "999"},
+                     {"aspect", "1"},
+                     {"zoom", face_frac},
+                     {"rotate", "start_angle + (" + Str(kFraction) + ") * sweep_angle"}};
+    /* the dot rides the FACE, not the dial: its `zoom`/`dy` are fractions of the
+       face's own area (its parent, spec 2.3), so they COMPOSE with the face's zoom
+       and inherit its rotation for free — this is the hierarchy actually being real
+       rather than three parts that agree on the same angle by convention. `dy` -0.34
+       lands it at 0.68 * face_frac of the dial's radius once the face's own zoom
+       scales it down, the same spot the old flat `mark` part computed by hand. */
+    Json dot = Json{{"fill", "handle_color"},
+                    {"radius", "999"},
+                    {"aspect", "1"},
+                    {"zoom", "0.13"},
+                    {"dy", "-0.34"}};
+    /* the label is NOT inside the dial (it is the widget's own caption, sized to the
+       tile), so it still finds the circle itself via `at: center` and needs its own
+       copy of the fit attrs to do it — the one place they are not the dial's alone */
     Json title = Json{{"text", "text"},
                       {"fill", "text_color"},
                       {"scale", "text_scale"},
                       {"strong", "true"},
                       {"at", "'center'"},
-                      {"pad", "show_scale.pick(0.4, 0.31)"}};
-    for (auto& item : angles.items()) {
-        arc[item.key()] = item.value();
-        ticks[item.key()] = item.value();
-        mark[item.key()] = item.value();
-        body[item.key()] = item.value();
-        title[item.key()] = item.value();
-    }
+                      {"start", "start_angle"},
+                      {"sweep", "sweep_angle"},
+                      {"fit", fit},
+                      {"core", face_frac},
+                      {"flare", show_scale + ".pick(9, 0)"},
+                      {"pad", show_scale + ".pick(0.4, 0.31)"}};
     return component("Knob",
                 compose_slots(tile_base(), {
+                    /* the widget's own: what it carries, its range, how it is dragged
+                       and how its circle sits in the tile */
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
-                    slot("divisions", "num", 5, "config"),
-                    slot("decimals", "num", 0, "config"),
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
-                    slot("fill_color", "color", "$accent", "appearance", "color"),
-                    slot("track_color", "color", "$track", "appearance", "color"),
-                    slot("handle_color", "color", "$handle", "appearance", "color"),
-                    slot("body_color", "color", "$surface-2", "appearance", "color"),
-                    slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
-                    slot("control_radius", "num", 4, "appearance"),
-                    range(fine(slot("thickness", "num", 0.14, "appearance"), 0.05), 0.02, 0.6),
-                    slot("show_scale", "bool", false, "appearance"),
-                    slot("scale_values", "bool", true, "appearance"),
-                    slot_enum("scale_position", {"inside", "outside"}, "outside",
-                              "appearance"),
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", "body", Json::object(),
                     Json::array({
-                        /* the body carries the interact so the whole face turns, not
-                           just the arc's stroke; no aspect lock: the fit places the
-                           circle in the raw rect */
-                        box("stack", "control", Json::object(),
+                        /* the dial IS the circle: it owns the fit and carries the
+                           drag, so the whole face turns, not just the arc's stroke */
+                        box("stack", "dial",
+                            Json{{"start", "start_angle"},
+                                 {"sweep", "sweep_angle"},
+                                 {"fit", fit},
+                                 {"core", face_frac},
+                                 {"flare", show_scale + ".pick(9, 0)"}},
                             Json::array({
-                                part("arc", "arc", arc),
-                                part("ticks", "scale", ticks),
-                                part("needle", "face", body),
-                                part("mark", "dot", mark),
-                                part("text", "label", title),
+                                owns(part("arc", "arc", arc),
+                                     radial_arc_props(0.14)),
+                                owns(code_part("scale", ticks, kTickBody),
+                                     radial_scale_props("outside")),
+                                /* the face holds the dot as a REAL CHILD (spec 2.3):
+                                   a draw part paints its own shape and then renders
+                                   its children into the same area, so the dot rides
+                                   the face's transform instead of copying its angle */
+                                owns(part("rect", "face", face,
+                                          Json::array({
+                                              owns(part("rect", "dot", dot),
+                                                   Json::array({slot("handle_color", "color",
+                                                         "$handle", "appearance", "color")})),
+                                          })),
+                                     Json::array({slot("body_color", "color", "$surface-2",
+                                           "appearance", "color")})),
                             }),
                             radial_interact(Json{{"min", "min"},
                                                  {"max", "max"},
                                                  {"step", "step"},
                                                  {"mode", "drag"},
-                                                 {"fit", fit},
-                                                 {"core", face},
                                                  {"fraction", kFraction}},
                                             Json{{"input", "input"}, {"commit", "commit"}})),
+                        owns(part("text", "label", title), radial_label_props()),
                     })),
                 Json::array({on_event("input", {sets_slot("value", "x")})}));
 }
 
 Json radial_slider_component() {
     /* the fit slot: "fill" (default) places the circle so a partial sweep fills the
-       tile; "center" pins the circle's center to the tile's center. The chosen fit +
-       the angles ride every radial part identically, so they always share one circle */
+       tile; "center" pins the circle's center to the tile's center. The DIAL alone
+       carries it (spec 2.3); arc and scale need only start/sweep for their own maths */
     const Str fit = "(fit == 'center').pick('circle', 'extent')";
-    const Str t = "thickness";
-    Json angles = Json{{"start", "start_angle"},
-                       {"sweep", "sweep_angle"},
-                       {"fit", fit},
-                       {"flare", "show_scale.pick(9, 0)"}};
-    const Str outside = "scale_position == 'outside'";
+    const Str t = "dial.arc.thickness";
+    const Str show_scale = "dial.scale.shown";
+    const Str outside = "dial.scale.position == 'outside'";
     /* an OUTSIDE scale pulls the arc inward and rings it; an INSIDE one keeps the
        arc at the rim and sets the scale within. Drawn exactly like the linear bar:
        no handle, the fill's straight leading edge IS the value, and control_radius
@@ -661,137 +956,122 @@ Json radial_slider_component() {
     Json arc = Json{{"track", "track_color"},
                     {"fill", "fill_color"},
                     {"value", kFraction},
-                    {"width", t},
+                    {"start", "start_angle"},
+                    {"sweep", "sweep_angle"},
+                    {"width", "thickness"},
                     {"radius", "control_radius"},
-                    {"outer", "show_scale.pick((" + outside + ").pick(0.7, 1), 1)"}};
+                    {"outer", show_scale + ".pick((" + outside + ").pick(0.7, 1), 1)"}};
     Json ticks = Json{{"count", "divisions"},
-                      {"labels", "scale_values"},
-                      {"labels_out", outside},
+                      {"labels", "labels"},
+                      {"labels_out", "position == 'outside'"},
                       {"min", "min"},
                       {"max", "max"},
                       {"decimals", "decimals"},
-                      {"outer", "(" + outside + ").pick(0.8, 1 - " + t + ")"},
+                      {"start", "start_angle"},
+                      {"sweep", "sweep_angle"},
+                      {"outer", "(position == 'outside').pick(0.8, 1 - " + t + ")"},
                       {"len", "0.06"},
                       {"fill", "$scale"},
-                      {"text_fill", "$ink-muted"},
-                      {"show", "show_scale"}};
-    /* the label pins itself to the fitted circle: with `fit` fill the circle's
-       center is not the tile's */
+                      {"text_fill", "$ink-muted"}};
+    /* the label is OUTSIDE the dial (the widget's own caption, sized to the tile), so
+       it still needs its own copy of the fit attrs to find the same circle from out
+       there — with `fit` fill the circle's center is not the tile's */
     Json title = Json{{"text", "text"},
                       {"fill", "text_color"},
                       {"scale", "text_scale"},
                       {"strong", "true"},
                       {"at", "'center'"},
+                      {"start", "start_angle"},
+                      {"sweep", "sweep_angle"},
+                      {"fit", fit},
+                      {"flare", show_scale + ".pick(9, 0)"},
                       {"pad", "0.3"}};
-    for (auto& item : angles.items()) {
-        arc[item.key()] = item.value();
-        ticks[item.key()] = item.value();
-        title[item.key()] = item.value();
-    }
     return component("RadialSlider",
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
-                    slot("divisions", "num", 5, "config"),
-                    slot("decimals", "num", 0, "config"),
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
-                    slot("fill_color", "color", "$accent", "appearance", "color"),
-                    slot("track_color", "color", "$track", "appearance", "color"),
-                    slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
-                    slot("control_radius", "num", 4, "appearance"),
-                    range(fine(slot("thickness", "num", 0.18, "appearance"), 0.05), 0.02, 0.6),
-                    slot("show_scale", "bool", false, "appearance"),
-                    slot("scale_values", "bool", true, "appearance"),
-                    slot_enum("scale_position", {"inside", "outside"}, "inside",
-                              "appearance"),
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
                 box("stack", "body", Json::object(),
                     Json::array({
-                        /* no aspect lock: the extent fit places the circle, so a half
-                           sweep spreads over the whole (possibly oblong) tile */
-                        box("stack", "control", Json::object(),
+                        /* the dial IS the circle: it owns the fit and carries the
+                           drag; no aspect lock, the extent fit places it in whatever
+                           (possibly oblong) rect the tile leaves */
+                        box("stack", "dial",
+                            Json{{"start", "start_angle"},
+                                 {"sweep", "sweep_angle"},
+                                 {"fit", fit},
+                                 {"flare", show_scale + ".pick(9, 0)"}},
                             Json::array({
-                                part("arc", "arc", arc),
-                                part("ticks", "scale", ticks),
-                                part("text", "label", title),
+                                owns(part("arc", "arc", arc), radial_arc_props(0.18)),
+                                owns(code_part("scale", ticks, kTickBody),
+                                     radial_scale_props("inside")),
                             }),
                             radial_interact(Json{{"min", "min"},
                                                  {"max", "max"},
                                                  {"step", "step"},
                                                  {"mode", "drag"},
-                                                 {"fit", fit},
                                                  {"fraction", kFraction}},
                                             Json{{"input", "input"}, {"commit", "commit"}})),
+                        owns(part("text", "label", title), radial_label_props()),
                     })),
                 Json::array({on_event("input", {sets_slot("value", "x")})}));
 }
 
 Json gauge_component() {
-    /* the fit slot, exactly as on the RadialSlider: fill the tile, or center */
+    /* the fit slot, exactly as on the RadialSlider: fill the tile, or center. Only
+       the DIAL carries it (spec 2.3); the arc and scale need start/sweep alone, and
+       the needle needs no angle attrs at all — it only ever points straight up and
+       lets its own `rotate` turn it, computed here exactly like any other slot. */
     const Str fit = "(fit == 'center').pick('circle', 'extent')";
-    Json angles = Json{{"start", "start_angle"},
-                       {"sweep", "sweep_angle"},
-                       {"fit", fit},
-                       {"flare", "show_scale.pick(9, 0)"}};
-    const Str outside = "scale_position == 'outside'";
+    const Str t = "dial.arc.thickness";
+    const Str show_scale = "dial.scale.shown";
+    const Str outside = "dial.scale.position == 'outside'";
     Json arc = Json{{"track", "track_color"},
                     {"fill", "fill_color"},
                     {"value", kFraction},
+                    {"start", "start_angle"},
+                    {"sweep", "sweep_angle"},
                     {"width", "thickness"},
                     {"radius", "control_radius"},
-                    {"outer", "show_scale.pick((" + outside + ").pick(0.7, 1), 1)"}};
+                    {"outer", show_scale + ".pick((" + outside + ").pick(0.7, 1), 1)"}};
     /* marks hug the arc, like the other radial scales: an inside scale rides the
        arc's inner edge, so the thickness moves it; an outside one rings the
        pulled-in arc */
     Json ticks = Json{{"count", "divisions"},
-                      {"labels", "scale_values"},
-                      {"labels_out", outside},
+                      {"labels", "labels"},
+                      {"labels_out", "position == 'outside'"},
                       {"min", "min"},
                       {"max", "max"},
                       {"decimals", "decimals"},
-                      {"outer", "(" + outside + ").pick(0.8, 1 - thickness)"},
+                      {"start", "start_angle"},
+                      {"sweep", "sweep_angle"},
+                      {"outer", "(position == 'outside').pick(0.8, 1 - " + t + ")"},
                       {"len", "0.07"},
                       {"fill", "$scale"},
-                      {"text_fill", "$ink-muted"},
-                      {"show", "show_scale"}};
+                      {"text_fill", "$ink-muted"}};
+    /* `value` still rides the needle, read only to gate the pointer (no needle drawn
+       when UNKNOWN, the hub alone); the angle itself is `rotate`, not a needle attr */
     Json needle = Json{{"value", kFraction},
                        {"fill", "handle_color"},
                        {"inner", "0"},
                        {"outer", "0.58"},
                        {"width", "0.045"},
-                       {"hub", "0.07"}};
-    for (auto& item : angles.items()) {
-        arc[item.key()] = item.value();
-        ticks[item.key()] = item.value();
-        needle[item.key()] = item.value();
-    }
+                       {"hub", "0.07"},
+                       {"rotate", "start_angle + (" + Str(kFraction) + ") * sweep_angle"}};
     return component("Gauge",
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
-                    slot("divisions", "num", 5, "config"),
-                    slot("decimals", "num", 0, "config"),
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
-                    slot("fill_color", "color", "$accent", "appearance", "color"),
-                    slot("track_color", "color", "$track", "appearance", "color"),
-                    slot("handle_color", "color", "$handle", "appearance", "color"),
-                    slot("text", "text", "", "appearance"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
-                    slot("control_radius", "num", 4, "appearance"),
-                    range(fine(slot("thickness", "num", 0.1, "appearance"), 0.05), 0.02, 0.6),
-                    slot("show_scale", "bool", true, "appearance"),
-                    slot("scale_values", "bool", true, "appearance"),
-                    slot_enum("scale_position", {"inside", "outside"}, "inside",
-                              "appearance"),
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 /* a press on a Gauge is about the value it is showing, like a Readout */
@@ -801,26 +1081,38 @@ Json gauge_component() {
                              event("held", "num", "widget.value")}),
                 box("stack", "body", Json::object(),
                     Json::array({
-                        box("stack", "control", Json::object(),
+                        /* the dial IS the circle: it owns the fit. No interact rides
+                           it — a Gauge is read-only, the tap-to-read press rides the
+                           whole body below, exactly like a Readout */
+                        box("stack", "dial",
+                            Json{{"start", "start_angle"},
+                                 {"sweep", "sweep_angle"},
+                                 {"fit", fit},
+                                 {"flare", show_scale + ".pick(9, 0)"}},
                             Json::array({
-                                part("arc", "arc", arc),
-                                part("ticks", "scale", ticks),
-                                part("needle", "needle", needle),
-                                /* the default sweep leaves the bottom gap free, which
-                                   is exactly where the label sits: a bottom strip, so
-                                   the self-fitting text sizes to the strip, not the
-                                   whole face */
-                                box("col", "strip", Json::object(),
-                                    Json::array({
-                                        box("stack", "gap", Json{{"weight", "0.76"}},
-                                            Json::array()),
-                                        part("text", "label",
-                                             Json{{"text", "text"},
-                                                  {"fill", "text_color"},
-                                                  {"scale", "text_scale"},
-                                                  {"strong", "true"},
-                                                  {"weight", "0.24"}}),
-                                    })),
+                                owns(part("arc", "arc", arc), radial_arc_props(0.1)),
+                                /* a gauge is a scale you read, so its scale starts ON */
+                                owns(code_part("scale", ticks, kTickBody),
+                                     radial_scale_props("inside", true)),
+                                owns(part("needle", "needle", needle),
+                                     Json::array({slot("handle_color", "color", "$handle",
+                                                       "appearance", "color")})),
+                            })),
+                        /* the label stays OUTSIDE the dial: it sits in the tile's
+                           bottom strip, not the circle, so the default sweep's free
+                           bottom gap is exactly where it lands and the self-fitting
+                           text sizes to the strip, not the whole face */
+                        box("col", "strip", Json::object(),
+                            Json::array({
+                                box("stack", "gap", Json{{"weight", "0.76"}},
+                                    Json::array()),
+                                owns(part("text", "label",
+                                          Json{{"text", "text"},
+                                               {"fill", "text_color"},
+                                               {"scale", "text_scale"},
+                                               {"strong", "true"},
+                                               {"weight", "0.24"}}),
+                                     radial_label_props()),
                             })),
                     }),
                     press_interact()));
@@ -828,41 +1120,40 @@ Json gauge_component() {
 
 Json selector_component() {
     /* the fit slot, as on the Knob: the round body is the extent's CORE, so a
-       partial-sweep selector fills its tile but always keeps room for the body */
+       partial-sweep selector fills its tile but always keeps room for the body.
+       Only the DIAL carries it (spec 2.3). */
     const Str fit = "(fit == 'center').pick('circle', 'extent')";
-    const Str body_frac = "show_scale.pick(0.66, 0.84)";
-    Json angles = Json{{"start", "start_angle"},
-                       {"sweep", "sweep_angle"},
-                       {"fit", fit},
-                       {"core", body_frac},
-                       {"flare", "show_scale.pick(9, 0)"}};
+    const Str show_scale = "dial.scale.shown";
+    const Str body_frac = show_scale + ".pick(0.66, 0.84)";
     /* the pointer's angle is where the value's NAME sits in the options list; an
-       unknown value or unresolvable options draw no pointer at all */
+       unknown value or unresolvable options draw no pointer at all. It carries no
+       angle maths of its own: `rotate` turns it, exactly like the Gauge's needle. */
     Json needle = Json{{"value", "optfrac(value, options)"},
                        {"fill", "handle_color"},
                        {"inner", "0.25"},
-                       {"outer", "show_scale.pick(0.58, 0.78)"},
-                       {"width", "0.09"}};
+                       {"outer", show_scale + ".pick(0.58, 0.78)"},
+                       {"width", "0.09"},
+                       {"rotate", "start_angle + (optfrac(value, options)) * sweep_angle"}};
     /* one detent mark per option hugging the body, each option's NAME beyond its
        mark when scale_values is on (the Selector never shows the current selection
        as text: a value readout is the user's own Label, fed from the value slot) */
     Json ticks = Json{{"count", "optcount(options)"},
                       {"names", "optnames(options)"},
-                      {"labels", "scale_values"},
+                      {"labels", "labels"},
                       {"labels_out", "true"},
+                      {"start", "start_angle"},
+                      {"sweep", "sweep_angle"},
                       {"outer", "0.78"},
                       {"len", "0.08"},
                       {"fill", "$scale"},
-                      {"text_fill", "text_color"},
-                      {"show", "show_scale"}};
-    /* the body pulls in when the scale shows, so the option names ring it; a radial
-       part (a bare hub), so it rides the fitted circle like everything else */
-    Json body = Json{{"fill", "body_color"}, {"hub", body_frac}};
-    for (auto& item : angles.items()) {
-        needle[item.key()] = item.value();
-        ticks[item.key()] = item.value();
-        body[item.key()] = item.value();
-    }
+                      {"text_fill", "text_color"}};
+    /* the body pulls in when the scale shows, so the option names ring it: a plain
+       round shape riding the dial's own square, exactly like the Knob's face, minus
+       the rotate — this body never turns, only the needle pointing across it does */
+    Json body = Json{{"fill", "body_color"},
+                     {"radius", "999"},
+                     {"aspect", "1"},
+                     {"zoom", body_frac}};
     return component("Selector",
                 compose_slots(tile_base(), {
                     /* options is a TypeRef naming an enum, exactly as on Dropdown */
@@ -872,28 +1163,41 @@ Json selector_component() {
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
-                    slot("body_color", "color", "$surface-2", "appearance", "color"),
-                    slot("handle_color", "color", "$handle", "appearance", "color"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
-                    slot("show_scale", "bool", true, "appearance"),
-                    slot("scale_values", "bool", true, "appearance"),
                     slot_enum("fit", {"fill", "center"}, "fill", "appearance"),
                 }),
                 Json::array({event("select", "text")}),
                 box("stack", "body", Json::object(),
                     Json::array({
-                        box("stack", "control", Json::object(),
+                        /* the dial IS the circle: it owns the fit and carries the
+                           drag, so `face`, `scale` and `needle` share one circle */
+                        box("stack", "dial",
+                            Json{{"start", "start_angle"},
+                                 {"sweep", "sweep_angle"},
+                                 {"fit", fit},
+                                 {"core", body_frac},
+                                 {"flare", show_scale + ".pick(9, 0)"}},
                             Json::array({
-                                part("needle", "body", body),
-                                part("ticks", "scale", ticks),
-                                part("needle", "needle", needle),
+                                /* `face`, as on the Knob: the round body the detents
+                                   ring, named for what it is rather than for the box
+                                   that holds it */
+                                owns(part("rect", "face", body),
+                                     Json::array({slot("body_color", "color", "$surface-2",
+                                                       "appearance", "color")})),
+                                /* the detents ARE the options, so the scale starts on;
+                                   the tick labels are the option names, so their colour
+                                   belongs to the scale that draws them */
+                                owns(code_part("scale", ticks, kTickBody),
+                                     Json::array({slot("shown", "bool", true, "config"),
+                                                  slot("labels", "bool", true, "appearance"),
+                                                  slot("text_color", "color", "$ink",
+                                                       "appearance", "color")})),
+                                owns(part("needle", "needle", needle),
+                                     Json::array({slot("handle_color", "color", "$handle",
+                                                       "appearance", "color")})),
                             }),
                             radial_interact(
                                 Json{{"options", "options"},
                                      {"mode", "drag"},
-                                     {"fit", fit},
-                                     {"core", body_frac},
-                                     {"flare", "show_scale.pick(9, 0)"},
                                      {"fraction", "optfrac(value, options)"}},
                                 Json{{"select", "select"}})),
                     })),
@@ -903,8 +1207,9 @@ Json selector_component() {
 Json label_component() {
     return component("Label",
                 compose_slots(tile_base(), {
+                    /* the text a Label shows is the widget's own DATA, not one part's
+                       dressing: it is what a feed binds and what a press proposes */
                     slot("text", "text", "", "value"),
-                    slot("text_color", "color", "$ink", "appearance", "color"),
                     /* a label reads like a line of text, so it starts left, not center */
                     align_slot("left"),
                 }),
@@ -913,11 +1218,13 @@ Json label_component() {
                              event("press", "text", "widget.text"),
                              event("held", "text", "widget.text")}),
                 box("stack", "body", Json::object(),
-                    Json::array({part("text", "text",
-                                      Json{{"text", "text"},
-                                           {"fill", "text_color"},
-                                           {"align", "align"},
-                                           {"scale", "text_scale"}})}),
+                    Json::array({owns(part("text", "line",
+                                           Json{{"text", "text"},
+                                                {"fill", "text_color"},
+                                                {"align", "align"},
+                                                {"scale", "text_scale"}}),
+                                      Json::array({slot("text_color", "color", "$ink",
+                                                        "appearance", "color")}))}),
                     press_interact()));
 }
 

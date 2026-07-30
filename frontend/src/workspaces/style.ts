@@ -9,16 +9,21 @@ import { colorField } from "../colorpicker.js";
 import { clear, commitInput, el, iconButton } from "../dom.js";
 import { Editor } from "../editor.js";
 import { bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
-import { Token } from "../types.js";
+import { Json, Token } from "../types.js";
 
-/* how many authored slot values reference this token, across every page */
+/* how many authored slot values reference this token, across every page. A widget's
+   slots nest one object per part (spec 2.3), so the count walks them. */
 function usedCount(editor: Editor, name: string): number {
   const ref = "$" + name;
   let count = 0;
+  const walk = (level: Json): void => {
+    for (const value of Object.values(level ?? {})) {
+      if (value && typeof value === "object") walk(value as Json);
+      else if (value === ref) count++;
+    }
+  };
   for (const page of editor.store.pages())
-    for (const widget of page.widgets ?? [])
-      for (const value of Object.values(widget.slots ?? {}))
-        if (value === ref) count++;
+    for (const widget of page.widgets ?? []) walk(widget.slots);
   return count;
 }
 

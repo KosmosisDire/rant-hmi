@@ -14,14 +14,14 @@ import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
-import { bindChoice, bindField, bindText } from "../reconcile.js";
+import { bindChoice, bindField, bindText, shownValue } from "../reconcile.js";
 import { ComponentDef, Json, PartNode, PropDef, SlotSpec } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "series"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
-const PART_KINDS = ["box", "rect", "bar", "text", "icon", "arc", "needle", "mark",
-                    "ticks", "plot"];
+const PART_KINDS = ["box", "rect", "bar", "text", "icon", "arc", "needle",
+                    "plot", "path", "code"];
 
 /* the selection resolved against the store: a vanished part falls back to the
  * component, a vanished component to null (the widget inspector then applies) */
@@ -46,6 +46,251 @@ function siblingsOf(editor: Editor, partId: number): Json[] {
   return [];
 }
 
+/* ---- the browsed built-in (spec 2.3 Forking) ----
+ *
+ * The same definition an Override would copy, shown read-only. It is not in the
+ * document, so nothing here binds, applies an op or looks anything up in the store: a
+ * built-in never changes at runtime, which is exactly why one static render is enough.
+ *
+ * `path` is a CHILD-INDEX path into `parts` ("" = the component, "0" = its root part,
+ * "0.1" = that part's second child). `address` is the different thing the reader
+ * actually wants: the part's SLOT ADDRESS prefix — the names joined below the template
+ * root, which is what its properties are addressed under and what an instance's nested
+ * `slots` mirror (spec 2.3). The root contributes no segment, so it is dropped. */
+interface BuiltinAt {
+  comp: Json;
+  part: Json | null;
+  path: string;
+  address: string;
+}
+
+function builtinAt(editor: Editor): BuiltinAt | null {
+  const sel = editor.builtinSel;
+  if (!sel || !sel.name) return null;
+  const comp = (editor.builtins ?? []).find((b: Json) => b?.name === sel.name);
+  if (!comp) return null;
+  let part: Json = null;
+  let list: Json[] = Array.isArray(comp.parts) ? (comp.parts as Json[]) : [];
+  const names: string[] = [];
+  for (const step of sel.path ? sel.path.split(".") : []) {
+    const at = list[Number(step)];
+    /* a stale path (the tree it addressed is gone) falls back to the component itself
+       rather than showing nothing: the same rule the doc selection follows */
+    if (!at || typeof at !== "object") return { comp, part: null, path: "", address: "" };
+    part = at;
+    names.push(String(at.name ?? ""));
+    list = Array.isArray(at.children) ? (at.children as Json[]) : [];
+  }
+  return { comp, part, path: sel.path, address: names.slice(1).join(".") };
+}
+
+/* A read-only expression: the same highlighted field the editable rows use, `readonly`
+   rather than disabled so the text still selects and copies out. It carries the whole
+   expression as its tooltip, because a built-in's attrs are the longest in the system
+   (a Knob's `zoom` folds four properties) and this view exists to be READ — the
+   editable rows can scroll their caret, a static one cannot. */
+function exprView(text: string): HTMLElement {
+  const input = el("input", {
+    class: "field grow",
+    type: "text",
+    value: text,
+    title: text,
+    spellcheck: "false",
+    readonly: "readonly",
+  }) as HTMLInputElement;
+  return highlighted(input);
+}
+
+/* one authored value as the reader would type it back: a string is itself (a color, an
+   enum variant, a piece of text), everything else its JSON */
+function literalText(value: Json): string {
+  if (value === undefined) return "";
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function builtinPropRow(prop: Json, prefix: string): HTMLElement {
+  const name = String(prop?.name ?? "");
+  return el("div", { class: "propdef" }, [
+    el("div", { class: "row" }, [
+      el("span", { class: "value-static grow", text: name,
+                   title: "addressed " + (prefix ? prefix + "." + name : name) }),
+      el("span", { class: "kw", text: String(prop?.shape ?? "num") }),
+    ]),
+    el("div", { class: "row" }, [
+      el("span", { class: "row-label", text: "DEFAULT" }),
+      el("span", { class: "value-static grow", text: literalText(prop?.default) }),
+      el("span", { class: "row-label", text: "GROUP" }),
+      el("span", { class: "kw", text: String(prop?.group ?? "appearance") }),
+    ]),
+  ]);
+}
+
+function builtinPropsSection(props: Json[], prefix: string, empty: string): HTMLElement[] {
+  return section("builtin-props", "Properties", String(props.length), () => [
+    ...props.map((prop) => builtinPropRow(prop, prefix)),
+    props.length ? null : el("p", { class: "empty", text: empty }),
+  ]);
+}
+
+function renderBuiltinComponentView(host: HTMLElement, editor: Editor, at: BuiltinAt): void {
+  const name = String(at.comp?.name ?? "");
+  host.appendChild(
+    el("div", { class: "inspector-head" }, [
+      el("span", { class: "part-name", text: name }),
+      el("span", { class: "head-tag", text: "built-in" }),
+    ]),
+  );
+
+  const body = el("div", { class: "inspector-body" }, []);
+  host.appendChild(body);
+  body.appendChild(
+    el("p", { class: "empty",
+              text: "the shipped definition, read-only — open its parts in the tree" }),
+  );
+  body.appendChild(
+    el("button", {
+      class: "dashed-btn",
+      text: "Override " + name,
+      title: "copy this definition into the document and edit it there",
+      onclick: () => editor.forkBuiltin(name),
+    }),
+  );
+
+  const events = (Array.isArray(at.comp?.events) ? at.comp.events : []) as Json[];
+  body.append(
+    ...section("builtin-events", "Events", String(events.length), () => [
+      ...events.map((evt) =>
+        el("div", { class: "event-line" }, [
+          el("span", { class: "kw", text: String(evt?.name ?? "") }),
+          el("span", { class: "op", text: "x: " + String(evt?.x ?? "") }),
+          evt?.value ? el("code", { class: "event-expr", text: String(evt.value) }) : null,
+        ]),
+      ),
+      events.length ? null : el("p", { class: "empty", text: "no events" }),
+    ]),
+  );
+
+  /* the WIDGET's own properties: what an instance shows while the widget itself is
+     selected. A part's are on that part, which is what the tree is for. */
+  body.append(
+    ...builtinPropsSection((at.comp?.props ?? []) as Json[], "",
+                           "no properties of its own"),
+  );
+
+  const flows = (Array.isArray(at.comp?.behavior) ? at.comp.behavior : []) as Json[];
+  body.append(
+    ...section("builtin-behavior", "Behavior", String(flows.length), () => [
+      ...flows.map((flow) => el("div", { class: "flow-line", text: flowSummary(flow) })),
+      flows.length ? null : el("p", { class: "empty", text: "no default behavior" }),
+    ]),
+  );
+}
+
+function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt): void {
+  const part = at.part as Json;
+  const comp = String(at.comp?.name ?? "");
+  const kind = String(part?.kind ?? "");
+  const attrs = (part?.attrs ?? {}) as Record<string, Json>;
+  const keys = Object.keys(attrs);
+
+  const back = el("button", {
+    class: "part-back",
+    text: comp,
+    title: "back to the component",
+    onclick: () => editor.selectBuiltin(comp, ""),
+  });
+  host.appendChild(
+    el("div", { class: "inspector-head" }, [
+      back,
+      el("span", { class: "part-sep", text: "›" }),
+      el("span", { class: "part-name", text: String(part?.name ?? "") }),
+      el("span", { class: "head-tag", text: "built-in" }),
+    ]),
+  );
+
+  const body = el("div", { class: "inspector-body" }, []);
+  host.appendChild(body);
+
+  const kindRow = el("div", { class: "row" }, [
+    el("span", { class: "row-label", text: "KIND" }),
+    el("span", { class: "kw", text: kind }),
+  ]);
+  if (kind === "box")
+    kindRow.append(
+      el("span", { class: "row-label", text: "DIR" }),
+      el("span", { class: "kw", text: String(part?.dir ?? "stack") }),
+    );
+  body.append(
+    el("div", { class: "part-def" }, [
+      kindRow,
+      /* the one thing a reader of a built-in is really after: what this part's
+         properties are called from the outside (spec 2.3) */
+      el("div", { class: "row" }, [
+        el("span", { class: "row-label", text: "ADDRESS" }),
+        el("span", { class: "value-static grow",
+                     text: at.address || "the widget itself",
+                     title: at.address
+                       ? "its properties address " + at.address + ".<name>"
+                       : "the template root adds no segment: its properties address bare" }),
+      ]),
+    ]),
+  );
+
+  body.append(
+    ...builtinPropsSection((part?.props ?? []) as Json[], at.address,
+                           "no properties of its own"),
+  );
+
+  body.append(
+    ...section("builtin-attrs", "Attrs", String(keys.length), () => [
+      ...keys.map((key) =>
+        el("div", { class: "attr-row" }, [
+          el("span", { class: "field attr-name static", text: key }),
+          exprView(String(attrs[key] ?? "")),
+        ]),
+      ),
+      keys.length ? null : el("p", { class: "empty", text: "no attrs" }),
+    ]),
+  );
+
+  if (kind === "code") {
+    const source = el("textarea", {
+      class: "field code-editor",
+      spellcheck: "false",
+      rows: "8",
+      readonly: "readonly",
+    }) as HTMLTextAreaElement;
+    source.value = String(part?.code ?? "");
+    body.append(...section("builtin-code", "Code", null, () => [source]));
+  }
+
+  const interact = part?.interact as Json;
+  if (interact && typeof interact === "object") {
+    const params = Object.entries((interact.params ?? {}) as Record<string, Json>);
+    const emits = Object.entries((interact.emits ?? {}) as Record<string, string>);
+    body.append(
+      ...section("builtin-interact", "Interact", null, () => [
+        el("div", { class: "row" }, [
+          el("span", { class: "row-label", text: "PRIMITIVE" }),
+          el("span", { class: "kw", text: String(interact.primitive ?? "press") }),
+        ]),
+        ...params.map(([param, expr]) =>
+          el("div", { class: "attr-row" }, [
+            el("span", { class: "field attr-name static", text: param }),
+            exprView(String(expr ?? "")),
+          ]),
+        ),
+        ...emits.map(([gesture, event]) =>
+          el("div", { class: "row" }, [
+            el("span", { class: "row-label", text: "EMITS" }),
+            el("span", { class: "kw", text: gesture + " → " + event }),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
 function flowSummary(flow: Json): string {
   const when = (Array.isArray(flow?.when) ? flow.when : [])
     .map((t: Json) => (t?.kind === "timer" ? "timer " + (t.var ?? "?") : String(t?.name ?? "?")))
@@ -61,6 +306,10 @@ function diagShape(editor: Editor, id: number): string[] {
 /* the component inspector's structure, or null when no component is selected (which
  * is what routes the inspector back to the widget views) */
 export function componentInspectorShape(editor: Editor): string | null {
+  /* a browsed built-in is fully described by its address: the definitions are
+     snapshot-only, so nothing inside one can change under a standing render */
+  const browsing = builtinAt(editor);
+  if (browsing) return JSON.stringify({ builtin: browsing.comp?.name, path: browsing.path });
   const at = selection(editor);
   if (!at) return null;
   const { comp, part } = at;
@@ -71,6 +320,8 @@ export function componentInspectorShape(editor: Editor): string | null {
       comp: comp.id,
       part: part.id,
       kind: part.kind,
+      props: ((part as Json).props ?? []).map((p: PropDef) =>
+        [p.id, p.shape, p.group, (p.variants ?? []).join("|"), p.editor ?? ""]),
       attrs: Object.keys(part.attrs ?? {}),
       interact: interact
         ? { primitive: interact.primitive ?? "press",
@@ -79,7 +330,8 @@ export function componentInspectorShape(editor: Editor): string | null {
         : null,
       index: siblings.findIndex((node: Json) => node?.id === part.id),
       count: siblings.length,
-      diag: diagShape(editor, part.id),
+      diag: diagShape(editor, part.id).concat(
+        ((part as Json).props ?? []).flatMap((p: PropDef) => diagShape(editor, p.id))),
     });
   }
   return JSON.stringify({
@@ -94,6 +346,12 @@ export function componentInspectorShape(editor: Editor): string | null {
 }
 
 export function renderComponentInspector(host: HTMLElement, editor: Editor): void {
+  const browsing = builtinAt(editor);
+  if (browsing) {
+    if (browsing.part) renderBuiltinPartView(host, editor, browsing);
+    else renderBuiltinComponentView(host, editor, browsing);
+    return;
+  }
   const at = selection(editor);
   if (!at) return;
   if (at.part) renderPartView(host, editor, at.comp, at.part);
@@ -143,23 +401,12 @@ function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentD
   );
 
   /* 2. Properties: one PropDef row per served slot. The name, shape, default and
-   *    group are the whole slot spec an instance sees. */
-  const props = comp.props ?? [];
+   *    group are the whole slot spec an instance sees. These are the WIDGET's own —
+   *    what an instance shows while the widget itself is selected; a property that
+   *    belongs to one part is declared on that part (spec 2.3). */
   body.append(
-    ...section("comp-props", "Properties", String(props.length), () => [
-      ...props.map((prop) => propRow(editor, prop)),
-      props.length ? null : el("p", { class: "empty", text: "no properties yet" }),
-      el("button", {
-        class: "dashed-btn",
-        text: "+ Property",
-        onclick: () => {
-          const taken = new Set((at().props ?? []).map((p) => p.name));
-          let fresh = "prop1";
-          for (let n = 1; taken.has(fresh); n++) fresh = "prop" + n;
-          editor.apply([{ op: "insert", parent: comp.id, list: "props", node: { name: fresh } }]);
-        },
-      }),
-    ]),
+    ...propsSection(editor, comp.id, "comp-props", () => at().props ?? [],
+                    "no properties yet"),
   );
 
   /* 3. Behavior: the type's default flows, summarized. Full flow editing stays on
@@ -171,6 +418,33 @@ function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentD
       flows.length ? null : el("p", { class: "empty", text: "no default behavior" }),
     ]),
   );
+}
+
+/* The properties one owner declares — a component (the widget's own vocabulary) or a
+ * part (what that part paints). One section, two callers, because the row is the same
+ * thing in both places and so is the rule: a property is declared where it is read. */
+function propsSection(
+  editor: Editor,
+  ownerId: number,
+  key: string,
+  propsAt: () => PropDef[],
+  empty: string,
+): HTMLElement[] {
+  const props = propsAt();
+  return section(key, "Properties", String(props.length), () => [
+    ...props.map((prop) => propRow(editor, prop)),
+    props.length ? null : el("p", { class: "empty", text: empty }),
+    el("button", {
+      class: "dashed-btn",
+      text: "+ Property",
+      onclick: () => {
+        const taken = new Set(propsAt().map((p) => p.name));
+        let fresh = "prop1";
+        for (let n = 1; taken.has(fresh); n++) fresh = "prop" + n;
+        editor.apply([{ op: "insert", parent: ownerId, list: "props", node: { name: fresh } }]);
+      },
+    }),
+  ]);
 }
 
 function propRow(editor: Editor, prop: PropDef): HTMLElement {
@@ -317,6 +591,14 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     ]),
   );
 
+  /* the properties this part OWNS (spec 2.3): an instance edits them only while this
+   * part is selected, they are stored under its path, and this part's expressions —
+   * and its children's — are the only ones that can read them */
+  body.append(
+    ...propsSection(editor, part.id, "part-props", () => (at() as Json).props ?? [],
+                    "no properties of its own"),
+  );
+
   /* the attrs table: one row per entry, name + expression text. Renaming rebuilds the
    * whole object in place so the entry keeps its position. */
   const keys = Object.keys(part.attrs ?? {});
@@ -336,6 +618,11 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
       }),
     ]),
   );
+
+  /* the `code` kind's body (spec 2.3): user-authored JavaScript, so it gets a dedicated
+   * multi-line editor instead of the one-line attr rows above (`attrs` still applies to
+   * a code part — repeat, show, the transform — only the body itself needs this). */
+  if (part.kind === "code") body.append(...codeSection(editor, part));
 
   /* the interact, when the part carries one: primitive and emits are read-only (the
    * primitive's vocabulary is closed), the params are expressions like any attr */
@@ -360,8 +647,17 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     );
   }
 
-  if (isBox) {
-    const add = el("button", { class: "dashed-btn", text: "+ Child part" });
+  /* ANY part takes children now (spec 2.3), not just a box: a draw part paints its
+     shape and its children ride over it, which is how a knob's dot lives on its face
+     instead of beside it behind a wrapper box */
+  {
+    const add = el("button", {
+      class: "dashed-btn",
+      text: "+ Child part",
+      title: isBox
+        ? "a box lays its children out by `dir`"
+        : "a draw part paints its shape, then its children over it",
+    });
     add.addEventListener("click", () => {
       const rect = add.getBoundingClientRect();
       openMenu(rect.left, rect.bottom + 4, "Add part",
@@ -380,6 +676,42 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     });
     body.appendChild(add);
   }
+}
+
+/* The `code` part's body editor: a multi-line monospace textarea (`.code-editor` in
+ * styles.css; `.field` already sets the monospace font every field here uses), resizable
+ * vertically since a JS body can run long. It follows the file's commit idiom — commit on
+ * blur/change, Escape reverts to the last value the reconciler pushed in (shownValue) —
+ * with two deliberate departures from `commitInput`/`commitTextInput`: Enter must NOT
+ * commit (it is an ordinary newline in the source), and Tab inserts two spaces rather
+ * than moving focus, since a code body is the one field here that needs both. */
+function codeSection(editor: Editor, part: PartNode): HTMLElement[] {
+  const at = () => (editor.store.node(part.id) as PartNode | null) ?? part;
+  const commit = (text: string) =>
+    editor.apply([{ op: "set_prop", node: part.id, key: "code", value: text }]);
+  const textarea = el("textarea", {
+    class: "field code-editor",
+    spellcheck: "false",
+    rows: "8",
+    onkeydown: (ev: KeyboardEvent) => {
+      const input = ev.target as HTMLTextAreaElement;
+      if (ev.key === "Tab") {
+        ev.preventDefault();
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? start;
+        input.value = input.value.slice(0, start) + "  " + input.value.slice(end);
+        input.selectionStart = input.selectionEnd = start + 2;
+        return;
+      }
+      if (ev.key === "Escape") {
+        input.value = shownValue(input) ?? "";
+        input.blur();
+      }
+    },
+    onchange: (ev: Event) => commit((ev.target as HTMLTextAreaElement).value),
+  }) as HTMLTextAreaElement;
+  bindField(part.id + ":code", textarea, () => at().code ?? "");
+  return section("part-code", "Code", null, () => [textarea]);
 }
 
 function attrRow(

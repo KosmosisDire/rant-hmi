@@ -118,6 +118,9 @@ export interface Widget {
   type: string;
   label: string;
   geom: Geom;
+  /* per-instance slot values, NESTED like the type's parts: a widget-level slot is a
+     key here, a part's slot a key inside an object named for the part, so
+     {"bar": {"fill_color": "#fff"}} is the slot addressed "bar.fill_color" */
   slots: Record<string, Json>;
   locals: Var[];
   feeds: Feed[];
@@ -152,12 +155,18 @@ export interface PropDef {
 
 export interface PartNode {
   id: number;
-  kind: "box" | "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "mark" | "ticks" | "plot";
+  kind: "box" | "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "plot" | "path" | "code";
   name: string;
   dir?: "row" | "col" | "stack" | "auto"; /* box only */
+  /* the properties this part OWNS: addressed under its path, edited only while it is
+     selected, and in scope for its own attrs and its children's (spec 2.3) */
+  props: PropDef[];
   attrs: Record<string, string>;          /* attr -> expression text */
   interact: { primitive: string; params: Record<string, string>;
               emits: Record<string, string> } | null;
+  /* `code` kind only: the user-authored JavaScript body, never compiled as an
+     expression (spec 2.3) */
+  code?: string;
   children: PartNode[];
 }
 
@@ -191,6 +200,9 @@ export type Program = { code: Instr[] };
 export type Instr = { op: string; v?: Json; cell?: string };
 
 export interface SlotSpec {
+  /* the slot's ADDRESS: a widget-level property is a bare name, a part's is its owning
+     part's path plus the name (`bar.fill_color`). It is what a feed's `slot`, a move's
+     destination, a live cell key and an instance's nesting all use (spec 2.3). */
   name: string;
   shape: string;
   default: Json;
@@ -223,7 +235,13 @@ export interface Interact {
    one; the renderer tolerates its absence (the node just has no path). */
 export type TemplateNode =
   | { kind: "box"; name?: string; dir: "row" | "col" | "stack" | "auto"; attrs: Attrs; children: TemplateNode[]; interact?: Interact }
-  | { kind: "part"; name?: string; draw: "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "mark" | "ticks" | "plot"; attrs: Attrs };
+  /* a draw part paints its own shape AND holds children (spec 2.3): they render into
+     the SAME area, over it, inheriting its transform — stack semantics with no `dir`
+     of its own, because a leaf's children are never laid out beside it, only atop it.
+     `code`/`scope` ride ONLY on a `draw: "code"` node: the user-authored JS source,
+     verbatim, and its part's lexical scope (bare name -> slot address) so the view can
+     build `props` by bare name (spec 2.3). */
+  | { kind: "part"; name?: string; draw: "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "plot" | "path" | "code"; attrs: Attrs; children: TemplateNode[]; code?: string; scope?: Record<string, string> };
 
 export interface WidgetType {
   name: string;

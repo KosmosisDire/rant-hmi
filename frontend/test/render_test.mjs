@@ -114,12 +114,25 @@ ws.onmessage = (ev) => {
 function next(type, timeout = 3000) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeout;
+    /* `look` is rearmed from two places (a fresh message, and a fallback poll), and
+       must stay armed at most ONCE each way: on a wait slow enough for several "live"
+       ticks to land before it settles (the case a registry-changed snapshot adds),
+       each tick used to arm a NEW setTimeout on top of whatever was already pending,
+       without ever cancelling the old one, so the outstanding pile of timers (and the
+       waiters entries they each re-added) grew without bound instead of staying at
+       one. Clearing the previous timer before rearming, and never pushing a second
+       waiters entry for the same look, keeps exactly one of each in flight. */
+    let timer = null;
     const look = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
       const at = inbox.findIndex((f) => f.type === type);
       if (at >= 0) return resolve(inbox.splice(at, 1)[0]);
       if (Date.now() > deadline) return reject(new Error("no " + type + " frame"));
-      waiters.push(look);
-      setTimeout(look, 50);
+      if (waiters.indexOf(look) < 0) waiters.push(look);
+      timer = setTimeout(look, 50);
     };
     look();
   });
@@ -187,7 +200,8 @@ ws.send(
           type: "Readout",
           label: "Unfed",
           geom: { x: 1200, y: 60, w: 180, h: 120 },
-          slots: { value: 12.345, decimals: 1, units: "bar" },
+          /* a part's values nest under the part (spec 2.3) */
+          slots: { value: 12.345, reading: { decimals: 1 }, units: { text: "bar" } },
         },
       },
     ],
@@ -208,7 +222,8 @@ ws.send(
   JSON.stringify({
     type: "apply_ops",
     base_version: store.version(),
-    ops: [{ op: "set_prop", node: unfed.id, key: "slots", value: { value: 12.345, decimals: 0 } }],
+    ops: [{ op: "set_prop", node: unfed.id, key: "slots",
+            value: { value: 12.345, reading: { decimals: 0 } } }],
   }),
 );
 const second = await next("ops_applied");
@@ -216,6 +231,13 @@ store.apply(second.version, second.ops);
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
 has(svg, ">12<", "decimals 0 rounded the value");
 check(!svg.includes(">bar<"), "an empty units slot sheds its part");
+/* the REAL backend's version, tracked separately from here on: everything below this
+   point simulates most further edits as LOCAL-ONLY echoes (store.apply with no
+   ws.send), which is deliberate — it exercises the reconciler without a round trip —
+   but it means store.version() drifts far ahead of what the backend actually saw. The
+   repeat/path proof near the end of this file needs the real backend to compile a doc
+   component, so it sends ops for real and must base them on this, not store.version() */
+let backendVersion = second.version;
 
 /* ---- inspector reconciliation ----
    The sidebars are generated from the document, so the question every echo asks is what it
@@ -236,6 +258,7 @@ const editor = {
   lang: null,
   builtins: snapshot.builtins ?? [],
   componentSel: null,
+  builtinSel: null,
   view,
   page: () => store.pages()[0],
   selectedWidget: () => store.widget(readout.id),
@@ -244,7 +267,9 @@ const editor = {
   select: () => undefined,
   selectPart: () => undefined,
   selectComponent: () => undefined,
+  selectBuiltin: () => undefined,
   forkBuiltin: () => undefined,
+  duplicateComponent: () => undefined,
   addComponent: () => undefined,
   addPage: () => undefined,
   reveal: () => undefined,
@@ -583,28 +608,28 @@ svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.liv
 check(!svg.includes('class="fault'), "and unmarked when the finding clears");
 
 /* ---- part identity ----
-   Every named template node has a part path (names joined with "/" from the template
-   root). A render handed a collector wraps each named node in a data-part group (inside
+   Every named template node has a part path (names joined with "." BELOW the template
+   root, whose own name adds nothing: the root part IS the widget). A render handed a collector wraps each named node in a data-part group (inside
    any data-act group) and records its laid-out rect per widget; without one the SVG is
    exactly what it always was. */
 check(!svg.includes("data-part"), "no collector, no data-part groups");
 const partRects = new Map();
 svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view,
                     null, null, partRects);
-has(svg, '<g data-act="0"><g data-part="body/pill">', "a data-part group nests inside its data-act group");
-has(svg, '<g data-part="body/pill/lane/knob">', "the toggle's knob renders as a data-part group");
+has(svg, '<g data-act="0"><g data-part="pill">', "a data-part group nests inside its data-act group");
+has(svg, '<g data-part="pill.lane.knob">', "the toggle's knob renders as a data-part group");
 const toggleParts = partRects.get(toggle.id);
-check(toggleParts instanceof Map && toggleParts.has("body/pill/lane/knob"),
+check(toggleParts instanceof Map && toggleParts.has("pill.lane.knob"),
       "part rects are recorded per widget by part path");
 {
-  const knob = toggleParts.get("body/pill/lane/knob");
+  const knob = toggleParts.get("pill.lane.knob");
   const g = store.widget(toggle.id).geom;
   check(knob && knob.x >= g.x && knob.y >= g.y &&
         knob.x + knob.w <= g.x + g.w && knob.y + knob.h <= g.y + g.h,
         "a recorded part rect lies inside its widget's tile");
 }
 /* the slider's scale is hidden (show_scale defaults off), so it records nothing */
-check(!partRects.get(slider.id).has("body/scale"), "a node hidden by `show` records no rect");
+check(!partRects.get(slider.id).has("scale"), "a node hidden by `show` records no rect");
 
 /* ---- the Layers tree, part selection and the part-scoped inspector ----
    The left sidebar's tree lists the CURRENT page's widgets and each widget's named
@@ -627,19 +652,19 @@ check(rowByKey("p" + page.id) === null, "not even the current page's");
 /* expanding the widget row (its caret) reveals the type's whole part tree */
 fire(toggleRow.children[0], "click");
 drawLeft();
-check(rowByKey("w" + toggle.id + "/body/pill/lane/knob") !== null,
+check(rowByKey("w" + toggle.id + "/pill.lane.knob") !== null,
       "an expanded widget lists its template parts by path");
 fire(rowByKey("w" + slider.id).children[0], "click");
 drawLeft();
-check(rowByKey("w" + slider.id + "/body/scale") !== null,
+check(rowByKey("w" + slider.id + "/scale") !== null,
       "a part hidden by `show` is still listed: the tree reads the type, not the render");
 
 /* a selected part scopes the inspector: widget › part head, ONE section, and only the
-   slots the part's subtree consumes (the knob paints with handle_color and nothing else) */
+   properties that part OWNS — not its siblings', not its children's, not the widget's */
 const toggleEditor2 = { ...editor, selectedWidget: () => store.widget(toggle.id) };
 view.selection = [toggle.id];
-view.part = "body/pill/lane/knob";
-const widgetShape = (() => { view.part = ""; const s = inspectorShape(toggleEditor2); view.part = "body/pill/lane/knob"; return s; })();
+view.part = "pill.lane.knob";
+const widgetShape = (() => { view.part = ""; const s = inspectorShape(toggleEditor2); view.part = "pill.lane.knob"; return s; })();
 check(inspectorShape(toggleEditor2) !== widgetShape, "the selected part moves the inspector's shape");
 const partPanel = new Panel(new Element("aside"));
 partPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
@@ -647,7 +672,7 @@ const partLabels = [];
 for (const grid of partPanel.host.querySelectorAll(".prop-grid"))
   for (const kid of grid.children) if (kid.tagName === "LABEL") partLabels.push(kid.textContent);
 check(partLabels.includes("handle_color"),
-      "the part view lists a slot the part's subtree consumes");
+      "the part view lists the property that part owns");
 check(!partLabels.includes("fill_color") && !partLabels.includes("track_color"),
       "and not its siblings' slots, got " + partLabels.join(","));
 check(partPanel.host.querySelector(".geom-grid") === null,
@@ -655,12 +680,45 @@ check(partPanel.host.querySelector(".geom-grid") === null,
 check(partPanel.host.querySelector(".part-name")?.textContent === "knob",
       "the head names the part");
 
+/* ...and the WIDGET view is the other half of the same rule: a property a part owns is
+   editable there and NOWHERE else, so the widget's own inspector holds only its own
+   (its value, its frame, its placement) */
+view.part = "";
+const widgetPanel = new Panel(new Element("aside"));
+widgetPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
+const widgetLabels = [];
+for (const grid of widgetPanel.host.querySelectorAll(".prop-grid"))
+  for (const kid of grid.children) if (kid.tagName === "LABEL") widgetLabels.push(kid.textContent);
+check(!widgetLabels.includes("handle_color") && !widgetLabels.includes("fill_color"),
+      "the widget view shows no property a part owns, got " + widgetLabels.join(","));
+check(widgetLabels.includes("surface") && widgetLabels.includes("Place"),
+      "and keeps the widget's own frame and placement");
+{
+  /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
+     — and the edit writes NESTED, under the part that owns it */
+  check(partLabels.includes("shown"), "a part can be switched off from its own view");
+  const applied = [];
+  const nested = { ...toggleEditor2, apply: (ops) => applied.push(...ops) };
+  view.part = "pill.lane.knob";
+  const editPanel = new Panel(new Element("aside"));
+  editPanel.render(inspectorShape(nested), (host) => renderInspector(host, nested));
+  const pairs = [...editPanel.host.querySelectorAll(".bool-pair")];
+  check(pairs.length === 1, "the knob's own view has exactly one switch");
+  fire(pairs[0].children[0], "click");   /* the "off" half */
+  const slotOp = applied.find((op) => op.key === "slots");
+  check(slotOp && slotOp.value?.pill?.lane?.knob?.shown === false,
+        "a part's edit writes nested under its part, got " + JSON.stringify(slotOp?.value));
+  check(slotOp && slotOp.value.shown === undefined,
+        "and never at the widget's top level");
+  view.part = "";
+}
+
 /* the overlay rings the selected part at its recorded rect; a hidden part has none */
-view.part = "body/pill";
+view.part = "pill";
 const ringed = renderOverlay(store.pages()[0], view, partRects);
 check(ringed.includes('class="part-ring"'), "the overlay rings the selected part");
 view.selection = [slider.id];
-view.part = "body/scale";
+view.part = "scale";
 check(!renderOverlay(store.pages()[0], view, partRects).includes('class="part-ring"'),
       "a part that did not render gets no ring");
 view.selection = [];
@@ -676,13 +734,60 @@ view.part = "";
 drawLeft();
 const builtinToggleRow = rowByKey("b:Toggle");
 check(builtinToggleRow !== null, "the Components section lists unshadowed built-ins");
-check(builtinToggleRow.querySelectorAll(".layer-fork").length === 1,
-      "a built-in row carries the fork affordance");
+check(builtinToggleRow.querySelectorAll(".layer-menu").length === 1,
+      "a built-in row carries the row-level verb menu (Override <Name>, Duplicate as…)");
 check(builtinToggleRow.className.includes("builtin"), "and is marked read-only");
 fire(builtinToggleRow.children[0], "click");
 drawLeft();
-check(rowByKey("b:Toggle/body") !== null,
+/* a built-in is not in the document, so its rows are addressed by name + CHILD-INDEX
+   path ("0" is the root part, "0.0.0" the track inside its pill) rather than node id */
+check(rowByKey("b:Toggle/0") !== null,
       "an expanded built-in lists its part tree from the served doc form");
+check(rowByKey("b:Toggle/0.0.0") !== null, "nested built-in parts too (boxes default open)");
+
+/* the row SELECTS, exactly as a doc component's does: the shipped definitions are
+   browsable read-only, which is how a type is read before it is overridden */
+const browsed = [];
+editor.selectBuiltin = (name, path) => browsed.push(name + ":" + path);
+fire(rowByKey("b:Toggle/0.0.0"), "click");
+fire(rowByKey("b:Toggle"), "click");
+check(browsed.join(" ") === "Toggle:0.0.0 Toggle:",
+      "a built-in row browses it by name and part path, got " + JSON.stringify(browsed));
+
+/* the inspector then shows that part's definition, read-only: no field commits, and
+   the ADDRESS row says what its properties are called from the outside (spec 2.3) */
+const trackEditor = {
+  ...editor,
+  selectedWidget: () => null,
+  builtinSel: { name: "Toggle", path: "0.0.0" },
+};
+const trackPanel = new Panel(new Element("aside"));
+check(inspectorShape(trackEditor) !== inspectorShape(editor),
+      "a browsed built-in owns the inspector's shape");
+trackPanel.render(inspectorShape(trackEditor), (host) => renderInspector(host, trackEditor));
+check(trackPanel.host.querySelector(".head-tag")?.textContent === "built-in",
+      "the head marks it as the built-in definition");
+const trackAttrs = trackPanel.host.querySelectorAll(".attr-row");
+check(trackAttrs.some((row) =>
+        row.querySelectorAll("input").some((i) => i.value === "value.pick(fill_color, track_color)")),
+      "the attrs table shows each attr's expression text");
+check(trackPanel.host.querySelectorAll("input").every((i) => i.getAttribute("readonly")),
+      "every field in it is read-only: nothing in the document owns a built-in");
+check(trackPanel.host.querySelectorAll(".value-static")
+        .some((v) => v.textContent === "pill.track"),
+      "and the ADDRESS row names the part's slot-address prefix");
+const bodyEditor = { ...trackEditor, builtinSel: { name: "Toggle", path: "0" } };
+const bodyPanel = new Panel(new Element("aside"));
+bodyPanel.render(inspectorShape(bodyEditor), (host) => renderInspector(host, bodyEditor));
+check(bodyPanel.host.querySelectorAll(".value-static")
+        .some((v) => v.textContent === "the widget itself"),
+      "the ROOT part adds no segment: its properties address bare");
+const toggleEditor3 = { ...trackEditor, builtinSel: { name: "Toggle", path: "" } };
+const compPanel = new Panel(new Element("aside"));
+compPanel.render(inspectorShape(toggleEditor3), (host) => renderInspector(host, toggleEditor3));
+check(compPanel.host.querySelectorAll(".dashed-btn")
+        .some((b) => b.textContent === "Override Toggle"),
+      "the component view offers the fork that makes it editable");
 
 /* a doc component, injected as an echo would deliver it (ids issued) */
 store.apply(store.version() + 1, [
@@ -718,6 +823,8 @@ store.apply(store.version() + 1, [
 drawLeft();
 const lampRow = rowByKey("c9200");
 check(lampRow !== null, "a doc component appears in the Components tree");
+check(lampRow.querySelector(".badge.shadow") === null,
+      "a component that shadows nothing carries no override tag");
 fire(lampRow.children[0], "click");
 drawLeft();
 check(rowByKey("c9200/9210") !== null, "an expanded component lists its part nodes");
@@ -771,7 +878,8 @@ const diagAttrRow = attrDiagPanel.host.querySelectorAll(".attr-row")[0];
 check(diagAttrRow.querySelectorAll(".diag-dot.error").length === 1,
       "a component finding pins to the attr row the compiler named");
 
-/* the doc component SHADOWS a built-in by name: the built-in row folds away */
+/* the doc component SHADOWS a built-in by name: the built-in row folds away, and the
+   row now carries a legible override tag, not just a tooltip (spec 3.1) */
 store.apply(store.version() + 1, [
   { op: "set_prop", node: 9200, key: "name", value: "Toggle" },
 ]);
@@ -779,9 +887,42 @@ drawLeft();
 check(rowByKey("b:Toggle") === null, "a shadowed built-in leaves the built-ins list");
 check(rowByKey("c9200").querySelector(".shadows") !== null,
       "and the doc component is marked as overriding it");
+check(rowByKey("c9200").querySelector(".badge.shadow") !== null,
+      "the override tag is legible in the row itself, not only the tooltip");
+
+/* "Revert to built-in": removing the component that shadows one restores it (the same
+   op the row menu's danger-styled Revert entry issues) */
 store.apply(store.version() + 1, [{ op: "remove", node: 9200 }]);
 drawLeft();
-check(rowByKey("b:Toggle") !== null, "removing the fork restores the built-in row");
+check(rowByKey("b:Toggle") !== null, "reverting a shadowing component restores the built-in row");
+
+/* "Duplicate as…": copies a built-in under a FRESH name, leaving the source alone —
+   simulate the echo the real duplicateComponent(name) insert produces (the fresh-name
+   derivation itself, "Knob 2" / "Knob 3", is exercised end to end by the Playwright
+   drive against the running app, not this in-process test) */
+store.apply(store.version() + 1, [
+  {
+    op: "insert",
+    parent: 0,
+    list: "components",
+    node: {
+      id: 9300,
+      name: "Knob 2",
+      events: [],
+      props: [],
+      parts: [{ id: 9301, kind: "box", name: "body", dir: "stack", attrs: {},
+                interact: null, children: [] }],
+      behavior: [],
+    },
+  },
+]);
+drawLeft();
+check(rowByKey("b:Knob") !== null, "duplicating a built-in leaves the built-in itself listed");
+check(rowByKey("c9300") !== null, "and a second component appears under the fresh name");
+check(rowByKey("c9300").querySelector(".badge.shadow") === null,
+      "the duplicate shadows nothing (a different name), so it carries no override tag");
+store.apply(store.version() + 1, [{ op: "remove", node: 9300 }]);
+drawLeft();
 
 /* ---- theme tokens (spec 2.10) ----
    The document carries the seeded semantic set; an authored "$name" color slot resolves
@@ -969,6 +1110,335 @@ check(dataDetailPanel.host.querySelector(".detail-name")?.textContent === "Valve
 check(dataDetailPanel.host.querySelectorAll(".used-row")
         .some((r) => r.textContent.includes("plant/valve")),
       "and lists its carrier entities");
+
+/* ---- repeat and path (spec 2.3): proved through the real pipeline ----
+   Not a unit test of template.ts in isolation: a document component compiled by the
+   REAL backend (doc schema -> component compiler -> template-expression compiler ->
+   served registry), placed as an ordinary widget and rendered, exactly the path a user
+   goes through. `repeat` is what turns "N tick marks around a dial" or "N segments in
+   a bar" from one of the nine hard-coded draw generators into an ordinary authored
+   part; `path` is the authored shape a repeated node actually draws here, so the same
+   round trip proves both at once. A fresh page keeps this SVG free of every other
+   widget's own transforms, so the checks below can match on raw substrings without
+   scoping to one widget's group. */
+
+ws.send(JSON.stringify({
+  type: "apply_ops",
+  base_version: backendVersion,
+  ops: [
+    { op: "insert", parent: 0, list: "pages", node: { id: 9550, name: "Repeat", widgets: [] } },
+    {
+      op: "insert", parent: 0, list: "components",
+      node: {
+        name: "Ring", events: [],
+        /* `visible` is the STATE base slot every built-in composes (registry.cpp
+           state_slots()); a doc component that omits it resolves null with no spec
+           to fall back to, and canvas.ts treats a null `visible` as "not rendered"
+           (spec 2.3) — so a bare custom component needs it declared to render at all */
+        props: [
+          { name: "visible", shape: "bool", default: true, group: "config" },
+          { name: "enabled", shape: "bool", default: true, group: "config" },
+        ],
+        parts: [
+          {
+            kind: "box", name: "dial", dir: "stack", attrs: {}, interact: null,
+            children: [
+              {
+                kind: "path", name: "mark", interact: null, children: [],
+                attrs: {
+                  /* repeat's count read against the cells the node was handed, its
+                     own transform placing each copy: a ring of marks, spec 2.3 */
+                  repeat: "4",
+                  rotate: "repeat.index * 30 + 15",
+                  zoom: "0.1 + repeat.fraction * 0.05",
+                  dy: "-0.4",
+                  d: "'M0.1 0.9 L0.5 0.1 L0.9 0.9 Z'",
+                  fill: "#123456",
+                },
+              },
+            ],
+          },
+        ],
+        behavior: [],
+      },
+    },
+    {
+      op: "insert", parent: 0, list: "components",
+      node: {
+        name: "Bar", events: [],
+        props: [
+          { name: "visible", shape: "bool", default: true, group: "config" },
+          { name: "enabled", shape: "bool", default: true, group: "config" },
+        ],
+        parts: [
+          {
+            kind: "box", name: "row", dir: "row", attrs: {}, interact: null,
+            children: [
+              { kind: "rect", name: "seg", interact: null, children: [],
+                attrs: { repeat: "5", fill: "#654321" } },
+            ],
+          },
+        ],
+        behavior: [],
+      },
+    },
+  ],
+}));
+const repeatOpsApplied = await next("ops_applied");
+backendVersion = repeatOpsApplied.version;
+store.apply(repeatOpsApplied.version, repeatOpsApplied.ops);
+/* the component insert changed what the registry derives, so a fresh snapshot follows
+   the op echo (app.cpp: ops_applied never carries the registry itself) — requested
+   explicitly here with "resync" rather than waited for as a broadcast, since a
+   registry-changed snapshot is large (the 12 built-ins alone put it well past a single
+   WebSocket frame) and this is the one exchange in the file that needs the compiled
+   result back, not just the document echo */
+ws.send(JSON.stringify({ type: "resync" }));
+const repeatSnapshot = await next("snapshot");
+check(
+  repeatSnapshot.registry.types.some((t) => t.name === "Ring") &&
+    repeatSnapshot.registry.types.some((t) => t.name === "Bar"),
+  "the Ring and Bar doc components compiled into the served registry",
+);
+
+const repeatPage = store.pages().find((p) => p.id === 9550);
+ws.send(JSON.stringify({
+  type: "apply_ops",
+  base_version: backendVersion,
+  ops: [
+    { op: "insert", parent: repeatPage.id, list: "widgets",
+      node: { type: "Ring", label: "Ring", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
+    { op: "insert", parent: repeatPage.id, list: "widgets",
+      node: { type: "Bar", label: "Bar", geom: { x: 300, y: 0, w: 400, h: 80 }, slots: {} } },
+  ],
+}));
+const repeatWidgetsApplied = await next("ops_applied");
+store.apply(repeatWidgetsApplied.version, repeatWidgetsApplied.ops);
+
+const repeatView = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
+const repeatParts = new Map();
+const repeatSvg = renderContent(store.doc, store.pages().find((p) => p.id === 9550),
+                                repeatSnapshot.registry, snapshot.live, repeatView,
+                                null, null, repeatParts);
+
+/* the ring: 4 copies of the SAME named node ("mark", a child of the root "dial" — the
+   root itself contributes no path segment, spec 2.3) share one part path, and paint
+   the same authored path shape, placed apart only by their own transform */
+const markGroups = repeatSvg.match(/data-part="mark">/g) ?? [];
+check(markGroups.length === 4, "a repeated stack child renders N copies, got " + markGroups.length);
+const marks = repeatSvg.match(/<path d="M0\.1 0\.9 L0\.5 0\.1 L0\.9 0\.9 Z" fill="#123456"\/>/g) ?? [];
+check(marks.length === 4, "each copy paints the authored `path` shape once, got " + marks.length);
+const rotations = [...repeatSvg.matchAll(/rotate\(([\d.]+) /g)].map((m) => m[1]);
+check(rotations.length === 4 && new Set(rotations).size === 4,
+      "the 4 copies carry 4 different transforms, got " + JSON.stringify(rotations));
+check(JSON.stringify(rotations) === JSON.stringify(["15.00", "45.00", "75.00", "105.00"]),
+      "repeat.index reached the rotate expression in copy order, got " + JSON.stringify(rotations));
+const zooms = [...repeatSvg.matchAll(/scale\(([\d.]+)\) translate/g)].map((m) => m[1]);
+check(new Set(zooms).size === 4,
+      "repeat.fraction reached a second expression independently, got " + JSON.stringify(zooms));
+/* the ring widget's whole tile records ONE rect for "mark" (recordRepeatRect), not
+   whichever of the 4 copies happened to render last */
+const ringWidget = repeatPage.widgets.find((w) => w.type === "Ring");
+const ringParts = repeatParts.get(ringWidget.id);
+check(ringParts instanceof Map && ringParts.size === 1 && ringParts.has("mark"),
+      "N copies share one recorded part rect, not one per copy");
+
+/* the bar: 5 copies of a repeated ROW child are separate LAID-OUT siblings (spec 2.3:
+   repeat is a layout device there, not a placement one), so they render as 5 ordinary
+   rects at 5 different x positions rather than one rect drawn 5 times in place */
+const segs = [...repeatSvg.matchAll(/<rect x="([\d.]+)"[^>]*fill="#654321"/g)].map((m) => Number(m[1]));
+check(segs.length === 5, "a repeated row child renders N side-by-side rects, got " + segs.length);
+check(new Set(segs).size === 5, "and each sits at its own x position, got " + JSON.stringify(segs));
+check(segs.every((x, i) => i === 0 || x > segs[i - 1]),
+      "the 5 segments are laid out left to right, got " + JSON.stringify(segs));
+
+/* ---- code parts (spec 2.3): the JS-body escape hatch ----
+   Proved through the same real pipeline as repeat/path above: a document component
+   compiled by the backend, placed as an ordinary widget and rendered. Every `draw.*`
+   helper returns markup rather than pushing into a hidden buffer, so one body can mix
+   the helpers, hand-written markup and a pasted static SVG in a single return. */
+
+ws.send(JSON.stringify({
+  type: "apply_ops",
+  base_version: backendVersion,
+  ops: [
+    { op: "insert", parent: 0, list: "pages", node: { name: "Code", widgets: [] } },
+    {
+      op: "insert", parent: 0, list: "components",
+      node: {
+        name: "CodeDemo", events: [],
+        props: [
+          { name: "visible", shape: "bool", default: true, group: "config" },
+          { name: "enabled", shape: "bool", default: true, group: "config" },
+          /* a WIDGET-level property: a code part's `props` must carry this by bare
+             name too, inherited down from the component root (spec 2.3) */
+          { name: "note", shape: "text", default: "hi", group: "value" },
+        ],
+        parts: [
+          {
+            kind: "box", name: "body", dir: "stack", attrs: {}, interact: null,
+            children: [
+              {
+                /* (a) renders with draw.rect AND draw.text; (c) `props` carries both
+                   this part's OWN property (divisions) and the widget's (note), by
+                   bare name; (g) `view.attrs` carries this part's OWN attrs, resolved
+                   through the same cells everything else reads through — distinct from
+                   `props` above, since a prop and an attr may share a name */
+                kind: "code", name: "canvas", attrs: { halo: "'#abc123'" }, interact: null,
+                children: [],
+                props: [{ name: "divisions", shape: "num", default: 4, group: "config" }],
+                code: "return draw.rect({x:0,y:0,w:area.w,h:area.h,fill:'#222222'}) + " +
+                      "draw.text(String(props.note) + ':' + String(props.divisions), " +
+                      "{x:10,y:10,size:14,fill:'#ffffff'}) + " +
+                      "draw.rect({x:0,y:0,w:1,h:1,fill:view.attrs.halo});",
+              },
+              {
+                /* (b) a raw, pasted SVG string renders unchanged: the "just return svg"
+                   path, no helpers involved at all */
+                kind: "code", name: "raw", attrs: {}, interact: null, children: [], props: [],
+                code: "return '<circle cx=\"50\" cy=\"50\" r=\"12\" fill=\"#ff00ff\"/>';",
+              },
+              {
+                /* (d) draw.measure: positive, and grows with the string — the one thing
+                   no declarative scale attr can do, which is the whole point */
+                kind: "code", name: "measured", attrs: {}, interact: null, children: [], props: [],
+                code: "var a = draw.measure('a', 20); var b = draw.measure('abcdefghij', 20); " +
+                      "return draw.rect({x:0,y:0,w:1,h:1,fill:(b > a && a > 0) ? '#00ff00' : '#ff0000'});",
+              },
+              {
+                /* (e) throws: draws nothing, and must not take the rest of the render
+                   with it — a compile-time-valid body that fails at CALL time */
+                kind: "code", name: "broken", attrs: {}, interact: null, children: [], props: [],
+                code: "throw new Error('boom');",
+              },
+              {
+                /* proves a throwing SIBLING did not stop the rest of this widget: this
+                   part renders after "broken" in the same stack */
+                kind: "code", name: "after", attrs: {}, interact: null, children: [], props: [],
+                code: "return draw.circle(5,5,3,{fill:'#00ffff'});",
+              },
+            ],
+          },
+        ],
+        behavior: [],
+      },
+    },
+    {
+      op: "insert", parent: 0, list: "components",
+      node: {
+        name: "CodeRepeat", events: [],
+        props: [
+          { name: "visible", shape: "bool", default: true, group: "config" },
+          { name: "enabled", shape: "bool", default: true, group: "config" },
+        ],
+        parts: [
+          {
+            kind: "box", name: "dial", dir: "stack", attrs: {}, interact: null,
+            children: [
+              {
+                /* (f) a code part under `repeat` sees repeat.index change per copy,
+                   read off `view.repeat` — the same three cells `repeat:index` etc.
+                   resolve to for everyone else (spec 2.3) */
+                kind: "code", name: "mark", attrs: { repeat: "3" }, interact: null,
+                children: [], props: [],
+                code: "return draw.text(String(view.repeat.index), " +
+                      "{x:area.x+area.w/2, y:area.y+area.h/2, size:12, fill:'#ffffff'});",
+              },
+            ],
+          },
+        ],
+        behavior: [],
+      },
+    },
+  ],
+}));
+const codeOpsApplied = await next("ops_applied");
+backendVersion = codeOpsApplied.version;
+store.apply(codeOpsApplied.version, codeOpsApplied.ops);
+/* the component inserts changed the derivation, so a fresh registry follows (same
+   reason the Ring/Bar block above resyncs explicitly rather than waiting on a broadcast).
+   A registry change ALSO auto-broadcasts a snapshot the moment ops_applied is sent
+   (app.cpp: `if (registry_ != served_before) server_.broadcast(snapshot())`), which can
+   already be sitting in `inbox` unconsumed by the time we get here (the Ring/Bar block
+   above never drained its own copy of this); draining every snapshot already queued
+   before asking again is what keeps the explicit resync below from handing back that
+   stale one instead of the fresh registry these ops just produced. */
+for (let at = inbox.findIndex((f) => f.type === "snapshot"); at >= 0;
+     at = inbox.findIndex((f) => f.type === "snapshot"))
+  inbox.splice(at, 1);
+ws.send(JSON.stringify({ type: "resync" }));
+const codeSnapshot = await next("snapshot");
+check(
+  codeSnapshot.registry.types.some((t) => t.name === "CodeDemo") &&
+    codeSnapshot.registry.types.some((t) => t.name === "CodeRepeat"),
+  "the CodeDemo and CodeRepeat doc components compiled into the served registry",
+);
+
+/* the served wire node: draw:"code", the body verbatim, and the scope map (bare name ->
+   slot address) — served ONLY for a code part, and never run through the
+   template-expression compiler */
+const canvasNode = codeSnapshot.registry.types.find((t) => t.name === "CodeDemo")
+  ?.template?.children?.find((c) => c.name === "canvas");
+check(canvasNode?.draw === "code", "a code part serves draw:\"code\"");
+check(typeof canvasNode?.code === "string" && canvasNode.code.includes("draw.rect"),
+      "the body rides the wire verbatim");
+check(
+  canvasNode?.scope?.note === "note" && canvasNode?.scope?.divisions === "canvas.divisions",
+  "the served scope maps bare names to slot addresses, got " + JSON.stringify(canvasNode?.scope),
+);
+
+const codePage = store.pages().find((p) => p.name === "Code");
+ws.send(JSON.stringify({
+  type: "apply_ops",
+  base_version: backendVersion,
+  ops: [
+    { op: "insert", parent: codePage.id, list: "widgets",
+      node: { type: "CodeDemo", label: "CodeDemo", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
+    { op: "insert", parent: codePage.id, list: "widgets",
+      node: { type: "CodeRepeat", label: "CodeRepeat", geom: { x: 300, y: 0, w: 200, h: 200 }, slots: {} } },
+  ],
+}));
+const codeWidgetsApplied = await next("ops_applied");
+backendVersion = codeWidgetsApplied.version;
+store.apply(codeWidgetsApplied.version, codeWidgetsApplied.ops);
+
+const codeView =
+  { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
+const codeFaults = new Map();
+const codeSvg = renderContent(store.doc, store.pages().find((p) => p.name === "Code"),
+                              codeSnapshot.registry, snapshot.live, codeView, null, null, null, codeFaults);
+
+/* (a) a code body using draw.rect/draw.text renders */
+has(codeSvg, 'fill="#222222"', "a code body's draw.rect renders");
+has(codeSvg, ">hi:4<",
+    "(c) props carried both the part's own property (divisions) and the widget's " +
+    "(note) by bare name");
+/* (b) a body returning a raw SVG string renders it */
+has(codeSvg, '<circle cx="50" cy="50" r="12" fill="#ff00ff"/>',
+    "a raw returned SVG string renders unchanged");
+/* (d) draw.measure returns a positive width that grows with the string */
+has(codeSvg, 'fill="#00ff00"', "draw.measure returns a positive width that grows with the string");
+/* (g) view.attrs exposes this part's own attrs, resolved through the same cells every
+   other draw part's attrs read through */
+has(codeSvg, 'fill="#abc123"', "(g) a code body reads one of its own attrs off view.attrs");
+/* (e) a throwing part draws nothing, does not break the surrounding render, and
+   records a fault naming the widget's part and the JS error */
+has(codeSvg, 'fill="#00ffff"', "a sibling AFTER the throwing part still rendered");
+has(codeSvg, 'class="fault error"', "the widget carrying the throwing code part shows the fault badge");
+has(codeSvg, "boom", "and the badge surfaces the JS error (a title tooltip), not just the console");
+const codeDemoWidgetId =
+  store.pages().find((p) => p.name === "Code").widgets.find((w) => w.label === "CodeDemo").id;
+const faultMsg = codeFaults.get(codeDemoWidgetId);
+check(
+  typeof faultMsg === "string" && faultMsg.includes("broken") && faultMsg.includes("boom"),
+  "a throwing code part records a fault naming the part and the JS error, got " + faultMsg,
+);
+
+/* (f) a code part under `repeat` sees repeat.index change per copy */
+check(
+  codeSvg.includes(">0</text>") && codeSvg.includes(">1</text>") && codeSvg.includes(">2</text>"),
+  "a code part under repeat sees repeat.index change per copy",
+);
 
 /* trend smoothing is pure math on the drawn copy: noisy input comes out with less
    spread, a null still breaks the run (never bridged), and knobs at 0 pass through */

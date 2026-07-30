@@ -127,6 +127,40 @@ export function slotCell(widget: Widget, slot: string): string {
   return widget.id + "." + slot;
 }
 
+/* ---- nested slot values (spec 2.3) ----
+ *
+ * A slot's NAME is its address: bare for the widget's own properties, prefixed by the
+ * owning part's path for the ones a part declares (`bar.fill_color`). An instance
+ * stores them the same way it reads them — nested, one object per part — so the shape
+ * of a widget's `slots` mirrors the shape of its type. */
+
+/* what the document authors at one address, or undefined when it authors nothing there
+   (including when the path runs into a non-object: a stale value is not a value) */
+export function slotValue(slots: Json, address: string): Json {
+  let at: Json = slots;
+  for (const segment of address.split(".")) {
+    if (!at || typeof at !== "object" || Array.isArray(at)) return undefined;
+    at = at[segment];
+  }
+  return at;
+}
+
+/* the same object with one address set, copied down the path it touches: op application
+   replaces the widget's whole `slots` value, and nothing else may be disturbed */
+export function withSlot(slots: Json, address: string, value: Json): Json {
+  const segments = address.split(".");
+  const root: Json = { ...((slots ?? {}) as Record<string, Json>) };
+  let at = root;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const held = at[segments[i]];
+    at[segments[i]] =
+      held && typeof held === "object" && !Array.isArray(held) ? { ...held } : {};
+    at = at[segments[i]];
+  }
+  at[segments[segments.length - 1]] = value;
+  return root;
+}
+
 export function resolveSlot(
   widget: Widget,
   type: WidgetType | null,
@@ -142,7 +176,7 @@ export function resolveSlot(
 
 /* what the DOCUMENT says a slot is: the instance value, else the type default */
 export function authoredSlot(widget: Widget, type: WidgetType | null, name: string): Json {
-  const instance = widget.slots?.[name];
+  const instance = slotValue(widget.slots, name);
   if (instance !== undefined) return instance;
   const spec = slotSpec(type, name);
   return spec ? spec.default : null;

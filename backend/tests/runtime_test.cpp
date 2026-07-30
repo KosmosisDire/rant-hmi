@@ -786,7 +786,7 @@ void test_feed_cases() {
         Json{{"test", "x == .stop"}, {"xf", "#888888"}},
         Json{{"test", "x == .run"}, {"xf", "#7fc4a0"}},
     });
-    Document uncovered = document_with("text_color", colored, "");
+    Document uncovered = document_with("line.text_color", colored, "");
     CompileResult refused = compile_document(uncovered, builtin_registry(), mesh);
     CHECK(!refused.ok);
     bool found = false;
@@ -794,7 +794,7 @@ void test_feed_cases() {
         if (diag.code == "cases") found = true;
     CHECK(found);
 
-    Document forgiven = document_with("text_color", colored, "#444444");
+    Document forgiven = document_with("line.text_color", colored, "#444444");
     CompileResult covered = compile_document(forgiven, builtin_registry(), mesh);
     CHECK(covered.ok);
     RuntimeState fallback(covered.program);
@@ -1098,11 +1098,11 @@ void test_colors() {
         "Readout", Json::object(),
         Json{{"feeds",
               Json::array({
-                  Json{{"slot", "text_color"},
+                  Json{{"slot", "reading.text_color"},
                        {"src", Json{{"kind", "V"}, {"name", "bit"}}},
                        {"path", "on"},
                        {"xf", "x.pick(#7fc4a0, #e0857c)"}},
-                  Json{{"slot", "units_color"},
+                  Json{{"slot", "units.text_color"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
                        {"xf", "#000000.mix(#ffffff, x / 100).alpha(0.5)"}},
@@ -1114,16 +1114,16 @@ void test_colors() {
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
                        {"xf", "hsv(x, 1, 1)"}},
-                  Json{{"slot", "decimals"},
+                  Json{{"slot", "reading.decimals"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
                        {"xf", "#ff8040.g + #ffffff.a"}},
                   /* channel arithmetic and inversion: scale keeps alpha, invert flips */
-                  Json{{"slot", "text_color"},
+                  Json{{"slot", "reading.text_color"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
                        {"xf", "(#204060 * 2).invert()"}},
-                  Json{{"slot", "units_color"},
+                  Json{{"slot", "units.text_color"},
                        {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                        {"path", "value"},
                        {"xf", "invert(#204080 / 2)"}},
@@ -1193,7 +1193,7 @@ void test_colors() {
     /* a color where the slot wants one is fine; a number there is a shape diagnostic */
     Document wrong = widget_document(
         "Readout", Json::object(),
-        Json{{"feeds", Json::array({Json{{"slot", "text_color"},
+        Json{{"feeds", Json::array({Json{{"slot", "reading.text_color"},
                                          {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                                          {"path", "value"}}})}});
     CHECK(has_diag(compile_document(wrong, builtin_registry(), mesh), "shape"));
@@ -1228,9 +1228,9 @@ void test_tonemaps() {
     widgets.push_back(Json{
         {"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
         {"feeds", Json::array({
-            Json{{"slot", "text_color"}, {"src", entity("V", "sensor")}, {"path", "value"},
+            Json{{"slot", "reading.text_color"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "jet(x)"}},
-            Json{{"slot", "units_color"}, {"src", entity("V", "sensor")}, {"path", "value"},
+            Json{{"slot", "units.text_color"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "hot(x)"}},
             Json{{"slot", "surface"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "coolWarm(x)"}},
@@ -1240,7 +1240,7 @@ void test_tonemaps() {
     widgets.push_back(Json{
         {"type", "Label"}, {"label", "b"}, {"slots", Json::object()},
         {"feeds", Json::array({
-            Json{{"slot", "text_color"}, {"src", entity("V", "tag")}, {"path", "text"},
+            Json{{"slot", "line.text_color"}, {"src", entity("V", "tag")}, {"path", "text"},
                  {"xf", "color(x)"}},
         })}});
     widgets.push_back(Json{
@@ -1322,9 +1322,9 @@ void test_text_and_enums() {
     widgets.push_back(Json{
         {"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
         {"feeds", Json::array({
-            Json{{"slot", "units"}, {"src", entity("V", "machine")}, {"path", "mode"},
+            Json{{"slot", "units.text"}, {"src", entity("V", "machine")}, {"path", "mode"},
                  {"xf", "x.name"}},
-            Json{{"slot", "decimals"}, {"src", entity("V", "machine")}, {"path", "mode"},
+            Json{{"slot", "reading.decimals"}, {"src", entity("V", "machine")}, {"path", "mode"},
                  {"xf", "x.is(running).pick(4, 1)"}},
             Json{{"slot", "value"}, {"src", entity("V", "machine")}, {"path", "mode"},
                  {"xf", "x.int"}},
@@ -1332,11 +1332,11 @@ void test_text_and_enums() {
     widgets.push_back(Json{
         {"type", "Readout"}, {"label", "b"}, {"slots", Json::object()},
         {"feeds", Json::array({
-            Json{{"slot", "units"}, {"src", entity("V", "sensor")}, {"path", "value"},
+            Json{{"slot", "units.text"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "x.toFixed(2)"}},
             Json{{"slot", "value"}, {"src", entity("V", "machine")}, {"path", "note"},
                  {"xf", "num(x.trim())"}},
-            Json{{"slot", "decimals"}, {"src", entity("V", "machine")}, {"path", "note"},
+            Json{{"slot", "reading.decimals"}, {"src", entity("V", "machine")}, {"path", "note"},
                  {"xf", "x.length"}},
         })}});
     widgets.push_back(Json{
@@ -1478,25 +1478,25 @@ void test_lists_and_maps() {
     widgets.push_back(Json{{"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "temps", "x.max"),
-            feed("decimals", "temps", "x.length"),
-            feed("units", "names", "x.join(\", \")"),
+            feed("reading.decimals", "temps", "x.length"),
+            feed("units.text", "names", "x.join(\", \")"),
         })}});
     widgets.push_back(Json{{"type", "Readout"}, {"label", "b"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "temps", "x.sort()[0]"),
-            feed("decimals", "temps", "x.slice(1, 3).sum"),
-            feed("units", "names", "x.sort().join(\"|\")"),
+            feed("reading.decimals", "temps", "x.slice(1, 3).sum"),
+            feed("units.text", "names", "x.sort().join(\"|\")"),
         })}});
     widgets.push_back(Json{{"type", "Readout"}, {"label", "c"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "config", "num(x.get(\"speed\"))"),
-            feed("decimals", "config", "x.length"),
-            feed("units", "config", "x.keys().sort().join(\",\")"),
+            feed("reading.decimals", "config", "x.length"),
+            feed("units.text", "config", "x.keys().sort().join(\",\")"),
         })}});
     widgets.push_back(Json{{"type", "Readout"}, {"label", "d"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "names", "x.indexOf(\"b\")"),
-            feed("units", "config", "x.has(\"mode\").pick(\"y\", \"n\")"),
+            feed("units.text", "config", "x.has(\"mode\").pick(\"y\", \"n\")"),
         })}});
     widgets.push_back(Json{{"type", "Label"}, {"label", "e"}, {"slots", Json::object()},
         {"feeds", Json::array({
@@ -1731,7 +1731,7 @@ void test_theme_tokens() {
     CHECK(flagged);
 
     /* a registry DEFAULT may be a token reference too: the untouched Toggle's fill */
-    const Value* fill = slot_initial(sw, "fill_color");
+    const Value* fill = slot_initial(sw, "pill.track.fill_color");
     CHECK(fill && fill->tag == ValueTag::Color && fill->data.rgba == 0x4e8ef7ffu);
 }
 

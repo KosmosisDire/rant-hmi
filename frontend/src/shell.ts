@@ -23,7 +23,7 @@ import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { run } from "./program.js";
 import { cellsFor, fedSlots, resolveSlot, runtimeSlots, themedSlot, typeOf, widgetOptions } from "./slots.js";
-import { radialExtent, Rect } from "./template.js";
+import { PartRect, Rect } from "./template.js";
 import { BuiltinDef, Diag, Doc, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
 import { Viewport } from "./viewport.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
@@ -49,12 +49,19 @@ export class App implements Editor {
   builtins: BuiltinDef[] = [];
   /* the component-edit selection; mutually exclusive with the widget selection */
   componentSel: { component: number; node: number } | null = null;
+  /* the built-in being browsed read-only: its name plus a child-index path into its
+     parts ("" = the component itself). Mutually exclusive with the other two. */
+  builtinSel: { name: string; path: string } | null = null;
   live: Live | null = null;
   hists: Record<string, HistView> = {};
   diagnostics: Diag[] = [];
   /* where every named template node landed on the last content render: widget id ->
      part path -> rect in artboard units (the overlay's part ring reads this) */
-  partRects: Map<number, Map<string, Rect>> = new Map();
+  partRects: Map<number, Map<string, PartRect>> = new Map();
+  /* a `code` part's error from the last content render, per widget (spec 2.3): rebuilt
+     fresh every render, so a fixed body drops out of it exactly as a cleared compile
+     finding drops out of `view.faults` */
+  codeFaults: Map<number, string> = new Map();
   view: ViewState = {
     mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {},
     /* the theme preview mode is a local preference, like the sidebar widths */
@@ -175,6 +182,7 @@ export class App implements Editor {
     this.view.selection = ids;
     this.view.part = "";
     this.componentSel = null;
+    this.builtinSel = null;
     this.queueCanvas();
     this.queueSidebars();
   }
@@ -185,6 +193,7 @@ export class App implements Editor {
     this.view.selection = [id];
     this.view.part = path;
     this.componentSel = null;
+    this.builtinSel = null;
     this.queueCanvas();
     this.queueSidebars();
   }
@@ -194,6 +203,19 @@ export class App implements Editor {
      part ring is drawn for a component part (partRects are per instance) */
   selectComponent(component: number, node: number): void {
     this.componentSel = component ? { component, node: node || component } : null;
+    this.builtinSel = null;
+    this.view.selection = [];
+    this.view.part = "";
+    this.queueCanvas();
+    this.queueSidebars();
+  }
+
+  /* browse a built-in read-only (spec 2.3 Forking: reading the shipped definition is
+     what precedes overriding it). It is not in the document, so there is nothing to
+     select by id and nothing to ring on the artboard — the inspector alone changes. */
+  selectBuiltin(name: string, path: string): void {
+    this.builtinSel = name ? { name, path } : null;
+    this.componentSel = null;
     this.view.selection = [];
     this.view.part = "";
     this.queueCanvas();
@@ -214,6 +236,27 @@ export class App implements Editor {
     this.apply([
       { op: "insert", parent: 0, list: "components", node: JSON.parse(JSON.stringify(source)) },
     ]);
+  }
+
+  /* "Duplicate as…": copy a built-in OR a doc component (either is a valid source) under
+     a fresh name, ids stripped so the backend issues its own — the source and every
+     instance of it are untouched, unlike forkBuiltin which deliberately shadows */
+  duplicateComponent(name: string): void {
+    const source = this.store.components().find((c) => c.name === name) ??
+      this.builtins.find((b) => b?.name === name);
+    if (!source) return;
+    const taken = new Set<string>(this.store.components().map((c) => c.name));
+    for (const b of this.builtins) if (b?.name) taken.add(b.name);
+    /* strip a prior "<root> <n>" suffix so duplicating a duplicate counts up from the
+       root name instead of growing a "Knob 2 2" tail */
+    const root = name.replace(/ \d+$/, "");
+    let n = 2;
+    while (taken.has(root + " " + n)) n++;
+    const fresh = root + " " + n;
+    const copy = stripIds(JSON.parse(JSON.stringify(source))) as Json;
+    copy.name = fresh;
+    this.pendingComponent = fresh;
+    this.apply([{ op: "insert", parent: 0, list: "components", node: copy }]);
   }
 
   /* a minimal fresh component: a body box holding one text part wired to one starter
@@ -484,8 +527,9 @@ export class App implements Editor {
     if (this.contentDirty) {
       this.contentDirty = false;
       this.partRects = new Map();
+      this.codeFaults = new Map();
       const content = renderContent(doc, page, this.registry, this.live, this.view, this.mesh,
-                                    this.hists, this.partRects);
+                                    this.hists, this.partRects, this.codeFaults);
       if (content !== this.lastContent) {
         this.lastContent = content;
         this.nodes.art.setAttribute("viewBox", viewBox);
@@ -889,29 +933,18 @@ export class App implements Editor {
     const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
     const fed = fedSlots(widget);
     if (resolveSlot(widget, type, this.live, fed, "enabled") !== true) return;
-    /* a radial gesture pivots on the CENTER of what the interact painted (the knob's
-       face, the arc), measured in client pixels once at the down edge; linear mode
-       instead anchors on the down point and the fraction the control held there */
+    /* a radial gesture pivots on the CENTER of what the interact painted (the dial),
+       measured in client pixels once at the down edge; linear mode instead anchors on
+       the down point and the fraction the control held there. The dial OWNS the fit
+       (spec 2.3): its own area already IS the fitted circle's bounding square, and the
+       renderer gives an interact-carrying node an invisible full-area rect so its
+       bbox is that whole square rather than just whatever a partial sweep painted —
+       so the plain bbox center is always the right pivot, no fit params to re-derive. */
     const pivot = hit.getBoundingClientRect();
     const cells = this.controlCells(widget, type);
     const f0 = interact.params.fraction ? run(interact.params.fraction, cells) : null;
-    /* a fit-declaring radial control's circle center is NOT its painted bbox center
-       (a half-circle's pivot sits on the bbox edge): recover it by mapping the unit
-       origin through the extent box. Valid for BOTH its fits: such a control paints
-       only swept parts, so its bbox is the extent box at either scale. Types without
-       the param (a Knob's full-circle face) keep the plain bbox center. */
-    let cx = pivot.left + pivot.width / 2;
-    let cy = pivot.top + pivot.height / 2;
-    if (interact.params.fit) {
-      const start = Number(run(interact.params.start, cells) ?? -135);
-      const sweep = Math.max(1, Math.min(360, Number(run(interact.params.sweep, cells) ?? 270)));
-      const core = interact.params.core
-        ? Math.max(0, Math.min(1, Number(run(interact.params.core, cells) ?? 0)))
-        : 0;
-      const b = radialExtent(start, sweep, core);
-      cx = pivot.left + ((0 - b.x) / b.w) * pivot.width;
-      cy = pivot.top + ((0 - b.y) / b.h) * pivot.height;
-    }
+    const cx = pivot.left + pivot.width / 2;
+    const cy = pivot.top + pivot.height / 2;
     this.control = {
       pointer: ev.pointerId,
       widget,
@@ -1180,6 +1213,13 @@ export class App implements Editor {
         if (this.componentSel.node !== this.componentSel.component)
           this.selectComponent(this.componentSel.component, this.componentSel.component);
         else this.selectComponent(0, 0);
+      } else if (this.builtinSel) {
+        /* the browsed built-in steps out one path segment at a time, then off */
+        const at = this.builtinSel.path.lastIndexOf(".");
+        if (this.builtinSel.path)
+          this.selectBuiltin(this.builtinSel.name,
+                             at < 0 ? "" : this.builtinSel.path.slice(0, at));
+        else this.selectBuiltin("", "");
       } else if (this.view.part && this.view.selection.length)
         this.selectPart(this.view.selection[0], "");
       else this.select([]);

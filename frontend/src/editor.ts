@@ -25,6 +25,14 @@ export interface Editor {
   /* the component-edit selection, SEPARATE from the widget selection (the two are
      mutually exclusive): `node` is the component id itself, or a Part node id in it */
   componentSel: { component: number; node: number } | null;
+  /* the built-in being BROWSED. A built-in is not in the document and carries no ids,
+     so it cannot be addressed the way componentSel addresses an editable one: it is
+     named, plus a CHILD-INDEX PATH into its parts ("" = the component itself, "0" =
+     its root part, "0.1" = that part's second child). Index rather than name because
+     this addresses the definition's own tree, where an unnamed node is still a node —
+     unlike a part path, which addresses only what a property can hang off (spec 2.3).
+     Read-only, and mutually exclusive with both other selections. */
+  builtinSel: { name: string; path: string } | null;
   view: ViewState;
   page(): Page | null;
   selectedWidget(): Widget | null;
@@ -43,9 +51,19 @@ export interface Editor {
   /* select a document component (or one part node in it) for editing; clears the
      widget selection, as selecting a widget clears this */
   selectComponent(component: number, node: number): void;
-  /* copy a built-in's document form into doc.components (ONE insert op; the backend
-     issues ids) and select the fork once its echo lands */
+  /* browse a built-in (or one part node inside it, by child-index path): the inspector
+     shows the definition READ-ONLY, since nothing in the document owns it until it is
+     overridden. This is how the shipped types are read before forking one. */
+  selectBuiltin(name: string, path: string): void;
+  /* the "Override <Name>" verb (spec 2.3 Forking): copy a built-in's document form
+     into doc.components under its OWN name (ONE insert op; the backend issues ids),
+     which shadows it so every existing instance follows the override automatically.
+     Select the override once its echo lands. */
   forkBuiltin(name: string): void;
+  /* the "Duplicate as…" verb: copy a built-in or an existing doc component under a
+     FRESH name, leaving the source and its instances untouched — the verb "fork"
+     never was, since forkBuiltin always shadows. Select the copy once its echo lands. */
+  duplicateComponent(name: string): void;
   /* insert a minimal fresh component (unique name) and select it */
   addComponent(): void;
   /* the theme preview mode (spec 2.10): sets view.themeMode, persists it locally and

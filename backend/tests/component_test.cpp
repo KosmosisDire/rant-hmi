@@ -18,10 +18,12 @@ using namespace hmi;
 
 namespace {
 
+/* a widget-level scope: every name addresses bare, as the component's own props do */
 TemplateScope scope_of(std::initializer_list<const char*> props) {
     TemplateScope scope;
-    for (const char* p : props) scope.props.push_back(p);
-    return scope;
+    std::vector<std::string> names;
+    for (const char* p : props) names.push_back(p);
+    return scope.extend("", names);
 }
 
 /* the compiled code as "OP OP(operand) ..." so a lowering pins in one readable line */
@@ -102,7 +104,7 @@ void test_template_expr() {
     CHECK_EQ(lower("optcount(options)", scope), "LOAD(optcount:options)");
     CHECK_EQ(lower("optnames(options)", scope), "LOAD(optnames:options)");
     CHECK(refuses("hist(12)", scope, "property name"));
-    CHECK(refuses("optfrac(value, nope)", scope, "not one of this component's"));
+    CHECK(refuses("optfrac(value, nope)", scope, "not a property in scope"));
 
     /* unknown names and fields are errors, not silent Nil */
     CHECK(refuses("nope", scope, "unknown name 'nope'"));
@@ -147,22 +149,22 @@ void check_attrs(const std::string& type, const Json& attrs) {
     }
 }
 
+/* a draw part can hold children now, exactly like a box (spec 2.3: it paints its own
+ * shape, then renders them into the same area), so both variants walk the same way —
+ * only a box can carry an interact. */
 void check_template(const std::string& type, const Json& node) {
     CHECK_MSG(node.value("name", "") != "", type + ": a part has no name");
-    if (node.value("kind", "") == "box") {
-        check_attrs(type, node.value("attrs", Json::object()));
-        std::set<std::string> names;
-        for (const Json& child : node.value("children", Json::array())) {
-            CHECK_MSG(names.insert(child.value("name", "")).second,
-                      type + ": sibling part names collide");
-            check_template(type, child);
-        }
-        if (node.contains("interact"))
-            check_attrs(type, node["interact"].value("params", Json::object()));
-        return;
-    }
-    CHECK_MSG(node.value("kind", "") == "part", type + ": unknown node kind");
+    const std::string kind = node.value("kind", "");
+    CHECK_MSG(kind == "box" || kind == "part", type + ": unknown node kind");
     check_attrs(type, node.value("attrs", Json::object()));
+    std::set<std::string> names;
+    for (const Json& child : node.value("children", Json::array())) {
+        CHECK_MSG(names.insert(child.value("name", "")).second,
+                  type + ": sibling part names collide");
+        check_template(type, child);
+    }
+    if (kind == "box" && node.contains("interact"))
+        check_attrs(type, node["interact"].value("params", Json::object()));
 }
 
 void test_builtins_compile_clean() {
@@ -196,8 +198,11 @@ void test_builtins_compile_clean() {
     /* pin a few known lowerings end to end, one per vocabulary feature */
     const Json& toggle = registry["types"][1];
     const Json& track = toggle["template"]["children"][0]["children"][0];
+    /* the pill's track owns its two colours, so they lower to the ADDRESSES under it
+       while `value` — the widget's own — stays bare (spec 2.3) */
     CHECK_EQ(ops_of(track["attrs"]["fill"]),
-             "LOAD(slot:value) LOAD(slot:fill_color) LOAD(slot:track_color) PICK");
+             "LOAD(slot:value) LOAD(slot:pill.track.fill_color) "
+             "LOAD(slot:pill.track.track_color) PICK");
     CHECK(toggle["template"]["children"][0]["interact"]["primitive"] == "press");
     CHECK(toggle["events"][0]["value"] == "!widget.value");
     CHECK(toggle["behavior"][0]["do"][0]["to"]["slot"] == "value");
@@ -220,7 +225,7 @@ void test_builtins_compile_clean() {
 
     const Json& readout = registry["types"][8];
     CHECK_EQ(ops_of(readout["template"]["children"][0]["attrs"]["text"]),
-             "LOAD(slot:value) LOAD(slot:decimals) TO_FIXED");
+             "LOAD(slot:value) LOAD(slot:reading.decimals) TO_FIXED");
 
     const Json& selector = registry["types"][6];
     CHECK_EQ(ops_of(selector["template"]["children"][0]["children"][2]["attrs"]["value"]),
@@ -238,7 +243,8 @@ void test_builtins_compile_clean() {
         }
         if (slot.value("name", "") == "scale_position")
             CHECK(slot["variants"].size() == 2);
-        if (slot.value("name", "") == "fill_color") CHECK(slot["editor"] == "color");
+        if (slot.value("name", "") == "dial.arc.fill_color")
+            CHECK(slot["editor"] == "color");
     }
 }
 
@@ -333,12 +339,15 @@ void test_doc_components() {
     }
     const Json& face = registry["types"][12]["template"]["children"][0];
     CHECK_EQ(ops_of(face["attrs"]["fill"]), "LOAD(slot:fill_color)");
-    CHECK_EQ(ops_of(face["attrs"]["show"]), "LOAD(slot:value) CONST(10.0) GT");
+    /* the part's own `shown` switch is folded into whatever the type computes: the
+       part draws when both hold (spec 2.3) */
+    CHECK_EQ(ops_of(face["attrs"]["show"]),
+             "LOAD(slot:face.shown) LOAD(slot:value) CONST(10.0) GT CONST(false) PICK");
     CHECK(!face["attrs"].contains("radius"));   /* the broken attr is not served */
 
     /* the shadow really replaced the built-in template and props */
     const Json& toggle = registry["types"][1];
-    CHECK_EQ(toggle["slots"].size(), size_t(1));
+    CHECK_EQ(toggle["slots"].size(), size_t(2));   /* `value` + the lamp part's `shown` */
     CHECK_EQ(ops_of(toggle["template"]["children"][0]["attrs"]["fill"]),
              "CONST(\"#ff0000\")");
 
@@ -358,6 +367,174 @@ void test_doc_components() {
     CHECK(meter_cell);
     CHECK(compiled.program.flows.size() == 1);   /* the shadow Toggle's default echo */
     CHECK(compiled.program.event_values.size() == 2);   /* both taps propose */
+}
+
+/* PARTS OWN PROPERTIES (spec 2.3): a property declared on a part is addressed under
+ * that part's path, is in scope for that part and everything under it and nowhere
+ * else, and an instance stores its value nested the same way. */
+void test_part_properties() {
+    Json comp = {
+        {"id", 400},
+        {"name", "Dial"},
+        /* the widget's own: read anywhere, addressed bare */
+        {"props", Json::array({
+            Json{{"id", 401}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
+                 {"group", "value"}},
+        })},
+        {"parts", Json::array({
+            Json{{"id", 410}, {"kind", "box"}, {"name", "body"}, {"dir", "stack"},
+                 {"attrs", Json::object()},
+                 {"children", Json::array({
+                     Json{{"id", 420}, {"kind", "box"}, {"name", "gauge"}, {"dir", "stack"},
+                          /* declared on the box, so BOTH its children read it */
+                          {"props", Json::array({Json{{"id", 421}, {"name", "shade"},
+                                                      {"shape", "color"},
+                                                      {"default", "$track"},
+                                                      {"group", "appearance"}}})},
+                          {"attrs", Json::object()},
+                          {"children", Json::array({
+                              Json{{"id", 430}, {"kind", "rect"}, {"name", "arc"},
+                                   {"props", Json::array({Json{{"id", 431},
+                                                               {"name", "fill_color"},
+                                                               {"shape", "color"},
+                                                               {"default", "$accent"},
+                                                               {"group", "appearance"}}})},
+                                   {"attrs", Json{{"fill", "fill_color"},
+                                                  {"track", "shade"},
+                                                  {"value", "value"}}}},
+                              /* the SAME name on a sibling is a different property */
+                              Json{{"id", 440}, {"kind", "rect"}, {"name", "dot"},
+                                   {"props", Json::array({Json{{"id", 441},
+                                                               {"name", "fill_color"},
+                                                               {"shape", "color"},
+                                                               {"default", "$handle"},
+                                                               {"group", "appearance"}}})},
+                                   {"attrs", Json{{"fill", "fill_color"}}}},
+                          })}},
+                 })}},
+        })},
+    };
+    Json root = {
+        {"version", 1}, {"next_id", 900},
+        {"components", Json::array({std::move(comp)})},
+        {"pages", Json::array({Json{
+            {"name", "Main"},
+            {"widgets", Json::array({Json{
+                {"type", "Dial"}, {"label", "D"},
+                /* the instance's values nest exactly like the parts do */
+                {"slots", Json{{"value", 3.0},
+                               {"gauge", Json{{"shade", "#101010"},
+                                              {"arc", Json{{"fill_color", "#00ff00"}}}}}}}}})}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    std::vector<Diag> diags;
+    Json registry = derive_registry(document, diags);
+    CHECK_MSG(diags.empty(), diags.empty() ? "" : diags[0].message);
+
+    /* every property is served ONCE, under its owner's path */
+    const Json& dial = registry["types"][12];
+    std::set<std::string> names;
+    for (const Json& slot : dial["slots"]) names.insert(slot.value("name", ""));
+    CHECK(names.count("value") == 1);
+    CHECK(names.count("gauge.shade") == 1);
+    CHECK(names.count("gauge.arc.fill_color") == 1);
+    CHECK(names.count("gauge.dot.fill_color") == 1);
+    CHECK(names.count("fill_color") == 0);   /* never at the widget level */
+    /* every named part can be switched off, without anyone declaring it */
+    CHECK(names.count("gauge.shown") == 1);
+    CHECK(names.count("gauge.arc.shown") == 1);
+    CHECK(names.count("gauge.dot.shown") == 1);
+    CHECK(names.count("shown") == 0);   /* the widget has `visible`, not `shown` */
+    CHECK_EQ(dial["slots"].size(), size_t(7));
+
+    /* the same bare name lowers to a DIFFERENT cell in each part, and an inherited
+       one to the box that declared it */
+    const Json& gauge = dial["template"]["children"][0];
+    CHECK_EQ(ops_of(gauge["children"][0]["attrs"]["fill"]),
+             "LOAD(slot:gauge.arc.fill_color)");
+    CHECK_EQ(ops_of(gauge["children"][0]["attrs"]["track"]), "LOAD(slot:gauge.shade)");
+    CHECK_EQ(ops_of(gauge["children"][0]["attrs"]["value"]), "LOAD(slot:value)");
+    CHECK_EQ(ops_of(gauge["children"][1]["attrs"]["fill"]),
+             "LOAD(slot:gauge.dot.fill_color)");
+
+    /* an instance's nested value reaches the compiled cell; an unauthored one keeps
+       the type's default */
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, registry, mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t id = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);
+    auto cell_named = [&](const char* name) -> const CellDef* {
+        for (const CellDef& cell : compiled.program.cells)
+            if (cell.kind == CellKind::Slot && cell.owner_widget == id && cell.name == name)
+                return &cell;
+        return nullptr;
+    };
+    const CellDef* arc = cell_named("gauge.arc.fill_color");
+    CHECK(arc && arc->initial.tag == ValueTag::Color &&
+          arc->initial.data.rgba == 0x00ff00ffu);
+    const CellDef* shade = cell_named("gauge.shade");
+    CHECK(shade && shade->initial.data.rgba == 0x101010ffu);
+    const CellDef* dot = cell_named("gauge.dot.fill_color");
+    CHECK(dot && dot->initial.tag == ValueTag::Color);   /* the $handle default */
+    CHECK(cell_named("value") != nullptr);
+}
+
+/* the rules that keep an address unambiguous: a name a part cannot carry, a property
+ * beside a part of the same name, and a property with nowhere to live */
+void test_part_property_rules() {
+    auto findings = [](Json parts, Json props) {
+        Json root = {
+            {"version", 1}, {"next_id", 900},
+            {"components", Json::array({Json{{"id", 500}, {"name", "Bad"},
+                                             {"props", std::move(props)},
+                                             {"parts", std::move(parts)}}})},
+            {"pages", Json::array()},
+        };
+        Document document;
+        std::string error;
+        CHECK_MSG(document.adopt(std::move(root), error), error);
+        std::vector<Diag> diags;
+        derive_registry(document, diags);
+        std::string codes;
+        for (const Diag& d : diags) codes += (codes.empty() ? "" : ",") + d.code;
+        return codes;
+    };
+    auto part_named = [](const char* name, Json props) {
+        return Json{{"id", 510}, {"kind", "box"}, {"name", "body"}, {"dir", "stack"},
+                    {"attrs", Json::object()},
+                    {"children", Json::array({Json{{"id", 511}, {"kind", "rect"},
+                                                   {"name", name},
+                                                   {"props", std::move(props)},
+                                                   {"attrs", Json::object()}}})}};
+    };
+    /* one `tint` property row; every node in a document carries its own id */
+    auto tint = [](int id) {
+        return Json::array({Json{{"id", id}, {"name", "tint"}, {"shape", "color"},
+                                 {"default", "#000000"}, {"group", "appearance"}}});
+    };
+
+    /* a hyphen would not parse as a bare name, nor join into a legible address */
+    CHECK_EQ(findings(Json::array({part_named("head-in", Json::array())}), Json::array()),
+             std::string("part_name"));
+    /* a part beside a property of the same name has nowhere to store its values */
+    CHECK_EQ(findings(Json::array({part_named("tint", Json::array())}), tint(520)),
+             std::string("part_name"));
+    /* an unnamed part cannot own anything */
+    CHECK_EQ(findings(Json::array({Json{{"id", 530}, {"kind", "box"}, {"name", "body"},
+                                        {"dir", "stack"}, {"attrs", Json::object()},
+                                        {"children", Json::array({Json{
+                                            {"id", 531}, {"kind", "rect"}, {"name", ""},
+                                            {"props", tint(520)},
+                                            {"attrs", Json::object()}}})}}}),
+                      Json::array()),
+             std::string("prop_name"));
+    /* shadowing an enclosing property is legal and says so */
+    CHECK_EQ(findings(Json::array({part_named("dot", tint(521))}), tint(520)),
+             std::string("prop_shadow"));
 }
 
 /* an empty component (just created in the editor) serves a blank body, not an error */
@@ -385,6 +562,8 @@ int main() {
     test_template_expr();
     test_builtins_compile_clean();
     test_doc_components();
+    test_part_properties();
+    test_part_property_rules();
     test_empty_component();
     return check::summary("component_test");
 }

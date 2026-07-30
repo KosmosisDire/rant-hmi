@@ -80,7 +80,10 @@ const std::vector<NodeSpec>& table() {
             text("type", "Button"),
             text("label", ""),
             object("geom", Json{{"x", 0}, {"y", 0}, {"w", 132}, {"h", 66}}),   /* canvas units: 6 x 3 cells */
-            object("slots", Json::object()),   /* unfed per-instance slot values */
+            /* per-instance slot values, NESTED like the type's parts: a widget-level
+             * slot is a key here, a part's slot a key inside an object named for the
+             * part ({"bar": {"fill_color": "#fff"}} = slot address "bar.fill_color") */
+            object("slots", Json::object()),
         };
         widget.lists = {{"locals", Kind::Var}, {"feeds", Kind::Feed}, {"flows", Kind::Flow}};
         t.push_back(widget);
@@ -174,10 +177,11 @@ const std::vector<NodeSpec>& table() {
         t.push_back(token);
 
         /* A COMPONENT (spec 2.3): a widget type as document data. Its props are the
-         * type's slot specs, its parts the visual template (attrs hold EXPRESSION
-         * TEXT, compiled to view programs by compile/components.cpp), its events the
-         * {name, x, value?} rows, and its behavior ordinary flows. A component with a
-         * built-in's name SHADOWS the built-in in the derived registry. */
+         * type's WIDGET-LEVEL slot specs (a part may declare its own), its parts the
+         * visual template (attrs hold EXPRESSION TEXT, compiled to view programs by
+         * compile/components.cpp), its events the {name, x, value?} rows, and its
+         * behavior ordinary flows. A component with a built-in's name SHADOWS the
+         * built-in in the derived registry. */
         NodeSpec component;
         component.kind = Kind::Component;
         component.name = "component";
@@ -192,7 +196,9 @@ const std::vector<NodeSpec>& table() {
 
         /* One declared property = one served SlotSpec row: the optional keys (editor,
          * variants, step/min/max, history) are served only where they say something,
-         * so a row here round-trips to exactly the wire shape (spec 2.3). */
+         * so a row here round-trips to exactly the wire shape (spec 2.3). A prop row
+         * lives on the component (the widget's own vocabulary) or on any PART, whose
+         * path prefixes its address. */
         NodeSpec prop;
         prop.kind = Kind::PropDef;
         prop.name = "prop";
@@ -214,24 +220,38 @@ const std::vector<NodeSpec>& table() {
          * `dir`, and the only kind that holds children or an interact) or a draw part.
          * `attrs` maps attr name -> expression text; `interact` is {primitive, params:
          * {name -> expression text}, emits: {primitive event -> declared event}},
-         * null on a part that takes no gestures. */
+         * null on a part that takes no gestures.
+         *
+         * A part OWNS PROPERTIES (spec 2.3): the props it declares are addressed under
+         * its path (`bar.fill_color`), stored nested in an instance's `slots`, and
+         * edited only while that part is selected. Its own props plus every ancestor's
+         * are what its attr expressions see, so a value several parts read is declared
+         * on the box that encloses them. */
         NodeSpec part;
         part.kind = Kind::Part;
         part.name = "part";
         part.variant_key = "kind";
         part.props = {
             enumer("kind",
-                   {"box", "rect", "bar", "text", "icon", "arc", "needle", "mark",
-                    "ticks", "plot"},
+                   {"box", "rect", "bar", "text", "icon", "arc", "needle",
+                    "plot", "path", "code"},
                    "box"),
             text("name"),
             object("attrs", Json::object()),
             object("interact", nullptr),
+            /* the `code` kind's body: user-authored JavaScript, run by the view once per
+             * render (once per copy under `repeat`). It is never handed to the
+             * template-expression compiler — compile/components.cpp passes it through
+             * verbatim, alongside the part's lexical SCOPE, so the frontend can build
+             * `props` by bare name without knowing the backend's own addressing scheme.
+             * A common prop rather than a "code"-only variant field, the same way
+             * `attrs` and `interact` are: harmless and unread on every other kind. */
+            text("code", ""),
         };
         part.variants = {
             {"box", {enumer("dir", {"row", "col", "stack", "auto"}, "stack")}},
         };
-        part.lists = {{"children", Kind::Part}};
+        part.lists = {{"props", Kind::PropDef}, {"children", Kind::Part}};
         t.push_back(part);
 
         return t;

@@ -30,6 +30,28 @@ std::string str_or(const Json& node, const char* key, const char* fallback) {
     return it != node.end() && it->is_string() ? it->get<std::string>() : fallback;
 }
 
+/* An instance's authored value for one slot ADDRESS (spec 2.3). A widget's `slots`
+ * object mirrors the type's parts: a widget-level slot is a key, a part's slot a key
+ * inside an object named for the part, so "bar.fill_color" walks two levels. Null when
+ * nothing is authored there (the type's default stands) — including when the path runs
+ * into a non-object, which is a stale value, not a value. */
+const Json* authored_slot(const Json& slots, const std::string& address) {
+    const Json* at = &slots;
+    size_t from = 0;
+    while (from <= address.size()) {
+        if (!at->is_object()) return nullptr;
+        const size_t dot = address.find('.', from);
+        const std::string segment = address.substr(
+            from, dot == std::string::npos ? std::string::npos : dot - from);
+        auto found = at->find(segment);
+        if (found == at->end()) return nullptr;
+        at = &*found;
+        if (dot == std::string::npos) return at;
+        from = dot + 1;
+    }
+    return nullptr;
+}
+
 bool entity_kind(const std::string& text, EntityKind& out) {
     if (text == "V") out = EntityKind::Variable;
     else if (text == "T") out = EntityKind::Topic;
@@ -474,8 +496,10 @@ class Compiler {
                         const std::string name = slot.value("name", "");
                         const Shape shape = slot_shape(slot);
                         Json initial = slot.value("default", Json());
-                        auto override = authored.find(name);
-                        if (override != authored.end()) initial = *override;
+                        /* the slot's NAME is its address: a part's property is stored
+                           nested under the part, so the lookup walks the dots */
+                        if (const Json* override = authored_slot(authored, name))
+                            initial = *override;
                         if (shape == Shape::Color) initial = resolve_token(info.id, name, initial);
                         check_variants(info.id, name, slot, initial);
                         check_enum_type_slot(info.id, name, slot, initial);
@@ -499,8 +523,8 @@ class Compiler {
     void add_history(const WidgetInfo& info, const std::string& name, uint32_t cell,
                      const Json& authored) {
         auto slot_number = [&](const char* slot, double fallback) {
-            auto it = authored.find(slot);
-            if (it != authored.end() && it->is_number()) return it->get<double>();
+            const Json* at = authored_slot(authored, slot);
+            if (at && at->is_number()) return at->get<double>();
             for (const Json& row : info.type->value("slots", Json::array()))
                 if (row.value("name", "") == slot && row["default"].is_number())
                     return row["default"].get<double>();

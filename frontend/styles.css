@@ -1681,6 +1681,20 @@ textarea.field {
   display: block;
 }
 
+/* the `code` part's body (spec 2.3): unlike the one-row textarea.field above, a JS body
+   is genuinely multi-line, so this one grows tall and the user resizes it vertically
+   instead of it staying pinned at one row */
+.code-editor {
+  height: 160px;
+  min-height: 60px;
+  padding-top: 6px;
+  line-height: 16px;
+  resize: vertical;
+  overflow: auto;
+  white-space: pre;
+  display: block;
+}
+
 .field.grow {
   flex: 1;
   width: 100%;
@@ -1964,6 +1978,12 @@ select.field {
   color: var(--acc-ink-2);
 }
 
+/* the same fact, legible in the row itself rather than only the tooltip: reuses the
+   section-count badge's type scale, tinted with the same accent as the label above */
+.layer-row .badge.shadow {
+  color: var(--acc-ink-2);
+}
+
 /* built-ins are browsable but read-only: dimmer than editable rows */
 .layer-row.builtin {
   color: var(--dim);
@@ -1973,15 +1993,33 @@ select.field {
   color: var(--dim);
 }
 
-/* the fork affordance on a built-in row; a span (the row is already a button) */
-.layer-fork {
+/* the row-level verb menu (Override / Duplicate as… / Revert, spec 2.3 Forking); a
+   span, not a button (the row is already one) */
+.layer-menu {
   margin-left: auto;
   opacity: 0.45;
 }
 
-.layer-row:hover .layer-fork {
+.layer-row:hover .layer-menu {
   opacity: 1;
   color: var(--acc-ink);
+}
+
+/* a part's own switch: quiet until the row is hovered, and standing while it is off so
+   a hidden part reads as hidden from the tree alone */
+.layer-eye {
+  margin-left: auto;
+  opacity: 0;
+}
+
+.layer-row:hover .layer-eye,
+.layer-eye.off {
+  opacity: 0.75;
+}
+
+.layer-row.hidden .layer-label,
+.layer-row.hidden .layer-glyph {
+  opacity: 0.42;
 }
 
 /* one label column for NOW, TYPE and INIT; the column is as wide as the widest of them */
@@ -2130,6 +2168,29 @@ select.field {
 .attr-row > .hl-wrap {
   flex: 1;
   min-width: 0;
+}
+
+/* A value the browser of a built-in reads but cannot edit: the type scale and colour of
+   a field's text with none of a field's box, so a read-only view stays legible as a
+   view rather than looking like a form that refuses to work. */
+.value-static {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font: 500 11.5px/20px var(--mono);
+}
+
+.value-static.grow {
+  flex: 1;
+}
+
+/* the expression fields in that view keep their highlighting; only the caret is gone */
+.inspector-body input[readonly],
+.inspector-body textarea[readonly] {
+  cursor: default;
+  border-color: transparent;
 }
 
 /* read-only summary lines: a component's events and default behavior */

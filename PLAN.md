@@ -470,6 +470,59 @@ working end-to-end demo at every stage. Each stage lands with its tests.
 7. **hot swap + migration** (wiring the stage-3 design: recompile on accepted edit,
    migrate, log decisions).
 
+## Next stage: per-part instance overrides (prefabs)
+
+Scoped 2026-07-30, not built. Property VALUES are already prefab-shaped: a widget
+stores only what it authored (nested per part, spec 2.3) and everything else follows
+its type, so editing the component moves every instance that never touched that
+property. What a widget CANNOT do is diverge structurally — change one part's attr,
+or add a child to just this one — because the tree belongs to the type.
+
+The target is Unity's reading: the component is the prefab, an instance edit is an
+OVERRIDE marked as such, and everything untouched keeps following the component.
+
+**Document.** A widget gains a sparse override list, one entry per part it has
+touched, addressed by the same part path everything else uses:
+
+```
+Widget { ..., slots, parts: [ PartOverride ] }
+PartOverride { path,                    // "" targets the root part
+               attrs: { attr: ExprText },  // REPLACE the type's, per attr
+               children: [ Part ] }        // parts this instance adds under it
+```
+
+Removal is deliberately NOT in the first cut: every named part already carries a
+`shown` switch (spec 2.3), which is the honest way to drop one from an instance
+without desynchronising the tree from its type. Reordering is out for the same
+reason — it has no addressing story yet.
+
+**Derivation.** An override's attrs are EXPRESSION TEXT, so they must be compiled,
+and that is what settles the wire shape: `derive_registry` keeps producing one row
+per component AND, for each widget that carries overrides, one SPECIALIZED row
+derived from the component's doc form with the overrides merged in before
+compiling. The snapshot's registry gains `instances: { "<widget id>": TypeRow }`,
+and every type lookup becomes "this widget's own row, else its component's" — one
+helper each side (`type_named` in the compiler, `typeFor` in the frontend, replacing
+`typeOf(registry, widget.type)` at its call sites).
+
+Slot ADDRESSES survive this untouched, which is what makes it tractable: an
+override renames nothing, so an instance's authored values keep resolving, and a
+part the instance ADDS simply contributes addresses that exist for that instance
+alone. A bad expression in an override pins to the override node, so it lands on
+the instance's own part row rather than blaming the component.
+
+**Editor.** Selecting a part of a WIDGET grows the attrs table the component's part
+view already has, writing into that widget's override list instead of the type; an
+attr that differs from the component is marked, with a revert that deletes the
+override entry rather than writing the default back (the difference matters: revert
+must re-follow the component from then on). "+ Child part" on an instance appends
+to the override's `children`.
+
+**Cost, honestly.** The registry stops being one row per type, which touches the
+compiler's type lookup, the snapshot, and every frontend `typeOf` call site; the
+part inspector gains a second authoring surface. Nothing else moves: cells, feeds,
+flows, the renderer and the part index all key off addresses that do not change.
+
 ## Roadmap and open questions (deferred, not blocking)
 
 - **Media: images and live camera video.** Planned, not started. Two source

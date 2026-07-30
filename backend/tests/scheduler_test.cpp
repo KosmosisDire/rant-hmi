@@ -432,7 +432,7 @@ Json timer_read_root(const std::string& surface_xf) {
                                     {"src", Json{{"kind", "L"}, {"name", "blink"}}},
                                     {"path", ""},
                                     {"xf", "x.remaining * 1000"}},
-                               Json{{"slot", "decimals"},
+                               Json{{"slot", "reading.decimals"},
                                     {"src", Json{{"kind", "V"}, {"name", ""}}},
                                     {"path", ""},
                                     {"xf", "blink.duration * 1000"}},
@@ -450,7 +450,7 @@ Json timer_read_root(const std::string& surface_xf) {
     Json toggle = {
         {"type", "Toggle"},
         {"slots", Json::object()},
-        {"feeds", Json::array({Json{{"slot", "track_color"},
+        {"feeds", Json::array({Json{{"slot", "pill.track.track_color"},
                                     {"src", Json{{"kind", "L"}, {"name", "blink"}}},
                                     {"path", ""},
                                     {"cases", Json::array({Json{{"test", "x.running"},

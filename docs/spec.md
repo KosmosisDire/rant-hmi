@@ -121,20 +121,29 @@ component with a built-in's name SHADOWS it. The REGISTRY the backend serves is 
 COMPILE PRODUCT derived from the two: it changes when components change, never
 independently.
 
-**Forking.** Editing a built-in IS shadowing it: a fork copies the built-in's
-document form (the snapshot serves it as `builtins`, ids stripped) into
-`doc.components` with one ordinary insert — the backend issues every id through
-prepare — and every instance typed by that name follows the fork automatically,
-because instances reference types by NAME and the doc component now wins the
-derivation. Deleting the fork restores the built-in the same way. Renaming a
-component is a plain `set_prop` (nothing references a component by id); instances
-typed by the old name lose their type and show the missing-type marker, which is
-the honest reading of what happened.
+**Forking.** Three distinct verbs, all ordinary document ops (3.1 is where they live
+in the UI). **Override `<Name>`** shadows a built-in under its own name: it copies
+the built-in's document form (the snapshot serves it as `builtins`, ids stripped)
+into `doc.components` with one ordinary insert — the backend issues every id
+through prepare — and every instance typed by that name follows the override
+automatically, because instances reference types by NAME and the doc component now
+wins the derivation. **Duplicate as…** copies a built-in OR an existing doc
+component under a FRESH name instead (ids stripped the same way, so the backend
+issues its own), leaving the source and every instance of it untouched — this is
+how a variant is authored without disturbing what is already placed. **Revert to
+built-in** deletes a component that shadows one, restoring the built-in the same
+way Override created the shadow; offered only where a shadow actually exists,
+since deleting a component with no built-in behind it is an ordinary delete that
+just destroys it (and orphans its instances). Renaming a component is a plain
+`set_prop` (nothing references a component by id); instances typed by the old name
+lose their type and show the missing-type marker, which is the honest reading of
+what happened.
 
 ```
 Component {                      // one document node (Doc.components[], spec 2.8)
   name,                          // the type key; shadows a built-in by name
-  props:  [ PropDef ],           // the slots table (child nodes)
+  props:  [ PropDef ],           // the WIDGET's own properties (a part declares its
+                                 // own; see "A part owns properties" below)
   events: [ {name, x: shape, value?: Expr} ],  // what flows can trigger on; x is the
                                  // seed shape, `value` where x comes FROM (below)
   behavior: [ Flow ],            // the type's DEFAULT flows (below), ordinary flows
@@ -166,6 +175,34 @@ finding: a bad part or expression pins to the part NODE (`where` = the attr), th
 component still serves minus the broken attr, and a broken BUILT-IN aborts the
 backend at startup (it is our bug, not the author's).
 
+**A part owns properties.** A PropDef row lives on the component — the widget's own
+vocabulary: the value it carries, its range, the frame the shared machinery paints
+— or on any PART, and a part's property is the part's in every sense:
+
+- its ADDRESS is the owning part's path plus the name, `arc.thickness`, and that
+  address is the slot's name everywhere else (a feed's `slot`, a move's
+  destination, the live cell key, a `widget.<address>` read in a flow);
+- an instance STORES it nested, one object per part:
+  `slots: {value: 40, control: {arc: {thickness: 0.2}}}`;
+- the inspector shows it on that part and NOWHERE else, which is what keeps a
+  widget's own inspector to what the widget is (3.3).
+
+A property belongs to the part it AFFECTS, not to the lowest part that encloses
+everyone who reads it: a knob's thickness is the arc's, and the face and the scale
+that size themselves around it say `arc.thickness`. Inside a part's own
+expressions a BARE name is that part's property, or the nearest enclosing one that
+declares it; a DOTTED name is an address read from the template root. Redeclaring
+an inherited name is legal and reported (it means something different from there
+down). A part's name and the properties beside it share one namespace — an
+instance stores both as keys of the same object — so they may not collide, and
+both are identifiers (letters, digits, underscore), because expressions read them.
+
+**Every named part has a `shown` switch.** It is synthesized where the part does
+not declare one (declare it to start hidden, as the scales do), it is folded into
+whatever the part computes for its own visibility, and it is why there is no
+`show_scale` property on any widget: a scale is turned on by selecting the scale.
+A part a user adds gets the same switch for free.
+
 One slots table is the whole input surface: every named value a widget consumes is
 a slot, whether it is the live process value or a corner radius. Any slot may take
 a feed (one per slot, 2.4) or hold an authored per-instance value in the document.
@@ -182,7 +219,10 @@ control's own.
 **Slot names are semantic contracts.** A slot name means the SAME thing on every
 type that declares it, which is what makes a future multi-select edit coherent
 (select a Toggle and a Slider, set one `fill_color`, both move) and keeps the
-vocabulary learnable:
+vocabulary learnable. The contract is read WITH the part that owns the name: the
+name says the role, the part says which one of them (`arc.fill_color`,
+`label.text`, `scale.shown`), and the same word under a different part is a
+different property.
 
 | Name | Semantics |
 |---|---|
@@ -192,11 +232,12 @@ vocabulary learnable:
 | `text`, `text_color` | the control's own text and its color; `text` defaults EMPTY and is bindable like any slot |
 | `control_radius` | corner rounding of the control's own shape (the Slider's bar; the arc ends of a Knob, Gauge or RadialSlider); the frame's `radius` rounds the panel around it |
 | `value`, `min`, `max`, `step` | the process value and its range |
-| `show_scale`, `scale_values`, `divisions`, `decimals` | the toggleable range ticks; `scale_values` toggles their labels separately (marks alone, or marks with values) |
-| `scale_position` | a radial scale's side: `outside` pulls the arc inward and rings it; `inside` keeps the arc at the rim and sets the scale within |
+| `shown` | every named part's own switch (synthesized, 2.3): the scale part's is what turns a scale on |
+| `divisions`, `decimals`, `labels` | the SCALE part's: how the range ticks are divided, how their numbers read, and whether the numbers show at all (marks alone, or marks with values) |
+| `position` | a radial SCALE part's side: `outside` pulls the arc inward and rings it; `inside` keeps the arc at the rim and sets the scale within |
 | `shown_options` | an option WHITELIST (comma or space separated variant names; empty = all) filtering what a Selector or Dropdown offers, in the listed order |
 | `start_angle`, `sweep_angle` | a radial control's sweep (degrees, 0 = up, clockwise) |
-| `thickness` | an arc's stroke, as a fraction of the radius |
+| `thickness` | the ARC part's stroke, as a fraction of the radius; the face and scale around it read `arc.thickness` |
 | `body_color` | a rotary control's circular body |
 | `drag` | radial vs linear gesture mapping on a radial control |
 | `fit` | where a partial sweep's circle sits: `fill` (default) places it so the swept extent fills the tile (a Knob's extent always includes its face), `center` pins the circle's center to the widget's center |
@@ -366,12 +407,13 @@ There is deliberately NO Indicator type: a lamp is a Panel with a bound `surface
 (colors bind anywhere), and NO built-in value readout on any control: `text` slots
 default empty, and a value display is the user's own Label or Readout placed beside
 (or on) the control (the Selector shows no current-selection text either). What
-every value control DOES carry is a toggleable SCALE (`show_scale`, with
-`divisions` / `decimals` where the scale is numeric, and `scale_values` gating the
-labels separately, so marks can stand alone): range ticks drawn by the shared
-ticks part, under a Slider's bar, around a radial's arc OUTSIDE it (the Knob's arc
-pulls inward when the scale shows), and one detent mark per option on a Selector,
-labeled with the option NAMES when `scale_values` is on.
+every value control DOES carry is a SCALE PART, switched on by selecting it and
+ticking its own `shown` (with its `divisions` / `decimals` where the scale is
+numeric, and `labels` gating the numbers separately, so marks can stand alone):
+range ticks drawn by one shared `code` body carried by all five (below), under a
+Slider's bar, around a radial's arc OUTSIDE it (the Knob's arc pulls inward when the
+scale shows), and one detent mark per option on a Selector, labeled with the option
+NAMES when the scale's `labels` is on.
 
 The radial controls share `start_angle` / `sweep_angle` (degrees, 0 = up, clockwise)
 and a `drag` mode: `linear` (the default: dragging horizontally moves the value
@@ -390,12 +432,14 @@ DOCUMENT (the authored form) it is a tree of Part nodes under the component,
 whose every attr is EXPRESSION TEXT:
 
 ```
-Part = { kind: box | rect | bar | text | icon | arc | needle | mark | ticks | plot,
+Part = { kind: box | rect | bar | text | icon | arc | needle | plot | path | code,
          name,
          dir?,                        // box only: row | col | stack | auto
+         props: [ PropDef ],          // what this part OWNS (above)
          attrs: { attr: ExprText },   // weight, min_px, aspect, show, ... are attrs
+         code?,                       // code only: the JS body, verbatim (below)
          interact?: Interact,         // box only; null on a part that takes none
-         children: [Part] }           // box only; a draw part holds no children
+         children: [Part] }           // ANY part may hold children
 Interact = { primitive: press | drag1d | drag_radial | pick,
              params: { name: ExprText },
              emits: { primitive event -> declared event } }
@@ -407,13 +451,162 @@ registry) the same tree is served with every attr compiled to a view program:
 ```
 Node = box  { name, dir, attrs: { attr: program }, children: [Node],
               interact?: { primitive, params: { name: program }, emits } }
-     | part { name, draw, attrs: { attr: program } }
+     | part { name, draw, attrs: { attr: program }, children: [Node] }
 ```
 
-Every node carries a `name`: short, semantic, lower-case, what a layers panel
-would show. Names are unique among siblings, and the names joined with `/` from
-the template root form the node's **part path**, its stable address (how the
-editor selects and scopes a part without per-node ids).
+**A draw part holds children.** It paints its own shape and then renders whatever
+it holds INTO THE SAME AREA, over it — stack semantics, no `dir` of its own. This
+is what keeps the tree honest: a shape that needs a child no longer forces a
+wrapper box around it, and the child rides its parent's transform.
+
+**Repeat.** A node carrying a `repeat` attr renders N copies instead of one — the
+authored form of what the draw kinds used to hard-code for a dial's ticks or a
+bar's segments, so a ring of marks or a strip of lamps is ordinary parts, not
+generator code. `repeat` is evaluated ONCE, against the cells the node was
+handed — never per copy, since the count decides how many copies exist before
+there is a "per copy" to speak of, and evaluating it once is what lets a NESTED
+repeat's own count read the outer copy's index. The result is clamped to 512, a
+defensive ceiling: the expression is arbitrary authored text, and nothing else
+stops a mistake from asking the renderer to build hundreds of thousands of
+nodes. Each copy's cells are the enclosing scope's, overlaid with three more —
+`repeat.index` (0-based), `repeat.count` (N), `repeat.fraction` (`index / (count
+- 1)`, 0 when count < 2, never NaN) — in scope for the copy's own attrs (its
+transform above all: that is how copies are PLACED) and everything under it; a
+repeat nested inside a repeat shadows the outer one's three cells for its own
+subtree. Repeat works everywhere a node can appear. In a stack the copies
+overlay the same area and place themselves apart by their own transform (a ring
+of detents). In a `row`/`col` box a copy is instead a separate LAID-OUT sibling,
+evaluating its own `weight` / `aspect` / `min_px` / `show` against its own
+cells — a segmented bar, a strip of lamps. N copies share ONE part path (a name
+addresses the template NODE, not a rendering of it), so its rect is recorded
+once: the plain area the node was handed, before its own per-copy transform,
+which is what lets the editor's selection ring show where the repetition LIVES
+rather than whichever copy happened to render last.
+
+**Path.** An authored shape, and the one the repeat examples above actually
+draw. `d` is raw SVG path data in a UNIT BOX — x and y run 0..1 across the
+node's own area — and is never parsed: it rides inside a group scaled by the
+area's own width and height, which is what maps the unit coordinates onto the
+part for free. That scale is generally non-uniform, so a stroke drawn at a
+uniform unit width skews; `stroke_w` is deliberately in the same unit terms as
+`d` so it scales WITH the distortion instead of fighting it, and a square
+`aspect` on the part is the fix for anyone who wants an undistorted stroke.
+Like `rect`, a `path` with neither `fill` nor `stroke` draws nothing.
+
+**Code.** The escape hatch for generative drawing: a `code` part's body is
+USER-AUTHORED JAVASCRIPT, run by the view. It exists because one built-in
+(the tick scale) does real work no amount of declarative geometry
+expresses — measuring label text and deciding which labels to drop — and a
+document author needs the same escape hatch for their own parts. Every
+`draw.*` helper (below) RETURNS an svg string rather than pushing into a
+hidden buffer, so the same mechanism covers three authoring styles at once:
+build with the helpers, concatenate hand-written markup, or return a pasted
+static SVG unchanged.
+
+The body is compiled ONCE PER DISTINCT SOURCE TEXT with `new Function("props",
+"area", "draw", "view", body)` and cached (keyed on the source string, so a
+re-served registry with unchanged source never recompiles); it is called once
+per render of the part, and once PER COPY where the part carries `repeat`
+(above), since `repeat` must be visible to it like anything else that reads
+the node's own cells. Arguments:
+
+- `props` — this part's properties in scope, BY BARE NAME (`props.divisions`):
+  exactly the names its `attrs` could use. The backend serves this scope on
+  the wire node ONLY for a `code` part (nothing else needs it) as a plain map
+  `scope: {"<bare name>": "<slot address>"}`, built from the same lexical
+  scope every attr expression resolves a bare name against (`TemplateScope`,
+  compile/template_expr.h); the view builds `props` by resolving each address
+  through its own cells, `slot:<address>`.
+- `area` — `{x, y, w, h}` in ARTBOARD UNITS: the part's own laid-out area,
+  after aspect/pad, in the same coordinate space every other draw function
+  works in. NOT a 0..1 unit box like `path`'s `d` — the body is code and can
+  do its own arithmetic, and real units keep text sizes and stroke widths
+  honest; the unit box is `path`'s fix for a literal `d` string that cannot
+  scale itself, and repeating it here would only cost a skew on non-square
+  areas for no reason.
+- `draw` — helpers, each a pure function returning markup: `rect({x, y, w,
+  h, fill?, stroke?, stroke_w?, radius?})`, `path(d, {fill?, stroke?,
+  stroke_w?})` (`d` in ARTBOARD units, unlike the `path` KIND above),
+  `line(x0, y0, x1, y1, {stroke?, stroke_w?, cap?})`, `circle(cx, cy, r,
+  {fill?, stroke?, stroke_w?})`, `text(text, {x, y, size, fill?, align?,
+  strong?})` (routed through the same rich-text path — inline `**bold**` /
+  `:icon:` markup — the `text` part uses, so escaping and markup behave
+  identically and nothing is ever emitted unescaped), `icon(name, {x, y,
+  size, fill?, stroke_w?})` (the Lucide set, as the `icon` part draws it),
+  `measure(text, size)` (the width the renderer would give that string at
+  that size, in artboard units, with the SAME estimator the `text` part
+  uses — this is the point of the whole feature: a declarative scale cannot
+  measure its own labels), `svg(markup, opts?)` (fits pasted markup into the
+  part's area: a whole `<svg>` with a `viewBox` maps that box onto `area`,
+  preserving aspect and centred unless `opts.stretch`; a bare fragment, or
+  one with no viewBox, is treated as already sitting in the area's own local
+  space and is simply placed there — the "paste a static SVG" path), and
+  `polar(cx, cy, r, degrees)` -> `[x, y]` (the project's own angle
+  convention, 0 = up, clockwise, shared with every other radial part).
+- `view` — `{tile: {w, h, aspect}, state: {pressed, dragging, open, hover},
+  repeat: {index, count, fraction}, attrs, theme(name)}`: the tile's geometry, this
+  view's interaction state, the same three values `repeat:index` etc.
+  resolve to for this copy (a part with no repeat gets `{index: 0, count: 1,
+  fraction: 0}`), and a token lookup resolving a `$token` name the way an
+  ordinary color attr does. `attrs` is this part's OWN attrs, by name, resolved
+  through the same cells every other draw part's attrs read through — the
+  registry's COMPUTED inputs for the part (an outside scale's `outer`, a
+  radial's `start` / `sweep`, ...), distinct from `props` because a prop and an
+  attr may share a name and the two are never merged. The generic layout attrs
+  (`show`, `weight`, `zoom`, ...) land here too wherever a part happens to carry
+  them; harmless, since a body reads only the names it declared attrs for.
+
+Return value: a string, an array of strings (joined), or nothing (draws
+nothing). Whatever comes back is spliced into the part's own group, so it
+inherits the part's transform and clip exactly like any other part's output.
+
+Failure is first-class, because this drives a plant: both the compile and
+every call are wrapped, and a throwing part draws NOTHING and never takes
+the rest of the render with it. The error surfaces rather than vanishing
+into the console — it is recorded as the widget's fault (`view.faults`,
+rendered as the same badge a compile finding gets), named by the part and
+the JS error, at most one such fault per widget per render. What this
+cannot contain: `new Function` runs synchronously and nothing short of
+killing the tab preempts an infinite loop in a body; the mitigation is that
+the body is authored by the HMI designer, and a hang shows up immediately in
+Edit/Test rather than in a shipped document nobody is watching run. A future
+CSP on this app needs `unsafe-eval` (or an equivalent trusted-types
+carve-out) for `code` parts to keep working.
+
+**Transforms.** Any node may carry one, and everything it paints — its own drawing
+and its children's — rides it, because it is emitted as ONE `<g transform>`. This
+is what makes the hierarchy real rather than a naming convention. Everything is a
+fraction of the node's own laid-out area, so a transform is as
+resolution-independent as the layout:
+
+| Attr | Meaning |
+|---|---|
+| `zoom` | scales the node about its own centre (0.13 = a dot inside its box) |
+| `dx`, `dy` | offset it, in fractions of its own width and height |
+| `rotate` | degrees clockwise about the pivot, applied LAST so an offset child ORBITS |
+| `origin_x`, `origin_y` | the pivot, fractions of the area (default its centre) |
+
+A child's fractions compose with its parent's, which is the point: a knob's `dot`
+is a CHILD of its `face` with `dy` -0.34 and `zoom` 0.13 of the face, the face
+carries `rotate`, and the dot orbits because the face turns. Nothing recomputes an
+angle from the same slots twice, and resizing the face moves the dot with it.
+
+**The dial owns the fit.** A radial control's circle is established ONCE, by the
+container: a node carrying a `fit` attr resolves its own area to the fitted
+circle's bounding square (`circle` = inscribed and centred; `extent` = scaled and
+offset so the swept extent, plus its `core` disc and `flare`, fills the rect).
+Its children are then handed a square and need only `start` / `sweep` for their
+own angle maths, and a `needle` simply points straight up and is turned by its own
+`rotate`. A part OUTSIDE the fit owner that still belongs on the circle (a Gauge's
+tile label) finds the same square with `at: "center"` and its own copy of the fit
+attrs — the one place they are not the container's alone.
+
+Every node carries a `name`: short, semantic, lower-case, an identifier, what a
+layers panel would show. Names are unique among siblings, and the names joined
+with `.` BELOW the template root form the node's **part path**, its stable address
+(how the editor selects and scopes a part without per-node ids, and what prefixes
+the properties that part owns). The ROOT node contributes no segment: the root
+part is the widget itself, whose properties address bare.
 
 **The radial vocabulary.** One angle convention for every radial part and the
 drag_radial primitive: DEGREES, 0 = straight up, clockwise positive. Each radial
@@ -429,32 +622,43 @@ is the stroke as a radius fraction; `outer` scales the arc inward without moving
 its center (an outside scale's inset). `needle` is a pointer capsule from `inner`
 to `outer` with an optional center `hub`, emitted as ONE filled path so a
 translucent handle color reads as one object, never darker where hub and body
-overlap; `mark` is the grabbable dot at radius
-fraction `at`; `ticks` spreads `count` scale markers over the sweep with optional
-labels: numeric min..max interpolation, or per-tick text via `names` (the one
-text a radial control renders besides its own `text` slot). A scale reads
+overlap; it always points STRAIGHT UP and its node's `rotate` turns it, so the
+value-to-angle maths lives in one place for the needle, the face and the dot
+alike. The shared scale body (below) spreads `count` scale markers over the sweep
+with optional labels: numeric min..max interpolation, or per-tick text via `names`
+(the one text a radial control renders besides its own `text` slot). A scale reads
 control-outward: the marks sit closest to the control and the values beyond them
 (`labels_out` for an outside scale, the mirrored default for an inside one). A
-null value draws no fill, no needle and no mark: UNKNOWN is never an invented
-position.
+null value draws no fill and no needle: UNKNOWN is never an invented position, and
+a `rotate` that goes Nil degrades to 0 rather than vanishing, which is why the
+needle still gates on its own `value` attr.
 
-**The tick and label rules**, shared by every tick-bearing control (one drawer
-draws them all): a label anchors a small gap past its mark and its box is pushed
-away along the tick's own direction, so the edge facing the tick is centered ON
-the tick (a top label sits above its tick, horizontally centered; a side label
-sits beside it, vertically centered) and never overlaps the mark. Marks never
-overlap each other (their width caps at a third of their spacing); labels never
-collide either: the size shrinks toward a readable floor first, and past it
-labels are thinned (every k-th drawn, the last always) instead of made
-illegible. Turning an outside scale on shrinks the control (`outer` reserves the
-rim), and the labels repay it by sizing to fit between the marks and the rim, so
-they never spill out of the tile; the fit's `flare` widens the extent past the
-sweep ends for the end labels' room. Every tick sits at its TRUE value
-position, ends included: this is an instrument, a mark is a reading, and a
-shifted mark is a wrong one, so a click on any tick lands exactly on that
-tick's value and nothing is ever repositioned for looks (end-tick insets to
-dodge the arc's rounded caps were tried and rejected). The linear slider's
-scale follows the same rules (sizing, thinning, tick-centered labels slid
+A grabbable dot is no longer a part kind of its own: it is a plain `rect` child of
+the shape it rides, rounded, offset by `dy` and scaled by `zoom` — the hierarchy
+expresses it, so there is nothing left for a `mark` primitive to do.
+
+**The tick and label rules.** The SCALE part on every tick-bearing built-in (Slider,
+Knob, RadialSlider, Gauge, Selector) is a `code` part (above) carrying one shared JS
+body — one drawer draws them all, the same way a hard-coded `ticks` primitive once
+did, except this is now an ordinary authored body shipped with the built-ins: forking
+any of these five types gives you this exact source to read and change, and it reads
+nothing but its own `view.attrs` (`outer`, `start`, `sweep`, `count`, `names`, `min`,
+`max`, `decimals`, `labels_out`, `len`, `fill`, `text_fill`, `dir`) plus `draw.line` /
+`draw.text` / `draw.polar` / `draw.measure`. Its rules: a label anchors a small gap
+past its mark and its box is pushed away along the tick's own direction, so the edge
+facing the tick is centered ON the tick (a top label sits above its tick, horizontally
+centered; a side label sits beside it, vertically centered) and never overlaps the
+mark. Marks never overlap each other (their width caps at a third of their spacing);
+labels never collide either: the size shrinks toward a readable floor first, and past
+it labels are thinned (every k-th drawn, the last always) instead of made illegible.
+Turning an outside scale on shrinks the control (`outer` reserves the rim), and the
+labels repay it by sizing to fit between the marks and the rim, so they never spill
+out of the tile; the fit's `flare` widens the extent past the sweep ends for the end
+labels' room. Every tick sits at its TRUE value position, ends included: this is an
+instrument, a mark is a reading, and a shifted mark is a wrong one, so a click on any
+tick lands exactly on that tick's value and nothing is ever repositioned for looks
+(end-tick insets to dodge the arc's rounded caps were tried and rejected). The linear
+slider's scale follows the same rules (sizing, thinning, tick-centered labels slid
 inward only where the tile would cut them; the marks themselves never move).
 
 **Radial fit.** Where the circle sits in the part's rect is the `fit` attr. The
@@ -522,7 +726,8 @@ Attribute values are authored as TEMPLATE EXPRESSIONS: the scalar language's own
 grammar (6.2), read against the component's scope. A bare identifier is one of the
 component's own properties; `tile.w` / `tile.h` / `tile.aspect` are the tile's
 geometry; `state.pressed` / `state.dragging` / `state.open` / `state.hover` are
-per-view interaction state; `$<token>` is a theme token literal (2.10); and
+per-view interaction state; `repeat.index` / `repeat.count` / `repeat.fraction`
+answer for a repeated node's own copy (above); `$<token>` is a theme token literal (2.10); and
 `hist(<prop>)`, `optfrac(<value>, <options>)`, `optcount(<prop>)`,
 `optnames(<prop>)` address the shared machinery's derived cells by bare property
 name. On the wire there is only one form: a compiled program over symbolic cells (a
@@ -943,21 +1148,38 @@ persisted per view):
   page's widgets → each widget's named template parts (its part paths, 2.3),
   read from the registry type, so every named node is listed whether the current
   render shows it or not; the section header carries the widget count. A widget
-  row selects the widget, a part row selects that part; expansion state is per
-  view and never synced.
+  row selects the widget, a part row selects that part; a part row also carries an
+  EYE that switches that part's `shown` (2.3) — a hidden part keeps its row, dimmed,
+  with the switch standing. Expansion state is per view and never synced.
 - **Components** lists the document's own components (editable: a row selects the
   component, its expanded part tree selects a part node) and then the built-ins not
-  shadowed by one — dimmed, browsable to their part trees, read-only, each carrying
-  a fork affordance (2.3). A doc component that shadows a built-in is marked (its
-  instances follow it). "+ Component" inserts a minimal fresh component. Component
-  selection is SEPARATE from widget selection and each clears the other; Escape
-  steps part → component → none. With a component selected the inspector edits the
+  shadowed by one — dimmed, and browsable to their part trees the same way. A
+  built-in row SELECTS too: the inspector then shows that definition READ-ONLY, which
+  is how a shipped type is read before it is overridden (its events, its properties
+  with their defaults, its behavior; for a part, its kind, its own properties, and
+  every attr's expression text). A built-in is not in the document and carries no
+  ids, so it is addressed by name plus a child-index path into its parts rather than
+  by node id, and a part's view states the one thing that address does not: the SLOT
+  ADDRESS prefix its properties are named under (2.3), the template root contributing
+  none. The component view carries the Override verb as its way out of read-only.
+  Every row carries a kebab opening its verb menu (2.3 Forking): a built-in row offers
+  **Override `<Name>`** (shadows it under its own name; every existing instance
+  follows) and **Duplicate as…** (copies it under a fresh name, source and
+  instances untouched); a doc component row offers **Duplicate as…** and either
+  **Revert to built-in** (only where it actually shadows one) or an ordinary
+  **Delete**. A doc component that shadows a built-in wears a small override tag in
+  the row itself, not only a tooltip. "+ Component" inserts a minimal fresh
+  component. Component
+  selection is SEPARATE from widget selection and each clears the other (a browsed
+  built-in is a third, equally exclusive, selection); Escape steps part → component →
+  none. With a component selected the inspector edits the
   TYPE: its name, a read-only events summary, the properties table (one PropDef
-  row: name, shape, default — the ordinary slot editors — group, delete), and a
-  read-only behavior summary. With a PART selected it edits that node: name, a
-  box's dir, the attrs table (attr name + expression text, findings pinned per attr
-  exactly as the compiler addresses them), the interact's params, add-child /
-  move / delete. Every edit is an ordinary op; the recompile's registry-changed
+  row: name, shape, default — the ordinary slot editors — group, delete) for the
+  WIDGET's own properties, and a read-only behavior summary. With a PART selected
+  it edits that node: name, a box's dir, ITS OWN properties table (the same rows;
+  what it declares here is addressed under it and edited on it, 2.3), the attrs
+  table (attr name + expression text, findings pinned per attr exactly as the
+  compiler addresses them), the interact's params, add-child / move / delete. Every edit is an ordinary op; the recompile's registry-changed
   snapshot repaints every instance, which is the honest live preview.
 - **Canvas**: the artboard and its surrounding pasteboard (below).
 - **Inspector** (right). A sticky header shows the widget's label and its type +
@@ -1055,12 +1277,13 @@ looks like, then the code that means. Appearance last, because it is the part th
 never breaks a machine.
 
 **The part-scoped view.** With a part selected (3.1) the stack narrows to ONE
-section, named for the part: exactly the slots the part's template subtree consumes
-(any program under it that reads `slot:<name>`, interact params included), value
-slots too, ordered as in Appearance. Behavior, variables and the Panel section stay
-with the widget view — the frame is painted by the canvas, not the template, so its
-slots appear here only if the subtree actually reads them. The head reads
-widget › part, and the widget's name is the way back.
+section, named for the part: exactly the properties THAT PART OWNS (2.3), its
+`shown` switch first, then ordered as in Appearance. Not its children's — they
+have their own rows in the tree — and not the widget's, which is one click up.
+Ownership is exclusive, so every property is editable in exactly one place, and
+the widget's own sections (Data in, Behavior, variables, Appearance, Panel) hold
+only what the widget itself declares. The head reads widget › part, and the
+widget's name is the way back.
 
 ### 3.3 Feed rows
 

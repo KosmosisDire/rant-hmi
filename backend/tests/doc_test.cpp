@@ -345,6 +345,8 @@ void test_tokens() {
     Json slots = first_widget(d)["slots"];
     slots["text_color"] = "$accent";
     slots["surface"] = "#4e8ef7";
+    /* a PART's colour sits one level in (spec 2.3): the fan-out walks the nesting */
+    slots["bar"] = Json{{"fill_color", "$accent"}};
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", wid}, {"key", "slots"},
                              {"value", slots}}},
                     err),
@@ -355,6 +357,7 @@ void test_tokens() {
     CHECK(token_named(d, "brand") != nullptr);
     CHECK(token_named(d, "accent") == nullptr);
     CHECK(first_widget(d)["slots"]["text_color"] == "$brand");
+    CHECK(first_widget(d)["slots"]["bar"]["fill_color"] == "$brand");
     CHECK(first_widget(d)["slots"]["surface"] == "#4e8ef7");
     /* the fan-out is echoed as ONE set_prop of the whole slots object per touched widget */
     int set_props = 0;
@@ -363,6 +366,7 @@ void test_tokens() {
             ++set_props;
             CHECK(op["key"] == "slots");
             CHECK(op["value"]["text_color"] == "$brand");
+            CHECK(op["value"]["bar"]["fill_color"] == "$brand");
         }
     CHECK(set_props == 1);
 

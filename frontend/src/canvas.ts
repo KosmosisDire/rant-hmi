@@ -11,7 +11,7 @@
 
 import { dividerPath, unionPath } from "./islands.js";
 import { cellsFor, opaqueEnough, resolveSlot, fedSlots, runtimeSlots, Theme, themedSlot, ThemeMode, typeOf } from "./slots.js";
-import { escapeXml, PartHits, Rect, renderNode } from "./template.js";
+import { escapeXml, PartHits, PartRect, Rect, renderNode } from "./template.js";
 import { Canvas, Doc, HistView, Json, Live, Mesh, Page, Registry, Widget, WidgetType } from "./types.js";
 
 export type Mode = "edit" | "test" | "operate";
@@ -201,7 +201,7 @@ function grips(box: Rect, radius: number, unit: number): string {
 function overlay(
   page: Page,
   view: ViewState,
-  partRects: Map<number, Map<string, Rect>> | null,
+  partRects: Map<number, Map<string, PartRect>> | null,
 ): string {
   const unit = 1 / Math.max(0.05, view.scale);   /* one screen pixel, in canvas units */
   const out: string[] = [];
@@ -235,11 +235,16 @@ function overlay(
      part hidden by `show` recorded no rect and gets no ring */
   if (view.part && view.selection.length === 1) {
     const rect = partRects?.get(view.selection[0])?.get(view.part);
-    if (rect)
+    if (rect) {
+      /* a part inside a rotated ancestor is ringed where it VISUALLY landed: the same
+         transform chain the renderer put it under carries the ring (spec 2.3) */
+      if (rect.transform) out.push(`<g transform="${rect.transform}">`);
       out.push(
         `<rect class="part-ring" stroke-width="${num(1.5 * unit)}" x="${num(rect.x)}" ` +
           `y="${num(rect.y)}" width="${num(rect.w)}" height="${num(rect.h)}"/>`,
       );
+      if (rect.transform) out.push(`</g>`);
+    }
   }
 
   if (view.ghost) {
@@ -254,13 +259,17 @@ function overlay(
 }
 
 /* a corner badge on a widget with a compile finding: a filled dot with a bang, sized off
- * the tile so it stays legible without depending on the view scale */
-function faultMark(geom: Rect, grade: string): string {
+ * the tile so it stays legible without depending on the view scale. `message`, when
+ * given, rides as a native `<title>` tooltip: a code part's error must surface rather
+ * than vanish into the console, and a hover is the surfacing the SVG itself can offer. */
+function faultMark(geom: Rect, grade: string, message?: string): string {
   const r = Math.max(5, Math.min(9, Math.min(geom.w, geom.h) / 8));
   const cx = geom.x + geom.w - r - 3;
   const cy = geom.y + r + 3;
   return (
-    `<g class="fault ${grade}"><circle cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}"/>` +
+    `<g class="fault ${grade}">` +
+    (message ? `<title>${escapeXml(message)}</title>` : "") +
+    `<circle cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}"/>` +
     `<path d="M${num(cx)} ${num(cy - r * 0.45)}v${num(r * 0.6)}" stroke-width="${num(r * 0.28)}"/>` +
     `<circle class="dot" cx="${num(cx)}" cy="${num(cy + r * 0.45)}" r="${num(r * 0.14)}"/></g>`
   );
@@ -278,7 +287,11 @@ export function renderContent(
   hists: Record<string, HistView> | null = null,
   /* when supplied, filled with each widget's part rects (widget id -> part path ->
      laid-out rect, artboard units) and the SVG gains `data-part` groups to match */
-  partRects: Map<number, Map<string, Rect>> | null = null,
+  partRects: Map<number, Map<string, PartRect>> | null = null,
+  /* when supplied, filled with the first `code` part error per widget (spec 2.3): a
+     throwing body draws nothing and reports here instead, named by the part and the JS
+     error, so the fault badge below can show it as a compile finding would */
+  codeFaults: Map<number, string> | null = null,
 ): string {
   const canvas = doc.canvas;
   const cell = cellSize(canvas);
@@ -388,10 +401,20 @@ export function renderContent(
     if (type) {
       const rect = contentRect(frame, pad);
       const parts: PartHits | undefined =
-        partRects ? { rects: new Map<string, Rect>(), path: "" } : undefined;
+        partRects ? { rects: new Map<string, PartRect>(), path: "", depth: 0, transform: "" } : undefined;
+      /* one code-part fault reported per widget per render (spec 2.3: "do not spam") —
+         the first part to throw wins, and every part still renders since a throwing one
+         draws nothing rather than aborting the widget */
+      const reportCodeFault = codeFaults
+        ? (part: string, err: unknown) => {
+            if (!codeFaults.has(widget.id))
+              codeFaults.set(widget.id, "code part '" + part + "' threw: " +
+                (err instanceof Error ? err.message : String(err)));
+          }
+        : undefined;
       renderNode(type.template, rect,
                  cellsFor(widget, type, live, view.state[widget.id] ?? {}, mesh, hists, theme),
-                 out, { next: 0 }, parts);
+                 out, { next: 0 }, parts, reportCodeFault);
       if (partRects && parts) partRects.set(widget.id, parts.rects);
     } else {
       out.push(
@@ -402,9 +425,15 @@ export function renderContent(
     }
     /* A widget the compiler complained about is marked HERE, on the thing itself. A feed
        that did not compile leaves its slot UNKNOWN forever, which on its own looks exactly
-       like a value that has not arrived yet; without this the mistake is invisible. */
-    const fault = editing ? view.faults?.[widget.id] : undefined;
-    if (fault === "error" || fault === "warning") out.push(faultMark(widget.geom, fault));
+       like a value that has not arrived yet; without this the mistake is invisible. A
+       `code` part that just threw THIS render is the same badge, read straight off
+       `codeFaults` rather than `view.faults` (which only catches up on the NEXT render,
+       since it is populated from this very pass): a throwing body is visible the instant
+       it throws, not one frame later. */
+    const codeFault = editing ? codeFaults?.get(widget.id) : undefined;
+    const fault = codeFault ? "error" : editing ? view.faults?.[widget.id] : undefined;
+    if (fault === "error" || fault === "warning")
+      out.push(faultMark(widget.geom, fault, codeFault));
     out.push(`</g>`);
   }
 
@@ -416,7 +445,7 @@ export function renderContent(
 export function renderOverlay(
   page: Page,
   view: ViewState,
-  partRects: Map<number, Map<string, Rect>> | null = null,
+  partRects: Map<number, Map<string, PartRect>> | null = null,
 ): string {
   return view.mode === "operate" ? "" : overlay(page, view, partRects);
 }

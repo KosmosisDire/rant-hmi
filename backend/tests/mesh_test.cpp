@@ -323,11 +323,11 @@ int main() {
                  {"src", entity_ref("V", "history")},
                  {"path", "temps"},
                  {"xf", "x.max"}},
-            Json{{"slot", "decimals"},
+            Json{{"slot", "reading.decimals"},
                  {"src", entity_ref("V", "history")},
                  {"path", "extras"},
                  {"xf", "num(x.get(\"speed\"))"}},
-            Json{{"slot", "units"},
+            Json{{"slot", "units.text"},
                  {"src", entity_ref("V", "history")},
                  {"path", "tags"},
                  {"xf", "x.join(\"/\")"}},
@@ -416,8 +416,8 @@ int main() {
     /* aggregate fields decode into list/map values and reduce through transforms */
     {
         const int hist_max = cell_of(sched.program(), hist_id, "value");
-        const int hist_speed = cell_of(sched.program(), hist_id, "decimals");
-        const int hist_tags = cell_of(sched.program(), hist_id, "units");
+        const int hist_speed = cell_of(sched.program(), hist_id, "reading.decimals");
+        const int hist_tags = cell_of(sched.program(), hist_id, "units.text");
         CHECK(hist_max >= 0 && hist_speed >= 0 && hist_tags >= 0);
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, hist_max) == 9.25; }),
                   "temps.max never arrived");

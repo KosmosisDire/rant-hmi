@@ -3,6 +3,7 @@
 #include "refs.h"
 
 #include <algorithm>
+#include <functional>
 
 namespace hmi {
 namespace {
@@ -222,12 +223,19 @@ bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& nam
         Json& w = *wr.widget;
         auto slots = w.find("slots");
         if (slots == w.end() || !slots->is_object()) continue;
+        /* `slots` mirrors the type's parts, so a part's colour sits one level in
+           (spec 2.3): the rewrite walks the nesting rather than the top keys */
         bool hit = false;
-        for (auto& item : slots->items())
-            if (item.value().is_string() && item.value().get<std::string>() == from) {
-                item.value() = to;
-                hit = true;
+        std::function<void(Json&)> rewrite = [&](Json& level) {
+            for (auto& item : level.items()) {
+                if (item.value().is_object()) rewrite(item.value());
+                else if (item.value().is_string() && item.value().get<std::string>() == from) {
+                    item.value() = to;
+                    hit = true;
+                }
             }
+        };
+        rewrite(*slots);
         if (!hit) continue;
         const uint64_t wid = json_u64_or(w["id"], 0);
         r.ops.push_back(
