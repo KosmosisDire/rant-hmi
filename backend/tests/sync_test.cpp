@@ -311,6 +311,66 @@ int main() {
     }
     CHECK(saw_live);
 
+    /* Widget types are document data (spec 2.3): inserting a component re-derives the
+       served registry, and ops_applied does not carry it, so the backend follows the
+       echo with a fresh snapshot for every client. A bad template expression is a
+       finding on the PART node, named by the attr, and the component still serves
+       (minus the broken attr). */
+    a.take();
+    b.take();
+    a.send(Json{
+        {"type", "apply_ops"},
+        {"base_version", app.document().version()},
+        {"ops",
+         Json::array({Json{
+             {"op", "insert"},
+             {"parent", 0},   /* the doc root holds the components list */
+             {"list", "components"},
+             {"node",
+              Json{{"name", "Lamp"},
+                   {"props", Json::array({Json{{"name", "tint"},
+                                               {"shape", "color"},
+                                               {"default", "#ff0000"},
+                                               {"group", "appearance"}}})},
+                   {"parts",
+                    Json::array({Json{
+                        {"kind", "box"},
+                        {"name", "body"},
+                        {"dir", "stack"},
+                        {"children",
+                         Json::array({Json{{"kind", "rect"},
+                                           {"name", "lamp"},
+                                           {"attrs", Json{{"fill", "tint"},
+                                                          {"radius", "nope + 1"}}}}})},
+                    }})}}}}})}});
+    frames = pump(app, a, 2);
+    echo = frame_of(frames, "ops_applied");
+    const Json* pushed = frame_of(frames, "snapshot");
+    CHECK_MSG(echo != nullptr, "component insert: expected the op echo");
+    CHECK_MSG(pushed != nullptr, "component insert: expected a pushed snapshot");
+    if (echo && pushed) {
+        CHECK((*pushed)["registry"]["types"].size() == 13);
+        const Json& lamp = (*pushed)["registry"]["types"][12];
+        CHECK(lamp["name"] == "Lamp");
+        /* the good attr compiled to a view program; the bad one is not served */
+        const Json& lamp_part = lamp["template"]["children"][0];
+        CHECK(lamp_part["attrs"]["fill"]["code"][0]["op"] == "LOAD");
+        CHECK(!lamp_part["attrs"].contains("radius"));
+        /* the finding is pinned to the part node the ECHO issued, at the attr */
+        const uint64_t part_id =
+            (*echo)["ops"][0]["node"]["parts"][0]["children"][0]["id"].get<uint64_t>();
+        bool pinned = false;
+        for (const Json& diag : (*pushed)["diag"]["compile"])
+            if (diag["node"] == part_id && diag["where"] == "radius" &&
+                diag["code"] == "template_expr")
+                pinned = true;
+        CHECK_MSG(pinned, "component insert: the bad attr's finding is not pinned");
+        /* the other client got the same snapshot */
+        std::vector<Json> theirs = pump(app, b, 2);
+        CHECK(frame_of(theirs, "snapshot") != nullptr);
+    }
+    b.take();
+
     /* the document on disk carries the edits */
     Document saved;
     CHECK_MSG(Document::from_file(kDocPath, saved, err), err);

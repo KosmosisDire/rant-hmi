@@ -9,7 +9,7 @@
 #include "compile/compiler.h"
 #include "doc/doc.h"
 #include "mesh/dart_mesh.h"
-#include "registry/registry.h"
+#include "compile/components.h"
 #include "sched/scheduler.h"
 
 #include "dart.hpp"
@@ -379,7 +379,7 @@ int main() {
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
 
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.grade == DiagGrade::Error)
             std::printf("compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());

@@ -5,8 +5,10 @@
 
 import { Doc, Json, Op, Page, Token, Var, Widget } from "./types.js";
 
-/* which lists a node kind holds, so the index can walk without knowing the schema */
-const CHILD_LISTS = ["globals", "tokens", "pages", "widgets", "locals", "feeds", "flows", "do"];
+/* which lists a node kind holds, so the index can walk without knowing the schema
+   ("components"/"props"/"parts"/"behavior"/"children" are the component subtree) */
+const CHILD_LISTS = ["globals", "tokens", "components", "props", "parts", "behavior",
+                     "children", "pages", "widgets", "locals", "feeds", "flows", "do"];
 
 interface Entry {
   node: Json;

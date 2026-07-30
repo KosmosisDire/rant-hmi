@@ -1,9 +1,9 @@
 #include "app.h"
 
 #include "compile/compiler.h"
+#include "compile/components.h"
 #include "compile/expression.h"
 #include "doc/ops.h"
-#include "registry/registry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -206,11 +206,21 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
     if (opts_.persist && !doc_.to_file(opts_.doc_path, err))
         std::printf("hmi: cannot save %s: %s\n", opts_.doc_path.c_str(), err.c_str());
 
+    /* The registry is a compile product now (derived from the document's components
+     * over the built-ins), and ops_applied does not carry it: when an edit changed
+     * what the derivation produces, every client gets a fresh snapshot AFTER the op
+     * echo. The echo keeps the editing clients' version sequencing and in-flight
+     * batches exact; the snapshot (which settles everything outstanding on the
+     * client, protocol.ts) delivers the new registry. Comparing the derived JSON is
+     * the one detection that cannot drift from whatever ops turn out to touch a
+     * component subtree. */
+    const Json served_before = registry_;
     compile_runtime();
     server_.broadcast(Json{{"type", "ops_applied"},
                            {"version", applied.version},
                            {"ops", applied.ops},
                            {"origin_session", session}});
+    if (registry_ != served_before) server_.broadcast(snapshot());
 }
 
 Json App::live() const {
@@ -314,7 +324,9 @@ void App::on_input(uint64_t session, const Json& frame) {
 }
 
 void App::compile_runtime() {
-    CompileResult compiled = compile_document(doc_, registry(), *mesh_);
+    component_diags_.clear();
+    registry_ = derive_registry(doc_, component_diags_);
+    CompileResult compiled = compile_document(doc_, registry_, *mesh_);
     auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);
     if (scheduler_)
         next->state() = migrate_state(scheduler_->program(), scheduler_->state(),
@@ -423,8 +435,7 @@ Json App::lang_json() {
 
 Json App::diagnostics() const {
     Json rows = Json::array();
-    if (!scheduler_) return rows;
-    for (const Diag& diag : scheduler_->program().diagnostics)
+    auto row = [&](const Diag& diag) {
         rows.push_back(Json{{"node", diag.node_id},
                             {"grade", diag.grade == DiagGrade::Error     ? "error"
                                       : diag.grade == DiagGrade::Warning ? "warning"
@@ -432,6 +443,12 @@ Json App::diagnostics() const {
                             {"code", diag.code},
                             {"message", diag.message},
                             {"where", diag.where}});
+    };
+    /* component findings first: a broken component explains the widget findings that
+     * usually follow it */
+    for (const Diag& diag : component_diags_) row(diag);
+    if (!scheduler_) return rows;
+    for (const Diag& diag : scheduler_->program().diagnostics) row(diag);
     return rows;
 }
 
@@ -454,7 +471,7 @@ Json App::snapshot() const {
     return Json{{"type", "snapshot"},
                 {"version", doc_.version()},
                 {"doc", doc_.root},
-                {"registry", registry()},
+                {"registry", registry_},
                 {"live", std::move(live_frame)},
                 {"mesh", mesh_json()},
                 {"lang", lang_json()},

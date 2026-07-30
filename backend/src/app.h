@@ -4,6 +4,7 @@
  * this loop at their build-order stages. */
 #pragma once
 
+#include "diag.h"
 #include "doc/doc.h"
 #include "mesh/dart_mesh.h"
 #include "mesh/fake.h"
@@ -83,6 +84,11 @@ class App {
 
     AppOptions opts_;
     Document doc_;
+    /* The served registry: a COMPILE PRODUCT (built-ins shadowed/extended by the
+     * document's components), rebuilt by every compile_runtime(). Component compile
+     * findings land beside it and ride diagnostics() with the program's own. */
+    Json registry_;
+    std::vector<Diag> component_diags_;
     Server server_;
     std::unordered_map<uint64_t, SessionState> sessions_;
     std::deque<std::pair<uint64_t, std::vector<uint64_t>>> history_;

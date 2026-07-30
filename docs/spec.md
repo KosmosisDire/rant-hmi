@@ -111,18 +111,30 @@ it, never a silent Nil.
 
 ### 2.3 Widgets: the type registry
 
-A widget type is a pure data record. There is no per-type code anywhere in the
-system: not in the backend (the compiler reads the tables), not in the inspector
-(sections, menus and pickers are generated from the tables), not in the renderer
-(one template engine plus a closed set of interaction primitives). Built-in types
-are registry rows the backend loads and serves; a user-defined component is the
-same kind of row, so custom components need no plugin mechanism.
+A widget type IS a component: a pure data record in the DOCUMENT's own form. There
+is no per-type code anywhere in the system: not in the backend (the compiler reads
+the tables), not in the inspector (sections, menus and pickers are generated from
+the tables), not in the renderer (one template engine plus a closed set of
+interaction primitives). The built-ins ship as component definitions in exactly
+this form; a document's own `components` list holds more of them, and a document
+component with a built-in's name SHADOWS it (which is what a future "edit a copy of
+Toggle" forks into). The REGISTRY the backend serves is a COMPILE PRODUCT derived
+from the two: it changes when components change, never independently.
 
 ```
-WidgetType {
-  name,                          // registry key; never referenced by code
-  slots:  [ {name, shape, default, group, editor?, step?, min?, max?} ],
-                                 // step: the caret and SCRUB increment for num
+Component {                      // one document node (Doc.components[], spec 2.8)
+  name,                          // the type key; shadows a built-in by name
+  props:  [ PropDef ],           // the slots table (child nodes)
+  events: [ {name, x: shape, value?: Expr} ],  // what flows can trigger on; x is the
+                                 // seed shape, `value` where x comes FROM (below)
+  behavior: [ Flow ],            // the type's DEFAULT flows (below), ordinary flows
+  parts: [ Part ]                // the visual: exactly ONE root node (below)
+}
+PropDef {
+  name, shape,                   // num | bool | text | color | enum | series
+  default, group,                // group: value | appearance | config | frame
+  editor?, variants?,            // UI hints; enum slots carry their variants
+  step?, min?, max?,             // step: the caret and SCRUB increment for num
                                  // slots (fractions step 0.05, angles 5, not the
                                  // number input's default 1). Every number field
                                  // scrubs: dragging an unfocused field slides its
@@ -132,12 +144,17 @@ WidgetType {
                                  // BOUNDED slot: the inspector edits it as a
                                  // slider beside the field (the Unity treatment)
                                  // and clamps typed values into the range.
-  events: [ {name, x: shape, value?: Expr} ],  // what flows can trigger on; x is the
-                                 // seed shape, `value` where x comes FROM (below)
-  behavior: [ Flow ],            // the type's DEFAULT flows (below)
-  template: Node                 // the visual (below)
+  history?                       // backend keeps a sampling ring for it (2.9)
 }
 ```
+
+One PropDef row round-trips to exactly one served slot spec
+`{name, shape, default, group, editor?, variants?, step?, min?, max?, history?}`;
+the served type row is `{name, slots, events, template, behavior}`, with `template`
+the compiled parts tree. Component mistakes are diagnostics like any other compile
+finding: a bad part or expression pins to the part NODE (`where` = the attr), the
+component still serves minus the broken attr, and a broken BUILT-IN aborts the
+backend at startup (it is our bug, not the author's).
 
 One slots table is the whole input surface: every named value a widget consumes is
 a slot, whether it is the live process value or a corner radius. Any slot may take
@@ -358,17 +375,29 @@ widget does BEYOND its own value echo is authored per instance as feeds and flow
 type's `behavior` reaches its own slots only (never a variable, an entity or another
 widget), so nothing that touches the plant is ever implied by a type.
 
-**Templates.** A template is a tree of layout boxes and draw parts:
+**Templates.** A template is a tree of layout boxes and draw parts. In the
+DOCUMENT (the authored form) it is a tree of Part nodes under the component,
+whose every attr is EXPRESSION TEXT:
 
 ```
-Node = box  { name, dir: row|col|stack|auto, weight, min_px?, aspect?, show?,
-              children: [Node], interact?: Interact }
-     | part { name, draw: rect | bar | text | icon
-                  | arc | needle | mark | ticks | plot,
-              weight, min_px?, show?,
-              attrs: { attr: program } }
-Interact = { primitive: press | drag1d | drag_radial | pick, params: {...},
+Part = { kind: box | rect | bar | text | icon | arc | needle | mark | ticks | plot,
+         name,
+         dir?,                        // box only: row | col | stack | auto
+         attrs: { attr: ExprText },   // weight, min_px, aspect, show, ... are attrs
+         interact?: Interact,         // box only; null on a part that takes none
+         children: [Part] }           // box only; a draw part holds no children
+Interact = { primitive: press | drag1d | drag_radial | pick,
+             params: { name: ExprText },
              emits: { primitive event -> declared event } }
+```
+
+A component's `parts` list holds exactly ONE root. On the WIRE (the derived
+registry) the same tree is served with every attr compiled to a view program:
+
+```
+Node = box  { name, dir, attrs: { attr: program }, children: [Node],
+              interact?: { primitive, params: { name: program }, emits } }
+     | part { name, draw, attrs: { attr: program } }
 ```
 
 Every node carries a `name`: short, semantic, lower-case, what a layers panel
@@ -479,19 +508,28 @@ from the same source, and scale-to-fit makes the composition natural. Every piec
 of text stays where the user can select, move and style it, and templates stay
 small.
 
-Attribute values are authored as literals, direct refs (a slot, or per-view
-interaction state such as `state.pressed` / `state.dragging`), or display-tier
-expressions over those same inputs; on the wire there is only one form: a compiled
-program (a literal compiles to one CONST, a ref to one LOAD), so the renderer has
-no per-form paths. Template expressions are compiled by the backend with the same
-parser, shape checker and instruction form as everything else (5.4), and shipped
-compiled in the registry; a view executes them with a small stack interpreter and
-never parses or checks anything. They are pure presentation functions: inputs are
-(slots, per-view interaction state), outputs are visual attributes only, and a Nil
-input renders the UNKNOWN treatment. This is the one deliberate carve-out to "the
-frontend never evaluates an expression": deriving pixels from backend-authoritative
-values is rendering, not truth, and two views given the same inputs render
-identically.
+Attribute values are authored as TEMPLATE EXPRESSIONS: the scalar language's own
+grammar (6.2), read against the component's scope. A bare identifier is one of the
+component's own properties; `tile.w` / `tile.h` / `tile.aspect` are the tile's
+geometry; `state.pressed` / `state.dragging` / `state.open` / `state.hover` are
+per-view interaction state; `$<token>` is a theme token literal (2.10); and
+`hist(<prop>)`, `optfrac(<value>, <options>)`, `optcount(<prop>)`,
+`optnames(<prop>)` address the shared machinery's derived cells by bare property
+name. On the wire there is only one form: a compiled program over symbolic cells (a
+literal compiles to one CONST, a ref to one LOAD), so the renderer has no per-form
+paths. The template-expression compiler lowers to exactly the opcode set the view's
+stack interpreter executes — literals, loads, arithmetic, comparisons, and/or/not
+(via pick: both sides evaluate, nothing here has effects), `pick`, `toFixed`,
+`clamp`/`clamp01` and the numeric builtins — and REFUSES the rest of the scalar
+vocabulary by name (color math, text formatting, aggregates, timing have no view
+encoding; bind such a value through a feed instead). Shape discipline is
+deliberately light: this is display-tier styling code, and a Nil input renders the
+UNKNOWN treatment rather than a wrong pixel. A view executes the shipped programs
+with a small stack interpreter and never parses or checks anything. They are pure
+presentation functions: inputs are (slots, per-view interaction state), outputs are
+visual attributes only. This is the one deliberate carve-out to "the frontend never
+evaluates an expression": deriving pixels from backend-authoritative values is
+rendering, not truth, and two views given the same inputs render identically.
 
 **Interaction primitives** are the only widget-related frontend code, written once,
 generic, parameterized by template data:
@@ -527,11 +565,13 @@ derived from its tables, never from its name: "continuous" (deadband offered) me
 control's writability is whatever its authored flows do. Code that switches on a
 widget-type name is a design bug by definition.
 
-**Custom components.** The registry is data served to views, so user-defined types
-(interface tables + template) are structurally supported from day one: a
-document-local `types` list merges over the built-ins, and nothing downstream can
-tell the difference. The authoring UI for them is a later stage; v1 ships built-ins
-only, defined in the same data form they would be.
+**Custom components.** The document's `components` list holds them, in the same
+form the built-ins ship in, and nothing downstream can tell the difference: the
+derived registry serves built-ins shadowed and extended by document components, the
+compiler compiles widgets against whatever that derivation produced, and an edit
+that changes the derivation reaches every client as a fresh snapshot (the op echo
+alone cannot carry a registry). The authoring UI for them is a later stage; the
+document model, compilation, shadowing and diagnostics are not.
 
 ### 2.4 Feeds (data in)
 
@@ -759,7 +799,8 @@ a moved row still lands on the right row.
 
 ```
 Doc    { version: u64, next_id: u64, canvas: Canvas,
-         globals: [Var], tokens: [Token], pages: [Page] }
+         globals: [Var], tokens: [Token],
+         components: [Component], pages: [Page] }
 Canvas { unit_w, unit_h, cols, rows }    // ONE fixed artboard shape per HMI
                                          // (default 1408x792 units, 64x36 cells)
 Page   { id, name, widgets: [Widget] }
@@ -768,6 +809,8 @@ Widget { id, type, label, geom: {x,y,w,h},               // continuous canvas un
          locals: [Var], feeds: [Feed], flows: [Flow] }
 Var    { id, name, type, init, persist: bool }
 Token  { id, name, group, light, dark }                  // a theme color role (2.10)
+Component { id, name, events,                            // a widget type (2.3)
+            props: [PropDef], parts: [Part], behavior: [Flow] }
 ```
 
 The canvas shape is document data, set once per HMI (a portrait handheld HMI picks

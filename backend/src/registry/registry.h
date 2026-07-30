@@ -1,15 +1,18 @@
-/* The widget type registry: pure data served to views (spec 2.3). A type is a slots
- * table (the universal base slots composed with the type's own, overridable by name),
- * an events table, and a visual template of layout boxes and draw parts whose every
- * attribute is a compiled program. Nothing here is code the frontend switches on: it
- * runs one template renderer, three interaction primitives and a stack interpreter. */
+/* The built-in widget components: pure data in the DOCUMENT component form (spec 2.3)
+ * — props (PropDef rows), events, a parts tree whose every attribute is EXPRESSION
+ * TEXT, and default behavior as ordinary flows. The component compiler
+ * (compile/components.cpp) lowers these to the served registry exactly as it lowers a
+ * document's own components, so a built-in and a user component are the same thing,
+ * and a document component may shadow a built-in by name. Nothing here is code the
+ * frontend switches on: it runs one template renderer, four interaction primitives
+ * and a stack interpreter. */
 #pragma once
 
 #include "doc/schema.h"
 
 namespace hmi {
 
-/* built once; the same object is embedded in every snapshot */
-const Json& registry();
+/* the 12 built-in component definitions, document-shaped; built once */
+const Json& builtin_components();
 
 } // namespace hmi

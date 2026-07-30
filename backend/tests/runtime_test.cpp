@@ -4,7 +4,7 @@
 #include "compile/expression.h"
 #include "doc/doc.h"
 #include "mesh/fake.h"
-#include "registry/registry.h"
+#include "compile/components.h"
 #include "sched/scheduler.h"
 #include "vm/vm.h"
 
@@ -202,7 +202,7 @@ int cell_named(const Program& program, const std::string& name) {
 void test_compile_and_run() {
     Document document = runtime_document();
     FakeMesh mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -346,7 +346,7 @@ void test_replay() {
     Document document = runtime_document();
     FakeMesh first_mesh(reflection());
     FakeMesh second_mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), first_mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), first_mesh);
     CHECK(compiled.ok);
 
     RuntimeState first(compiled.program);
@@ -371,7 +371,7 @@ void test_replay() {
 void test_migration() {
     Document document = runtime_document();
     FakeMesh mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     RuntimeState old_state(compiled.program);
     const int setpoint = cell_named(compiled.program, "setpoint");
     const int note = cell_named(compiled.program, "note");
@@ -415,7 +415,7 @@ void test_migration() {
 void test_typed_variables() {
     Document document = runtime_document();
     FakeMesh mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
     const uint64_t widget = slider_id(document);
@@ -461,7 +461,7 @@ void test_typed_variables() {
     Document broken = runtime_document();
     broken.root["pages"][0]["widgets"][0]["locals"][0]["type"] = "Bogus";
     broken.reindex();
-    CompileResult failed = compile_document(broken, registry(), mesh);
+    CompileResult failed = compile_document(broken, builtin_registry(), mesh);
     CHECK(!failed.ok);
     bool found = false;
     for (const Diag& diag : failed.program.diagnostics)
@@ -495,7 +495,7 @@ void test_typed_temporaries() {
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
     FakeMesh mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -576,7 +576,7 @@ void test_enum_names() {
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
     FakeMesh mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -728,7 +728,7 @@ void test_feed_cases() {
         Json{{"test", "x == .fast"}, {"xf", "\"Flying\""}},
     });
     Document document = document_with("text", full, "");
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -759,7 +759,7 @@ void test_feed_cases() {
         Json{{"test", "x == .run"}, {"xf", "\"Turning\""}},
     });
     Document through = document_with("text", partial, "");
-    CompileResult passing = compile_document(through, registry(), mesh);
+    CompileResult passing = compile_document(through, builtin_registry(), mesh);
     CHECK(passing.ok);
     RuntimeState passed(passing.program);
     RunResult rest = run_feed(passing.program, passing.program.feeds[0], passed,
@@ -771,7 +771,7 @@ void test_feed_cases() {
     /* the retired value-matching arm ({when}) is refused, with guidance */
     Json valued = Json::array({Json{{"when", "run"}, {"xf", "\"Turning\""}}});
     Document matched = document_with("text", valued, "");
-    CompileResult refused_arm = compile_document(matched, registry(), mesh);
+    CompileResult refused_arm = compile_document(matched, builtin_registry(), mesh);
     CHECK(!refused_arm.ok);
     bool guided = false;
     for (const Diag& diag : refused_arm.program.diagnostics)
@@ -787,7 +787,7 @@ void test_feed_cases() {
         Json{{"test", "x == .run"}, {"xf", "#7fc4a0"}},
     });
     Document uncovered = document_with("text_color", colored, "");
-    CompileResult refused = compile_document(uncovered, registry(), mesh);
+    CompileResult refused = compile_document(uncovered, builtin_registry(), mesh);
     CHECK(!refused.ok);
     bool found = false;
     for (const Diag& diag : refused.program.diagnostics)
@@ -795,7 +795,7 @@ void test_feed_cases() {
     CHECK(found);
 
     Document forgiven = document_with("text_color", colored, "#444444");
-    CompileResult covered = compile_document(forgiven, registry(), mesh);
+    CompileResult covered = compile_document(forgiven, builtin_registry(), mesh);
     CHECK(covered.ok);
     RuntimeState fallback(covered.program);
     RunResult other = run_feed(covered.program, covered.program.feeds[0], fallback,
@@ -825,7 +825,7 @@ void test_whole_source() {
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
     FakeMesh mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -848,7 +848,7 @@ void test_whole_source() {
     Document bare = document;
     bare.root["pages"][0]["widgets"][0]["feeds"][0]["xf"] = "";
     bare.reindex();
-    CompileResult refused = compile_document(bare, registry(), mesh);
+    CompileResult refused = compile_document(bare, builtin_registry(), mesh);
     CHECK(!refused.ok);
     bool found = false;
     for (const Diag& diag : refused.program.diagnostics)
@@ -863,7 +863,7 @@ void test_compile_fault() {
     document.root["pages"][0]["widgets"][0]["flows"][0]["do"][2]["to"]["name"] = "missing";
     document.reindex();
     FakeMesh mesh(reflection());
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(!compiled.ok);
     bool found = false;
     for (const Diag& diag : compiled.program.diagnostics)
@@ -908,7 +908,7 @@ void test_default_behavior() {
     FakeMesh mesh(reflection());
 
     Document bare = widget_document("Toggle", Json{{"value", false}});
-    CompileResult compiled = compile_document(bare, registry(), mesh);
+    CompileResult compiled = compile_document(bare, builtin_registry(), mesh);
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
     const uint64_t id = only_widget(bare);
@@ -933,7 +933,7 @@ void test_default_behavior() {
                                          {"src", entity("V", "sensor")},
                                          {"path", "on"},
                                          {"xf", ""}}})}});
-    CompileResult fed_compiled = compile_document(fed, registry(), mesh);
+    CompileResult fed_compiled = compile_document(fed, builtin_registry(), mesh);
     /* standing down is deterministic and silent: the feed is what the author asked for */
     CHECK(!has_diag(fed_compiled, "behavior_inactive"));
     RuntimeState fed_state(fed_compiled.program);
@@ -948,7 +948,7 @@ void test_default_behavior() {
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "first"},
                   {"do", Json::array({steps::set_slot("value", "true")})}}})}});
-    CompileResult authored_compiled = compile_document(authored, registry(), mesh);
+    CompileResult authored_compiled = compile_document(authored, builtin_registry(), mesh);
     CHECK(authored_compiled.ok);
     CHECK(!has_diag(authored_compiled, "behavior_inactive"));
     RuntimeState authored_state(authored_compiled.program);
@@ -967,7 +967,7 @@ void test_default_behavior() {
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "first"},
                   {"do", Json::array({steps::set_slot("nosuchslot", "true")})}}})}});
-    CHECK(has_diag(compile_document(reaching, registry(), mesh), "move_dest"));
+    CHECK(has_diag(compile_document(reaching, builtin_registry(), mesh), "move_dest"));
 }
 
 /* `x` IS WHAT THE WIDGET PROPOSES. A flow that sends x has to send the value the control
@@ -988,7 +988,7 @@ void test_event_value() {
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "first"},
                   {"do", Json::array({steps::write_field("V", "bit", "on", "x")})}}})}});
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -1020,7 +1020,7 @@ void test_event_value() {
     /* a type that declares no derivation keeps the gesture's own value: a slider's drag
        already carries what it proposes */
     Document slider = widget_document("Slider", Json{{"value", 0}, {"min", 0}, {"max", 100}});
-    CompileResult slider_compiled = compile_document(slider, registry(), mesh);
+    CompileResult slider_compiled = compile_document(slider, builtin_registry(), mesh);
     RuntimeState slider_state(slider_compiled.program);
     run_event(slider_compiled.program, slider_state, only_widget(slider), "input",
               Value::number(62.5));
@@ -1032,7 +1032,7 @@ void test_event_value() {
        press flow (force here, unforce there) has to see the value it is trying to set,
        not the pointer's own true on the way down and false on the way up. */
     Document edges = widget_document("Toggle", Json{{"value", true}});
-    CompileResult edges_compiled = compile_document(edges, registry(), mesh);
+    CompileResult edges_compiled = compile_document(edges, builtin_registry(), mesh);
     CHECK(edges_compiled.ok);
     RuntimeState edges_state(edges_compiled.program);
     const uint64_t edges_id = only_widget(edges);
@@ -1045,7 +1045,7 @@ void test_event_value() {
 
     /* a read-only control proposes what it is SHOWING, so the view never supplies it */
     Document readout = widget_document("Readout", Json{{"value", 7.5}});
-    CompileResult readout_compiled = compile_document(readout, registry(), mesh);
+    CompileResult readout_compiled = compile_document(readout, builtin_registry(), mesh);
     RuntimeState readout_state(readout_compiled.program);
     const Value shown = event_x(readout_compiled.program, readout_state, only_widget(readout),
                                 "tap", Value::nil());
@@ -1059,15 +1059,15 @@ void test_value_shape_diagnostics() {
     FakeMesh mesh(reflection());
 
     Document mistyped = widget_document("Toggle", Json{{"value", 3}});
-    CHECK(has_diag(compile_document(mistyped, registry(), mesh), "value_shape"));
+    CHECK(has_diag(compile_document(mistyped, builtin_registry(), mesh), "value_shape"));
 
     /* an explicit null is a deliberate UNKNOWN, not a mistake */
     Document unknown = widget_document("Toggle", Json{{"value", nullptr}});
-    CHECK(!has_diag(compile_document(unknown, registry(), mesh), "value_shape"));
+    CHECK(!has_diag(compile_document(unknown, builtin_registry(), mesh), "value_shape"));
 
     /* an enum slot holds a variant NAME, so it is text and its value is checked */
     Document aligned = widget_document("Label", Json{{"align", "top-left"}});
-    CompileResult ok = compile_document(aligned, registry(), mesh);
+    CompileResult ok = compile_document(aligned, builtin_registry(), mesh);
     CHECK(!has_diag(ok, "slot_variant"));
     CHECK(!has_diag(ok, "value_shape"));
     bool text_align = false;
@@ -1078,7 +1078,7 @@ void test_value_shape_diagnostics() {
     CHECK(text_align);
 
     Document typo = widget_document("Label", Json{{"align", "middle"}});
-    CHECK(has_diag(compile_document(typo, registry(), mesh), "slot_variant"));
+    CHECK(has_diag(compile_document(typo, builtin_registry(), mesh), "slot_variant"));
 }
 
 /* Color bindings: a feed can DERIVE a color from data (a bool picking between two, a
@@ -1128,7 +1128,7 @@ void test_colors() {
                        {"path", "value"},
                        {"xf", "invert(#204080 / 2)"}},
               })}});
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.grade == DiagGrade::Error)
             std::printf("colors compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
@@ -1196,7 +1196,7 @@ void test_colors() {
         Json{{"feeds", Json::array({Json{{"slot", "text_color"},
                                          {"src", Json{{"kind", "V"}, {"name", "sensor"}}},
                                          {"path", "value"}}})}});
-    CHECK(has_diag(compile_document(wrong, registry(), mesh), "shape"));
+    CHECK(has_diag(compile_document(wrong, builtin_registry(), mesh), "shape"));
 
     /* the chain type-checks end to end and yields a color */
     Program program;
@@ -1256,7 +1256,7 @@ void test_tonemaps() {
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.grade == DiagGrade::Error)
             std::printf("tonemap compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
@@ -1365,7 +1365,7 @@ void test_text_and_enums() {
     std::string err;
     CHECK(document.adopt(std::move(root), err));
 
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.grade == DiagGrade::Error)
             std::printf("text compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
@@ -1513,7 +1513,7 @@ void test_lists_and_maps() {
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.grade == DiagGrade::Error)
             std::printf("list compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
@@ -1605,7 +1605,7 @@ void test_suspend_holds_text() {
     std::string err;
     CHECK(document.adopt(std::move(root), err));
     FakeMesh mesh(std::vector<EntityDef>{});
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.grade == DiagGrade::Error)
             std::printf("suspend compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
@@ -1670,7 +1670,7 @@ void test_document_tolerance() {
     Document document;
     std::string err;
     CHECK_MSG(document.adopt(std::move(root), err), err);
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     /* the flipped transform reads as absent (`x` stands), so this still compiles; the
        null poll rate falls back to the 1 Hz default */
     CHECK(compiled.program.feeds.size() == 1);
@@ -1701,7 +1701,7 @@ void test_theme_tokens() {
     std::string err;
     CHECK_MSG(document.adopt(std::move(root), err), err);
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, registry(), mesh);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(compiled.ok);   /* an unknown token degrades the paint, never the program */
 
     const uint64_t lamp = json_u64_or(document.root["pages"][0]["widgets"][0]["id"], 0);

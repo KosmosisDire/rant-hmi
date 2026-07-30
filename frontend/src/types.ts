@@ -130,12 +130,53 @@ export interface Page {
   widgets: Widget[];
 }
 
+/* ---- components: widget types as document data (spec 2.3) ----
+ *
+ * The document form the backend compiles into the served registry: a PropDef row
+ * round-trips to a SlotSpec, a PartNode's attrs hold EXPRESSION TEXT (compiled to
+ * view programs server-side), and a component with a built-in's name shadows it. */
+
+export interface PropDef {
+  id: number;
+  name: string;
+  shape: "num" | "bool" | "text" | "color" | "enum" | "series";
+  default: Json;
+  group: "value" | "appearance" | "config" | "frame";
+  editor: string;
+  variants: string[];
+  step: number | null;
+  min: number | null;
+  max: number | null;
+  history: boolean;
+}
+
+export interface PartNode {
+  id: number;
+  kind: "box" | "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "mark" | "ticks" | "plot";
+  name: string;
+  dir?: "row" | "col" | "stack" | "auto"; /* box only */
+  attrs: Record<string, string>;          /* attr -> expression text */
+  interact: { primitive: string; params: Record<string, string>;
+              emits: Record<string, string> } | null;
+  children: PartNode[];
+}
+
+export interface ComponentDef {
+  id: number;
+  name: string;
+  events: EventSpec[];
+  props: PropDef[];
+  parts: PartNode[]; /* the template's one root node */
+  behavior: Flow[];
+}
+
 export interface Doc {
   version: number;
   next_id: number;
   canvas: Canvas;
   globals: Var[];
   tokens: Token[];
+  components: ComponentDef[];
   pages: Page[];
 }
 

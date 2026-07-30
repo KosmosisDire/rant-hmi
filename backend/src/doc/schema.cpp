@@ -62,7 +62,8 @@ const std::vector<NodeSpec>& table() {
              * snapped coordinate on a half unit and the inspector rounds it back off */
             object("canvas", Json{{"unit_w", 1408}, {"unit_h", 792}, {"cols", 64}, {"rows", 36}}),
         };
-        doc.lists = {{"globals", Kind::Var}, {"tokens", Kind::Token}, {"pages", Kind::Page}};
+        doc.lists = {{"globals", Kind::Var}, {"tokens", Kind::Token},
+                     {"components", Kind::Component}, {"pages", Kind::Page}};
         t.push_back(doc);
 
         NodeSpec page;
@@ -171,6 +172,67 @@ const std::vector<NodeSpec>& table() {
             text("dark", "#ffffff"),
         };
         t.push_back(token);
+
+        /* A COMPONENT (spec 2.3): a widget type as document data. Its props are the
+         * type's slot specs, its parts the visual template (attrs hold EXPRESSION
+         * TEXT, compiled to view programs by compile/components.cpp), its events the
+         * {name, x, value?} rows, and its behavior ordinary flows. A component with a
+         * built-in's name SHADOWS the built-in in the derived registry. */
+        NodeSpec component;
+        component.kind = Kind::Component;
+        component.name = "component";
+        component.props = {
+            text("name", "Component"),
+            array("events"),
+        };
+        component.lists = {{"props", Kind::PropDef},
+                           {"parts", Kind::Part},
+                           {"behavior", Kind::Flow}};
+        t.push_back(component);
+
+        /* One declared property = one served SlotSpec row: the optional keys (editor,
+         * variants, step/min/max, history) are served only where they say something,
+         * so a row here round-trips to exactly the wire shape (spec 2.3). */
+        NodeSpec prop;
+        prop.kind = Kind::PropDef;
+        prop.name = "prop";
+        prop.props = {
+            text("name"),
+            enumer("shape", {"num", "bool", "text", "color", "enum", "series"}, "num"),
+            any("default", 0.0),
+            enumer("group", {"value", "appearance", "config", "frame"}, "appearance"),
+            text("editor", ""),
+            array("variants"),
+            num("step", nullptr),
+            num("min", nullptr),
+            num("max", nullptr),
+            boolean("history", false),
+        };
+        t.push_back(prop);
+
+        /* One template node: a layout `box` (the only variant with a prop of its own,
+         * `dir`, and the only kind that holds children or an interact) or a draw part.
+         * `attrs` maps attr name -> expression text; `interact` is {primitive, params:
+         * {name -> expression text}, emits: {primitive event -> declared event}},
+         * null on a part that takes no gestures. */
+        NodeSpec part;
+        part.kind = Kind::Part;
+        part.name = "part";
+        part.variant_key = "kind";
+        part.props = {
+            enumer("kind",
+                   {"box", "rect", "bar", "text", "icon", "arc", "needle", "mark",
+                    "ticks", "plot"},
+                   "box"),
+            text("name"),
+            object("attrs", Json::object()),
+            object("interact", nullptr),
+        };
+        part.variants = {
+            {"box", {enumer("dir", {"row", "col", "stack", "auto"}, "stack")}},
+        };
+        part.lists = {{"children", Kind::Part}};
+        t.push_back(part);
 
         return t;
     }();

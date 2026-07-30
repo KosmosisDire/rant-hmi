@@ -22,7 +22,7 @@ uint64_t json_u64_or(const Json& value, uint64_t fallback);
 /* addressable node kinds (spec 2.8); every instance carries a stable id.
  * node_spec() indexes the table by this enum, so the order here MUST match the order
  * the NodeSpecs are pushed in table(): append new kinds at the END of both. */
-enum class Kind { Doc, Page, Widget, Var, Feed, Flow, Step, Token };
+enum class Kind { Doc, Page, Widget, Var, Feed, Flow, Step, Token, Component, PropDef, Part };
 
 enum class PropType {
     Text,    /* string */

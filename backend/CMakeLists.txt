@@ -55,7 +55,10 @@ add_library(hmi_core STATIC
   src/mesh/fake.cpp
   src/mesh/dart_mesh.cpp
   src/mesh/dart_impl.cpp
+  src/compile/lexer.cpp
   src/compile/expression.cpp
+  src/compile/template_expr.cpp
+  src/compile/components.cpp
   src/compile/compiler.cpp
   src/sched/scheduler.cpp
   src/registry/registry.cpp
@@ -92,7 +95,7 @@ add_executable(hmi_designer src/main.cpp)
 target_link_libraries(hmi_designer PRIVATE hmi_core)
 
 enable_testing()
-foreach(_test doc_test sync_test runtime_test scheduler_test mesh_test)
+foreach(_test doc_test sync_test runtime_test scheduler_test mesh_test component_test)
   add_executable(hmi_${_test} tests/${_test}.cpp)
   target_link_libraries(hmi_${_test} PRIVATE hmi_core)
   add_test(NAME ${_test} COMMAND hmi_${_test})
