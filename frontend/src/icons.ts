@@ -38,10 +38,10 @@ export const ICONS: Record<string, string> = {
 
   /* widget types, for the palette and the add menu */
   Button: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M8 12h8"/>',
-  Toggle: '<rect x="2" y="7" width="20" height="10" rx="5"/><circle cx="16" cy="12" r="3"/>',
-  Slider: '<path d="M3 12h18"/><circle cx="14" cy="12" r="3"/>',
+  Toggle: '<rect x="2" y="7" width="20" height="10" rx="5"/><circle cx="16" cy="12" r="3" fill="currentColor"/>',
+  Slider: '<path d="M3 12h18"/><circle cx="14" cy="12" r="2" fill="currentColor"/>',
   Knob: '<circle cx="12" cy="12" r="8"/><path d="M12 12V6"/>',
-  RadialSlider: '<path d="M5.6 18.4a9 9 0 1 1 12.8 0"/><circle cx="18.4" cy="18.4" r="2.2"/>',
+  RadialSlider: '<path d="M5.6 18.4a9 9 0 1 1 12.8 0"/>',
   Gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
   Selector: '<circle cx="12" cy="12" r="7"/><path d="M12 12V7"/><path d="M12 2v1.5"/><path d="m19.1 4.9-1.1 1.1"/><path d="m4.9 4.9 1.1 1.1"/>',
   Trend: '<path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/>',
@@ -49,6 +49,11 @@ export const ICONS: Record<string, string> = {
   Dropdown: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="m9 11 3 3 3-3"/>',
   Label: '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
   Panel: '<rect x="3" y="4" width="18" height="16" rx="2"/>',
+
+  /* frame layouts, for the inspector's layer tree */
+  "frame-row": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/>',
+  "frame-col": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>',
+  "frame-stack": '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8" y="8" width="16" height="16" rx="2"/>',
 };
 
 export const KIND_COLOR: Record<string, string> = {

@@ -32,6 +32,7 @@
   min-width: 0;
   overflow: hidden;
   background: radial-gradient(var(--stage-dot) 1px, transparent 1px) 0 0 / 22px 22px, var(--stage);
+  padding: 1em;
 }
 
 [data-mode="operate"] .sidebar,

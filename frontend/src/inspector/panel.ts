@@ -129,7 +129,7 @@ function frameRows(editor: Editor, frame: Frame, depth: number): HTMLElement[] {
     "frame" + (current ? " current" : ""),
     frame.children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
     [
-      el("span", { class: "layer-glyph", html: iconMarkup("frame-" + frame.layout, 16, 3.5) }),
+      el("span", { class: "layer-glyph", html: iconMarkup("frame-" + frame.layout, 16, 1.5) }),
       label,
       diagIcon(editor.diagAt(frame.id)),
     ],
@@ -160,7 +160,7 @@ function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[
       [
         el("span", {
           class: "layer-glyph",
-          html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 16, 3.5),
+          html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 16, 1.5),
         }),
         label,
         diagIcon(editor.diagFor(widget.id)),

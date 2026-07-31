@@ -45,8 +45,8 @@ export function treeRow(
 ): HTMLElement {
   const caret = el("span", {
     class: "layer-caret",
-    html: fold ? iconMarkup("chevron-down", 9, 2) : "",
-    style: fold && !fold.open ? "transform:rotate(-90deg)" : "",
+    html: fold ? iconMarkup("chevron-down", 16, 2) : "",
+    style: `flex-basis: calc(0.75em + ` + (depth) + `em);`,
   });
   if (fold)
     caret.addEventListener("click", (ev) => {
@@ -56,9 +56,8 @@ export function treeRow(
   return el(
     "button",
     {
-      class: "layer-row " + cls,
+      class: "layer-row " + cls + (fold && !fold.open ? " collapsed" : ""),
       "data-key": key,
-      style: "padding-left:" + (4 + depth * 12) + "px",
       title,
       onclick,
     },

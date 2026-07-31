@@ -1,15 +1,21 @@
-/* Build the view: type-check and strip src/*.ts into dist/, concatenate styles/*.css into
- * one stylesheet beside it, and copy index.html, so dist/ is the whole thing the backend
+/* Build the view: type-check and strip src/*.ts into dist/, put styles/*.css beside it, and
+ * write index.html with a <link> per stylesheet, so dist/ is the whole thing the backend
  * serves.
  *
- *   npm install && node build.mjs
- *   ../bin/hmi_designer --statics frontend/dist
+ *   npm install && node build.mjs            # one <link> per file — devtools name the file
+ *   npm install && node build.mjs --release  # one concatenated styles.css, one request
+ *
+ * The split build is the default because it is the debuggable one: a rule you are looking at
+ * in devtools reports the styles/*.css it actually came from, and the line number is the line
+ * number in that file. --release trades that away for a single request.
  *
  * tsc is the only tool and the only dependency: no bundler, no runtime library. */
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const release = process.argv.includes("--release");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "dist");
@@ -71,14 +77,45 @@ const listed = new Set(STYLES.map((n) => n + ".css"));
 const stray = present.filter((f) => !listed.has(f));
 if (stray.length) throw new Error("styles/ has unlisted files: " + stray.join(", "));
 
-const css = STYLES.map((name) => {
-  const path = join(here, "styles", name + ".css");
-  return "/* ===== styles/" + name + ".css ===== */\n" + readFileSync(path, "utf8").trimEnd();
-}).join("\n\n");
-writeFileSync(join(dist, "styles.css"), css + "\n");
+/* Either shape keeps THE ORDER above: concatenated, it is the order of the parts in the one
+ * file; split, it is the order of the <link> tags, which is the order the browser cascades
+ * them in regardless of the order they finish loading. */
+const links = [];
+if (release) {
+  rmSync(join(dist, "styles"), { recursive: true, force: true });
+  const css = STYLES.map((name) => {
+    const path = join(here, "styles", name + ".css");
+    return "/* ===== styles/" + name + ".css ===== */\n" + readFileSync(path, "utf8").trimEnd();
+  }).join("\n\n");
+  writeFileSync(join(dist, "styles.css"), css + "\n");
+  links.push(`<link rel="stylesheet" href="styles.css" />`);
+} else {
+  rmSync(join(dist, "styles.css"), { force: true });
+  mkdirSync(join(dist, "styles"), { recursive: true });
+  for (const name of STYLES) {
+    writeFileSync(
+      join(dist, "styles", name + ".css"),
+      readFileSync(join(here, "styles", name + ".css"), "utf8"),
+    );
+    links.push(`<link rel="stylesheet" href="styles/${name}.css" />`);
+  }
+}
 
-copyFileSync(join(here, "index.html"), join(dist, "index.html"));
+/* index.html is a template with exactly one line to fill in; refuse to guess if it moved */
+const MARKER = "<!--STYLES-->";
+const html = readFileSync(join(here, "index.html"), "utf8");
+const marked = html.split("\n").filter((line) => line.trim() === MARKER);
+if (marked.length !== 1) {
+  throw new Error(`index.html must contain exactly one ${MARKER} line, found ${marked.length}`);
+}
+const indent = marked[0].slice(0, marked[0].indexOf("<"));
+writeFileSync(
+  join(dist, "index.html"),
+  html.replace(marked[0], indent + links.join("\n" + indent)),
+);
 
 console.log(
-  `built frontend/dist (main.js + modules, index.html, styles.css from ${STYLES.length} parts)`,
+  release
+    ? `built frontend/dist --release (main.js + modules, index.html, styles.css from ${STYLES.length} parts)`
+    : `built frontend/dist (main.js + modules, index.html, ${STYLES.length} separate styles/*.css)`,
 );
