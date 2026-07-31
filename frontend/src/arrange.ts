@@ -143,6 +143,11 @@ export function settle(page: Page, dragId: number, raw: DropPlan): DropPlan | nu
   if (!drag) return null;
   /* into itself, or into anything it holds */
   if (within(page, raw.parent, dragId)) return null;
+  /* into something that cannot hold a child: a leaf, or an INSTANCE, whose subtree belongs
+     to the component it names. Asked HERE, where every drop passes, rather than only where
+     the tree asks it — the stage aims by pointer and would otherwise find the inside of a
+     widget a perfectly good target. */
+  if (raw.parent !== page.id && !holds(seatOf(page, raw.parent)?.node)) return null;
 
   /* THE SERVER ERASES FIRST: by the time it inserts, the list it is inserting into is the
      list without the dragged node. So a move further down its OWN list lands one short of
@@ -169,13 +174,27 @@ export function gapIndex(midpoints: number[], at: number): number {
   return passed;
 }
 
-/* The same index read against a list that ALREADY HOLDS the dragged node — which is exactly
- * what the stage's preview is. `held` is where the node sits in that list (-1 when it is
- * somewhere else entirely): every slot past it is one too far. This is what makes the preview
- * stable — the pointer resting anywhere over the node's own preview element resolves back to
- * the slot it is already in instead of drifting one further with each move. */
+/* The same index read against a list that ALREADY HOLDS the dragged node — which is what
+ * the page always is during a drag, because nothing moves until the drop. `held` is where
+ * the node sits in that list (-1 when it is somewhere else entirely): every slot past it is
+ * one too far. An op's index counts the list the server will insert into, which is the list
+ * without the node; a caret is drawn between the children that are actually on screen. */
 export function withoutHeld(raw: number, held: number): number {
   return held >= 0 && held < raw ? raw - 1 : raw;
+}
+
+/* WHERE THE CARET GOES, which is the inverse: an op's index counted against the list minus
+ * the dragged node, turned back into the gap between the children now on screen. Drawing at
+ * the op's own index would put the line one slot early whenever the node is being moved
+ * further down its own list.
+ *
+ * Pure, and separate from the drawing, because this is the arithmetic that decides whether a
+ * drop lands where the line promised — the tree drag and the stage drag both come through
+ * here, so one line means one answer. */
+export function caretIndex(page: Page, dragId: number, plan: DropPlan): number {
+  const seat = seatOf(page, dragId);
+  const inPlace = seat && seat.parent === plan.parent;
+  return inPlace && seat.index <= plan.index ? plan.index + 1 : plan.index;
 }
 
 /* one child's extent on both axes, in whatever units the caller measured: client pixels from

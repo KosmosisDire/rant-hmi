@@ -20,15 +20,17 @@
   overflow: hidden;
 }
 
-.page .frame {
+.page .frame,
+.page .leaf {
   box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.45);
 }
 
-/* A WIDGET INSTANCE is a frame like any other — the component's own root box, dressed by
-   the component and by this placement. The class marks it for the drag/select rules; it
-   carries no look of its own, because there is nothing left that is special about it. */
+/* A WIDGET INSTANCE renders as its component's own root box — a frame in every way except
+   one: it holds no children OF THIS PAGE, so it is not a container anything can be dropped
+   into, and it wears `.leaf` rather than `.frame` to say so to every container search. */
 .leaf {
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 /* ---------- the ink ----------
@@ -90,22 +92,36 @@
 
 /* ---------- carrying a node through the layout ---------- */
 
-/* the page reflows into the arrangement the drop would make, and every arrangement a drag
-   can point at is one the document allows — a container inside the carried subtree never
-   even answers the hit test — so the cursor has only the one thing to say */
+/* every arrangement a drag can point at is one the document allows — a container inside the
+   carried subtree never even answers the hit test — so the cursor has only the one thing to
+   say */
 .stage.dragging {
   cursor: grabbing;
   user-select: none;
 }
 
-/* WHAT IS IN YOUR HAND, and WHERE IT WOULD LAND. The reflow alone does not say which of the
-   two things that just moved is the one being carried. Inset rather than an outline, because
-   a frame clips to its own radius and would cut an outline off. */
-.preview-moving {
-  opacity: 0.65;
+/* WHERE IT WOULD LAND: a line in the gap it would be inserted into, drawn across the
+   container's own width. THE PAGE DOES NOT MOVE while a drag is live — a preview that
+   reflows slides the children out from under the pointer, which names a different slot,
+   which reflows again — so this line is the only thing that follows the pointer. */
+.insert-caret {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 1px;
+  background: var(--acc);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+/* WHAT IS IN YOUR HAND, dimmed where it still sits: it has not moved, and pretending
+   otherwise is what the reflow preview got wrong. Inset rather than an outline, because a
+   frame clips to its own radius and would cut an outline off. */
+.carrying {
+  opacity: 0.55;
   box-shadow: inset 0 0 0 1px var(--acc);
 }
 
+/* and the container that would receive it, so a drop into an empty frame — where there is
+   no gap to draw a line in — still says where it is going */
 .drop-target {
   box-shadow: inset 0 0 0 1px var(--acc);
 }

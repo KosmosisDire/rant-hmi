@@ -350,11 +350,13 @@ function onUp(): void {
   end();
   if (!held) return;
   swallow = true;
+  /* the caret goes at the release, plan or no plan: it promised where the node would land,
+     and the answer is about to be on screen. (It used to stay until the echo retired it,
+     which was right when the preview WAS the arrangement — a line has nothing to hand
+     over to.) */
+  held.editor.previewMove(0, null);
   const plan = held.plan;
-  if (!plan) {
-    held.editor.previewMove(0, null);
-    return;
-  }
+  if (!plan) return;
   /* the client always sends the whole placement, reparent or reorder: one path */
   held.editor.apply([
     { op: "move", node: held.id, parent: plan.parent, list: "children", index: plan.index },

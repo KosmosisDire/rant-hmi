@@ -4,9 +4,9 @@
  *
  * Pointer events over the page's own DOM, never the HTML5 drag API — what this needs is the
  * opposite of what that one offers. There is no drag image to carry, because the page itself
- * reflows into the candidate arrangement and THAT is the preview; and the drop target is
- * computed here rather than nominated by the browser, because the answer is a slot between
- * two children, which is not a thing the browser can hand back.
+ * carries no drag image (the node stays where it is, dimmed, and a caret says where it
+ * would go), and the drop target is computed here rather than nominated by the browser,
+ * because the answer is a slot between two children — not a thing the browser can hand back.
  *
  * None of the arithmetic is here. Which gap the pointer names, whether the drop is legal, what
  * index the op carries, which boundary the pointer is on and what moving it does to grow and
@@ -306,13 +306,13 @@ function onMove(ev: PointerEvent): void {
   const page = editor.page();
   if (!page) return;
 
-  /* HIT-TEST THE PREVIEW, which is what is on screen: hovering a leaf resolves to the
-     container holding it, and that leaf takes part in the midpoint rule below like any
-     other. A carried FRAME needs one step more — the pointer mostly rides over the frame's
-     own interior, and nothing can be dropped into what is being carried, so the question
-     climbs up past the carried subtree to the nearest container that stays put. That is
-     what makes dragging a frame read like dragging a widget instead of a wall of refusals.
-     Off the page entirely, the last legal preview stands. */
+  /* HIT-TEST THE PAGE, which does not move while a drag is live: hovering a leaf resolves
+     to the container holding it, and that leaf takes part in the midpoint rule below like
+     any other. A carried FRAME needs one step more — the pointer mostly rides over the
+     frame's own interior, and nothing can be dropped into what is being carried, so the
+     question climbs up past the carried subtree to the nearest container that stays put.
+     That is what makes dragging a frame read like dragging a widget instead of a wall of
+     refusals. Off the page entirely, the last legal candidate stands. */
   const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
   let container = under?.closest?.(".frame, .page") as HTMLElement | null;
   const carried = nodeIn(host, drag.id);
@@ -334,29 +334,19 @@ function onMove(ev: PointerEvent): void {
     });
     raw = gapIndex(mids, row ? ev.clientX : ev.clientY);
   }
-  /* the DOM being read already holds the dragged node, so every slot past it is one too far:
-     this is what makes the pointer resting over its own preview mean where it already is */
+  /* the page still holds the dragged node — nothing moves until the drop — so every slot
+     past it is one too far for an op, which counts the list the server inserts into */
   const index = withoutHeld(raw, kids.findIndex((kid) => idOf(kid) === drag!.id));
-  if (holder === drag.parent && index === drag.index) return;   /* already showing exactly this */
+  if (holder === drag.parent && index === drag.index) return;   /* already promising this */
 
-  const plan = settle(page, drag.id, { parent: holder, index });
-  if (plan) {
-    drag.parent = holder;
-    drag.index = index;
-    drag.plan = plan;
-    editor.previewMove(drag.id, plan);
-    return;
-  }
-  /* A refused candidate here means ONE thing: this is the document's own arrangement. The
-     raw index was read against a list the node has left, and shifting it lands exactly on
-     the seat the document holds — "after the gap it came from" IS "where it started". The
-     other refusals cannot reach this line: a container inside the carried subtree was
-     climbed past above, and a node the document no longer holds has nothing to plan. So
-     show the document and arm nothing; a release from here is a click's worth of nothing. */
   drag.parent = holder;
   drag.index = index;
-  drag.plan = null;
-  editor.previewMove(0, null);
+  /* A refused candidate means ONE thing here: it is the seat the node already holds. The
+     other refusals cannot reach this line — a container inside the carried subtree was
+     climbed past above, and a node the document no longer holds has nothing to plan — so
+     the caret stays where it is, promising the truth, and a release does nothing. */
+  drag.plan = settle(page, drag.id, { parent: holder, index });
+  editor.previewMove(drag.id, drag.plan ?? { parent: holder, index });
 }
 
 function onUp(): void {
@@ -368,19 +358,17 @@ function onUp(): void {
   end();
   if (!held) return;
   swallow = true;
-  if (!held.plan) {
-    held.editor.previewMove(0, null);
-    return;
-  }
+  /* the caret goes at the release, whatever happens next: it promised where the node would
+     land, and the answer is about to be on screen */
+  held.editor.previewMove(0, null);
+  if (!held.plan) return;
   /* the client always sends the whole placement, reparent or reorder: the same op the tree
-     sends, through the same rules */
+     sends, through the same rules. The page moves ONCE, when the echo lands — which is the
+     first and only time anything under the pointer has moved during this gesture. */
   held.editor.apply([
     { op: "move", node: held.id, parent: held.plan.parent, list: "children", index: held.plan.index },
   ]);
   held.editor.select([held.id]);
-  /* the preview STAYS until the echo retires it. It and the applied arrangement are the same
-     picture, so there is nothing to see; rebuilding from the document here would flick the
-     page back to where the node was for the length of a round trip. */
 }
 
 /* ---- dragging the boundary ----

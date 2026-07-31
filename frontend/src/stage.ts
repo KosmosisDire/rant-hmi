@@ -21,7 +21,7 @@
  * live frame at 30 Hz must NOT do that, so each render records the live cells it actually
  * read, and a live frame rebuilds only when one of those moved. */
 
-import { DropPlan, seatOf } from "./arrange.js";
+import { caretIndex, DropPlan } from "./arrange.js";
 import { Editor } from "./editor.js";
 import { iconMarkup } from "./icons.js";
 import { armStage, repaintResize, stageBusy } from "./manipulate.js";
@@ -45,19 +45,9 @@ interface StageState {
   rings: HTMLElement[];
   /* the one ring that follows the pointer rather than the selection */
   hover: HTMLElement | null;
-  /* the arrangement being SHOWN instead of the document's, while a drag is live */
-  preview: Preview | null;
+  /* the line promising where a dragged node would land, while a drag is live */
+  caret: HTMLElement | null;
   wired: boolean;
-}
-
-/* A drop preview is held against the document version it was spliced from, and that is what
- * retires it: the echo of its own drop bumps the version and replaces it with the identical
- * arrangement (so there is nothing to see), and an edit arriving from another window replaces
- * it with the truth (the live drag re-reads on its next move). */
-interface Preview {
-  node: number;
-  plan: DropPlan;
-  version: number;
 }
 
 const states = new WeakMap<HTMLElement, StageState>();
@@ -66,7 +56,7 @@ function stateOf(host: HTMLElement): StageState {
   let state = states.get(host);
   if (!state) {
     state = { page: null, signature: "", consumed: new Map(), rings: [],
-              hover: null, preview: null, wired: false };
+              hover: null, caret: null, wired: false };
     states.set(host, state);
   }
   return state;
@@ -548,8 +538,11 @@ function buildNode(state: StageState, editor: Editor, node: ViewNode, parent: La
            : node.kind === "text" ? buildText(node, cells)
            : node.kind === "icon" ? buildIcon(node, cells)
            : document.createElement("div");
-  if (node.kind === "frame") el.className = "frame";
-  if (node.instance) el.classList.add("leaf");
+  /* `.frame` MEANS "CAN HOLD A CHILD", and an instance cannot: what is inside it belongs
+     to the component it names. The class is what every container search reads — the drag's
+     candidate, the boundary hunt — so an instance wearing it would let a drop aim into a
+     widget's internals. It is a leaf here, which is exactly what it is to this page. */
+  if (node.kind === "frame") el.className = node.instance ? "leaf" : "frame";
 
   /* FAIL-SAFE, and only in a mode that operates: a disabled control is dimmed everywhere,
      and inert only where a pointer would be operating it. In EDIT mode it still takes the
@@ -672,48 +665,41 @@ function positionRings(host: HTMLElement, editor: Editor): void {
   ringOver(host, state.hover, shown ? nodeElement(host, hovered) : null);
 }
 
-/* ---- the drop preview ----
+/* ---- where a drop would land ----
  *
- * While a node is being dragged — from the stage or from the Layers tree — the page is drawn
- * AS IF it were already in the candidate slot. That reflow IS the preview: there is no ghost
- * rectangle to keep in step with the layout, because the layout is the answer to the question
- * the drag is asking.
+ * THE PAGE DOES NOT MOVE WHILE YOU DRAG. It used to: the page was rebuilt as if the node
+ * were already in the candidate slot, so the reflow itself was the preview. That reads
+ * beautifully and is unusable, because the thing you are aiming AT is part of what moves —
+ * the reflow slides the children out from under the pointer, which names a different slot,
+ * which reflows again. Aiming at a moving target you are moving by aiming at it.
  *
- * It is a rendering and never an edit. The store is untouched and no op is in flight, so an
- * abandoned drag costs nothing, and a drag that lands sends exactly one op whose echo draws
- * the same picture that is already on screen. */
+ * So the layout stands still and a CARET says where the node will go: a line in the gap it
+ * would be inserted into, drawn across the container's own width, plus a mark on the
+ * container that would receive it. Nothing about the page changes until the drop, and the
+ * only thing that follows the pointer is the line. */
 
-/* the page with one node lifted out of its seat and put down at the plan's, on a copy: the
- * document is not touched, and the ERASE-THEN-INSERT order is the one the plan's index was
- * already counted against (arrange.ts) */
-function arrangedPage(page: Page, node: number, plan: DropPlan): Page | null {
-  const clone: Page = JSON.parse(JSON.stringify(page));
-  const seat = seatOf(clone, node);
-  if (!seat) return null;
-  seat.siblings.splice(seat.index, 1);
-  const holder: Page | Node | null =
-    plan.parent === clone.id ? clone : seatOf(clone, plan.parent)?.node ?? null;
-  if (!holder) return null;
-  const list = (holder as Page | Node).children ?? ((holder as Node).children = []);
-  list.splice(Math.max(0, Math.min(plan.index, list.length)), 0, seat.node);
-  return clone;
+/* the gap the caret sits in, in client pixels: the leading edge of the child now at that
+ * index, or the trailing edge of the last one when the drop is at the end. An empty
+ * container has no children to measure, so the line is its own leading edge. */
+function caretLine(container: HTMLElement, index: number, row: boolean):
+    { at: number; from: number; to: number } {
+  const box = container.getBoundingClientRect();
+  const kids = Array.from(container.children)
+    .filter((c) => (c as HTMLElement).hasAttribute?.("data-id")) as HTMLElement[];
+  const cross = { from: row ? box.top : box.left, to: row ? box.bottom : box.right };
+  if (!kids.length) return { at: row ? box.left : box.top, ...cross };
+  const clamped = Math.max(0, Math.min(index, kids.length));
+  if (clamped === kids.length) {
+    const last = kids[kids.length - 1].getBoundingClientRect();
+    return { at: row ? last.right : last.bottom, ...cross };
+  }
+  const next = kids[clamped].getBoundingClientRect();
+  return { at: row ? next.left : next.top, ...cross };
 }
 
-/* what is being carried, and where it would land: both wear a mark, because a reflow alone
- * does not say which of the two things that moved is the one in your hand */
-function markPreview(host: HTMLElement, preview: Preview | null): void {
-  const state = stateOf(host);
-  if (!state.page || !preview) return;
-  nodeElement(host, preview.node)?.classList.add("preview-moving");
-  /* the page is the one frame with no id of its own on it (buildPage), so a parent with no
-     element IS the page */
-  (nodeElement(host, preview.plan.parent) ?? state.page).classList.add("drop-target");
-}
-
-/* The one preview mechanism, driven from wherever the drag lives: the stage's own pointer
- * gestures (manipulate.ts) and the Layers tree's (inspector/panel.ts) both arrive here, so a
- * drop looks the same however it was aimed. A null plan puts the document back — which is
- * also how a cancelled resize drops the inline styles it was writing. */
+/* Draw it, or take it away. Driven from wherever the drag lives — the stage's own pointer
+ * gestures (manipulate.ts) and the Layers tree's row drag (inspector/panel.ts) — so a drop
+ * is promised the same way however it was aimed. A null plan clears everything. */
 export function previewArrangement(
   host: HTMLElement,
   editor: Editor,
@@ -721,13 +707,52 @@ export function previewArrangement(
   plan: DropPlan | null,
 ): void {
   const state = stateOf(host);
-  if (node && plan) state.preview = { node, plan, version: editor.store.version() };
-  else {
-    state.preview = null;
-    /* whatever is on screen, it is not the document: rebuild rather than reposition */
-    state.signature = "";
+  for (const el of Array.from(host.querySelectorAll(".carrying, .drop-target")))
+    el.classList.remove("carrying", "drop-target");
+  if (!node || !plan) {
+    state.caret?.remove();
+    state.caret = null;
+    return;
   }
-  renderStage(host, editor);
+
+  const page = editor.page();
+  const target = nodeElement(host, plan.parent) ?? state.page;
+  if (!page || !target) return;
+  nodeElement(host, node)?.classList.add("carrying");
+  target.classList.add("drop-target");
+
+  /* FREE and GRID place by their own rules rather than by order, so a line between two
+     children would be promising something order does not decide there: the container's own
+     mark is the whole of what can honestly be shown. */
+  const holder = editor.store.nodeAt(plan.parent);
+  const layout = plan.parent === page.id ? "col" : holder?.layout ?? "free";
+  if (layout !== "row" && layout !== "col") {
+    state.caret?.remove();
+    state.caret = null;
+    return;
+  }
+
+  if (!state.caret) {
+    state.caret = document.createElement("div");
+    state.caret.className = "insert-caret";
+    host.appendChild(state.caret);
+  }
+  const row = layout === "row";
+  const line = caretLine(target, caretIndex(page, node, plan), row);
+  const box = host.getBoundingClientRect();
+  const caret = state.caret;
+  caret.classList.toggle("row", row);
+  if (row) {
+    caret.style.left = line.at - box.left - 1 + "px";
+    caret.style.top = line.from - box.top + "px";
+    caret.style.width = "2px";
+    caret.style.height = line.to - line.from + "px";
+  } else {
+    caret.style.left = line.from - box.left + "px";
+    caret.style.top = line.at - box.top - 1 + "px";
+    caret.style.width = line.to - line.from + "px";
+    caret.style.height = "2px";
+  }
 }
 
 /* ---- the one entry point ---- */
@@ -736,11 +761,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   wire(host, editor);
 
-  const doc = editor.page();
-  if (state.preview && state.preview.version !== editor.store.version()) state.preview = null;
-  const page = doc && state.preview
-    ? arrangedPage(doc, state.preview.node, state.preview.plan) ?? doc
-    : doc;
+  const page = editor.page();
   if (!page) {
     state.page?.remove();
     state.page = null;
@@ -754,9 +775,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
      tree holds. A page node's attrs are programs; editing one leaves the tree identical and
      the version moved, and the new programs arrive in the snapshot that follows. Without the
      epoch here a boundary drag would commit its number and then redraw the old one. */
-  const preview = state.preview;
-  const signature = page.id + ":" + editor.store.version() + ":" + (editor.live?.epoch ?? 0) +
-    (preview ? ":" + preview.node + ">" + preview.plan.parent + "@" + preview.plan.index : "");
+  const signature = page.id + ":" + editor.store.version() + ":" + (editor.live?.epoch ?? 0);
   let rebuild = !state.page || signature !== state.signature;
   if (!rebuild)
     for (const [cell, was] of state.consumed) {
@@ -783,7 +802,6 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
        on the fresh elements (manipulate.ts owns them; this only says when). */
     repaintResize();
   }
-  markPreview(host, preview);
   positionRings(host, editor);
 }
 
