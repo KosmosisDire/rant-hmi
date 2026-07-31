@@ -20,6 +20,10 @@
   overflow: hidden;
 }
 
+.page .frame {
+  box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.45);
+}
+
 /* A widget instance, until components render as DOM: its own frame slots painted (a
    Panel with a bound surface is already a working lamp) around a name. */
 .leaf {
@@ -59,15 +63,12 @@
 
 /* ---------- carrying a node through the layout ---------- */
 
-/* the page reflows into the arrangement the drop would make, so what the cursor says is the
-   whole of the rest: this one would land, this one would not */
+/* the page reflows into the arrangement the drop would make, and every arrangement a drag
+   can point at is one the document allows — a container inside the carried subtree never
+   even answers the hit test — so the cursor has only the one thing to say */
 .stage.dragging {
   cursor: grabbing;
   user-select: none;
-}
-
-.stage.no-drop {
-  cursor: not-allowed;
 }
 
 /* WHAT IS IN YOUR HAND, and WHERE IT WOULD LAND. The reflow alone does not say which of the

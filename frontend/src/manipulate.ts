@@ -1,5 +1,6 @@
-/* DIRECT MANIPULATION ON THE STAGE: dragging a widget to another place in the layout, and
- * dragging the boundary between two children to change how their container's room is split.
+/* DIRECT MANIPULATION ON THE STAGE: dragging a node — a widget, or a frame by its own
+ * pixels — to another place in the layout, and dragging the boundary between two children
+ * to change how their container's room is split.
  *
  * Pointer events over the page's own DOM, never the HTML5 drag API — what this needs is the
  * opposite of what that one offers. There is no drag image to carry, because the page itself
@@ -43,8 +44,6 @@ interface Drag {
   editor: Editor;
   id: number;
   pointer: number;
-  /* where the DOCUMENT has it, so a drag back to the start is recognised as no move */
-  home: DropPlan;
   /* where the PREVIEW currently has it: the reading every candidate is normalised against */
   parent: number;
   index: number;
@@ -237,12 +236,13 @@ function onDown(host: HTMLElement, editor: Editor, ev: PointerEvent): void {
     beginResize(host, editor, edge, ev);
     return;
   }
-  /* A GRAB TAKES THE DEEPEST WIDGET. A frame's own children cover every pixel of it, so a
-     press inside one means the child that was pressed; frames are dragged from the Layers
-     tree, where they have a row of their own. */
-  const leaf = (ev.target as HTMLElement | null)?.closest?.(".leaf") as HTMLElement | null;
-  if (!leaf || !host.contains(leaf) || !idOf(leaf)) return;
-  armed = { host, editor, id: idOf(leaf), x: ev.clientX, y: ev.clientY, pointer: ev.pointerId };
+  /* A GRAB TAKES THE DEEPEST NODE, the same one a click would select and the hover ring is
+     already showing: a press on a widget carries the widget, a press on a frame's own
+     pixels (its padding, its gaps, its empty room) carries the frame and everything in it.
+     The page background belongs to no node and arms nothing. */
+  const grip = (ev.target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
+  if (!grip || !host.contains(grip) || !idOf(grip)) return;
+  armed = { host, editor, id: idOf(grip), x: ev.clientX, y: ev.clientY, pointer: ev.pointerId };
   listen();
 }
 
@@ -258,7 +258,6 @@ function begin(): void {
     editor,
     id,
     pointer,
-    home: { parent: seat.parent, index: seat.index },
     parent: seat.parent,
     index: seat.index,
     plan: null,
@@ -289,9 +288,16 @@ function onMove(ev: PointerEvent): void {
 
   /* HIT-TEST THE PREVIEW, which is what is on screen: hovering a leaf resolves to the
      container holding it, and that leaf takes part in the midpoint rule below like any
-     other. Off the page entirely, the last legal preview stands. */
+     other. A carried FRAME needs one step more — the pointer mostly rides over the frame's
+     own interior, and nothing can be dropped into what is being carried, so the question
+     climbs up past the carried subtree to the nearest container that stays put. That is
+     what makes dragging a frame read like dragging a widget instead of a wall of refusals.
+     Off the page entirely, the last legal preview stands. */
   const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
-  const container = under?.closest?.(".frame, .page") as HTMLElement | null;
+  let container = under?.closest?.(".frame, .page") as HTMLElement | null;
+  const carried = nodeIn(host, drag.id);
+  while (container && carried?.contains(container))
+    container = container.parentElement?.closest?.(".frame, .page") as HTMLElement | null;
   if (!container || !host.contains(container)) return;
   const holder = idOf(container) || page.id;
   const kids = kidsOf(container);
@@ -318,21 +324,19 @@ function onMove(ev: PointerEvent): void {
     drag.parent = holder;
     drag.index = index;
     drag.plan = plan;
-    host.classList.remove("no-drop");
     editor.previewMove(drag.id, plan);
     return;
   }
-  /* Back where it started is not a move, and the arrangement to show for it is the document
-     itself. Anything else the rules refuse says so, and the last legal preview stands. */
-  if (holder === drag.home.parent && index === drag.home.index) {
-    drag.parent = holder;
-    drag.index = index;
-    drag.plan = null;
-    host.classList.remove("no-drop");
-    editor.previewMove(0, null);
-  } else {
-    host.classList.add("no-drop");
-  }
+  /* A refused candidate here means ONE thing: this is the document's own arrangement. The
+     raw index was read against a list the node has left, and shifting it lands exactly on
+     the seat the document holds — "after the gap it came from" IS "where it started". The
+     other refusals cannot reach this line: a container inside the carried subtree was
+     climbed past above, and a node the document no longer holds has nothing to plan. So
+     show the document and arm nothing; a release from here is a click's worth of nothing. */
+  drag.parent = holder;
+  drag.index = index;
+  drag.plan = null;
+  editor.previewMove(0, null);
 }
 
 function onUp(): void {
@@ -407,8 +411,11 @@ function beginResize(host: HTMLElement, editor: Editor, edge: Boundary, ev: Poin
   listen();
 }
 
-/* the same vocabulary place() emits, written inline for the length of the drag: the browser
- * re-solves the layout on every move with no op in flight and nothing to undo */
+/* The same vocabulary place() emits, written inline for the length of the drag: the browser
+ * re-solves the layout on every move with no op in flight and nothing to undo. Raw grows,
+ * without the sub-one-sum scale the build applies — a boundary drag conserves the pair's
+ * sum, so a container the build left unscaled stays unscaled; only inside an already
+ * sub-one container do the live ratios drift, and the echo settles them at release. */
 function paint(host: HTMLElement, id: number, write: SideWrite | null, row: boolean): void {
   const element = write ? nodeIn(host, id) : null;
   if (!element || !write) return;
@@ -480,7 +487,7 @@ function end(): void {
   hot = null;
   if (drag) {
     if (drag.host.hasPointerCapture?.(drag.pointer)) drag.host.releasePointerCapture(drag.pointer);
-    drag.host.classList.remove("dragging", "no-drop");
+    drag.host.classList.remove("dragging");
     drag = null;
   }
   if (resize) {

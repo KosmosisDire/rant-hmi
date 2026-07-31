@@ -67,8 +67,9 @@ export interface Editor {
   view: ViewState;
   page(): Page | null;
   selectedWidget(): Widget | null;
-  /* the selected FRAME, when the (single) selection names one (spec 2.8): a frame is
-     selected only from the Layers tree, never by clicking the artboard */
+  /* the selected FRAME, when the (single) selection names one (spec 2.8): from its Layers
+     row, or from its own pixels on the stage — the padding, gaps and empty room its
+     children do not cover */
   selectedFrame(): Frame | null;
   apply(ops: Op[]): void;
   setPage(id: number): void;

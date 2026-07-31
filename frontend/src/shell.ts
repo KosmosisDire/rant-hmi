@@ -132,8 +132,8 @@ export class App implements Editor {
     return id ? this.store.widget(id) : null;
   }
 
-  /* the selected FRAME, when the (single) selection names one: selected only from the
-     Layers tree (spec 2.8), never by clicking the artboard */
+  /* the selected FRAME, when the (single) selection names one (spec 2.8): from its Layers
+     row, or from its own pixels on the stage */
   selectedFrame(): Frame | null {
     const id = this.view.selection[0];
     return id ? this.store.frame(id) : null;
@@ -726,8 +726,7 @@ export class App implements Editor {
 
   /* The verbs of one node, wherever the right-click came from: the stage hands us what the
      browser's hit test named, the Layers tree what the row stands for. Same node, same
-     menu — the tree is the only place a FRAME can be right-clicked at all, since on the
-     stage its own children cover every pixel of it. */
+     menu — a frame answers from its row or from its own pixels on the stage alike. */
   openNodeMenu(clientX: number, clientY: number, node: number): void {
     this.openContextAt(clientX, clientY, node);
   }

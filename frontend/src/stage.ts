@@ -112,7 +112,7 @@ function crossSelf(align: Json, parent: string): string {
  * padded child's share is its weight PLUS its padding, which is the browser's arithmetic
  * and is left alone. The two zero minimums are the flex overflow gotcha: without them a
  * long word or a wide child refuses to shrink and pushes its siblings out of the box. */
-function place(node: HTMLElement, child: Frame | Widget, parent: string): void {
+function place(node: HTMLElement, child: Frame | Widget, parent: string, scale = 1): void {
   const grow = typeof child.grow === "number" ? child.grow : 1;
   const min = typeof child.min === "number" ? child.min : 0;
   if (parent === "stack") {
@@ -123,13 +123,28 @@ function place(node: HTMLElement, child: Frame | Widget, parent: string): void {
     node.style.minHeight = "0";
     return;
   }
-  node.style.flex = grow + " 1 0";
+  node.style.flex = grow * scale + " 1 0";
   node.style.minWidth = "0";
   node.style.minHeight = "0";
   if (min > 0) {
     if (parent === "row") node.style.minWidth = min + "px";
     else node.style.minHeight = min + "px";
   }
+}
+
+/* THE SUB-ONE SUM RULE: when a container's grow factors sum below 1, flexbox hands its
+ * children only that FRACTION of the free space — weights quietly become "fractions of
+ * the pane" and the container shows through the remainder. The document means grow as a
+ * pure weight (types.ts, Place), so a sub-one sum is scaled back up to one; at or above
+ * one the authored numbers ride through untouched, which keeps devtools legible. This is
+ * not hypothetical: a boundary drag conserves a PAIR's sum, so a later remove, dissolve
+ * or drag-away can leave a lone 0.77 behind — without the scale that is a hole in the
+ * page, and a drag preview reading the hole as "the document's own arrangement". */
+function growScale(children: (Frame | Widget)[]): number {
+  let sum = 0;
+  for (const child of children)
+    sum += Math.max(0, typeof child.grow === "number" ? child.grow : 1);
+  return sum > 0 && sum < 1 ? 1 / sum : 1;
 }
 
 /* the container half: what a frame does to the children inside it */
@@ -172,11 +187,11 @@ function leafSlot(state: StageState, live: Live | null, widget: Widget,
 /* ---- building ---- */
 
 function buildLeaf(state: StageState, editor: Editor, widget: Widget,
-                   parent: string): HTMLElement {
+                   parent: string, scale: number): HTMLElement {
   const node = document.createElement("div");
   node.className = "leaf";
   node.setAttribute("data-id", String(widget.id));
-  place(node, widget, parent);
+  place(node, widget, parent, scale);
 
   const type = typeOf(editor.registry, widget.type);
   const slot = (name: string) => leafSlot(state, editor.live, widget, type, name);
@@ -207,26 +222,27 @@ function buildLeaf(state: StageState, editor: Editor, widget: Widget,
 }
 
 function buildFrame(state: StageState, editor: Editor, frame: Frame,
-                    parent: string): HTMLElement {
+                    parent: string, scale: number): HTMLElement {
   const node = document.createElement("div");
   node.className = "frame";
   node.setAttribute("data-id", String(frame.id));
-  place(node, frame, parent);
+  place(node, frame, parent, scale);
   container(node, frame.layout, frame.gap, frame.pad, frame.align, frame.justify);
   if (paints(frame.surface)) node.style.background = cssColor(frame.surface);
   if (paints(frame.border))
     node.style.border = (frame.border_w ?? 1) + "px solid " + cssColor(frame.border);
   if (frame.radius) node.style.borderRadius = frame.radius + "px";
+  const inner = growScale(frame.children ?? []);
   for (const child of frame.children ?? [])
-    node.appendChild(buildChild(state, editor, child, frame.layout));
+    node.appendChild(buildChild(state, editor, child, frame.layout, inner));
   return node;
 }
 
 function buildChild(state: StageState, editor: Editor, child: Frame | Widget,
-                    parent: string): HTMLElement {
+                    parent: string, scale: number): HTMLElement {
   return child.kind === "frame"
-    ? buildFrame(state, editor, child, parent)
-    : buildLeaf(state, editor, child, parent);
+    ? buildFrame(state, editor, child, parent, scale)
+    : buildLeaf(state, editor, child, parent, scale);
 }
 
 /* Theme tokens become CSS custom properties on the page, so a "$name" value is an
@@ -245,8 +261,9 @@ function buildPage(state: StageState, editor: Editor, page: Page): HTMLElement {
   /* The page is the ROOT frame, and it is the one frame the document does not describe:
      it has no layout prop of its own, so it takes the same default a fresh frame does —
      a column, filling the pane. Its own display/direction live in stage.css. */
+  const scale = growScale(page.children ?? []);
   for (const child of page.children ?? [])
-    node.appendChild(buildChild(state, editor, child, "col"));
+    node.appendChild(buildChild(state, editor, child, "col", scale));
   return node;
 }
 
@@ -416,10 +433,11 @@ export function idUnder(target: EventTarget | null): number {
   return at ? Number(at.getAttribute("data-id")) : 0;
 }
 
-/* Listeners are attached once per host. A click SELECTS, and only a widget: a frame is
- * selected from the Layers tree alone, because a click landing on a frame is nearly
- * always a click at a gap between its children and would steal the selection from what
- * the author meant. Clicking the page background clears. */
+/* Listeners are attached once per host. A click SELECTS whatever the hit test named — a
+ * widget from its own pixels, a frame from ITS own pixels (its padding, the gap between
+ * its children, its empty room). No kind is special-cased: the hover ring has already
+ * announced exactly which node those pixels belong to, so the click confirms what is
+ * shown rather than guessing what was meant. Clicking the page background clears. */
 function wire(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   if (state.wired) return;
@@ -427,7 +445,7 @@ function wire(host: HTMLElement, editor: Editor): void {
   host.addEventListener("click", (ev) => {
     if (editor.view.mode !== "edit") return;
     const id = idUnder(ev.target);
-    editor.select(id && editor.store.widget(id) ? [id] : []);
+    editor.select(id ? [id] : []);
   });
   /* HOVER, the other direction of the Layers tree's own: the pointer names a node here and
      the row standing for it lights up, out of the same one piece of state. mouseover, not
@@ -440,7 +458,7 @@ function wire(host: HTMLElement, editor: Editor): void {
   host.addEventListener("mouseout", () => {
     if (editor.view.mode === "edit") editor.setHover(0);
   });
-  /* the press gestures: dragging a widget through the layout, and dragging the boundary
+  /* the press gestures: dragging a node through the layout, and dragging the boundary
      between two children (manipulate.ts, which owns their precedence) */
   armStage(host, editor);
   /* the pane resizes when a sidebar is dragged or the window changes: the layout re-solves
