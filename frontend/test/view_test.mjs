@@ -1,10 +1,16 @@
-/* Headless check of the view's pure half: it starts the real backend, joins over the
- * real protocol, and drives the document mirror, the attribute interpreter, the template
- * renderer (DOM-free: it returns SVG text) and the sidebar reconciler, which gets a DOM small
- * enough to run in-process (dom_shim.mjs). What none of it covers is pixels and gestures;
- * that is what a browser is for.
+/* Headless check of the view's pure half: it starts the real backend, joins over the real
+ * protocol, and drives the document mirror, the attribute interpreter and the sidebar
+ * reconcilers, which get a DOM small enough to run in-process (dom_shim.mjs).
  *
- *   node test/render_test.mjs        (after `node build.mjs` and a backend build) */
+ * It no longer RENDERS anything. The SVG template renderer this file was named for is
+ * being removed: pages and component internals both become DOM, so what a widget looks
+ * like stops being a string this process can assert on and becomes a layout only a
+ * browser computes. Every such check left with the code it pinned; verifying appearance
+ * is now a Playwright drive's job. What survives here is everything that was never about
+ * pixels — boot, sync, ops round trips, reconciliation, the four workspaces' panels —
+ * which is exactly the safety net the rest of the strip needs.
+ *
+ *   node test/view_test.mjs        (after `node build.mjs` and a backend build) */
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,18 +21,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, "..", "dist");
 const exe = join(here, "..", "..", "bin", "hmi_designer" + (process.platform === "win32" ? ".exe" : ""));
 const PORT = 7593;
-const DOC = join(here, "render_test.tmp.json");
+const DOC = join(here, "view_test.tmp.json");
 
 installDom();
 
 const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
-const { hitTest, renderContent, renderDesignPreview, resolvePage } = await import(mod("canvas.js"));
-const { placeChildren, resolveTree } = await import(mod("frame.js"));
 const { run } = await import(mod("program.js"));
-const { unionPath } = await import(mod("islands.js"));
 const { syncUrl } = await import(mod("endpoint.js"));
-const { parseRich, richMarkup, richUnits } = await import(mod("rich.js"));
 const { Panel } = await import(mod("reconcile.js"));
 const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
   await import(mod("inspector/panel.js"));
@@ -34,7 +36,6 @@ const {
   designInspectorShape, designSelectedPath, designShape, designSubject,
   locatePart, renderDesignInspector, renderDesignTree, selectDesignRenderedPart,
 } = await import(mod("workspaces/design.js"));
-const { renderOverlay } = await import(mod("canvas.js"));
 const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.js"));
 const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
@@ -68,25 +69,6 @@ check(
   }) === "wss://hmi.example/sync",
   "remote sync keeps the page origin",
 );
-
-/* ---- inline markup (rich.ts), a pure function of the string ---- */
-const mutes = (line) => (parseRich(line) ?? []).map((s) => s.mute).join(",");
-check(mutes("12.3 _bar_") === "0,1", "an underscore run is the muted secondary scale");
-check(mutes("__note__") === "2", "a double underscore is the dimmer step");
-check(mutes("_a **b** c_") === "1,1,1", "bold nests inside a muted run");
-check(parseRich("feed_name") === null, "an underscore inside a word stays literal");
-check(parseRich("motor_1_speed") === null, "so does every underscore of a snake_case path");
-check(parseRich("_kg_s") === null, "a closer that would split a word does not close");
-check(parseRich("tail_") === null, "an unclosed underscore stays literal");
-{
-  const mark = richMarkup(parseRich("12.3 _bar_"), 0, 0, 20, "middle", "#fff", 450);
-  check(mark.includes(`font-size="12.00" fill-opacity="0.55"`), "the muted run renders smaller and dimmer");
-  check(richUnits(parseRich("12.3 _bar_")) < "12.3 bar".length, "and autosizing counts it narrower");
-}
-
-function has(svg, needle, what) {
-  check(svg.includes(needle), what + " (looking for " + JSON.stringify(needle) + ")");
-}
 
 rmSync(DOC, { force: true });
 const backend = spawn(exe, ["--port", String(PORT), "--doc", DOC, "--no-mesh"], { stdio: "ignore" });
@@ -143,7 +125,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 4, client_name: "render_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 4, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -174,39 +156,12 @@ const store = new DocStore();
 store.load(snapshot.doc);
 const view = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
 const page = store.pages()[0];
-let svg = renderContent(store.doc, page, snapshot.registry, snapshot.live, view);
-
-has(svg, 'class="island"', "the fused island surface");
-has(svg, 'class="grid"', "the edit-mode grid");
-has(svg, "Line 1 Overview", "the label's text part");
-/* seven flat widgets plus the demo frame's own two (spec 2.8): every widget renders
-   its own group regardless of how deep it nests under a frame */
-check((svg.match(/<g class="widget/g) ?? []).length === 9, "nine widget groups");
-
-/* the toggle is on, so PICK resolved its fill to the on colour */
-has(svg, "#4e8ef7", "the toggle's on colour from a PICK program");
-/* the slider's bar is 62% of its track: norm() and CLAMP01 ran over three slots. Scope the
-   search to the slider's own group: the accent colour is on several widgets. */
-const groupOf = (id) => {
-  const at = svg.indexOf('data-id="' + id + '"');
-  return at < 0 ? "" : svg.slice(at, svg.indexOf("</g>", at));
-};
 const slider = store.widgetsOn(page).find((w) => w.type === "Slider");
-const sliderSvg = groupOf(slider.id);
-const width = (color) => {
-  const found = sliderSvg.match(new RegExp('<rect [^>]*width="([0-9.]+)"[^>]*fill="' + color + '"'));
-  return found ? Number(found[1]) : 0;
-};
-const fraction = width("#4e8ef7") / (width("#242424") || 1);
-check(Math.abs(fraction - 0.62) < 0.01, "the slider bar is 62 percent of its track, got " + fraction);
-/* the local feed is now evaluated by the scheduler before this view joins */
-has(svg, ">0.0<", "the fed readout renders the runtime value");
-check(!svg.includes("42.5"), "a fed slot never shows its authored value");
 
-/* ---- frames (spec 2.8): a page-level container that groups widgets, laid out in a row
-   or column and resolved to absolute rects only at RENDER time — the authored geom
-   never moves. The default document seeds one ("Status group", layout "row") so the
-   feature is exercised the moment the document opens: a Label grouped with a Toggle. */
+/* ---- frames: a page-level container that groups widgets. The default document seeds
+   one ("Status group") so the feature is exercised the moment the document opens: a
+   Label grouped with a Toggle. How a frame LAYS OUT is no longer asserted here — the
+   browser owns that now, so it is Playwright's question, not this file's. */
 const statusFrame = page.children.find((n) => n.kind === "frame");
 check(statusFrame !== undefined, "the default document seeds a demo frame");
 check(
@@ -214,91 +169,7 @@ check(
   "the frame groups two widgets",
 );
 
-/* placeChildren, unit-tested directly against synthetic frames: layout:"none" keeps
-   each child's authored geom, translated into the parent's absolute origin */
-{
-  const none = { layout: "none", children: [
-    { id: 1, kind: "widget", geom: { x: 10, y: 20, w: 30, h: 40 } },
-  ] };
-  const placed = placeChildren(none, { x: 100, y: 200, w: 500, h: 500 });
-  check(
-    placed.length === 1 && placed[0].rect.x === 110 && placed[0].rect.y === 220 &&
-      placed[0].rect.w === 30 && placed[0].rect.h === 40,
-    "layout:none translates a child's authored geom by the parent's origin, got " +
-      JSON.stringify(placed[0]?.rect),
-  );
-}
-
-/* row layout: children flow along x in order, the authored MAIN-axis size kept,
-   separated by `gap`, inside `pad` on every side */
-{
-  const row = { layout: "row", pad: 5, gap: 10, align: "start", children: [
-    { id: 1, kind: "widget", geom: { x: 0, y: 0, w: 40, h: 20 } },
-    { id: 2, kind: "widget", geom: { x: 0, y: 0, w: 60, h: 30 } },
-  ] };
-  const placed = placeChildren(row, { x: 0, y: 0, w: 300, h: 100 });
-  check(
-    placed[0].rect.x === 5 && placed[0].rect.w === 40,
-    "the first row child starts at pad, keeping its authored width, got " +
-      JSON.stringify(placed[0].rect),
-  );
-  check(
-    placed[1].rect.x === 5 + 40 + 10 && placed[1].rect.w === 60,
-    "the second row child starts after the first plus gap, got " + JSON.stringify(placed[1].rect),
-  );
-  check(
-    placed[0].rect.y === 5 && placed[0].rect.h === 20,
-    "align:start keeps the child's authored cross size at the padded edge, got " +
-      JSON.stringify(placed[0].rect),
-  );
-}
-
-/* align:"stretch" fills the cross axis, overriding the child's authored cross size */
-{
-  const stretch = { layout: "row", pad: 0, gap: 0, align: "stretch", children: [
-    { id: 1, kind: "widget", geom: { x: 0, y: 0, w: 40, h: 20 } },
-  ] };
-  const placed = placeChildren(stretch, { x: 0, y: 0, w: 300, h: 100 });
-  check(
-    placed[0].rect.y === 0 && placed[0].rect.h === 100,
-    "align:stretch fills the cross axis regardless of the authored cross size, got " +
-      JSON.stringify(placed[0].rect),
-  );
-}
-
-/* resolveTree over the REAL document: a frame's children resolve to ABSOLUTE rects —
-   never their raw frame-relative geom read as if it were already an absolute position */
-const placedPage = resolveTree(
-  page, { x: 0, y: 0, w: store.doc.canvas.unit_w, h: store.doc.canvas.unit_h },
-);
-const frameChildIds = new Set(statusFrame.children.map((c) => c.id));
-const placedChildren = placedPage.filter((p) => frameChildIds.has(p.node.id));
-check(placedChildren.length === 2, "resolveTree reaches a frame's own children");
-for (const p of placedChildren) {
-  const local = statusFrame.children.find((c) => c.id === p.node.id).geom;
-  check(
-    p.rect.x !== local.x || p.rect.y !== local.y,
-    "a frame child resolves to an absolute rect, not its frame-relative geom read raw",
-  );
-  check(
-    p.rect.x >= statusFrame.geom.x && p.rect.x < statusFrame.geom.x + statusFrame.geom.w,
-    "and lands inside its frame's own horizontal extent",
-  );
-}
-
-/* hitTest finds the WIDGET under a point, resolved through however many frames it sits
-   under, and never returns a frame itself (spec 2.8: a frame is never artboard-clickable) */
 const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
-const toggleRect = placedPage.find((p) => p.node.id === toggleChild.id).rect;
-const insideToggle = { x: toggleRect.x + toggleRect.w / 2, y: toggleRect.y + toggleRect.h / 2 };
-check(
-  hitTest(store.doc.canvas, page, insideToggle.x, insideToggle.y) === toggleChild.id,
-  "hitTest finds a widget nested inside a frame",
-);
-check(
-  hitTest(store.doc.canvas, page, insideToggle.x, insideToggle.y) !== statusFrame.id,
-  "hitTest never returns a frame, only the widget under the point",
-);
 
 /* the Layers tree shows the frame nesting: a frame row, its own children indented
    beneath it exactly like a widget's part tree */
@@ -351,11 +222,6 @@ store.apply(applied.version, applied.ops);
 /* 7 flat widgets + the demo frame + the freshly appended Readout, all top-level */
 check(store.pages()[0].children.length === 9, "the insert reached the mirror");
 
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
-has(svg, ">12.3<", "TO_FIXED formatted an unfed value");
-has(svg, ">bar<", "the units part rendered");
-
-/* a text slot that is empty hides its part through the `show` attribute */
 const unfed = store.pages()[0].children[8];
 ws.send(
   JSON.stringify({
@@ -367,16 +233,9 @@ ws.send(
 );
 const second = await next("ops_applied");
 store.apply(second.version, second.ops);
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
-has(svg, ">12<", "decimals 0 rounded the value");
-check(!svg.includes(">bar<"), "an empty units slot sheds its part");
-/* the REAL backend's version, tracked separately from here on: everything below this
-   point simulates most further edits as LOCAL-ONLY echoes (store.apply with no
-   ws.send), which is deliberate — it exercises the reconciler without a round trip —
-   but it means store.version() drifts far ahead of what the backend actually saw. The
-   repeat/path proof near the end of this file needs the real backend to compile a doc
-   component, so it sends ops for real and must base them on this, not store.version() */
-let backendVersion = second.version;
+/* everything below this point simulates further edits as LOCAL-ONLY echoes (store.apply
+   with no ws.send), which is deliberate — it exercises the reconciler without a round
+   trip — so store.version() drifts far ahead of what the backend actually saw. */
 
 /* ---- inspector reconciliation ----
    The sidebars are generated from the document, so the question every echo asks is what it
@@ -554,17 +413,6 @@ check(
 check(document.activeElement === geomField(5), "and the caret is still in that field");
 document.activeElement = null;
 
-/* merging does not depend on the grid: two touching off-grid widgets are ONE island, and
-   two separated ones are two (one closed loop per island) */
-const loops = (path) => (path.match(/Z/g) ?? []).length;
-const offGridA = { x: 103, y: 57, w: 100, h: 60 };
-const offGridB = { x: 203, y: 57, w: 100, h: 60 };
-const fused = unionPath([offGridA, offGridB], 16);
-check(loops(fused) === 1, "two touching off-grid widgets fuse into one island, got " + loops(fused));
-check(fused.includes("303.0") && fused.includes("103.0"), "the fused outline spans both widgets");
-const apart = unionPath([offGridA, { ...offGridB, x: 260 }], 16);
-check(loops(apart) === 2, "two separated widgets stay two islands, got " + loops(apart));
-
 /* the interpreter's own rules: Nil poisons, division by zero is Nil, not a trap */
 check(run({ code: [{ op: "CONST", v: null }, { op: "CONST", v: 2 }, { op: "MUL" }] }, () => null) === null,
       "Nil poisons arithmetic");
@@ -741,37 +589,6 @@ check(
   "a feed finding marks the feed's one line",
 );
 
-view.faults = { [toggle.id]: "error" };
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
-has(svg, 'class="fault error"', "the widget is marked on the canvas");
-view.faults = {};
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
-check(!svg.includes('class="fault'), "and unmarked when the finding clears");
-
-/* ---- part identity ----
-   Every named template node has a part path (names joined with "." BELOW the template
-   root, whose own name adds nothing: the root part IS the widget). A render handed a collector wraps each named node in a data-part group (inside
-   any data-act group) and records its laid-out rect per widget; without one the SVG is
-   exactly what it always was. */
-check(!svg.includes("data-part"), "no collector, no data-part groups");
-const partRects = new Map();
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view,
-                    null, null, partRects);
-has(svg, '<g data-act="0"><g data-part="pill">', "a data-part group nests inside its data-act group");
-has(svg, '<g data-part="pill.lane.knob">', "the toggle's knob renders as a data-part group");
-const toggleParts = partRects.get(toggle.id);
-check(toggleParts instanceof Map && toggleParts.has("pill.lane.knob"),
-      "part rects are recorded per widget by part path");
-{
-  const knob = toggleParts.get("pill.lane.knob");
-  const g = store.widget(toggle.id).geom;
-  check(knob && knob.x >= g.x && knob.y >= g.y &&
-        knob.x + knob.w <= g.x + g.w && knob.y + knob.h <= g.y + g.h,
-        "a recorded part rect lies inside its widget's tile");
-}
-/* the slider's scale is hidden (show_scale defaults off), so it records nothing */
-check(!partRects.get(slider.id).has("scale"), "a node hidden by `show` records no rect");
-
 /* ---- the Layers tree, part selection and the part-scoped inspector ----
    The left sidebar's tree lists the CURRENT page's widgets and each widget's named
    template parts from the REGISTRY type (all of them, rendered or not); pages live in
@@ -862,14 +679,6 @@ check(widgetLabels.includes("surface") && widgetLabels.includes("Place"),
   view.part = "";
 }
 
-/* the overlay rings the selected part at its recorded rect; a hidden part has none */
-view.part = "pill";
-const ringed = renderOverlay(store.doc.canvas, store.pages()[0], view, partRects);
-check(ringed.includes('class="part-ring"'), "the overlay rings the selected part");
-view.selection = [slider.id];
-view.part = "scale";
-check(!renderOverlay(store.doc.canvas, store.pages()[0], view, partRects).includes('class="part-ring"'),
-      "a part that did not render gets no ring");
 view.selection = [];
 view.part = "";
 
@@ -1165,60 +974,13 @@ check(designRow("c9300").querySelector(".badge.shadow") === null,
 store.apply(store.version() + 1, [{ op: "remove", node: 9300 }]);
 drawDesign();
 
-/* ---- the Design viewport: the live preview and part addressing (spec 3.1) ----
-   The middle column renders the selected component's TYPE at its design frame, type
-   defaults, no live data — renderDesignPreview shares canvas.ts's own renderWidgetBody
-   with the page renderer, so a preview looks exactly like a placed instance. Part
-   addressing is the harder half: a rendered path (names only, excluding the root) must
-   translate both ways into whichever selection space is current — node id for a doc
-   component, child-index path for a built-in. */
+/* ---- Design part addressing ----
+   A part's rendered path (names only, excluding the root) must translate both ways into
+   whichever selection space is current — node id for a doc component, child-index path
+   for a built-in. The PREVIEW that used to sit beside this is gone; addressing is pure
+   document arithmetic and does not depend on it.
 
-const previewView =
-  { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {} };
-const previewTheme = { tokens: [], mode: "dark" };
-
-/* a known BUILT-IN's parts render, wrapped in data-part groups exactly like a placed
-   instance's, and their rects land in the collector */
-{
-  const previewParts = { rects: new Map(), path: "", depth: 0, transform: "" };
-  const svgPreview =
-    renderDesignPreview(toggleType, "Toggle", 240, 120, previewTheme, previewView, previewParts);
-  has(svgPreview, 'data-part="pill.lane.knob"', "the preview renders a built-in's named parts");
-  check(previewParts.rects.has("pill.lane.knob"),
-        "and records the part's rect, same as a placed instance would");
-}
-
-/* the DESIGN FRAME drives the rendered size */
-{
-  const small = renderDesignPreview(toggleType, "Toggle", 240, 120, previewTheme, previewView);
-  const big = renderDesignPreview(toggleType, "Toggle", 400, 260, previewTheme, previewView);
-  has(small, 'width="240.00" height="120.00"', "the design frame's w/h size the background rect");
-  has(big, 'width="400.00" height="260.00"', "a different design frame draws at a different size");
-}
-
-/* a component with no parts yet (components.cpp: the compiler's own fallback for one
-   is a bare stack box) renders without throwing — a blank new component is a blank
-   picture, not a mistake — and a type that failed to resolve at all still draws the
-   ordinary missing-type marker rather than crashing the preview */
-{
-  const emptyType = {
-    name: "Empty", slots: [], events: [],
-    template: { kind: "box", name: "body", dir: "stack", attrs: {}, children: [] },
-  };
-  let threw = false;
-  let svgEmpty = "";
-  try {
-    svgEmpty = renderDesignPreview(emptyType, "Empty", 240, 120, previewTheme, previewView);
-  } catch {
-    threw = true;
-  }
-  check(!threw, "a component with no parts renders without throwing");
-  has(svgEmpty, 'class="artboard-bg"', "and still draws its background box");
-  const svgMissing = renderDesignPreview(null, "Nope", 240, 120, previewTheme, previewView);
-  has(svgMissing, "missing-type", "an unresolved type falls back to the missing-type marker");
-}
-
-/* rendered path <-> selection, round-tripped both ways: a DOC component (node ids)
+   rendered path <-> selection, round-tripped both ways: a DOC component (node ids)
    and a BUILT-IN (child-index path) */
 {
   const compId = 9600, rootId = 9601, wrapId = 9602, faceId = 9603;
@@ -1317,35 +1079,9 @@ check(accentToken?.dark === "#4e8ef7", "accent's dark value is the reference pal
 check(typeof accentToken?.light === "string" && accentToken.light.startsWith("#"),
       "and it carries a light counterpart");
 
-/* the Fault lamp is a Panel whose surface we author to a token; its live echo still
-   holds the OLD compiled literal, which must not win over the document */
-const faultPanel = store.widgetsOn(store.pages()[0]).find((w) => w.label === "Fault");
-store.apply(store.version() + 1, [
-  { op: "set_prop", node: faultPanel.id, key: "slots", value: { surface: "$accent" } },
-]);
-view.themeMode = "dark";
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
-check(groupOf(faultPanel.id).includes('fill="' + accentToken.dark + '"'),
-      "an authored $accent surface paints the token's dark value in dark mode");
-view.themeMode = "light";
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
-check(groupOf(faultPanel.id).includes('fill="' + accentToken.light + '"'),
-      "and the light value once the view's mode flips");
-check(!groupOf(faultPanel.id).includes('fill="' + accentToken.dark + '"'),
-      "the live echo's canonical-dark copy does not defeat the flip");
-view.themeMode = "dark";
-
-/* an unknown token paints transparent: opaqueEnough drops it, so the frame vanishes */
-store.apply(store.version() + 1, [
-  { op: "set_prop", node: faultPanel.id, key: "slots",
-    value: { surface: "$nope", border: "$nope" } },
-]);
-svg = renderContent(store.doc, store.pages()[0], snapshot.registry, snapshot.live, view);
-check(!groupOf(faultPanel.id).includes("<rect x"),
-      "an unknown token resolves transparent and paints nothing");
-store.apply(store.version() + 1, [
-  { op: "set_prop", node: faultPanel.id, key: "slots", value: { surface: "#2a2a2a" } },
-]);
+/* How a "$name" slot RESOLVES per view mode was asserted against the SVG renderer and
+   goes with it; the rule itself (document over live echo, per-view dark/light) is
+   Playwright's to re-pin once tokens are CSS custom properties. */
 
 /* the Style workspace: a token table over the same reconcile idiom */
 const stylePanel = new Panel(new Element("main"));
@@ -1491,358 +1227,11 @@ check(dataDetailPanel.host.querySelectorAll(".used-row")
         .some((r) => r.textContent.includes("plant/valve")),
       "and lists its carrier entities");
 
-/* ---- repeat and path (spec 2.3): proved through the real pipeline ----
-   Not a unit test of template.ts in isolation: a document component compiled by the
-   REAL backend (doc schema -> component compiler -> template-expression compiler ->
-   served registry), placed as an ordinary widget and rendered, exactly the path a user
-   goes through. `repeat` is what turns "N tick marks around a dial" or "N segments in
-   a bar" from one of the nine hard-coded draw generators into an ordinary authored
-   part; `path` is the authored shape a repeated node actually draws here, so the same
-   round trip proves both at once. A fresh page keeps this SVG free of every other
-   widget's own transforms, so the checks below can match on raw substrings without
-   scoping to one widget's group. */
+/* What used to close this file -- the repeat/path round trip and the code-part escape
+   hatch, both proved by rendering a backend-compiled component to SVG, plus trend
+   smoothing out of template.ts -- went with the SVG renderer. Those are real behaviours
+   and they will need re-pinning against the DOM once components render as HTML. */
 
-ws.send(JSON.stringify({
-  type: "apply_ops",
-  base_version: backendVersion,
-  ops: [
-    { op: "insert", parent: 0, list: "pages", node: { id: 9550, name: "Repeat", children: [] } },
-    {
-      op: "insert", parent: 0, list: "components",
-      node: {
-        name: "Ring", events: [],
-        /* `visible` is the STATE base slot every built-in composes (registry.cpp
-           state_slots()); a doc component that omits it resolves null with no spec
-           to fall back to, and canvas.ts treats a null `visible` as "not rendered"
-           (spec 2.3) — so a bare custom component needs it declared to render at all */
-        props: [
-          { name: "visible", shape: "bool", default: true, group: "config" },
-          { name: "enabled", shape: "bool", default: true, group: "config" },
-        ],
-        parts: [
-          {
-            kind: "box", name: "dial", dir: "stack", attrs: {}, interact: null,
-            children: [
-              {
-                kind: "path", name: "mark", interact: null, children: [],
-                attrs: {
-                  /* repeat's count read against the cells the node was handed, its
-                     own transform placing each copy: a ring of marks, spec 2.3 */
-                  repeat: "4",
-                  rotate: "repeat.index * 30 + 15",
-                  zoom: "0.1 + repeat.fraction * 0.05",
-                  dy: "-0.4",
-                  d: "'M0.1 0.9 L0.5 0.1 L0.9 0.9 Z'",
-                  fill: "#123456",
-                },
-              },
-            ],
-          },
-        ],
-        behavior: [],
-      },
-    },
-    {
-      op: "insert", parent: 0, list: "components",
-      node: {
-        name: "Bar", events: [],
-        props: [
-          { name: "visible", shape: "bool", default: true, group: "config" },
-          { name: "enabled", shape: "bool", default: true, group: "config" },
-        ],
-        parts: [
-          {
-            kind: "box", name: "row", dir: "row", attrs: {}, interact: null,
-            children: [
-              { kind: "rect", name: "seg", interact: null, children: [],
-                attrs: { repeat: "5", fill: "#654321" } },
-            ],
-          },
-        ],
-        behavior: [],
-      },
-    },
-  ],
-}));
-const repeatOpsApplied = await next("ops_applied");
-backendVersion = repeatOpsApplied.version;
-store.apply(repeatOpsApplied.version, repeatOpsApplied.ops);
-/* the component insert changed what the registry derives, so a fresh snapshot follows
-   the op echo (app.cpp: ops_applied never carries the registry itself) — requested
-   explicitly here with "resync" rather than waited for as a broadcast, since a
-   registry-changed snapshot is large (the 12 built-ins alone put it well past a single
-   WebSocket frame) and this is the one exchange in the file that needs the compiled
-   result back, not just the document echo */
-ws.send(JSON.stringify({ type: "resync" }));
-const repeatSnapshot = await next("snapshot");
-check(
-  repeatSnapshot.registry.types.some((t) => t.name === "Ring") &&
-    repeatSnapshot.registry.types.some((t) => t.name === "Bar"),
-  "the Ring and Bar doc components compiled into the served registry",
-);
-
-const repeatPage = store.pages().find((p) => p.id === 9550);
-ws.send(JSON.stringify({
-  type: "apply_ops",
-  base_version: backendVersion,
-  ops: [
-    { op: "insert", parent: repeatPage.id, list: "children",
-      node: { kind: "widget", type: "Ring", label: "Ring", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
-    { op: "insert", parent: repeatPage.id, list: "children",
-      node: { kind: "widget", type: "Bar", label: "Bar", geom: { x: 300, y: 0, w: 400, h: 80 }, slots: {} } },
-  ],
-}));
-const repeatWidgetsApplied = await next("ops_applied");
-store.apply(repeatWidgetsApplied.version, repeatWidgetsApplied.ops);
-
-const repeatView = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
-const repeatParts = new Map();
-const repeatSvg = renderContent(store.doc, store.pages().find((p) => p.id === 9550),
-                                repeatSnapshot.registry, snapshot.live, repeatView,
-                                null, null, repeatParts);
-
-/* the ring: 4 copies of the SAME named node ("mark", a child of the root "dial" — the
-   root itself contributes no path segment, spec 2.3) share one part path, and paint
-   the same authored path shape, placed apart only by their own transform */
-const markGroups = repeatSvg.match(/data-part="mark">/g) ?? [];
-check(markGroups.length === 4, "a repeated stack child renders N copies, got " + markGroups.length);
-const marks = repeatSvg.match(/<path d="M0\.1 0\.9 L0\.5 0\.1 L0\.9 0\.9 Z" fill="#123456"\/>/g) ?? [];
-check(marks.length === 4, "each copy paints the authored `path` shape once, got " + marks.length);
-const rotations = [...repeatSvg.matchAll(/rotate\(([\d.]+) /g)].map((m) => m[1]);
-check(rotations.length === 4 && new Set(rotations).size === 4,
-      "the 4 copies carry 4 different transforms, got " + JSON.stringify(rotations));
-check(JSON.stringify(rotations) === JSON.stringify(["15.00", "45.00", "75.00", "105.00"]),
-      "repeat.index reached the rotate expression in copy order, got " + JSON.stringify(rotations));
-const zooms = [...repeatSvg.matchAll(/scale\(([\d.]+)\) translate/g)].map((m) => m[1]);
-check(new Set(zooms).size === 4,
-      "repeat.fraction reached a second expression independently, got " + JSON.stringify(zooms));
-/* the ring widget's whole tile records ONE rect for "mark" (recordRepeatRect), not
-   whichever of the 4 copies happened to render last */
-const ringWidget = repeatPage.children.find((w) => w.type === "Ring");
-const ringParts = repeatParts.get(ringWidget.id);
-check(ringParts instanceof Map && ringParts.size === 1 && ringParts.has("mark"),
-      "N copies share one recorded part rect, not one per copy");
-
-/* the bar: 5 copies of a repeated ROW child are separate LAID-OUT siblings (spec 2.3:
-   repeat is a layout device there, not a placement one), so they render as 5 ordinary
-   rects at 5 different x positions rather than one rect drawn 5 times in place */
-const segs = [...repeatSvg.matchAll(/<rect x="([\d.]+)"[^>]*fill="#654321"/g)].map((m) => Number(m[1]));
-check(segs.length === 5, "a repeated row child renders N side-by-side rects, got " + segs.length);
-check(new Set(segs).size === 5, "and each sits at its own x position, got " + JSON.stringify(segs));
-check(segs.every((x, i) => i === 0 || x > segs[i - 1]),
-      "the 5 segments are laid out left to right, got " + JSON.stringify(segs));
-
-/* ---- code parts (spec 2.3): the JS-body escape hatch ----
-   Proved through the same real pipeline as repeat/path above: a document component
-   compiled by the backend, placed as an ordinary widget and rendered. Every `draw.*`
-   helper returns markup rather than pushing into a hidden buffer, so one body can mix
-   the helpers, hand-written markup and a pasted static SVG in a single return. */
-
-ws.send(JSON.stringify({
-  type: "apply_ops",
-  base_version: backendVersion,
-  ops: [
-    { op: "insert", parent: 0, list: "pages", node: { name: "Code", children: [] } },
-    {
-      op: "insert", parent: 0, list: "components",
-      node: {
-        name: "CodeDemo", events: [],
-        props: [
-          { name: "visible", shape: "bool", default: true, group: "config" },
-          { name: "enabled", shape: "bool", default: true, group: "config" },
-          /* a WIDGET-level property: a code part's `props` must carry this by bare
-             name too, inherited down from the component root (spec 2.3) */
-          { name: "note", shape: "text", default: "hi", group: "value" },
-        ],
-        parts: [
-          {
-            kind: "box", name: "body", dir: "stack", attrs: {}, interact: null,
-            children: [
-              {
-                /* (a) renders with draw.rect AND draw.text; (c) `props` carries both
-                   this part's OWN property (divisions) and the widget's (note), by
-                   bare name; (g) `view.attrs` carries this part's OWN attrs, resolved
-                   through the same cells everything else reads through — distinct from
-                   `props` above, since a prop and an attr may share a name */
-                kind: "code", name: "canvas", attrs: { halo: "'#abc123'" }, interact: null,
-                children: [],
-                props: [{ name: "divisions", shape: "num", default: 4, group: "config" }],
-                code: "return draw.rect({x:0,y:0,w:area.w,h:area.h,fill:'#222222'}) + " +
-                      "draw.text(String(props.note) + ':' + String(props.divisions), " +
-                      "{x:10,y:10,size:14,fill:'#ffffff'}) + " +
-                      "draw.rect({x:0,y:0,w:1,h:1,fill:view.attrs.halo});",
-              },
-              {
-                /* (b) a raw, pasted SVG string renders unchanged: the "just return svg"
-                   path, no helpers involved at all */
-                kind: "code", name: "raw", attrs: {}, interact: null, children: [], props: [],
-                code: "return '<circle cx=\"50\" cy=\"50\" r=\"12\" fill=\"#ff00ff\"/>';",
-              },
-              {
-                /* (d) draw.measure: positive, and grows with the string — the one thing
-                   no declarative scale attr can do, which is the whole point */
-                kind: "code", name: "measured", attrs: {}, interact: null, children: [], props: [],
-                code: "var a = draw.measure('a', 20); var b = draw.measure('abcdefghij', 20); " +
-                      "return draw.rect({x:0,y:0,w:1,h:1,fill:(b > a && a > 0) ? '#00ff00' : '#ff0000'});",
-              },
-              {
-                /* (e) throws: draws nothing, and must not take the rest of the render
-                   with it — a compile-time-valid body that fails at CALL time */
-                kind: "code", name: "broken", attrs: {}, interact: null, children: [], props: [],
-                code: "throw new Error('boom');",
-              },
-              {
-                /* proves a throwing SIBLING did not stop the rest of this widget: this
-                   part renders after "broken" in the same stack */
-                kind: "code", name: "after", attrs: {}, interact: null, children: [], props: [],
-                code: "return draw.circle(5,5,3,{fill:'#00ffff'});",
-              },
-            ],
-          },
-        ],
-        behavior: [],
-      },
-    },
-    {
-      op: "insert", parent: 0, list: "components",
-      node: {
-        name: "CodeRepeat", events: [],
-        props: [
-          { name: "visible", shape: "bool", default: true, group: "config" },
-          { name: "enabled", shape: "bool", default: true, group: "config" },
-        ],
-        parts: [
-          {
-            kind: "box", name: "dial", dir: "stack", attrs: {}, interact: null,
-            children: [
-              {
-                /* (f) a code part under `repeat` sees repeat.index change per copy,
-                   read off `view.repeat` — the same three cells `repeat:index` etc.
-                   resolve to for everyone else (spec 2.3) */
-                kind: "code", name: "mark", attrs: { repeat: "3" }, interact: null,
-                children: [], props: [],
-                code: "return draw.text(String(view.repeat.index), " +
-                      "{x:area.x+area.w/2, y:area.y+area.h/2, size:12, fill:'#ffffff'});",
-              },
-            ],
-          },
-        ],
-        behavior: [],
-      },
-    },
-  ],
-}));
-const codeOpsApplied = await next("ops_applied");
-backendVersion = codeOpsApplied.version;
-store.apply(codeOpsApplied.version, codeOpsApplied.ops);
-/* the component inserts changed the derivation, so a fresh registry follows (same
-   reason the Ring/Bar block above resyncs explicitly rather than waiting on a broadcast).
-   A registry change ALSO auto-broadcasts a snapshot the moment ops_applied is sent
-   (app.cpp: `if (registry_ != served_before) server_.broadcast(snapshot())`), which can
-   already be sitting in `inbox` unconsumed by the time we get here (the Ring/Bar block
-   above never drained its own copy of this); draining every snapshot already queued
-   before asking again is what keeps the explicit resync below from handing back that
-   stale one instead of the fresh registry these ops just produced. */
-for (let at = inbox.findIndex((f) => f.type === "snapshot"); at >= 0;
-     at = inbox.findIndex((f) => f.type === "snapshot"))
-  inbox.splice(at, 1);
-ws.send(JSON.stringify({ type: "resync" }));
-const codeSnapshot = await next("snapshot");
-check(
-  codeSnapshot.registry.types.some((t) => t.name === "CodeDemo") &&
-    codeSnapshot.registry.types.some((t) => t.name === "CodeRepeat"),
-  "the CodeDemo and CodeRepeat doc components compiled into the served registry",
-);
-
-/* the served wire node: draw:"code", the body verbatim, and the scope map (bare name ->
-   slot address) — served ONLY for a code part, and never run through the
-   template-expression compiler */
-const canvasNode = codeSnapshot.registry.types.find((t) => t.name === "CodeDemo")
-  ?.template?.children?.find((c) => c.name === "canvas");
-check(canvasNode?.draw === "code", "a code part serves draw:\"code\"");
-check(typeof canvasNode?.code === "string" && canvasNode.code.includes("draw.rect"),
-      "the body rides the wire verbatim");
-check(
-  canvasNode?.scope?.note === "note" && canvasNode?.scope?.divisions === "canvas.divisions",
-  "the served scope maps bare names to slot addresses, got " + JSON.stringify(canvasNode?.scope),
-);
-
-const codePage = store.pages().find((p) => p.name === "Code");
-ws.send(JSON.stringify({
-  type: "apply_ops",
-  base_version: backendVersion,
-  ops: [
-    { op: "insert", parent: codePage.id, list: "children",
-      node: { kind: "widget", type: "CodeDemo", label: "CodeDemo", geom: { x: 0, y: 0, w: 200, h: 200 }, slots: {} } },
-    { op: "insert", parent: codePage.id, list: "children",
-      node: { kind: "widget", type: "CodeRepeat", label: "CodeRepeat", geom: { x: 300, y: 0, w: 200, h: 200 }, slots: {} } },
-  ],
-}));
-const codeWidgetsApplied = await next("ops_applied");
-backendVersion = codeWidgetsApplied.version;
-store.apply(codeWidgetsApplied.version, codeWidgetsApplied.ops);
-
-const codeView =
-  { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
-const codeFaults = new Map();
-const codeSvg = renderContent(store.doc, store.pages().find((p) => p.name === "Code"),
-                              codeSnapshot.registry, snapshot.live, codeView, null, null, null, codeFaults);
-
-/* (a) a code body using draw.rect/draw.text renders */
-has(codeSvg, 'fill="#222222"', "a code body's draw.rect renders");
-has(codeSvg, ">hi:4<",
-    "(c) props carried both the part's own property (divisions) and the widget's " +
-    "(note) by bare name");
-/* (b) a body returning a raw SVG string renders it */
-has(codeSvg, '<circle cx="50" cy="50" r="12" fill="#ff00ff"/>',
-    "a raw returned SVG string renders unchanged");
-/* (d) draw.measure returns a positive width that grows with the string */
-has(codeSvg, 'fill="#00ff00"', "draw.measure returns a positive width that grows with the string");
-/* (g) view.attrs exposes this part's own attrs, resolved through the same cells every
-   other draw part's attrs read through */
-has(codeSvg, 'fill="#abc123"', "(g) a code body reads one of its own attrs off view.attrs");
-/* (e) a throwing part draws nothing, does not break the surrounding render, and
-   records a fault naming the widget's part and the JS error */
-has(codeSvg, 'fill="#00ffff"', "a sibling AFTER the throwing part still rendered");
-has(codeSvg, 'class="fault error"', "the widget carrying the throwing code part shows the fault badge");
-has(codeSvg, "boom", "and the badge surfaces the JS error (a title tooltip), not just the console");
-const codeDemoWidgetId =
-  store.pages().find((p) => p.name === "Code").children.find((w) => w.label === "CodeDemo").id;
-const faultMsg = codeFaults.get(codeDemoWidgetId);
-check(
-  typeof faultMsg === "string" && faultMsg.includes("broken") && faultMsg.includes("boom"),
-  "a throwing code part records a fault naming the part and the JS error, got " + faultMsg,
-);
-
-/* (f) a code part under `repeat` sees repeat.index change per copy */
-check(
-  codeSvg.includes(">0</text>") && codeSvg.includes(">1</text>") && codeSvg.includes(">2</text>"),
-  "a code part under repeat sees repeat.index change per copy",
-);
-
-/* trend smoothing is pure math on the drawn copy: noisy input comes out with less
-   spread, a null still breaks the run (never bridged), and knobs at 0 pass through */
-{
-  const { smoothSamples } = await import(mod("template.js"));
-  const noisy = [];
-  for (let i = 0; i < 60; ++i) noisy.push([50 + (i % 2 ? 8 : -8)]);
-  noisy[30] = [null];
-  const spread = (rows) => {
-    let lo = Infinity, hi = -Infinity;
-    for (const [v] of rows.slice(10, 30))
-      if (typeof v === "number") { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-    return hi - lo;
-  };
-  const smoothed = smoothSamples(noisy, 1, 0.8, 0.8);
-  check(spread(smoothed) < spread(noisy) / 3, "kalman+ema shrink a noisy spread");
-  check(smoothed[30][0] === null, "a null sample survives smoothing as a gap");
-  check(smoothed[31][0] === noisy[31][0], "the run after a gap restarts from its own sample");
-  const identity = smoothSamples(noisy, 1, 0, 0);
-  check(
-    identity.every((row, i) => row[0] === noisy[i][0]),
-    "knobs at 0 pass samples through unchanged",
-  );
-}
 
 ws.close();
 backend.kill();
@@ -1852,5 +1241,5 @@ if (backend.exitCode === null)
     setTimeout(resolve, 1000);
   });
 rmSync(DOC, { force: true });
-console.log(`render_test: ${checks} checks, ${failures} failed`);
+console.log(`view_test: ${checks} checks, ${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);

@@ -105,14 +105,16 @@ foreach(_test doc_test sync_test runtime_test scheduler_test mesh_test component
   add_test(NAME ${_test} COMMAND hmi_${_test})
 endforeach()
 
-# The view's pure half (document mirror, attribute interpreter, template renderer) is
-# checked headlessly against a real backend; it needs `node build.mjs` to have run.
+# The view's pure half (boot and sync, document mirror, attribute interpreter, sidebar
+# reconciliation) is checked headlessly against a real backend; it needs `node build.mjs`
+# to have run. What a widget LOOKS like is not checked here: that is a browser's
+# computation, so it belongs to a Playwright drive.
 find_program(NODE_EXE node)
 if(NODE_EXE AND EXISTS "${HMI_ROOT}/frontend/dist/main.js")
-  add_test(NAME render_test COMMAND "${NODE_EXE}" test/render_test.mjs)
-  set_tests_properties(render_test PROPERTIES
+  add_test(NAME view_test COMMAND "${NODE_EXE}" test/view_test.mjs)
+  set_tests_properties(view_test PROPERTIES
                        WORKING_DIRECTORY "${HMI_ROOT}/frontend"
                        DEPENDS sync_test)
 else()
-  message(STATUS "frontend render_test skipped (build it with: cd frontend && npm install && node build.mjs)")
+  message(STATUS "frontend view_test skipped (build it with: cd frontend && npm install && node build.mjs)")
 endif()
