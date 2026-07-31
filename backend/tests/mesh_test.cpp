@@ -256,9 +256,9 @@ int main() {
 
     /* ---- the document: feeds from every kind, flows back out ---- */
     Json level_widget = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "Level"},
+        {"name", "Level"},
         {"feeds", Json::array({Json{{"slot", "value"},
                                     {"src", entity_ref("V", "tank_level")},
                                     {"path", "level"}}})},
@@ -282,42 +282,42 @@ int main() {
         })},
     };
     Json label_widget = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Label"},
-        {"label", "Tag"},
+        {"name", "Tag"},
         {"feeds", Json::array({Json{{"slot", "text"},
                                     {"src", entity_ref("V", "tank_level")},
                                     {"path", "label"}}})},
     };
     Json speed_widget = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "Speed"},
+        {"name", "Speed"},
         {"feeds", Json::array({Json{{"slot", "value"},
                                     {"src", entity_ref("T", "belt")},
                                     {"path", "speed"}}})},
     };
     Json temp_widget = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "Temp"},
+        {"name", "Temp"},
         {"feeds", Json::array({Json{{"slot", "value"},
                                     {"src", entity_ref("F", "status")},
                                     {"path", "temp"},
                                     {"poll_hz", 20}}})},
     };
     Json alarm_widget = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "Alarm"},
+        {"name", "Alarm"},
         {"feeds", Json::array({Json{{"slot", "value"},
                                     {"src", entity_ref("S", "alarm")},
                                     {"path", "code"}}})},
     };
     Json hist_widget = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "Hist"},
+        {"name", "Hist"},
         {"feeds", Json::array({
             Json{{"slot", "value"},
                  {"src", entity_ref("V", "history")},
@@ -337,9 +337,9 @@ int main() {
     /* the toggle-off-the-plant idiom: read the value, gate on it, force / unforce.
      * Deliberately NO feed references `suction` anywhere in this document. */
     Json suction_widget = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Button"},
-        {"label", "Suction"},
+        {"name", "Suction"},
         {"flows", Json::array({
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                  {"when_mode", "first"},

@@ -36,7 +36,7 @@ namespace {
 
 Document timed_document() {
     Json button = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Button"},
         {"slots", Json{{"text", "Run"}}},
         {"flows",
@@ -84,7 +84,7 @@ Document timed_document() {
 
 Document filter_document() {
     Json slider = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Slider"},
         {"flows",
          Json::array({
@@ -125,7 +125,7 @@ Document filter_document() {
 
 Document first_document() {
     Json button = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Button"},
         {"flows",
          Json::array({
@@ -297,7 +297,7 @@ void test_gesture_pin() {
     sw.fields = {FieldDef{"on", Shape::Bool}};
     FakeMesh mesh({sw});
 
-    Json toggle = {{"kind", "widget"}, {"type", "Toggle"},
+    Json toggle = {{"kind", "frame"}, {"type", "Toggle"},
                    {"slots", Json::object()},
                    {"feeds", Json::array({Json{{"slot", "value"},
                                                {"src", Json{{"kind", "V"}, {"name", "switch"}}},
@@ -357,7 +357,7 @@ void test_gesture_pin() {
  * back from that variable. The held firing must carry the gesture's proposal, pinned
  * at pointer-down, never a bare `true`: the second hold has to write FALSE. */
 void test_held_proposal() {
-    Json toggle = {{"kind", "widget"}, {"type", "Toggle"},
+    Json toggle = {{"kind", "frame"}, {"type", "Toggle"},
                    {"slots", Json::object()},
                    {"feeds", Json::array({Json{{"slot", "value"},
                                                {"src", Json{{"kind", "L"}, {"name", "state"}}},
@@ -416,7 +416,7 @@ void test_held_proposal() {
  * computed bindings re-run every tick, so a readout tracks the countdown live. */
 Json timer_read_root(const std::string& surface_xf) {
     Json button = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Button"},
         {"slots", Json{{"text", "Run"}}},
         {"feeds", Json::array({Json{{"slot", "surface"},
@@ -429,7 +429,7 @@ Json timer_read_root(const std::string& surface_xf) {
             {"do", Json::array({Json{{"kind", "tmr_start"}, {"timer", "blink"}}})}}})},
     };
     Json readout = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
         {"slots", Json::object()},
         /* the value feed's SOURCE is the timer itself: x is the timer, read by field */
@@ -443,7 +443,7 @@ Json timer_read_root(const std::string& surface_xf) {
                                     {"xf", "blink.duration * 1000"}},
                                /* the fraction finished, 0..1, with no knowledge of
                                   the total time */
-                               Json{{"slot", "text_scale"},
+                               Json{{"slot", "reading.text_size"},
                                     {"src", Json{{"kind", "V"}, {"name", ""}}},
                                     {"path", ""},
                                     {"xf", "blink.progress"}}})},
@@ -453,10 +453,10 @@ Json timer_read_root(const std::string& surface_xf) {
        condition over x.running, the else the resting color; the Nil bail must not
        eat it (a timer cell's stored value is always Nil) */
     Json toggle = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Toggle"},
         {"slots", Json::object()},
-        {"feeds", Json::array({Json{{"slot", "pill.track.track_color"},
+        {"feeds", Json::array({Json{{"slot", "pill.track_color"},
                                     {"src", Json{{"kind", "L"}, {"name", "blink"}}},
                                     {"path", ""},
                                     {"cases", Json::array({Json{{"test", "x.running"},
@@ -546,7 +546,7 @@ void test_timer_reads() {
  * adapter subscribes it exactly like a fed one. */
 void test_flow_entity_read() {
     Json button = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Button"},
         {"slots", Json::object()},
         {"flows", Json::array({
@@ -648,7 +648,7 @@ void test_trend_history() {
     FakeMesh mesh({temp, temps});
 
     auto trend = [](const char* source, const char* path) {
-        return Json{{"kind", "widget"}, {"type", "Trend"},
+        return Json{{"kind", "frame"}, {"type", "Trend"},
                     {"slots", Json{{"rate", 100}, {"window", 1}}},
                     {"feeds", Json::array({Json{{"slot", "value"},
                                                 {"src", Json{{"kind", "V"}, {"name", source}}},

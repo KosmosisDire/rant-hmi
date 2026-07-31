@@ -19,10 +19,23 @@ using Json = nlohmann::json;
 bool json_u64(const Json& value, uint64_t& out);
 uint64_t json_u64_or(const Json& value, uint64_t fallback);
 
-/* addressable node kinds (spec 2.8); every instance carries a stable id.
+/* addressable node kinds; every instance carries a stable id.
  * node_spec() indexes the table by this enum, so the order here MUST match the order
- * the NodeSpecs are pushed in table(): append new kinds at the END of both. */
-enum class Kind { Doc, Page, Widget, Var, Feed, Flow, Step, Token, Component, PropDef, Part, Frame };
+ * the NodeSpecs are pushed in table(): append new kinds at the END of both.
+ *
+ * THERE IS ONE TREE. A page's frames, a component's internals and a widget instance were
+ * three node kinds (Frame, Part, Widget) with three field models; they are now one `Node`
+ * whose `kind` VARIANT says what it draws: frame | text | icon | path. A page holds
+ * nodes, a frame holds nodes, a component holds nodes, and one inspector, one renderer
+ * and one drag arithmetic serve all three because there is nothing left to tell apart.
+ *
+ * A WIDGET IS NOT A KIND. It is a frame with a `type`: it names a component, and that
+ * component's children are its subtree — hidden on the page, entered to edit. The
+ * component is the same frame, PRE-MADE and kept in the library instead of on a page,
+ * and what earns it a record of its own is what it adds: declared properties, events and
+ * behavior. So Page and Component are the two documents-of-nodes (a screen and a
+ * template), neither a child of anything, and everything inside either one is a Node. */
+enum class Kind { Doc, Page, Node, Var, Feed, Flow, Step, Token, Component, PropDef };
 
 enum class PropType {
     Text,    /* string */
@@ -59,28 +72,36 @@ struct Prop {
     std::vector<Json> variant_defaults;  /* parallel to `variants`; the shape to coerce to */
 };
 
-/* One child list. Almost every list holds exactly one kind (`children` = {kind}, a
- * uniform vector); a PAGE or a FRAME's `children` holds several, because z-order and
- * flow order must be the SAME order, so a frame's widgets and sub-frames cannot live in
- * two separate arrays. A heterogeneous list's children carry a discriminator PROP (its
- * name in `discriminator`, always "kind") whose value names the target NodeSpec, so
- * `child_kind` below can tell a `{"kind":"frame", ...}` from a `{"kind":"widget", ...}`
- * sitting in the same array. `discriminator` is empty exactly when `children.size()==1`. */
+/* One child list, holding exactly one kind. Every list is uniform now that a page, a
+ * frame and a component all hold the SAME kind of child: the discriminator machinery
+ * that let a `{"kind":"frame"}` and a `{"kind":"widget"}` share one array went with the
+ * split it existed to paper over — `kind` is a variant of one NodeSpec, not a choice
+ * between two. */
 struct ChildList {
     std::string key;
-    std::vector<Kind> children;
-    std::string discriminator;
+    Kind kind;
 };
 
-/* A node kind. `variant_key` names the prop that selects a variant (DO steps switch
- * on "kind"); a variant contributes extra props on top of the common set. */
+/* One variant of a node kind: the props AND the lists it adds on top of the common set.
+ * A variant owns its lists because the variants differ in what they can HOLD, not only
+ * in what they describe — a frame holds children, a widget holds its feeds and flows and
+ * no children at all, a text leaf holds neither — and filling every node with every
+ * other variant's empty arrays would make the document say things that are not true. */
+struct Variant {
+    std::string name;
+    std::vector<Prop> props;
+    std::vector<ChildList> lists;
+};
+
+/* A node kind. `variant_key` names the prop that selects a variant (a node switches on
+ * "kind", a DO step likewise). */
 struct NodeSpec {
     Kind kind;
     std::string name;
     std::vector<Prop> props;
     std::vector<ChildList> lists;
     std::string variant_key;
-    std::vector<std::pair<std::string, std::vector<Prop>>> variants;
+    std::vector<Variant> variants;
 };
 
 const NodeSpec& node_spec(Kind kind);
@@ -93,35 +114,15 @@ std::string node_variant(const NodeSpec& spec, const Json& node);
 std::vector<const Prop*> node_props(const NodeSpec& spec, const std::string& variant);
 const Prop* find_prop(const NodeSpec& spec, const std::string& variant, const std::string& key);
 
-/* the ChildList row for `parent`.`list`, or null when that list does not exist */
-const ChildList* find_list(Kind parent, const std::string& list);
+/* lists of one node instance: the common set plus its variant's, in order. A variant's
+ * lists are as much part of what the node IS as its props (a text leaf holds no
+ * children), so every walk over a node's lists resolves the variant first. */
+std::vector<const ChildList*> node_lists(const NodeSpec& spec, const std::string& variant);
 
-/* the child kind of `parent`.`list`, valid for a SINGLE-kind list (out = children[0]);
- * false when the list does not exist or holds several kinds (use child_kind for those,
- * which resolves per NODE rather than per list). */
-bool list_child(Kind parent, const std::string& list, Kind& out);
-
-/* Resolve the Kind of one child node sitting in `list`. A uniform list (children.size()
- * == 1) always resolves to that one kind; a heterogeneous list (a page or frame's
- * `children`) reads the node's own `kind` prop and matches it against each candidate's
- * NodeSpec::name. False, with `err` naming the key and the legal values, when the
- * discriminator is missing or names nothing in `children` — used identically by adopt
- * (document load) and op validation (op_insert), so a malformed child is rejected rather
- * than silently defaulted into an arbitrary shape. */
-bool child_kind(const ChildList& list, const Json& child, Kind& out, std::string& err);
-
-/* Is `key` the discriminator of some heterogeneous list that can hold `kind`? Such a prop
- * does not describe the node, it names WHICH NODE IT IS, so it is structural: setting it
- * in place would leave every other field belonging to the shape the node used to be (a
- * "frame" still carrying locals/feeds/flows, a "widget" still carrying children), and the
- * next walk would index it as the new kind and quietly read the wrong fields. Refused by
- * op_set_prop — changing a node's kind means removing it and inserting the other one.
- *
- * Note this is the OPPOSITE rule to a variant_key ("kind" on a Part or a DO step), which
- * is deliberately settable and deliberately keeps the old variant's fields: a variant
- * flips within ONE NodeSpec, where every variant's key is a legal key. This flips BETWEEN
- * NodeSpecs, where they are not. */
-bool is_discriminator(Kind kind, const std::string& key);
+/* the ChildList row for `parent`.`list` in `variant`, or null when that list does not
+ * exist there — which is also how "a text leaf cannot hold children" is enforced, with no
+ * kind named anywhere in the check. */
+const ChildList* find_list(Kind parent, const std::string& variant, const std::string& list);
 
 /* `value` as the same JSON shape as `like`, converting where the meaning carries (a number
  * to a bool by zero/non-zero, a bool to 0/1, a numeric string either way) and falling back

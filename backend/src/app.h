@@ -25,8 +25,11 @@ namespace hmi {
  * lost `canvas` and every node lost `geom`; 6: a frame gained layout "stack", justify,
  * surface/border/border_w/radius, and both frames and widgets gained grow/min; 7: move
  * reparents (its echo always carries parent+list+index) and `wrap` folds siblings into a
- * fresh frame) */
-constexpr int kProto = 7;
+ * fresh frame; 8: ONE TREE — Frame, Widget and Part are one `node` kind with four
+ * variants (frame | text | icon | path), every field is expression text in `attrs`, an
+ * instance is a frame carrying a `type`, a component holds `children` and describes its
+ * own root box, and the snapshot carries `node_attrs`, every page node's compiled attrs) */
+constexpr int kProto = 8;
 
 struct AppOptions {
     ServerOptions server;
@@ -93,6 +96,9 @@ class App {
      * document's components), rebuilt by every compile_runtime(). Component compile
      * findings land beside it and ride diagnostics() with the program's own. */
     Json registry_;
+    /* every page node's compiled attrs, keyed by node id: the other half of the compile
+       product, and the reason a page and a component render through one path */
+    Json node_attrs_;
     std::vector<Diag> component_diags_;
     Server server_;
     std::unordered_map<uint64_t, SessionState> sessions_;

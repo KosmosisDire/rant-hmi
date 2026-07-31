@@ -466,27 +466,28 @@ class Compiler {
         if (pages == document_.root.end() || !pages->is_array()) return;
         for (const Json& page : *pages) {
             const uint64_t page_id = id_of(page);
-            /* A page's children are widgets and frames in one list (spec 2.8), a frame
-             * nesting to any depth; only the widgets carry cells, so this walks past
-             * frames rather than compiling anything for them. `info.page` is always the
-             * PAGE's id, never a frame's — page identity is what gates mesh polling
-             * (a widget three frames deep must still resolve to its page). */
+            /* A page is one tree of nodes nesting to any depth; the ones carrying cells are
+             * the INSTANCES — a frame with a `type` — so this walks the whole tree and
+             * compiles at those. `info.page` is always the PAGE's id, never a frame's:
+             * page identity is what gates mesh polling, so an instance three frames deep
+             * must still resolve to its page. */
             std::function<void(const Json&)> walk_children = [&](const Json& node) {
                 auto children = node.find("children");
                 if (children == node.end() || !children->is_array()) return;
                 for (const Json& widget : *children) {
-                    const std::string kind = widget.value("kind", "");
-                    if (kind == "frame") { walk_children(widget); continue; }
-                    if (kind != "widget") continue;
+                    const std::string type_name = widget.value("type", "");
+                    /* pre-order, so cells and flows are built in document order — which is
+                       the order the scheduler runs them in */
+                    if (type_name.empty()) { walk_children(widget); continue; }
 
                     WidgetInfo info;
                     info.id = id_of(widget);
                     info.page = page_id;
                     info.node = &widget;
-                    info.type = type_named(widget.value("type", ""));
+                    info.type = type_named(type_name);
                     if (!info.type)
                         diag(info.id, "widget_type",
-                             "widget type '" + widget.value("type", "") + "' is not registered");
+                             "widget type '" + type_name + "' is not registered");
 
                     auto locals = widget.find("locals");
                     if (locals != widget.end() && locals->is_array()) {

@@ -1,15 +1,20 @@
-/* The component compiler: widget TYPE definitions are document data (spec 2.3), and
- * the served registry is a COMPILE PRODUCT derived from them. A component is the
- * document form — props (PropDef rows), parts (a tree whose attrs are expression
- * text), events and behavior — and this module lowers it to the wire form the views
- * and the document compiler consume: {name, slots, events, template, behavior} with
- * every template attribute a compiled view program.
+/* The node compiler. Component definitions are document data, and the served registry is
+ * a COMPILE PRODUCT derived from them: a component is props (PropDef rows), children (a
+ * node tree whose attrs are expression text), events and behavior, and this module lowers
+ * it to the wire form the views and the document compiler consume — {name, slots, events,
+ * template, behavior} with every attr a compiled view program.
+ *
+ * The SAME machinery compiles a page (compile_page_attrs): a page's nodes are the same
+ * nodes, so their attrs are lowered by the same compiler into the same programs. What
+ * differs is only what is in scope — a component's nodes read the properties it declares,
+ * a page's nodes read theme tokens and their own literals — which is a scope argument,
+ * not a second implementation.
  *
  * Sources are the built-in component definitions (registry/registry.cpp) plus the
- * document's own `components` list; a document component with a built-in's name
- * SHADOWS it (the future copy-on-write fork target). Bad parts and bad expressions in
- * a DOCUMENT component are diagnostics pinned to the part node (where = the attr); a
- * built-in that fails to compile is a startup bug and aborts loudly. */
+ * document's own `components` list; a document component with a built-in's name SHADOWS
+ * it. Bad nodes and bad expressions in a DOCUMENT component are diagnostics pinned to the
+ * node (where = the attr); a built-in that fails to compile is a startup bug and aborts
+ * loudly, which makes starting the app the built-ins' own test. */
 #pragma once
 
 #include "diag.h"
@@ -27,5 +32,10 @@ Json derive_registry(const Document& document, std::vector<Diag>& diags);
  * test suites compile their documents against. Built once; aborts if any built-in
  * fails to compile, so a bad built-in definition cannot ship. */
 const Json& builtin_registry();
+
+/* Every PAGE node's attrs, compiled: {"<node id>": {"<attr>": {"code": [...]}}}. The
+ * renderer walks the document tree it already holds and pulls each node's programs from
+ * here, so page and component nodes render through one path. */
+Json compile_page_attrs(const Document& document, std::vector<Diag>& diags);
 
 } // namespace hmi

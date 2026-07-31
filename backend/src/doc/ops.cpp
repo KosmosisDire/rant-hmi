@@ -37,17 +37,11 @@ void collect_ids(Kind kind, const Json& node, std::vector<uint64_t>& out) {
         uint64_t id = 0;
         if (json_u64(*it, id)) out.push_back(id);
     }
-    for (const ChildList& l : node_spec(kind).lists) {
-        auto it = node.find(l.key);
+    const NodeSpec& spec = node_spec(kind);
+    for (const ChildList* l : node_lists(spec, node_variant(spec, node))) {
+        auto it = node.find(l->key);
         if (it == node.end() || !it->is_array()) continue;
-        for (const Json& child : *it) {
-            /* the subtree being walked here was already validated by prepare() (an
-               insert's node) or by adopt (the whole document), so every child's
-               discriminator resolves; a failure here has nothing useful to collect */
-            Kind ck = Kind::Doc;
-            std::string ignored;
-            if (child_kind(l, child, ck, ignored)) collect_ids(ck, child, out);
-        }
+        for (const Json& child : *it) collect_ids(l->kind, child, out);
     }
 }
 
@@ -89,15 +83,30 @@ bool op_set_prop(Document& d, const Json& op, ApplyResult& r, std::string& err) 
         err = "a " + spec.name + " name changes through the rename op";
         return false;
     }
-    if (is_discriminator(e->kind, key)) {
-        err = "a " + spec.name + "'s '" + key + "' names which node it is, not something "
-              "about it; remove this node and insert the other kind instead";
-        return false;
-    }
     const Prop* p = find_prop(spec, node_variant(spec, *e->node), key);
     if (!p) { err = spec.name + " has no property '" + key + "'"; return false; }
     const Json& value = value_field(op, "value");
     if (!check_prop(*p, value, err)) return false;
+
+    /* A NODE'S KIND FLIPS, like any other variant key: a rectangle becomes an ellipse
+     * becomes a path, and the fields of the kind it was sleep until it is flipped back
+     * (schema.h). The one refusal is a flip that would strand something — a frame holding
+     * children, or one naming a component — because a leaf has nowhere to keep them and
+     * the subtree would vanish from the tree while still sitting in the file. */
+    if (e->kind == Kind::Node && key == spec.variant_key && value.is_string() &&
+        value.get<std::string>() != "frame") {
+        const Json& kids = value_field(*e->node, "children");
+        if (kids.is_array() && !kids.empty()) {
+            err = "this frame holds children; a '" + value.get<std::string>() +
+                  "' has nowhere to keep them";
+            return false;
+        }
+        if (!str_field(*e->node, "type").empty()) {
+            err = "this frame is an instance of '" + str_field(*e->node, "type") +
+                  "'; detach it before changing what it is";
+            return false;
+        }
+    }
 
     (*e->node)[key] = value;
     r.ops.push_back(Json{{"op", "set_prop"}, {"node", id}, {"key", key}, {"value", value}});
@@ -110,17 +119,27 @@ bool op_set_prop(Document& d, const Json& op, ApplyResult& r, std::string& err) 
         r.ops.push_back(Json{
             {"op", "set_prop"}, {"node", id}, {"key", retyped}, {"value", (*e->node)[retyped]}});
 
-    /* Changing the variant (a DO step's kind) brings the new variant's fields with it;
-     * each default is echoed as its own set_prop so the client stays mechanical. */
+    /* Changing the variant (a node's kind, a DO step's) brings the new variant's fields
+     * with it; each default is echoed as its own set_prop so the client stays mechanical.
+     * Its LISTS come along the same way — a text leaf flipped to a frame needs somewhere
+     * to put children before anything can be inserted into it. */
     if (!spec.variant_key.empty() && key == spec.variant_key) {
         const std::string variant = node_variant(spec, *e->node);
-        for (const auto& v : spec.variants) {
-            if (v.first != variant) continue;
-            for (const Prop& np : v.second) {
+        for (const Variant& v : spec.variants) {
+            if (v.name != variant) continue;
+            for (const Prop& np : v.props) {
                 if (e->node->find(np.key) != e->node->end()) continue;
                 (*e->node)[np.key] = np.def;
                 r.ops.push_back(
                     Json{{"op", "set_prop"}, {"node", id}, {"key", np.key}, {"value", np.def}});
+            }
+            for (const ChildList& nl : v.lists) {
+                if (e->node->find(nl.key) != e->node->end()) continue;
+                (*e->node)[nl.key] = Json::array();
+                r.ops.push_back(Json{{"op", "set_prop"},
+                                     {"node", id},
+                                     {"key", nl.key},
+                                     {"value", Json::array()}});
             }
         }
     }
@@ -134,18 +153,20 @@ bool op_insert(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     NodeEntry* pe = nullptr;
     if (!node_at(d, parent, pe, err)) return false;
 
-    const ChildList* cl = find_list(pe->kind, list);
+    const NodeSpec& pspec = node_spec(pe->kind);
+    const ChildList* cl = find_list(pe->kind, node_variant(pspec, *pe->node), list);
     if (!cl) {
-        err = node_spec(pe->kind).name + " has no list '" + list + "'";
+        /* the list may exist on ANOTHER variant — a text leaf has no `children` — and
+           saying which of the two it is turns a puzzling refusal into an obvious one */
+        err = declares_key(pspec, list)
+                  ? "a '" + node_variant(pspec, *pe->node) + "' " + pspec.name +
+                        " has no list '" + list + "'"
+                  : pspec.name + " has no list '" + list + "'";
         return false;
     }
     Json node = value_field(op, "node");
     if (node.is_null()) node = Json::object();
-    /* a heterogeneous list (a page or frame's `children`) resolves the new node's kind
-       from its own discriminator BEFORE prepare fills anything in, so an insert that
-       omits or misnames `kind` is rejected exactly as adopt would reject it on load */
-    Kind child = Kind::Doc;
-    if (!child_kind(*cl, node, child, err)) return false;
+    const Kind child = cl->kind;
     if (!d.prepare(child, node, err)) return false;
 
     auto it = pe->node->find(list);
@@ -226,20 +247,28 @@ bool op_move(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     uint64_t target = 0;
     if (!json_u64(into, target)) { err = "move's 'parent' must be a node id"; return false; }
 
-    /* PAGE COMPOSITION IS THE ONE TIER WHERE PLACEMENT IS PURE: a frame or a widget means
-       the same thing wherever it sits, so where it sits is the author's free choice. Every
-       other node's position carries scope or meaning — a local belongs to its widget, a
-       part's props are addressed through its path, a step's turn comes from its order — so
-       there is nothing to choose and this op does not offer it. */
-    if (e->kind != Kind::Frame && e->kind != Kind::Widget) {
-        err = "only a frame or a widget moves to another parent";
+    /* COMPOSITION IS THE ONE TIER WHERE PLACEMENT IS PURE: a node means the same thing
+       wherever it sits, so where it sits is the author's free choice. Every other node's
+       position carries scope or meaning — a local belongs to its instance, a step's turn
+       comes from its order — so there is nothing to choose and this op does not offer it. */
+    if (e->kind != Kind::Node) {
+        err = "only a node moves to another parent";
         return false;
     }
     NodeEntry* pe = nullptr;
     if (!node_at(d, target, pe, err)) return false;
-    const ChildList* cl = find_list(pe->kind, "children");
-    if (!cl || std::find(cl->children.begin(), cl->children.end(), e->kind) == cl->children.end()) {
-        err = node_spec(pe->kind).name + " does not hold " + node_spec(e->kind).name + "s";
+    const NodeSpec& pspec = node_spec(pe->kind);
+    const ChildList* cl = find_list(pe->kind, node_variant(pspec, *pe->node), "children");
+    if (!cl || cl->kind != Kind::Node) {
+        err = "a " + node_variant(pspec, *pe->node) + " holds no children";
+        return false;
+    }
+    /* AN INSTANCE'S SUBTREE IS ITS COMPONENT'S. The children are there in the model (they
+       are how per-instance additions will arrive), but until that exists a drop inside one
+       would put a node somewhere no editor shows and no compiler reads. */
+    const std::string type = str_field(*pe->node, "type");
+    if (!type.empty()) {
+        err = "this is an instance of '" + type + "'; open it to change what is inside";
         return false;
     }
     /* walking UP from the target: a frame dropped inside its own subtree would take the
@@ -293,9 +322,16 @@ bool op_move(Document& d, const Json& op, ApplyResult& r, std::string& err) {
 bool op_wrap(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     const Json& nodes = value_field(op, "nodes");
     if (!nodes.is_array() || nodes.empty()) { err = "wrap needs a node to wrap"; return false; }
+    /* the layout list is the frame variant's own, so a mode added there is offered here
+       with nothing to remember */
     const std::string layout = str_field(op, "layout");
-    if (layout != "row" && layout != "col" && layout != "stack") {
-        err = "wrap needs a layout of 'row', 'col' or 'stack'";
+    const Prop* modes = find_prop(node_spec(Kind::Node), "frame", "layout");
+    if (!modes || std::find(modes->variants.begin(), modes->variants.end(), layout) ==
+                      modes->variants.end()) {
+        std::string legal;
+        for (const std::string& v : modes ? modes->variants : std::vector<std::string>{})
+            legal += (legal.empty() ? "'" : ", '") + v + "'";
+        err = "wrap needs a layout of " + legal;
         return false;
     }
 
@@ -312,8 +348,8 @@ bool op_wrap(Document& d, const Json& op, ApplyResult& r, std::string& err) {
             }
         NodeEntry* e = nullptr;
         if (!node_at(d, id, e, err)) return false;
-        if (e->kind != Kind::Frame && e->kind != Kind::Widget) {
-            err = "only a frame or a widget wraps into a frame";
+        if (e->kind != Kind::Node) {
+            err = "only a node wraps into a frame";
             return false;
         }
         if (ordered.empty()) {
@@ -328,7 +364,10 @@ bool op_wrap(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     /* document order, whatever order they were named in: the frame reads top to bottom */
     std::sort(ordered.begin(), ordered.end());
 
-    const char* name = layout == "row" ? "Row" : layout == "col" ? "Column" : "Stack";
+    const char* name = layout == "row"    ? "Row"
+                       : layout == "col"  ? "Column"
+                       : layout == "grid" ? "Grid"
+                                          : "Group";
     Json insert = Json{{"op", "insert"},
                        {"parent", parent},
                        {"list", list},
@@ -349,11 +388,35 @@ bool op_wrap(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     return true;
 }
 
-/* Rename a theme token and rewrite every color value holding "$<old>" (spec 2.10).
- * A token reference lives in `widget.slots` and, since frames gained a surface, in a
- * frame's own colour props. The inspector edits slots by replacing the whole object, so
- * a widget rewrite echoes as one set_prop of its `slots`; a frame's colours are plain
- * props and echo as one set_prop each. */
+/* One "$name" reference inside EXPRESSION TEXT, rewritten wherever it stands. A node's
+ * colours are expressions now — `$accent` alone, but equally `alarm.pick($bad, $surface)`
+ * — so a token rename cannot compare whole strings any more; it has to find the reference
+ * inside the text. `$` starts a token everywhere the lexer accepts one, and a name runs to
+ * the first character that cannot continue an identifier, so this is the lexer's own rule
+ * applied to a string: match `$` + the exact name, and only when the next character could
+ * not have been part of it (`$surface` must not rewrite inside `$surface-2`). */
+std::string rewrite_token(const std::string& text, const std::string& from,
+                          const std::string& to) {
+    std::string out;
+    size_t at = 0;
+    while (at < text.size()) {
+        const size_t hit = text.find(from, at);
+        if (hit == std::string::npos) { out.append(text, at, std::string::npos); break; }
+        const size_t after = hit + from.size();
+        const char next = after < text.size() ? text[after] : '\0';
+        const bool continues =
+            std::isalnum(static_cast<unsigned char>(next)) || next == '_' || next == '-';
+        out.append(text, at, hit - at);
+        out.append(continues ? from : to);
+        at = after;
+    }
+    return out;
+}
+
+/* Rename a theme token and rewrite every reference to it (spec 2.10). Two homes: an
+ * instance's `slots` (a stored VALUE, matched whole) and any node's `attrs` (expression
+ * text, matched inside). Both echo as one set_prop of the whole object, which is how the
+ * inspector writes them anyway. */
 bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& name,
                   ApplyResult& r, std::string& err) {
     if (!valid_token_name(name)) {
@@ -397,30 +460,27 @@ bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& nam
         r.touched.push_back(wid);
     }
 
-    /* a frame dresses itself with the same vocabulary (schema.cpp), so a pane painted
-       "$surface" follows the rename exactly as a widget's panel does */
-    std::function<void(Json&)> follow_frames = [&](Json& node) {
-        auto kids = node.find("children");
-        if (kids == node.end() || !kids->is_array()) return;
-        for (Json& child : *kids) {
-            auto kind = child.find("kind");
-            if (kind == child.end() || !kind->is_string()) continue;
-            if (kind->get<std::string>() != "frame") continue;
-            for (const char* key : {"surface", "border"}) {
-                auto at = child.find(key);
-                if (at == child.end() || !at->is_string()) continue;
-                if (at->get<std::string>() != from) continue;
-                *at = to;
-                const uint64_t fid = json_u64_or(child["id"], 0);
-                r.ops.push_back(
-                    Json{{"op", "set_prop"}, {"node", fid}, {"key", key}, {"value", to}});
-                r.touched.push_back(fid);
-            }
-            follow_frames(child);
+    /* EVERY node dresses itself with the same vocabulary, in the same one field, so a pane
+       painted `$surface` and a component's arc painted `alarm.pick($bad, $accent)` follow
+       the rename by one rule and one walk. */
+    d.walk_nodes([&](Json& node) {
+        auto attrs = node.find("attrs");
+        if (attrs == node.end() || !attrs->is_object()) return;
+        bool hit = false;
+        for (auto& item : attrs->items()) {
+            if (!item.value().is_string()) continue;
+            const std::string was = item.value().get<std::string>();
+            const std::string now = rewrite_token(was, from, to);
+            if (now == was) continue;
+            item.value() = now;
+            hit = true;
         }
-    };
-    if (auto pages = d.root.find("pages"); pages != d.root.end() && pages->is_array())
-        for (Json& page : *pages) follow_frames(page);
+        if (!hit) return;
+        const uint64_t nid = json_u64_or(node.value("id", Json(0)), 0);
+        r.ops.push_back(
+            Json{{"op", "set_prop"}, {"node", nid}, {"key", "attrs"}, {"value", *attrs}});
+        r.touched.push_back(nid);
+    });
     return true;
 }
 
@@ -459,21 +519,21 @@ bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
             auto lit = w.find("locals");
             const Json& locals = lit != w.end() ? *lit : no_locals;
             if (has_var(locals, from)) continue;   /* shadowed: its refs are not ours */
-            if (has_var(locals, name) && count_refs(Kind::Widget, w, from) > 0) {
-                err = "'" + name + "' is a local of widget " +
+            if (has_var(locals, name) && count_refs(Kind::Node, w, from) > 0) {
+                err = "'" + name + "' is a local of node " +
                       std::to_string(json_u64_or(w["id"], 0)) + " and would capture it";
                 return false;
             }
-            rename_refs(Kind::Widget, w, from, name, &edits);
+            rename_refs(Kind::Node, w, from, name, &edits);
         }
     } else {
         Json& w = *pe->node;
         const Json* globals = d.root.find("globals") == d.root.end() ? nullptr : &d.root["globals"];
-        if (globals && has_var(*globals, name) && count_refs(Kind::Widget, w, name) > 0) {
+        if (globals && has_var(*globals, name) && count_refs(Kind::Node, w, name) > 0) {
             err = "'" + name + "' is a global this widget already uses";
             return false;
         }
-        rename_refs(Kind::Widget, w, from, name, &edits);
+        rename_refs(Kind::Node, w, from, name, &edits);
     }
 
     (*e->node)["name"] = name;

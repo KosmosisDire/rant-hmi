@@ -7,6 +7,7 @@
 #include "schema.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -47,9 +48,17 @@ class Document {
     Json* node(uint64_t id);
     const Json* node(uint64_t id) const;
 
-    /* every widget in document order, with the page it belongs to */
+    /* Every INSTANCE in document order — a frame node carrying a `type` — with the page
+     * it belongs to. Page identity is what gates mesh polling and scopes a rename, so an
+     * instance nested five frames deep still resolves to its page, never to its parent. */
     struct WidgetRef { Json* page; Json* widget; };
     std::vector<WidgetRef> widgets();
+
+    /* Every node of every page AND of every component, root-first: the walk that belongs
+     * to anything treating the document as one tree (the token rename, the attr compile).
+     * A component's own nodes are nodes — that is the whole point of there being one
+     * kind — so a walk that skipped them would be a walk with a blind spot. */
+    void walk_nodes(const std::function<void(Json&)>& visit);
 
     /* Fill defaults and issue ids over a subtree being inserted, validating as it
      * goes. Rejects unknown keys and wrong value types. */

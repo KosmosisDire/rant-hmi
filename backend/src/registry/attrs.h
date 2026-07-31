@@ -1,36 +1,28 @@
-/* THE DECLARATION of the attr vocabulary a template node may carry (spec 2.3). Until
- * this file existed, `attrs` was an OPEN map — the compiler would lower any key you
- * typed, and the renderer read whatever names it happened to know — so a misspelled
- * `rotation` for `rotate` compiled clean and silently did nothing, and the part
- * inspector could only list attrs already SET, because the attrs object was the only
- * list that existed. This table fixes both: it is the one place the vocabulary is
- * written down, in C++, and it is served (app.cpp, next to `lang`) so the inspector can
- * show every attr a kind supports — set or not, with its default visible as a
- * placeholder — before anyone has typed anything.
+/* THE DECLARATION of the attr vocabulary a node may carry. `attrs` is a CLOSED map: a
+ * name that is neither in the common set nor in this kind's own is a compile error pinned
+ * to the node, so a misspelled `rotation` for `rotate` cannot compile clean and silently
+ * do nothing. It is served next to `lang` (app.cpp) so the inspector can offer every attr
+ * a kind supports — set or not, with its default visible as a placeholder — before anyone
+ * has typed anything.
  *
- * THE RENDERER THIS TABLE DESCRIBED IS GONE. It named exactly what the SVG template
- * renderer (frontend/src/template.ts) read, function by function, and the pairing was
- * the point: a name here with no reader stranded an attr the inspector offered and
- * nothing honoured, and a reader with no name here accepted an attr silently ignored.
- * The strip removed the renderer and kept this, because it is also the compile-time
- * vocabulary — compile_attrs (compile/components.cpp) still refuses an undeclared name,
- * and the part inspector still generates from it. So the rows below now describe an
- * INTENT rather than an implementation, and the defaults are the departed renderer's
- * own fallbacks. WHEN COMPONENTS RENDER AS DOM, this table must be re-derived against
- * whatever actually reads each attr, not assumed to have survived intact: some of it is
- * SVG-shaped (`fit`, `start`, `sweep`, `core`, `flare`) and belongs to a drawing leaf,
- * while some (`pad`, `weight`, `min_px`, `aspect`) is layout the browser will own.
- * Where an attr has no fallback because absence means "not applied" (show, repeat,
- * clip, zoom, rotate, at, fit) `default_value` is left null and the note says so instead
- * of inventing a value.
+ * EVERY FIELD IS AN EXPRESSION and they all live here: what used to be a frame's typed
+ * `gap` prop and a part's `attrs` entry are one thing now (doc/schema.h). A literal is a
+ * degenerate expression, which is what lets direct manipulation write a CONSTANT into the
+ * same field an expression could occupy.
  *
- * `code` is the one open-ended kind (spec 2.3: its body reads `view.attrs` by
- * whatever names its author chose — the registry's own shared tick body alone reads
- * `count`, `labels`, `min`, `max`, `outer`, `len`, `names` and more, none of which any
- * other kind knows) and carries no row of its OWN here; `kind_attrs("code")` is empty
- * and `is_open_kind` is how a caller recognizes it needs no validation at all, common
- * attrs included — a code part's `attrs` are exactly as free-form as before this file
- * existed. */
+ * TWO SPACES, one table. A node's parent decides which half of it applies:
+ *   ARRANGEMENT — a child of a row, col or grid is placed by `grow`, `min` and `aspect`;
+ *                 x/y/w/h mean nothing there and the inspector does not offer them.
+ *   MEASUREMENT — a child of a FREE frame places itself: x/y/w/h are fractions of the
+ *                 containing box, `origin_x`/`origin_y` name the node's own reference
+ *                 point, and `rotate` turns it about that same point.
+ * Fractions rather than pixels because a widget is not a picture at one size: a handle at
+ * `value.mapRange(min, max, 0, 1)` is right at every box the page ever gives it, and that
+ * is tier-2 adaptivity falling out of the coordinate system instead of being bolted on.
+ *
+ * The notes name the CSS or SVG each attr lands as — the renderer (frontend/src/stage.ts)
+ * is the reader, and a row here with no reader there strands an attr the inspector offers
+ * and nothing honours. */
 #pragma once
 
 #include "doc/schema.h"
@@ -47,29 +39,21 @@ struct AttrDef {
     const char* note;
 };
 
-/* The single declared list of part kinds: box (layout only, no attrs of its own) and
- * the nine draw kinds (code included, an open set). This is NOT a second hand-written
- * copy: `doc/` depends on nothing (PLAN.md), so the ONE hand-written list stays the
- * `kind` enum's variants in doc/schema.cpp, and this reads it back out through
- * node_spec()/find_prop() — the same tables op validation already indexes. Everything
- * downstream (compile/components.cpp's draw-kind check, the served snapshot, the
- * frontend's "+ Child part" menu) derives from this one call instead of repeating the
- * list a third and fourth time. */
-const std::vector<std::string>& part_kinds();
+/* The declared list of node kinds: frame, text, icon, path. This is NOT a second
+ * hand-written copy — `doc/` depends on nothing, so the ONE hand-written list stays the
+ * `kind` enum's variants in doc/schema.cpp and this reads it back out through
+ * node_spec()/find_prop(). Everything downstream (the served snapshot, the inspector's
+ * "+ Child" menu) derives from this one call. */
+const std::vector<std::string>& node_kinds();
 
-/* honoured on EVERY kind: the transform/layout/clip vocabulary (spec 2.3), read
- * regardless of what the node draws. */
+/* honoured on EVERY kind: visibility, repetition, clipping, and the two placement
+ * vocabularies (see the header note) */
 const std::vector<AttrDef>& common_attrs();
 
-/* one kind's OWN attrs, on top of the common set: empty for "box" (nothing beyond the
- * common set) and for "code" (nothing declared here at all — see is_open_kind). */
+/* one kind's OWN attrs, on top of the common set */
 const std::vector<AttrDef>& kind_attrs(const std::string& kind);
 
-/* "code": the one kind whose attrs are free-form and never diagnosed (spec 2.3) */
-bool is_open_kind(const std::string& kind);
-
-/* is `attr_name` in the common set or `kind`'s own set? Always true for an open kind,
- * since there is nothing closed to validate against. */
+/* is `attr_name` in the common set or `kind`'s own set? */
 bool attr_known(const std::string& kind, const std::string& attr_name);
 
 /* the served wire shape, carried in the snapshot next to `lang` (app.cpp) exactly like

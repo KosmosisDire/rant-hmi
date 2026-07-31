@@ -68,9 +68,9 @@ Document runtime_document() {
     };
 
     Json slider = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Slider"},
-        {"label", "Command"},
+        {"name", "Command"},
         {"slots", Json{{"value", 1.0}}},
         /* `msg` is a struct-typed local (spec 2.7): born at its DEFAULTS, an object of
          * field values over the type's zero */
@@ -141,9 +141,9 @@ Document runtime_document() {
 
     /* a COMPUTED binding: no source picked, the expression alone drives the slot */
     Json readout = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "Doubled"},
+        {"name", "Doubled"},
         {"slots", Json::object()},
         {"feeds",
          Json::array({
@@ -522,9 +522,9 @@ void test_typed_temporaries() {
     Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                  {"pages", Json::array()}};
     Json slider = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Slider"},
-        {"label", "cmd"},
+        {"name", "cmd"},
         {"slots", Json::object()},
         {"feeds", Json::array()},
         {"flows",
@@ -570,9 +570,9 @@ void test_enum_names() {
     Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                  {"pages", Json::array()}};
     Json label = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Label"},
-        {"label", "gear"},
+        {"name", "gear"},
         {"slots", Json::object()},
         /* an ENUM-TYPED variable (spec 2.7): typed by the path to the enum, its
            DEFAULT a variant name, and taking text through the same coercion a field
@@ -605,9 +605,9 @@ void test_enum_names() {
        `enabled` compares the enum three ways: a leading-dot variant literal, a
        variant NAME, and the backing integer. */
     Json fmt = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Label"},
-        {"label", "fmt"},
+        {"name", "fmt"},
         {"slots", Json::object()},
         {"feeds", Json::array({Json{{"slot", "text"},
                                     {"src", entity("V", "gear")},
@@ -753,9 +753,9 @@ void test_feed_cases() {
         Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                      {"pages", Json::array()}};
         Json label = {
-            {"kind", "widget"},
+            {"kind", "frame"},
             {"type", "Label"},
-            {"label", "gear"},
+            {"name", "gear"},
             {"slots", Json::object()},
             {"feeds", Json::array({Json{{"slot", slot},
                                         {"src", entity("V", "gear")},
@@ -861,9 +861,9 @@ void test_whole_source() {
     Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                  {"pages", Json::array()}};
     Json readout = {
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "motor"},
+        {"name", "motor"},
         {"slots", Json::object()},
         {"feeds", Json::array({Json{{"slot", "value"},
                                     {"src", entity("V", "motor")},
@@ -930,7 +930,7 @@ void test_compile_fault() {
 
 /* a page with one widget of `type`, its authored slots, and whatever else is passed in */
 Document widget_document(const char* type, Json slots, Json extra = Json::object()) {
-    Json widget = Json{{"kind", "widget"}, {"type", type}, {"label", "w"}, {"slots", std::move(slots)}};
+    Json widget = Json{{"kind", "frame"}, {"type", type}, {"name", "w"}, {"slots", std::move(slots)}};
     for (auto item = extra.begin(); item != extra.end(); ++item) widget[item.key()] = item.value();
     Json root = {{"version", 1},
                  {"next_id", 1},
@@ -1117,7 +1117,7 @@ void test_value_shape_diagnostics() {
     CHECK(!has_diag(compile_document(unknown, builtin_registry(), mesh), "value_shape"));
 
     /* an enum slot holds a variant NAME, so it is text and its value is checked */
-    Document aligned = widget_document("Label", Json{{"align", "top-left"}});
+    Document aligned = widget_document("Label", Json{{"align", "center"}});
     CompileResult ok = compile_document(aligned, builtin_registry(), mesh);
     CHECK(!has_diag(ok, "slot_variant"));
     CHECK(!has_diag(ok, "value_shape"));
@@ -1277,7 +1277,7 @@ void test_tonemaps() {
 
     Json widgets = Json::array();
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Readout"}, {"name", "a"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "reading.text_color"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "jet(x)"}},
@@ -1289,13 +1289,13 @@ void test_tonemaps() {
                  {"xf", "viridis(x)"}},
         })}});
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Label"}, {"label", "b"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Label"}, {"name", "b"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "line.text_color"}, {"src", entity("V", "tag")}, {"path", "text"},
                  {"xf", "color(x)"}},
         })}});
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Button"}, {"label", "c"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Button"}, {"name", "c"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "surface"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "grayscale(x)"}},
@@ -1371,7 +1371,7 @@ void test_text_and_enums() {
 
     Json widgets = Json::array();
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Readout"}, {"name", "a"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "units.text"}, {"src", entity("V", "machine")}, {"path", "mode"},
                  {"xf", "x.name"}},
@@ -1381,7 +1381,7 @@ void test_text_and_enums() {
                  {"xf", "x.int"}},
         })}});
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Readout"}, {"label", "b"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Readout"}, {"name", "b"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "units.text"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "x.toFixed(2)"}},
@@ -1391,19 +1391,19 @@ void test_text_and_enums() {
                  {"xf", "x.length"}},
         })}});
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Label"}, {"label", "c"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Label"}, {"name", "c"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "text"}, {"src", entity("V", "machine")}, {"path", "note"},
                  {"xf", "x.trim().title().replace(\"Ab\", \"Z\").padStart(4, \"_\")"}},
         })}});
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Label"}, {"label", "d"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Label"}, {"name", "d"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "text"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "fmtDuration(x)"}},
         })}});
     widgets.push_back(Json{
-        {"kind", "widget"}, {"type", "Label"}, {"label", "e"}, {"slots", Json::object()},
+        {"kind", "frame"}, {"type", "Label"}, {"name", "e"}, {"slots", Json::object()},
         {"feeds", Json::array({
             Json{{"slot", "text"}, {"src", entity("V", "sensor")}, {"path", "value"},
                  {"xf", "str(x)"}},
@@ -1526,52 +1526,52 @@ void test_lists_and_maps() {
         return Json{{"slot", slot}, {"src", entity("V", "plant")}, {"path", path}, {"xf", xf}};
     };
     Json widgets = Json::array();
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "a"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "a"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "temps", "x.max"),
             feed("reading.decimals", "temps", "x.length"),
             feed("units.text", "names", "x.join(\", \")"),
         })}});
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "b"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "b"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "temps", "x.sort()[0]"),
             feed("reading.decimals", "temps", "x.slice(1, 3).sum"),
             feed("units.text", "names", "x.sort().join(\"|\")"),
         })}});
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "c"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "c"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "config", "num(x.get(\"speed\"))"),
             feed("reading.decimals", "config", "x.length"),
             feed("units.text", "config", "x.keys().sort().join(\",\")"),
         })}});
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "d"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "d"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "names", "x.indexOf(\"b\")"),
             feed("units.text", "config", "x.has(\"mode\").pick(\"y\", \"n\")"),
         })}});
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Label"}, {"label", "e"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "e"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("text", "csv", "x.split(\",\").slice(0, 2).join(\"+\")"),
         })}});
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "f"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "f"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "config", "values(x).length"),
         })}});
     /* lambdas (spec 6.4): every mode, end to end through the scheduler. temps is
        [30, 10, 20]; names is ["b", "c", "a"]. */
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "g"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "g"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "temps", "x.map(v => v * 2).sum"),
             feed("reading.decimals", "temps", "x.filter(v => v > 15).length"),
             feed("units.text", "names", "x.map(v => v.upper()).join(\",\")"),
         })}});
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "h"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "h"}, {"slots", Json::object()},
         {"feeds", Json::array({
             feed("value", "temps", "x.any(v => v > 25).pick(1, 0)"),
             feed("reading.decimals", "temps", "x.all(v => v > 25).pick(1, 0)"),
             feed("units.text", "names", "x.sortBy(v => v).join(\"\")"),
         })}});
-    widgets.push_back(Json{{"kind", "widget"}, {"type", "Readout"}, {"label", "i"}, {"slots", Json::object()},
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "i"}, {"slots", Json::object()},
         {"feeds", Json::array({
             /* the body's own value orders the elements, so a negated key reverses */
             feed("value", "temps", "x.sortBy(v => -v).first"),
@@ -1737,7 +1737,7 @@ void test_suspend_holds_text() {
                           steps::guard("delay", 5),
                           steps::set_var("out", "x"),
                       })}};
-    Json widget = Json{{"kind", "widget"}, {"type", "Button"}, {"label", "w"}, {"slots", Json::object()},
+    Json widget = Json{{"kind", "frame"}, {"type", "Button"}, {"name", "w"}, {"slots", Json::object()},
                        {"flows", Json::array({std::move(flow)})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
@@ -1795,9 +1795,9 @@ void test_document_tolerance() {
     FakeMesh mesh(std::vector<EntityDef>{status, sensor});
 
     Json widget = Json{
-        {"kind", "widget"},
+        {"kind", "frame"},
         {"type", "Readout"},
-        {"label", "w"},
+        {"name", "w"},
         {"slots", Json::object()},
         {"feeds", Json::array({Json{{"slot", "value"},
                                     {"src", entity("F", "status")},
@@ -1828,10 +1828,10 @@ void test_document_tolerance() {
  * default — seeds the token's DARK value (the canonical runtime mode); an unknown
  * token is a warning on the slot and seeds transparent, never a fault. */
 void test_theme_tokens() {
-    Json panel = Json{{"kind", "widget"}, {"type", "Panel"},
-                      {"label", "lamp"},
+    Json panel = Json{{"kind", "frame"}, {"type", "Panel"},
+                      {"name", "lamp"},
                       {"slots", Json{{"surface", "$accent"}, {"border", "$nope"}}}};
-    Json toggle = Json{{"kind", "widget"}, {"type", "Toggle"}, {"label", "sw"}, {"slots", Json::object()}};
+    Json toggle = Json{{"kind", "frame"}, {"type", "Toggle"}, {"name", "sw"}, {"slots", Json::object()}};
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
@@ -1878,7 +1878,7 @@ void test_theme_tokens() {
     CHECK(flagged);
 
     /* a registry DEFAULT may be a token reference too: the untouched Toggle's fill */
-    const Value* fill = slot_initial(sw, "pill.track.fill_color");
+    const Value* fill = slot_initial(sw, "pill.fill_color");
     CHECK(fill && fill->tag == ValueTag::Color && fill->data.rgba == 0x4e8ef7ffu);
 }
 

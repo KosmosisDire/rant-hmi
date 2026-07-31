@@ -328,6 +328,10 @@ void App::on_input(uint64_t session, const Json& frame) {
 void App::compile_runtime() {
     component_diags_.clear();
     registry_ = derive_registry(doc_, component_diags_);
+    /* A PAGE COMPILES TOO. Its nodes are the same nodes a component's are, so their attrs
+     * are lowered by the same compiler into the same view programs, and the renderer runs
+     * one interpreter over both. This is the whole of what "one tree" costs the backend. */
+    node_attrs_ = compile_page_attrs(doc_, component_diags_);
     CompileResult compiled = compile_document(doc_, registry_, *mesh_);
     auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);
     if (scheduler_)
@@ -479,6 +483,11 @@ Json App::snapshot() const {
                 {"version", doc_.version()},
                 {"doc", doc_.root},
                 {"registry", registry_},
+                /* every PAGE node's compiled attrs, keyed by node id: the document says
+                 * what the tree IS, this says what each node's fields evaluate to, and
+                 * the renderer needs both. Rides the snapshot rather than the live frame
+                 * because it changes when the DOCUMENT does, not when a value does. */
+                {"node_attrs", node_attrs_},
                 /* the built-ins' EDITABLE document form (no ids): the registry serves
                  * compiled programs, so forking a built-in into doc.components needs
                  * this. It never changes at runtime, so the snapshot is enough. */

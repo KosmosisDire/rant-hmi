@@ -116,7 +116,7 @@ const Json* widget_in(const Json& node, const std::string& label) {
     auto kids = node.find("children");
     if (kids == node.end() || !kids->is_array()) return nullptr;
     for (const Json& child : *kids) {
-        if (child.value("kind", "") == "widget" && child.value("label", "") == label)
+        if (!child.value("type", "").empty() && child.value("name", "") == label)
             return &child;
         if (const Json* found = widget_in(child, label)) return found;
     }
@@ -177,21 +177,30 @@ int main() {
      * dead widget with nothing to explain it. */
     CHECK((*snapshot)["diag"]["compile"].is_array());
 
-    /* the built-ins' editable DOCUMENT form rides beside the derived registry: parts
+    /* every PAGE node's compiled attrs ride the snapshot beside the registry: the document
+     * says what the tree is, this says what each node's fields evaluate to, and the
+     * renderer needs both to draw a page and a component through one path */
+    CHECK((*snapshot)["node_attrs"].is_object());
+    {
+        const Json& header = widget_of((*snapshot)["doc"], "Title");
+        CHECK(header.is_object());
+    }
+
+    /* the built-ins' editable DOCUMENT form rides beside the derived registry: nodes
      * with expression-text attrs, no compiled template, no ids (a fork inserts one
      * into doc.components and the backend issues ids through prepare) */
     CHECK((*snapshot)["builtins"].is_array());
     CHECK((*snapshot)["builtins"].size() == 12);
     CHECK((*snapshot)["builtins"][0]["name"] == "Button");
-    CHECK((*snapshot)["builtins"][0]["parts"].is_array());
+    CHECK((*snapshot)["builtins"][0]["children"].is_array());
     CHECK(!(*snapshot)["builtins"][0].contains("template"));
     CHECK(!(*snapshot)["builtins"][0].contains("id"));
 
     /* every template attribute arrives as a compiled program */
     const Json& button = (*snapshot)["registry"]["types"][0];
     CHECK(button["name"] == "Button");
-    CHECK(button["slots"].size() > 10);   /* base slots composed in */
-    CHECK(button["template"]["children"][0]["attrs"]["fill"]["code"][0]["op"] == "LOAD");
+    CHECK(button["slots"].size() > 8);   /* base slots composed in */
+    CHECK(button["template"]["children"][0]["attrs"]["text"]["code"][0]["op"] == "LOAD");
     CHECK(button["template"]["interact"]["primitive"] == "press");
 
     /* a second view sees the first view's edit, and both see the same version */
@@ -206,7 +215,7 @@ int main() {
                 {"base_version", version},
                 {"ops", Json::array({Json{{"op", "set_prop"},
                                           {"node", widget},
-                                          {"key", "label"},
+                                          {"key", "name"},
                                           {"value", "Renamed"}}})}});
     frames = pump(app, a, 1);
     const Json* echo = frame_of(frames, "ops_applied");
@@ -226,7 +235,7 @@ int main() {
                 {"ops", Json::array({Json{{"op", "insert"},
                                           {"parent", page},
                                           {"list", "children"},
-                                          {"node", {{"kind", "widget"}, {"type", "Toggle"}}}}})}});
+                                          {"node", {{"kind", "frame"}, {"type", "Toggle"}}}}})}});
     frames = pump(app, b, 1);
     echo = frame_of(frames, "ops_applied");
     CHECK(echo != nullptr);
@@ -256,7 +265,7 @@ int main() {
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
                                           {"node", widget},
-                                          {"key", "label"},
+                                          {"key", "name"},
                                           {"value", "first"}}})}});
     frames = pump(app, a, 1);
     CHECK(frame_of(frames, "ops_applied") != nullptr);
@@ -266,7 +275,7 @@ int main() {
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
                                           {"node", widget},
-                                          {"key", "label"},
+                                          {"key", "name"},
                                           {"value", "second"}}})}});
     frames = pump(app, a, 2);
     CHECK_MSG(frame_of(frames, "reject") != nullptr, "same node, stale base: expected a reject");
@@ -277,7 +286,7 @@ int main() {
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
                                           {"node", other},
-                                          {"key", "label"},
+                                          {"key", "name"},
                                           {"value", "elsewhere"}}})}});
     frames = pump(app, a, 1);
     CHECK_MSG(frame_of(frames, "ops_applied") != nullptr,
@@ -361,17 +370,12 @@ int main() {
                                                {"shape", "color"},
                                                {"default", "#ff0000"},
                                                {"group", "appearance"}}})},
-                   {"parts",
-                    Json::array({Json{
-                        {"kind", "box"},
-                        {"name", "body"},
-                        {"dir", "stack"},
-                        {"children",
-                         Json::array({Json{{"kind", "rect"},
-                                           {"name", "lamp"},
-                                           {"attrs", Json{{"fill", "tint"},
-                                                          {"radius", "nope + 1"}}}}})},
-                    }})}}}}})}});
+                   {"layout", "free"},
+                   {"children",
+                    Json::array({Json{{"kind", "frame"},
+                                      {"name", "lamp"},
+                                      {"attrs", Json{{"surface", "tint"},
+                                                     {"radius", "nope + 1"}}}}})}}}}})}});
     frames = pump(app, a, 2);
     echo = frame_of(frames, "ops_applied");
     const Json* pushed = frame_of(frames, "snapshot");
@@ -383,11 +387,11 @@ int main() {
         CHECK(lamp["name"] == "Lamp");
         /* the good attr compiled to a view program; the bad one is not served */
         const Json& lamp_part = lamp["template"]["children"][0];
-        CHECK(lamp_part["attrs"]["fill"]["code"][0]["op"] == "LOAD");
+        CHECK(lamp_part["attrs"]["surface"]["code"][0]["op"] == "LOAD");
         CHECK(!lamp_part["attrs"].contains("radius"));
-        /* the finding is pinned to the part node the ECHO issued, at the attr */
+        /* the finding is pinned to the node the ECHO issued, at the attr */
         const uint64_t part_id =
-            (*echo)["ops"][0]["node"]["parts"][0]["children"][0]["id"].get<uint64_t>();
+            (*echo)["ops"][0]["node"]["children"][0]["id"].get<uint64_t>();
         bool pinned = false;
         for (const Json& diag : (*pushed)["diag"]["compile"])
             if (diag["node"] == part_id && diag["where"] == "radius" &&
@@ -453,7 +457,7 @@ int main() {
                         {"base_version", app.document().version()},
                         {"ops", Json::array({Json{{"op", "set_prop"},
                                                   {"node", widget},
-                                                  {"key", "label"},
+                                                  {"key", "name"},
                                                   {"value", "alive " + std::to_string(i)}}})}});
             frames = pump(app, a, 1);
             CHECK(frame_of(frames, "ops_applied") != nullptr);

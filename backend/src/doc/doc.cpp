@@ -14,44 +14,47 @@ Json token(const char* name, const char* group, const char* dark, const char* li
     return Json{{"name", name}, {"group", group}, {"dark", dark}, {"light", light}};
 }
 
-/* A widget carries no geometry: what a demo document says is WHAT is on the page and in
- * WHAT ORDER, and where each one lands is the containing frame's arithmetic.
- * `kind` is the discriminator page.children and frame.children read (schema.cpp): a
- * literal here rather than left to prepare()'s default fill, because a heterogeneous
- * list rejects a child whose kind is absent (spec: never silently defaulted). */
-Json widget(const char* type, const char* label, Json slots) {
-    return Json{{"kind", "widget"},
+/* AN INSTANCE: a frame that names a component, dressed with this placement's own slot
+ * values. Nothing here says where it lands — that follows from its order among its
+ * siblings and from the frame that holds it. */
+Json instance(const char* type, const char* name, Json slots) {
+    return Json{{"kind", "frame"},
+                {"name", name},
                 {"type", type},
-                {"label", label},
                 {"slots", std::move(slots)}};
 }
 
-/* a FRAME; `children` is filled in by the caller once the widgets it groups exist, so it
-   composes with `widget()` above. `extra` overrides any of the frame's own props — a
-   surface, a grow share, a floor — so a demo pane reads as one expression. */
-Json frame(const char* name, const char* layout, Json children, Json extra = Json::object()) {
-    Json f = Json{{"kind", "frame"},
-                  {"name", name},
-                  {"layout", layout},
-                  {"gap", 8},
-                  {"pad", 8},
-                  {"children", std::move(children)}};
-    for (const auto& item : extra.items()) f[item.key()] = item.value();
-    return f;
+/* a plain FRAME; `children` is filled in by the caller once what it groups exists, so it
+   composes with instance() above. `attrs` are expression text like every other field — a
+   demo pane's surface reads `$surface`, its gap reads `8`. */
+Json frame(const char* name, const char* layout, Json children, Json attrs = Json::object()) {
+    Json own = Json{{"gap", "8"}, {"pad", "8"}};
+    for (const auto& item : attrs.items()) own[item.key()] = item.value();
+    return Json{{"kind", "frame"},
+                {"name", name},
+                {"layout", layout},
+                {"attrs", std::move(own)},
+                {"children", std::move(children)}};
 }
 
-/* Every widget on a page, wherever it nests: DFS through frames, collecting each widget
- * along with the PAGE it belongs to (never the frame) — page identity is what gates mesh
- * polling and rename fan-out, so a widget three frames deep must still resolve to its
- * page, not its immediate parent. */
+/* every node under one, root-first */
+void walk_from(Json& node, const std::function<void(Json&)>& visit) {
+    visit(node);
+    auto it = node.find("children");
+    if (it == node.end() || !it->is_array()) return;
+    for (Json& child : *it) walk_from(child, visit);
+}
+
+/* Every INSTANCE on a page, wherever it nests, with the PAGE it belongs to (never the
+ * frame above it) — page identity is what gates mesh polling and scopes a rename. */
 void collect_widgets(Json& page, Json& node, std::vector<Document::WidgetRef>& out) {
     auto it = node.find("children");
     if (it == node.end() || !it->is_array()) return;
     for (Json& child : *it) {
-        auto kind = child.find("kind");
-        const std::string k = kind != child.end() && kind->is_string() ? kind->get<std::string>() : "";
-        if (k == "widget") out.push_back({&page, &child});
-        else if (k == "frame") collect_widgets(page, child, out);
+        auto type = child.find("type");
+        if (type != child.end() && type->is_string() && !type->get<std::string>().empty())
+            out.push_back({&page, &child});
+        collect_widgets(page, child, out);
     }
 }
 
@@ -117,9 +120,9 @@ bool Document::prepare(Kind kind, Json& node, std::string& err) {
         else if (!check_prop(p, *it, err)) return false;
     }
     const std::string variant = node_variant(spec, node);
-    for (const auto& v : spec.variants) {
-        if (v.first != variant) continue;
-        for (const Prop& p : v.second) {
+    for (const Variant& v : spec.variants) {
+        if (v.name != variant) continue;
+        for (const Prop& p : v.props) {
             auto it = node.find(p.key);
             if (it == node.end()) node[p.key] = p.def;
             else if (!check_prop(p, *it, err)) return false;
@@ -130,15 +133,12 @@ bool Document::prepare(Kind kind, Json& node, std::string& err) {
        normalized by exactly the rule an edit goes through (schema.h, Prop::retypes) */
     retype_props(spec, node);
 
-    for (const ChildList& l : spec.lists) {
-        auto it = node.find(l.key);
-        if (it == node.end()) { node[l.key] = Json::array(); continue; }
-        if (!it->is_array()) { err = l.key + " must be an array"; return false; }
-        for (Json& child : *it) {
-            Kind ck = Kind::Doc;
-            if (!child_kind(l, child, ck, err)) return false;
-            if (!prepare(ck, child, err)) return false;
-        }
+    for (const ChildList* l : node_lists(spec, variant)) {
+        auto it = node.find(l->key);
+        if (it == node.end()) { node[l->key] = Json::array(); continue; }
+        if (!it->is_array()) { err = l->key + " must be an array"; return false; }
+        for (Json& child : *it)
+            if (!prepare(l->kind, child, err)) return false;
     }
 
     /* anything left over is not part of the model */
@@ -164,18 +164,12 @@ void Document::index_subtree(Json& node, Kind kind, uint64_t parent, const std::
     const uint64_t id = kind == Kind::Doc ? kDocId : read_id(node);
     index_[id] = e;
 
-    for (const ChildList& l : node_spec(kind).lists) {
-        auto it = node.find(l.key);
+    const NodeSpec& spec = node_spec(kind);
+    for (const ChildList* l : node_lists(spec, node_variant(spec, node))) {
+        auto it = node.find(l->key);
         if (it == node.end() || !it->is_array()) continue;
         size_t i = 0;
-        for (Json& child : *it) {
-            /* prepare() already rejected any child whose discriminator does not resolve,
-               so this always succeeds here; the check is defensive, not load-bearing */
-            Kind ck = Kind::Doc;
-            std::string ignored;
-            if (child_kind(l, child, ck, ignored)) index_subtree(child, ck, id, l.key, i);
-            ++i;
-        }
+        for (Json& child : *it) index_subtree(child, l->kind, id, l->key, i++);
     }
 }
 
@@ -212,6 +206,20 @@ std::vector<Document::WidgetRef> Document::widgets() {
     return out;
 }
 
+void Document::walk_nodes(const std::function<void(Json&)>& visit) {
+    /* BOTH documents-of-nodes: the pages and the component library. A token reference
+       inside a component's own node is exactly as real as one on a page. */
+    for (const char* list : {"pages", "components"}) {
+        auto holders = root.find(list);
+        if (holders == root.end() || !holders->is_array()) continue;
+        for (Json& holder : *holders) {
+            auto kids = holder.find("children");
+            if (kids == holder.end() || !kids->is_array()) continue;
+            for (Json& child : *kids) walk_from(child, visit);
+        }
+    }
+}
+
 bool Document::adopt(Json j, std::string& err) {
     if (!j.is_object()) { err = "document must be a JSON object"; return false; }
     root = std::move(j);
@@ -225,15 +233,11 @@ bool Document::adopt(Json j, std::string& err) {
         auto [n, kind] = stack.back();
         stack.pop_back();
         ++counted;
-        for (const ChildList& l : node_spec(kind).lists) {
-            auto it = n->find(l.key);
+        const NodeSpec& spec = node_spec(kind);
+        for (const ChildList* l : node_lists(spec, node_variant(spec, *n))) {
+            auto it = n->find(l->key);
             if (it == n->end() || !it->is_array()) continue;
-            for (Json& child : *it) {
-                /* the same defensive no-op as index_subtree: prepare() already validated */
-                Kind ck = Kind::Doc;
-                std::string ignored;
-                if (child_kind(l, child, ck, ignored)) stack.push_back({&child, ck});
-            }
+            for (Json& child : *it) stack.push_back({&child, l->kind});
         }
     }
     if (counted != index_.size()) { err = "duplicate node ids in document"; return false; }
@@ -277,15 +281,15 @@ Document Document::make_default() {
      * the page), so opening the document at any window size is the feature working. */
 
     /* one feed and one flow so the inspector and the rename fan-out have real work */
-    Json readout = widget("Readout", "Flow",
-                          /* a part's value nests under the part (spec 2.3): the units are
-                             the `units` part's */
-                          Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}});
+    Json readout = instance("Readout", "Flow",
+                            /* a nested node's value nests under its name: the units are
+                               the `units` node's */
+                            Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}});
     readout["feeds"] = Json::array({Json{{"slot", "value"},
                                          {"src", {{"kind", "L"}, {"name", "flow"}}},
                                          {"path", ""},
                                          {"xf", "x.round(1)"}}});
-    Json reset = widget("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}});
+    Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}});
     reset["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
         {"when_mode", "first"},
@@ -294,42 +298,43 @@ Document Document::make_default() {
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
     Json header_kids = Json::array();
-    header_kids.push_back(widget("Label", "Title", Json{{"text", "Line 1 Overview"}}));
+    header_kids.push_back(instance("Label", "Title", Json{{"text", "Line 1 Overview"}}));
     /* grow 0 + a floor: the band is as tall as it asks to be and the body keeps the rest */
     Json header = frame("Header", "row", std::move(header_kids),
-                        Json{{"surface", "$surface-2"}, {"align", "center"},
-                             {"grow", 0}, {"min", 52}});
+                        Json{{"surface", "$surface-2"}, {"align", "'center'"},
+                             {"grow", "0"}, {"min", "52"}});
 
     Json main_kids = Json::array();
-    main_kids.push_back(widget("Toggle", "Pump", Json{{"value", true}}));
-    main_kids.push_back(widget("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}}));
+    main_kids.push_back(instance("Toggle", "Pump", Json{{"value", true}}));
+    main_kids.push_back(
+        instance("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}}));
     main_kids.push_back(std::move(readout));
     main_kids.push_back(std::move(reset));
     Json main_col = frame("Main", "col", std::move(main_kids),
-                          Json{{"surface", "$surface"}, {"radius", 6}, {"grow", 2}});
+                          Json{{"surface", "$surface"}, {"radius", "6"}, {"grow", "2"}});
 
     Json status_kids = Json::array();
-    status_kids.push_back(widget("Label", "Status", Json{{"text", "Status"}}));
-    status_kids.push_back(widget("Toggle", "Enabled", Json{{"value", false}}));
+    status_kids.push_back(instance("Label", "Status", Json{{"text", "Status"}}));
+    status_kids.push_back(instance("Toggle", "Enabled", Json{{"value", false}}));
     Json status = frame("Status group", "row", std::move(status_kids),
-                        Json{{"surface", "$surface"}, {"radius", 6}, {"align", "center"}});
+                        Json{{"surface", "$surface"}, {"radius", "6"}, {"align", "'center'"}});
 
     Json lamp_kids = Json::array();
-    lamp_kids.push_back(widget("Panel", "Pump group", Json::object()));
+    lamp_kids.push_back(instance("Panel", "Pump group", Json::object()));
     /* the lamp is a Panel with a bound surface: there is no Indicator type */
-    lamp_kids.push_back(widget("Panel", "Fault", Json{{"surface", "#2a2a2a"}}));
+    lamp_kids.push_back(instance("Panel", "Fault", Json{{"surface", "#2a2a2a"}}));
     Json lamps = frame("Lamps", "col", std::move(lamp_kids),
-                       Json{{"surface", "$surface"}, {"radius", 6}});
+                       Json{{"surface", "$surface"}, {"radius", "6"}});
 
     Json side_kids = Json::array();
     side_kids.push_back(std::move(status));
     side_kids.push_back(std::move(lamps));
-    Json side = frame("Side", "col", std::move(side_kids), Json{{"pad", 0}, {"grow", 1}});
+    Json side = frame("Side", "col", std::move(side_kids), Json{{"pad", "0"}, {"grow", "1"}});
 
     Json body_kids = Json::array();
     body_kids.push_back(std::move(main_col));
     body_kids.push_back(std::move(side));
-    Json body = frame("Body", "row", std::move(body_kids), Json{{"pad", 0}});
+    Json body = frame("Body", "row", std::move(body_kids), Json{{"pad", "0"}});
 
     Json page = Json{{"name", "Overview"}, {"children", Json::array()}};
     page["children"].push_back(std::move(header));
