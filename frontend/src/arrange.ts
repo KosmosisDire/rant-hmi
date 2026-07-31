@@ -10,9 +10,17 @@
  * exactly the ones that make dragging feel right or maddening, so they belong where a test can
  * reach them (test/view_test.mjs). */
 
-import { Frame, Page, Widget } from "./types.js";
+import { isInstance, Node, Page } from "./types.js";
 
 export type Zone = "before" | "after" | "into";
+
+/* Can this node hold a child at all? A frame can, and an INSTANCE cannot: what is inside
+ * one belongs to the component it names. One question, asked by the drop arithmetic, by
+ * the tree's zone split and by the stage's container search, so a drag can never be shown
+ * a target the document would refuse. */
+export function holds(node: Node | null | undefined): boolean {
+  return !!node && node.kind === "frame" && !isInstance(node);
+}
 
 /* the parent to insert into and the index to insert AT, in the op's own terms */
 export interface DropPlan {
@@ -30,7 +38,6 @@ export function dropZone(isFrame: boolean, ratio: number): Zone {
   return "into";
 }
 
-type Node = Frame | Widget;
 
 export interface Seat {
   node: Node;
@@ -91,7 +98,11 @@ export function dropPlan(
   if (targetId === page.id) return dropAtPageEnd(page, dragId);
   const target = seatOf(page, targetId);
   if (!target) return null;
-  const kids = target.node.kind === "frame" ? target.node.children ?? [] : null;
+  /* WHAT CAN HOLD A CHILD: a frame, and not an instance. An instance's subtree belongs to
+     the component it names — dropping into one would put a node somewhere no editor shows
+     — which is the same refusal the backend's move op makes, said here so the drag can
+     show it rather than discovering it on release. */
+  const kids = holds(target.node) ? target.node.children ?? [] : null;
 
   if (zone === "into") {
     if (!kids) return null;

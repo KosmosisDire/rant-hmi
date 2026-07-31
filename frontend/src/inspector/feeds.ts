@@ -16,7 +16,7 @@ import { chip, commitInput, el, iconButton, numberInput } from "../dom.js";
 import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { bindField } from "../reconcile.js";
-import { Feed, Json, SlotSpec, Widget, WidgetType } from "../types.js";
+import { Feed, Json, SlotSpec, Node, WidgetType } from "../types.js";
 import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
 import { sourceField, valueEditor } from "./editors.js";
 import { highlighted } from "../highlight.js";
@@ -60,7 +60,7 @@ export function feedShape(feed: Feed): Json {
   return [feed.id, feed.slot, feed.src?.kind ?? "V", (feed.cases ?? []).length];
 }
 
-export function feedCard(editor: Editor, widget: Widget, type: WidgetType | null, feed: Feed): HTMLElement {
+export function feedCard(editor: Editor, widget: Node, type: WidgetType | null, feed: Feed): HTMLElement {
   const at = () => (editor.store.node(feed.id) as Feed | null) ?? feed;
   const set = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: feed.id, key, value }]);

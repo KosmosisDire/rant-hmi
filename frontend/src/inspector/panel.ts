@@ -13,7 +13,7 @@
  * wholesale, and a binding holding the old object would then quietly show a document that
  * no longer exists. */
 
-import { DropPlan, dropAtPageEnd, dropPlan, dropZone } from "../arrange.js";
+import { DropPlan, dropAtPageEnd, dropPlan, dropZone, holds } from "../arrange.js";
 import { clear, commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
@@ -21,8 +21,9 @@ import { ownedSlots, partIndex, slotLeaf } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf, withSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
-import { Frame, Json, SlotSpec, Widget, WidgetType } from "../types.js";
+import { isInstance, Json, Node, SlotSpec, WidgetType } from "../types.js";
 
+import { attrsSection, attrsShape } from "./components.js";
 import { valueEditor } from "./editors.js";
 import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
@@ -44,14 +45,13 @@ function toggleLayer(editor: Editor, key: string, dflt: boolean): void {
   fold.toggle(key, dflt, () => editor.refresh());
 }
 
-/* every node on the page, wherever it nests: a frame groups widgets and other frames in
-   ONE ordered list (spec 2.8), so the Layers tree is a real hierarchy now, not a flat
-   widget list. Pre-order, matching document (= z/flow) order. */
-function flattenPage(children: (Frame | Widget)[]): (Frame | Widget)[] {
-  const out: (Frame | Widget)[] = [];
+/* every node on the page, wherever it nests, pre-order — which is document order, which
+   is z-order and flow order too, because there is only one list */
+function flattenPage(children: Node[]): Node[] {
+  const out: Node[] = [];
   for (const node of children) {
     out.push(node);
-    if (node.kind === "frame") out.push(...flattenPage(node.children));
+    out.push(...flattenPage(node.children ?? []));
   }
   return out;
 }
@@ -59,18 +59,18 @@ function flattenPage(children: (Frame | Widget)[]): (Frame | Widget)[] {
 export function leftShape(editor: Editor): string {
   const page = editor.page();
   const nodes = flattenPage(page?.children ?? []);
-  const widgets = nodes.filter((n): n is Widget => n.kind === "widget");
+  const widgets = nodes.filter(isInstance);
   return JSON.stringify({
     /* the CURRENT page's tree only: pages live in the topbar selector */
     page: page ? page.id : 0,
-    nodes: nodes.map((n) => [n.id, n.kind, n.kind === "widget" ? n.type : n.name]),
+    nodes: nodes.map((n) => [n.id, n.kind, n.type || n.name]),
     /* the tree highlights the selection and lists rows per expansion state */
     selection: editor.view.selection,
     part: editor.view.part,
-    /* a switched-off part wears a different icon and a dimmed row, so which parts are
+    /* a switched-off node wears a different icon and a dimmed row, so which ones are
        hidden decides what the rows ARE */
     hidden: widgets.flatMap((w) => {
-      const type = typeOf(editor.registry, w.type);
+      const type = typeOf(editor.registry, w.type ?? "");
       return (type?.slots ?? [])
         .filter((s) => s.name.endsWith(".shown") && authoredSlot(w, type, s.name) === false)
         .map((s) => w.id + ":" + s.name);
@@ -86,20 +86,16 @@ export function leftShape(editor: Editor): string {
 export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   clear(host);
   const children = editor.page()?.children ?? [];
-  const count = flattenPage(children).filter((n) => n.kind === "widget").length;
+  const count = flattenPage(children).length;
   const tree = el("div", { class: "layers" }, children.flatMap((n) => nodeRows(editor, n, 0)));
   armTree(tree, editor);
 
   host.append(
     ...section("layers", "Layers", String(count), () => [
       tree,
-      children.length ? null : el("p", { class: "empty", text: "no widgets on this page" }),
+      children.length ? null : el("p", { class: "empty", text: "nothing on this page yet" }),
     ]),
   );
-}
-
-function nodeRows(editor: Editor, node: Frame | Widget, depth: number): HTMLElement[] {
-  return node.kind === "frame" ? frameRows(editor, node, depth) : widgetRows(editor, node, depth);
 }
 
 /* A row and the node it stands for are one thing seen twice, so pointing at either
@@ -114,60 +110,45 @@ function hoverable(editor: Editor, row: HTMLElement, id: number): HTMLElement {
   return row;
 }
 
-/* a frame row selects the frame (spec 2.8); its children are indented beneath it using
-   the same fold/treeRow idiom a widget's part tree uses, so a group reads exactly like
-   any other branch of the tree */
-function frameRows(editor: Editor, frame: Frame, depth: number): HTMLElement[] {
-  const key = "f" + frame.id;
-  const open = layerOpen(key, true);   /* a frame opens by default: it exists to show structure */
-  const current = editor.view.selection.length === 1 && editor.view.selection[0] === frame.id;
+/* ONE ROW FOR ONE NODE, whatever it is. An instance shows its type's glyph and its type
+ * as the fallback label; a plain frame shows its layout glyph; a leaf shows its kind's.
+ * An instance's own subtree belongs to the component it names, so it is not listed here —
+ * it is entered (double-click) rather than unfolded, which is the difference between
+ * editing this placement and editing every placement at once. */
+function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
+  const key = "n" + node.id;
+  const instance = isInstance(node);
+  const kids = instance ? [] : node.children ?? [];
+  const open = layerOpen(key, true);
+  const current =
+    editor.view.selection.indexOf(node.id) >= 0 && (!editor.view.part || !instance);
   const label = el("span", { class: "layer-label" });
-  bindText(frame.id + ":label.layer", label, () => (editor.store.frame(frame.id) ?? frame).name);
+  bindText(node.id + ":label.layer", label, () => {
+    const at = editor.store.nodeAt(node.id) ?? node;
+    return at.name || at.type || at.kind;
+  });
   const row = hoverable(editor, treeRow(
     key,
     depth,
-    "frame" + (current ? " current" : ""),
-    frame.children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
+    (instance ? "widget" : node.kind) + (current ? " current" : ""),
+    kids.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
     [
-      el("span", { class: "layer-glyph", html: iconMarkup("frame-" + frame.layout, 16, 1.5) }),
+      el("span", { class: "layer-glyph", html: iconMarkup(glyphOf(node), 16, 1.5) }),
       label,
-      diagIcon(editor.diagAt(frame.id)),
+      diagIcon(instance ? editor.diagFor(node.id) : editor.diagAt(node.id)),
     ],
-    () => editor.select([frame.id]),
-  ), frame.id);
+    () => editor.select([node.id]),
+  ), node.id);
   const rows = [row];
-  if (open) for (const child of frame.children) rows.push(...nodeRows(editor, child, depth + 1));
+  if (open) for (const child of kids) rows.push(...nodeRows(editor, child, depth + 1));
   return rows;
 }
 
-/* widgets -> the widget's template part tree (the page level lives in the topbar) */
-function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[] {
-  const key = "w" + widget.id;
-  const cls =
-    "widget" +
-    (editor.view.selection.indexOf(widget.id) >= 0 && !editor.view.part ? " current" : "");
-  const label = el("span", { class: "layer-label" });
-  bindText(widget.id + ":label.layer", label, () => {
-    const at = editor.store.widget(widget.id);
-    return at ? at.label || at.type : "";
-  });
-  return [
-    hoverable(editor, treeRow(
-      key,
-      depth,
-      cls,
-      null,
-      [
-        el("span", {
-          class: "layer-glyph",
-          html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 16, 1.5),
-        }),
-        label,
-        diagIcon(editor.diagFor(widget.id)),
-      ],
-      () => editor.select([widget.id]),
-    ), widget.id),
-  ];
+/* which icon stands for a node: its component's, its layout's, or its kind's */
+function glyphOf(node: Node): string {
+  if (isInstance(node)) return ICONS[node.type ?? ""] ? node.type ?? "" : "layers";
+  if (node.kind === "frame") return "frame-" + (node.layout ?? "free");
+  return "node-" + node.kind;
 }
 
 /* ---- dragging a row somewhere else: the only way to reparent (spec 2.8) ----
@@ -214,7 +195,7 @@ function preview(editor: Editor, id: number, plan: DropPlan | null): void {
 
 function rowId(row: Element | null): number {
   const key = row?.getAttribute("data-key") ?? "";
-  return /^[fw][0-9]+$/.test(key) ? Number(key.slice(1)) : 0;
+  return /^n[0-9]+$/.test(key) ? Number(key.slice(1)) : 0;
 }
 
 /* the tree as it stands NOW: a rebuild replaces the element the drag started over */
@@ -222,8 +203,8 @@ function layersHost(): HTMLElement | null {
   return document.querySelector(".layers");
 }
 
-function labelOf(node: Frame | Widget): string {
-  return node.kind === "frame" ? node.name : node.label || node.type;
+function labelOf(node: Node): string {
+  return node.name || node.type || node.kind;
 }
 
 function armTree(tree: HTMLElement, editor: Editor): void {
@@ -259,7 +240,7 @@ function armTree(tree: HTMLElement, editor: Editor): void {
 function begin(): void {
   if (!armed) return;
   const editor = armed.editor;
-  const node = editor.store.frame(armed.id) ?? editor.store.widget(armed.id);
+  const node = editor.store.nodeAt(armed.id);
   if (!node) {
     armed = null;
     return;
@@ -304,7 +285,7 @@ function autoExpand(id: number, frame: boolean, open: boolean): void {
   const editor = drag.editor;
   drag.timer = window.setTimeout(() => {
     if (drag) drag.timer = 0;
-    toggleLayer(editor, "f" + id, true);
+    toggleLayer(editor, "n" + id, true);
   }, EXPAND_MS);
 }
 
@@ -330,10 +311,12 @@ function onMove(ev: PointerEvent): void {
   const id = row && host.contains(row) ? rowId(row) : 0;
 
   if (id) {
-    const node = drag.editor.store.frame(id) ?? drag.editor.store.widget(id);
+    const node = drag.editor.store.nodeAt(id);
     const rect = row!.getBoundingClientRect();
-    const frame = node?.kind === "frame";
-    const open = frame && layerOpen("f" + id, true);
+    /* only a node that can HOLD one has an inside to drop into (arrange.ts): an instance
+       and a leaf both split at the halfway mark, and every position names a gap */
+    const frame = holds(node);
+    const open = frame && layerOpen("n" + id, true);
     const zone = dropZone(frame, rect.height ? (ev.clientY - rect.top) / rect.height : 0);
     drag.plan = dropPlan(page, drag.id, id, zone, open);
     if (drag.plan && zone === "into") {
@@ -375,8 +358,8 @@ function onUp(): void {
   held.editor.select([held.id]);
   /* dropped into a frame that was folded shut: open it, or it lands out of sight */
   const page = held.editor.page();
-  if (page && plan.parent !== page.id && !layerOpen("f" + plan.parent, true))
-    toggleLayer(held.editor, "f" + plan.parent, true);
+  if (page && plan.parent !== page.id && !layerOpen("n" + plan.parent, true))
+    toggleLayer(held.editor, "n" + plan.parent, true);
 }
 
 function onKey(ev: KeyboardEvent): void {
@@ -422,20 +405,22 @@ function selectedPart(editor: Editor, type: WidgetType | null): string {
   return path && type && partIndex(type).byPath.has(path) ? path : "";
 }
 
-/* The CONTENT inspector: a widget instance, one of its parts, or a selected FRAME
-   (plain: name/layout/gap/pad/align, no feeds or behavior — a frame is pure
-   composition). Editing a component itself belongs to the Design workspace and no
-   longer routes through here. */
+/* The CONTENT inspector, routed by WHAT THE NODE IS rather than by which of three kinds
+   it used to be: an instance shows the component's own vocabulary (data in, behavior,
+   locals, appearance), and any other node shows its name, its layout and its attrs. */
 export function inspectorShape(editor: Editor): string {
-  const frame = editor.selectedFrame();
-  if (frame)
+  const node = editor.selectedNode();
+  if (!node) return "empty";
+  if (!isInstance(node))
     return JSON.stringify({
-      frame: frame.id,
-      diag: editor.diagAt(frame.id).map((d) => d.code + ":" + d.message),
+      node: node.id,
+      kind: node.kind,
+      layout: node.layout ?? "",
+      attrs: attrsShape(editor, node),
+      diag: editor.diagAt(node.id).map((d) => d.code + ":" + d.message),
     });
-  const widget = editor.selectedWidget();
-  if (!widget) return "empty";
-  const type = typeOf(editor.registry, widget.type);
+  const widget = node;
+  const type = typeOf(editor.registry, widget.type ?? "");
   const fed = fedSlots(widget);
   const template = JSON.stringify(type?.template ?? null);
   return JSON.stringify({
@@ -462,12 +447,12 @@ export function inspectorShape(editor: Editor): string {
 
 export function renderInspector(host: HTMLElement, editor: Editor): void {
   clear(host);
-  const frame = editor.selectedFrame();
-  if (frame) {
-    renderFrameInspector(host, editor, frame);
+  const node = editor.selectedNode();
+  if (node && !isInstance(node)) {
+    renderNodeInspector(host, editor, node);
     return;
   }
-  const widget = editor.selectedWidget();
+  const widget = node;
   if (!widget) {
     host.appendChild(
       el("div", { class: "inspector-head" }, [
@@ -483,7 +468,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   }
 
   const at = () => editor.store.widget(widget.id) ?? widget;
-  const type = typeOf(editor.registry, widget.type);
+  const type = typeOf(editor.registry, widget.type ?? "");
   const part = selectedPart(editor, type);
   if (part && type) {
     renderPartInspector(host, editor, widget, type, part);
@@ -500,11 +485,11 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const otherSlots = own.filter((s) => s.group !== "value");
 
   const label = commitInput(
-    widget.label,
+    widget.name,
     (text) => editor.apply([{ op: "set_prop", node: widget.id, key: "label", value: text }]),
     { class: "field title", title: "the widget's label" },
   );
-  bindField(widget.id + ":label", label, () => at().label ?? "");
+  bindField(widget.id + ":label", label, () => at().name ?? "");
   host.appendChild(
     el("div", { class: "inspector-head" }, [
       label,
@@ -632,7 +617,7 @@ function slotRank(address: string): number {
 function renderPartInspector(
   host: HTMLElement,
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   type: WidgetType,
   path: string,
 ): void {
@@ -644,7 +629,7 @@ function renderPartInspector(
   });
   bindText(widget.id + ":label.part", back, () => {
     const at = editor.store.widget(widget.id);
-    return at ? at.label || at.type : "";
+    return at ? at.name || at.type || "" : "";
   });
   /* the whole path, not just the leaf: parts nest now (a knob's dot lives under its
      face), and "Knob › dot" would say nothing about where that dot actually is. Every
@@ -691,72 +676,47 @@ function renderPartInspector(
   );
 }
 
-/* The x/y/w/h grid that stood here is gone with the coordinate space it edited. A node's
-   size and position stop being four numbers an author types and become a consequence of
-   what the node sits in — order, grow, min, gap, pad — so the rows that replace it are
-   ordinary schema rows on the frame, not a geometry pad. */
-
-/* The frame inspector: three small sections and no more — a frame is pure composition
- * (how it lays its children out, how it is dressed, how its own container places it),
- * never feeds or behavior. Every field reuses the ordinary slot-shaped value editor
- * (editors.ts) with a hand-built SlotSpec, exactly the control a widget property of the
- * same shape would get, so a colour here gets the same swatch-plus-token field a widget's
- * surface does. */
-function renderFrameInspector(host: HTMLElement, editor: Editor, frame: Frame): void {
-  const at = () => editor.store.frame(frame.id) ?? frame;
+/* THE NODE INSPECTOR: a frame, a text, an icon or a path on the page — its name, what it
+ * is, and its attrs. There is no hand-written field list any more: `attrsSection` (the
+ * Design inspector's own) generates every row from the served vocabulary, so a page's
+ * frame and a component's frame edit identically because they are the same node.
+ *
+ * What used to be three little sections of typed props — Layout, Surface, Place — is one
+ * table now, and the split between "arrangement" and "measurement" is the parent's
+ * layout, said once in the vocabulary rather than mirrored here. */
+function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): void {
+  const at = () => editor.store.nodeAt(node.id) ?? node;
 
   const name = commitInput(
-    frame.name,
-    (text) => editor.apply([{ op: "set_prop", node: frame.id, key: "name", value: text }]),
-    { class: "field title", title: "the frame's name" },
+    node.name,
+    (text) => editor.apply([{ op: "set_prop", node: node.id, key: "name", value: text }]),
+    { class: "field title", title: "what the tree calls it" },
   );
-  bindField(frame.id + ":name", name, () => at().name ?? "");
+  bindField(node.id + ":name", name, () => at().name ?? "");
   host.appendChild(
-    el("div", { class: "inspector-head" }, [name, diagIcon(editor.diagAt(frame.id))]),
+    el("div", { class: "inspector-head" }, [name, diagIcon(editor.diagAt(node.id))]),
   );
 
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
-  const enumField = (key: string, variants: string[]) =>
-    nodeField(editor, frame.id, key, "enum", variants[0], variants);
-  const numField = (key: string, step?: number) =>
-    nodeField(editor, frame.id, key, "num", 0, undefined, step);
-  const colorField = (key: string) => nodeField(editor, frame.id, key, "color", "");
-
-  /* `.prop-grid` is THREE columns (label, editor, trailing cell), so every row has to
-     supply all three or the next row's label slides into this one's trailing slot and the
-     pairs come apart — the same triple the widget inspector's slot rows emit. */
+  /* the two structural facts, side by side: WHAT it is, and — for a frame — how it places
+     what is inside it. Everything else is an expression in the table below. */
+  const kindRow: (HTMLElement | null)[] = [
+    el("label", { text: "kind" }),
+    el("span", { class: "kw", text: node.kind }),
+    el("span"),
+  ];
+  if (node.kind === "frame")
+    kindRow.push(
+      el("label", { text: "layout", title: "free places children by their own x/y/w/h" }),
+      nodeField(editor, node.id, "layout", "enum", "free", ["free", "row", "col", "grid"]),
+      el("span"),
+    );
   body.append(
-    ...section("frame", "Layout", null, () => [
-      el("div", { class: "prop-grid" }, [
-        el("label", { text: "layout" }),
-        enumField("layout", ["row", "col", "stack"]), el("span"),
-        el("label", { text: "gap" }), numField("gap"), el("span"),
-        el("label", { text: "pad" }), numField("pad"), el("span"),
-        /* align is the CROSS axis, justify the MAIN one; both read against `layout` */
-        el("label", { text: "align" }),
-        enumField("align", ["start", "center", "end", "stretch"]), el("span"),
-        el("label", { text: "justify" }),
-        enumField("justify", ["start", "center", "end", "between"]), el("span"),
-      ]),
-    ]),
+    ...section("node", "Node", null, () => [el("div", { class: "prop-grid" }, kindRow)]),
   );
-
-  /* the same three words a widget's frame group uses (surface, border, radius): one
-     surface vocabulary, so a pane and a widget's panel are dressed alike */
-  body.append(
-    ...section("frame-surface", "Surface", null, () => [
-      el("div", { class: "prop-grid" }, [
-        el("label", { text: "surface" }), colorField("surface"), el("span"),
-        el("label", { text: "border" }), colorField("border"), el("span"),
-        el("label", { text: "border_w" }), numField("border_w"), el("span"),
-        el("label", { text: "radius" }), numField("radius"), el("span"),
-      ]),
-    ]),
-  );
-
-  body.append(...section("frame-place", "Place", null, () => [placeGrid(editor, frame.id)]));
+  body.append(...attrsSection(editor, node));
 }
 
 /* One editor over one PROP of one document node — not a registry slot, so it is written
@@ -786,7 +746,7 @@ function placeGrid(editor: Editor, node: number): HTMLElement {
 /* one Data-in row for a value slot, bound or not */
 function slotRow(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   type: ReturnType<typeof typeOf>,
   fed: Set<string>,
   spec: SlotSpec,
@@ -809,7 +769,7 @@ function disableAll(node: HTMLElement): void {
  * below); what it currently reads is VALUE, and goes into the editor built here. */
 function slotCells(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   type: ReturnType<typeof typeOf>,
   fed: Set<string>,
   spec: SlotSpec,

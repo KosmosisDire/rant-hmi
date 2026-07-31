@@ -11,7 +11,7 @@
  * vocabulary and be believed. */
 
 import { Editor, variablesInScope } from "../editor.js";
-import { Flow, Json, MeshEntity, MeshField, Widget } from "../types.js";
+import { Flow, Json, MeshEntity, MeshField, Node } from "../types.js";
 
 export interface LocalInfo {
   name: string;
@@ -46,7 +46,7 @@ export function typeFields(editor: Editor, name: string): MeshField[] {
 /* the declared variables a widget's flows can name, before any move adds to them. A type
  * beyond the four scalars is a TypeRef (spec 2.7): a struct root holds a struct of it,
  * and a dotted ref (`ValveCmd.mode`) holds that enum's value. */
-function declared(editor: Editor, widget: Widget | null): LocalInfo[] {
+function declared(editor: Editor, widget: Node | null): LocalInfo[] {
   const own = new Set((widget?.locals ?? []).map((v) => v.id));
   return variablesInScope(editor, widget)
     .filter((v) => v.type !== "timer")
@@ -121,7 +121,7 @@ export interface FlowScope {
  * scope standing at that point. */
 export function scopeAt(
   editor: Editor,
-  widget: Widget | null,
+  widget: Node | null,
   flow: Flow,
   stepId: number,
 ): FlowScope {
@@ -181,7 +181,7 @@ export function scopeAt(
 /* the struct local a row's destination names, resolved for its path picker */
 export function localAt(
   editor: Editor,
-  widget: Widget | null,
+  widget: Node | null,
   flow: Flow,
   stepId: number,
   name: string,

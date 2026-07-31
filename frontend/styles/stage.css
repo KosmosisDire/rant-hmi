@@ -24,25 +24,46 @@
   box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.45);
 }
 
-/* A widget instance, until components render as DOM: its own frame slots painted (a
-   Panel with a bound surface is already a working lamp) around a name. */
+/* A WIDGET INSTANCE is a frame like any other — the component's own root box, dressed by
+   the component and by this placement. The class marks it for the drag/select rules; it
+   carries no look of its own, because there is nothing left that is special about it. */
 .leaf {
   box-sizing: border-box;
-  position: relative;
-  overflow: hidden;
+}
+
+/* ---------- the ink ----------
+ *
+ * Three leaves, and between them everything that is not a box: type, a glyph, an outline.
+ * None of them lays anything out — they fill the box their parent gave them, which is the
+ * whole of the contract between arrangement space and measurement space. */
+
+.ink-text {
+  box-sizing: border-box;
+  font: 13px/1.35 var(--mono);
+  color: var(--ink);
+  align-content: center;
+  min-width: 0;
+}
+
+/* the UNKNOWN treatment: a value that could not be known reads as absent, never as a
+   number someone might trust */
+.ink-text.unknown {
+  color: var(--dim);
+  opacity: 0.7;
+}
+
+.ink-icon {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--ink);
+  min-width: 0;
 }
 
-.leaf-tag {
-  font: 11px/1.4 var(--mono);
-  color: var(--dim);
-  text-align: center;
-  padding: 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.ink-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 /* the selection ring: over the page, never in it — nothing about a selection may move

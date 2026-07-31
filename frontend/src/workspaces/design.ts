@@ -52,7 +52,7 @@ function componentDiagShape(editor: Editor, comp: ComponentDef): string[] {
     for (const prop of (part?.props ?? []) as Json[]) add(prop.id);
     for (const child of (part?.children ?? []) as Json[]) walk(child);
   };
-  for (const part of comp.parts ?? []) walk(part);
+  for (const part of comp.children ?? []) walk(part);
   return out;
 }
 
@@ -62,7 +62,7 @@ export function designShape(editor: Editor): string {
   const builtinNames = new Set(editor.builtins.map((b: Json) => b?.name));
   return JSON.stringify({
     components: comps.map((c) => [c.id, builtinNames.has(c.name),
-                                  (c.parts ?? []).map(docPartShape)]),
+                                  (c.children ?? []).map(docPartShape)]),
     builtins: editor.builtins.map((b: Json) => b?.name).filter((n: Json) => !shadowed.has(n)),
     sel: editor.componentSel ? [editor.componentSel.component, editor.componentSel.node] : null,
     builtinSel: editor.builtinSel ? [editor.builtinSel.name, editor.builtinSel.path] : null,
@@ -159,7 +159,7 @@ function docComponentMenu(editor: Editor, comp: ComponentDef, shadows: boolean):
 function docComponentRows(editor: Editor, comp: ComponentDef, shadows: boolean): HTMLElement[] {
   const key = "c" + comp.id;
   const open = fold.open(key, false);
-  const parts = comp.parts ?? [];
+  const parts = comp.children ?? [];
   const label = el("span", { class: "layer-label" + (shadows ? " shadows" : "") });
   bindText(comp.id + ":name.layer", label, () =>
     (editor.store.node(comp.id) as Json)?.name ?? "");
@@ -232,7 +232,7 @@ function builtinComponentRows(editor: Editor, comp: Json): HTMLElement[] {
   const name = String(comp?.name ?? "");
   const key = "b:" + name;
   const open = fold.open(key, false);
-  const parts = Array.isArray(comp?.parts) ? (comp.parts as Json[]) : [];
+  const parts = Array.isArray(comp?.children) ? (comp.children as Json[]) : [];
   const current = editor.builtinSel?.name === name && !editor.builtinSel.path;
   const row = treeRow(
     key,

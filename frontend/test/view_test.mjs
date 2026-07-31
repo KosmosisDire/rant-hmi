@@ -126,25 +126,31 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 7, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 8, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
 /* the built-ins' editable document form rides beside the derived registry */
 check(Array.isArray(snapshot.builtins) && snapshot.builtins.length === 12,
       "the snapshot serves the twelve built-ins' document form");
-/* the closed attr vocabulary (spec 2.3): served once, next to `lang`, never changing
-   at runtime — the part inspector's Attrs section reads exactly this */
-check(Array.isArray(snapshot.attr_table?.kinds) && snapshot.attr_table.kinds.includes("code"),
-      "the snapshot serves the declared list of part kinds");
+/* the closed attr vocabulary: served once, next to `lang`, never changing at runtime —
+   the node inspector's Attrs section reads exactly this */
+check(Array.isArray(snapshot.attr_table?.kinds) &&
+        ["frame", "text", "icon", "path"].every((k) => snapshot.attr_table.kinds.includes(k)),
+      "the snapshot serves the four node kinds");
 check(Array.isArray(snapshot.attr_table?.common) &&
         snapshot.attr_table.common.some((a) => a.name === "rotate"),
       "and the common attrs honoured on every kind");
 check(Array.isArray(snapshot.attr_table?.perKind?.text) &&
-        snapshot.attr_table.perKind.text.some((a) => a.name === "fill" && a.default === "#e7ecf5"),
-      "and each kind's own attrs, with the renderer's own default");
-check(Array.isArray(snapshot.builtins[0]?.parts) && !snapshot.builtins[0]?.template,
-      "a served built-in is doc-form: parts with expression text, no compiled template");
+        snapshot.attr_table.perKind.text.some((a) => a.name === "size" && a.default === 13),
+      "and each kind's own attrs, with its default");
+check(Array.isArray(snapshot.builtins[0]?.children) && !snapshot.builtins[0]?.template,
+      "a served built-in is doc-form: children with expression text, no compiled template");
+/* EVERY PAGE NODE'S ATTRS ARE COMPILED TOO: the same programs a component's are, which is
+   what lets one renderer draw a page and a widget's internals */
+const headerNode = snapshot.doc.pages[0].children[0];
+check(snapshot.node_attrs?.[String(headerNode.id)]?.attrs?.surface?.code?.[0]?.op === "LOAD",
+      "a page node's own attrs arrive compiled, keyed by node id");
 const interactionOf = (node) =>
   node?.interact ?? (node?.children ?? []).map(interactionOf).find(Boolean) ?? null;
 check(
@@ -165,7 +171,6 @@ const slider = store.widgetsOn(page).find((w) => w.type === "Slider");
    is the browser's arithmetic and so Playwright's question, not this file's. */
 const frameNamed = (node, name) => {
   for (const child of node.children ?? []) {
-    if (child.kind !== "frame") continue;
     if (child.name === name) return child;
     const found = frameNamed(child, name);
     if (found) return found;
@@ -173,15 +178,18 @@ const frameNamed = (node, name) => {
   return null;
 };
 check(page.children.length === 2, "the page is a header over a body, nothing loose");
-check(frameNamed(page, "Main")?.grow === 2 && frameNamed(page, "Side")?.grow === 1,
+/* EVERY FIELD IS EXPRESSION TEXT, a literal being the degenerate case: the place a
+   column takes and the token it is painted with live in one map, and are read the same */
+check(frameNamed(page, "Main")?.attrs?.grow === "2" &&
+        frameNamed(page, "Side")?.attrs?.grow === "1",
       "the body splits two-to-one between its columns");
-check(frameNamed(page, "Main")?.surface === "$surface",
+check(frameNamed(page, "Main")?.attrs?.surface === "$surface",
       "a pane is dressed with a theme token, not a literal");
 const statusFrame = frameNamed(page, "Status group");
 check(statusFrame !== null, "the default document seeds a demo frame");
 check(
-  statusFrame.children.length === 2 && statusFrame.children.every((c) => c.kind === "widget"),
-  "the frame groups two widgets",
+  statusFrame.children.length === 2 && statusFrame.children.every((c) => c.type),
+  "the frame groups two instances — a widget is a frame that names a component",
 );
 
 const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
@@ -200,12 +208,12 @@ const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
   treePanel.render(leftShape(treeEditor), (host) => renderLeftSidebar(host, treeEditor));
   const rows = treeHost.querySelectorAll(".layer-row");
   check(
-    rows.some((r) => r.getAttribute("data-key") === "f" + statusFrame.id),
+    rows.some((r) => r.getAttribute("data-key") === "n" + statusFrame.id),
     "the Layers tree lists a row for the frame",
   );
   check(
-    rows.some((r) => r.getAttribute("data-key") === "w" + toggleChild.id),
-    "and a row for the widget grouped inside it",
+    rows.some((r) => r.getAttribute("data-key") === "n" + toggleChild.id),
+    "and a row for the instance inside it: ONE kind of row, for one kind of node",
   );
 }
 
@@ -220,10 +228,10 @@ ws.send(
         parent: page.id,
         list: "children",
         node: {
-          kind: "widget",
+          kind: "frame",
           type: "Readout",
-          label: "Unfed",
-          /* a part's values nest under the part (spec 2.3) */
+          name: "Unfed",
+          /* a nested node's values nest under its name */
           slots: { value: 12.345, reading: { decimals: 1 }, units: { text: "bar" } },
         },
       },
@@ -274,8 +282,8 @@ const editor = {
   builtinSel: null,
   view,
   page: () => store.pages()[0],
-  selectedWidget: () => store.widget(readout.id),
-  selectedFrame: () => null,
+  selectedNode: () => store.nodeAt(readout.id),
+  selectedNode: () => store.nodeAt(readout.id), selectedWidget: () => store.widget(readout.id),
   apply: () => undefined,
   setPage: () => undefined,
   select: () => undefined,
@@ -358,7 +366,7 @@ check(valueInput.value === "5.5", "an unfed slot's field follows the document, g
       UNKNOWN until something arrives. Widget 10's `value` is fed in the seeded document. */
 const fedWidget = store.widgetsOn(store.pages()[0]).find((w) => (w.feeds ?? []).some((f) => f.slot === "value"));
 const fedPanel = new Panel(new Element("aside"));
-const fedEditor = { ...editor, selectedWidget: () => store.widget(fedWidget.id) };
+const fedEditor = { ...editor, selectedNode: () => store.nodeAt(fedWidget.id), selectedWidget: () => store.widget(fedWidget.id) };
 const drawFed = () =>
   fedPanel.render(inspectorShape(fedEditor), (host) => renderInspector(host, fedEditor));
 fedEditor.live = { epoch: 3, values: {} };
@@ -488,7 +496,7 @@ check(Array.isArray(snapshot.diag?.compile), "the snapshot carries the compile f
    list them: the Behavior section holds only what this instance authors */
 const toggle = store.widgetsOn(store.pages()[0]).find((w) => w.type === "Toggle");
 const togglePanel = new Panel(new Element("aside"));
-const toggleEditor = { ...editor, selectedWidget: () => store.widget(toggle.id) };
+const toggleEditor = { ...editor, selectedNode: () => store.nodeAt(toggle.id), selectedWidget: () => store.widget(toggle.id) };
 togglePanel.render(inspectorShape(toggleEditor), (host) => renderInspector(host, toggleEditor));
 check(
   togglePanel.host.querySelectorAll(".default-flow").length === 0,
@@ -571,12 +579,12 @@ check(
 
 /* a finding inside a flow is addressed to the STEP, so it traces to the exact line; a
    collapsed card cannot show that line yet, so its head carries the rollup */
-const reset = store.widgetsOn(store.pages()[0]).find((w) => w.label === "Reset");
+const reset = store.widgetsOn(store.pages()[0]).find((w) => w.name === "Reset");
 const stepId = reset.flows[0].do[0].id;
 const stepRows = [{ node: stepId, grade: "error", code: "expression", message: "unknown name" }];
 const stepEditor = {
   ...editor,
-  selectedWidget: () => store.widget(reset.id),
+  selectedNode: () => store.nodeAt(reset.id), selectedWidget: () => store.widget(reset.id),
   diagFor: () => stepRows,
   diagAt: (node, where) =>
     stepRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
@@ -599,7 +607,7 @@ const feedRows = [
 ];
 const feedEditor = {
   ...editor,
-  selectedWidget: () => store.widget(readoutW.id),
+  selectedNode: () => store.nodeAt(readoutW.id), selectedWidget: () => store.widget(readoutW.id),
   diagFor: () => feedRows,
   diagAt: (node, where) =>
     feedRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
@@ -649,22 +657,22 @@ const designRow = (key) =>
   designHost.querySelectorAll(".layer-row").find((r) => r.getAttribute("data-key") === key) ?? null;
 
 drawLeft();
-const toggleRow = rowByKey("w" + toggle.id);
+const toggleRow = rowByKey("n" + toggle.id);
 check(toggleRow !== null, "the Layers tree lists the current page's widgets");
 check(left.querySelectorAll(".layer-row.page").length === 0, "the Layers tree has no page rows");
 check(rowByKey("p" + page.id) === null, "not even the current page's");
 /* a widget row is a LEAF here now: its parts belong to the component that defines them,
    so they are listed by the Design tree and no longer expand out of this one */
-check(rowByKey("w" + toggle.id + "/pill.lane.knob") === null,
+check(rowByKey("n" + toggle.id + "/pill.knob") === null,
       "a widget's parts are not listed in the Layers tree");
-check(rowByKey("w" + slider.id + "/scale") === null, "not even a part hidden by `show`");
+check(rowByKey("n" + slider.id + "/scale") === null, "not even a part hidden by `show`");
 
 /* a selected part scopes the inspector: widget › part head, ONE section, and only the
    properties that part OWNS — not its siblings', not its children's, not the widget's */
-const toggleEditor2 = { ...editor, selectedWidget: () => store.widget(toggle.id) };
+const toggleEditor2 = { ...editor, selectedNode: () => store.nodeAt(toggle.id), selectedWidget: () => store.widget(toggle.id) };
 view.selection = [toggle.id];
-view.part = "pill.lane.knob";
-const widgetShape = (() => { view.part = ""; const s = inspectorShape(toggleEditor2); view.part = "pill.lane.knob"; return s; })();
+view.part = "pill.knob";
+const widgetShape = (() => { view.part = ""; const s = inspectorShape(toggleEditor2); view.part = "pill.knob"; return s; })();
 check(inspectorShape(toggleEditor2) !== widgetShape, "the selected part moves the inspector's shape");
 const partPanel = new Panel(new Element("aside"));
 partPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
@@ -702,14 +710,14 @@ check(widgetLabels.includes("grow") && widgetLabels.includes("min"),
   check(partLabels.includes("shown"), "a part can be switched off from its own view");
   const applied = [];
   const nested = { ...toggleEditor2, apply: (ops) => applied.push(...ops) };
-  view.part = "pill.lane.knob";
+  view.part = "pill.knob";
   const editPanel = new Panel(new Element("aside"));
   editPanel.render(inspectorShape(nested), (host) => renderInspector(host, nested));
   const pairs = [...editPanel.host.querySelectorAll(".bool-pair")];
   check(pairs.length === 1, "the knob's own view has exactly one switch");
   fire(pairs[0].children[0], "click");   /* the "off" half */
   const slotOp = applied.find((op) => op.key === "slots");
-  check(slotOp && slotOp.value?.pill?.lane?.knob?.shown === false,
+  check(slotOp && slotOp.value?.pill?.knob?.shown === false,
         "a part's edit writes nested under its part, got " + JSON.stringify(slotOp?.value));
   check(slotOp && slotOp.value.shown === undefined,
         "and never at the widget's top level");
@@ -741,25 +749,29 @@ fire(builtinToggleRow.children[0], "click");
 drawDesign();
 /* a built-in is not in the document, so its rows are addressed by name + CHILD-INDEX
    path ("0" is the root part, "0.0.0" the track inside its pill) rather than node id */
+/* THE COMPONENT IS THE ROOT NODE, so index 0 is its first CHILD (the pill), not a
+   wrapper box standing in for the component itself */
 check(designRow("b:Toggle/0") !== null,
-      "an expanded built-in lists its part tree from the served doc form");
-check(designRow("b:Toggle/0.0.0") !== null, "nested built-in parts too (boxes default open)");
+      "an expanded built-in lists its node tree from the served doc form");
+check(designRow("b:Toggle/0.0") !== null, "nested nodes too (frames default open)");
 
 /* the row SELECTS, exactly as a doc component's does: the shipped definitions are
    browsable read-only, which is how a type is read before it is overridden */
 const browsed = [];
 editor.selectBuiltin = (name, path) => browsed.push(name + ":" + path);
-fire(designRow("b:Toggle/0.0.0"), "click");
+fire(designRow("b:Toggle/0.0"), "click");
 fire(designRow("b:Toggle"), "click");
-check(browsed.join(" ") === "Toggle:0.0.0 Toggle:",
+check(browsed.join(" ") === "Toggle:0.0 Toggle:",
       "a built-in row browses it by name and part path, got " + JSON.stringify(browsed));
 
 /* the inspector then shows that part's definition, read-only: no field commits, and
    the ADDRESS row says what its properties are called from the outside (spec 2.3) */
 const trackEditor = {
   ...editor,
+  selectedNode: () => null,
   selectedWidget: () => null,
-  builtinSel: { name: "Toggle", path: "0.0.0" },
+  /* the pill: index 0 of the component's own children, since the component IS the root */
+  builtinSel: { name: "Toggle", path: "0" },
 };
 const trackPanel = new Panel(new Element("aside"));
 check(designInspectorShape(trackEditor) !== designInspectorShape(editor),
@@ -777,14 +789,15 @@ check(trackAttrs.some((row) =>
 check(trackPanel.host.querySelectorAll("input").every((i) => i.getAttribute("readonly")),
       "every field in it is read-only: nothing in the document owns a built-in");
 check(trackPanel.host.querySelectorAll(".value-static")
-        .some((v) => v.textContent === "pill.track"),
-      "and the ADDRESS row names the part's slot-address prefix");
-const bodyEditor = { ...trackEditor, builtinSel: { name: "Toggle", path: "0" } };
+        .some((v) => v.textContent === "pill"),
+      "and the ADDRESS row names the node's slot-address prefix");
+/* THE COMPONENT IS THE ROOT, and it adds no segment: its own properties address bare,
+   which is why an instance's `value` is `value` and never `body.value` */
+const bodyEditor = { ...trackEditor, builtinSel: { name: "Toggle", path: "" } };
 const bodyPanel = new Panel(new Element("aside"));
 bodyPanel.render(designInspectorShape(bodyEditor), (host) => renderDesignInspector(host, bodyEditor));
-check(bodyPanel.host.querySelectorAll(".value-static")
-        .some((v) => v.textContent === "the widget itself"),
-      "the ROOT part adds no segment: its properties address bare");
+check(bodyPanel.host.querySelector(".head-tag")?.textContent === "built-in",
+      "the component's own view is the root: its properties address bare");
 const toggleEditor3 = { ...trackEditor, builtinSel: { name: "Toggle", path: "" } };
 const compPanel = new Panel(new Element("aside"));
 compPanel.render(designInspectorShape(toggleEditor3), (host) => renderDesignInspector(host, toggleEditor3));
@@ -805,17 +818,19 @@ store.apply(store.version() + 1, [
       props: [
         { id: 9201, name: "tint", shape: "color", default: "#ff0000", group: "appearance" },
       ],
-      parts: [
+      /* the component IS the root frame: its own layout and attrs, holding its children */
+      layout: "free",
+      attrs: {},
+      children: [
         {
           id: 9210,
-          kind: "box",
+          kind: "frame",
           name: "body",
-          dir: "stack",
+          layout: "free",
           attrs: {},
           interact: null,
           children: [
-            { id: 9211, kind: "text", name: "label", attrs: { text: "'hi'" },
-              interact: null, children: [] },
+            { id: 9211, kind: "text", name: "label", attrs: { text: "'hi'" } },
           ],
         },
       ],
@@ -831,11 +846,12 @@ check(lampRow.querySelector(".badge.shadow") === null,
 fire(lampRow.children[0], "click");
 drawDesign();
 check(designRow("c9200/9210") !== null, "an expanded component lists its part nodes");
-check(designRow("c9200/9211") !== null, "nested parts too (boxes default open)");
+check(designRow("c9200/9211") !== null, "nested nodes too (frames default open)");
 
 /* selecting the component edits the TYPE: name field and the properties table */
 const lampEditor = {
   ...editor,
+  selectedNode: () => null,
   selectedWidget: () => null,
   componentSel: { component: 9200, node: 9200 },
 };
@@ -871,13 +887,13 @@ check(attrRowNamed(attrRows, "text").querySelectorAll("input")
       "the set attr's expression text is editable in place");
 check(labelPanel.host.querySelectorAll(".attr-name.static").length === attrRows.length,
       "every attr name is a static label now, never a typed field");
-const unsetFill = attrRowNamed(attrRows, "fill");
-check(unsetFill.querySelectorAll("input")
-        .some((i) => i.value === "" && i.getAttribute("placeholder") === "#e7ecf5"),
-      "an unset attr shows the renderer's own default as the placeholder, unfilled");
+const unsetColor = attrRowNamed(attrRows, "color");
+check(unsetColor.querySelectorAll("input")
+        .some((i) => i.value === "" && i.getAttribute("placeholder") === "$ink"),
+      "an unset attr shows its own default as the placeholder, unfilled");
 check(labelPanel.host.querySelectorAll(".dashed-btn")
         .filter((b) => b.textContent === "+ Attr").length === 0,
-      "the closed vocabulary offers nothing to add: no + Attr button for a text part");
+      "the closed vocabulary offers nothing to add: no + Attr button on a text leaf");
 
 /* clearing a SET attr's field removes the key from the committed attrs object rather
    than writing "": the document keeps only what was actually authored. `apply` is
@@ -929,21 +945,25 @@ check(labelPanel.host.querySelectorAll(".dashed-btn")
         "a stray coming and going moves the inspector's shape");
 }
 
-/* `code` is the one open kind: it keeps the free-form attrs UI in full, "+ Attr"
-   included, because its body reads view.attrs by whatever names its own JS chose */
+/* THERE IS NO OPEN KIND ANY MORE: `code` parts are gone, so every attr on every node is
+   checked against the one table. What the document carries that the vocabulary does NOT
+   name still gets a row of its own — visible and removable, never an error with nowhere
+   to land. */
 store.apply(store.version() + 1, [
-  { op: "insert", parent: 9210, list: "children",
-    node: { id: 9220, kind: "code", name: "gen", code: "", attrs: { count: "5" } } },
+  { op: "set_prop", node: 9211, key: "attrs", value: { text: "'hi'", rotaton: "1" } },
 ]);
-const genEditor = { ...lampEditor, componentSel: { component: 9200, node: 9220 } };
-const genPanel = new Panel(new Element("aside"));
-genPanel.render(designInspectorShape(genEditor), (host) => renderDesignInspector(host, genEditor));
-const genRows = genPanel.host.querySelectorAll(".attr-row");
-const genNameField = genRows[0]?.querySelectorAll(".attr-name")[0];
-check(genRows.length === 1 && genNameField?.tagName === "INPUT",
-      "a code part's existing attr is a free-form, renameable row");
-check(genPanel.host.querySelectorAll(".dashed-btn").some((b) => b.textContent === "+ Attr"),
-      "and a code part still offers + Attr");
+const strayPanel = new Panel(new Element("aside"));
+strayPanel.render(designInspectorShape(labelEditor),
+                  (host) => renderDesignInspector(host, labelEditor));
+const strayRow = strayPanel.host.querySelectorAll(".attr-row")
+  .find((row) => row.querySelector(".attr-name")?.textContent === "rotaton");
+check(strayRow !== undefined, "an attr the kind does not read still gets a row");
+check(strayPanel.host.querySelectorAll(".row-label")
+        .some((l) => l.textContent === "NOT READ BY THIS KIND"),
+      "under a heading that says so");
+store.apply(store.version() + 1, [
+  { op: "set_prop", node: 9211, key: "attrs", value: { text: "'hi'" } },
+]);
 
 /* a component finding is addressed to the part node, where = the attr: it pins to
    that attr's own row, exactly as the backend's template_expr diags arrive */
@@ -1189,31 +1209,41 @@ stageStore.load({
     id: 900,
     name: "Stage",
     children: [
-      { id: 901, kind: "frame", name: "Row", layout: "row", gap: 6, pad: 4, radius: 3,
-        align: "center", justify: "between", surface: "$accent", border: "", border_w: 1,
-        grow: 2, min: 40,
-        children: [
-          { id: 903, kind: "widget", type: "Panel", label: "Lamp", grow: 1, min: 0,
+      { id: 901, kind: "frame", name: "Row", layout: "row", type: "", attrs: {}, children: [
+          { id: 903, kind: "frame", type: "Panel", name: "Lamp", attrs: {},
             slots: { surface: "#123456" }, locals: [], feeds: [], flows: [] },
-          { id: 904, kind: "widget", type: "Label", label: "", grow: 3, min: 0,
-            slots: {}, locals: [], feeds: [], flows: [] },
+          { id: 904, kind: "frame", type: "Label", name: "", attrs: {},
+            slots: { text: "hi" }, locals: [], feeds: [], flows: [] },
         ] },
-      { id: 902, kind: "frame", name: "Deck", layout: "stack", gap: 0, pad: 0, radius: 0,
-        align: "stretch", justify: "start", surface: "", border: "", border_w: 1,
-        grow: 1, min: 0,
-        children: [
-          { id: 905, kind: "widget", type: "Panel", label: "Under", grow: 1, min: 0,
+      { id: 902, kind: "frame", name: "Deck", layout: "free", type: "", attrs: {}, children: [
+          { id: 905, kind: "frame", type: "Panel", name: "Under", attrs: {},
             slots: {}, locals: [], feeds: [], flows: [] },
         ] },
     ],
   }],
 });
 
+/* A PAGE NODE'S FIELDS ARE PROGRAMS, exactly like a component's — the backend compiles
+   both with the same compiler, and this is the wire form it serves them in. A literal is
+   the degenerate program, which is why one CONST covers most of a page. */
+const prog = (v) => ({ code: [{ op: "CONST", v }] });
+const loads = (cell) => ({ code: [{ op: "LOAD", cell }] });
+const stageAttrs = {
+  "901": { attrs: { grow: prog(2), min: prog(40), gap: prog(6), pad: prog(4),
+                    radius: prog(3), align: prog("center"), justify: prog("between"),
+                    surface: loads("theme:accent") } },
+  "902": { attrs: { grow: prog(1) } },
+  "903": { attrs: { grow: prog(1) } },
+  "904": { attrs: { grow: prog(3) } },
+  "905": { attrs: {} },
+};
+
 const stageHost = new Element("section");
 const stageView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
 const stageEditor = {
   store: stageStore,
   registry: snapshot.registry,
+  nodeAttrs: stageAttrs,
   live: { epoch: 1, values: {} },
   view: stageView,
   page: () => stageStore.pages()[0],
@@ -1234,8 +1264,14 @@ check(row.parentElement === stagePage && deck.parentElement === stagePage,
 check(stageNode("leaf", 903)?.parentElement === row, "and a frame's widgets nest inside it");
 check(row.style.display === "flex" && row.style.flexDirection === "row",
       "a row lays out as a flex row");
-check(deck.style.display === "grid" && stageNode("leaf", 905).style.gridArea === "1 / 1",
-      "a stack lays out as one grid cell every child shares");
+/* FREE is measurement space: the box is the origin, and a child with nothing said about
+   its x/y/w/h pins to all four edges — which is what "stack" used to mean before it
+   dissolved into the general rule */
+check(deck.style.position === "relative", "a free frame is its children's origin");
+check(stageNode("leaf", 905).style.position === "absolute" &&
+        stageNode("leaf", 905).style.left === "0" &&
+        stageNode("leaf", 905).style.right === "0",
+      "and an unplaced free child fills it");
 check(row.style.alignItems === "center" && row.style.justifyContent === "space-between",
       "align is the cross axis and justify the main one");
 check(stageNode("leaf", 903).style.flex === "1 1 0" &&
@@ -1255,12 +1291,14 @@ check(stagePage.style["--t-accent"] === "#4e8ef7",
 check(row.style.background === "var(--t-accent)",
       "so a $token surface is an ordinary var(), resolved by the browser");
 check(stageNode("leaf", 903).style.background === "#123456",
-      "a leaf paints the surface its instance authors");
+      "an instance paints the surface it authors, through its component's own attr");
 check(stageNode("leaf", 905).style.background === "var(--t-surface)",
       "and falls back to the served type's own default");
-check(stageNode("leaf", 904).textContent === "Label",
-      "an unlabelled leaf is tagged with its type, got " + stageNode("leaf", 904).textContent);
-check(stageNode("leaf", 903).textContent === "Lamp", "a labelled one with its label");
+/* AN INSTANCE RENDERS ITS COMPONENT: the Label's own text leaf is real DOM inside it,
+   reading the slot this placement authored */
+const labelInk = stageNode("leaf", 904).querySelector(".ink-text");
+check(labelInk !== null && labelInk.textContent === "hi",
+      "an instance renders its component's own nodes, reading this placement's slots");
 
 /* LIVE FIRST: the cell the runtime publishes outranks what the instance authored, which
    is the whole of a lamp — a Panel with a bound surface lights up */
@@ -1279,16 +1317,18 @@ stageEditor.live = { epoch: 4, values: { "903.surface": "#00ff00" } };
 drawStage();
 check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell rebuilds the page");
 
-/* ---- the frame inspector: composition, surface, place ----
-   A frame's fields are document PROPS on the node, not registry slots, so each row writes
-   a plain set_prop — the same op a name or a label goes through. */
+/* ---- the node inspector ----
+   A page's frame is a NODE, so it is inspected the way a component's node is: two
+   structural fields (what it is, how it places its children) and then every attr its kind
+   declares, generated from the served vocabulary. There is no hand-written field list for
+   a page frame and a second one for a component's frame, because there is one node. */
 {
   const group = frameNamed(store.pages()[0], "Status group");
   const applied = [];
   const frameEditor = {
     ...editor,
+    selectedNode: () => store.nodeAt(group.id),
     selectedWidget: () => null,
-    selectedFrame: () => store.frame(group.id),
     apply: (ops) => applied.push(...ops),
   };
   const framePanel = new Panel(new Element("aside"));
@@ -1301,23 +1341,34 @@ check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell r
     }
     return null;
   };
-  for (const name of ["layout", "gap", "pad", "align", "justify", "surface", "border",
-                      "border_w", "radius", "grow", "min"])
-    check(cellFor(name) !== null, "the frame inspector edits " + name);
   const options = cellFor("layout").querySelectorAll("option").map((o) => o.value);
-  check(options.join(",") === "row,col,stack", "layout offers the three, got " + options.join(","));
-  /* a colour row is the ordinary swatch-plus-field editor, so a "$token" value edits as
-     itself while the swatch shows what it resolves to */
-  check(cellFor("surface").querySelector(".swatch") !== null, "surface edits as a colour");
+  check(options.join(",") === "free,row,col,grid",
+        "layout offers the four modes, got " + options.join(","));
 
-  /* an unbounded number slot IS the field, with no wrapper to reach through */
-  const growField = cellFor("grow");
-  check(growField.tagName === "INPUT", "grow edits as a plain number field");
-  growField.value = "3";
-  fire(growField, "change");
-  const op = applied.find((o) => o.key === "grow");
-  check(op && op.op === "set_prop" && op.node === group.id && op.value === 3,
-        "editing grow writes one set_prop on the frame, got " + JSON.stringify(op));
+  const attrRowFor = (name) =>
+    framePanel.host.querySelectorAll(".attr-row")
+      .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
+  /* the frame's own dressing AND both placement vocabularies: which half applies is the
+     PARENT's layout, said once in the table rather than mirrored in the inspector */
+  for (const name of ["gap", "pad", "align", "justify", "surface", "border", "border_w",
+                      "radius", "grow", "min", "x", "y", "w", "h", "rotate"])
+    check(attrRowFor(name) !== null, "the node inspector edits " + name);
+
+  /* editing one writes the WHOLE attrs map, exactly as a component's node does */
+  const gapField = attrRowFor("gap").querySelectorAll("input")[0];
+  gapField.value = "12";
+  fire(gapField, "change");
+  const op = applied.find((o) => o.key === "attrs");
+  check(op && op.op === "set_prop" && op.node === group.id && op.value.gap === "12",
+        "editing an attr writes one set_prop of the map, got " + JSON.stringify(op));
+  /* and clearing it back to empty REMOVES the key rather than storing "" */
+  applied.length = 0;
+  const surfaceField = attrRowFor("surface").querySelectorAll("input")[0];
+  surfaceField.value = "";
+  fire(surfaceField, "change");
+  const cleared = applied.find((o) => o.key === "attrs");
+  check(cleared && !("surface" in cleared.value),
+        "clearing an attr drops the key, so the document keeps only what was authored");
 }
 
 /* ---- moving a node: the mirror's half, and the drop arithmetic ----
@@ -1327,11 +1378,11 @@ check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell r
    ARE, but which parent and which index a drop means is arithmetic, and it is the part that
    makes tree dragging feel right or maddening. */
 {
-  const leaf = (id, label) => ({ id, kind: "widget", type: "Label", label,
-                                 grow: 1, min: 0, slots: {}, locals: [], feeds: [], flows: [] });
+  const leaf = (id, name) => ({ id, kind: "frame", type: "Label", name,
+                                 attrs: { grow: "1", min: "0" }, slots: {}, locals: [], feeds: [], flows: [] });
   const frame = (id, name, children) => ({ id, kind: "frame", name, layout: "col", gap: 0, pad: 0,
                                            align: "stretch", justify: "start", surface: "",
-                                           border: "", border_w: 1, radius: 0, grow: 1, min: 0,
+                                           border: "", border_w: 1, radius: 0, attrs: { grow: "1", min: "0" },
                                            children });
   /* Left[ A, Inner[ E ] ], Right[ C ], D */
   const movePage = () => ({
@@ -1350,19 +1401,19 @@ check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell r
                    pages: [movePage(), { id: 800, name: "Second", children: [] }] });
 
   moveStore.apply(2, [{ op: "move", node: 711, parent: 720, list: "children", index: 0 }]);
-  check(ids(moveStore.frame(710).children) === "715", "a reparent echo takes the node out of its old frame");
-  check(ids(moveStore.frame(720).children) === "711,721", "and splices it in where the echo says");
+  check(ids(moveStore.nodeAt(710).children) === "715", "a reparent echo takes the node out of its old frame");
+  check(ids(moveStore.nodeAt(720).children) === "711,721", "and splices it in where the echo says");
   check(moveStore.parentOf(711)?.id === 720, "and the mirror re-indexes it under its new parent");
   /* what the shell's selectable() filter reads after every echo: a selected node that only
      MOVED must still resolve, or the inspector empties under the author's hands */
-  check(Boolean(moveStore.widget(711) ?? moveStore.frame(711)),
+  check(Boolean(moveStore.widget(711) ?? moveStore.nodeAt(711)),
         "a selected node survives its own reparent echo");
 
   moveStore.apply(3, [{ op: "move", node: 700, parent: 0, list: "pages", index: 1 }]);
   check(ids(moveStore.pages()) === "800,700", "a page echo reorders the one list hanging off the root");
 
   moveStore.apply(4, [{ op: "move", node: 711, index: 1 }]);
-  check(ids(moveStore.frame(720).children) === "721,711",
+  check(ids(moveStore.nodeAt(720).children) === "721,711",
         "and an echo with no parent at all reorders where the node already is");
 
   /* the wrap echo: an insert of an EMPTY frame, then one addressed move per node, so the
@@ -1374,7 +1425,7 @@ check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell r
     { op: "move", node: 720, parent: 750, list: "children", index: 1 },
   ]);
   check(ids(moveStore.page(700).children) === "750,730", "the wrap echo lands the frame where the nodes were");
-  check(ids(moveStore.frame(750).children) === "710,720", "with both of them inside it");
+  check(ids(moveStore.nodeAt(750).children) === "710,720", "with both of them inside it");
   check(moveStore.parentOf(710)?.id === 750 && moveStore.parentOf(720)?.id === 750,
         "and nowhere else");
 

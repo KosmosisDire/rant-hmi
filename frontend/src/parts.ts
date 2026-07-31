@@ -12,21 +12,22 @@
  * one screen, and a part shows nothing its children own (spec 2.3). An unnamed node
  * has no address of its own: it renders, and it can own nothing. */
 
-import { Json, SlotSpec, TemplateNode, WidgetType } from "./types.js";
+import { Json, SlotSpec, WidgetType } from "./types.js";
 
-export interface PartNode {
-  path: string; /* names joined with "." from the root; "" is the widget itself */
+/* one addressable node of a type's template, as the inspector reads it */
+export interface PartEntry {
+  path: string; /* names joined with "." from the root; "" is the instance itself */
   name: string;
-  kind: string; /* a box's dir, or a part's draw */
-  box: boolean;
-  slots: string[]; /* the slot addresses this part OWNS, declaration order */
-  children: PartNode[];
+  kind: string; /* frame | text | icon | path */
+  layout: string; /* a frame's own layout; "" on a leaf */
+  slots: string[]; /* the slot addresses this node OWNS, declaration order */
+  children: PartEntry[];
 }
 
 export interface PartIndex {
-  root: PartNode;         /* the widget: its slots are the widget-level ones */
-  roots: PartNode[];      /* the root's children: what the Layers tree lists */
-  byPath: Map<string, PartNode>;
+  root: PartEntry;         /* the instance: its slots are the component-level ones */
+  roots: PartEntry[];      /* the root's children */
+  byPath: Map<string, PartEntry>;
 }
 
 /* the part that owns a slot address, and the property name within it */
@@ -57,11 +58,11 @@ export function partIndex(type: WidgetType): PartIndex {
     else owned.set(path, [spec.name]);
   }
 
-  const make = (node: Json, path: string, name: string): PartNode => ({
+  const make = (node: Json, path: string, name: string): PartEntry => ({
     path,
     name,
-    kind: node?.kind === "box" ? node.dir : node?.draw,
-    box: node?.kind === "box",
+    kind: String(node?.kind ?? "frame"),
+    layout: node?.kind === "frame" ? String(node?.layout ?? "free") : "",
     slots: owned.get(path) ?? [],
     children: [],
   });
@@ -73,8 +74,8 @@ export function partIndex(type: WidgetType): PartIndex {
   };
   index.byPath.set("", index.root);
 
-  const walk = (node: TemplateNode | null, path: string, into: PartNode[]): void => {
-    for (const child of (((node as Json)?.children ?? []) as TemplateNode[])) {
+  const walk = (node: Json, path: string, into: PartEntry[]): void => {
+    for (const child of ((node?.children ?? []) as Json[])) {
       const name = typeof (child as Json).name === "string" ? ((child as Json).name as string) : "";
       /* an unnamed node cannot be addressed: it renders, and its children hang off the
          nearest named ancestor rather than acquiring a path of their own */

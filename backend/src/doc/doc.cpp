@@ -17,11 +17,19 @@ Json token(const char* name, const char* group, const char* dark, const char* li
 /* AN INSTANCE: a frame that names a component, dressed with this placement's own slot
  * values. Nothing here says where it lands — that follows from its order among its
  * siblings and from the frame that holds it. */
-Json instance(const char* type, const char* name, Json slots) {
+Json instance(const char* type, const char* name, Json slots,
+              Json attrs = Json::object()) {
     return Json{{"kind", "frame"},
                 {"name", name},
                 {"type", type},
-                {"slots", std::move(slots)}};
+                {"slots", std::move(slots)},
+                {"attrs", std::move(attrs)}};
+}
+
+/* a control that keeps a strip's height instead of taking a share of the column: the
+   place vocabulary an author reaches for constantly, said once here */
+Json strip(int px) {
+    return Json{{"grow", "0"}, {"min", std::to_string(px)}};
 }
 
 /* a plain FRAME; `children` is filled in by the caller once what it groups exists, so it
@@ -289,7 +297,8 @@ Document Document::make_default() {
                                          {"src", {{"kind", "L"}, {"name", "flow"}}},
                                          {"path", ""},
                                          {"xf", "x.round(1)"}}});
-    Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}});
+    Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}},
+                          strip(40));
     reset["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
         {"when_mode", "first"},
@@ -304,10 +313,13 @@ Document Document::make_default() {
                         Json{{"surface", "$surface-2"}, {"align", "'center'"},
                              {"grow", "0"}, {"min", "52"}});
 
+    /* the controls keep a strip each and the readout takes what is left: a column reads as
+       an HMI rather than as four equal quarters, and it is all said in `grow` and `min` */
     Json main_kids = Json::array();
-    main_kids.push_back(instance("Toggle", "Pump", Json{{"value", true}}));
+    main_kids.push_back(instance("Toggle", "Pump", Json{{"value", true}}, strip(44)));
     main_kids.push_back(
-        instance("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}}));
+        instance("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}},
+                 strip(58)));
     main_kids.push_back(std::move(readout));
     main_kids.push_back(std::move(reset));
     Json main_col = frame("Main", "col", std::move(main_kids),
@@ -316,8 +328,13 @@ Document Document::make_default() {
     Json status_kids = Json::array();
     status_kids.push_back(instance("Label", "Status", Json{{"text", "Status"}}));
     status_kids.push_back(instance("Toggle", "Enabled", Json{{"value", false}}));
+    /* A STRIP, not a pane: grow 0 and a floor, so the label and its switch keep a strip's
+       height and the lamps below take the rest. No `align` on purpose — stretch is the
+       default, and a centred row would size its children to their content, which for a
+       control that fills whatever box it is given is nothing at all. */
     Json status = frame("Status group", "row", std::move(status_kids),
-                        Json{{"surface", "$surface"}, {"radius", "6"}, {"align", "'center'"}});
+                        Json{{"surface", "$surface"}, {"radius", "6"},
+                             {"grow", "0"}, {"min", "56"}});
 
     Json lamp_kids = Json::array();
     lamp_kids.push_back(instance("Panel", "Pump group", Json::object()));

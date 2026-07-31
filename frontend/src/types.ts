@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 7;
+export const PROTO = 8;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 
@@ -64,25 +64,24 @@ export interface Lang {
   methods: LangEntry[];
 }
 
-/* ---- the closed attr vocabulary, as a served table (spec 2.3) ----
+/* ---- the closed attr vocabulary, as a served table ----
  *
- * The DECLARATION of every attr name a template node's `attrs` may carry, mirrored from
+ * The DECLARATION of every attr name a node's `attrs` may carry, mirrored from
  * backend/src/registry/attrs.h — that header is the source of truth and carries the full
- * reasoning, including why it currently describes an intent rather than a renderer. Snapshot-
- * only, like `builtins`: it never changes at runtime. `perKind.code` is always empty —
- * `code` is the one open kind, its attrs read by whatever names the author's own JS
- * body chose, so it keeps the free-form attrs UI instead of this table. */
+ * reasoning, including which half of the table applies (arrangement vs measurement) and
+ * what each attr lands as in CSS or SVG. Snapshot-only, like `builtins`: it never changes
+ * at runtime. */
 export interface AttrDef {
   name: string;
-  shape: "num" | "bool" | "text" | "color" | "series";
-  /* absent = no computed default: the attr is structural (show, repeat, clip, zoom,
-     rotate, at, fit) and `note` explains what absence means instead */
+  shape: "num" | "bool" | "text" | "color" | "series" | "any";
+  /* absent = no computed default: the attr is structural (show, repeat, clip, x, y, w, h,
+     rotate, a colour that is simply not painted) and `note` explains what absence means */
   default?: Json;
   note: string;
 }
 
 export interface AttrTable {
-  /* the single declared list of part kinds: box, the draw kinds, and code */
+  /* the four node kinds: frame, text, icon, path */
   kinds: string[];
   /* honoured on every kind */
   common: AttrDef[];
@@ -131,62 +130,74 @@ export interface Flow {
   do: Json[];
 }
 
-/* How the containing frame gives a child room, carried by a frame and a widget alike
-   (a container is a child of its own container): `grow` is the share of the free space
-   this child takes, `min` a floor in CSS pixels on the container's MAIN axis. */
-export interface Place {
-  grow: number;
-  min: number;
+/* ---- THE NODE: one kind, four variants, one field model ----
+ *
+ * A page's frames, a component's internals and a widget instance are the same thing.
+ * `kind` says what a node draws; everything a node LOOKS like is expression text in
+ * `attrs`, checked against the served vocabulary (AttrTable) and compiled to view
+ * programs by the backend. Only what is structural stays a field of its own: `kind`,
+ * `name`, `layout`, and a path's anchors.
+ *
+ * A FRAME WITH A `type` IS AN INSTANCE: it names a component, that component's children
+ * are its subtree (hidden here, entered to edit), and `slots`/`feeds`/`flows`/`locals`
+ * are how this one placement is wired. */
+export type NodeKind = "frame" | "text" | "icon" | "path";
+
+export type Layout = "free" | "row" | "col" | "grid";
+
+/* one anchor of a path, in the DOCUMENT form: every coordinate is expression text, and
+   `arc` (an elliptical segment ending at this anchor) is a row of the same */
+export interface Anchor {
+  x?: string;
+  y?: string;
+  arc?: Record<string, string>;
 }
 
-export interface Widget extends Place {
+export interface Node {
   id: number;
-  /* the discriminator a page or frame's `children` reads to tell a widget from a
-     frame sitting in the same ordered list (spec 2.8); always "widget" */
-  kind: "widget";
-  type: string;
-  label: string;
-  /* per-instance slot values, NESTED like the type's parts: a widget-level slot is a
-     key here, a part's slot a key inside an object named for the part, so
-     {"bar": {"fill_color": "#fff"}} is the slot addressed "bar.fill_color" */
-  slots: Record<string, Json>;
-  locals: Var[];
-  feeds: Feed[];
-  flows: Flow[];
-}
-
-/* A FRAME: a page-level container grouping widgets and other frames in ONE ordered
-   list. Nothing here is a coordinate — order, layout, gap, pad, align and justify are
-   the whole vocabulary, and where a child lands follows from them. `surface`, `border`
-   and `radius` are deliberately the same names a widget's frame group uses: one surface
-   vocabulary at both tiers. A colour is a literal or a "$name" token reference. */
-export interface Frame extends Place {
-  id: number;
-  kind: "frame";
+  kind: NodeKind;
+  /* the label the tree shows — and, where something under it declares a property, the
+     segment that property's address is built from */
   name: string;
-  layout: "row" | "col" | "stack";
-  gap: number;
-  pad: number;
-  align: "start" | "center" | "end" | "stretch";
-  justify: "start" | "center" | "end" | "between";
-  surface: string;     /* "" = no surface at all, not a transparent one */
-  border: string;
-  border_w: number;
-  radius: number;
-  children: (Frame | Widget)[];
+  attrs: Record<string, string>;   /* attr -> expression text */
+  props?: PropDef[];
+  /* frame only */
+  layout?: Layout;
+  type?: string;                   /* "" = a plain frame; a component name = an instance */
+  /* per-instance slot values, NESTED like the component's own nodes: a top-level property
+     is a key here, a nested node's property a key inside an object named for that node, so
+     {"bar": {"fill_color": "#fff"}} is the slot addressed "bar.fill_color" */
+  slots?: Record<string, Json>;
+  interact?: Json;
+  children?: Node[];
+  locals?: Var[];
+  feeds?: Feed[];
+  flows?: Flow[];
+  /* path only */
+  anchors?: Anchor[];
+  closed?: boolean;
 }
 
+/* a PAGE: one screen, and one of the two documents-of-nodes (the other is a component).
+   Not a node itself — nothing places it and nothing sizes it. */
 export interface Page {
   id: number;
   name: string;
-  children: (Frame | Widget)[];
+  children: Node[];
 }
 
-/* ---- components: widget types as document data (spec 2.3) ----
+/* is this node an instance of a component, rather than a plain frame? */
+export function isInstance(node: Node | null | undefined): boolean {
+  return !!node && typeof node.type === "string" && node.type !== "";
+}
+
+/* ---- components: a frame someone already made ----
  *
  * The document form the backend compiles into the served registry: a PropDef row
- * round-trips to a SlotSpec, a PartNode's attrs hold EXPRESSION TEXT (compiled to
- * view programs server-side), and a component with a built-in's name shadows it. */
+ * round-trips to a SlotSpec, a node's attrs hold EXPRESSION TEXT (compiled to view
+ * programs server-side), and a component with a built-in's name shadows it. The record IS
+ * the root node — its `layout`, `attrs` and `interact` describe the box an instance
+ * renders as — so there is no wrapper between a type and its content. */
 
 export interface PropDef {
   id: number;
@@ -202,32 +213,20 @@ export interface PropDef {
   history: boolean;
 }
 
-export interface PartNode {
-  id: number;
-  kind: "box" | "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "plot" | "path" | "code";
-  name: string;
-  dir?: "row" | "col" | "stack" | "auto"; /* box only */
-  /* the properties this part OWNS: addressed under its path, edited only while it is
-     selected, and in scope for its own attrs and its children's (spec 2.3) */
-  props: PropDef[];
-  attrs: Record<string, string>;          /* attr -> expression text */
-  interact: { primitive: string; params: Record<string, string>;
-              emits: Record<string, string> } | null;
-  /* `code` kind only: the user-authored JavaScript body, never compiled as an
-     expression (spec 2.3) */
-  code?: string;
-  children: PartNode[];
-}
-
 export interface ComponentDef {
   id: number;
   name: string;
   events: EventSpec[];
   props: PropDef[];
-  parts: PartNode[]; /* the template's one root node */
+  /* the ROOT BOX: the same three fields the frame variant carries, because the record IS
+     the root node */
+  layout: Layout;
+  attrs: Record<string, string>;
+  interact?: Json;
+  children: Node[];
   behavior: Flow[];
   /* the DESIGN FRAME: the size this component is AUTHORED at — its natural size. NOT an
-     instance size: an instance takes whatever box its frame gives it. A built-in carries
+     instance size: an instance takes whatever box its parent gives it. A built-in carries
      neither field, and the fallback is 240 x 120. */
   design_w: number;
   design_h: number;
@@ -283,18 +282,36 @@ export interface Interact {
   emits: Record<string, string>;
 }
 
-/* `name` is unique among siblings; the names joined with "/" from the template root
-   are the node's part path, its stable address (spec 2.3). Built-ins always carry
-   one; the renderer tolerates its absence (the node just has no path). */
-export type TemplateNode =
-  | { kind: "box"; name?: string; dir: "row" | "col" | "stack" | "auto"; attrs: Attrs; children: TemplateNode[]; interact?: Interact }
-  /* a draw part paints its own shape AND holds children (spec 2.3): they render into
-     the SAME area, over it, inheriting its transform — stack semantics with no `dir`
-     of its own, because a leaf's children are never laid out beside it, only atop it.
-     `code`/`scope` ride ONLY on a `draw: "code"` node: the user-authored JS source,
-     verbatim, and its part's lexical scope (bare name -> slot address) so the view can
-     build `props` by bare name (spec 2.3). */
-  | { kind: "part"; name?: string; draw: "rect" | "bar" | "text" | "icon" | "arc" | "needle" | "plot" | "path" | "code"; attrs: Attrs; children: TemplateNode[]; code?: string; scope?: Record<string, string> };
+/* one anchor, COMPILED: every coordinate is a program the view runs, which is what makes
+   a plot's ink data and an arc's corner arithmetic */
+export interface CompiledAnchor {
+  x?: Program;
+  y?: Program;
+  arc?: Record<string, Program>;
+}
+
+/* The served template: the SAME four kinds the document holds, with every attr compiled.
+   `name` is unique among siblings, and the names joined with "." from the root are the
+   node's address. A frame is the only kind that holds children or a gesture. */
+export interface TemplateNode {
+  kind: NodeKind;
+  name?: string;
+  attrs: Attrs;
+  layout?: Layout;
+  children?: TemplateNode[];
+  interact?: Interact;
+  anchors?: CompiledAnchor[];
+  closed?: boolean;
+}
+
+/* one PAGE node's compiled fields, keyed by node id in the snapshot's `node_attrs`: the
+   document says what the tree is, this says what each node's fields evaluate to, and the
+   renderer needs both. A page node and a template node meet here — same programs, same
+   interpreter, one renderer. */
+export interface NodeAttrs {
+  attrs: Attrs;
+  anchors?: CompiledAnchor[];
+}
 
 export interface WidgetType {
   name: string;
@@ -324,7 +341,7 @@ export type Op =
   | { op: "insert"; parent: number; list: string; index?: number; node: Json }
   | { op: "remove"; node: number }
   | { op: "move"; node: number; index: number; parent?: number; list?: string }
-  | { op: "wrap"; nodes: number[]; layout: "row" | "col" | "stack" }
+  | { op: "wrap"; nodes: number[]; layout: Layout }
   | { op: "rename"; node: number; name: string };
 
 /* ---- live state ---- */

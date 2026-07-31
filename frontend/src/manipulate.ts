@@ -23,7 +23,7 @@ import {
   SideWrite, withoutHeld,
 } from "./arrange.js";
 import { Editor } from "./editor.js";
-import { Op } from "./types.js";
+import { Layout, Op } from "./types.js";
 
 /* a press travels this far before it is a drag rather than a click */
 const SLOP = 4;
@@ -102,9 +102,9 @@ function kidsOf(container: HTMLElement): HTMLElement[] {
 
 /* the page is the root frame and the one frame the document does not describe, so it takes
  * the same default a fresh frame does: a column */
-function dirOf(editor: Editor, container: HTMLElement): "row" | "col" | "stack" {
-  const frame = editor.store.frame(idOf(container));
-  return frame ? frame.layout : "col";
+function dirOf(editor: Editor, container: HTMLElement): Layout {
+  const frame = editor.store.nodeAt(idOf(container));
+  return frame?.layout ?? "col";
 }
 
 /* the element one id is drawn as, re-read every time rather than held: a render between two
@@ -117,7 +117,10 @@ function nodeIn(host: HTMLElement, id: number): HTMLElement | null {
 
 function boundaryIn(editor: Editor, container: HTMLElement, x: number, y: number): Boundary | null {
   const dir = dirOf(editor, container);
-  if (dir === "stack") return null;   /* one cell, every child in it: no boundaries */
+  /* FREE and GRID have no boundary to drag: a free child sets its own x/y/w/h, and a
+     grid's tracks are equal by definition. Only a row or a column shares a line whose
+     two sides trade weight. */
+  if (dir !== "row" && dir !== "col") return null;
   const kids = kidsOf(container);
   if (kids.length < 2) return null;
   const row = dir === "row";
@@ -309,7 +312,7 @@ function onMove(ev: PointerEvent): void {
   /* THE MIDPOINT RULE along the container's main axis. A stack has no main axis to read, so
      it accepts at the end and nothing more. */
   let raw = kids.length;
-  if (dir !== "stack") {
+  if (dir === "row" || dir === "col") {
     const row = dir === "row";
     const mids = kids.map((kid) => {
       const at = kid.getBoundingClientRect();

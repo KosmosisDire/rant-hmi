@@ -9,7 +9,7 @@ import { DropPlan } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
-import { AttrTable, BuiltinDef, Diag, Frame, Json, Lang, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry, Var } from "./types.js";
 
 export type Mode = "edit" | "test" | "operate";
 
@@ -50,6 +50,9 @@ export interface Editor {
      with the renderer's own defaults — what the part inspector's Attrs section lists
      in full, set or not. Snapshot-only, like `lang` and `builtins`. */
   attrTable: AttrTable | null;
+  /* every PAGE node's compiled attrs, keyed by node id. The document says what the tree
+     IS; this says what each node's fields evaluate to, and the renderer needs both. */
+  nodeAttrs: Record<string, NodeAttrs>;
   /* the built-in components' editable document form (no ids): what the Components
      tree browses and what a fork copies into doc.components */
   builtins: BuiltinDef[];
@@ -66,11 +69,14 @@ export interface Editor {
   builtinSel: { name: string; path: string } | null;
   view: ViewState;
   page(): Page | null;
-  selectedWidget(): Widget | null;
-  /* the selected FRAME, when the (single) selection names one (spec 2.8): from its Layers
-     row, or from its own pixels on the stage — the padding, gaps and empty room its
-     children do not cover */
-  selectedFrame(): Frame | null;
+  /* WHATEVER IS SELECTED: one kind of node, so one accessor. From its Layers row, or from
+     its own pixels on the stage — for a frame, the padding, gaps and empty room its
+     children do not cover. */
+  selectedNode(): Node | null;
+  /* the same node, but only when it is an INSTANCE (a frame naming a component): the
+     inspector's data/behavior/appearance sections are about the component's slots, so
+     they ask this rather than testing a kind themselves */
+  selectedWidget(): Node | null;
   apply(ops: Op[]): void;
   setPage(id: number): void;
   /* insert a fresh page and switch to it once the echo issues its id (the topbar page
@@ -234,7 +240,7 @@ export function liveIsOn(live: Live | null, cell: string): boolean {
 }
 
 /* every variable a widget's flows can name: its own locals shadow the globals */
-export function variablesInScope(editor: Editor, widget: Widget | null): Var[] {
+export function variablesInScope(editor: Editor, widget: Node | null): Var[] {
   const locals = widget?.locals ?? [];
   const shadowed = new Set(locals.map((v) => v.name));
   return locals.concat(editor.store.globals().filter((v) => !shadowed.has(v.name)));

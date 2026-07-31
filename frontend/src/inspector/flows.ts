@@ -24,7 +24,7 @@ import { diagIcon, Editor, liveText, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
-import { Flow, Json, Op, Widget, WidgetType } from "../types.js";
+import { Flow, Json, Op, Node, WidgetType } from "../types.js";
 import { attachAutocomplete, exprContext, flowNames, flowX } from "./autocomplete.js";
 import { localAt, scopeAt } from "./flowscope.js";
 import { openSourceTree, SourcePick, SourceTreeOptions } from "./sourcetree.js";
@@ -146,7 +146,7 @@ export function flowShape(flow: Flow): Json {
   ];
 }
 
-export function flowCard(editor: Editor, widget: Widget, type: WidgetType | null, flow: Flow): HTMLElement {
+export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, flow: Flow): HTMLElement {
   const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
   const open = opened.has(flow.id);
   const set = (key: string, value: Json) =>
@@ -254,7 +254,7 @@ function targetChip(target: { kind: string; name: string }): HTMLElement {
 
 function whenGrid(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   type: WidgetType | null,
   flow: Flow,
   when: Json[],
@@ -373,7 +373,7 @@ function whenGrid(
 
 function alsoMenu(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   flow: Flow,
   timers: { name: string }[],
   set: (key: string, value: Json) => void,
@@ -412,7 +412,7 @@ function alsoMenu(
 
 /* ---- the DO list: one directly-editable line per step ---- */
 
-function doList(editor: Editor, widget: Widget, type: WidgetType | null, flow: Flow): HTMLElement {
+function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flow): HTMLElement {
   const list = el("div", { class: "do-list" }, []);
   const steps = flow.do ?? [];
 
@@ -462,7 +462,7 @@ function liveChip(editor: Editor, key: string, cell: string): HTMLElement {
 
 function stepRow(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   type: WidgetType | null,
   flow: Flow,
   step: Json,
@@ -499,7 +499,7 @@ const GUARD_KINDS = [
 
 function stepCell(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   type: WidgetType | null,
   flow: Flow,
   step: Json,
@@ -657,7 +657,7 @@ function stepCell(
  * expression form renders as an input instead (stepCell). */
 function sideChip(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   key: string,
   read: () => Json,
   flow: Flow,
@@ -778,7 +778,7 @@ function grip(editor: Editor, step: Json, index: number): HTMLElement {
  * fills its next unset field. */
 function stepMenu(
   editor: Editor,
-  widget: Widget,
+  widget: Node,
   type: WidgetType | null,
   flow: Flow,
   ev: MouseEvent,
@@ -820,7 +820,7 @@ function stepMenu(
   openMenu(ev.clientX, ev.clientY, "Add step", items);
 }
 
-export function addFlowButton(editor: Editor, widget: Widget, type: WidgetType | null): HTMLElement {
+export function addFlowButton(editor: Editor, widget: Node, type: WidgetType | null): HTMLElement {
   /* an event-less type (a Trend) still takes behavior: a flow can trigger on a
      timer, so the new flow starts with NO trigger and the finding walks the user
      to picking one */

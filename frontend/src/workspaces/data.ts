@@ -18,7 +18,7 @@ import { iconMarkup, kindMark } from "../icons.js";
 import { sideOf, verbOf } from "../inspector/flows.js";
 import { newVariable, varCard, varShape } from "../inspector/vars.js";
 import { bindField, bindText } from "../reconcile.js";
-import { Feed, Json, MeshEntity, MeshField, MeshType, Widget } from "../types.js";
+import { Feed, Json, MeshEntity, MeshField, MeshType, Node } from "../types.js";
 
 /* ---- module view state: per view, never synced ---- */
 
@@ -357,25 +357,25 @@ export function renderDataTree(host: HTMLElement, editor: Editor): void {
 /* ---- where-used: the document's structural references, never an expression scan ---- */
 
 interface FeedUse {
-  widget: Widget;
+  widget: Node;
   feed: Feed;
 }
 
 interface FlowUse {
-  widget: Widget;
+  widget: Node;
   text: string;
 }
 
-function widgetLabel(widget: Widget): string {
-  return widget.label || widget.type;
+function widgetLabel(widget: Node): string {
+  return widget.name || widget.type || widget.kind;
 }
 
-function eachWidget(editor: Editor, visit: (widget: Widget) => void): void {
+function eachWidget(editor: Editor, visit: (widget: Node) => void): void {
   for (const page of editor.store.pages())
     for (const widget of editor.store.widgetsOn(page)) visit(widget);
 }
 
-function feedUses(editor: Editor, wants: (feed: Feed, widget: Widget) => boolean): FeedUse[] {
+function feedUses(editor: Editor, wants: (feed: Feed, widget: Node) => boolean): FeedUse[] {
   const out: FeedUse[] = [];
   eachWidget(editor, (widget) => {
     for (const feed of widget.feeds ?? [])
@@ -384,7 +384,7 @@ function feedUses(editor: Editor, wants: (feed: Feed, widget: Widget) => boolean
   return out;
 }
 
-function flowUses(editor: Editor, wants: (step: Json, widget: Widget) => boolean): FlowUse[] {
+function flowUses(editor: Editor, wants: (step: Json, widget: Node) => boolean): FlowUse[] {
   const out: FlowUse[] = [];
   eachWidget(editor, (widget) => {
     for (const flow of widget.flows ?? [])
@@ -397,7 +397,7 @@ function flowUses(editor: Editor, wants: (step: Json, widget: Widget) => boolean
 
 /* a widget whose OWN local carries the name shadows the global: its references are
  * to the local, so they never count as uses of the global */
-function shadows(widget: Widget, name: string): boolean {
+function shadows(widget: Node, name: string): boolean {
   return (widget.locals ?? []).some((v) => v.name === name);
 }
 
@@ -406,7 +406,7 @@ function sideNames(side: Json, name: string): boolean {
 }
 
 /* one clickable consumer row: landing on the consumer is the point of the listing */
-function usedRow(editor: Editor, widget: Widget, cells: (HTMLElement | null)[]): HTMLElement {
+function usedRow(editor: Editor, widget: Node, cells: (HTMLElement | null)[]): HTMLElement {
   const row = el("button", { class: "used-row", title: "go to " + widgetLabel(widget) }, cells);
   row.addEventListener("click", () => editor.reveal(widget.id));
   return row;

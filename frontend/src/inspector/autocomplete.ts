@@ -11,7 +11,7 @@
 
 import { el } from "../dom.js";
 import { Editor, variablesInScope } from "../editor.js";
-import { Feed, Flow, Lang, LangEntry, MeshField, Widget } from "../types.js";
+import { Feed, Flow, Lang, LangEntry, MeshField, Node } from "../types.js";
 import { localAt, scopeAt } from "./flowscope.js";
 
 export interface NameRow {
@@ -441,7 +441,7 @@ const TIMER_FIELDS: MeshField[] = [
 
 /* the standing name vocabulary at a widget: its slots as widget.<name>, then every
  * variable in scope */
-function scopeNames(editor: Editor, widget: Widget | null): NameRow[] {
+function scopeNames(editor: Editor, widget: Node | null): NameRow[] {
   const rows: NameRow[] = [];
   const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
   for (const slot of type?.slots ?? [])
@@ -481,7 +481,7 @@ function scopeNames(editor: Editor, widget: Widget | null): NameRow[] {
 /* what x IS in a feed's transform: the source field's shape, from reflection (mesh
  * sources) or the variable's declared type (HMI sources); a WHOLE-entity source makes
  * x the message, its field table riding along so the dot completes fields */
-export function feedX(editor: Editor, widget: Widget | null, feed: () => Feed) {
+export function feedX(editor: Editor, widget: Node | null, feed: () => Feed) {
   return (): { shape: string; elem?: string; fields?: MeshField[] } | null => {
     const at = feed();
     if (!at.src) return null;
@@ -506,7 +506,7 @@ export function feedX(editor: Editor, widget: Widget | null, feed: () => Feed) {
 
 /* what x IS at one row of a flow: the trigger's proposal, retyped by every `set x = ...`
  * above this row (spec 2.6). An earlier row can change it, so the row matters. */
-export function flowX(editor: Editor, widget: Widget | null, flow: () => Flow, stepId = 0) {
+export function flowX(editor: Editor, widget: Node | null, flow: () => Flow, stepId = 0) {
   return (): { shape: string; elem?: string; fields?: MeshField[] } | null =>
     scopeAt(editor, widget, flow(), stepId).x;
 }
@@ -514,7 +514,7 @@ export function flowX(editor: Editor, widget: Widget | null, flow: () => Flow, s
 /* The names a FLOW ROW may write: the standing scope plus this flow's own locals,
  * declared above this row only, and struct ones expanded to their fields so one field
  * can be computed from another (spec 3.7). */
-export function flowNames(editor: Editor, widget: Widget | null, flow: () => Flow, stepId: number) {
+export function flowNames(editor: Editor, widget: Node | null, flow: () => Flow, stepId: number) {
   return (): NameRow[] => {
     const rows = scopeNames(editor, widget);
     const declared = new Set(rows.map((r) => r.label));
@@ -541,7 +541,7 @@ export function flowNames(editor: Editor, widget: Widget | null, flow: () => Flo
 
 export function exprContext(
   editor: Editor,
-  widget: Widget | null,
+  widget: Node | null,
   tier: "display" | "wire",
   x: () => { shape: string; elem?: string } | null,
   names?: () => NameRow[],
@@ -638,7 +638,7 @@ export function feedPaths(editor: Editor, feed: () => Feed) {
  * side cannot set them. */
 export function localPaths(
   editor: Editor,
-  widget: Widget | null,
+  widget: Node | null,
   flow: () => Flow,
   stepId: number,
   local: () => string,

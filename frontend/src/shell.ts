@@ -23,7 +23,7 @@ import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { previewArrangement, renderStage } from "./stage.js";
-import { AttrTable, BuiltinDef, Diag, Doc, Frame, Json, Lang, Live, Mesh, Op, Page, Registry, Widget } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Layout, Live, Mesh, Node, NodeAttrs, Op, Page, Registry } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
 import { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } from "./workspaces/design.js";
@@ -35,6 +35,9 @@ const SIDEBAR_MAX = 640;
 export class App implements Editor {
   store = new DocStore();
   registry: Registry | null = null;
+  /* every PAGE node's compiled attrs, keyed by node id: the other half of the compile
+     product, and what lets the renderer run one interpreter over a page and a component */
+  nodeAttrs: Record<string, NodeAttrs> = {};
   /* the reflected entity tree, served by the backend: the "dart" root of the coming
      source picker (stage 6); the "hmi" root is the document's own variables */
   mesh: Mesh = { entities: [], types: [] };
@@ -98,8 +101,9 @@ export class App implements Editor {
     this.build();
     if (this.operate) this.setMode("operate");
     this.conn = new Connection(url, {
-      snapshot: (doc, registry, live, diag, mesh, lang, attrTable, builtins) =>
-        this.onSnapshot(doc, registry, live, diag, mesh, lang, attrTable, builtins),
+      snapshot: (doc, registry, live, diag, mesh, lang, attrTable, builtins, nodeAttrs) =>
+        this.onSnapshot(doc, registry, live, diag, mesh, lang, attrTable, builtins,
+                        nodeAttrs),
       mesh: (mesh) => {
         this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
         refreshSourceTree();
@@ -127,16 +131,16 @@ export class App implements Editor {
     return this.store.page(this.pageId) ?? this.store.pages()[0] ?? null;
   }
 
-  selectedWidget(): Widget | null {
+  selectedNode(): Node | null {
     const id = this.view.selection[0];
-    return id ? this.store.widget(id) : null;
+    return id ? this.store.nodeAt(id) : null;
   }
 
-  /* the selected FRAME, when the (single) selection names one (spec 2.8): from its Layers
-     row, or from its own pixels on the stage */
-  selectedFrame(): Frame | null {
+  /* the selection only where it is an INSTANCE: `store.widget` is the same question asked
+     of one id, so the rule lives in exactly one place */
+  selectedWidget(): Node | null {
     const id = this.view.selection[0];
-    return id ? this.store.frame(id) : null;
+    return id ? this.store.widget(id) : null;
   }
 
   apply(ops: Op[]): void {
@@ -188,8 +192,9 @@ export class App implements Editor {
     renderStage(this.nodes.stage, this);
     this.root.querySelector(".layers .layer-row.hover")?.classList.remove("hover");
     if (!id) return;
-    const key = this.store.frame(id) ? "f" + id : "w" + id;
-    this.root.querySelector('.layers [data-key="' + key + '"]')?.classList.add("hover");
+    /* ONE row key for one kind of node: the tree stopped needing to know which of two
+       shapes a row stood for the day there stopped being two */
+    this.root.querySelector('.layers [data-key="n' + id + '"]')?.classList.add("hover");
   }
 
   /* one preview mechanism for both drags: the tree hands its plan straight through to the
@@ -338,9 +343,11 @@ export class App implements Editor {
    * rebuild folds them again, where it knows what it needs. */
 
   private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
-                     lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[]): void {
+                     lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[],
+                     nodeAttrs: Record<string, NodeAttrs>): void {
     this.store.load(doc);
     this.registry = registry;
+    this.nodeAttrs = nodeAttrs;
     this.live = live;
     this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
     this.lang = lang;
@@ -360,7 +367,7 @@ export class App implements Editor {
      one is selected from the Layers tree and edited in the inspector, so dropping it on
      the echo of its own edit would empty the inspector under the author's hands. */
   private selectable(id: number): boolean {
-    return Boolean(this.store.widget(id) ?? this.store.frame(id));
+    return Boolean(this.store.widget(id) ?? this.store.nodeAt(id));
   }
 
   private onOps(version: number, ops: Op[]): void {
@@ -739,7 +746,7 @@ export class App implements Editor {
     const widget = at ? this.store.widget(at) : null;
     if (widget) {
       this.select([widget.id]);
-      openMenu(clientX, clientY, widget.type, [
+      openMenu(clientX, clientY, widget.type ?? "", [
         ...this.wrapItems([widget.id]),
         { separator: true },
         { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
@@ -751,7 +758,7 @@ export class App implements Editor {
     /* on a frame or the page background: what can be added INTO it, and — when there is a
        real frame under the pointer — what can be done TO it. The page background keeps the
        Add group alone: there is no node there to act on, and nothing to select. */
-    const frame = at ? this.store.frame(at) : null;
+    const frame = at ? this.store.nodeAt(at) : null;
     const parent = frame ? at : page.id;
     if (frame) this.select([frame.id]);
     const types = this.registry?.types ?? [];
@@ -795,14 +802,17 @@ export class App implements Editor {
     return [
       { label: "Wrap in row", icon: "frame", run: () => this.wrap(ids, "row") },
       { label: "Wrap in column", icon: "frame", run: () => this.wrap(ids, "col") },
-      { label: "Wrap in stack", icon: "frame", run: () => this.wrap(ids, "stack") },
+      { label: "Wrap in grid", icon: "frame", run: () => this.wrap(ids, "grid") },
+      /* free is the overlay: children fill the box unless they place themselves, which
+         is what "stack" used to mean before it dissolved into the general rule */
+      { label: "Wrap in free frame", icon: "frame", run: () => this.wrap(ids, "free") },
     ];
   }
 
   /* Grouping is one op because the frame it makes has an id only the backend can issue
      (ops.cpp); the echo comes back as that insert plus a move per node, and the selection
      follows the frame the same way a new page's does. */
-  private wrap(ids: number[], layout: "row" | "col" | "stack"): void {
+  private wrap(ids: number[], layout: Layout): void {
     if (!ids.length) return;
     this.pendingWrap = true;
     this.apply([{ op: "wrap", nodes: ids, layout }]);
@@ -813,12 +823,12 @@ export class App implements Editor {
      sliding right as its children land in front of it, so the k-th child's slot is k past
      where the frame started. The frame goes last, when it is empty. */
   private dissolve(frameId: number): void {
-    const frame = this.store.frame(frameId);
+    const frame = this.store.nodeAt(frameId);
     const parent = this.store.parentOf(frameId);
     if (!frame || !parent || typeof parent.id !== "number") return;
-    const base = (parent.children as (Frame | Widget)[]).findIndex((n) => n.id === frameId);
+    const base = (parent.children as Node[]).findIndex((n) => n.id === frameId);
     if (base < 0) return;
-    const ops: Op[] = frame.children.map((child, k) => ({
+    const ops: Op[] = (frame.children ?? []).map((child, k) => ({
       op: "move",
       node: child.id,
       parent: parent.id as number,
@@ -855,7 +865,7 @@ export class App implements Editor {
   private duplicate(): void {
     const ops: Op[] = [];
     for (const id of this.view.selection) {
-      const node = this.store.widget(id) ?? this.store.frame(id);
+      const node = this.store.widget(id) ?? this.store.nodeAt(id);
       if (!node) continue;
       const parent = this.store.parentOf(id);
       if (!parent || typeof parent.id !== "number") continue;

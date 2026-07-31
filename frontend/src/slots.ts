@@ -14,7 +14,7 @@
  *                      live value, because that is the thing the user is reasoning about
  *                      (spec 3.10), and editing it restates where the runtime starts. */
 
-import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Widget } from "./types.js";
+import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Node } from "./types.js";
 
 /* ---- theme tokens (spec 2.10) ---- */
 
@@ -62,7 +62,7 @@ export function slotSpec(type: WidgetType | null, name: string): SlotSpec | null
 }
 
 /* which slots this widget instance feeds from the mesh (at most one feed per slot) */
-export function fedSlots(widget: Widget): Set<string> {
+export function fedSlots(widget: Node): Set<string> {
   return new Set((widget.feeds ?? []).map((feed) => feed.slot));
 }
 
@@ -70,7 +70,7 @@ export function fedSlots(widget: Widget): Set<string> {
  * the type's default behavior. This is a union, not a decision: WHICH of them wins is the
  * backend's precedence rule (spec 2.3) and is not restated here. Whether the slot is
  * written at all does not depend on that, and it is all a view needs to know. */
-export function runtimeSlots(widget: Widget, type: WidgetType | null): Set<string> {
+export function runtimeSlots(widget: Node, type: WidgetType | null): Set<string> {
   const out = fedSlots(widget);
   const written = (flows: Json[]) => {
     for (const flow of flows ?? [])
@@ -84,7 +84,7 @@ export function runtimeSlots(widget: Widget, type: WidgetType | null): Set<strin
 }
 
 /* the live cell key for a widget slot; the backend owns this naming */
-export function slotCell(widget: Widget, slot: string): string {
+export function slotCell(widget: Node, slot: string): string {
   return widget.id + "." + slot;
 }
 
@@ -123,7 +123,7 @@ export function withSlot(slots: Json, address: string, value: Json): Json {
 }
 
 /* what the DOCUMENT says a slot is: the instance value, else the type default */
-export function authoredSlot(widget: Widget, type: WidgetType | null, name: string): Json {
+export function authoredSlot(widget: Node, type: WidgetType | null, name: string): Json {
   const instance = slotValue(widget.slots, name);
   if (instance !== undefined) return instance;
   const spec = slotSpec(type, name);
@@ -135,7 +135,7 @@ export function authoredSlot(widget: Widget, type: WidgetType | null, name: stri
  * only where that cell started. For the rest the document IS the value and the field shows
  * it, so typing is never fought by a compiled copy of the old one. */
 export function editedSlot(
-  widget: Widget,
+  widget: Node,
   type: WidgetType | null,
   live: Live | null,
   runtime: Set<string>,

@@ -5,7 +5,7 @@
  * Anti-desync rules (PLAN.md) live here: a version that is not last + 1 is a GAP, and a
  * gap discards state and asks for a snapshot rather than patching around the hole. */
 
-import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Live, Mesh, Op, PROTO, Registry } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Live, Mesh, NodeAttrs, Op, PROTO, Registry } from "./types.js";
 
 export interface Handlers {
   /* the snapshot carries diagnostics too: they are computed at compile time, which is
@@ -14,7 +14,8 @@ export interface Handlers {
      the closed attr vocabulary (spec 2.3); neither ever changes at runtime, so the
      snapshot is their only carrier. */
   snapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
-           lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[]): void;
+           lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[],
+           nodeAttrs: Record<string, NodeAttrs>): void;
   ops(version: number, ops: Op[], origin: number): void;
   live(live: Live): void;
   diag(diag: Diag[]): void;
@@ -132,7 +133,8 @@ export class Connection {
           frame.diag?.compile ?? [], frame.mesh ?? { entities: [] },
           frame.lang ?? { builtins: [], methods: [] },
           frame.attr_table ?? { kinds: [], common: [], perKind: {} },
-          frame.builtins ?? []);
+          frame.builtins ?? [],
+          frame.node_attrs ?? {});
         this.flush();
         return;
       case "ops_applied":

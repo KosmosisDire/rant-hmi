@@ -18,7 +18,7 @@ import { Editor, UNKNOWN_TEXT } from "../editor.js";
 import { kindMark } from "../icons.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { resolveColor } from "../slots.js";
-import { Json, SlotSpec, Widget } from "../types.js";
+import { Json, SlotSpec, Node } from "../types.js";
 
 /* what a color editor needs to speak tokens: resolution in this view's mode, and the
  * grouped offer list for the $ menu (spec 2.10) */
@@ -154,14 +154,14 @@ export function valueEditor(
  * structure key of the row containing this must include the reference's kind, so a
  * cross-kind repick rebuilds the kind mark. */
 /* the scope mark for an HMI variable reference: blue local, violet global */
-function scopeMark(widget: Widget | null, name: string | undefined): string {
-  return widget?.locals.some((v) => v.name === name) ? "l" : "g";
+function scopeMark(widget: Node | null, name: string | undefined): string {
+  return (widget?.locals ?? []).some((v) => v.name === name) ? "l" : "g";
 }
 
 export function sourceField(
   key: string,
   editor: Editor,
-  widget: Widget | null,
+  widget: Node | null,
   opts: SourceTreeOptions,
   read: () => { ref?: { kind: string; name: string }; path?: string },
   onPick: (pick: SourcePick) => void,
@@ -201,7 +201,7 @@ export function entityChip(
   key: string,
   read: () => { ref?: { kind: string; name: string }; path?: string },
   editor?: Editor,
-  widget?: Widget | null,
+  widget?: Node | null,
 ): HTMLElement {
   const raw = read().ref?.kind ?? "?";
   const kind = raw === "L" ? scopeMark(widget ?? null, read().ref?.name) : raw;

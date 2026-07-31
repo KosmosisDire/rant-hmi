@@ -50,10 +50,18 @@ export const ICONS: Record<string, string> = {
   Label: '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
   Panel: '<rect x="3" y="4" width="18" height="16" rx="2"/>',
 
-  /* frame layouts, for the inspector's layer tree */
+  /* frame layouts, for the layers tree: how this frame places what is inside it */
   "frame-row": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/>',
   "frame-col": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>',
-  "frame-stack": '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8" y="8" width="16" height="16" rx="2"/>',
+  "frame-grid": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18"/><path d="M12 3v18"/>',
+  /* FREE: the children place themselves, so the glyph is a box with one floating inside
+     it rather than a box divided into tracks */
+  "frame-free": '<rect width="18" height="18" x="3" y="3" rx="2"/><rect x="8" y="8" width="7" height="6" rx="1"/>',
+
+  /* the ink kinds: type, glyph, outline */
+  "node-text": '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
+  "node-icon": '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  "node-path": '<path d="M4 18C7 6 17 18 20 6"/><rect x="2" y="16" width="4" height="4" rx="1"/><rect x="18" y="4" width="4" height="4" rx="1"/>',
 };
 
 export const KIND_COLOR: Record<string, string> = {

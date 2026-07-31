@@ -14,7 +14,7 @@
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
-import { Json, MeshEntity, MeshField, SlotSpec, Var, Widget } from "../types.js";
+import { Json, MeshEntity, MeshField, SlotSpec, Var, Node } from "../types.js";
 import { FlowScope } from "./flowscope.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
@@ -173,13 +173,13 @@ function varFields(editor: Editor, type: string): MeshField[] {
 /* what a src/path pair resolves to, for the type chips outside the tree */
 export function resolveShape(
   editor: Editor,
-  widget: Widget | null,
+  widget: Node | null,
   ref: { kind?: string; name?: string } | undefined,
   path: string | undefined,
 ): string {
   if (!ref?.name) return "";
   if (ref.kind === "L") {
-    const local = widget?.locals.find((v) => v.name === ref.name);
+    const local = (widget?.locals ?? []).find((v) => v.name === ref.name);
     const found = local ?? editor.store.globals().find((v) => v.name === ref.name);
     if (!found) return "";
     if (!path) return varShape(found.type);
@@ -222,7 +222,7 @@ function leaf_name(name: string): string {
   return at < 0 ? name : name.slice(at + 1);
 }
 
-function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptions,
+function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions,
                     filter: string): Row[] {
   const rows: Row[] = [];
   const match = (text: string) => !filter || text.toLowerCase().includes(filter);
@@ -442,7 +442,7 @@ function build_rows(editor: Editor, widget: Widget | null, opts: SourceTreeOptio
 export function openSourceTree(
   anchor: HTMLElement,
   editor: Editor,
-  widget: Widget | null,
+  widget: Node | null,
   opts: SourceTreeOptions,
   onPick: (pick: SourcePick) => void,
   current?: Json,

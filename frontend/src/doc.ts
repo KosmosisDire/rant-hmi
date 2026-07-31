@@ -3,13 +3,12 @@
  * set_props its fan-out performed), so there is nothing to decide here and no rule that
  * can drift out of step with the server. */
 
-import { ComponentDef, Doc, Frame, Json, Op, Page, Token, Var, Widget } from "./types.js";
+import { ComponentDef, Doc, isInstance, Json, Node, Op, Page, Token, Var } from "./types.js";
 
-/* which lists a node kind holds, so the index can walk without knowing the schema
-   ("components"/"props"/"parts"/"behavior" are the component subtree; "children" is
-   shared by a page, a frame AND a part — a page or frame's holds widgets and frames
-   in one heterogeneous list, spec 2.8) */
-const CHILD_LISTS = ["globals", "tokens", "components", "props", "parts", "behavior",
+/* which lists a node holds, so the index can walk without knowing the schema. `children`
+   is shared by a page, a component and a frame, because they all hold the SAME kind of
+   child — that is the whole of what "one tree" means here. */
+const CHILD_LISTS = ["globals", "tokens", "components", "props", "behavior",
                      "children", "pages", "locals", "feeds", "flows", "do"];
 
 interface Entry {
@@ -62,28 +61,29 @@ export class DocStore {
     return this.doc ? this.doc.components ?? [] : [];
   }
 
-  widget(id: number): Widget | null {
+  /* ONE LOOKUP: a page's frame, a component's text leaf and a widget instance all come
+     back through here, because they are the same kind of thing. */
+  nodeAt(id: number): Node | null {
     const node = this.node(id);
-    return node && node.kind === "widget" ? (node as Widget) : null;
+    return node && typeof node.kind === "string" ? (node as Node) : null;
   }
 
-  frame(id: number): Frame | null {
-    const node = this.node(id);
-    return node && node.kind === "frame" ? (node as Frame) : null;
+  /* the node only if it is an INSTANCE — a frame naming a component. What used to be
+     `widget()`, asked the way the model now answers it. */
+  widget(id: number): Node | null {
+    const node = this.nodeAt(id);
+    return isInstance(node) ? node : null;
   }
 
-  /* The WIDGET that owns a node, or 0. A compile finding is addressed to whatever node is
-     wrong — a feed, a flow step, a local — and every view that MARKS one marks the widget
-     it belongs to (spec 3.8), so each finding is walked up here. A widget is identified by
-     its `kind` discriminator, the same one `widget()` above reads: it used to be "carries a
-     geom", which stopped being true of any node when manual geometry was removed and left
-     this answering 0 for everything. A global variable, or anything inside a component,
-     belongs to no widget and walks off the top of the document. */
+  /* The INSTANCE that owns a node, or 0. A compile finding is addressed to whatever node
+     is wrong — a feed, a flow step, a local — and every view that MARKS one marks the
+     instance it belongs to, so each finding is walked up here. A global variable, or
+     anything inside a component, belongs to no instance and walks off the top. */
   owningWidget(id: number): number {
     let at: Json = this.node(id);
     let node = id;
     while (at) {
-      if (at.kind === "widget") return node;
+      if (isInstance(at as Node)) return node;
       const parent = this.parentOf(node);
       if (!parent || typeof parent.id !== "number") return 0;
       node = parent.id;
@@ -92,14 +92,14 @@ export class DocStore {
     return 0;
   }
 
-  /* every widget on this page, wherever it nests: a page-level where-used scan (Data,
-     Style) wants every widget regardless of frame grouping, never a frame itself */
-  widgetsOn(page: Page): Widget[] {
-    const out: Widget[] = [];
-    const walk = (children: (Frame | Widget)[]) => {
+  /* every instance on this page, wherever it nests: a page-level where-used scan (Data,
+     Style) wants every one of them regardless of how they are grouped */
+  widgetsOn(page: Page): Node[] {
+    const out: Node[] = [];
+    const walk = (children: Node[]) => {
       for (const node of children) {
-        if (node.kind === "widget") out.push(node);
-        else walk(node.children);
+        if (isInstance(node)) out.push(node);
+        walk(node.children ?? []);
       }
     };
     walk(page.children ?? []);

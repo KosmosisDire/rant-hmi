@@ -14,8 +14,8 @@ import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
-import { bindChoice, bindField, bindText, shownValue } from "../reconcile.js";
-import { AttrDef, ComponentDef, Json, PartNode, PropDef, SlotSpec } from "../types.js";
+import { bindChoice, bindField, bindText } from "../reconcile.js";
+import { AttrDef, ComponentDef, Json, Node, PropDef, SlotSpec } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "series"];
@@ -33,7 +33,7 @@ function ownAttrsOf(editor: Editor, kind: string): AttrDef[] {
 function commonAttrs(editor: Editor): AttrDef[] {
   return editor.attrTable?.common ?? [];
 }
-function partKinds(editor: Editor): string[] {
+function nodeKinds(editor: Editor): string[] {
   return editor.attrTable?.kinds ?? [];
 }
 
@@ -48,12 +48,11 @@ function attrPlaceholder(def: AttrDef): string {
   return def.default !== undefined ? literalText(def.default) : "not set";
 }
 
-/* The keys a part carries that its kind's vocabulary does NOT declare. ONE definition,
+/* The keys a node carries that its kind's vocabulary does NOT declare. ONE definition,
  * because both the shape string and the render need it and they must not disagree: the
  * declared rows are fixed by `kind` alone, but a stray adds a row, so which strays exist
- * is structure and has to ride the shape. `code` has an open vocabulary and never strays. */
-function strayAttrs(editor: Editor, part: PartNode): string[] {
-  if (part.kind === "code") return [];
+ * is structure and has to ride the shape. */
+function strayAttrs(editor: Editor, part: Node): string[] {
   const declared = new Set(
     [...ownAttrsOf(editor, part.kind), ...commonAttrs(editor)].map((d) => d.name));
   return Object.keys((part.attrs ?? {}) as Record<string, string>)
@@ -69,13 +68,13 @@ function attrGroupHeading(text: string): HTMLElement {
 
 /* the selection resolved against the store: a vanished part falls back to the
  * component, a vanished component to null (the widget inspector then applies) */
-function selection(editor: Editor): { comp: ComponentDef; part: PartNode | null } | null {
+function selection(editor: Editor): { comp: ComponentDef; part: Node | null } | null {
   const sel = editor.componentSel;
   if (!sel) return null;
   const comp = editor.store.node(sel.component) as ComponentDef | null;
   if (!comp) return null;
   if (sel.node === sel.component) return { comp, part: null };
-  const part = editor.store.node(sel.node) as PartNode | null;
+  const part = editor.store.node(sel.node) as Node | null;
   return { comp, part: part && typeof part.kind === "string" ? part : null };
 }
 
@@ -83,7 +82,7 @@ function selection(editor: Editor): { comp: ComponentDef; part: PartNode | null 
 function siblingsOf(editor: Editor, partId: number): Json[] {
   const parent = editor.store.parentOf(partId) as Json;
   if (!parent) return [];
-  for (const key of ["children", "parts"]) {
+  for (const key of ["children"]) {
     const list = parent[key];
     if (Array.isArray(list) && list.some((node: Json) => node?.id === partId)) return list;
   }
@@ -114,7 +113,7 @@ function builtinAt(editor: Editor): BuiltinAt | null {
   const comp = (editor.builtins ?? []).find((b: Json) => b?.name === sel.name);
   if (!comp) return null;
   let part: Json = null;
-  let list: Json[] = Array.isArray(comp.parts) ? (comp.parts as Json[]) : [];
+  let list: Json[] = Array.isArray(comp.children) ? (comp.children as Json[]) : [];
   const names: string[] = [];
   for (const step of sel.path ? sel.path.split(".") : []) {
     const at = list[Number(step)];
@@ -125,7 +124,9 @@ function builtinAt(editor: Editor): BuiltinAt | null {
     names.push(String(at.name ?? ""));
     list = Array.isArray(at.children) ? (at.children as Json[]) : [];
   }
-  return { comp, part, path: sel.path, address: names.slice(1).join(".") };
+  /* every step IS an address segment now: the component is the root, so its children are
+     the first named level rather than one wrapper part down */
+  return { comp, part, path: sel.path, address: names.join(".") };
 }
 
 /* A read-only expression: the same highlighted field the editable rows use, `readonly`
@@ -239,7 +240,6 @@ function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt)
   const comp = String(at.comp?.name ?? "");
   const kind = String(part?.kind ?? "");
   const attrs = (part?.attrs ?? {}) as Record<string, Json>;
-  const keys = Object.keys(attrs);
 
   const back = el("button", {
     class: "part-back",
@@ -263,10 +263,10 @@ function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt)
     el("span", { class: "row-label", text: "KIND" }),
     el("span", { class: "kw", text: kind }),
   ]);
-  if (kind === "box")
+  if (kind === "frame")
     kindRow.append(
-      el("span", { class: "row-label", text: "DIR" }),
-      el("span", { class: "kw", text: String(part?.dir ?? "stack") }),
+      el("span", { class: "row-label", text: "LAYOUT" }),
+      el("span", { class: "kw", text: String(part?.layout ?? "free") }),
     );
   body.append(
     el("div", { class: "part-def" }, [
@@ -289,10 +289,9 @@ function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt)
                            "no properties of its own"),
   );
 
-  /* the closed vocabulary (spec 2.3): every attr this KIND declares, own first then
-   * common, with the built-in's authored text where it set one — same idiom as the
-   * editable part view below, minus the commit wiring. `code` alone keeps the old
-   * free-form listing (its own attrs are never in the table at all). */
+  /* the closed vocabulary: every attr this KIND declares, own first then common, with the
+   * built-in's authored text where it set one — same idiom as the editable node view
+   * below, minus the commit wiring */
   const attrDefRow = (def: AttrDef): HTMLElement => {
     const raw = attrs[def.name];
     return el("div", { class: "attr-row" }, [
@@ -300,43 +299,15 @@ function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt)
       exprView(typeof raw === "string" ? raw : "", attrPlaceholder(def), def.note),
     ]);
   };
-  const ownDefs = kind === "code" ? [] : ownAttrsOf(editor, kind);
-  const commonDefs = kind === "code" ? [] : commonAttrs(editor);
+  const ownDefs = ownAttrsOf(editor, kind);
+  const commonDefs = commonAttrs(editor);
   body.append(
-    ...section(
-      "builtin-attrs", "Attrs",
-      String(kind === "code" ? keys.length : ownDefs.length + commonDefs.length),
-      () =>
-        kind === "code"
-          ? [
-              ...keys.map((key) =>
-                el("div", { class: "attr-row" }, [
-                  el("span", { class: "field attr-name static", text: key }),
-                  exprView(String(attrs[key] ?? "")),
-                ]),
-              ),
-              keys.length ? null : el("p", { class: "empty", text: "no attrs" }),
-            ]
-          : [
-              ...(ownDefs.length
-                ? [attrGroupHeading("THIS PART"), ...ownDefs.map(attrDefRow)]
-                : []),
-              attrGroupHeading("COMMON"),
-              ...commonDefs.map(attrDefRow),
-            ],
-    ),
+    ...section("builtin-attrs", "Attrs", String(ownDefs.length + commonDefs.length), () => [
+      ...(ownDefs.length ? [attrGroupHeading("THIS NODE"), ...ownDefs.map(attrDefRow)] : []),
+      attrGroupHeading("COMMON"),
+      ...commonDefs.map(attrDefRow),
+    ]),
   );
-
-  if (kind === "code") {
-    const source = el("textarea", {
-      class: "field code-editor",
-      spellcheck: "false",
-      rows: "8",
-      readonly: "readonly",
-    }) as HTMLTextAreaElement;
-    source.value = String(part?.code ?? "");
-    body.append(...section("builtin-code", "Code", null, () => [source]));
-  }
 
   const interact = part?.interact as Json;
   if (interact && typeof interact === "object") {
@@ -396,14 +367,12 @@ export function componentInspectorShape(editor: Editor): string | null {
       kind: part.kind,
       props: ((part as Json).props ?? []).map((p: PropDef) =>
         [p.id, p.shape, p.group, (p.variants ?? []).join("|"), p.editor ?? ""]),
-      /* the closed vocabulary (spec 2.3) fixes the declared row SET by kind, already
-         covered by the `kind` key above, so a value or diag change needs no shape bump
-         (bindField and the diag icon's own hover state handle those live). Two things
-         still add rows: `code`, whose vocabulary is open, and an undeclared key the
-         document carries, which gets a row of its own so it can be removed. */
-      attrs: part.kind === "code"
-        ? Object.keys(part.attrs ?? {})
-        : strayAttrs(editor, part),
+      /* the closed vocabulary fixes the declared row SET by kind, already covered by the
+         `kind` key above, so a value or diag change needs no shape bump (bindField and the
+         diag icon's own hover state handle those live). One thing still adds a row: an
+         undeclared key the document carries, which gets one of its own so it can be
+         removed. */
+      attrs: strayAttrs(editor, part),
       interact: interact
         ? { primitive: interact.primitive ?? "press",
             params: Object.keys(interact.params ?? {}),
@@ -610,11 +579,8 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
 /* ---- the part view ---- */
 
 function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
-                        part: PartNode): void {
-  const at = () => (editor.store.node(part.id) as PartNode | null) ?? part;
-  const attrsOf = () => (at().attrs ?? {}) as Record<string, string>;
-  const commitAttrs = (next: Record<string, string>) =>
-    editor.apply([{ op: "set_prop", node: part.id, key: "attrs", value: next }]);
+                        part: Node): void {
+  const at = () => (editor.store.node(part.id) as Node | null) ?? part;
 
   const back = el("button", {
     class: "part-back",
@@ -648,20 +614,21 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
 
   const siblings = siblingsOf(editor, part.id);
   const index = siblings.findIndex((node: Json) => node?.id === part.id);
-  const isBox = part.kind === "box";
 
   const kindRow = el("div", { class: "row" }, [
     el("span", { class: "row-label", text: "KIND" }),
     el("span", { class: "kw", text: part.kind }),
   ]);
-  if (isBox) {
-    const dir = selectField(
-      ["row", "col", "stack", "auto"].map((v) => ({ value: v })),
-      (part as Json).dir ?? "stack",
-      (v) => editor.apply([{ op: "set_prop", node: part.id, key: "dir", value: v }]),
+  /* a frame is the one kind that PLACES anything, so it is the one kind with a layout:
+     free lets its children measure themselves, row/col/grid arrange them */
+  if (part.kind === "frame") {
+    const layout = selectField(
+      ["free", "row", "col", "grid"].map((v) => ({ value: v })),
+      (part as Json).layout ?? "free",
+      (v) => editor.apply([{ op: "set_prop", node: part.id, key: "layout", value: v }]),
     );
-    bindChoice(part.id + ":dir", pickerOf(dir), () => (at() as Json).dir ?? "stack");
-    kindRow.append(el("span", { class: "row-label", text: "DIR" }), dir);
+    bindChoice(part.id + ":layout", pickerOf(layout), () => (at() as Json).layout ?? "free");
+    kindRow.append(el("span", { class: "row-label", text: "LAYOUT" }), layout);
   }
   kindRow.appendChild(el("span", { class: "spacer" }));
   if (index > 0)
@@ -701,61 +668,7 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
                     "no properties of its own"),
   );
 
-  /* the attrs table (spec 2.3). The vocabulary is CLOSED: the section lists EVERY attr
-   * this kind declares — its own first, then the common set every kind shares — set or
-   * not, so what an unset one will do is visible without typing anything (its renderer
-   * default as the field's placeholder). The name is a static label now: it is picked
-   * by which row you are on, never typed, and clearing a field back to empty REMOVES
-   * the key (attrDefRow) rather than storing "", so the document keeps only what was
-   * authored. `code` is the one exception, unchanged: its body reads `view.attrs` by
-   * whatever names its own JS chose, an open set no table could close, so it alone
-   * keeps the free-form rows (add, rename, delete) this section always had. */
-  if (part.kind === "code") {
-    const keys = Object.keys(part.attrs ?? {});
-    body.append(
-      ...section("part-attrs", "Attrs", String(keys.length), () => [
-        ...keys.map((key) => attrRow(editor, part.id, key, attrsOf, commitAttrs)),
-        keys.length ? null : el("p", { class: "empty", text: "no attrs yet" }),
-        el("button", {
-          class: "dashed-btn",
-          text: "+ Attr",
-          onclick: () => {
-            const taken = new Set(Object.keys(attrsOf()));
-            let fresh = "attr1";
-            for (let n = 1; taken.has(fresh); n++) fresh = "attr" + n;
-            commitAttrs({ ...attrsOf(), [fresh]: "" });
-          },
-        }),
-      ]),
-    );
-  } else {
-    const ownDefs = ownAttrsOf(editor, part.kind);
-    const commonDefs = commonAttrs(editor);
-    /* anything the document carries that the vocabulary does not name: rendered last,
-       under its own heading, so it is visible and removable rather than an error with
-       nowhere to land (unknownAttrRow) */
-    const strays = strayAttrs(editor, part);
-    body.append(
-      ...section("part-attrs", "Attrs",
-                 String(ownDefs.length + commonDefs.length + strays.length), () => [
-        ...(ownDefs.length
-          ? [attrGroupHeading("THIS PART"),
-             ...ownDefs.map((d) => attrDefRow(editor, part.id, d, attrsOf, commitAttrs))]
-          : []),
-        attrGroupHeading("COMMON"),
-        ...commonDefs.map((d) => attrDefRow(editor, part.id, d, attrsOf, commitAttrs)),
-        ...(strays.length
-          ? [attrGroupHeading("NOT READ BY THIS KIND"),
-             ...strays.map((key) => unknownAttrRow(editor, part.id, key, attrsOf, commitAttrs))]
-          : []),
-      ]),
-    );
-  }
-
-  /* the `code` kind's body (spec 2.3): user-authored JavaScript, so it gets a dedicated
-   * multi-line editor instead of the one-line attr rows above (`attrs` still applies to
-   * a code part — repeat, show, the transform — only the body itself needs this). */
-  if (part.kind === "code") body.append(...codeSection(editor, part));
+  body.append(...attrsSection(editor, part));
 
   /* the interact, when the part carries one: primitive and emits are read-only (the
    * primitive's vocabulary is closed), the params are expressions like any attr */
@@ -780,21 +693,20 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     );
   }
 
-  /* ANY part takes children now (spec 2.3), not just a box: a draw part paints its
-     shape and its children ride over it, which is how a knob's dot lives on its face
-     instead of beside it behind a wrapper box */
-  {
+  /* A FRAME IS THE ONE KIND THAT HOLDS CHILDREN: text, icon and path are ink, and
+     anything that wants to sit over them is a free frame's child, placed by its own
+     x/y/w/h. The schema refuses the other three a `children` list at all, so this offers
+     the button only where it would work. */
+  if (part.kind === "frame") {
     const add = el("button", {
       class: "dashed-btn",
-      text: "+ Child part",
-      title: isBox
-        ? "a box lays its children out by `dir`"
-        : "a draw part paints its shape, then its children over it",
+      text: "+ Child",
+      title: "placed by this frame's own layout",
     });
     add.addEventListener("click", () => {
       const rect = add.getBoundingClientRect();
-      openMenu(rect.left, rect.bottom + 4, "Add part",
-        partKinds(editor).map((kind) => ({
+      openMenu(rect.left, rect.bottom + 4, "Add node",
+        nodeKinds(editor).map((kind) => ({
           label: kind,
           run: () => {
             const taken = new Set(((at() as Json).children ?? []).map((c: Json) => c?.name));
@@ -811,87 +723,46 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
   }
 }
 
-/* The `code` part's body editor: a multi-line monospace textarea (`.code-editor` in
- * styles.css; `.field` already sets the monospace font every field here uses), resizable
- * vertically since a JS body can run long. It follows the file's commit idiom — commit on
- * blur/change, Escape reverts to the last value the reconciler pushed in (shownValue) —
- * with two deliberate departures from `commitInput`/`commitTextInput`: Enter must NOT
- * commit (it is an ordinary newline in the source), and Tab inserts two spaces rather
- * than moving focus, since a code body is the one field here that needs both. */
-function codeSection(editor: Editor, part: PartNode): HTMLElement[] {
-  const at = () => (editor.store.node(part.id) as PartNode | null) ?? part;
-  const commit = (text: string) =>
-    editor.apply([{ op: "set_prop", node: part.id, key: "code", value: text }]);
-  const textarea = el("textarea", {
-    class: "field code-editor",
-    spellcheck: "false",
-    rows: "8",
-    onkeydown: (ev: KeyboardEvent) => {
-      const input = ev.target as HTMLTextAreaElement;
-      if (ev.key === "Tab") {
-        ev.preventDefault();
-        const start = input.selectionStart ?? input.value.length;
-        const end = input.selectionEnd ?? start;
-        input.value = input.value.slice(0, start) + "  " + input.value.slice(end);
-        input.selectionStart = input.selectionEnd = start + 2;
-        return;
-      }
-      if (ev.key === "Escape") {
-        input.value = shownValue(input) ?? "";
-        input.blur();
-      }
-    },
-    onchange: (ev: Event) => commit((ev.target as HTMLTextAreaElement).value),
-  }) as HTMLTextAreaElement;
-  bindField(part.id + ":code", textarea, () => at().code ?? "");
-  return section("part-code", "Code", null, () => [textarea]);
-}
-
-function attrRow(
-  editor: Editor,
-  partId: number,
-  key: string,
-  attrsOf: () => Record<string, string>,
-  commitAttrs: (next: Record<string, string>) => void,
-): HTMLElement {
-  const name = commitInput(
-    key,
-    (text) => {
-      if (!text || text === key) return;
-      const next: Record<string, string> = {};
-      for (const [k, v] of Object.entries(attrsOf())) next[k === key ? text : k] = v;
-      commitAttrs(next);
-    },
-    { class: "field attr-name" },
-  );
-  bindField(partId + ":attrs." + key + ".key", name, () => key);
-  const expr = commitInput(
-    String(attrsOf()[key] ?? ""),
-    (text) => commitAttrs({ ...attrsOf(), [key]: text }),
-    { class: "field grow", spellcheck: "false" },
-  );
-  bindField(partId + ":attrs." + key, expr, () => String(attrsOf()[key] ?? ""));
-  return el("div", { class: "attr-row" }, [
-    name,
-    highlighted(expr),
-    diagIcon(editor.diagAt(partId, key)),
-    iconButton("x", "remove " + key, () => {
-      const next = { ...attrsOf() };
-      delete next[key];
-      commitAttrs(next);
-    }),
+/* THE ATTRS SECTION, for any node anywhere. The vocabulary is CLOSED: it lists EVERY attr
+ * this kind declares — its own first, then the common set every kind shares — set or not,
+ * so what an unset one will do is visible without typing anything (its default as the
+ * field's placeholder). The name is a static label: it is picked by which row you are on,
+ * never typed, and clearing a field back to empty REMOVES the key rather than storing "",
+ * so the document keeps only what was authored. Anything the document carries that the
+ * vocabulary does not name is listed last, under its own heading, so it is visible and
+ * removable rather than an error with nowhere to land.
+ *
+ * ONE implementation, exported, because a page's frame and a component's frame are the
+ * same node: editing them differently would be two vocabularies wearing one name. */
+export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
+  const at = () => (editor.store.node(node.id) as Node | null) ?? node;
+  const attrsOf = () => (at().attrs ?? {}) as Record<string, string>;
+  const commitAttrs = (next: Record<string, string>) =>
+    editor.apply([{ op: "set_prop", node: node.id, key: "attrs", value: next }]);
+  const ownDefs = ownAttrsOf(editor, node.kind);
+  const commonDefs = commonAttrs(editor);
+  const strays = strayAttrs(editor, node);
+  return section("node-attrs", "Attrs",
+                 String(ownDefs.length + commonDefs.length + strays.length), () => [
+    ...(ownDefs.length
+      ? [attrGroupHeading("THIS " + node.kind.toUpperCase()),
+         ...ownDefs.map((d) => attrDefRow(editor, node.id, d, attrsOf, commitAttrs))]
+      : []),
+    attrGroupHeading("COMMON"),
+    ...commonDefs.map((d) => attrDefRow(editor, node.id, d, attrsOf, commitAttrs)),
+    ...(strays.length
+      ? [attrGroupHeading("NOT READ BY THIS KIND"),
+         ...strays.map((key) => unknownAttrRow(editor, node.id, key, attrsOf, commitAttrs))]
+      : []),
   ]);
 }
 
-/* One row of the CLOSED vocabulary (spec 2.3): the name is a static label — the
- * vocabulary is picked by which row you are on, not typed — and the value is the same
- * highlighted expression field every attr row has always used. An unset attr shows the
- * renderer's own default (or, where there is none, the note explaining what absence
- * means) as the field's placeholder, so its effect is visible without filling it in.
- * Typing a value commits it into the attrs object; clearing it back to empty REMOVES
- * the key rather than storing "", so the document keeps only what was actually
- * authored — unlike `attrRow` above, there is no separate remove button, because
- * clearing the field already says the same thing. */
+/* which attrs a node's inspector will show, as a shape string: the declared set is fixed
+ * by kind, so only the strays move it */
+export function attrsShape(editor: Editor, node: Node): string {
+  return node.kind + ":" + strayAttrs(editor, node).join(",");
+}
+
 function attrDefRow(
   editor: Editor,
   partId: number,
