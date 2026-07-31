@@ -330,25 +330,14 @@ export function run(program: Program | undefined, cells: Cells): Json {
   return stack.length ? stack[stack.length - 1] : NIL;
 }
 
-/* typed reads of one attribute, with the fallback a renderer wants when it is Nil */
-export function attrNum(value: Json, fallback: number): number {
-  const n = num(value);
-  return n === null ? fallback : n;
-}
-
+/* An attribute read as TEXT, or null where it is Nil. The num/bool/color coercers that
+ * stood beside this went with the renderer that took their fallbacks; this one stays
+ * because the interpreter itself needs it — STR, MEASURE and text-side ADD all render an
+ * operand through it, so the two spellings of "make this a string" cannot disagree. */
 export function attrText(value: Json): string | null {
   if (nil(value)) return null;
   if (typeof value === "string") return value;
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   return null;
-}
-
-export function attrBool(value: Json, fallback: boolean): boolean {
-  const t = truthy(value);
-  return t === null ? fallback : t;
-}
-
-export function attrColor(value: Json): string | null {
-  return typeof value === "string" && value.startsWith("#") ? value : null;
 }

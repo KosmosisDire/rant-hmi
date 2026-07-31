@@ -23,7 +23,7 @@ import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
-import { AttrTable, BuiltinDef, Diag, Doc, Frame, HistView, Json, Lang, Live, Mesh, Op, Page, Registry, Widget } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Frame, Json, Lang, Live, Mesh, Op, Page, Registry, Widget } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
 import { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } from "./workspaces/design.js";
@@ -52,7 +52,6 @@ export class App implements Editor {
      parts ("" = the component itself). Mutually exclusive with the other two. */
   builtinSel: { name: string; path: string } | null = null;
   live: Live | null = null;
-  hists: Record<string, HistView> = {};
   diagnostics: Diag[] = [];
   view: ViewState = {
     mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {},
@@ -108,7 +107,6 @@ export class App implements Editor {
          assign. The sidebars decide for themselves whether anything structural moved. */
       live: (live) => {
         this.live = live;
-        this.absorbHist(live.hist);
         this.queueSidebars();
       },
       diag: (rows) => this.onDiag(rows),
@@ -303,52 +301,20 @@ export class App implements Editor {
     this.queueSidebars();
   }
 
-  /* ---- protocol ---- */
-
-  /* Fold a frame's history deltas into the standing views. `from` is the absolute index
-   * of the first delivered sample: contiguous appends extend, a jump forward pads the
-   * gap with unknowns, and anything else (a snapshot, a recompile's full resend, a
-   * series-width change) replaces the view outright. */
-  private absorbHist(hist: Record<string, Json> | undefined): void {
-    if (!hist) return;
-    for (const key of Object.keys(hist)) {
-      const entry = hist[key] as Json;
-      if (!entry || typeof entry !== "object") continue;
-      const series = Math.max(1, Number(entry.series ?? 1));
-      const flat = Array.isArray(entry.values) ? (entry.values as (number | null)[]) : [];
-      const samples: (number | null)[][] = [];
-      for (let at = 0; at + series <= flat.length; at += series)
-        samples.push(flat.slice(at, at + series));
-      const from = Number(entry.from ?? 0);
-      const cap = Math.max(2, Number(entry.cap ?? 600));
-      const view = this.hists[key];
-      if (view && view.series === series && from >= view.total) {
-        for (let pad = view.total; pad < from; ++pad)
-          view.samples.push(new Array(series).fill(null));
-        view.samples.push(...samples);
-        view.total = from + samples.length;
-        view.cap = cap;
-        view.rate = Number(entry.rate ?? view.rate);
-        if (view.samples.length > cap) view.samples.splice(0, view.samples.length - cap);
-      } else {
-        this.hists[key] = {
-          rate: Number(entry.rate ?? 10),
-          series,
-          cap,
-          total: from + samples.length,
-          samples,
-        };
-      }
-    }
-  }
+  /* ---- protocol ----
+   *
+   * Neither entry point below reads a frame's `hist` deltas any more. The wire still
+   * delivers them — the backend owns trend history and nothing about that changed — but
+   * the standing views this shell folded them into existed for one reader, the Trend
+   * widget's plot, which went with the renderer. Accumulating them for nobody would be
+   * keeping a buffer warm against a consumer whose shape is not decided yet, so the
+   * rebuild folds them again, where it knows what it needs. */
 
   private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
                      lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[]): void {
     this.store.load(doc);
     this.registry = registry;
     this.live = live;
-    this.hists = {};
-    this.absorbHist(live.hist);
     this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
     this.lang = lang;
     this.attrTable = attrTable;

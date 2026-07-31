@@ -32,10 +32,8 @@ const { syncUrl } = await import(mod("endpoint.js"));
 const { Panel } = await import(mod("reconcile.js"));
 const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
   await import(mod("inspector/panel.js"));
-const {
-  designInspectorShape, designSelectedPath, designShape, designSubject,
-  locatePart, renderDesignInspector, renderDesignTree, selectDesignRenderedPart,
-} = await import(mod("workspaces/design.js"));
+const { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } =
+  await import(mod("workspaces/design.js"));
 const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.js"));
 const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
@@ -993,98 +991,6 @@ check(designRow("c9300").querySelector(".badge.shadow") === null,
       "the duplicate shadows nothing (a different name), so it carries no override tag");
 store.apply(store.version() + 1, [{ op: "remove", node: 9300 }]);
 drawDesign();
-
-/* ---- Design part addressing ----
-   A part's rendered path (names only, excluding the root) must translate both ways into
-   whichever selection space is current — node id for a doc component, child-index path
-   for a built-in. The PREVIEW that used to sit beside this is gone; addressing is pure
-   document arithmetic and does not depend on it.
-
-   rendered path <-> selection, round-tripped both ways: a DOC component (node ids)
-   and a BUILT-IN (child-index path) */
-{
-  const compId = 9600, rootId = 9601, wrapId = 9602, faceId = 9603;
-  store.apply(store.version() + 1, [
-    {
-      op: "insert", parent: 0, list: "components",
-      node: {
-        id: compId, name: "AddrProbe", events: [], props: [], behavior: [],
-        parts: [
-          {
-            id: rootId, kind: "box", name: "body", dir: "stack", attrs: {}, interact: null,
-            children: [
-              /* an UNNAMED wrapper is transparent to addressing (spec 2.3): "face"
-                 addresses straight off the root even though it is really this node's
-                 child, exactly the rule the compiler's collect_tree applies */
-              {
-                id: wrapId, kind: "box", name: "", dir: "stack", attrs: {}, interact: null,
-                children: [
-                  { id: faceId, kind: "rect", name: "face", attrs: {}, interact: null,
-                    children: [] },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    },
-  ]);
-
-  const docLoc = locatePart(store.node(rootId), "face");
-  check(docLoc !== null && docLoc.node.id === faceId,
-        "locatePart finds a named part past an unnamed wrapper, got " + JSON.stringify(docLoc));
-  const docEditor = { ...editor, componentSel: { component: compId, node: faceId } };
-  check(designSelectedPath(docEditor, designSubject(docEditor)) === "face",
-        "and the doc selection resolves back to the same rendered path");
-  /* the ROOT part's own selection rings nothing: it renders with no data-part wrapper
-     of its own, so it recorded no rect either (spec: the root contributes no segment) */
-  const rootEditor = { ...editor, componentSel: { component: compId, node: rootId } };
-  check(designSelectedPath(rootEditor, designSubject(rootEditor)) === "",
-        "selecting the root part resolves to no rendered path");
-  /* a stale node id (removed, or never existed) degrades to no ring rather than
-     throwing */
-  const staleEditor = { ...editor, componentSel: { component: compId, node: 999999 } };
-  check(designSelectedPath(staleEditor, designSubject(staleEditor)) === "",
-        "a stale doc selection resolves to no rendered path rather than throwing");
-
-  /* the BUILT-IN half: the same round trip, addressed by child-index path instead */
-  const builtinToggle = snapshot.builtins.find((b) => b?.name === "Toggle");
-  const builtinLoc = locatePart(builtinToggle.parts[0], "pill.lane.knob");
-  check(builtinLoc !== null, "locatePart resolves a built-in's rendered path too");
-  const builtinEditor = { ...editor, builtinSel: { name: "Toggle", path: builtinLoc.index } };
-  check(designSelectedPath(builtinEditor, designSubject(builtinEditor)) === "pill.lane.knob",
-        "and the built-in's index path resolves back to the same rendered path, got " +
-        designSelectedPath(builtinEditor, designSubject(builtinEditor)));
-  const staleBuiltin = { ...editor, builtinSel: { name: "Toggle", path: "9.9.9" } };
-  check(designSelectedPath(staleBuiltin, designSubject(staleBuiltin)) === "",
-        "a stale built-in path resolves to no rendered path rather than throwing");
-
-  /* selectDesignRenderedPart: the CLICK direction, exercised end to end for both */
-  const compSelected = [];
-  const clickEditor = {
-    ...editor,
-    componentSel: { component: compId, node: rootId },
-    selectComponent: (c, n) => compSelected.push([c, n]),
-  };
-  selectDesignRenderedPart(clickEditor, designSubject(clickEditor), "face");
-  check(compSelected.length === 1 && compSelected[0][0] === compId && compSelected[0][1] === faceId,
-        "clicking a rendered part selects its doc node, got " + JSON.stringify(compSelected));
-
-  const builtinSelected = [];
-  const clickBuiltinEditor = {
-    ...editor,
-    componentSel: null,
-    builtinSel: { name: "Toggle", path: "0" },
-    selectBuiltin: (name, path) => builtinSelected.push([name, path]),
-  };
-  selectDesignRenderedPart(clickBuiltinEditor, designSubject(clickBuiltinEditor), "pill.lane.knob");
-  check(builtinSelected.length === 1 && builtinSelected[0][0] === "Toggle" &&
-        builtinSelected[0][1] === builtinLoc.index,
-        "and clicking a built-in's rendered part selects it by index path, got " +
-        JSON.stringify(builtinSelected));
-
-  store.apply(store.version() + 1, [{ op: "remove", node: compId }]);
-}
 
 /* ---- theme tokens (spec 2.10) ----
    The document carries the seeded semantic set; an authored "$name" color slot resolves

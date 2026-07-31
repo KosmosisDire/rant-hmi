@@ -1,10 +1,10 @@
-/* Slot resolution (spec 2.3): a slot WITH a feed resolves to the live value or UNKNOWN,
- * never to a fallback; a slot without one resolves to the instance value, else the type
- * default.
+/* Slot resolution (spec 2.3): what a slot IS, read from the document and the runtime.
  *
- * There are two readers, because the canvas and the inspector want different things from a
- * slot. `resolveSlot` is the canvas's: it DRAWS the runtime, so the runtime's cell wins
- * wherever it has one. `editedSlot` is the inspector's, and what it shows depends on who
+ * There used to be two readers here, because the canvas and the inspector wanted different
+ * things from a slot. The CANVAS's half — `resolveSlot`, plus the theme-aware, option-
+ * expanding and cell-space readers layered on it — went with the renderer that was its only
+ * caller; the rebuild re-adds its own consumers against real DOM rather than inheriting a
+ * shape drawn for SVG. What is left is the INSPECTOR's, and what it shows depends on who
  * OWNS the slot:
  *
  *   nobody writes it   the document IS the value, so the field shows the document. Reading
@@ -14,18 +14,11 @@
  *                      live value, because that is the thing the user is reasoning about
  *                      (spec 3.10), and editing it restates where the runtime starts. */
 
-import { Cells } from "./program.js";
-import { HistView, Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Widget } from "./types.js";
+import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Widget } from "./types.js";
 
 /* ---- theme tokens (spec 2.10) ---- */
 
 export type ThemeMode = "dark" | "light";
-
-/* the document's tokens plus this view's mode: everything token resolution needs */
-export interface Theme {
-  tokens: Token[];
-  mode: ThemeMode;
-}
 
 /* "$<name>" -> the token's value in this mode; a literal passes through untouched; an
  * unknown token is transparent, matching the backend's compile-time fallback */
@@ -38,8 +31,7 @@ export function resolveColor(value: Json, tokens: Token[], mode: ThemeMode): Jso
 
 /* What a TypeRef lands on, from the served table: the same resolution the compiler runs
  * (find_type_ref), so what the view expands and what compiles can never disagree. Lives
- * here (the pure slot layer) because the canvas resolves option lists too; the type
- * tree re-exports it. */
+ * here, in the pure slot layer, and the type tree re-exports it for Data and Vars. */
 export function resolveTypeRef(
   mesh: Mesh,
   ref: string,
@@ -57,37 +49,6 @@ export function resolveTypeRef(
 export function variantNames(mesh: Mesh, ref: string): string[] {
   const found = resolveTypeRef(mesh, ref);
   return found?.field?.variants?.map((v) => v.name) ?? [];
-}
-
-/* an options slot resolves to a name list: a literal array, or a TypeRef expanded
- * against the served type table */
-export function optionNames(mesh: Mesh | null, raw: Json): string[] {
-  if (Array.isArray(raw)) return raw.map(String);
-  if (typeof raw === "string" && raw && mesh) return variantNames(mesh, raw);
-  return [];
-}
-
-/* The option list a widget OFFERS: the options slot resolved, then filtered by its
- * `shown_options` slot where the type declares one (comma or space separated variant
- * names; empty = all). The filter is a WHITELIST in the listed order, so it can also
- * reorder; names outside the enum are dropped. Every consumer (the pick tray, the
- * drag detents, the pointer angle, the tick marks and their labels) resolves through
- * here, so the offered list can never disagree with the drawn one. */
-export function widgetOptions(
-  widget: Widget,
-  type: WidgetType | null,
-  live: Live | null,
-  fed: Set<string>,
-  mesh: Mesh | null,
-  raw: Json,
-): string[] {
-  const names = optionNames(mesh, raw);
-  if (!type?.slots.some((s) => s.name === "shown_options")) return names;
-  const filter = String(resolveSlot(widget, type, live, fed, "shown_options") ?? "")
-    .split(/[\s,]+/)
-    .filter(Boolean);
-  if (!filter.length) return names;
-  return filter.filter((name) => names.indexOf(name) >= 0);
 }
 
 export function typeOf(registry: Registry | null, name: string): WidgetType | null {
@@ -161,49 +122,12 @@ export function withSlot(slots: Json, address: string, value: Json): Json {
   return root;
 }
 
-export function resolveSlot(
-  widget: Widget,
-  type: WidgetType | null,
-  live: Live | null,
-  fed: Set<string>,
-  name: string,
-): Json {
-  const value = live?.values?.[slotCell(widget, name)];
-  if (value !== undefined) return value;
-  if (fed.has(name)) return null; /* fed but nothing delivered yet: UNKNOWN */
-  return authoredSlot(widget, type, name);
-}
-
 /* what the DOCUMENT says a slot is: the instance value, else the type default */
 export function authoredSlot(widget: Widget, type: WidgetType | null, name: string): Json {
   const instance = slotValue(widget.slots, name);
   if (instance !== undefined) return instance;
   const spec = slotSpec(type, name);
   return spec ? spec.default : null;
-}
-
-/* A COLOR slot, resolved theme-aware. The live frame echoes the backend's compiled copy
- * of every slot cell — resolved in the canonical DARK mode — which would defeat per-view
- * theming for a slot the user merely authored. So a color slot nothing writes resolves
- * from the DOCUMENT (token-aware, in this view's mode); a fed or flow-written one keeps
- * live precedence (dynamic data wins: the backend computed it, and it is mode-agnostic).
- * For literals the document value and the live echo are identical, so this changes
- * nothing until a token is involved. Every paint site resolves through here. */
-export function themedSlot(
-  widget: Widget,
-  type: WidgetType | null,
-  live: Live | null,
-  fed: Set<string>,
-  runtime: Set<string>,
-  theme: Theme,
-  name: string,
-): Json {
-  const spec = slotSpec(type, name);
-  if (spec?.shape !== "color") return resolveSlot(widget, type, live, fed, name);
-  const raw = runtime.has(name)
-    ? resolveSlot(widget, type, live, fed, name)
-    : authoredSlot(widget, type, name);
-  return resolveColor(raw, theme.tokens, theme.mode);
 }
 
 /* What an INSPECTOR field shows. `runtime` is the set of slots something writes
@@ -220,83 +144,6 @@ export function editedSlot(
   if (!runtime.has(name)) return authoredSlot(widget, type, name);
   const value = live?.values?.[slotCell(widget, name)];
   return value === undefined ? null : value;
-}
-
-/* the cell space a template program reads: slots, this view's interaction state, the
- * tile's own metrics, and the theme's tokens */
-export function cellsFor(
-  widget: Widget,
-  type: WidgetType | null,
-  live: Live | null,
-  state: Record<string, Json>,
-  mesh: Mesh | null = null,
-  hists: Record<string, HistView> | null = null,
-  theme: Theme | null = null,
-): Cells {
-  const fed = fedSlots(widget);
-  const runtime = theme ? runtimeSlots(widget, type) : fed;
-  return (cell: string): Json => {
-    const colon = cell.indexOf(":");
-    const kind = colon < 0 ? "" : cell.slice(0, colon);
-    const name = colon < 0 ? cell : cell.slice(colon + 1);
-    switch (kind) {
-      case "slot":
-        return theme
-          ? themedSlot(widget, type, live, fed, runtime, theme, name)
-          : resolveSlot(widget, type, live, fed, name);
-      case "theme":
-        /* "theme:<name>": a token straight from the theme, for template colors no slot
-           names (scale marks); UNKNOWN without a theme rather than a wrong pixel */
-        return theme ? resolveColor("$" + name, theme.tokens, theme.mode) : null;
-      case "state":
-        /* per-view, animation only; interaction lands with the scheduler stage */
-        return state[name] ?? false;
-      case "tile":
-        /* "tile:w|h|aspect": the widget's own box. It used to be read straight off the
-           authored geom, which no longer exists — a widget's box is now whatever its
-           frame gives it, which only the browser knows. Until the rebuild measures it,
-           the honest answer is UNKNOWN: Nil poisons the expression that asked, which is
-           exactly right, because a fabricated size would silently draw the wrong picture.
-           This is the one place the strip leaves a live expression unanswered, and it is
-           the first thing the DOM renderer must reconnect. */
-        if (name === "w" || name === "h" || name === "aspect") return null;
-        return null;
-      case "hist":
-        /* "hist:<slot>": the slot's accumulated history view (a Trend's plot data) */
-        return (hists?.[widget.id + "." + name] as unknown as Json) ?? null;
-      case "optcount": {
-        /* "optcount:<options slot>": how many OFFERED options resolve (a Selector's
-           detent marks); null when the list is unresolvable or trivially small */
-        const count = widgetOptions(widget, type, live, fed, mesh,
-                                    resolveSlot(widget, type, live, fed, name)).length;
-        return count >= 2 ? count : null;
-      }
-      case "optnames": {
-        /* "optnames:<options slot>": the OFFERED option names themselves (a
-           Selector's per-tick labels); null when unresolvable */
-        const names = widgetOptions(widget, type, live, fed, mesh,
-                                    resolveSlot(widget, type, live, fed, name));
-        return names.length >= 2 ? names : null;
-      }
-      case "optfrac": {
-        /* "optfrac:<value slot>@<options slot>": where the value slot's NAME sits in
-           the OFFERED options (resolved, shown_options-filtered), as a 0..1 fraction
-           (a Selector's pointer angle). Unknown value, unknown options or a name
-           outside the offered list resolve to null, and the pointer part draws
-           nothing: never an invented position. */
-        const at = name.indexOf("@");
-        if (at < 0) return null;
-        const value = resolveSlot(widget, type, live, fed, name.slice(0, at));
-        const options = widgetOptions(widget, type, live, fed, mesh,
-                                      resolveSlot(widget, type, live, fed, name.slice(at + 1)));
-        if (typeof value !== "string" || options.length < 2) return null;
-        const index = options.indexOf(value);
-        return index < 0 ? null : index / (options.length - 1);
-      }
-      default:
-        return null;
-    }
-  };
 }
 
 /* "#rrggbb00" and friends are not painted: transparent is a real, common default */

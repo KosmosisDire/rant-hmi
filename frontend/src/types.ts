@@ -311,17 +311,11 @@ export type Op =
 export interface Live {
   epoch: number;
   values: Record<string, Json>;
-  /* trend history deltas, keyed "<widget>.<slot>" (shell.ts folds them into HistViews) */
+  /* trend history deltas, keyed "<widget>.<slot>". The backend still computes and sends
+     them; no view accumulates them at present — the standing views and the plot that read
+     them both went with the SVG renderer, and the rebuild folds them again for whatever
+     draws a trend next. Declared here because the frame carries the field. */
   hist?: Record<string, Json>;
-}
-
-/* one widget slot's accumulated history, rebuilt from the wire's from/values deltas */
-export interface HistView {
-  rate: number;
-  series: number;
-  cap: number;
-  total: number;                    /* absolute index one past the newest sample */
-  samples: (number | null)[][];     /* oldest first; null = unknown */
 }
 
 /* ---- diagnostics ---- */
