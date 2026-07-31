@@ -325,10 +325,14 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   );
 
   /* 5. Panel: placement plus the shared frame vocabulary (the box around the content:
-   *    island merge, surface, border, radius, paddings, aspect). Separated from
-   *    Appearance so the panel's dressing never mixes with the control's own. */
+   *    surface, border, radius, paddings, aspect). Separated from Appearance so the
+   *    panel's dressing never mixes with the control's own. The two PLACE rows lead:
+   *    they are document props on the instance, like its label — how the containing
+   *    frame gives it room — not slots the type declares, so they are written straight
+   *    with set_prop and never through the slot machinery. */
   body.append(
     ...section("panel", "Panel", null, () => [
+      placeGrid(editor, widget.id),
       el("div", { class: "prop-grid" }, [
         ...otherSlots
           .filter((s) => s.group === "frame")
@@ -440,10 +444,12 @@ function renderPartInspector(
    what the node sits in — order, grow, min, gap, pad — so the rows that replace it are
    ordinary schema rows on the frame, not a geometry pad. */
 
-/* The frame inspector: plain and small on purpose — a frame is pure composition
- * (name, layout, gap, pad, align), never feeds or behavior. Every field reuses the
- * ordinary slot-shaped value editor (editors.ts) with a hand-built SlotSpec, exactly
- * the control a "config"-group widget property would get. */
+/* The frame inspector: three small sections and no more — a frame is pure composition
+ * (how it lays its children out, how it is dressed, how its own container places it),
+ * never feeds or behavior. Every field reuses the ordinary slot-shaped value editor
+ * (editors.ts) with a hand-built SlotSpec, exactly the control a widget property of the
+ * same shape would get, so a colour here gets the same swatch-plus-token field a widget's
+ * surface does. */
 function renderFrameInspector(host: HTMLElement, editor: Editor, frame: Frame): void {
   const at = () => editor.store.frame(frame.id) ?? frame;
 
@@ -460,19 +466,11 @@ function renderFrameInspector(host: HTMLElement, editor: Editor, frame: Frame): 
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
-  const enumField = (key: "layout" | "align", variants: string[]) => {
-    const spec: SlotSpec = { name: key, shape: "enum", default: variants[0], group: "config",
-                             variants };
-    return valueEditor(spec, "enum", frame.id + ":" + key, () => at()[key],
-                       (v) => editor.apply([{ op: "set_prop", node: frame.id, key, value: v }]),
-                       false, editor);
-  };
-  const numField = (key: "gap" | "pad") => {
-    const spec: SlotSpec = { name: key, shape: "num", default: 0, group: "config" };
-    return valueEditor(spec, "num", frame.id + ":" + key, () => at()[key],
-                       (v) => editor.apply([{ op: "set_prop", node: frame.id, key, value: v }]),
-                       false, editor);
-  };
+  const enumField = (key: string, variants: string[]) =>
+    nodeField(editor, frame.id, key, "enum", variants[0], variants);
+  const numField = (key: string, step?: number) =>
+    nodeField(editor, frame.id, key, "num", 0, undefined, step);
+  const colorField = (key: string) => nodeField(editor, frame.id, key, "color", "");
 
   /* `.prop-grid` is THREE columns (label, editor, trailing cell), so every row has to
      supply all three or the next row's label slides into this one's trailing slot and the
@@ -480,14 +478,57 @@ function renderFrameInspector(host: HTMLElement, editor: Editor, frame: Frame): 
   body.append(
     ...section("frame", "Layout", null, () => [
       el("div", { class: "prop-grid" }, [
-        el("label", { text: "layout" }), enumField("layout", ["none", "row", "col"]), el("span"),
+        el("label", { text: "layout" }),
+        enumField("layout", ["row", "col", "stack"]), el("span"),
         el("label", { text: "gap" }), numField("gap"), el("span"),
         el("label", { text: "pad" }), numField("pad"), el("span"),
+        /* align is the CROSS axis, justify the MAIN one; both read against `layout` */
         el("label", { text: "align" }),
         enumField("align", ["start", "center", "end", "stretch"]), el("span"),
+        el("label", { text: "justify" }),
+        enumField("justify", ["start", "center", "end", "between"]), el("span"),
       ]),
     ]),
   );
+
+  /* the same three words a widget's frame group uses (surface, border, radius): one
+     surface vocabulary, so a pane and a widget's panel are dressed alike */
+  body.append(
+    ...section("frame-surface", "Surface", null, () => [
+      el("div", { class: "prop-grid" }, [
+        el("label", { text: "surface" }), colorField("surface"), el("span"),
+        el("label", { text: "border" }), colorField("border"), el("span"),
+        el("label", { text: "border_w" }), numField("border_w"), el("span"),
+        el("label", { text: "radius" }), numField("radius"), el("span"),
+      ]),
+    ]),
+  );
+
+  body.append(...section("frame-place", "Place", null, () => [placeGrid(editor, frame.id)]));
+}
+
+/* One editor over one PROP of one document node — not a registry slot, so it is written
+ * with set_prop like a name or a label, and never through the slot machinery. The frame
+ * inspector is built entirely from these; the widget inspector borrows two. */
+function nodeField(editor: Editor, node: number, key: string, shape: string, def: Json,
+                   variants?: string[], step?: number): HTMLElement {
+  const spec: SlotSpec = { name: key, shape, default: def, group: "config",
+                           ...(variants ? { variants } : {}), ...(step ? { step } : {}) };
+  const read = () => (editor.store.node(node) ?? {})[key];
+  return valueEditor(spec, shape, node + ":" + key, read,
+                     (v) => editor.apply([{ op: "set_prop", node, key, value: v }]),
+                     false, editor);
+}
+
+/* PLACE: how the containing frame gives this node room. The pair sits on the CHILD — a
+ * frame and a widget instance carry it identically — so one grid serves both inspectors. */
+function placeGrid(editor: Editor, node: number): HTMLElement {
+  return el("div", { class: "prop-grid" }, [
+    el("label", { text: "grow", title: "share of the free space this takes; 0 = only its min" }),
+    nodeField(editor, node, "grow", "num", 1), el("span"),
+    el("label", { text: "min", title: "floor in pixels, on the container's main axis" }),
+    nodeField(editor, node, "min", "num", 0), el("span"),
+  ]);
 }
 
 /* one Data-in row for a value slot, bound or not */

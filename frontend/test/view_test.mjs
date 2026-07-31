@@ -38,6 +38,7 @@ const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.
 const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
 const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
+const { renderStage } = await import(mod("stage.js"));
 
 let failures = 0;
 let checks = 0;
@@ -689,8 +690,10 @@ for (const grid of widgetPanel.host.querySelectorAll(".prop-grid"))
 check(!widgetLabels.includes("handle_color") && !widgetLabels.includes("fill_color"),
       "the widget view shows no property a part owns, got " + widgetLabels.join(","));
 check(widgetLabels.includes("surface"), "and keeps the widget's own frame slots");
-check(!widgetLabels.includes("Place"),
-      "placement is not one of them any more, got " + widgetLabels.join(","));
+/* PLACE is not a slot the type declares — it is how the CONTAINING frame gives this
+   instance room, so it is a document prop on the node, edited beside the frame slots */
+check(widgetLabels.includes("grow") && widgetLabels.includes("min"),
+      "the widget view places the instance, got " + widgetLabels.join(","));
 {
   /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
      — and the edit writes NESTED, under the part that owns it */
@@ -1166,6 +1169,154 @@ check(dataDetailPanel.host.querySelector(".detail-name")?.textContent === "Valve
 check(dataDetailPanel.host.querySelectorAll(".used-row")
         .some((r) => r.textContent.includes("plant/valve")),
       "and lists its carrier entities");
+
+/* ---- the stage: a page as real DOM ----
+   STRUCTURE ONLY. This process has no layout engine, so what a weight RESOLVES to is a
+   browser's arithmetic and a Playwright drive's question; what is asserted here is the
+   mapping — which document prop lands in which style, what nests inside what, which live
+   cell a picture depends on. */
+
+const stageStore = new DocStore();
+stageStore.load({
+  version: 1,
+  next_id: 999,
+  globals: [],
+  tokens: snapshot.doc.tokens,
+  components: [],
+  pages: [{
+    id: 900,
+    name: "Stage",
+    children: [
+      { id: 901, kind: "frame", name: "Row", layout: "row", gap: 6, pad: 4, radius: 3,
+        align: "center", justify: "between", surface: "$accent", border: "", border_w: 1,
+        grow: 2, min: 40,
+        children: [
+          { id: 903, kind: "widget", type: "Panel", label: "Lamp", grow: 1, min: 0,
+            slots: { surface: "#123456" }, locals: [], feeds: [], flows: [] },
+          { id: 904, kind: "widget", type: "Label", label: "", grow: 3, min: 0,
+            slots: {}, locals: [], feeds: [], flows: [] },
+        ] },
+      { id: 902, kind: "frame", name: "Deck", layout: "stack", gap: 0, pad: 0, radius: 0,
+        align: "stretch", justify: "start", surface: "", border: "", border_w: 1,
+        grow: 1, min: 0,
+        children: [
+          { id: 905, kind: "widget", type: "Panel", label: "Under", grow: 1, min: 0,
+            slots: {}, locals: [], feeds: [], flows: [] },
+        ] },
+    ],
+  }],
+});
+
+const stageHost = new Element("section");
+const stageView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+const stageEditor = {
+  store: stageStore,
+  registry: snapshot.registry,
+  live: { epoch: 1, values: {} },
+  view: stageView,
+  page: () => stageStore.pages()[0],
+  select: (ids) => { stageView.selection = ids; },
+};
+const drawStage = () => renderStage(stageHost, stageEditor);
+const stageNode = (cls, id) =>
+  stageHost.querySelectorAll("." + cls).find((n) => n.getAttribute("data-id") === String(id)) ?? null;
+
+drawStage();
+const stagePage = stageHost.querySelector(".page");
+check(stagePage !== null, "the stage renders a page element");
+const row = stageNode("frame", 901);
+const deck = stageNode("frame", 902);
+check(row !== null && deck !== null, "each frame is a div carrying its own id");
+check(row.parentElement === stagePage && deck.parentElement === stagePage,
+      "the page's frames are its own children");
+check(stageNode("leaf", 903)?.parentElement === row, "and a frame's widgets nest inside it");
+check(row.style.display === "flex" && row.style.flexDirection === "row",
+      "a row lays out as a flex row");
+check(deck.style.display === "grid" && stageNode("leaf", 905).style.gridArea === "1 / 1",
+      "a stack lays out as one grid cell every child shares");
+check(row.style.alignItems === "center" && row.style.justifyContent === "space-between",
+      "align is the cross axis and justify the main one");
+check(stageNode("leaf", 903).style.flex === "1 1 0" &&
+        stageNode("leaf", 904).style.flex === "3 1 0",
+      "grow is a flex weight over a zero basis");
+check(stageNode("leaf", 903).style.minWidth === "0" &&
+        stageNode("leaf", 903).style.minHeight === "0",
+      "and every child is free to shrink below its content");
+/* `min` is a floor on the CONTAINER's main axis, so the same number on the same node
+   means a height under the page's column and a width under a row */
+check(row.style.minHeight === "40px" && row.style.minWidth === "0",
+      "an authored min floors the container's main axis");
+check(row.style.gap === "6px" && row.style.padding === "4px" && row.style.borderRadius === "3px",
+      "gap, pad and radius reach the style");
+check(stagePage.style["--t-accent"] === "#4e8ef7",
+      "the document's tokens are emitted as custom properties on the page");
+check(row.style.background === "var(--t-accent)",
+      "so a $token surface is an ordinary var(), resolved by the browser");
+check(stageNode("leaf", 903).style.background === "#123456",
+      "a leaf paints the surface its instance authors");
+check(stageNode("leaf", 905).style.background === "var(--t-surface)",
+      "and falls back to the served type's own default");
+check(stageNode("leaf", 904).textContent === "Label",
+      "an unlabelled leaf is tagged with its type, got " + stageNode("leaf", 904).textContent);
+check(stageNode("leaf", 903).textContent === "Lamp", "a labelled one with its label");
+
+/* LIVE FIRST: the cell the runtime publishes outranks what the instance authored, which
+   is the whole of a lamp — a Panel with a bound surface lights up */
+stageEditor.live = { epoch: 2, values: { "903.surface": "#ff0000" } };
+drawStage();
+check(stageNode("leaf", 903).style.background === "#ff0000",
+      "a live cell paints over the authored surface");
+
+/* ...and the price of that is paid ONCE per change, not thirty times a second: a live
+   frame that moves no cell this picture read leaves the very same nodes standing */
+const heldRow = stageNode("frame", 901);
+stageEditor.live = { epoch: 3, values: { "903.surface": "#ff0000", "999.value": 7 } };
+drawStage();
+check(stageNode("frame", 901) === heldRow, "a live frame touching no consumed cell rebuilds nothing");
+stageEditor.live = { epoch: 4, values: { "903.surface": "#00ff00" } };
+drawStage();
+check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell rebuilds the page");
+
+/* ---- the frame inspector: composition, surface, place ----
+   A frame's fields are document PROPS on the node, not registry slots, so each row writes
+   a plain set_prop — the same op a name or a label goes through. */
+{
+  const group = frameNamed(store.pages()[0], "Status group");
+  const applied = [];
+  const frameEditor = {
+    ...editor,
+    selectedWidget: () => null,
+    selectedFrame: () => store.frame(group.id),
+    apply: (ops) => applied.push(...ops),
+  };
+  const framePanel = new Panel(new Element("aside"));
+  framePanel.render(inspectorShape(frameEditor), (host) => renderInspector(host, frameEditor));
+  const cellFor = (name) => {
+    for (const grid of framePanel.host.querySelectorAll(".prop-grid")) {
+      const kids = grid.children;
+      for (let i = 0; i + 1 < kids.length; i++)
+        if (kids[i].tagName === "LABEL" && kids[i].textContent === name) return kids[i + 1];
+    }
+    return null;
+  };
+  for (const name of ["layout", "gap", "pad", "align", "justify", "surface", "border",
+                      "border_w", "radius", "grow", "min"])
+    check(cellFor(name) !== null, "the frame inspector edits " + name);
+  const options = cellFor("layout").querySelectorAll("option").map((o) => o.value);
+  check(options.join(",") === "row,col,stack", "layout offers the three, got " + options.join(","));
+  /* a colour row is the ordinary swatch-plus-field editor, so a "$token" value edits as
+     itself while the swatch shows what it resolves to */
+  check(cellFor("surface").querySelector(".swatch") !== null, "surface edits as a colour");
+
+  /* an unbounded number slot IS the field, with no wrapper to reach through */
+  const growField = cellFor("grow");
+  check(growField.tagName === "INPUT", "grow edits as a plain number field");
+  growField.value = "3";
+  fire(growField, "change");
+  const op = applied.find((o) => o.key === "grow");
+  check(op && op.op === "set_prop" && op.node === group.id && op.value === 3,
+        "editing grow writes one set_prop on the frame, got " + JSON.stringify(op));
+}
 
 /* What used to close this file -- the repeat/path round trip and the code-part escape
    hatch, both proved by rendering a backend-compiled component to SVG, plus trend
