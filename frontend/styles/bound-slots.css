@@ -1,0 +1,56 @@
+/* ---------- bound slots ---------- */
+
+/* a bound slot keeps its value editor as a live read-only view; the feed editor rides
+   a full-width row underneath */
+.prop-grid .feed-below {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.value-cell.bound input:disabled,
+.value-cell.bound select:disabled {
+  color: var(--acc-ink-2);
+  border-color: var(--line-2);
+  opacity: 1;
+  cursor: default;
+}
+
+.value-cell.bound .swatch:disabled,
+.value-cell.bound button:disabled {
+  cursor: default;
+}
+
+.value-cell.bound .bool-pair button:disabled.on {
+  background: var(--acc-deep);
+  color: var(--acc-ink-2);
+}
+
+.value-cell.bound .align-grid button:disabled.on {
+  background: var(--acc-deep);
+}
+
+[data-mode="test"] .widget,
+[data-mode="operate"] .widget {
+  touch-action: none;
+}
+
+/* the pointer cursor follows the hit test exactly: only what an interact element
+   PAINTED invites a press; a widget's inert background reads as surface */
+[data-mode="test"] .widget [data-act],
+[data-mode="operate"] .widget [data-act] {
+  cursor: pointer;
+}
+
+[data-mode="test"] .widget.disabled [data-act],
+[data-mode="operate"] .widget.disabled [data-act] {
+  cursor: not-allowed;
+}
+
+.cpick-kw {
+  flex: none;
+  width: 30px;
+  font: 700 10.5px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}

@@ -1,0 +1,102 @@
+/* Tokens taken from the Build Sheet mock (the inspector's visual reference) and the old
+ * designer's editor UI. Two type systems, deliberately: a system sans for the fixed
+ * UI text, and a monospace for everything that names a value (slots, paths,
+ * expressions, live readouts) so a name never shifts as its value changes. */
+
+:root {
+  --bg: #161616;
+  --shell: #191919;
+  --sidebar: #1b1b1b;
+  --sidebar-2: #171717;
+  --card: #202020;
+  --tile: #1d1d1d;
+  --stage: #131313;
+  --stage-dot: #212121;
+  --input: #131313;
+  --chip: #232323;
+  --chip-2: #262626;
+  --menu: #181818;
+
+  --line: #2a2a2a;
+  --line-2: #262626;
+  --line-3: #2c2c2c;
+  --line-in: #333;
+  --dash: #444;
+
+  --ink: #ececec;
+  --ink-2: #c9c9c9;
+  --ink-3: #b0b0b0;
+  --muted: #9c9c9c;
+  --muted-2: #8a8a8a;
+  --dim: #6e6e6e;
+  --dim-2: #5a5a5a;
+
+  --acc: #4e8ef7;
+  --acc-ink: #9dc0ff;
+  --acc-ink-2: #8ab4f8;
+  --acc-bg: rgba(78, 142, 247, 0.16);
+  --acc-deep: #141d2e;
+  --acc-deep-line: #33507f;
+
+  --ok: #7fc4a0;
+  --ok-bg: #16261f;
+  --ok-line: #2f4a3c;
+  --warn: #d7b562;
+  --warn-bg: #241f14;
+  --warn-line: #4a4433;
+  --bad: #e0857c;
+  --bad-bg: #3a2420;
+
+  --sidebar-left: 274px;
+  --sidebar-right: 384px;
+
+  --sans: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, "Cascadia Mono", "SF Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #333 var(--bg);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border: 2px solid var(--sidebar);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  color-scheme: dark;
+  font: 13px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  /* iOS inflates text in a narrow column on its own; an instrument's type is fixed */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* pinning the body kills the iOS rubber band and the pull to refresh that a plain
+   overflow:hidden still leaves reachable */
+body {
+  position: fixed;
+  inset: 0;
+}

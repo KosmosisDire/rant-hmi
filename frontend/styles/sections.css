@@ -1,0 +1,47 @@
+/* ---------- section stack ---------- */
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin: 16px 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
+}
+
+.section-head .caret {
+  flex: none;
+  display: inline-flex;
+  color: var(--dim-2);
+  transform: rotate(-90deg);
+  transition: transform 0.12s;
+}
+
+.section-head.open .caret {
+  transform: rotate(0deg);
+}
+
+.section-head .section-title {
+  font: 700 11.5px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.section-head .rule {
+  flex: 1;
+  border-top: 1px solid var(--line-2);
+}
+
+.badge {
+  padding: 0 6px;
+  border-radius: 2px;
+  background: var(--chip-2);
+  color: var(--muted);
+  font: 600 10.5px/16px var(--mono);
+}

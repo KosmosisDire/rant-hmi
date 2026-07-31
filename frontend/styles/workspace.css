@@ -1,0 +1,14 @@
+/* ---------- workspace ---------- */
+
+.workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--sidebar-left) 5px 1fr 5px var(--sidebar-right);
+}
+
+/* an inactive workspace is hidden, never torn down: its display rule must not win
+   over the hidden attribute */
+#app > main[hidden] {
+  display: none;
+}

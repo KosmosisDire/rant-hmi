@@ -1,0 +1,158 @@
+/* ---------- the component-editing inspector ---------- */
+
+/* the head's "this is a type, not an instance" tag */
+.inspector-head .head-tag {
+  font: 600 9.5px var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.part-def {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.part-def .spacer {
+  flex: 1;
+}
+
+/* one PropDef: name + shape + delete, then default + group */
+.propdef {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.propdef:last-of-type {
+  border-bottom: 0;
+}
+
+/* one attr (or interact param): name | expression | mark | delete */
+.attr-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 3px 0;
+  min-width: 0;
+}
+
+.attr-row .attr-name {
+  flex: 0 0 84px;
+  min-width: 0;
+}
+
+/* a key the document carries that this kind's vocabulary does not declare: named in the
+   warning ink so it reads as the odd one out among the declared rows above it */
+.attr-row .attr-name.static.unknown {
+  color: var(--warn);
+}
+
+.attr-row .attr-name.static {
+  color: var(--muted);
+  font: 500 11.5px/20px var(--mono);
+  padding: 0 6px;
+  border: 1px solid transparent;
+  background: none;
+}
+
+.attr-row > .hl-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A value the browser of a built-in reads but cannot edit: the type scale and colour of
+   a field's text with none of a field's box, so a read-only view stays legible as a
+   view rather than looking like a form that refuses to work. */
+.value-static {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font: 500 11.5px/20px var(--mono);
+}
+
+.value-static.grow {
+  flex: 1;
+}
+
+/* the expression fields in that view keep their highlighting; only the caret is gone */
+.inspector-body input[readonly],
+.inspector-body textarea[readonly] {
+  cursor: default;
+  border-color: transparent;
+}
+
+/* read-only summary lines: a component's events and default behavior */
+.event-line,
+.flow-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font: 500 11.5px var(--mono);
+  color: var(--muted);
+  min-width: 0;
+}
+
+.event-line .event-expr {
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-grid {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: 7px 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.prop-grid > label {
+  font: 600 12px var(--sans);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* x y w h on ONE row: four label+field pairs sharing the value column evenly */
+.geom-grid {
+  display: grid;
+  grid-template-columns: repeat(4, auto minmax(0, 1fr));
+  gap: 5px;
+  align-items: center;
+}
+
+.geom-grid label {
+  font: 700 10.5px var(--mono);
+  color: var(--dim);
+}
+
+/* four labelled numbers on one line: at the sidebar's type scale they would clip */
+.geom-grid .field.num {
+  width: 100%;
+  padding: 0 3px;
+  font-size: 11px;
+}
+
+.value-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.empty {
+  margin: 6px 0;
+  font: 500 11.5px var(--mono);
+  line-height: 1.5;
+  color: var(--dim-2);
+}

@@ -1,0 +1,48 @@
+/* ---------- align grid ---------- */
+
+.align-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 16px);
+  grid-auto-rows: 16px;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  background: var(--input);
+  width: max-content;
+}
+
+.align-grid button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 1px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.align-grid button:hover {
+  background: var(--chip-2);
+}
+
+.align-grid .align-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--dim-2);
+}
+
+.align-grid button:hover .align-dot {
+  background: var(--ink-3);
+}
+
+.align-grid button.on {
+  background: var(--acc-bg);
+}
+
+.align-grid button.on .align-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--acc);
+}

@@ -1,0 +1,46 @@
+/* ---------- the Design workspace (workspaces/design.ts): the component list, a live
+   preview of the selected component in its own stage (the middle column reuses the
+   Content stage's own .stage/.layer/.artboard anatomy below), and the component/part
+   inspector. ---------- */
+
+.workspace-design {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--sidebar-left) 1fr var(--sidebar-right);
+  background: var(--stage);
+}
+
+/* the two Design columns take the sidebar treatment without the sidebar's left/right
+   classes: those belong to Content's three-column grid, and sharing them would make
+   every "which tree is this" selector ambiguous */
+.design-tree {
+  padding: 8px 8px 28px;
+  border-right: 1px solid var(--line);
+}
+
+.design-inspector {
+  padding: 0 0 24px;
+  border-left: 1px solid var(--line);
+}
+
+/* the column's own heading: the tree IS the column here, so it takes a plain title
+   rather than the foldable section header a sidebar stacks several of */
+.tree-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 8px;
+}
+
+.tree-title {
+  font: 700 10.5px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tree-head .count {
+  font: 500 9.5px var(--mono);
+  color: var(--dim);
+}

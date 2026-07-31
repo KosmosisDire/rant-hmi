@@ -1,0 +1,80 @@
+/* ---------- context menu (ported from the old designer) ---------- */
+
+#ctx {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: none;
+}
+
+#ctx.on {
+  display: block;
+}
+
+#ctx .popover {
+  position: fixed;
+  min-width: 168px;
+  max-height: 330px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  background: var(--menu);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+
+#ctx .menu-head {
+  padding: 5px 9px 3px;
+  font: 700 10.5px var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim-2);
+}
+
+#ctx button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 13px var(--sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+#ctx button:hover {
+  background: #242424;
+  color: var(--ink);
+}
+
+#ctx button svg {
+  color: var(--dim);
+  flex: none;
+}
+
+#ctx button.danger,
+#ctx button.danger svg {
+  color: #c9564d;
+}
+
+/* a custom row in a menu (the page selector's inline rename): a field on the menu's
+   own rhythm, and clicks inside it never reach the dismiss overlay */
+#ctx .menu-edit {
+  display: flex;
+  padding: 3px 8px;
+}
+
+#ctx .menu-edit .field {
+  width: 100%;
+  min-width: 140px;
+}
+
+#ctx .menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--line-2);
+}

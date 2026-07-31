@@ -1,0 +1,75 @@
+/* ---------- the Style workspace (workspaces/style.ts) ---------- */
+
+.workspace-style {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--stage);
+  padding: 26px 0 60px;
+}
+
+.style-sheet {
+  width: min(560px, calc(100% - 48px));
+  margin: 0 auto;
+}
+
+.style-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.style-title {
+  font: 600 11px var(--mono);
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+
+.style-head > .rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line);
+}
+
+.style-mode-label {
+  font: 500 10px var(--mono);
+  letter-spacing: 0.1em;
+  color: var(--dim);
+}
+
+.token-group {
+  margin: 14px 0 6px;
+  font: 600 10px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* name | light | dark | used | delete */
+.token-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr) minmax(110px, 1fr) 34px 24px;
+  gap: 6px 8px;
+  align-items: center;
+}
+
+.token-grid > label {
+  font: 500 10px var(--mono);
+  letter-spacing: 0.1em;
+  color: var(--dim-2);
+}
+
+.token-used {
+  font: 500 11px var(--mono);
+  text-align: right;
+  color: var(--ink-3);
+}
+
+.token-used.dim {
+  color: var(--dim-2);
+}
+
+.workspace-style .dashed-btn {
+  margin-top: 14px;
+}

@@ -1,0 +1,91 @@
+/* ---------- left sidebar: the Layers tree ---------- */
+
+.layers {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -8px 6px;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: calc(100% + 16px);
+  height: 21px;
+  padding-right: 8px;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.layer-row:hover {
+  background: #232323;
+  color: var(--ink);
+}
+
+/* the selected widget or part, the same treatment as the source tree's current row */
+.layer-row.current {
+  background: rgba(78, 142, 247, 0.14);
+  color: var(--ink);
+}
+
+.layer-row.current:hover {
+  background: rgba(78, 142, 247, 0.2);
+}
+
+.layer-row.page {
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.layer-row.page.here {
+  color: var(--ink);
+}
+
+.layer-row.part {
+  color: var(--muted);
+}
+
+/* a frame groups widgets and other frames (spec 2.8): the same quiet, slightly bolder
+   treatment a page row gets, so a group reads as structure rather than content */
+.layer-row.frame {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.layer-row.frame.current {
+  color: var(--ink);
+}
+
+.layer-row .badge {
+  margin-left: auto;
+}
+
+.layer-caret {
+  flex: 0 0 10px;
+  display: inline-flex;
+  color: var(--dim);
+}
+
+.layer-glyph {
+  flex: 0 0 13px;
+  display: inline-flex;
+  justify-content: center;
+  color: #8a8a8a;
+}
+
+.layer-glyph.draw {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.layer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

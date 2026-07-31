@@ -1,0 +1,237 @@
+/* ---------- fields ---------- */
+
+.field {
+  height: 24px;
+  min-width: 0;
+  padding: 0 6px;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  background: var(--input);
+  color: var(--ink);
+  font: 600 12px var(--mono);
+}
+
+.field:hover {
+  border-color: #3d3d3d;
+}
+
+/* the textarea form (text values may hold explicit newlines): same one-row box as an
+   input; extra lines scroll rather than growing the row */
+textarea.field {
+  height: 24px;
+  padding-top: 3px;
+  line-height: 16px;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  display: block;
+}
+
+/* the `code` part's body (spec 2.3): unlike the one-row textarea.field above, a JS body
+   is genuinely multi-line, so this one grows tall and the user resizes it vertically
+   instead of it staying pinned at one row */
+.code-editor {
+  height: 160px;
+  min-height: 60px;
+  padding-top: 6px;
+  line-height: 16px;
+  resize: vertical;
+  overflow: auto;
+  white-space: pre;
+  display: block;
+}
+
+.field.grow {
+  flex: 1;
+  width: 100%;
+}
+
+.field.num {
+  width: 54px;
+}
+
+/* an unfocused number field scrubs on drag (dom.ts attachScrub): say so with the
+   cursor; once focused it edits like any text field */
+input[type="number"]:not(:focus) {
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+/* a BOUNDED slot (spec min/max) edits as slider + field: the slider takes the row,
+   the field stays narrow for typing */
+.range-pair {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.range-pair > input[type="number"] {
+  width: 52px;
+  flex: none;
+}
+
+input[type="range"].range {
+  flex: 1;
+  min-width: 24px;
+  height: 22px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+input[type="range"].range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-in);
+}
+
+input[type="range"].range::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--acc-ink-2);
+  border: none;
+}
+
+input[type="range"].range:hover::-webkit-slider-thumb {
+  background: var(--acc-ink);
+}
+
+.field.title {
+  height: 26px;
+  background: transparent;
+  border-color: transparent;
+  padding: 0 4px;
+  font: 650 15px var(--sans);
+}
+
+.field.title:hover {
+  border-color: var(--line-in);
+  background: var(--input);
+}
+
+select.field {
+  appearance: none;
+  padding-right: 18px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* the caret is placed on the wrap, so the select has to fill it: a wrap stretched by its
+   container (a grid cell) would otherwise leave the mark floating past the select's edge */
+.select-wrap select.field {
+  flex: 1 1 auto;
+}
+
+.select-wrap .caret-mark {
+  position: absolute;
+  right: 5px;
+  display: inline-flex;
+  pointer-events: none;
+  color: var(--dim);
+}
+
+.select-wrap.trigger select.field {
+  background: var(--acc-deep);
+  border-color: var(--acc-deep-line);
+  color: var(--acc-ink);
+}
+
+.select-wrap.trigger .caret-mark {
+  color: var(--acc-ink);
+  opacity: 0.7;
+}
+
+.swatch {
+  width: 24px;
+  height: 24px;
+  aspect-ratio: 1;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  background: var(--input);
+  cursor: pointer;
+}
+
+/* a bool slot reads as a two-state icon pair, like every other two-state control */
+.bool-pair {
+  display: inline-flex;
+  height: 24px;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  overflow: hidden;
+  flex: none;
+}
+
+.bool-pair button {
+  width: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--dim-2);
+  font: 600 11.5px var(--mono);
+  cursor: pointer;
+}
+
+.bool-pair button.on {
+  background: var(--acc);
+  color: #0d0d0d;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 24px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  color: var(--ink-2);
+}
+
+.icon-btn.on {
+  color: var(--acc);
+}
+
+.icon-btn.framed {
+  border-color: var(--line-in);
+}
+
+.icon-btn.framed:hover {
+  border-color: var(--acc);
+}
+
+.dashed-btn {
+  width: 100%;
+  padding: 5px;
+  border: 1px dashed #3a3a3a;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 12px var(--sans);
+  cursor: pointer;
+}
+
+.dashed-btn:hover {
+  border-color: var(--acc);
+  color: var(--ink-2);
+}

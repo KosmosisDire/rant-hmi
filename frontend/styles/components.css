@@ -1,0 +1,91 @@
+/* ---------- left sidebar: the Components tree ---------- */
+
+/* a doc component that SHADOWS a built-in: the accent says instances follow it */
+.layer-row .layer-label.shadows {
+  color: var(--acc-ink-2);
+}
+
+/* the same fact, legible in the row itself rather than only the tooltip: reuses the
+   section-count badge's type scale, tinted with the same accent as the label above */
+.layer-row .badge.shadow {
+  color: var(--acc-ink-2);
+}
+
+/* built-ins are browsable but read-only: dimmer than editable rows */
+.layer-row.builtin {
+  color: var(--dim);
+}
+
+.layer-row.builtin .layer-glyph {
+  color: var(--dim);
+}
+
+/* the row-level verb menu (Override / Duplicate as… / Revert, spec 2.3 Forking); a
+   span, not a button (the row is already one) */
+.layer-menu {
+  margin-left: auto;
+  opacity: 0.45;
+}
+
+.layer-row:hover .layer-menu {
+  opacity: 1;
+  color: var(--acc-ink);
+}
+
+/* a part's own switch: quiet until the row is hovered, and standing while it is off so
+   a hidden part reads as hidden from the tree alone */
+.layer-eye {
+  margin-left: auto;
+  opacity: 0;
+}
+
+.layer-row:hover .layer-eye,
+.layer-eye.off {
+  opacity: 0.75;
+}
+
+.layer-row.hidden .layer-label,
+.layer-row.hidden .layer-glyph {
+  opacity: 0.42;
+}
+
+/* one label column for NOW, TYPE and INIT; the column is as wide as the widest of them */
+.var-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 8px;
+  align-items: center;
+}
+
+/* a struct variable's per-field defaults, indented under INIT */
+.var-grid .row-label.init-field {
+  padding-left: 12px;
+  color: #5a5a5a;
+}
+
+/* a row's controls: laid out at their own size, not stretched to the value column */
+.var-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.now-value {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--line-3);
+  border-radius: 2px;
+  background: var(--input);
+  color: var(--ink-2);
+  font: 700 12px var(--mono);
+  white-space: nowrap;
+}
+
+.now-value.on {
+  background: rgba(127, 196, 160, 0.14);
+  border-color: var(--ok-line);
+  color: var(--ok);
+}

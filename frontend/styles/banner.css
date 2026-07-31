@@ -1,0 +1,33 @@
+/* ---------- banner ---------- */
+
+.banner {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translate(-50%, 16px);
+  padding: 6px 12px;
+  border: 1px solid var(--warn-line);
+  border-radius: 3px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font: 500 12.5px var(--mono);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  z-index: 70;
+}
+
+.banner.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .sidebar,
+  .gutter {
+    display: none;
+  }
+}

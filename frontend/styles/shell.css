@@ -1,0 +1,46 @@
+.sidebar {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--sidebar);
+  padding: 2px 15px 28px;
+}
+
+.sidebar.left {
+  border-right: 1px solid var(--line);
+}
+.sidebar.right {
+  border-left: 1px solid var(--line);
+  padding: 0 0 24px;
+}
+
+.gutter {
+  background: #242424;
+  cursor: col-resize;
+  touch-action: none;
+}
+.gutter:hover {
+  background: var(--acc);
+}
+
+/* The stage: the middle column of the Content and Design workspaces. It is an empty
+   pane — the two stacked artboard SVGs, their shared pan/zoom .layer transform and the
+   click-through .overlay that carried the selection ring and grips have all gone with the
+   renderer. The dot grid stays so the column still reads as a surface rather than a hole. */
+.stage {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: radial-gradient(var(--stage-dot) 1px, transparent 1px) 0 0 / 22px 22px, var(--stage);
+}
+
+[data-mode="operate"] .sidebar,
+[data-mode="operate"] .gutter {
+  display: none;
+}
+[data-mode="operate"] .workspace {
+  grid-template-columns: 1fr;
+}
+[data-mode="operate"] .stage {
+  background: #0c0c0c;
+}

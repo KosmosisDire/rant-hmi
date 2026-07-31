@@ -1,0 +1,86 @@
+/* ---------- theme tokens in the color editor (spec 2.10) ---------- */
+
+/* a tokenized value: the swatch paints the resolved color and wears a corner notch */
+button.swatch {
+  position: relative;
+  overflow: hidden;
+}
+
+button.swatch.token::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border: 5px solid transparent;
+  border-top-color: var(--acc);
+  border-right-color: var(--acc);
+}
+
+.token-btn {
+  width: 20px;
+  height: 24px;
+  flex: none;
+  border: 1px solid var(--line-in);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 11.5px var(--mono);
+  cursor: pointer;
+}
+
+.token-btn:hover {
+  color: var(--acc);
+  border-color: var(--acc-deep-line);
+}
+
+/* the token menu rides the picker's popover, restyled as a list */
+.cpick-pop.tokens {
+  width: 172px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.tok-group {
+  margin: 6px 4px 2px;
+  font: 600 9px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.tok-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 11px var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tok-row:hover {
+  background: var(--chip);
+}
+
+.tok-row.on {
+  color: var(--acc-ink);
+}
+
+.tok-row .swatch {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.tok-custom {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--dim);
+}

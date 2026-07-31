@@ -1,0 +1,244 @@
+/* ---- expression highlighting: a colored underlay behind a transparent-text input.
+   The underlay mirrors the input's font and padding EXACTLY, or the caret drifts. ---- */
+
+.hl-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hl-wrap > .hl-input {
+  position: relative;
+  width: 100%;
+  color: transparent;
+  caret-color: var(--ink);
+  background: var(--input);
+}
+
+.hl-wrap > .hl-input::placeholder {
+  color: #5a5a5a;
+}
+
+.hl-wrap > .hl-input::selection {
+  background: rgba(78, 142, 247, 0.35);
+  color: transparent;
+}
+
+.hl-under {
+  position: absolute;
+  inset: 1px 0 0 0;
+  padding: 0 7px;   /* the field's 1px border + 6px padding: the text must sit EXACTLY
+                       under the caret's text */
+  /* centered by line-height, NEVER flex: flex layout drops whitespace-only text nodes
+     between the token spans, and the underlay must keep every space the input has */
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+  font: 600 12px/22px var(--mono);
+  color: var(--ink-2);
+  z-index: 1;
+}
+
+/* inside the fused expression box the input is borderless, so the origin shifts 1px */
+.expr-pick .hl-under {
+  inset: 0;
+  padding: 0 6px;
+}
+
+.hl-under .tk-str { color: #7fc4a0; }
+.hl-under .tk-color { color: #d7a5e8; }
+.hl-under .tk-num { color: #d7b562; }
+.hl-under .tk-kw { color: #8ab4f8; }
+.hl-under .tk-fn { color: #4db6ac; }
+.hl-under .tk-dot { color: #cf9a3a; }
+.hl-under .tk-id { color: var(--ink); }
+.hl-under .tk-op { color: #8a8a8a; }
+
+/* the flexible sizing the raw field carried moves onto the wrapper */
+.do-cell > .hl-wrap,
+.feed-line > .hl-wrap,
+.feed-case > .hl-wrap {
+  flex: 1 1 40px;
+  min-width: 34px;
+}
+
+.hl-wrap > .field.grow {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* a feed with cases: the line, then one row per arm, then the else */
+.feed-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.feed-case {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-left: 18px;
+}
+
+.feed-case > .field.num,
+.feed-case > .select-wrap {
+  flex: 0 0 92px;
+  min-width: 0;
+}
+
+.feed-case > .field.grow {
+  flex: 1 1 40px;
+  min-width: 34px;
+  width: 40px;
+  text-overflow: ellipsis;
+}
+
+.feed-case > .arrow,
+.feed-case > .icon-btn,
+.feed-case > .chip {
+  flex: none;
+}
+
+/* a case's RESULT: the slot's own picker or the expression editor, one at a time */
+.feed-case > .case-result {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1 1 40px;
+  min-width: 34px;
+}
+
+.case-result > .hl-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.case-result > .field,
+.case-result > .select-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.case-result > .icon-btn {
+  flex: none;
+}
+
+/* the WHEN block's label + editor grid (spec 3.5) */
+.sub-grid {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 7px 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.sub-grid > label {
+  font: 700 10.5px var(--mono);
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sub-grid > .cell {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sub-grid > .cell > .field.num {
+  width: 56px;
+  flex: none;
+}
+
+.sub-grid > .cell > .select-wrap {
+  min-width: 0;
+}
+
+.sub-grid > .cell > .source-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.source-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the NAME is what identifies the pick, so it takes the slack and the type chip gives
+   way; a truncated name would leave the row saying nothing at all */
+.source-chip .name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.source-chip .shape,
+.source-chip .path {
+  flex: 0 1 auto;
+}
+
+.sub-grid > .cell > .field.grow {
+  flex: 1 1 auto;
+}
+
+
+.do-grip {
+  display: inline-flex;
+  align-items: center;
+  width: 12px;
+  flex: none;
+  color: #4a4a4a;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.do-grip:hover {
+  color: var(--muted-2);
+}
+
+
+/* pushes a trailing control to the row's right edge; costs nothing when a growing
+   field already fills the line */
+.push-right {
+  margin-left: auto;
+}
+
+.kind-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.warn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--bad-bg);
+  color: var(--bad);
+  font: 700 11.5px/16px var(--mono);
+  cursor: help;
+}
+
+.note {
+  margin-top: 3px;
+  font: 500 11px/1.5 var(--mono);
+  color: var(--warn);
+}
+.note.bad {
+  color: var(--bad);
+}
