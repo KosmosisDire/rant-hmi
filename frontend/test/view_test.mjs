@@ -285,7 +285,17 @@ const echo = (ops) => {
   store.apply(store.version() + 1, ops);
   draw();
 };
-const geomField = (at) => sidebar.querySelector(".geom-grid").children[at];
+/* The x/y/w/h grid these checks used to drive is gone with manual geometry, so they now
+   drive two ordinary NUMBER SLOTS instead (radius and pad, base frame slots every type
+   carries). Nothing about what is being proved changes: these are reconciliation rules —
+   same node, new value, no rebuild; focus found by document address rather than tree
+   position — and they need any two standing numeric controls, not those two in
+   particular. Each echo spreads the CURRENT slots so an earlier check's write survives. */
+const slotInput = (name) => slotControl(name).children[0];
+const slotsNow = () => store.widget(readout.id).slots ?? {};
+const echoSlot = (name, value) =>
+  echo([{ op: "set_prop", node: readout.id, key: "slots",
+          value: { ...slotsNow(), [name]: value } }]);
 const slotControl = (name) => {
   for (const grid of sidebar.querySelectorAll(".prop-grid")) {
     const kids = grid.children;
@@ -300,18 +310,18 @@ check(sidebar.querySelectorAll("input").length > 0, "the inspector built control
 
 /* 1. a value echo moves the value and nothing else */
 const shapeBefore = inspectorShape(editor);
-const widthField = geomField(5);
+const widthField = slotInput("radius");
 sidebar.scrollTop = 140;
-echo([{ op: "set_prop", node: readout.id, key: "geom", value: { ...readout.geom, w: 321 } }]);
+echoSlot("radius", 321);
 check(inspectorShape(editor) === shapeBefore, "a value echo does not move the inspector's shape");
-check(geomField(5) === widthField, "a value echo keeps the very same input node");
+check(slotInput("radius") === widthField, "a value echo keeps the very same input node");
 check(widthField.value === "321", "a value echo assigns the new value, got " + widthField.value);
 check(sidebar.scrollTop === 140, "a value echo leaves scroll alone, got " + sidebar.scrollTop);
 
 /* 2. the bug the old focus restore caused: a remote change to the field you are standing
       in was overwritten by the stale local copy, so the inspector looked frozen */
 widthField.focus();
-echo([{ op: "set_prop", node: readout.id, key: "geom", value: { ...readout.geom, w: 654 } }]);
+echoSlot("radius", 654);
 check(widthField.value === "654", "a remote change reaches a FOCUSED field, got " + widthField.value);
 check(document.activeElement === widthField, "and the field keeps focus");
 
@@ -375,7 +385,7 @@ fire(rebuiltLabel, "change");
 
 /* 5. an insert that puts controls ABOVE the focused one must not redirect focus into a
       different control, which is exactly what a numeric DOM path would do */
-const heightField = geomField(7);
+const heightField = slotInput("pad");
 heightField.focus();
 echo([
   {
@@ -385,8 +395,8 @@ echo([
     node: { id: 9002, name: "tmp2", type: "f64", init: 0, persist: false },
   },
 ]);
-check(geomField(7) !== heightField, "the second insert rebuilt the inspector");
-check(document.activeElement === geomField(7), "focus follows the key past inserted controls");
+check(slotInput("pad") !== heightField, "the second insert rebuilt the inspector");
+check(document.activeElement === slotInput("pad"), "focus follows the key past inserted controls");
 check(
   document.activeElement.getAttribute("type") === "number",
   "and lands on the same kind of control",
@@ -394,10 +404,10 @@ check(
 
 /* 6. the same batch changes the focused field AND the structure. Restoring the caret must
       not restore the VALUE with it: the field was not dirty, so what the echo carries wins */
-const focusedWidth = geomField(5);
+const focusedWidth = slotInput("radius");
 focusedWidth.focus();
 echo([
-  { op: "set_prop", node: readout.id, key: "geom", value: { ...readout.geom, w: 777 } },
+  { op: "set_prop", node: readout.id, key: "slots", value: { ...slotsNow(), radius: 777 } },
   {
     op: "insert",
     parent: readout.id,
@@ -405,12 +415,12 @@ echo([
     node: { id: 9003, name: "tmp3", type: "f64", init: 0, persist: false },
   },
 ]);
-check(geomField(5) !== focusedWidth, "the mixed batch rebuilt the inspector");
+check(slotInput("radius") !== focusedWidth, "the mixed batch rebuilt the inspector");
 check(
-  geomField(5).value === "777",
-  "a rebuild with focus held still shows the echoed value, got " + geomField(5).value,
+  slotInput("radius").value === "777",
+  "a rebuild with focus held still shows the echoed value, got " + slotInput("radius").value,
 );
-check(document.activeElement === geomField(5), "and the caret is still in that field");
+check(document.activeElement === slotInput("radius"), "and the caret is still in that field");
 document.activeElement = null;
 
 /* the interpreter's own rules: Nil poisons, division by zero is Nil, not a trap */
@@ -615,15 +625,11 @@ const toggleRow = rowByKey("w" + toggle.id);
 check(toggleRow !== null, "the Layers tree lists the current page's widgets");
 check(left.querySelectorAll(".layer-row.page").length === 0, "the Layers tree has no page rows");
 check(rowByKey("p" + page.id) === null, "not even the current page's");
-/* expanding the widget row (its caret) reveals the type's whole part tree */
-fire(toggleRow.children[0], "click");
-drawLeft();
-check(rowByKey("w" + toggle.id + "/pill.lane.knob") !== null,
-      "an expanded widget lists its template parts by path");
-fire(rowByKey("w" + slider.id).children[0], "click");
-drawLeft();
-check(rowByKey("w" + slider.id + "/scale") !== null,
-      "a part hidden by `show` is still listed: the tree reads the type, not the render");
+/* a widget row is a LEAF here now: its parts belong to the component that defines them,
+   so they are listed by the Design tree and no longer expand out of this one */
+check(rowByKey("w" + toggle.id + "/pill.lane.knob") === null,
+      "a widget's parts are not listed in the Layers tree");
+check(rowByKey("w" + slider.id + "/scale") === null, "not even a part hidden by `show`");
 
 /* a selected part scopes the inspector: widget › part head, ONE section, and only the
    properties that part OWNS — not its siblings', not its children's, not the widget's */
@@ -657,8 +663,9 @@ for (const grid of widgetPanel.host.querySelectorAll(".prop-grid"))
   for (const kid of grid.children) if (kid.tagName === "LABEL") widgetLabels.push(kid.textContent);
 check(!widgetLabels.includes("handle_color") && !widgetLabels.includes("fill_color"),
       "the widget view shows no property a part owns, got " + widgetLabels.join(","));
-check(widgetLabels.includes("surface") && widgetLabels.includes("Place"),
-      "and keeps the widget's own frame and placement");
+check(widgetLabels.includes("surface"), "and keeps the widget's own frame slots");
+check(!widgetLabels.includes("Place"),
+      "placement is not one of them any more, got " + widgetLabels.join(","));
 {
   /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
      — and the edit writes NESTED, under the part that owns it */

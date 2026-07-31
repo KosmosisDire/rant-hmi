@@ -14,11 +14,10 @@
 
 import { colorField, TokenAccess } from "../colorpicker.js";
 import { alignGrid, boolPair, chip, commitTextInput, el, numberInput, pickerOf, selectField } from "../dom.js";
-import { Editor } from "../editor.js";
+import { Editor, UNKNOWN_TEXT } from "../editor.js";
 import { kindMark } from "../icons.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { resolveColor } from "../slots.js";
-import { UNKNOWN_TEXT } from "../template.js";
 import { Json, SlotSpec, Widget } from "../types.js";
 
 /* what a color editor needs to speak tokens: resolution in this view's mode, and the

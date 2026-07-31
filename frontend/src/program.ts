@@ -7,7 +7,6 @@
  * Nil attribute renders the UNKNOWN treatment rather than a fabricated value. */
 
 import { Instr, Json, Program } from "./types.js";
-import { parseRich, richUnits } from "./rich.js";
 
 export type Cells = (cell: string) => Json;
 
@@ -126,19 +125,17 @@ function parseColorBytes(text: Json): number[] | null {
   return null;
 }
 
-/* draw.measure's estimator (template.ts's codeMeasure), ported rather than shared: the
- * constant (0.58 x size per average-char unit) is the SAME one drawText and richUnits
- * already use to fit rendered text, and the `code` part API's own draw.measure, so an
- * author's own layout arithmetic agrees with what actually renders. Splitting on "\n"
- * matches codeMeasure even though a template attribute rarely carries one. */
+/* MEASURE's estimator: 0.58 x size per character, the constant the SVG renderer used to
+ * fit text into a box. It is a guess and always was — it cannot see the font, so it cannot
+ * be right — and it is PROVISIONAL here: the whole reason a declarative renderer needed an
+ * estimator is that it could not ask the browser. Once text is real DOM the browser
+ * measures it, and this collapses into asking. It stays meanwhile so an expression using
+ * measure() keeps computing something rather than failing. (It used to discount rich.ts's
+ * underscore markup, which went with the SVG text renderer that drew it.) */
 function measureText(text: string, size: number): number {
   if (!text.length) return 0;
   let longest = 0;
-  for (const line of text.split("\n")) {
-    const rich = parseRich(line);
-    const units = rich ? richUnits(rich) : line.length;
-    if (units > longest) longest = units;
-  }
+  for (const line of text.split("\n")) if (line.length > longest) longest = line.length;
   return 0.58 * size * longest;
 }
 

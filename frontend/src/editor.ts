@@ -5,11 +5,36 @@
  * the same event to a sidebar: the shape is unchanged, so every binding re-reads and assigns.
  * One reconciliation path with two triggers (reconcile.ts). */
 
-import { ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
 import { AttrTable, BuiltinDef, Diag, Frame, Json, Lang, Live, Mesh, Op, Page, Registry, Var, Widget } from "./types.js";
+
+export type Mode = "edit" | "test" | "operate";
+
+/* What the view is currently SHOWING, as opposed to what the document says: none of it is
+ * synced and none of it survives a reload. It used to live in canvas.ts, next to the
+ * renderer that read it; with the artboard's own coordinate space gone, so are the fields
+ * that only made sense inside one (`scale` in px-per-canvas-unit, and the `ghost` rect a
+ * drag painted). What is left is selection and presentation. */
+export interface ViewState {
+  mode: Mode;
+  /* the selected PART of the selected widget: a part path into its template, "" = none */
+  part: string;
+  selection: number[];
+  hover: number;
+  /* per-widget interaction state, read by the attr programs through cellsFor. Nothing
+     writes it while the gesture primitives are gone, so it stands empty. */
+  state: Record<number, Record<string, Json>>;
+  faults: Record<number, string>;               /* worst compile grade, per widget */
+  /* which side of every theme token this view paints (spec 2.10): a local preview
+     preference, persisted per browser, never synced */
+  themeMode?: "dark" | "light";
+}
+
+/* The UNKNOWN mark: what every reader shows where a value could not be known. Never a
+ * fabricated number, and never blank — blank reads as "empty", which is a different claim. */
+export const UNKNOWN_TEXT = "--";
 
 export interface Editor {
   store: DocStore;

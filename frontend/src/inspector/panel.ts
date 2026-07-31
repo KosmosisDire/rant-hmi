@@ -13,14 +13,14 @@
  * wholesale, and a binding holding the old object would then quietly show a document that
  * no longer exists. */
 
-import { clear, commitInput, el, iconButton, numberInput } from "../dom.js";
+import { clear, commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
-import { PartNode, ownedSlots, partIndex, slotLeaf } from "../parts.js";
+import { ownedSlots, partIndex, slotLeaf } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf, withSlot } from "../slots.js";
-import { makeFold, PART_GLYPH, treeRow } from "../tree.js";
-import { Frame, Geom, Json, SlotSpec, Widget, WidgetType } from "../types.js";
+import { makeFold, treeRow } from "../tree.js";
+import { Frame, Json, SlotSpec, Widget, WidgetType } from "../types.js";
 
 import { valueEditor } from "./editors.js";
 import { feedCard, feedShape } from "./feeds.js";
@@ -128,9 +128,6 @@ function frameRows(editor: Editor, frame: Frame, depth: number): HTMLElement[] {
 /* widgets -> the widget's template part tree (the page level lives in the topbar) */
 function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[] {
   const key = "w" + widget.id;
-  const type = typeOf(editor.registry, widget.type);
-  const parts = type ? partIndex(type).roots : [];
-  const open = layerOpen(key, false);
   const cls =
     "widget" +
     (editor.view.selection.indexOf(widget.id) >= 0 && !editor.view.part ? " current" : "");
@@ -139,75 +136,30 @@ function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[
     const at = editor.store.widget(widget.id);
     return at ? at.label || at.type : "";
   });
-  const row = treeRow(
-    key,
-    depth,
-    cls,
-    parts.length ? { open, toggle: () => toggleLayer(editor, key, false) } : null,
-    [
-      el("span", {
-        class: "layer-glyph",
-        html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 11, 1.7),
-      }),
-      label,
-      diagIcon(editor.diagFor(widget.id)),
-    ],
-    () => editor.select([widget.id]),
-  );
-  const rows = [row];
-  if (open) for (const part of parts) rows.push(...partRows(editor, widget, part, depth + 1));
-  return rows;
+  return [
+    treeRow(
+      key,
+      depth,
+      cls,
+      null,
+      [
+        el("span", {
+          class: "layer-glyph",
+          html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 11, 1.7),
+        }),
+        label,
+        diagIcon(editor.diagFor(widget.id)),
+      ],
+      () => editor.select([widget.id]),
+    ),
+  ];
 }
 
-/* draw-kind glyphs: one mono mark per box direction / part draw */
-function partRows(
-  editor: Editor,
-  widget: Widget,
-  node: PartNode,
-  depth: number,
-): HTMLElement[] {
-  const key = "w" + widget.id + "/" + node.path;
-  const open = layerOpen(key, true);
-  const current =
-    editor.view.selection.length === 1 &&
-    editor.view.selection[0] === widget.id &&
-    editor.view.part === node.path;
-  /* every part carries its own `shown` switch (spec 2.3), so the tree can turn one off
-     where you are already looking at it; a span, not a button, inside the row's button */
-  const type = typeOf(editor.registry, widget.type);
-  const address = node.path + ".shown";
-  const switchable = (type?.slots ?? []).some((s) => s.name === address);
-  const on = !switchable || authoredSlot(widget, type, address) !== false;
-  const eye = el("span", {
-    class: "icon-btn layer-eye" + (on ? "" : " off"),
-    title: on ? "hide " + node.name : "show " + node.name,
-    html: iconMarkup(on ? "eye" : "eye-off", 11),
-  });
-  eye.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    const at = editor.store.widget(widget.id) ?? widget;
-    editor.apply([{ op: "set_prop", node: widget.id, key: "slots",
-                    value: withSlot(at.slots, address, !on) }]);
-  });
-  const row = treeRow(
-    key,
-    depth,
-    "part" + (current ? " current" : "") + (on ? "" : " hidden"),
-    node.children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
-    [
-      el("span", { class: "layer-glyph draw", text: PART_GLYPH[node.kind] ?? "·" }),
-      el("span", { class: "layer-label", text: node.name }),
-      switchable ? eye : null,
-    ],
-    () => editor.selectPart(widget.id, node.path),
-    node.path + " (" + node.kind + ")",
-  );
-  const rows = [row];
-  if (open)
-    for (const child of node.children)
-      rows.push(...partRows(editor, widget, child, depth + 1));
-  return rows;
-}
+/* PART ROWS have left this tree. Layers is page composition — which frames and widgets
+   sit where — and a widget's internals belong to the component that defines them, which
+   is the Design workspace's tree, not this one. The per-part eye that hid one went with
+   them; per-instance part visibility comes back as an instance-inspector concern, since
+   that is what it always was: an override on one placement, not a fact about the page.
 
 /* ---- inspector ---- */
 
@@ -377,11 +329,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
    *    Appearance so the panel's dressing never mixes with the control's own. */
   body.append(
     ...section("panel", "Panel", null, () => [
-      /* placement shares the slots' grid so its row sits on the same rhythm */
       el("div", { class: "prop-grid" }, [
-        el("label", { text: "Place" }),
-        geomRow(editor, widget.id, widget.geom, () => at().geom),
-        el("span"),
         ...otherSlots
           .filter((s) => s.group === "frame")
           .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
@@ -487,29 +435,10 @@ function renderPartInspector(
   );
 }
 
-/* shared by the widget inspector's Panel section and the frame inspector: four plain
-   number fields over any node's `geom` (a widget's or a frame's, both {x,y,w,h}) */
-function geomRow(editor: Editor, id: number, geom: Geom, at: () => Geom): HTMLElement {
-  const field = (key: "x" | "y" | "w" | "h") => {
-    const input = numberInput(Math.round(geom[key]), (n) =>
-      editor.apply([{ op: "set_prop", node: id, key: "geom", value: { ...at(), [key]: n } }]),
-    );
-    /* a canvas drag lands here as four value pushes: the fields track the pointer and the
-       one the user happens to be typing in is left alone */
-    bindField(id + ":geom." + key, input, () => String(Math.round(at()[key])));
-    return input;
-  };
-  return el("div", { class: "geom-grid" }, [
-    el("label", { text: "x" }),
-    field("x"),
-    el("label", { text: "y" }),
-    field("y"),
-    el("label", { text: "w" }),
-    field("w"),
-    el("label", { text: "h" }),
-    field("h"),
-  ]);
-}
+/* The x/y/w/h grid that stood here is gone with the coordinate space it edited. A node's
+   size and position stop being four numbers an author types and become a consequence of
+   what the node sits in — order, grow, min, gap, pad — so the rows that replace it are
+   ordinary schema rows on the frame, not a geometry pad. */
 
 /* The frame inspector (spec 2.8): plain and small on purpose — a frame is pure
  * composition (name, layout, gap, pad, align, geom), never feeds or behavior. Every
@@ -558,15 +487,6 @@ function renderFrameInspector(host: HTMLElement, editor: Editor, frame: Frame): 
         enumField("align", ["start", "center", "end", "stretch"]), el("span"),
       ]),
     ]),
-  );
-
-  /* NOT the widget inspector's "Panel" section: that one is named for the frame slots it
-     carries (surface, border, radius) and placement rides along in it. A frame node has
-     no such slots — placement is the whole section — so it is named for what it is, and
-     the geom row stands alone rather than under a redundant "Place" label. */
-  body.append(
-    ...section("frame-place", "Place", null, () =>
-      [geomRow(editor, frame.id, frame.geom, () => at().geom)]),
   );
 }
 

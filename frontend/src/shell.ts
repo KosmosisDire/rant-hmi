@@ -1,57 +1,36 @@
 /* The application shell: the frame (topbar, workspace tabs, mode switch) around the
  * workspaces, and the wiring between the connection, the document mirror and the
  * sidebars. The content workspace is the three-column editor; the shell holds only view
- * state (selection, hover, mode, active workspace, sidebar widths); every edit leaves as
- * an op and comes back as a broadcast, so two windows are always looking at the same
- * document. An `?operate` URL is the deployed view: the same app with a minimal frame,
- * just the artboard, started straight in operate mode.
+ * state (selection, mode, active workspace, sidebar widths); every edit leaves as an op
+ * and comes back as a broadcast, so two windows are always looking at the same document.
  *
- * Direct manipulation follows the old designer: click selects, shift-click extends, drag
- * moves the whole selection, the grips resize its bbox, and a dashed ghost shows where it
- * will land. The document is only touched on release, by one op. */
+ * THE STAGE IS EMPTY. Everything that drew a page or answered a gesture on it — the two
+ * artboard SVGs, the template renderer behind them, the pan/zoom camera, hit testing,
+ * drag-move and the resize grips, the four interaction primitives — has been removed
+ * rather than adapted, because the substrate under all of it changed: a page becomes real
+ * DOM laid out by the browser, so hit testing, dragging and scaling all become things the
+ * browser already does and none of the machinery here would have survived the port. What
+ * remains is the half that was never about pixels: the connection, the document mirror,
+ * selection, the four workspaces' panels, and structural editing by TREE POSITION rather
+ * than by coordinate. */
 
-import { bboxOf, cellSize, hitTest, renderContent, renderDesignOverlay, renderDesignPreview, renderOverlay, resolvePage, ViewState } from "./canvas.js";
 import { DocStore } from "./doc.js";
-import { clear, el, iconButton, svg } from "./dom.js";
-import { Editor } from "./editor.js";
-import { iconMarkup } from "./icons.js";
+import { clear, el, iconButton } from "./dom.js";
+import { Editor, Mode, ViewState } from "./editor.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
-import { run } from "./program.js";
-import { cellsFor, fedSlots, resolveSlot, runtimeSlots, themedSlot, typeOf, widgetOptions } from "./slots.js";
-import { PartHits, PartRect, Rect } from "./template.js";
-import { AttrTable, BuiltinDef, Diag, Doc, Frame, Geom, HistView, Interact, Json, Lang, Live, Mesh, Op, Page, Registry, Token, Widget, WidgetType } from "./types.js";
-import { Viewport } from "./viewport.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Frame, HistView, Json, Lang, Live, Mesh, Op, Page, Registry, Widget } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
-import { designInspectorShape, designSelectedPath, designShape, designSubject, renderDesignInspector, renderDesignTree, selectDesignRenderedPart } from "./workspaces/design.js";
+import { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } from "./workspaces/design.js";
 import { renderStyleWorkspace, styleShape } from "./workspaces/style.js";
-
-type Mode = "edit" | "test" | "operate";
 
 const SIDEBAR_MIN = 200;
 const SIDEBAR_MAX = 640;
-const MIN_SIZE = 20;
-
-/* Map one geom through a from-rect -> to-rect transform (a uniform scale plus the
- * to-rect's own offset): the SAME maths a multi-widget group resize and a "none"-layout
- * frame's child rescale both need (spec 2.8 Resize), so it lives once here rather than
- * twice. A from/to pair anchored at (0,0) (a frame's own old/new size) rescales in the
- * frame's LOCAL space; the selection's absolute bbox rescales in canvas-absolute space. */
-function mapGeom(geom: Geom, from: Rect, to: Rect): Geom {
-  const scaleX = from.w ? to.w / from.w : 1;
-  const scaleY = from.h ? to.h / from.h : 1;
-  return {
-    x: Math.round(to.x + (geom.x - from.x) * scaleX),
-    y: Math.round(to.y + (geom.y - from.y) * scaleY),
-    w: Math.max(MIN_SIZE, Math.round(geom.w * scaleX)),
-    h: Math.max(MIN_SIZE, Math.round(geom.h * scaleY)),
-  };
-}
 
 export class App implements Editor {
   store = new DocStore();
@@ -75,26 +54,13 @@ export class App implements Editor {
   live: Live | null = null;
   hists: Record<string, HistView> = {};
   diagnostics: Diag[] = [];
-  /* where every named template node landed on the last content render: widget id ->
-     part path -> rect in artboard units (the overlay's part ring reads this) */
-  partRects: Map<number, Map<string, PartRect>> = new Map();
-  /* a `code` part's error from the last content render, per widget (spec 2.3): rebuilt
-     fresh every render, so a fixed body drops out of it exactly as a cleared compile
-     finding drops out of `view.faults` */
-  codeFaults: Map<number, string> = new Map();
   view: ViewState = {
-    mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {},
+    mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {},
     /* the theme preview mode is a local preference, like the sidebar widths */
     themeMode: localStorage.getItem("theme-mode") === "light" ? "light" : "dark",
   };
 
   private conn: Connection;
-  private viewport: Viewport | null = null;
-  /* the Design workspace's OWN camera: a component preview is its own little artboard,
-     scaled to fit its own stage exactly like Content's, and it must pan/zoom
-     independently (spec 3.1) — one Viewport per stage, never shared. Null in the
-     operate view, which builds no Design workspace at all. */
-  private designViewport: Viewport | null = null;
   private pageId = 0;
   private workspaces: Workspace[] = [];
   private workspace: WorkspaceId = "content";
@@ -104,19 +70,10 @@ export class App implements Editor {
     left: HTMLElement;
     inspector: HTMLElement;
     stage: HTMLElement;
-    layer: HTMLElement;
-    art: SVGSVGElement;
-    overlay: SVGSVGElement;
     banner: HTMLElement;
     problems: HTMLElement;
     pill: HTMLElement;
   };
-  private designNodes: {
-    stage: HTMLElement;
-    layer: HTMLElement;
-    art: SVGSVGElement;
-    overlay: SVGSVGElement;
-  } | null = null;
   private sidebars!: { left: Panel; inspector: Panel };
   /* the Style and Data workspaces' reconciled panels and the topbar page selector's
      (pageselect.ts); all null when operating */
@@ -128,19 +85,11 @@ export class App implements Editor {
   private pagePanel: Panel | null = null;
   /* our "+ New page" is in flight: the echo carries the issued id, switch to it there */
   private pendingPage = false;
-  private drag: Json = null;
-  private control: Json = null;
   /* a just-forked or just-added component's name: its insert is in flight, and the ids
      the backend issues arrive with the echo, so selection resolves there by name */
   private pendingComponent: string | null = null;
-  private inputSequence = 0;
   private frame = 0;
-  private contentDirty = true;
   private sidebarsDirty = true;
-  private lastContent = "";
-  private lastOverlay = "";
-  private lastDesignContent = "";
-  private lastDesignOverlay = "";
 
   /* `operate` is the deployed view: no topbar, no sidebars, the artboard alone */
   constructor(private root: HTMLElement, url: string, private operate = false) {
@@ -160,7 +109,6 @@ export class App implements Editor {
       live: (live) => {
         this.live = live;
         this.absorbHist(live.hist);
-        this.queueCanvas(true);
         this.queueSidebars();
       },
       diag: (rows) => this.onDiag(rows),
@@ -226,16 +174,14 @@ export class App implements Editor {
   select(ids: number[]): void {
     this.view.selection = ids;
     this.view.part = "";
-    this.queueCanvas();
     this.queueSidebars();
   }
 
   /* part selection: the widget is selected and the focus narrows to one named template
-     node; the inspector scopes to it and the overlay rings where it landed */
+     node; the inspector scopes to it */
   selectPart(id: number, path: string): void {
     this.view.selection = [id];
     this.view.part = path;
-    this.queueCanvas();
     this.queueSidebars();
   }
 
@@ -332,21 +278,7 @@ export class App implements Editor {
     if (this.view.themeMode === mode) return;
     this.view.themeMode = mode;
     localStorage.setItem("theme-mode", mode);
-    this.queueCanvas(true);
     this.queueSidebars();
-  }
-
-  /* the theme every paint site resolves colors through: this view's mode over the
-     document's tokens */
-  private theme(): { tokens: Token[]; mode: "dark" | "light" } {
-    return { tokens: this.store.tokens(), mode: this.view.themeMode ?? "dark" };
-  }
-
-  /* the artboard and its editing overlay are separate layers: only the overlay depends on
-     the view transform, so panning and zooming redraw a handful of shapes */
-  private queueCanvas(content = false): void {
-    this.contentDirty = this.contentDirty || content;
-    this.schedule();
   }
 
   private queueSidebars(): void {
@@ -354,8 +286,8 @@ export class App implements Editor {
     this.schedule();
   }
 
-  /* One frame for both. Everything arriving from the wire is coalesced here, so a burst of
-     op echoes and 30 Hz live frames costs one pass, not one pass each. */
+  /* Everything arriving from the wire is coalesced into one frame, so a burst of op echoes
+     and 30 Hz live frames costs one pass, not one pass each. */
   private schedule(): void {
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
@@ -364,8 +296,6 @@ export class App implements Editor {
         this.sidebarsDirty = false;
         this.renderSidebars();
       }
-      this.renderCanvas();
-      this.renderDesignCanvas();
     });
   }
 
@@ -426,7 +356,6 @@ export class App implements Editor {
     this.onDiag(diag, false);
     const page = this.page();
     this.pageId = page ? page.id : 0;
-    this.viewport?.setArtboard(doc.canvas.unit_w, doc.canvas.unit_h);
     this.conn.view(this.pageId, true);
     this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
     if (!this.view.selection.length) this.view.part = "";
@@ -548,93 +477,9 @@ export class App implements Editor {
   /* ---- rendering ---- */
 
   private renderAll(): void {
-    this.queueCanvas(true);
     this.queueSidebars();
   }
 
-  private renderCanvas(): void {
-    const doc = this.store.doc;
-    const page = this.page();
-    if (!doc || !page) {
-      this.nodes.art.innerHTML = "";
-      this.nodes.overlay.innerHTML = "";
-      this.lastContent = this.lastOverlay = "";
-      return;
-    }
-    this.view.scale = this.viewport?.scale() ?? 1;
-    const viewBox = `0 0 ${doc.canvas.unit_w} ${doc.canvas.unit_h}`;
-    if (this.contentDirty) {
-      this.contentDirty = false;
-      this.partRects = new Map();
-      this.codeFaults = new Map();
-      const content = renderContent(doc, page, this.registry, this.live, this.view, this.mesh,
-                                    this.hists, this.partRects, this.codeFaults);
-      if (content !== this.lastContent) {
-        this.lastContent = content;
-        this.nodes.art.setAttribute("viewBox", viewBox);
-        this.nodes.art.innerHTML = content;
-      }
-    }
-    const overlay = renderOverlay(doc.canvas, page, this.view, this.partRects);
-    if (overlay === this.lastOverlay) return;
-    this.lastOverlay = overlay;
-    this.nodes.overlay.setAttribute("viewBox", viewBox);
-    this.nodes.overlay.innerHTML = overlay;
-  }
-
-  /* The Design workspace's own artboard: a TYPE preview rather than a page. Cheap
-     enough (one widget, no live data) to just recompute every frame and diff against
-     the last markup, exactly like Content's own canvas above — no separate dirty flag
-     needed since nothing here is fed by 30 Hz live frames in the first place. */
-  private renderDesignCanvas(): void {
-    if (this.operate || !this.designNodes) return;
-    const nodes = this.designNodes;
-    const subject = designSubject(this);
-    if (!subject) {
-      if (this.lastDesignContent !== "" || this.lastDesignOverlay !== "") {
-        nodes.art.innerHTML = "";
-        nodes.overlay.innerHTML = "";
-        this.lastDesignContent = this.lastDesignOverlay = "";
-      }
-      return;
-    }
-    /* a size change (switching subjects, or editing design_w/h) re-fits the camera;
-       an unchanged size is a no-op, so a standing pan/zoom survives an unrelated edit */
-    this.designViewport?.setArtboard(subject.w, subject.h);
-    const type = typeOf(this.registry, subject.name);
-    const parts: PartHits = { rects: new Map<string, PartRect>(), path: "", depth: 0, transform: "" };
-    const content = renderDesignPreview(type, subject.name, subject.w, subject.h,
-                                        this.theme(), this.view, parts);
-    const viewBox = `0 0 ${subject.w} ${subject.h}`;
-    if (content !== this.lastDesignContent) {
-      this.lastDesignContent = content;
-      nodes.art.setAttribute("viewBox", viewBox);
-      nodes.art.innerHTML = content;
-    }
-    const path = designSelectedPath(this, subject);
-    const overlay = renderDesignOverlay(path, this.designViewport?.scale() ?? 1, parts.rects);
-    if (overlay !== this.lastDesignOverlay) {
-      this.lastDesignOverlay = overlay;
-      nodes.overlay.setAttribute("viewBox", viewBox);
-      nodes.overlay.innerHTML = overlay;
-    }
-  }
-
-  /* A click in the Design viewport, resolved the same way Content resolves a second
-     click into a part (shell.ts's onStageDown): the browser's OWN hit test, never
-     geometry. The design Viewport captures the pointer for panning (canPan is
-     unconditionally true here — nothing else ever grabs a gesture in this preview), so
-     by the time this fires `ev.target` has been retargeted to the stage itself; asking
-     the browser directly for what is under the pointer (elementFromPoint) is still the
-     browser's hit test, just entered from a different door. */
-  private onDesignTap(ev: PointerEvent): void {
-    const under = document.elementFromPoint(ev.clientX, ev.clientY) as Element | null;
-    const partEl = under?.closest?.("[data-part]") as Element | null;
-    if (!partEl) return;
-    const subject = designSubject(this);
-    if (!subject) return;
-    selectDesignRenderedPart(this, subject, partEl.getAttribute("data-part") ?? "");
-  }
 
   /* Each sidebar decides for itself. It is handed the shape of the document it draws from,
    * and rebuilds only if that shape moved; otherwise every control it already built
@@ -664,21 +509,19 @@ export class App implements Editor {
     const problems = el("button", { class: "problems", onclick: () => this.showProblem() });
     const left = el("aside", { class: "sidebar left" });
     const inspector = el("aside", { class: "sidebar right" });
-    const art = svg("svg", { class: "artboard", width: "100%", height: "100%" }) as SVGSVGElement;
-    const overlay = svg("svg", { class: "artboard overlay", width: "100%", height: "100%" }) as SVGSVGElement;
-    const layer = el("div", { class: "layer" }, [art as unknown as Node, overlay as unknown as Node]);
-    const stage = el("section", { class: "stage" }, [layer]);
+    /* An honest empty pane. It is a real element and it holds the layout's middle column
+       so the two sidebars and their gutters still have something to sit either side of;
+       it just draws nothing, because nothing here can draw a page any more. */
+    const stage = el("section", { class: "stage empty" });
     const banner = el("div", { class: "banner" });
 
-    this.nodes = {
-      left, inspector, stage, layer, art, overlay, banner, problems, pill,
-    };
+    this.nodes = { left, inspector, stage, banner, problems, pill };
     this.sidebars = { left: new Panel(left), inspector: new Panel(inspector) };
 
     if (this.operate) {
-      /* the deployed view: the artboard alone. The banner stays: reconnects and refused
-         edits still need a voice. The problems button and pill exist unattached, so the
-         status handlers have somewhere to write. */
+      /* the deployed view: nothing to deploy while the stage is empty. The banner stays:
+         reconnects and refused edits still need a voice. The problems button and pill
+         exist unattached, so the status handlers have somewhere to write. */
       this.root.appendChild(el("main", { class: "workspace" }, [stage]));
       this.root.appendChild(banner);
     } else {
@@ -698,25 +541,18 @@ export class App implements Editor {
       const data = el("main", { class: "workspace-data" }, [dataTree, dataDetail]);
       this.dataTreePanel = new Panel(dataTree);
       this.dataDetailPanel = new Panel(dataDetail);
-      /* Design: the component list, a live preview of the selected component/part in
-         the middle, and the component/part inspector. The preview's stage is built
-         exactly like Content's (a .stage holding a .layer holding the content SVG and
-         its ring overlay), with its OWN Viewport (below): the two cameras are wholly
-         independent, so panning one never touches the other. */
+      /* Design: the component tree and the component/part inspector, either side of an
+         empty middle. The preview that used to stand between them was a second artboard
+         with its own camera; it goes with the first one, and comes back as the multi-size
+         gallery the rebuild plans. Authoring a component still works — the tree selects,
+         the inspector edits — it just cannot be watched while it happens. */
       const designTree = el("aside", { class: "sidebar design-tree", "data-input": "scroll" });
       const designInspector = el("aside", { class: "sidebar design-inspector", "data-input": "scroll" });
-      const designArt =
-        svg("svg", { class: "artboard", width: "100%", height: "100%" }) as SVGSVGElement;
-      const designOverlay =
-        svg("svg", { class: "artboard overlay", width: "100%", height: "100%" }) as SVGSVGElement;
-      const designLayer = el("div", { class: "layer" },
-        [designArt as unknown as Node, designOverlay as unknown as Node]);
-      const designStage = el("section", { class: "stage" }, [designLayer]);
+      const designStage = el("section", { class: "stage empty" });
       const design =
         el("main", { class: "workspace-design" }, [designTree, designStage, designInspector]);
       this.designTreePanel = new Panel(designTree);
       this.designInspectorPanel = new Panel(designInspector);
-      this.designNodes = { stage: designStage, layer: designLayer, art: designArt, overlay: designOverlay };
       this.workspaces = buildWorkspaces(content, design, data, style);
 
       const modes = el(
@@ -769,48 +605,12 @@ export class App implements Editor {
       }
       this.root.appendChild(banner);
       this.restoreSidebarWidths();
-
-      /* the preview has nothing else to grab a gesture (spec: no drag/resize/rotate in
-         the viewport yet, the inspector already owns add/delete), so canPan is
-         unconditionally true — the whole stage is background as far as this camera is
-         concerned, and a real part click is resolved separately (onDesignTap) */
-      this.designViewport = new Viewport(designStage, designLayer, {
-        canPan: () => true,
-        onTap: (_x, _y, ev) => this.onDesignTap(ev),
-        onViewChange: () => this.schedule(),
-        onLongPress: () => {},
-      });
     }
 
-    this.viewport = new Viewport(stage, layer, {
-      canPan: (ev) => !this.grabbable(ev),
-      onTap: (x, y, ev) => {
-        if (this.view.mode !== "edit") return;
-        const page = this.page();
-        const doc = this.store.doc;
-        const id = page && doc ? hitTest(doc.canvas, page, x, y) : 0;
-        this.clickSelect(id, ev.shiftKey);
-      },
-      onViewChange: () => this.queueCanvas(),
-      onLongPress: (x, y, ev) => this.openContextAt(x, y, ev.clientX, ev.clientY),
-    });
-
-    stage.addEventListener("pointerdown", (ev) => this.onStageDown(ev as PointerEvent), true);
-    stage.addEventListener("pointermove", (ev) => this.onStageHover(ev as PointerEvent));
-    stage.addEventListener("pointerleave", () => {
-      if (this.view.hover) {
-        this.view.hover = 0;
-        this.queueCanvas();
-      }
-    });
+    /* The stage listens for one thing: a right-click asking to add a widget. There is
+       nothing under the pointer to hit-test against, so the menu adds by TREE POSITION
+       (append to the current page) rather than at the coordinate clicked. */
     stage.addEventListener("contextmenu", (ev) => this.onContextMenu(ev as MouseEvent));
-    window.addEventListener("pointermove", (ev) => this.onStageMove(ev as PointerEvent));
-    window.addEventListener("pointerup", (ev) => this.onStageUp(ev as PointerEvent));
-    window.addEventListener("pointercancel", (ev) => this.onControlUp(ev as PointerEvent, true));
-    window.addEventListener("blur", () => this.cancelControl());
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) this.cancelControl();
-    });
     window.addEventListener("keydown", (ev) => this.onKey(ev));
   }
 
@@ -847,576 +647,33 @@ export class App implements Editor {
     }
   }
 
-  /* pure view routing: the hidden workspaces stay alive (viewport transform, reconciled
-     sidebars), and the connection and document never notice a switch */
+  /* pure view routing: the hidden workspaces stay alive (their reconciled sidebars keep
+     rendering), and the connection and document never notice a switch */
   private setWorkspace(id: WorkspaceId): void {
-    /* selecting a component (or one of its parts) calls this EVERY time, even while
-       already in Design — `entering` is only true on a real tab change, which is what
-       must trigger a re-fit below; refitting on every part click would fight a
-       standing pan/zoom the moment the author touched the tree */
-    const entering = this.workspace !== id;
     this.workspace = id;
     for (const ws of this.workspaces) ws.root.hidden = ws.id !== id;
     for (const tab of Array.from(this.root.querySelectorAll("button[data-workspace]")))
       tab.classList.toggle("on", (tab as HTMLElement).dataset.workspace === id);
     /* the mode switch and play act on the artboard: they mean nothing over Data or Style */
     for (const tool of this.stageTools) tool.hidden = id !== "content";
-    /* a HIDDEN stage has zero size (viewport.ts's own fit() guard skips one with none),
-       so switching TO Design must re-fit its camera on this same tick, right as the
-       `hidden` attribute clears — waiting on the ResizeObserver instead leaves the
-       preview blank or wrongly scaled until something else happens to resize it */
-    if (entering && id === "design") this.designViewport?.fit(true);
   }
 
   private setMode(mode: Mode): void {
     this.view.mode = mode;
-    this.view.ghost = null;
     this.root.setAttribute("data-mode", mode);
     for (const button of Array.from(this.root.querySelectorAll("button[data-mode]")))
       button.classList.toggle("on", (button as HTMLElement).dataset.mode === mode);
-    /* an operator surface stays still; editing wants pan and zoom everywhere */
-    this.viewport?.setLocked(mode === "operate" && window.innerWidth > 900);
     this.renderAll();
   }
 
-  /* ---- selection and direct manipulation ---- */
+  /* Direct manipulation and the four interaction primitives (press, drag1d, drag_radial
+     and the pick tray) stood here and are gone. Both rested on the same two things: a
+     coordinate space this view owned, and a hit test it performed itself against resolved
+     rects. Under DOM neither is ours — the browser hit-tests, and a gesture arrives already
+     addressed to the element it landed on — so every line of it would have been rewritten
+     rather than moved. Selection now comes from the Layers tree only, and TEST MODE drives
+     nothing until the primitives are rebuilt on ordinary DOM events. */
 
-  private grabbable(ev: PointerEvent): boolean {
-    const target = ev.target as Element | null;
-    /* operating: only an interactive ELEMENT claims the pointer, so a touch on a
-       widget's inert background can still pan the viewport */
-    if (this.view.mode !== "edit") return Boolean(target?.closest?.("[data-act]"));
-    return Boolean(target?.closest?.("[data-id], [data-handle]"));
-  }
-
-  private clickSelect(id: number, extend: boolean): void {
-    if (!id) {
-      this.select([]);
-      return;
-    }
-    if (!extend) {
-      this.select([id]);
-      return;
-    }
-    const at = this.view.selection.indexOf(id);
-    this.select(at >= 0
-      ? this.view.selection.filter((other) => other !== id)
-      : this.view.selection.concat([id]));
-  }
-
-  private onStageHover(ev: PointerEvent): void {
-    if (this.view.mode !== "edit" || this.drag) return;
-    const page = this.page();
-    const doc = this.store.doc;
-    if (!page || !doc || !this.viewport) return;
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const id = hitTest(doc.canvas, page, at.x, at.y);
-    if (id === this.view.hover) return;
-    this.view.hover = id;
-    this.queueCanvas();
-  }
-
-  private onStageDown(ev: PointerEvent): void {
-    if (this.view.mode !== "edit") {
-      this.onControlDown(ev);
-      return;
-    }
-    if (ev.button !== 0 || !this.viewport) return;
-    const target = ev.target as HTMLElement | null;
-    const handle = target?.closest?.("[data-handle]") as HTMLElement | null;
-    const widgetNode = target?.closest?.("[data-id]") as HTMLElement | null;
-    if (!handle && !widgetNode) return;
-
-    let selection = this.view.selection.slice();
-    let descend: string | null = null;
-    if (!handle && widgetNode) {
-      const id = Number(widgetNode.dataset.id);
-      if (selection.indexOf(id) < 0) {
-        this.clickSelect(id, ev.shiftKey);
-        selection = this.view.selection.slice();
-      } else if (!ev.shiftKey && selection.length === 1 && selection[0] === id) {
-        /* a second click on the already-selected widget descends into the part under
-           the pointer: the browser's own hit test names it (the overlay is
-           click-through, so the target rides the art SVG). Committed at the up edge,
-           so a drag never descends. */
-        const partNode = target?.closest?.("[data-part]") as Element | null;
-        if (partNode && partNode.closest("[data-id]") === widgetNode)
-          descend = partNode.getAttribute("data-part");
-      }
-    }
-
-    const page = this.page();
-    const doc = this.store.doc;
-    if (!page || !doc) return;
-    const placed = resolvePage(doc.canvas, page);
-    const byId = new Map(placed.map((p) => [p.node.id, p]));
-    /* the ABSOLUTE x/y a node's `geom` is authored relative to: the page's own origin
-       (0,0) for a top-level child, or its parent frame's resolved origin for a nested
-       one (spec 2.8). Read once at drag-start and held fixed through the drag: only the
-       dragged node itself moves, never its parent. */
-    const originOf = (id: number): { x: number; y: number } => {
-      const parent = this.store.parentOf(id);
-      const p = parent && typeof parent.id === "number" ? byId.get(parent.id) : undefined;
-      return p ? { x: p.rect.x, y: p.rect.y } : { x: 0, y: 0 };
-    };
-
-    /* a lone selected FRAME resizes as its own rect, reached only through a grip: a
-       frame paints no body of its own in the content layer (its geom is authored
-       directly in the inspector instead), so `widgetNode` is never a frame's. */
-    if (handle && selection.length === 1) {
-      const frame = this.store.frame(selection[0]);
-      if (frame) {
-        const rect = byId.get(frame.id)?.rect ?? { ...frame.geom };
-        const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-        this.drag = {
-          mode: handle.dataset.handle,
-          part: null,
-          frame,
-          frameOrigin: originOf(frame.id),
-          start: rect,
-          x0: at.x,
-          y0: at.y,
-          moved: false,
-        };
-        ev.stopPropagation();
-        ev.preventDefault();
-        return;
-      }
-    }
-
-    const widgets = selection
-      .map((id) => this.store.widget(id))
-      .filter(Boolean) as Widget[];
-    if (!widgets.length) return;
-
-    /* the RESOLVED absolute rect, not the raw (possibly frame-relative) geom: a widget
-       nested under a frame must drag and resize in the same screen space it is drawn
-       in, exactly like a top-level one (whose resolved rect equals its geom, origin 0,0) */
-    const rects = widgets.map((w) => byId.get(w.id)?.rect ?? { ...w.geom });
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    this.drag = {
-      mode: handle?.dataset.handle ?? "move",
-      part: descend,
-      widgets,
-      origins: widgets.map((w) => originOf(w.id)),
-      start: bboxOf(rects),
-      geoms: rects,
-      x0: at.x,
-      y0: at.y,
-      moved: false,
-    };
-    ev.stopPropagation();
-    ev.preventDefault();
-  }
-
-  private onStageMove(ev: PointerEvent): void {
-    if (this.control) {
-      this.onControlMove(ev);
-      return;
-    }
-    if (!this.drag || !this.viewport) return;
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const dx = at.x - this.drag.x0;
-    const dy = at.y - this.drag.y0;
-    if (!this.drag.moved && Math.hypot(dx, dy) * this.view.scale < 4) return;
-    this.drag.moved = true;
-    this.view.ghost = this.targetBox(this.drag, dx, dy, ev.altKey);
-    this.queueCanvas();
-  }
-
-  private onStageUp(ev: PointerEvent): void {
-    if (this.control) {
-      this.onControlUp(ev, false);
-      return;
-    }
-    if (!this.drag) return;
-    const drag = this.drag;
-    this.drag = null;
-    this.view.ghost = null;
-    if (!drag.moved || !this.viewport) {
-      /* the second click that never dragged: descend into the noted part; with no part
-         under the pointer the widget selection simply stands */
-      if (typeof drag.part === "string" && drag.part)
-        this.selectPart((drag.widgets as Widget[])[0].id, drag.part);
-      this.queueCanvas();
-      return;
-    }
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const box = this.targetBox(drag, at.x - drag.x0, at.y - drag.y0, ev.altKey);
-    const from: Rect = drag.start;
-
-    if (drag.frame) {
-      const frame = drag.frame as Frame;
-      const origin = drag.frameOrigin as { x: number; y: number };
-      const ops: Op[] = [{
-        op: "set_prop",
-        node: frame.id,
-        key: "geom",
-        value: {
-          x: Math.round(box.x - origin.x),
-          y: Math.round(box.y - origin.y),
-          w: Math.max(MIN_SIZE, Math.round(box.w)),
-          h: Math.max(MIN_SIZE, Math.round(box.h)),
-        },
-      }];
-      /* a SIZE change on a "none"-layout frame scales its children's authored geom
-         proportionally (spec 2.8 Resize); a plain move needs no child op at all, since
-         a child's geom is already relative to the frame's own origin. row/col children
-         are never rewritten by this: the flow simply re-runs at the new size. */
-      if (frame.layout === "none" && (box.w !== from.w || box.h !== from.h)) {
-        const localFrom: Rect = { x: 0, y: 0, w: from.w, h: from.h };
-        const localTo: Rect = { x: 0, y: 0, w: box.w, h: box.h };
-        for (const child of frame.children ?? [])
-          ops.push({ op: "set_prop", node: child.id, key: "geom",
-                     value: mapGeom(child.geom, localFrom, localTo) });
-      }
-      this.apply(ops);
-      this.queueCanvas();
-      return;
-    }
-
-    /* a group resize maps each widget through the bbox transform, so relative placement
-       survives; for a single widget it is just the new rect. The transform runs in
-       ABSOLUTE space (drag.geoms holds resolved rects); each result is then localized
-       back into whatever origin that widget is actually authored against. */
-    const origins = drag.origins as { x: number; y: number }[];
-    const ops: Op[] = (drag.widgets as Widget[]).map((widget, index) => {
-      const abs = mapGeom(drag.geoms[index], from, box);
-      const origin = origins[index];
-      return {
-        op: "set_prop",
-        node: widget.id,
-        key: "geom",
-        value: {
-          x: Math.round(abs.x - origin.x),
-          y: Math.round(abs.y - origin.y),
-          w: abs.w,
-          h: abs.h,
-        },
-      };
-    });
-    this.apply(ops);
-    this.queueCanvas();
-  }
-
-  /* the type's interacts in template PREORDER: the same order the renderer counts them
-     off into data-act ordinals, so a hit group names its interact by index */
-  private interactions(type: WidgetType | null): Interact[] {
-    const out: Interact[] = [];
-    const walk = (node: Json): void => {
-      if (!node) return;
-      if (node.interact) out.push(node.interact as Interact);
-      for (const child of node.children ?? []) walk(child);
-    };
-    if (type) walk(type.template);
-    return out;
-  }
-
-  private controlCells(widget: Widget, type: WidgetType): (cell: string) => Json {
-    return cellsFor(widget, type, this.live, this.view.state[widget.id] ?? {}, this.mesh,
-                    null, this.theme());
-  }
-
-  /* What the gesture itself reports. Where the type declares where `x` comes from, that
-     is the backend's to derive and this sends nothing: a view holding its own copy of a
-     value the backend already owns is exactly the truth this tier must not hold. */
-  private eventValue(type: WidgetType, event: string, down: boolean): Json {
-    return type.events.find((row) => row.name === event)?.value ? null : down;
-  }
-
-  private emitInput(widget: Widget, event: string | undefined, value: Json): void {
-    if (!event) return;
-    this.conn.input(widget.id, event, value, ++this.inputSequence);
-  }
-
-  private onControlDown(ev: PointerEvent): void {
-    if (ev.button !== 0 || !this.viewport) return;
-    /* The browser's own SVG hit test decides what is interactive: a gesture starts only
-       on something PAINTED by an interact-carrying template element, so a circle hits
-       inside the circle and a toggle only on its pill, never the tile around it. The
-       group's ordinal names which of the type's interacts was hit. */
-    const target = ev.target as Element | null;
-    const hit = (target?.closest?.("[data-act]") ?? null) as Element | null;
-    if (!hit) return;
-    const holder = hit.closest("[data-id]");
-    const widget = this.store.widget(Number(holder?.getAttribute("data-id") ?? 0));
-    if (!widget) return;
-    const type = typeOf(this.registry, widget.type);
-    const interact = type
-      ? this.interactions(type)[Number(hit.getAttribute("data-act") ?? 0)] ?? null
-      : null;
-    if (!type || !interact) return;
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    const fed = fedSlots(widget);
-    if (resolveSlot(widget, type, this.live, fed, "enabled") !== true) return;
-    /* a radial gesture pivots on the CENTER of what the interact painted (the dial),
-       measured in client pixels once at the down edge; linear mode instead anchors on
-       the down point and the fraction the control held there. The dial OWNS the fit
-       (spec 2.3): its own area already IS the fitted circle's bounding square, and the
-       renderer gives an interact-carrying node an invisible full-area rect so its
-       bbox is that whole square rather than just whatever a partial sweep painted —
-       so the plain bbox center is always the right pivot, no fit params to re-derive. */
-    const pivot = hit.getBoundingClientRect();
-    const cells = this.controlCells(widget, type);
-    const f0 = interact.params.fraction ? run(interact.params.fraction, cells) : null;
-    const cx = pivot.left + pivot.width / 2;
-    const cy = pivot.top + pivot.height / 2;
-    this.control = {
-      pointer: ev.pointerId,
-      widget,
-      type,
-      interact,
-      started: performance.now(),
-      cx,
-      cy,
-      downX: ev.clientX,
-      downY: ev.clientY,
-      f0: typeof f0 === "number" ? Math.max(0, Math.min(1, f0)) : 0,
-    };
-    this.view.state[widget.id] = {
-      ...(this.view.state[widget.id] ?? {}),
-      pressed: interact.primitive === "press",
-      dragging: interact.primitive === "drag1d" || interact.primitive === "drag_radial",
-      open: interact.primitive === "pick",
-    };
-    if (interact.primitive === "press")
-      this.emitInput(widget, interact.emits.press,
-        this.eventValue(type, interact.emits.press, true));
-    else if (interact.primitive === "pick")
-      this.emitInput(widget, interact.emits.open,
-        this.eventValue(type, interact.emits.open, true));
-    else if (interact.primitive === "drag1d")
-      /* a press on the track IS a drag to that point: without this, a click that never
-         moves emits nothing at all and the knob ignores it */
-      this.emitDrag(widget, type, interact, at.x, at.y);
-    else if (interact.primitive === "drag_radial")
-      /* linear mode emits nothing at the down edge: the value moves relative to the
-         drag, and a click that never drags jumps at the UP edge instead */
-      this.emitRadial(widget, type, interact, ev.clientX, ev.clientY);
-    this.queueCanvas(true);
-    ev.preventDefault();
-    ev.stopPropagation();
-  }
-
-  /* the drag1d primitive: map a point in the tile onto the range its params declare, and
-     report it. The value it computes is not truth, it is an input event like any other */
-  private emitDrag(widget: Widget, type: WidgetType, interact: Interact, x: number, y: number): void {
-    const cells = this.controlCells(widget, type);
-    const axis = String(run(interact.params.axis, cells) ?? "x");
-    const lo = Number(run(interact.params.min, cells) ?? 0);
-    const hi = Number(run(interact.params.max, cells) ?? 1);
-    const step = Math.max(0, Number(run(interact.params.step, cells) ?? 0));
-    const fraction = axis === "y"
-      ? 1 - (y - widget.geom.y) / widget.geom.h
-      : (x - widget.geom.x) / widget.geom.w;
-    let value = lo + Math.max(0, Math.min(1, fraction)) * (hi - lo);
-    if (step > 0) value = lo + Math.round((value - lo) / step) * step;
-    if (this.control) this.control.value = value;
-    this.emitInput(widget, interact.emits.input, value);
-  }
-
-  /* The drag_radial primitive: the pointer's bearing from the control's center, mapped
-   * onto the sweep the params declare (degrees, 0 = up, clockwise; the same convention
-   * the arc parts draw with). A bearing outside the sweep clamps to the nearer end, so
-   * dragging past the stop holds it there. With `mode` "linear" (the default) the same
-   * control DRAGS like a fader instead: horizontal motion moves the value RELATIVE to
-   * where it stood at pointer-down (the `fraction` param), full range over ~220 px; a
-   * CLICK that never drags still jumps to the clicked bearing (`jump`, sent from the
-   * up edge), so pointing at a position works in both modes. With `options`, the range
-   * is a detent per option and the gesture reports the SELECTED NAME (on change only);
-   * without, it reports the min..max value like drag1d. */
-  private emitRadial(widget: Widget, type: WidgetType, interact: Interact,
-                     clientX: number, clientY: number, jump = false): void {
-    const cells = this.controlCells(widget, type);
-    let fraction: number;
-    if (!jump && String(run(interact.params.mode, cells) ?? "radial") === "linear") {
-      const moved = clientX - Number(this.control?.downX ?? clientX);
-      if (!moved) return;
-      fraction = Math.max(0, Math.min(1, Number(this.control?.f0 ?? 0) + moved / 220));
-    } else {
-      const start = Number(run(interact.params.start, cells) ?? -135);
-      const sweep = Math.max(1, Math.min(360, Number(run(interact.params.sweep, cells) ?? 270)));
-      const dx = clientX - Number(this.control?.cx ?? 0);
-      const dy = clientY - Number(this.control?.cy ?? 0);
-      if (dx * dx + dy * dy < 9) return;              /* dead zone: no bearing yet */
-      const bearing = (Math.atan2(dx, -dy) * 180) / Math.PI;   /* [-180, 180], 0 = up */
-      let rel = ((bearing - start) % 360 + 360) % 360;          /* into [0, 360) */
-      /* past the open end: snap to whichever stop is closer around the gap */
-      if (rel > sweep) rel = rel - sweep < (360 - rel) ? sweep : 0;
-      fraction = rel / sweep;
-    }
-
-    if (interact.params.options) {
-      const options = widgetOptions(widget, type, this.live, fedSlots(widget), this.mesh,
-                                    run(interact.params.options, cells));
-      if (options.length < 2) return;
-      const name = options[Math.round(fraction * (options.length - 1))];
-      if (this.control && this.control.value !== name) {
-        this.control.value = name;
-        this.emitInput(widget, interact.emits.select, name);
-      }
-      return;
-    }
-
-    const lo = Number(run(interact.params.min, cells) ?? 0);
-    const hi = Number(run(interact.params.max, cells) ?? 1);
-    const step = Math.max(0, Number(run(interact.params.step, cells) ?? 0));
-    let value = lo + fraction * (hi - lo);
-    if (step > 0) value = lo + Math.round((value - lo) / step) * step;
-    if (this.control) this.control.value = value;
-    this.emitInput(widget, interact.emits.input, value);
-  }
-
-  private onControlMove(ev: PointerEvent): void {
-    const control = this.control;
-    if (!control || control.pointer !== ev.pointerId || !this.viewport) return;
-    if (control.interact.primitive === "drag_radial") {
-      /* a real drag, once the pointer has left the click slop */
-      const slopX = ev.clientX - Number(control.downX ?? ev.clientX);
-      const slopY = ev.clientY - Number(control.downY ?? ev.clientY);
-      if (control.moved || slopX * slopX + slopY * slopY > 16) control.moved = true;
-      if (control.moved)
-        this.emitRadial(control.widget as Widget, control.type as WidgetType,
-                        control.interact, ev.clientX, ev.clientY);
-      ev.preventDefault();
-      return;
-    }
-    if (control.interact.primitive !== "drag1d") return;
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    this.emitDrag(control.widget as Widget, control.type as WidgetType, control.interact, at.x, at.y);
-    ev.preventDefault();
-  }
-
-  private onControlUp(ev: PointerEvent, cancelled: boolean): void {
-    const control = this.control;
-    if (!control || (ev.pointerId !== undefined && control.pointer !== ev.pointerId)) return;
-    /* the gesture stays current until the end of this handler: the click-jump below
-       still needs its pivot (cx/cy) and down point */
-    const widget = control.widget as Widget;
-    const type = control.type as WidgetType;
-    const interact = control.interact as Interact;
-    const state = this.view.state[widget.id] ?? {};
-    state.pressed = state.dragging = state.open = false;
-    if (interact.primitive === "press") {
-      this.emitInput(widget, interact.emits.release,
-        this.eventValue(type, interact.emits.release, false));
-      const hold = Number(run(interact.params.hold_ms, this.controlCells(widget, type)) ?? 600);
-      if (!cancelled && performance.now() - control.started < hold)
-        this.emitInput(widget, interact.emits.tap,
-          this.eventValue(type, interact.emits.tap, true));
-    } else if (interact.primitive === "drag1d" || interact.primitive === "drag_radial") {
-      /* a CLICK on a radial control (nothing emitted yet) jumps to the clicked
-         bearing, whatever the drag mode: pointing at a position always works */
-      if (interact.primitive === "drag_radial" && !cancelled && control.value === undefined)
-        this.emitRadial(widget, type, interact, ev.clientX, ev.clientY, true);
-      if (!cancelled && control.value !== undefined)
-        this.emitInput(widget, interact.emits.commit, control.value);
-    } else if (interact.primitive === "pick" && !cancelled) {
-      /* a REAL menu: the options slot holds a TypeRef naming an enum (spec 6.2), and
-         the variant names come off the served type table, so the list can never drift
-         from the schema. Selection is an input event like any other. */
-      const options = widgetOptions(widget, type, this.live, fedSlots(widget), this.mesh,
-                                    run(interact.params.options, this.controlCells(widget, type)));
-      if (options.length) {
-        const current = String(
-          resolveSlot(widget, type, this.live, fedSlots(widget), "value") ?? "");
-        this.openPickTray(widget, type, options, current, (option) =>
-          this.emitInput(widget, interact.emits.select, option));
-      }
-    }
-    this.control = null;
-    this.queueCanvas(true);
-  }
-
-  /* The Dropdown's tray is WIDGET chrome, not editor chrome: it hangs under the field
-     at the field's own width and wears the widget's resolved surface, border, radius
-     and text colour, so the open control reads as one piece of the same widget. */
-  private openPickTray(widget: Widget, type: WidgetType, options: string[],
-                       current: string, pick: (option: string) => void): void {
-    const anchor = document.querySelector('[data-id="' + widget.id + '"]');
-    const rect = anchor?.getBoundingClientRect();
-    if (!rect || !rect.width) return;
-    const fed = fedSlots(widget);
-    const runtime = runtimeSlots(widget, type);
-    const theme = this.theme();
-    const slot = (name: string) => resolveSlot(widget, type, this.live, fed, name);
-    /* the tray wears the widget's colors, so they resolve exactly as the canvas does */
-    const color = (name: string) =>
-      themedSlot(widget, type, this.live, fed, runtime, theme, name);
-    /* the frame's radius rule (canvas.ts): auto nests inside the island's corner at
-       the panel inset; units become pixels at the widget's own on-screen scale */
-    const panelPad = Number(slot("panel_pad") ?? -1);
-    const inset = panelPad < 0 ? 5 : panelPad;
-    const rawRadius = Number(slot("radius") ?? -1);
-    const units = rawRadius < 0 ? Math.max(0, 16 - inset) : rawRadius;
-    const scale = rect.height / Math.max(1, widget.geom.h - 2 * inset);
-
-    const overlay = el("div", { class: "pick-shade" });
-    const tray = el("div", { class: "pick-tray", "data-input": "scroll" });
-    tray.style.left = rect.left + "px";
-    tray.style.top = rect.bottom + 4 + "px";
-    tray.style.width = rect.width + "px";
-    tray.style.maxHeight = Math.max(60, window.innerHeight - rect.bottom - 16) + "px";
-    tray.style.background = String(color("surface") ?? "#141414");
-    tray.style.border = "1px solid " + String(color("border") ?? "#2e2e2e");
-    tray.style.borderRadius = Math.round(units * scale) + "px";
-    tray.style.color = String(color("text_color") ?? "#ececec");
-    const close = () => overlay.remove();
-    overlay.addEventListener("pointerdown", (pd) => {
-      if (pd.target === overlay) close();
-    });
-    for (const option of options) {
-      const row = el("button", { class: "pick-row" }, [
-        el("span", {
-          class: "pick-check",
-          html: option === current ? iconMarkup("check", 11, 2) : "",
-        }),
-        el("span", { text: option }),
-      ]);
-      row.addEventListener("click", () => {
-        close();
-        pick(option);
-      });
-      tray.appendChild(row);
-    }
-    overlay.appendChild(tray);
-    document.body.appendChild(overlay);
-    /* no room below: hang it above the field instead */
-    if (rect.bottom + 4 + tray.offsetHeight > window.innerHeight - 8)
-      tray.style.top = Math.max(8, rect.top - tray.offsetHeight - 4) + "px";
-  }
-
-  private cancelControl(): void {
-    if (!this.control) return;
-    this.onControlUp({ pointerId: this.control.pointer } as PointerEvent, true);
-  }
-
-  /* Where the selection bbox lands: snapped to the cell grid unless Alt frees it. The drag
-   * is passed in, never read from the field: the release path clears the field first. */
-  private targetBox(drag: Json, dx: number, dy: number, free: boolean): Rect {
-    const doc = this.store.doc;
-    const cell = doc ? cellSize(doc.canvas) : 22;
-    const snap = (v: number) => (free ? Math.round(v) : Math.round(v / cell) * cell);
-    const from: Rect = drag.start;
-    const mode: string = drag.mode;
-    if (mode === "move")
-      return { x: snap(from.x + dx), y: snap(from.y + dy), w: from.w, h: from.h };
-
-    let { x, y, w, h } = from;
-    if (mode.includes("L")) {
-      const right = x + w;
-      x = Math.min(snap(x + dx), right - MIN_SIZE);
-      w = right - x;
-    }
-    if (mode.includes("R")) w = Math.max(MIN_SIZE, snap(x + w + dx) - x);
-    if (mode.includes("T")) {
-      const bottom = y + h;
-      y = Math.min(snap(y + dy), bottom - MIN_SIZE);
-      h = bottom - y;
-    }
-    if (mode.includes("B")) h = Math.max(MIN_SIZE, snap(y + h + dy) - y);
-    return { x, y, w, h };
-  }
 
   private onKey(ev: KeyboardEvent): void {
     const typing = (ev.target as HTMLElement)?.matches?.("input, select, textarea");
@@ -1460,96 +717,73 @@ export class App implements Editor {
   /* ---- context menu (right-click, or long-press on touch) ---- */
 
   private onContextMenu(ev: MouseEvent): void {
-    if (this.view.mode !== "edit" || !this.viewport) return;
+    if (this.view.mode !== "edit") return;
     ev.preventDefault();
-    const at = this.viewport.toArtboard(ev.clientX, ev.clientY);
-    this.openContextAt(at.x, at.y, ev.clientX, ev.clientY);
+    this.openContextAt(ev.clientX, ev.clientY);
   }
 
-  /* right-click on the desktop, long-press on touch: the same menu either way */
-  private openContextAt(x: number, y: number, clientX: number, clientY: number): void {
+  /* The menu no longer asks WHERE it was opened, only WHAT is selected. With nothing
+     drawn there is nothing under the pointer to hit-test, so the click cannot name a
+     widget and cannot name a position: a selection (made in the Layers tree) offers its
+     own verbs, and an empty selection offers the type list, which appends. */
+  private openContextAt(clientX: number, clientY: number): void {
     const page = this.page();
-    const doc = this.store.doc;
-    if (!page || !doc || this.view.mode !== "edit") return;
-    const ev = { clientX, clientY };
-    const at = { x, y };
-    const id = hitTest(doc.canvas, page, at.x, at.y);
-    if (id) {
-      if (this.view.selection.indexOf(id) < 0) this.select([id]);
-      const widget = this.store.widget(id);
-      openMenu(ev.clientX, ev.clientY, widget ? widget.type : "Widget", [
+    if (!page || this.view.mode !== "edit") return;
+    if (this.view.selection.length) {
+      const widget = this.store.widget(this.view.selection[0]);
+      openMenu(clientX, clientY, widget ? widget.type : "Selection", [
         { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
         { label: "Delete", icon: "trash", danger: true, run: () => this.removeSelection() },
       ]);
       return;
     }
-    this.select([]);
     openMenu(
-      ev.clientX,
-      ev.clientY,
+      clientX,
+      clientY,
       "Add widget",
       (this.registry?.types ?? []).map((type) => ({
         label: type.name,
         icon: type.name,
-        run: () => this.addWidget(type.name, at.x, at.y),
+        run: () => this.addWidget(type.name),
       })),
     );
   }
 
-  private addWidget(type: string, atX?: number, atY?: number): void {
+  /* Append to the current page. Placement used to be a clash search over every resolved
+     rect, looking for a free patch of grid; there is no grid and no free patch to find,
+     because order in the tree is the only thing that will place a frame's child. `geom`
+     is left off entirely — the schema still fills its default, and that default is on its
+     way out with the rest of manual geometry. */
+  private addWidget(type: string): void {
     const page = this.page();
-    const doc = this.store.doc;
-    if (!page || !doc) return;
-    const cell = cellSize(doc.canvas);
-    const w = 6 * cell;
-    const h = 3 * cell;
-    /* the clash search reads every node's RESOLVED absolute rect, wherever it nests:
-       a widget grouped inside a frame occupies real screen space just like a bare one */
-    const others = resolvePage(doc.canvas, page).map((p) => p.rect);
-    const clash = (px: number, py: number) =>
-      others.some(
-        (other) =>
-          !(px + w <= other.x || other.x + other.w <= px ||
-            py + h <= other.y || other.y + other.h <= py),
-      );
-    let x = atX === undefined ? cell : Math.round(atX / cell) * cell;
-    let y = atY === undefined ? cell : Math.round(atY / cell) * cell;
-    if (atX === undefined)
-      for (let row = 1; row < doc.canvas.rows - 3 && clash(x, y); row++)
-        for (let col = 1; col < doc.canvas.cols - 6; col++) {
-          x = col * cell;
-          y = row * cell;
-          if (!clash(x, y)) break;
-        }
-    /* a placed-by-hand widget always lands as a top-level page child (its geom is then
-       exactly the canvas position computed above); dropping it INTO a frame is a Layers-
-       tree move, not a placement default */
+    if (!page) return;
     this.apply([
       {
         op: "insert",
         parent: page.id,
         list: "children",
-        node: { kind: "widget", type, label: type, geom: { x, y, w, h } },
+        node: { kind: "widget", type, label: type },
       },
     ]);
   }
 
-  /* duplicate every selected widget OR frame, into its OWN parent (a frame's child
-     duplicates back into that same frame, keeping its frame-relative geom meaningful;
-     a page-level node duplicates back onto the page) */
+  /* duplicate every selected widget OR frame into its OWN parent, directly after it: a
+     frame's child duplicates back into that frame, a page-level node back onto the page.
+     The copy used to be nudged one cell down and right so it did not hide under its
+     original; a list has no "under", so it simply follows. */
   private duplicate(): void {
-    const doc = this.store.doc;
-    if (!doc) return;
-    const cell = cellSize(doc.canvas);
     const ops: Op[] = [];
     for (const id of this.view.selection) {
       const node = this.store.widget(id) ?? this.store.frame(id);
       if (!node) continue;
       const parent = this.store.parentOf(id);
       if (!parent || typeof parent.id !== "number") continue;
-      const copy = stripIds(JSON.parse(JSON.stringify(node)));
-      copy.geom = { ...node.geom, x: node.geom.x + cell, y: node.geom.y + cell };
-      ops.push({ op: "insert", parent: parent.id, list: "children", node: copy });
+      ops.push({
+        op: "insert",
+        parent: parent.id,
+        list: "children",
+        node: stripIds(JSON.parse(JSON.stringify(node))),
+      });
     }
     if (ops.length) this.apply(ops);
   }
