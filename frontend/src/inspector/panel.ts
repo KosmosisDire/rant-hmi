@@ -171,8 +171,8 @@ function selectedPart(editor: Editor, type: WidgetType | null): string {
 }
 
 /* The CONTENT inspector: a widget instance, one of its parts, or a selected FRAME
-   (spec 2.8, plain: name/layout/gap/pad/align/geom, no feeds or behavior — a frame is
-   pure composition). Editing a component itself belongs to the Design workspace and no
+   (plain: name/layout/gap/pad/align, no feeds or behavior — a frame is pure
+   composition). Editing a component itself belongs to the Design workspace and no
    longer routes through here. */
 export function inspectorShape(editor: Editor): string {
   const frame = editor.selectedFrame();
@@ -440,10 +440,10 @@ function renderPartInspector(
    what the node sits in — order, grow, min, gap, pad — so the rows that replace it are
    ordinary schema rows on the frame, not a geometry pad. */
 
-/* The frame inspector (spec 2.8): plain and small on purpose — a frame is pure
- * composition (name, layout, gap, pad, align, geom), never feeds or behavior. Every
- * field reuses the ordinary slot-shaped value editor (editors.ts) with a hand-built
- * SlotSpec, exactly the control a "config"-group widget property would get. */
+/* The frame inspector: plain and small on purpose — a frame is pure composition
+ * (name, layout, gap, pad, align), never feeds or behavior. Every field reuses the
+ * ordinary slot-shaped value editor (editors.ts) with a hand-built SlotSpec, exactly
+ * the control a "config"-group widget property would get. */
 function renderFrameInspector(host: HTMLElement, editor: Editor, frame: Frame): void {
   const at = () => editor.store.frame(frame.id) ?? frame;
 

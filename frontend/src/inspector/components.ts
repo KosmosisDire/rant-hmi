@@ -500,11 +500,11 @@ function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentD
     ]),
   );
 
-  /* 4. Design frame (spec 3.1): the size the Design workspace's own preview viewport
-   *    draws this component at — never an instance size, so it is edited here on the
-   *    TYPE and nowhere an instance's own geom is. Same numeric idiom the frame
-   *    inspector's gap/pad fields use (panel.ts): a hand-built SlotSpec through the
-   *    ordinary value editor. */
+  /* 4. Design frame: the component's own authored size — what the future Design
+   *    preview will draw it at. Never an instance size (an instance carries no
+   *    geometry of its own; its box comes from layout), so it is edited here on the
+   *    TYPE and nowhere else. Same numeric idiom the frame inspector's gap/pad fields
+   *    use (panel.ts): a hand-built SlotSpec through the ordinary value editor. */
   const designField = (key: "design_w" | "design_h") => {
     const spec: SlotSpec = { name: key, shape: "num", default: key === "design_w" ? 240 : 120,
                              group: "config" };

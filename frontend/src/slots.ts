@@ -145,10 +145,3 @@ export function editedSlot(
   const value = live?.values?.[slotCell(widget, name)];
   return value === undefined ? null : value;
 }
-
-/* "#rrggbb00" and friends are not painted: transparent is a real, common default */
-export function opaqueEnough(color: Json): string | null {
-  if (typeof color !== "string" || !color.startsWith("#")) return null;
-  if (color.length === 9 && color.slice(7).toLowerCase() === "00") return null;
-  return color;
-}

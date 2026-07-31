@@ -366,8 +366,9 @@ export class App implements Editor {
   }
 
   /* Diagnostics arrive addressed to a document node, which may be a feed, a step or a
-   * variable. The canvas can only mark a WIDGET, so each finding is walked up to the widget
-   * that owns it; a global variable's finding belongs to no widget and stays in the list. */
+   * variable. The Layers tree can only badge a WIDGET, so each finding is walked up to the
+   * widget that owns it; a global variable's finding belongs to no widget and stays in the
+   * list. */
   private onDiag(rows: Diag[], render = true): void {
     this.diagnostics = Array.isArray(rows) ? rows : [];
     this.view.faults = {};
@@ -704,9 +705,8 @@ export class App implements Editor {
 
   /* Append to the current page. Placement used to be a clash search over every resolved
      rect, looking for a free patch of grid; there is no grid and no free patch to find,
-     because order in the tree is the only thing that will place a frame's child. `geom`
-     is left off entirely — the schema still fills its default, and that default is on its
-     way out with the rest of manual geometry. */
+     because order in the tree is the only thing that places a frame's child. A widget
+     carries no geometry at all. */
   private addWidget(type: string): void {
     const page = this.page();
     if (!page) return;
