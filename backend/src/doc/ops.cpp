@@ -213,10 +213,11 @@ bool op_move(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     return true;
 }
 
-/* Rename a theme token and rewrite every color slot value holding "$<old>" (spec 2.10).
- * A token reference lives only in `widget.slots`, and the inspector edits slots by
- * replacing the whole object, so each rewrite echoes the same way: one set_prop of the
- * widget's `slots`. */
+/* Rename a theme token and rewrite every color value holding "$<old>" (spec 2.10).
+ * A token reference lives in `widget.slots` and, since frames gained a surface, in a
+ * frame's own colour props. The inspector edits slots by replacing the whole object, so
+ * a widget rewrite echoes as one set_prop of its `slots`; a frame's colours are plain
+ * props and echo as one set_prop each. */
 bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& name,
                   ApplyResult& r, std::string& err) {
     if (!valid_token_name(name)) {
@@ -259,6 +260,31 @@ bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& nam
             Json{{"op", "set_prop"}, {"node", wid}, {"key", "slots"}, {"value", *slots}});
         r.touched.push_back(wid);
     }
+
+    /* a frame dresses itself with the same vocabulary (schema.cpp), so a pane painted
+       "$surface" follows the rename exactly as a widget's panel does */
+    std::function<void(Json&)> follow_frames = [&](Json& node) {
+        auto kids = node.find("children");
+        if (kids == node.end() || !kids->is_array()) return;
+        for (Json& child : *kids) {
+            auto kind = child.find("kind");
+            if (kind == child.end() || !kind->is_string()) continue;
+            if (kind->get<std::string>() != "frame") continue;
+            for (const char* key : {"surface", "border"}) {
+                auto at = child.find(key);
+                if (at == child.end() || !at->is_string()) continue;
+                if (at->get<std::string>() != from) continue;
+                *at = to;
+                const uint64_t fid = json_u64_or(child["id"], 0);
+                r.ops.push_back(
+                    Json{{"op", "set_prop"}, {"node", fid}, {"key", key}, {"value", to}});
+                r.touched.push_back(fid);
+            }
+            follow_frames(child);
+        }
+    };
+    if (auto pages = d.root.find("pages"); pages != d.root.end() && pages->is_array())
+        for (Json& page : *pages) follow_frames(page);
     return true;
 }
 

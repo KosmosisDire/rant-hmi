@@ -123,7 +123,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 5, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 6, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -156,12 +156,26 @@ const view = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost:
 const page = store.pages()[0];
 const slider = store.widgetsOn(page).find((w) => w.type === "Slider");
 
-/* ---- frames: a page-level container that groups widgets. The default document seeds
-   one ("Status group") so the feature is exercised the moment the document opens: a
-   Label grouped with a Toggle. How a frame LAYS OUT is no longer asserted here — the
-   browser owns that now, so it is Playwright's question, not this file's. */
-const statusFrame = page.children.find((n) => n.kind === "frame");
-check(statusFrame !== undefined, "the default document seeds a demo frame");
+/* ---- frames: the page is a TREE of them now — a header band over a body that splits
+   between a main column and a side column of panes — so the default document exercises
+   nesting, grow shares and surfaces the moment it opens. What those numbers RESOLVE to
+   is the browser's arithmetic and so Playwright's question, not this file's. */
+const frameNamed = (node, name) => {
+  for (const child of node.children ?? []) {
+    if (child.kind !== "frame") continue;
+    if (child.name === name) return child;
+    const found = frameNamed(child, name);
+    if (found) return found;
+  }
+  return null;
+};
+check(page.children.length === 2, "the page is a header over a body, nothing loose");
+check(frameNamed(page, "Main")?.grow === 2 && frameNamed(page, "Side")?.grow === 1,
+      "the body splits two-to-one between its columns");
+check(frameNamed(page, "Header")?.surface === "$surface",
+      "a pane is dressed with a theme token, not a literal");
+const statusFrame = frameNamed(page, "Status group");
+check(statusFrame !== null, "the default document seeds a demo frame");
 check(
   statusFrame.children.length === 2 && statusFrame.children.every((c) => c.kind === "widget"),
   "the frame groups two widgets",
@@ -216,10 +230,10 @@ ws.send(
 const applied = await next("ops_applied");
 check(applied.version === snapshot.version + 1, "the version advanced by one");
 store.apply(applied.version, applied.ops);
-/* 7 flat widgets + the demo frame + the freshly appended Readout, all top-level */
-check(store.pages()[0].children.length === 9, "the insert reached the mirror");
+/* the header, the body, and the freshly appended Readout beside them */
+check(store.pages()[0].children.length === 3, "the insert reached the mirror");
 
-const unfed = store.pages()[0].children[8];
+const unfed = store.pages()[0].children[2];
 ws.send(
   JSON.stringify({
     type: "apply_ops",
@@ -244,7 +258,7 @@ store.apply(second.version, second.ops);
 const sidebar = new Element("aside");
 sidebar.className = "sidebar right";
 const panel = new Panel(sidebar);
-const readout = store.pages()[0].children[8];
+const readout = store.pages()[0].children[2];
 const editor = {
   store,
   registry: snapshot.registry,

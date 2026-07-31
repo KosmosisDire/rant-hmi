@@ -27,15 +27,17 @@ Json widget(const char* type, const char* label, Json slots) {
 }
 
 /* a FRAME; `children` is filled in by the caller once the widgets it groups exist, so it
-   composes with `widget()` above */
-Json frame(const char* name, const char* layout, Json children) {
-    return Json{{"kind", "frame"},
-                {"name", name},
-                {"layout", layout},
-                {"gap", 8},
-                {"pad", 6},
-                {"align", "center"},
-                {"children", std::move(children)}};
+   composes with `widget()` above. `extra` overrides any of the frame's own props — a
+   surface, a grow share, a floor — so a demo pane reads as one expression. */
+Json frame(const char* name, const char* layout, Json children, Json extra = Json::object()) {
+    Json f = Json{{"kind", "frame"},
+                  {"name", name},
+                  {"layout", layout},
+                  {"gap", 8},
+                  {"pad", 8},
+                  {"children", std::move(children)}};
+    for (const auto& item : extra.items()) f[item.key()] = item.value();
+    return f;
 }
 
 /* Every widget on a page, wherever it nests: DFS through frames, collecting each widget
@@ -268,38 +270,70 @@ Document Document::make_default() {
         token("bad", "status", "#e0857c", "#b2443b"),
     });
 
-    Json page = Json{{"name", "Overview"}, {"children", Json::array()}};
-    Json& ws = page["children"];
-    ws.push_back(widget("Label", "Title", Json{{"text", "Line 1 Overview"}}));
-    ws.push_back(widget("Panel", "Pump group", Json::object()));
-    ws.push_back(widget("Toggle", "Pump", Json{{"value", true}}));
-    ws.push_back(widget("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}}));
-    /* a part's value nests under the part (spec 2.3): the units are the `units` part's */
-    ws.push_back(widget("Readout", "Flow",
-                        Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}}));
-    /* the lamp is a Panel with a bound surface: there is no Indicator type */
-    ws.push_back(widget("Panel", "Fault", Json{{"surface", "#2a2a2a"}}));
-    ws.push_back(widget("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}}));
+    /* THE DEMO PAGE IS A LAYOUT, not a pile of widgets: a header band over a body that
+     * splits two-to-one between a main column and a side column of panes. Nothing here
+     * says where anything is — the shape comes entirely from nesting, grow shares and the
+     * one floor the header needs (a header should keep its height, not take a share of
+     * the page), so opening the document at any window size is the feature working. */
 
     /* one feed and one flow so the inspector and the rename fan-out have real work */
-    ws[4]["feeds"] = Json::array({Json{{"slot", "value"},
-                                       {"src", {{"kind", "L"}, {"name", "flow"}}},
-                                       {"path", ""},
-                                       {"xf", "x.round(1)"}}});
-    ws[6]["flows"] = Json::array({Json{
+    Json readout = widget("Readout", "Flow",
+                          /* a part's value nests under the part (spec 2.3): the units are
+                             the `units` part's */
+                          Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}});
+    readout["feeds"] = Json::array({Json{{"slot", "value"},
+                                         {"src", {{"kind", "L"}, {"name", "flow"}}},
+                                         {"path", ""},
+                                         {"xf", "x.round(1)"}}});
+    Json reset = widget("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}});
+    reset["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
         {"when_mode", "first"},
         {"do", Json::array({Json{{"kind", "move"},
                                  {"from", {{"expr", "0"}}},
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
-    /* a FRAME so the feature has a real example the moment the document opens: a label
-     * grouped with a switch, laid out in a row — the composition that used to need two
-     * independently-placed widgets and now is the only way to place anything at all. */
-    Json group_children = Json::array();
-    group_children.push_back(widget("Label", "Status", Json{{"text", "Status"}}));
-    group_children.push_back(widget("Toggle", "Enabled", Json{{"value", false}}));
-    ws.push_back(frame("Status group", "row", std::move(group_children)));
+    Json header_kids = Json::array();
+    header_kids.push_back(widget("Label", "Title", Json{{"text", "Line 1 Overview"}}));
+    /* grow 0 + a floor: the band is as tall as it asks to be and the body keeps the rest */
+    Json header = frame("Header", "row", std::move(header_kids),
+                        Json{{"surface", "$surface"}, {"align", "center"},
+                             {"grow", 0}, {"min", 52}});
+
+    Json main_kids = Json::array();
+    main_kids.push_back(widget("Toggle", "Pump", Json{{"value", true}}));
+    main_kids.push_back(widget("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}}));
+    main_kids.push_back(std::move(readout));
+    main_kids.push_back(std::move(reset));
+    Json main_col = frame("Main", "col", std::move(main_kids),
+                          Json{{"surface", "$surface-2"}, {"radius", 6}, {"grow", 2}});
+
+    Json status_kids = Json::array();
+    status_kids.push_back(widget("Label", "Status", Json{{"text", "Status"}}));
+    status_kids.push_back(widget("Toggle", "Enabled", Json{{"value", false}}));
+    Json status = frame("Status group", "row", std::move(status_kids),
+                        Json{{"surface", "$surface"}, {"radius", 6}, {"align", "center"}});
+
+    Json lamp_kids = Json::array();
+    lamp_kids.push_back(widget("Panel", "Pump group", Json::object()));
+    /* the lamp is a Panel with a bound surface: there is no Indicator type */
+    lamp_kids.push_back(widget("Panel", "Fault", Json{{"surface", "#2a2a2a"}}));
+    Json lamps = frame("Lamps", "col", std::move(lamp_kids),
+                       Json{{"surface", "$surface"}, {"radius", 6}});
+
+    Json side_kids = Json::array();
+    side_kids.push_back(std::move(status));
+    side_kids.push_back(std::move(lamps));
+    Json side = frame("Side", "col", std::move(side_kids), Json{{"pad", 0}, {"grow", 1}});
+
+    Json body_kids = Json::array();
+    body_kids.push_back(std::move(main_col));
+    body_kids.push_back(std::move(side));
+    Json body = frame("Body", "row", std::move(body_kids), Json{{"pad", 0}});
+
+    Json page = Json{{"name", "Overview"}, {"children", Json::array()}};
+    page["children"].push_back(std::move(header));
+    page["children"].push_back(std::move(body));
 
     j["pages"] = Json::array({page});
 

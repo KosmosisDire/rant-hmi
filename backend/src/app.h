@@ -21,8 +21,10 @@ namespace hmi {
 
 /* bumped when a frame shape changes; a client with another number is refused
  * (3: the snapshot carries `builtins`, the built-ins' editable document form; 4: the
- * snapshot also carries `attr_table`, the closed attr vocabulary, spec 2.3) */
-constexpr int kProto = 5;
+ * snapshot also carries `attr_table`, the closed attr vocabulary, spec 2.3; 5: the doc
+ * lost `canvas` and every node lost `geom`; 6: a frame gained layout "stack", justify,
+ * surface/border/border_w/radius, and both frames and widgets gained grow/min) */
+constexpr int kProto = 6;
 
 struct AppOptions {
     ServerOptions server;

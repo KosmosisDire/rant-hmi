@@ -86,6 +86,13 @@ const std::vector<NodeSpec>& table() {
              * slot is a key here, a part's slot a key inside an object named for the
              * part ({"bar": {"fill_color": "#fff"}} = slot address "bar.fill_color") */
             object("slots", Json::object()),
+            /* PLACE: how the containing frame gives this instance room. `grow` is the
+             * share of the free space it takes (1 = an equal share, 0 = only its `min`),
+             * `min` a floor in CSS pixels on the container's MAIN axis. They live on the
+             * CHILD because only the child knows what it needs; everything else about
+             * where it lands is the container's. A frame declares the same pair. */
+            num("grow", 1),
+            num("min", 0),
         };
         widget.lists = {{"locals", {Kind::Var}}, {"feeds", {Kind::Feed}}, {"flows", {Kind::Flow}}};
         t.push_back(widget);
@@ -266,23 +273,41 @@ const std::vector<NodeSpec>& table() {
 
         /* A FRAME (proto doc 2.2/2.4, one level up from the component-internal node
          * model it previews): a page-level container that groups widget instances and
-         * other frames, and can lay them out in a row or column. It gives the Layers
-         * tree a real hierarchy now that a widget's own internal parts are edited in the
-         * Design workspace instead. A frame has NO geometry of its own, and neither do
-         * its children: where a node lands follows from its order among its siblings and
-         * from the container's own row/col, gap, pad and align — which is what lets a page
-         * re-solve at a size nobody authored it at. "none" was the escape hatch back to
-         * coordinates and went with them, so col is both the default and the floor. */
+         * other frames, and lays them out in a row, a column or a stack. It gives the
+         * Layers tree a real hierarchy now that a widget's own internal parts are edited
+         * in the Design workspace instead. A frame has NO geometry of its own, and neither
+         * do its children: where a node lands follows from its order among its siblings and
+         * from the container's own row/col/stack, gap, pad, align and justify — which is
+         * what lets a page re-solve at a size nobody authored it at. "none" was the escape
+         * hatch back to coordinates and went with them, so col is the default and the floor.
+         *
+         * FILL IS THE DEFAULT: `align` (the cross axis) starts at "stretch" and `grow`
+         * at 1, so a child of a fresh frame occupies the room it is given instead of
+         * shrinking to its content and leaving the author to place the remainder.
+         *
+         * `surface`, `border` and `radius` are deliberately the SAME NAMES a widget's
+         * frame group already uses: one surface vocabulary at both tiers, so a pane and a
+         * widget's panel are dressed with the same words. A colour is a "#rrggbb"/
+         * "#rrggbbaa" literal or a "$name" theme-token reference, as everywhere else. */
         NodeSpec frame;
         frame.kind = Kind::Frame;
         frame.name = "frame";
         frame.props = {
             text("kind", "frame"),   /* the discriminator; see widget's own "kind" above */
             text("name", "Group"),
-            enumer("layout", {"row", "col"}, "col"),
+            enumer("layout", {"row", "col", "stack"}, "col"),
             num("gap", 0),
             num("pad", 0),
-            enumer("align", {"start", "center", "end", "stretch"}, "start"),
+            enumer("align", {"start", "center", "end", "stretch"}, "stretch"),
+            enumer("justify", {"start", "center", "end", "between"}, "start"),
+            text("surface", ""),     /* "" = no surface at all, not a transparent one */
+            text("border", ""),
+            num("border_w", 1),
+            num("radius", 0),
+            /* the PLACE pair, declared identically on Kind::Widget above: a frame is a
+               child of its own container, so it is placed by the same two numbers */
+            num("grow", 1),
+            num("min", 0),
         };
         frame.lists = {{"children", {Kind::Frame, Kind::Widget}, "kind"}};
         t.push_back(frame);

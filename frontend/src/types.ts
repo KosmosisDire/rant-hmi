@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 5;
+export const PROTO = 6;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 
@@ -131,7 +131,15 @@ export interface Flow {
   do: Json[];
 }
 
-export interface Widget {
+/* How the containing frame gives a child room, carried by a frame and a widget alike
+   (a container is a child of its own container): `grow` is the share of the free space
+   this child takes, `min` a floor in CSS pixels on the container's MAIN axis. */
+export interface Place {
+  grow: number;
+  min: number;
+}
+
+export interface Widget extends Place {
   id: number;
   /* the discriminator a page or frame's `children` reads to tell a widget from a
      frame sitting in the same ordered list (spec 2.8); always "widget" */
@@ -148,16 +156,23 @@ export interface Widget {
 }
 
 /* A FRAME: a page-level container grouping widgets and other frames in ONE ordered
-   list. Nothing here is a coordinate — order, layout, gap, pad and align are the whole
-   vocabulary, and where a child lands follows from them. */
-export interface Frame {
+   list. Nothing here is a coordinate — order, layout, gap, pad, align and justify are
+   the whole vocabulary, and where a child lands follows from them. `surface`, `border`
+   and `radius` are deliberately the same names a widget's frame group uses: one surface
+   vocabulary at both tiers. A colour is a literal or a "$name" token reference. */
+export interface Frame extends Place {
   id: number;
   kind: "frame";
   name: string;
-  layout: "row" | "col";
+  layout: "row" | "col" | "stack";
   gap: number;
   pad: number;
   align: "start" | "center" | "end" | "stretch";
+  justify: "start" | "center" | "end" | "between";
+  surface: string;     /* "" = no surface at all, not a transparent one */
+  border: string;
+  border_w: number;
+  radius: number;
   children: (Frame | Widget)[];
 }
 

@@ -109,7 +109,24 @@ void write_statics() {
     write_file_atomic(std::string(kStatics) + "/index.html", "<h1>hmi</h1>\n", err);
 }
 
-Json widget_of(const Json& doc, size_t index) { return doc["pages"][0]["children"][index]; }
+/* The default page is a tree of frames, so a demo widget is found by its LABEL wherever
+ * it nests. `label` is the document's own field and an edit below renames one, so each
+ * lookup names the label the widget carries AT THAT POINT. */
+const Json* widget_in(const Json& node, const std::string& label) {
+    auto kids = node.find("children");
+    if (kids == node.end() || !kids->is_array()) return nullptr;
+    for (const Json& child : *kids) {
+        if (child.value("kind", "") == "widget" && child.value("label", "") == label)
+            return &child;
+        if (const Json* found = widget_in(child, label)) return found;
+    }
+    return nullptr;
+}
+
+Json widget_of(const Json& doc, const char* label) {
+    const Json* found = widget_in(doc["pages"][0], label);
+    return found ? *found : Json::object();
+}
 
 } // namespace
 
@@ -151,8 +168,8 @@ int main() {
     if (!welcome || !snapshot) return check::summary("sync_test");
     CHECK((*welcome)["proto"] == kProto);
     CHECK((*snapshot)["version"] == app.document().version());
-    /* seven flat widgets plus the demo frame (spec 2.8) */
-    CHECK((*snapshot)["doc"]["pages"][0]["children"].size() == 8);
+    /* the page is a layout: a header band over a body, everything else nested inside */
+    CHECK((*snapshot)["doc"]["pages"][0]["children"].size() == 2);
     CHECK((*snapshot)["registry"]["types"].size() == 12);
     CHECK((*snapshot)["live"]["values"].is_object());
     /* Compile findings ride the snapshot. They are produced once, at startup, so a view
@@ -184,7 +201,7 @@ int main() {
     a.take();
 
     const uint64_t version = app.document().version();
-    const uint64_t widget = widget_of(app.document().root, 0)["id"].get<uint64_t>();
+    const uint64_t widget = widget_of(app.document().root, "Title")["id"].get<uint64_t>();
     b.send(Json{{"type", "apply_ops"},
                 {"base_version", version},
                 {"ops", Json::array({Json{{"op", "set_prop"},
@@ -199,7 +216,7 @@ int main() {
         CHECK((*echo)["ops"][0]["value"] == "Renamed");
         CHECK((*echo)["origin_session"] != 0);
     }
-    CHECK(widget_of(app.document().root, 0)["label"] == "Renamed");
+    CHECK(widget_of(app.document().root, "Renamed")["id"] == widget);
     b.take();
 
     /* an insert comes back with the id the backend issued */
@@ -216,8 +233,8 @@ int main() {
     if (echo) {
         CHECK((*echo)["ops"][0]["node"]["id"].is_number());
         CHECK((*echo)["ops"][0]["node"]["slots"].is_object());
-        /* appended after the 7 flat widgets AND the demo frame */
-        CHECK((*echo)["ops"][0]["index"] == 8);
+        /* appended after the header band and the body */
+        CHECK((*echo)["ops"][0]["index"] == 2);
     }
 
     /* a rejection always brings a snapshot with it, so a view can never sit desynced */
@@ -255,7 +272,7 @@ int main() {
     CHECK_MSG(frame_of(frames, "reject") != nullptr, "same node, stale base: expected a reject");
     a.take();
 
-    const uint64_t other = widget_of(app.document().root, 1)["id"].get<uint64_t>();
+    const uint64_t other = widget_of(app.document().root, "Pump")["id"].get<uint64_t>();
     a.send(Json{{"type", "apply_ops"},
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
@@ -287,7 +304,7 @@ int main() {
     CHECK(frame_of(frames, "snapshot") != nullptr);
 
     /* stage 4: an input runs once in the backend and the live cell reaches the view */
-    const Json& reset = widget_of(app.document().root, 6);
+    const Json reset = widget_of(app.document().root, "Reset");
     const uint64_t reset_id = reset["id"].get<uint64_t>();
     const uint64_t reset_step = reset["flows"][0]["do"][0]["id"].get<uint64_t>();
     uint64_t flow_var = 0;
@@ -387,7 +404,7 @@ int main() {
     Document saved;
     CHECK_MSG(Document::from_file(kDocPath, saved, err), err);
     CHECK(saved.version() == app.document().version());
-    CHECK(widget_of(saved.root, 0)["label"] == "first");
+    CHECK(widget_of(saved.root, "first")["id"] == widget);
 
     /* CRASH REGRESSION: a peer that vanishes with no close handshake makes a later
        broadcast's send FAIL, and ix closes that socket synchronously INSIDE the send,
