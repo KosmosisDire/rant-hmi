@@ -12,7 +12,7 @@
  * document mirror, selection, the four workspaces' panels, and structural editing by TREE
  * POSITION rather than by coordinate. */
 
-import { DropPlan } from "./arrange.js";
+import { DropPlan, holds } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
 import { Editor, Mode, ViewState } from "./editor.js";
@@ -23,7 +23,7 @@ import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { previewArrangement, renderStage } from "./stage.js";
-import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Layout, Live, Mesh, Node, NodeAttrs, Op, Page, Registry } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Layout, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
 import { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } from "./workspaces/design.js";
@@ -755,14 +755,18 @@ export class App implements Editor {
       return;
     }
 
-    /* on a frame or the page background: what can be added INTO it, and — when there is a
-       real frame under the pointer — what can be done TO it. The page background keeps the
-       Add group alone: there is no node there to act on, and nothing to select. */
-    const frame = at ? this.store.nodeAt(at) : null;
-    const parent = frame ? at : page.id;
-    if (frame) this.select([frame.id]);
+    /* WHAT CAN BE ADDED INTO IT, and what can be done TO it. The node under the pointer
+       receives the insert only if it can hold a child — an instance cannot, since what is
+       inside it belongs to its component, so an insert aimed at one goes to the frame that
+       holds IT, which is what the author was pointing at anyway. The page background keeps
+       the Add group alone: there is no node there to act on. */
+    const node = at ? this.store.nodeAt(at) : null;
+    const parent = holds(node) ? at
+                 : node ? (this.store.parentOf(at)?.id ?? page.id)
+                 : page.id;
+    if (node) this.select([node.id]);
     const types = this.registry?.types ?? [];
-    openMenu(clientX, clientY, frame?.name ?? page.name, [
+    openMenu(clientX, clientY, node?.name || node?.type || page.name, [
       {
         label: "Add widget ▸",
         icon: "layers",
@@ -779,19 +783,30 @@ export class App implements Editor {
         },
       },
       { separator: true },
-      { label: "Add row", icon: "frame", run: () => this.addFrame("row", parent) },
-      { label: "Add column", icon: "frame", run: () => this.addFrame("col", parent) },
-      { label: "Add stack", icon: "frame", run: () => this.addFrame("stack", parent) },
-      ...(frame
+      { label: "Add row", icon: "frame-row", run: () => this.addFrame("row", parent) },
+      { label: "Add column", icon: "frame-col", run: () => this.addFrame("col", parent) },
+      { label: "Add grid", icon: "frame-grid", run: () => this.addFrame("grid", parent) },
+      /* FREE is where a child places itself, which is the overlay `stack` used to name */
+      { label: "Add free frame", icon: "frame-free", run: () => this.addFrame("free", parent) },
+      { separator: true },
+      /* THE INK, reachable at last: text, a glyph and an outline are ordinary nodes now, so
+         a page can hold a caption or a mimic line without a component around it */
+      { label: "Add text", icon: "node-text", run: () => this.addLeaf("text", parent) },
+      { label: "Add icon", icon: "node-icon", run: () => this.addLeaf("icon", parent) },
+      { label: "Add path", icon: "node-path", run: () => this.addLeaf("path", parent) },
+      ...(node
         ? [
             { separator: true } as const,
-            ...this.wrapItems([frame.id]),
-            { label: "Dissolve frame", icon: "unlink", run: () => this.dissolve(frame.id) },
+            ...this.wrapItems([node.id]),
+            ...(holds(node)
+              ? [{ label: "Dissolve frame", icon: "unlink",
+                   run: () => this.dissolve(node.id) } as const]
+              : []),
             {
-              label: "Delete frame",
+              label: "Delete",
               icon: "trash",
               danger: true,
-              run: () => this.apply([{ op: "remove", node: frame.id }]),
+              run: () => this.apply([{ op: "remove", node: node.id }]),
             },
           ]
         : []),
@@ -840,21 +855,33 @@ export class App implements Editor {
     this.view.selection = [];
   }
 
-  /* Append into a frame (or the page). Placement used to be a clash search over every
-     resolved rect, looking for a free patch of grid; there is no grid and no free patch to
-     find, because order in the tree is the only thing that places a frame's child. */
+  /* Append into a frame (or the page). A WIDGET IS A FRAME THAT NAMES A COMPONENT — there
+     is no widget kind to ask for — so this inserts the same node `addFrame` does, carrying
+     a `type`. Placement used to be a clash search over every resolved rect, looking for a
+     free patch of grid; there is no grid and no free patch to find, because order in the
+     tree is the only thing that places a frame's child. */
   private addWidget(type: string, parent: number): void {
     this.apply([
-      { op: "insert", parent, list: "children", node: { kind: "widget", type, label: type } },
+      { op: "insert", parent, list: "children",
+        node: { kind: "frame", type, name: type } },
     ]);
   }
 
-  /* the first frame-creation UI in the product: a fresh frame is empty, and fills, so it
-     shows up as the share of the room its siblings gave it */
-  private addFrame(layout: "row" | "col" | "stack", parent: number): void {
-    const name = layout === "row" ? "Row" : layout === "col" ? "Column" : "Stack";
+  /* a fresh frame is empty and fills, so it shows up as the share of the room its siblings
+     gave it */
+  private addFrame(layout: Layout, parent: number): void {
+    const name = layout === "row" ? "Row"
+               : layout === "col" ? "Column"
+               : layout === "grid" ? "Grid" : "Group";
     this.apply([
       { op: "insert", parent, list: "children", node: { kind: "frame", name, layout } },
+    ]);
+  }
+
+  /* the ink kinds, added the same way: one node, one insert, no second path */
+  private addLeaf(kind: NodeKind, parent: number): void {
+    this.apply([
+      { op: "insert", parent, list: "children", node: { kind, name: kind } },
     ]);
   }
 
