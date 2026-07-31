@@ -4,7 +4,7 @@
  * alpha is not full. Like the context menu, the popup sits on a full-screen dismiss
  * overlay, so any click outside closes it and nobody tracks "is a picker open".
  *
- * A value may also be a theme token reference, "$<name>" (spec 2.10). A caller that
+ * A value may also be a theme token reference, "$<name>". A caller that
  * hands in a TokenAccess gets the tokenized treatment: the swatch paints the RESOLVED
  * color (this view's mode) with a corner notch saying "this is a token", the text field
  * shows and accepts the honest "$name", and a small $ button opens the token menu —

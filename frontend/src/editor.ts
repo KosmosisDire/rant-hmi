@@ -29,7 +29,7 @@ export interface ViewState {
      the cell reader that served it are both gone, so it stands empty until the rebuild. */
   state: Record<number, Record<string, Json>>;
   faults: Record<number, string>;               /* worst compile grade, per widget */
-  /* which side of every theme token this view paints (spec 2.10): a local preview
+  /* which side of every theme token this view paints: a local preview
      preference, persisted per browser, never synced */
   themeMode?: "dark" | "light";
 }
@@ -46,7 +46,7 @@ export interface Editor {
   mesh: Mesh;
   /* the served expression vocabulary (builtins + shape-scoped methods) */
   lang: Lang | null;
-  /* the closed attr vocabulary (spec 2.3): common attrs plus each part kind's own,
+  /* the closed attr vocabulary: common attrs plus each part kind's own,
      with the renderer's own defaults — what the part inspector's Attrs section lists
      in full, set or not. Snapshot-only, like `lang` and `builtins`. */
   attrTable: AttrTable | null;
@@ -64,7 +64,7 @@ export interface Editor {
      named, plus a CHILD-INDEX PATH into its parts ("" = the component itself, "0" =
      its root part, "0.1" = that part's second child). Index rather than name because
      this addresses the definition's own tree, where an unnamed node is still a node —
-     unlike a part path, which addresses only what a property can hang off (spec 2.3).
+     unlike a part path, which addresses only what a property can hang off.
      Read-only, and mutually exclusive with both other selections. */
   builtinSel: { name: string; path: string } | null;
   view: ViewState;
@@ -101,7 +101,7 @@ export interface Editor {
      tree is the only place a frame can be right-clicked at all, since on the stage its
      own children cover it. */
   openNodeMenu(x: number, y: number, node: number): void;
-  /* select one widget and narrow to one of its template parts (a part path, spec 2.3);
+  /* select one widget and narrow to one of its template parts (a part path);
      "" steps back to the widget. `select` always clears any part. */
   selectPart(id: number, path: string): void;
   /* select a document component (or one part node in it) for editing; clears the
@@ -111,7 +111,7 @@ export interface Editor {
      shows the definition READ-ONLY, since nothing in the document owns it until it is
      overridden. This is how the shipped types are read before forking one. */
   selectBuiltin(name: string, path: string): void;
-  /* the "Override <Name>" verb (spec 2.3 Forking): copy a built-in's document form
+  /* the "Override <Name>" verb: copy a built-in's document form
      into doc.components under its OWN name (ONE insert op; the backend issues ids),
      which shadows it so every existing instance follows the override automatically.
      Select the override once its echo lands. */
@@ -122,13 +122,12 @@ export interface Editor {
   duplicateComponent(name: string): void;
   /* insert a minimal fresh component (unique name) and select it */
   addComponent(): void;
-  /* the theme preview mode (spec 2.10): sets view.themeMode, persists it locally and
+  /* the theme preview mode: sets view.themeMode, persists it locally and
      repaints the artboard; the Style workspace's toggle is the only caller for now */
   setThemeMode(mode: "dark" | "light"): void;
   /* what the compiler said about this widget or anything inside it */
   diagFor(widget: number): Diag[];
-  /* the findings pinned to one node, or to one field of it (spec 3.8: a finding sits on
-     the row that is wrong). No `where` asks for the node's own findings only. */
+  /* the findings pinned to one node, or to one field of it. No `where` asks for the node's own findings only. */
   diagAt(node: number, where?: string): Diag[];
   /* every finding about a node, whatever field of it they name. A summary line stands for
      the whole node, so it rolls these up; the form under it pins each one to its row. */
@@ -186,7 +185,7 @@ export function diagIcon(diags: Diag[]): HTMLElement | null {
 const folded = new Map<string, boolean>();
 
 /* the header is the whole row, the caret rotates rather than swapping glyph, and the state
- * is remembered per section key across selection changes (spec 3.2). Folding is a pure
+ * is remembered per section key across selection changes. Folding is a pure
  * view act: it toggles one style and never asks for a rebuild. */
 export function section(
   key: string,

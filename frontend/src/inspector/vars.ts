@@ -1,9 +1,9 @@
 /* The variable card: collapsed it is the name and what the variable reads right NOW, which
  * is what a variable is looked at for; open it adds the settings behind that value (TYPE,
  * INIT, KEEP). Global and widget-local cards are the same card; only the scope note differs
- * (spec 3.9). It folds like a feed or a flow card, same caret and same click.
+ *. It folds like a feed or a flow card, same caret and same click.
  *
- * A variable's TYPE is any TypeRef from the mesh besides the four scalars (spec 2.7): the
+ * A variable's TYPE is any TypeRef from the mesh besides the four scalars: the
  * picker is the TYPE TREE, and a struct-typed variable is born zeroed, so it shows no INIT
  * row (there is nothing scalar to seed) and its NOW readout names its type. The type is
  * structure (it picks the INIT editor and renames the row); everything else is a value
@@ -99,7 +99,7 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
     variable.type === "bool" ? "bool" : variable.type === "str" ? "text" : "num";
 
   /* the INIT rows: a scalar edits one value; an enum picks its start VARIANT; a struct
-     edits a default per scalar field over the type's zero (spec 2.7) */
+     edits a default per scalar field over the type's zero */
   const initRows: (HTMLElement | null)[] = [];
   const resolved = isStruct ? resolveTypeRef(editor.mesh, variable.type) : null;
   if (!isStruct) {

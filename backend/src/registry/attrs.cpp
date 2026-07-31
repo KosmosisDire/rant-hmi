@@ -30,6 +30,11 @@ const std::vector<AttrDef>& common_attrs_table() {
         no_def("clip", "any",
                "absent = content may overflow; true clips to the node's own box, a number "
                "clips to that box rounded by that radius (overflow: hidden + radius)"),
+        no_def("enabled", "bool",
+               "absent = live; false or Nil dims the node and stops it taking gestures — "
+               "UNKNOWN disables rather than enables, which is the fail-safe direction. It "
+               "still SELECTS in the editor: a control you cannot operate is not a control "
+               "you cannot edit"),
 
         /* ARRANGEMENT: read by the PARENT's row/col/grid, ignored in a free frame */
         def("grow", "num", 1.0,

@@ -262,9 +262,10 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         state.consumed.set("hist:" + key, JSON.stringify(series ?? null));
         return series ?? null;
       }
-      /* optcount/optnames/optfrac: the option list is a mesh TYPE's variants, and the
-         resolver that read them went with the SVG renderer. Nil until it returns, which
-         renders no detents rather than the wrong ones. */
+      /* optcount/optnames/optfrac: an option list is a mesh TYPE's variants, and the
+         resolver that expanded them went with the SVG renderer. Nil until it returns,
+         which draws no detents rather than the wrong ones. Nothing else reaches here —
+         `tile` is refused at compile now, since a node cannot measure itself. */
       default:
         return null;
     }
@@ -549,6 +550,15 @@ function buildNode(state: StageState, editor: Editor, node: ViewNode, parent: La
            : document.createElement("div");
   if (node.kind === "frame") el.className = "frame";
   if (node.instance) el.classList.add("leaf");
+
+  /* FAIL-SAFE, and only in a mode that operates: a disabled control is dimmed everywhere,
+     and inert only where a pointer would be operating it. In EDIT mode it still takes the
+     pointer, because a control you cannot operate is not a control you cannot select. */
+  const enabled = attrOf(node, "enabled", cells);
+  if (enabled !== undefined && !truthy(enabled)) {
+    el.classList.add("disabled");
+    if (editor.view.mode !== "edit") el.style.pointerEvents = "none";
+  }
   if (node.id) el.setAttribute("data-id", String(node.id));
   place(el, node, parent, cells, scale);
 

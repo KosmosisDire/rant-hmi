@@ -243,6 +243,10 @@ Json tile_base() {
  * from this, so "the box around the content" is one expression set in one place. */
 Json box_attrs() {
     return Json{{"show", "visible"},
+                /* the fail-safe pair: `visible` decides whether it is drawn at all,
+                   `enabled` whether it may be operated. Both are ordinary slots, so both
+                   bind — an interlock reaches either one through a feed. */
+                {"enabled", "enabled"},
                 {"surface", "surface"},
                 {"border", "border"},
                 {"border_w", "border_w"},
@@ -573,7 +577,6 @@ Json dropdown_component() {
                     /* a TypeRef naming an enum: the view expands it to the variant names,
                      * so the options can never drift from the schema */
                     slot("options", "text", "", "value", "enum-type"),
-                    slot("shown_options", "text", "", "config"),
                     slot("value", "text", "", "value"),
                     /* the field itself is the box */
                     slot("surface", "color", "$surface-2", "frame", "color"),
@@ -875,7 +878,6 @@ Json selector_component() {
                 compose_slots(tile_base(), {
                     /* options is a TypeRef naming an enum, exactly as on Dropdown */
                     slot("options", "text", "", "value", "enum-type"),
-                    slot("shown_options", "text", "", "config"),
                     slot("value", "text", "", "value"),
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),

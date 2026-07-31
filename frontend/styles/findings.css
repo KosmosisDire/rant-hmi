@@ -107,27 +107,3 @@
   font-size: 11px;
 }
 
-.default-flow .step {
-  font: 500 12px/24px var(--mono);
-  color: var(--ink-3);
-  word-break: break-word;
-}
-
-.default-flow .ghost-btn {
-  margin-left: auto;
-  height: 18px;
-  padding: 0 7px;
-  border: 1px solid var(--line-3);
-  border-radius: 2px;
-  background: transparent;
-  color: var(--muted);
-  font: 500 11px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.default-flow .ghost-btn:hover {
-  color: var(--ink-2);
-  border-color: var(--line-in);
-}

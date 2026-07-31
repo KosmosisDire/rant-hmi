@@ -1,6 +1,6 @@
 /* The two sidebars. Both are generated from the served tables: the section order is fixed
- * (spec 3.2), a slot's group decides whether its row lives in Data in or Appearance
- * (spec 3.3), and every editor comes from the slot's shape.
+ *, a slot's group decides whether its row lives in Data in or Appearance
+ *, and every editor comes from the slot's shape.
  *
  * Each sidebar is declared twice, and the split is the point. `*Shape` projects the document
  * down to what decides which controls EXIST; `render*` builds those controls once and binds
@@ -29,10 +29,14 @@ import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 
-/* ---- left sidebar: the Layers tree, which is PAGE COMPOSITION — the current page's
- * widgets (pages live in the topbar selector). What is inside a component is a different
- * tree with a different lifetime and lives in the Design workspace
- * (workspaces/design.ts); globals live in Data. ---- */
+/* ---- left sidebar: the Layers tree, which is PAGE COMPOSITION — every node of the
+ * current page, one row per node, whatever it draws (pages live in the topbar selector;
+ * globals live in Data).
+ *
+ * An INSTANCE is a leaf here even though it holds a whole tree: what is inside it belongs
+ * to the component it names, which is a different thing with a different lifetime, edited
+ * in the Design workspace (workspaces/design.ts). Unfolding it here would offer to edit
+ * every placement at once while looking at one. ---- */
 
 /* the Layers tree's own expansion state, independent of the Design tree's */
 const fold = makeFold();
@@ -151,7 +155,7 @@ function glyphOf(node: Node): string {
   return "node-" + node.kind;
 }
 
-/* ---- dragging a row somewhere else: the only way to reparent (spec 2.8) ----
+/* ---- dragging a row somewhere else: the only way to reparent ----
  *
  * Pointer events, never the HTML5 drag API: that one owns the drag image and hands back a
  * drop target, when what this needs is the opposite — our own insertion line, and a target
@@ -476,7 +480,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   }
   const fed = fedSlots(widget);
   const feeds = widget.feeds ?? [];
-  /* ONLY the widget's own properties (spec 2.3): what a part declares is edited by
+  /* ONLY the widget's own properties: what a part declares is edited by
      selecting that part, and appears nowhere else. This is the whole point of parts
      owning properties — a Slider's inspector is its value, its range and its frame,
      not every colour of every shape inside it. */
@@ -537,39 +541,31 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     ]),
   );
 
-  /* 4. Appearance: the CONTENT's properties (colors, text, per-type config). A slot the
-   *    template consumes nowhere is hidden rather than shown dead: align also counts
-   *    the aspect-locked content box it places, so it stays once an aspect is set.
-   *    RELATED properties sit together, in ONE canonical order on every type (the
-   *    semantic contract extended to position): colors, text, the control's own shape,
-   *    range, the scale, options, sampling, then state. A name outside the table keeps
-   *    its declaration order at the end. */
-  const template = JSON.stringify(type?.template ?? null);
-  const usesAlign = template.includes("slot:align");
-  const usesTextScale = template.includes("slot:text_scale");
-  const hasAspect = String(authoredSlot(widget, type, "aspect") ?? "") !== "";
+  /* 4. Appearance: the CONTENT's properties (colors, text, per-type config). RELATED
+   *    properties sit together, in ONE canonical order on every type (the semantic
+   *    contract extended to position): colors, text, the control's own shape, range, the
+   *    scale, options, sampling, then state. A name outside the table keeps its
+   *    declaration order at the end. */
   body.append(
     ...section("appearance", "Appearance", String(fed.size), () => [
       el("div", { class: "prop-grid" }, [
         ...otherSlots
           .filter((s) => s.group === "appearance" || s.group === "config")
-          .filter((s) => s.name !== "align" || usesAlign || hasAspect)
-          .filter((s) => s.name !== "text_scale" || usesTextScale)
           .sort((a, b) => slotRank(a.name) - slotRank(b.name))
           .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
       ]),
     ]),
   );
 
-  /* 5. Panel: placement plus the shared frame vocabulary (the box around the content:
-   *    surface, border, radius, paddings, aspect). Separated from Appearance so the
-   *    panel's dressing never mixes with the control's own. The two PLACE rows lead:
-   *    they are document props on the instance, like its label — how the containing
-   *    frame gives it room — not slots the type declares, so they are written straight
-   *    with set_prop and never through the slot machinery. */
+  /* 5. Panel: the box around the content — the frame-group SLOTS the component declares
+   *    (surface, border, radius, pad: bindable, which is what makes a bound surface a
+   *    lamp), and then how this placement is placed.
+   *
+   *    PLACE IS ATTRS, not props: an instance is a node, and a node's fields are
+   *    expression text, so these are the very same rows a plain frame gets and they go
+   *    through the very same commit. There is no instance-shaped copy of them. */
   body.append(
     ...section("panel", "Panel", null, () => [
-      placeGrid(editor, widget.id),
       el("div", { class: "prop-grid" }, [
         ...otherSlots
           .filter((s) => s.group === "frame")
@@ -577,27 +573,28 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       ]),
     ]),
   );
+  body.append(...attrsSection(editor, widget));
 }
 
 /* the canonical property order (see the Appearance section): clusters of related names,
  * shared across every type so the same property is always found in the same place */
 const SLOT_ORDER = [
-  /* the part's own switch leads: whether it is drawn at all comes before how */
+  /* the node's own switch leads: whether it is drawn at all comes before how */
   "shown",
   /* the content colors */
   "fill_color", "track_color", "handle_color", "body_color",
   /* text */
-  "text", "text_color", "text_scale", "align",
+  "text", "text_color", "text_size", "align",
   /* the control's own shape */
-  "control_radius", "thickness", "start_angle", "sweep_angle", "fit",
+  "control_radius", "thickness", "start_angle", "sweep_angle",
   /* range + gesture */
   "min", "max", "step", "drag",
   /* the scale */
-  "show_scale", "scale_values", "scale_position", "divisions", "decimals",
+  "divisions", "decimals", "labels",
   /* options */
-  "shown_options",
-  /* sampling + smoothing (Trend) */
-  "rate", "window", "autoscale", "kalman", "smoothing",
+  "options",
+  /* sampling (Trend): read by the backend to size the ring, not by any attr */
+  "rate", "window",
   /* state, last: interlocks, not styling */
   "visible", "enabled",
 ];
@@ -676,6 +673,18 @@ function renderPartInspector(
   );
 }
 
+/* THE ONE FIELD A NODE STILL WRITES AS A PROP: `layout` is structural — the tree's glyph,
+ * the drop arithmetic and this inspector all read it without evaluating anything — so it is
+ * a typed enum on the node rather than expression text like every other field. */
+function layoutField(editor: Editor, node: number): HTMLElement {
+  const spec: SlotSpec = { name: "layout", shape: "enum", default: "free", group: "config",
+                           variants: ["free", "row", "col", "grid"] };
+  return valueEditor(spec, "enum", node + ":layout",
+                     () => (editor.store.node(node) ?? {}).layout,
+                     (v) => editor.apply([{ op: "set_prop", node, key: "layout", value: v }]),
+                     false, editor);
+}
+
 /* THE NODE INSPECTOR: a frame, a text, an icon or a path on the page — its name, what it
  * is, and its attrs. There is no hand-written field list any more: `attrsSection` (the
  * Design inspector's own) generates every row from the served vocabulary, so a page's
@@ -710,37 +719,13 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
   if (node.kind === "frame")
     kindRow.push(
       el("label", { text: "layout", title: "free places children by their own x/y/w/h" }),
-      nodeField(editor, node.id, "layout", "enum", "free", ["free", "row", "col", "grid"]),
+      layoutField(editor, node.id),
       el("span"),
     );
   body.append(
     ...section("node", "Node", null, () => [el("div", { class: "prop-grid" }, kindRow)]),
   );
   body.append(...attrsSection(editor, node));
-}
-
-/* One editor over one PROP of one document node — not a registry slot, so it is written
- * with set_prop like a name or a label, and never through the slot machinery. The frame
- * inspector is built entirely from these; the widget inspector borrows two. */
-function nodeField(editor: Editor, node: number, key: string, shape: string, def: Json,
-                   variants?: string[], step?: number): HTMLElement {
-  const spec: SlotSpec = { name: key, shape, default: def, group: "config",
-                           ...(variants ? { variants } : {}), ...(step ? { step } : {}) };
-  const read = () => (editor.store.node(node) ?? {})[key];
-  return valueEditor(spec, shape, node + ":" + key, read,
-                     (v) => editor.apply([{ op: "set_prop", node, key, value: v }]),
-                     false, editor);
-}
-
-/* PLACE: how the containing frame gives this node room. The pair sits on the CHILD — a
- * frame and a widget instance carry it identically — so one grid serves both inspectors. */
-function placeGrid(editor: Editor, node: number): HTMLElement {
-  return el("div", { class: "prop-grid" }, [
-    el("label", { text: "grow", title: "share of the free space this takes; 0 = only its min" }),
-    nodeField(editor, node, "grow", "num", 1), el("span"),
-    el("label", { text: "min", title: "floor in pixels, on the container's main axis" }),
-    nodeField(editor, node, "min", "num", 0), el("span"),
-  ]);
 }
 
 /* one Data-in row for a value slot, bound or not */
@@ -761,7 +746,7 @@ function disableAll(node: HTMLElement): void {
 }
 
 /* label + editor + the bind chip: which property you are binding is answered by where
- * you are standing (spec 3.3). A bound slot keeps its value editor, disabled, as a live
+ * you are standing. A bound slot keeps its value editor, disabled, as a live
  * view of what the feed delivers (UNKNOWN until something arrives), and the feed's own
  * editor sits on a full-width row below it.
  *
@@ -821,7 +806,7 @@ function slotCells(
   /* the shape is what the editor and the compiler enforce, so the row does not spell it
      out; it is on the label's tooltip for when the user wants to know, beside the
      property's full address (where you are standing already says which part owns it).
-     A finding about this slot's value sits right here on its label (spec 3.8). */
+     A finding about this slot's value sits right here on its label. */
   const cells = [
     el("label", { text: slotLeaf(spec.name), title: spec.name + ": " + spec.shape }, [
       diagIcon(editor.diagAt(widget.id, spec.name)),

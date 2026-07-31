@@ -66,6 +66,12 @@
   height: 100%;
 }
 
+/* A DISABLED CONTROL, dimmed rather than hidden: an interlock says "not now", which is a
+   different claim from "not here", and an operator has to be able to see the difference. */
+.disabled {
+  opacity: 0.45;
+}
+
 /* the selection ring: over the page, never in it — nothing about a selection may move
    what is selected */
 .ring {

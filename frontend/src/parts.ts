@@ -9,7 +9,7 @@
  * which programs happen to load which cell.
  *
  * Ownership is EXCLUSIVE: a property belongs to exactly one part, appears on exactly
- * one screen, and a part shows nothing its children own (spec 2.3). An unnamed node
+ * one screen, and a part shows nothing its children own. An unnamed node
  * has no address of its own: it renders, and it can own nothing. */
 
 import { Json, SlotSpec, WidgetType } from "./types.js";
@@ -31,7 +31,7 @@ export interface PartIndex {
 }
 
 /* the part that owns a slot address, and the property name within it */
-export function slotOwner(address: string): string {
+function slotOwner(address: string): string {
   const dot = address.lastIndexOf(".");
   return dot < 0 ? "" : address.slice(0, dot);
 }

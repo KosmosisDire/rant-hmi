@@ -56,10 +56,8 @@ void test_template_expr() {
         scope_of({"value", "min", "max", "fill_color", "track_color", "text",
                   "decimals", "options"});
 
-    /* the scope: properties, tile, state, theme tokens */
+    /* the scope: properties, this view's state, theme tokens */
     CHECK_EQ(lower("value", scope), "LOAD(slot:value)");
-    CHECK_EQ(lower("tile.w", scope), "LOAD(tile:w)");
-    CHECK_EQ(lower("tile.aspect", scope), "LOAD(tile:aspect)");
     CHECK_EQ(lower("state.pressed", scope), "LOAD(state:pressed)");
     CHECK_EQ(lower("$accent", scope), "LOAD(theme:accent)");
     CHECK_EQ(lower("$ink-muted", scope), "LOAD(theme:ink-muted)");
@@ -132,7 +130,11 @@ void test_template_expr() {
 
     /* unknown names and fields are errors, not silent Nil */
     CHECK(refuses("nope", scope, "unknown name 'nope'"));
-    CHECK(refuses("tile.q", scope, "unknown field 'tile.q'"));
+    /* A NODE CANNOT MEASURE ITSELF, and says so rather than compiling to a silent Nil:
+       `tile` read the box the departed SVG renderer had already laid out, and the browser
+       lays out now. A field that always reads UNKNOWN is exactly the lie the served
+       vocabulary exists to prevent, so the refusal names the fractions to use instead. */
+    CHECK(refuses("tile.w", scope, "cannot read its own size"));
     CHECK(refuses("state.blink", scope, "unknown field 'state.blink'"));
     CHECK(refuses("x", scope, "unknown name 'x'"));
 

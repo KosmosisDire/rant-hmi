@@ -1,4 +1,4 @@
-/* Expression autocomplete (spec 3.7), driven entirely by the SERVED language tables:
+/* Expression autocomplete, driven entirely by the SERVED language tables:
  * the backend exports the same builtin/method rows its parser compiles with, so what
  * this offers and what compiles can never disagree. Context-aware in the spec's order:
  * after `.` exactly the receiver shape's vocabulary; otherwise x, the widget's slots,
@@ -24,7 +24,7 @@ export interface NameRow {
 
 export interface ExprContext {
   /* "display" (a feed's transform) and "wire" (a flow guard/source) are the two
-     SCALAR positions (spec 6); "attr" is a template attribute, compiled by a
+     SCALAR positions; "attr" is a template attribute, compiled by a
      different compiler (template_expr.cpp) with a smaller vocabulary again -- a row
      can be legal on "display" and still have no view encoding (rgb was, until the
      two tiers gained a shared vocabulary), so this needs its own filter rather than
@@ -461,7 +461,7 @@ function scopeNames(editor: Editor, widget: Node | null): NameRow[] {
       });
       continue;
     }
-    /* beyond the scalars, a variable's type is a TypeRef (spec 2.7): a dotted ref is
+    /* beyond the scalars, a variable's type is a TypeRef: a dotted ref is
        an enum, a root name a struct carrying its field table */
     const scalar = VAR_SHAPE[variable.type];
     const isEnum = !scalar && variable.type.includes(".");
@@ -505,7 +505,7 @@ export function feedX(editor: Editor, widget: Node | null, feed: () => Feed) {
 }
 
 /* what x IS at one row of a flow: the trigger's proposal, retyped by every `set x = ...`
- * above this row (spec 2.6). An earlier row can change it, so the row matters. */
+ * above this row. An earlier row can change it, so the row matters. */
 export function flowX(editor: Editor, widget: Node | null, flow: () => Flow, stepId = 0) {
   return (): { shape: string; elem?: string; fields?: MeshField[] } | null =>
     scopeAt(editor, widget, flow(), stepId).x;
@@ -513,7 +513,7 @@ export function flowX(editor: Editor, widget: Node | null, flow: () => Flow, ste
 
 /* The names a FLOW ROW may write: the standing scope plus this flow's own locals,
  * declared above this row only, and struct ones expanded to their fields so one field
- * can be computed from another (spec 3.7). */
+ * can be computed from another. */
 export function flowNames(editor: Editor, widget: Node | null, flow: () => Flow, stepId: number) {
   return (): NameRow[] => {
     const rows = scopeNames(editor, widget);
@@ -573,7 +573,7 @@ export function attachAutocomplete(input: HTMLInputElement, ctx: ExprContext): v
   input.addEventListener("keydown", menuKeydown(input), { capture: true });
 }
 
-/* ---- the path picker (spec 3.7): the chosen entity's field paths, with shapes ---- */
+/* ---- the path picker: the chosen entity's field paths, with shapes ---- */
 
 export interface PathOption {
   path: string;
@@ -634,7 +634,7 @@ export function feedPaths(editor: Editor, feed: () => Feed) {
 }
 
 /* What a move's `to.path` may name when the destination is a LOCAL: the fields of the
- * struct that local holds at this row (spec 2.6). Aggregates stay out, because the write
+ * struct that local holds at this row. Aggregates stay out, because the write
  * side cannot set them. */
 export function localPaths(
   editor: Editor,

@@ -11,7 +11,7 @@ export interface Handlers {
   /* the snapshot carries diagnostics too: they are computed at compile time, which is
      usually before this client existed, so there is no later frame to learn them from.
      `builtins` is the built-ins' editable document form (the fork source); `attrTable`
-     the closed attr vocabulary (spec 2.3); neither ever changes at runtime, so the
+     the closed attr vocabulary; neither ever changes at runtime, so the
      snapshot is their only carrier. */
   snapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
            lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[],

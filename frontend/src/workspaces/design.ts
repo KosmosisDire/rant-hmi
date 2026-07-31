@@ -31,7 +31,7 @@ function toggle(editor: Editor, key: string, dflt: boolean): void {
   fold.toggle(key, dflt, () => editor.refresh());
 }
 
-/* a doc component's part tree as structure (names are bound values; ids, kinds and
+/* a doc component's node tree as structure (names are bound values; ids, kinds and
  * nesting decide which rows exist) */
 function docPartShape(part: Json): Json {
   return [part?.id, part?.kind, part?.dir ?? "",
@@ -118,7 +118,7 @@ export function designInspectorShape(editor: Editor): string {
 
 /* ---- rows ---- */
 
-/* the row-level verb menu (spec 2.3 Forking): every doc/built-in component row gets
+/* the row-level verb menu: every doc/built-in component row gets
  * one kebab opening the menu.ts context menu at the click point, so all of a row's
  * verbs are one gesture away without crowding the row with icons — the row itself
  * stays a single click to SELECT. */

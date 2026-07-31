@@ -43,7 +43,7 @@ export class App implements Editor {
   mesh: Mesh = { entities: [], types: [] };
   /* the served expression vocabulary: autocomplete reads exactly what compiles */
   lang: Lang | null = null;
-  /* the closed attr vocabulary (spec 2.3), snapshot-only like `lang`: the part
+  /* the closed attr vocabulary, snapshot-only like `lang`: the part
      inspector's Attrs section lists exactly this, set or not */
   attrTable: AttrTable | null = null;
   /* the built-ins' editable document form, snapshot-only (it never changes at runtime):
@@ -222,7 +222,7 @@ export class App implements Editor {
     this.queueSidebars();
   }
 
-  /* browse a built-in read-only (spec 2.3 Forking: reading the shipped definition is
+  /* browse a built-in read-only (reading the shipped definition is
      what precedes overriding it). It is not in the document, so there is nothing to
      select by id — the Design inspector alone changes. */
   selectBuiltin(name: string, path: string): void {
@@ -299,7 +299,7 @@ export class App implements Editor {
     ]);
   }
 
-  /* the theme preview mode (spec 2.10): the artboard repaints in the other half of
+  /* the theme preview mode: the artboard repaints in the other half of
      every token; the editor's own chrome is deliberately untouched */
   setThemeMode(mode: "dark" | "light"): void {
     if (this.view.themeMode === mode) return;

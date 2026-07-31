@@ -48,7 +48,7 @@ export function iconButton(
 }
 
 /* a text input that commits on Enter or blur, never per keystroke: an op stream of
- * half-typed text would fight other views for the caret (spec 4.2). Escape reverts to the
+ * half-typed text would fight other views for the caret. Escape reverts to the
  * value the reconciler last put in, which is the document's current one; the value the
  * field was built with is only the fallback for an unbound field. */
 export function commitInput(

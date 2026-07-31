@@ -1,4 +1,4 @@
-/* The TYPE picker (spec 2.2, 3.7): a tree over the served type table, shaped like the
+/* The TYPE picker: a tree over the served type table, shaped like the
  * entity tree. Root struct types by name; every root BROWSES into its full field table
  * (so an unfamiliar name can be verified against what it carries), and an enum field is
  * itself pickable as `Root.path.to.field` (DART names only the root, so everything under
@@ -115,7 +115,7 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
     rows.push({ depth: 0, key: "dart", label: "dart", icon: "folder", expandable: true });
   if (!openOr("dart")) return rows;
   for (const type of editor.mesh.types) {
-    /* an unnamed root has no TypeRef (spec 2.2): it stays in the tree, labeled by the
+    /* an unnamed root has no TypeRef: it stays in the tree, labeled by the
        entity carrying it, so its fields can be browsed, but nothing under it picks */
     const named = Boolean(type.name);
     const label = type.name || (type.entities[0]?.name ?? "?");

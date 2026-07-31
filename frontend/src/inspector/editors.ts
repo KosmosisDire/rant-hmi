@@ -21,7 +21,7 @@ import { resolveColor } from "../slots.js";
 import { Json, SlotSpec, Node } from "../types.js";
 
 /* what a color editor needs to speak tokens: resolution in this view's mode, and the
- * grouped offer list for the $ menu (spec 2.10) */
+ * grouped offer list for the $ menu */
 function tokenAccess(editor: Editor): TokenAccess {
   const mode = () => editor.view.themeMode ?? "dark";
   return {
@@ -59,7 +59,7 @@ export function valueEditor(
     bindGroup(key, grid, () => text(read()) || (unknown ? "" : "center"));
     return grid;
   }
-  /* ... and a Dropdown's options hold a TypeRef naming an enum (spec 6.2), picked from
+  /* ... and a Dropdown's options hold a TypeRef naming an enum, picked from
      the type tree so the option list can never drift from the schema */
   if (spec?.editor === "enum-type") {
     const node = el("button", { class: "chip pad-mark source-chip", title: "pick an enum" });

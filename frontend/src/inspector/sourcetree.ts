@@ -26,7 +26,7 @@ export interface SourcePick {
   name: string;   /* entity/variable name; the slot's name; the expression's text */
   path: string;   /* the field within the entity or struct value; "" = the whole thing */
   shape: string;  /* the resolved value type ("" when nothing has said) */
-  /* a TYPED fresh temporary (spec 2.7): the TypeRef the new name is declared with,
+  /* a TYPED fresh temporary: the TypeRef the new name is declared with,
      zeroed per run at its declaring row */
   type?: string;
 }
@@ -50,7 +50,7 @@ export interface SourceTreeOptions {
   scope?: FlowScope;
   /* this widget's own slots (a move destination); the specs come from the registry */
   slots?: SlotSpec[];
-  /* offer "+ new name" (a temporary, declared by being used; spec 2.7) */
+  /* offer "+ new name" (a temporary, declared by being used) */
   newName?: boolean;
   /* offer the "expression" escape at the top: the caller switches its side to {expr} */
   expr?: boolean;
@@ -163,7 +163,7 @@ function varShape(type: string): string {
   return SCALAR_SHAPE[type] ?? type;
 }
 
-/* a variable's struct fields, when its type names a struct ROOT (spec 2.7); a dotted
+/* a variable's struct fields, when its type names a struct ROOT; a dotted
  * TypeRef is an enum and holds no fields */
 function varFields(editor: Editor, type: string): MeshField[] {
   if (!type || SCALAR_SHAPE[type] || type === "timer" || type.includes(".")) return [];
@@ -525,7 +525,7 @@ export function openSourceTree(
       list.appendChild(node);
     }
 
-    /* A fresh temporary needs only a name (spec 2.7): a text row, Enter commits it,
+    /* A fresh temporary needs only a name: a text row, Enter commits it,
        typed by what the move puts into it. The button beside it declares the name WITH
        a type instead: a per-run zeroed value of that type, which is where a clean
        message comes from. A struct pick aims the row at the type's first field, so the

@@ -1,4 +1,4 @@
-/* Slot resolution (spec 2.3): what a slot IS, read from the document and the runtime.
+/* Slot resolution: what a slot IS, read from the document and the runtime.
  *
  * There used to be two readers here, because the canvas and the inspector wanted different
  * things from a slot. The CANVAS's half — `resolveSlot`, plus the theme-aware, option-
@@ -12,13 +12,13 @@
  *   something writes it (a feed, an authored flow, or the type's own default behavior)
  *                      the document is only where the runtime STARTED. The field shows the
  *                      live value, because that is the thing the user is reasoning about
- *                      (spec 3.10), and editing it restates where the runtime starts. */
+ *                     , and editing it restates where the runtime starts. */
 
 import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Node } from "./types.js";
 
-/* ---- theme tokens (spec 2.10) ---- */
+/* ---- theme tokens ---- */
 
-export type ThemeMode = "dark" | "light";
+type ThemeMode = "dark" | "light";
 
 /* "$<name>" -> the token's value in this mode; a literal passes through untouched; an
  * unknown token is transparent, matching the backend's compile-time fallback */
@@ -45,7 +45,7 @@ export function resolveTypeRef(
   return field?.variants?.length ? { kind: "enum", type: root, field } : null;
 }
 
-/* the variant names a TypeRef expands to (a Dropdown's options; spec 6.2) */
+/* the variant names a TypeRef expands to (a Dropdown's options) */
 export function variantNames(mesh: Mesh, ref: string): string[] {
   const found = resolveTypeRef(mesh, ref);
   return found?.field?.variants?.map((v) => v.name) ?? [];
@@ -56,7 +56,7 @@ export function typeOf(registry: Registry | null, name: string): WidgetType | nu
   return registry.types.find((t) => t.name === name) ?? null;
 }
 
-export function slotSpec(type: WidgetType | null, name: string): SlotSpec | null {
+function slotSpec(type: WidgetType | null, name: string): SlotSpec | null {
   if (!type) return null;
   return type.slots.find((s) => s.name === name) ?? null;
 }
@@ -68,7 +68,7 @@ export function fedSlots(widget: Node): Set<string> {
 
 /* Which slots the RUNTIME owns: a feed, an authored flow whose move writes the slot, or
  * the type's default behavior. This is a union, not a decision: WHICH of them wins is the
- * backend's precedence rule (spec 2.3) and is not restated here. Whether the slot is
+ * backend's precedence rule and is not restated here. Whether the slot is
  * written at all does not depend on that, and it is all a view needs to know. */
 export function runtimeSlots(widget: Node, type: WidgetType | null): Set<string> {
   const out = fedSlots(widget);
@@ -88,7 +88,7 @@ export function slotCell(widget: Node, slot: string): string {
   return widget.id + "." + slot;
 }
 
-/* ---- nested slot values (spec 2.3) ----
+/* ---- nested slot values ----
  *
  * A slot's NAME is its address: bare for the widget's own properties, prefixed by the
  * owning part's path for the ones a part declares (`bar.fill_color`). An instance
@@ -97,7 +97,7 @@ export function slotCell(widget: Node, slot: string): string {
 
 /* what the document authors at one address, or undefined when it authors nothing there
    (including when the path runs into a non-object: a stale value is not a value) */
-export function slotValue(slots: Json, address: string): Json {
+function slotValue(slots: Json, address: string): Json {
   let at: Json = slots;
   for (const segment of address.split(".")) {
     if (!at || typeof at !== "object" || Array.isArray(at)) return undefined;

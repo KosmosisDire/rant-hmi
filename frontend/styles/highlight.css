@@ -205,12 +205,6 @@
 }
 
 
-/* pushes a trailing control to the row's right edge; costs nothing when a growing
-   field already fills the line */
-.push-right {
-  margin-left: auto;
-}
-
 .kind-mark {
   display: inline-flex;
   align-items: center;
@@ -219,19 +213,6 @@
   height: 17px;
   border-radius: 2px;
   flex: none;
-}
-
-.warn-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  border-radius: 2px;
-  background: var(--bad-bg);
-  color: var(--bad);
-  font: 700 11.5px/16px var(--mono);
-  cursor: help;
 }
 
 .note {

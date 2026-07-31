@@ -18,7 +18,7 @@ export interface MeshEntity {
   kind: "V" | "T" | "F" | "S";
   name: string;
   /* the schema's ROOT type name, "" where the schema names none. DART names only the
-     root (spec 2.2), so this is the whole of what an entity says about its type. */
+     root, so this is the whole of what an entity says about its type. */
   type: string;
   writable: boolean;
   forceable: boolean;
@@ -41,7 +41,7 @@ export interface Mesh {
   types: MeshType[];
 }
 
-/* ---- the expression language, as served tables (spec 3.7) ---- */
+/* ---- the expression language, as served tables ---- */
 
 export interface LangEntry {
   name: string;
@@ -53,7 +53,7 @@ export interface LangEntry {
      different question from `tier`, which is about the two SCALAR positions (feed vs.
      flow). An attribute field's autocomplete must offer exactly the rows where this is
      true; offering one where it is false and then refusing it at compile is the bug
-     this field exists to close (spec 3.7). */
+     this field exists to close. */
   view: boolean;
   receiver?: string;   /* method rows only */
   property?: boolean;  /* method rows: reads bare (x.length) vs called (x.trim()) */
@@ -94,13 +94,13 @@ export interface AttrTable {
 export interface Var {
   id: number;
   name: string;
-  /* "f64" | "bool" | "str" | "timer", or any TypeRef from the mesh (spec 2.7) */
+  /* "f64" | "bool" | "str" | "timer", or any TypeRef from the mesh */
   type: string;
   init: Json;
   persist: boolean;
 }
 
-/* a theme token (spec 2.10): a named color role with one value per theme mode; a
+/* a theme token: a named color role with one value per theme mode; a
    color slot value "$<name>" resolves through it in the view's own mode */
 export interface Token {
   id: number;
@@ -117,7 +117,7 @@ export interface Feed {
   path: string;
   /* with `cases`, the ELSE arm; alone, the whole transform */
   xf: string;
-  /* conditional arms over x (spec 2.4): first match wins, any boolean condition */
+  /* conditional arms over x: first match wins, any boolean condition */
   cases?: { test?: string; xf: string }[];
   poll_hz: number | null;
   stale_ms: number | null;
@@ -254,7 +254,7 @@ export type Instr = { op: string; v?: Json; cell?: string };
 export interface SlotSpec {
   /* the slot's ADDRESS: a widget-level property is a bare name, a part's is its owning
      part's path plus the name (`bar.fill_color`). It is what a feed's `slot`, a move's
-     destination, a live cell key and an instance's nesting all use (spec 2.3). */
+     destination, a live cell key and an instance's nesting all use. */
   name: string;
   shape: string;
   default: Json;
@@ -270,7 +270,7 @@ export interface EventSpec {
   name: string;
   x: string;
   /* where `x` comes from, when the type derives it rather than the gesture carrying it
-     (spec 2.3). The backend evaluates it; a view only reports the gesture. */
+    . The backend evaluates it; a view only reports the gesture. */
   value?: string;
 }
 
@@ -358,7 +358,7 @@ export interface Live {
 
 /* ---- diagnostics ---- */
 
-/* One compile finding, addressed to the document node it is about (spec 3.8). `node` may
+/* One compile finding, addressed to the document node it is about. `node` may
  * be any node, so a view maps it to the widget that owns it before marking the canvas.
  * `where` narrows it to a field within that node (a slot name, "init") so the sidebars can
  * pin it on the exact row; empty when the node itself is the line. */

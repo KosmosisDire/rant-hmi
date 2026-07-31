@@ -27,20 +27,6 @@ textarea.field {
   display: block;
 }
 
-/* the `code` part's body (spec 2.3): unlike the one-row textarea.field above, a JS body
-   is genuinely multi-line, so this one grows tall and the user resizes it vertically
-   instead of it staying pinned at one row */
-.code-editor {
-  height: 160px;
-  min-height: 60px;
-  padding-top: 6px;
-  line-height: 16px;
-  resize: vertical;
-  overflow: auto;
-  white-space: pre;
-  display: block;
-}
-
 .field.grow {
   flex: 1;
   width: 100%;

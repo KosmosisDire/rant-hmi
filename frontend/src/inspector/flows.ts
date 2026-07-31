@@ -1,4 +1,4 @@
-/* Flow cards (spec 3.4 to 3.6).
+/* Flow cards.
  *
  * EVERY STEP IS ONE LINE, AND THE LINE IS THE EDITOR. There is no summary/form split and
  * nothing to expand: a move's source, destination and mode sit as live controls on the
@@ -8,7 +8,7 @@
  *
  * Every row occupies one skeleton, `grip | n | verb | content | (!) | x`, and the verb
  * column is fixed and right-aligned so verbs align down one edge. THE VERB IS DERIVED
- * (spec 2.6), never chosen, and there are two words for a move: `read` (an entity's value
+ *, never chosen, and there are two words for a move: `read` (an entity's value
  * coming in) and `write` (a value going anywhere), plus `force`/`unforce` when a variable
  * destination's mode says so. WHERE something lives is never stated: both sides pick
  * from ONE tree (sourcetree.ts) holding the flow's locals, the variables, this widget's
@@ -32,7 +32,7 @@ import { highlighted } from "../highlight.js";
 
 const opened = new Set<number>();
 
-/* ---- the derived verb (spec 2.6) ---- */
+/* ---- the derived verb ---- */
 
 /* which FORM a move's side takes, discriminated by key exactly as the backend does */
 type Side = "expr" | "local" | "entity" | "slot" | "init" | "";
@@ -94,7 +94,7 @@ function triggerText(trigger: Json): string {
   return pastTense(String(trigger.name ?? "?"));
 }
 
-/* What a flow leaves behind, de-duplicated in DO order (spec 3.4): the destinations of
+/* What a flow leaves behind, de-duplicated in DO order: the destinations of
  * the moves that LEAVE it. A move into a local is working, not writing, so it never
  * appears; a flow that writes nothing falls back to its timer effects, and a flow with
  * neither says so. */
@@ -250,7 +250,7 @@ function targetChip(target: { kind: string; name: string }): HTMLElement {
   return node;
 }
 
-/* ---- the WHEN block (spec 3.5): a labelled grid, never a wrapping line ---- */
+/* ---- the WHEN block: a labelled grid, never a wrapping line ---- */
 
 function whenGrid(
   editor: Editor,
@@ -310,7 +310,7 @@ function whenGrid(
     row("for", hold, el("span", { class: "op", text: "ms" }));
 
     /* a two-state choice is a dropdown with the states NAMED, never an icon pair whose
-       meaning lives in a tooltip (spec 3.5) */
+       meaning lives in a tooltip */
     const repeating = Boolean(first.every_ms);
     const mode = selectField(
       [{ value: "once", label: "run once" }, { value: "repeat", label: "repeat while held" }],
@@ -480,7 +480,7 @@ function stepRow(
     verb,
     stepCell(editor, widget, type, flow, step),
     el("span", { class: "do-tail" }, [
-      /* a finding about this step sits on the step's own line (spec 3.8), whichever
+      /* a finding about this step sits on the step's own line, whichever
          field of it the compiler named */
       diagIcon(editor.diagNode(step.id)),
       iconButton("x", "remove this step", () =>
@@ -511,7 +511,7 @@ function stepCell(
   const cell = el("span", { class: "do-cell" }, []);
 
   /* an expression field, wire tier, seeing this row's own scope: x as the rows above
-     leave it, and the locals declared above this one (spec 3.7) */
+     leave it, and the locals declared above this one */
   const expr = (read: () => string, commit: (text: string) => void, key: string) => {
     const field = commitInput(read(), commit, { class: "field grow", placeholder: "expression" });
     bindField(step.id + ":" + key, field, read);
@@ -736,7 +736,7 @@ function sideChip(
 }
 
 /* Drag to reorder, from the grip only: an armed drag, so a normal click never starts one
- * (spec 3.6). The move op lands on release. Every order is a valid document now, so a
+ *. The move op lands on release. Every order is a valid document now, so a
  * reorder can be wrong but can never be rejected. */
 function grip(editor: Editor, step: Json, index: number): HTMLElement {
   const handle = el("span", {
@@ -772,7 +772,7 @@ function grip(editor: Editor, step: Json, index: number): HTMLElement {
   return handle;
 }
 
-/* The + menu: read, write, then the guards, then the timers (spec 3.6). Both transfer
+/* The + menu: read, write, then the guards, then the timers. Both transfer
  * entries insert a `move` with its holes visible; WHERE each side lives is the pick's
  * business, so the menu never asks. A struct value in scope adds a contextual entry that
  * fills its next unset field. */

@@ -1,10 +1,10 @@
-/* A feed is ONE LINE (spec 3.3), sitting under the slot it fills: the source picked from
+/* A feed is ONE LINE, sitting under the slot it fills: the source picked from
  * the tree (which carries kind, name, path and type in one act), then the transform, then
  * the poll rate where the source is a function. The slot itself is said by WHERE the line
  * sits, so the line does not restate it. There is nothing to fold: the line is the
  * editor, it never wraps, and content squishes rather than reflowing the sidebar.
  *
- * "+ case" graduates the one transform into CONDITIONAL arms (spec 2.4): the expression
+ * "+ case" graduates the one transform into CONDITIONAL arms: the expression
  * moves onto its own row, each row a condition over x and its expression, first match
  * wins, with the feed's own xf standing as the else. There is no value matching: a
  * condition (`x == .run`, `x > 40`) says everything a picked value said and more.

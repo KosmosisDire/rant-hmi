@@ -700,10 +700,12 @@ for (const grid of widgetPanel.host.querySelectorAll(".prop-grid"))
 check(!widgetLabels.includes("handle_color") && !widgetLabels.includes("fill_color"),
       "the widget view shows no property a part owns, got " + widgetLabels.join(","));
 check(widgetLabels.includes("surface"), "and keeps the widget's own frame slots");
-/* PLACE is not a slot the type declares — it is how the CONTAINING frame gives this
-   instance room, so it is a document prop on the node, edited beside the frame slots */
-check(widgetLabels.includes("grow") && widgetLabels.includes("min"),
-      "the widget view places the instance, got " + widgetLabels.join(","));
+/* PLACE IS NOT A SLOT and not a prop: an instance is a node, so how its container gives
+   it room is the same attr row a plain frame gets, through the same commit */
+const widgetAttrNames = widgetPanel.host.querySelectorAll(".attr-row")
+  .map((row) => row.querySelector(".attr-name")?.textContent);
+check(widgetAttrNames.includes("grow") && widgetAttrNames.includes("min"),
+      "the widget view places the instance, got " + widgetAttrNames.join(","));
 {
   /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
      — and the edit writes NESTED, under the part that owns it */
@@ -874,12 +876,23 @@ const labelPanel = new Panel(new Element("aside"));
 check(designInspectorShape(labelEditor) !== designInspectorShape(lampEditor),
       "the selected part node moves the inspector's shape");
 labelPanel.render(designInspectorShape(labelEditor), (host) => renderDesignInspector(host, labelEditor));
+/* EVERY attr the kind declares, and exactly ONE of the two placement vocabularies: the
+   parent decides which, so offering both would be offering a field that does nothing half
+   the time — which is the sort of dead row this table exists to prevent */
 const attrRows = labelPanel.host.querySelectorAll(".attr-row");
-const textVocabCount =
-  editor.attrTable.perKind.text.length + editor.attrTable.common.length;
+const MEASURED = ["x", "y", "w", "h", "origin_x", "origin_y", "rotate"];
+const ARRANGED = ["grow", "min"];
+const textVocabCount = editor.attrTable.perKind.text.length +
+  editor.attrTable.common.filter((a) => !ARRANGED.includes(a.name)).length;
 check(attrRows.length === textVocabCount,
-      "the part view lists EVERY attr the kind declares, got " + attrRows.length +
-        " expected " + textVocabCount);
+      "the part view lists the kind's attrs and the placement half that applies, got " +
+        attrRows.length + " expected " + textVocabCount);
+const attrNamed = (rows, name) =>
+  rows.find((row) => row.querySelector(".attr-name")?.textContent === name);
+check(MEASURED.every((name) => attrNamed(attrRows, name) !== undefined),
+      "a child of a FREE frame places itself: x/y/w/h are offered");
+check(ARRANGED.every((name) => attrNamed(attrRows, name) === undefined),
+      "and the share its parent would have given it is not");
 const attrRowNamed = (rows, name) =>
   rows.find((row) => row.querySelector(".attr-name")?.textContent === name);
 check(attrRowNamed(attrRows, "text").querySelectorAll("input")
@@ -1363,11 +1376,14 @@ check(stageNode("frame", 901) !== heldAgain && stageNode("frame", 901).style.fle
   const attrRowFor = (name) =>
     framePanel.host.querySelectorAll(".attr-row")
       .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
-  /* the frame's own dressing AND both placement vocabularies: which half applies is the
-     PARENT's layout, said once in the table rather than mirrored in the inspector */
+  /* the frame's own dressing, and the placement half that applies: this frame sits in a
+     COLUMN, so it is arranged by a share and a floor and places itself nowhere */
   for (const name of ["gap", "pad", "align", "justify", "surface", "border", "border_w",
-                      "radius", "grow", "min", "x", "y", "w", "h", "rotate"])
+                      "radius", "grow", "min", "aspect"])
     check(attrRowFor(name) !== null, "the node inspector edits " + name);
+  for (const name of ["x", "y", "w", "h", "rotate"])
+    check(attrRowFor(name) === null,
+          "and does not offer " + name + ", which its parent's layout ignores");
 
   /* editing one writes the WHOLE attrs map, exactly as a component's node does */
   const gapField = attrRowFor("gap").querySelectorAll("input")[0];

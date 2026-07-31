@@ -22,11 +22,9 @@ namespace {
  * three or getting "unknown function" where "no view encoding" was meant. */
 
 const char* kStates[] = {"pressed", "dragging", "open", "hover"};
-const char* kTileFields[] = {"w", "h", "aspect"};
-/* the three cells a repeated node's copy answers (spec 2.3): 0-based index, the total
- * copy count, and index / (count - 1) (0 when count < 2, never NaN). `repeat` needs no
- * opcode of its own — like `tile` and `state`, it is a LOAD of a symbolic cell the
- * renderer's per-copy overlay answers at paint time. */
+/* the three cells a repeated node's copy answers: 0-based index, the total copy count,
+ * and index / (count - 1) (0 when count < 2, never NaN). `repeat` needs no opcode of its
+ * own — like `state`, it is a LOAD of a symbolic cell the renderer answers per copy. */
 const char* kRepeatFields[] = {"index", "count", "fraction"};
 
 class Parser {
@@ -517,13 +515,24 @@ class Parser {
             emit_const(name == "true");
             return;
         }
-        /* the view's own inputs: the tile's geometry, this view's gesture state, and —
-           inside a repeated node — which copy this one is (spec 2.3) */
-        if (name == "tile" || name == "state" || name == "repeat") {
+        /* A NODE DOES NOT KNOW ITS OWN PIXELS. `tile.w/h/aspect` measured the box the SVG
+           renderer had already laid out; the browser lays out now, and nothing has asked it
+           for a number by the time these expressions run. Refused rather than compiled to a
+           silent UNKNOWN — a field that always reads Nil is the exact lie the served
+           vocabulary exists to prevent — and refused with what to write instead: every
+           measured field is a FRACTION of the box, so a size relative to it needs no
+           measurement at all. It returns when something measures (the envelope contract). */
+        if (name == "tile") {
+            fail("a node cannot read its own size yet: x, y, w and h are fractions of the "
+                 "box it is given, so a size relative to that box needs no measurement");
+            return;
+        }
+        /* the view's own inputs: this view's gesture state, and — inside a repeated node —
+           which copy this one is */
+        if (name == "state" || name == "repeat") {
             if (token_.kind != TokenKind::Dot) {
                 fail("'" + name + "' reads by field (" +
-                     (name == "tile" ? std::string("tile.w / tile.h / tile.aspect")
-                      : name == "repeat"
+                     (name == "repeat"
                           ? std::string("repeat.index / repeat.count / repeat.fraction")
                           : std::string("state.pressed / state.dragging / "
                                         "state.open / state.hover")) + ")");
@@ -536,9 +545,7 @@ class Parser {
             }
             const std::string field = token_.text;
             bool known = false;
-            if (name == "tile") {
-                for (const char* f : kTileFields) known = known || field == f;
-            } else if (name == "repeat") {
+            if (name == "repeat") {
                 for (const char* f : kRepeatFields) known = known || field == f;
             } else {
                 for (const char* f : kStates) known = known || field == f;

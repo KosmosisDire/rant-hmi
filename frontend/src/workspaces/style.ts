@@ -1,4 +1,4 @@
-/* The Style workspace: a full-page editor over the document's theme tokens (spec 2.10).
+/* The Style workspace: a full-page editor over the document's theme tokens.
  * Built on the same reconcile idiom as the sidebars: styleShape decides which rows exist
  * (the token list and its grouping), and every value — a name, a swatch, a where-used
  * count, the preview mode — is pushed into the standing control. Edits leave as ordinary
@@ -12,7 +12,7 @@ import { bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { Json, Token } from "../types.js";
 
 /* how many authored slot values reference this token, across every page. A widget's
-   slots nest one object per part (spec 2.3), so the count walks them. */
+   slots nest one object per part, so the count walks them. */
 function usedCount(editor: Editor, name: string): number {
   const ref = "$" + name;
   let count = 0;

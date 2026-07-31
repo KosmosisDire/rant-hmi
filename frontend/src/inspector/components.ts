@@ -1,32 +1,33 @@
-/* The component-editing inspector (spec 2.3, 3.1): the views behind the Components
- * tree. A COMPONENT selection edits the type's own record — its name (a plain
- * set_prop: nothing references a component by id, and instances typed by the old name
- * simply lose their type, which the missing-type marker already says), a read-only
- * events summary, the PROPERTIES table (one PropDef row each, the slot editors
- * reused for the default), and a read-only behavior summary. A PART selection edits
- * one template node: its name, a box's dir, the ATTRS table (attr name + expression
- * text with the highlight underlay, committed as the WHOLE attrs object exactly like
- * a widget's `slots`), the interact's params, and the structural acts (add child,
- * move, delete). Everything is ordinary ops: the backend recompiles and the
- * registry-changed snapshot delivers the new derived type to every instance live. */
+/* The component-editing inspector: the views behind the Components tree.
+ *
+ * A COMPONENT selection edits the type's own record — its name (a plain set_prop:
+ * nothing references a component by id, and instances typed by the old name simply lose
+ * their type, which the missing-type marker already says), a read-only events summary,
+ * the PROPERTIES table (one PropDef row each, the slot editors reused for the default),
+ * and a read-only behavior summary.
+ *
+ * A NODE selection edits one node of its tree: its name, a frame's layout, the ATTRS
+ * table (every attr its kind declares, expression text with the highlight underlay,
+ * committed as the WHOLE attrs object exactly like an instance's `slots`), the interact's
+ * params, and the structural acts (add child, move, delete). That attrs table is exported
+ * — the Content inspector shows the same rows for a page's node, because it is the same
+ * node. Everything is ordinary ops: the backend recompiles and the snapshot delivers the
+ * new derived type to every instance live. */
 
 import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
-import { AttrDef, ComponentDef, Json, Node, PropDef, SlotSpec } from "../types.js";
+import { AttrDef, ComponentDef, Json, Layout, Node, PropDef, SlotSpec } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "series"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
 
-/* the closed attr vocabulary (spec 2.3): `editor.attrTable` is snapshot-only data, so
- * these read straight off it rather than caching — a part kind with nothing of its own
- * (box) or an offline editor with no table yet both fall back to an empty list, never
- * a crash. `code` is the one open kind and never reads from here (see codeSection /
- * the "code" branch of the attrs section below): its own row is deliberately never
- * looked up by these. */
+/* the closed attr vocabulary: `editor.attrTable` is snapshot-only data, so these read
+ * straight off it rather than caching — a kind with nothing of its own, or an offline
+ * editor with no table yet, both fall back to an empty list rather than to a crash. */
 function ownAttrsOf(editor: Editor, kind: string): AttrDef[] {
   return editor.attrTable?.perKind[kind] ?? [];
 }
@@ -59,9 +60,9 @@ function strayAttrs(editor: Editor, part: Node): string[] {
     .filter((key) => !declared.has(key));
 }
 
-/* the "THIS PART" / "COMMON" divider between a kind's own attrs and the set every kind
- * shares: the existing row-label idiom (KIND, ADDRESS, DEFAULT, GROUP, ...), not a new
- * visual language */
+/* the divider between a kind's own attrs, the placement half that applies and the set
+ * every kind shares: the existing row-label idiom (KIND, ADDRESS, DEFAULT, GROUP, ...),
+ * not a new visual language */
 function attrGroupHeading(text: string): HTMLElement {
   return el("div", { class: "row" }, [el("span", { class: "row-label", text })]);
 }
@@ -78,7 +79,7 @@ function selection(editor: Editor): { comp: ComponentDef; part: Node | null } | 
   return { comp, part: part && typeof part.kind === "string" ? part : null };
 }
 
-/* the list a part sits in: a box's children, or the component's parts for the root */
+/* the list a node sits in: its parent frame's children, or the component's own */
 function siblingsOf(editor: Editor, partId: number): Json[] {
   const parent = editor.store.parentOf(partId) as Json;
   if (!parent) return [];
@@ -89,17 +90,17 @@ function siblingsOf(editor: Editor, partId: number): Json[] {
   return [];
 }
 
-/* ---- the browsed built-in (spec 2.3 Forking) ----
+/* ---- the browsed built-in ----
  *
  * The same definition an Override would copy, shown read-only. It is not in the
  * document, so nothing here binds, applies an op or looks anything up in the store: a
  * built-in never changes at runtime, which is exactly why one static render is enough.
  *
- * `path` is a CHILD-INDEX path into `parts` ("" = the component, "0" = its root part,
- * "0.1" = that part's second child). `address` is the different thing the reader
- * actually wants: the part's SLOT ADDRESS prefix — the names joined below the template
- * root, which is what its properties are addressed under and what an instance's nested
- * `slots` mirror (spec 2.3). The root contributes no segment, so it is dropped. */
+ * `path` is a CHILD-INDEX path into the component's own children ("" = the component
+ * itself, "0" = its first child, "0.1" = that child's second). `address` is the different
+ * thing the reader actually wants: the node's SLOT ADDRESS prefix — the names joined from
+ * the component down, which is what its properties are addressed under and what an
+ * instance's nested `slots` mirror. The component adds no segment, being the root. */
 interface BuiltinAt {
   comp: Json;
   part: Json | null;
@@ -272,7 +273,7 @@ function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt)
     el("div", { class: "part-def" }, [
       kindRow,
       /* the one thing a reader of a built-in is really after: what this part's
-         properties are called from the outside (spec 2.3) */
+         properties are called from the outside */
       el("div", { class: "row" }, [
         el("span", { class: "row-label", text: "ADDRESS" }),
         el("span", { class: "value-static grow",
@@ -453,7 +454,7 @@ function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentD
   /* 2. Properties: one PropDef row per served slot. The name, shape, default and
    *    group are the whole slot spec an instance sees. These are the WIDGET's own —
    *    what an instance shows while the widget itself is selected; a property that
-   *    belongs to one part is declared on that part (spec 2.3). */
+   *    belongs to one part is declared on that part. */
   body.append(
     ...propsSection(editor, comp.id, "comp-props", () => at().props ?? [],
                     "no properties yet"),
@@ -660,7 +661,7 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     ]),
   );
 
-  /* the properties this part OWNS (spec 2.3): an instance edits them only while this
+  /* the properties this part OWNS: an instance edits them only while this
    * part is selected, they are stored under its path, and this part's expressions —
    * and its children's — are the only ones that can read them */
   body.append(
@@ -739,17 +740,21 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
   const attrsOf = () => (at().attrs ?? {}) as Record<string, string>;
   const commitAttrs = (next: Record<string, string>) =>
     editor.apply([{ op: "set_prop", node: node.id, key: "attrs", value: next }]);
+  const row = (d: AttrDef) => attrDefRow(editor, node.id, d, attrsOf, commitAttrs);
   const ownDefs = ownAttrsOf(editor, node.kind);
-  const commonDefs = commonAttrs(editor);
+  const place = placementAttrs(editor, node);
+  const commonDefs = commonAttrs(editor).filter((d) => !PLACEMENT.has(d.name));
   const strays = strayAttrs(editor, node);
   return section("node-attrs", "Attrs",
-                 String(ownDefs.length + commonDefs.length + strays.length), () => [
+                 String(ownDefs.length + place.length + commonDefs.length + strays.length),
+                 () => [
     ...(ownDefs.length
-      ? [attrGroupHeading("THIS " + node.kind.toUpperCase()),
-         ...ownDefs.map((d) => attrDefRow(editor, node.id, d, attrsOf, commitAttrs))]
+      ? [attrGroupHeading("THIS " + node.kind.toUpperCase()), ...ownDefs.map(row)]
       : []),
+    attrGroupHeading(placementHeading(editor, node)),
+    ...place.map(row),
     attrGroupHeading("COMMON"),
-    ...commonDefs.map((d) => attrDefRow(editor, node.id, d, attrsOf, commitAttrs)),
+    ...commonDefs.map(row),
     ...(strays.length
       ? [attrGroupHeading("NOT READ BY THIS KIND"),
          ...strays.map((key) => unknownAttrRow(editor, node.id, key, attrsOf, commitAttrs))]
@@ -757,10 +762,42 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
   ]);
 }
 
-/* which attrs a node's inspector will show, as a shape string: the declared set is fixed
- * by kind, so only the strays move it */
+/* ---- the two placement vocabularies, and which one a node is actually in ----
+ *
+ * A node does not choose how it is placed; its PARENT does. In a row, col or grid it is
+ * arranged (a share, a floor, a ratio) and x/y/w/h mean nothing; in a free frame it places
+ * itself and the share means nothing. Offering both sets at once would be offering a field
+ * that does nothing half the time, which is exactly the sort of dead row this vocabulary
+ * exists to prevent — so the inspector shows the half that applies, named for it. */
+const ARRANGED = ["grow", "min", "aspect"];
+const MEASURED = ["x", "y", "w", "h", "aspect", "origin_x", "origin_y", "rotate"];
+const PLACEMENT = new Set([...ARRANGED, ...MEASURED]);
+
+/* the layout of whatever holds this node: a page's root children are placed by the page,
+   which is the one frame the document does not describe (a column, stage.ts) */
+export function parentLayout(editor: Editor, node: Node): Layout {
+  const parent = editor.store.parentOf(node.id) as Node | null;
+  if (!parent || typeof parent.kind !== "string") return "col";
+  return (parent.layout ?? "free") as Layout;
+}
+
+function placementAttrs(editor: Editor, node: Node): AttrDef[] {
+  const names = parentLayout(editor, node) === "free" ? MEASURED : ARRANGED;
+  const table = commonAttrs(editor);
+  return names
+    .map((name) => table.find((d) => d.name === name))
+    .filter((d): d is AttrDef => d !== undefined);
+}
+
+function placementHeading(editor: Editor, node: Node): string {
+  return parentLayout(editor, node) === "free" ? "PLACES ITSELF" : "PLACED BY ITS PARENT";
+}
+
+/* which attrs a node's inspector will show, as a shape string: the declared set is fixed by
+ * kind and by how its parent places it, so only those two and the strays move it */
 export function attrsShape(editor: Editor, node: Node): string {
-  return node.kind + ":" + strayAttrs(editor, node).join(",");
+  return node.kind + ":" + parentLayout(editor, node) + ":" +
+         strayAttrs(editor, node).join(",");
 }
 
 function attrDefRow(

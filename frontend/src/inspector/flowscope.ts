@@ -1,7 +1,7 @@
 /* What a flow's names mean AT A GIVEN ROW.
  *
  * A DO list is read top to bottom and so is this: the locals a row may name are the ones
- * declared ABOVE it (spec 3.7), `x` is whatever the last move into it produced, and a
+ * declared ABOVE it, `x` is whatever the last move into it produced, and a
  * struct local carries the field table of the type that was moved into it. One pass
  * answers all of that, because they are all the same question.
  *
@@ -44,7 +44,7 @@ export function typeFields(editor: Editor, name: string): MeshField[] {
 }
 
 /* the declared variables a widget's flows can name, before any move adds to them. A type
- * beyond the four scalars is a TypeRef (spec 2.7): a struct root holds a struct of it,
+ * beyond the four scalars is a TypeRef: a struct root holds a struct of it,
  * and a dotted ref (`ValveCmd.mode`) holds that enum's value. */
 function declared(editor: Editor, widget: Node | null): LocalInfo[] {
   const own = new Set((widget?.locals ?? []).map((v) => v.id));
@@ -128,7 +128,7 @@ export function scopeAt(
   const scope = new Map<string, LocalInfo>();
   for (const variable of declared(editor, widget)) scope.set(variable.name, variable);
 
-  /* x starts as the value the widget proposes for the trigger event (spec 2.6) */
+  /* x starts as the value the widget proposes for the trigger event */
   const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
   const trigger = (flow?.when ?? []).find((w: Json) => w?.kind === "event");
   const event = trigger ? type?.events.find((e) => e.name === trigger.name) : null;
@@ -147,7 +147,7 @@ export function scopeAt(
         : null;
       continue;
     }
-    /* a TYPED destination declares a fresh temporary right here (spec 2.7), zeroed
+    /* a TYPED destination declares a fresh temporary right here, zeroed
        per run, whichever field the row goes on to fill */
     if (typeof to.type === "string" && to.type && !scope.has(to.local)) {
       scope.set(to.local, to.type.includes(".")
