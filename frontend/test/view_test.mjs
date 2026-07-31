@@ -39,6 +39,7 @@ const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
 const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
 const { renderStage } = await import(mod("stage.js"));
+const { dropAtPageEnd, dropPlan, dropZone } = await import(mod("arrange.js"));
 
 let failures = 0;
 let checks = 0;
@@ -124,7 +125,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 6, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 7, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -1316,6 +1317,117 @@ check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell r
   const op = applied.find((o) => o.key === "grow");
   check(op && op.op === "set_prop" && op.node === group.id && op.value === 3,
         "editing grow writes one set_prop on the frame, got " + JSON.stringify(op));
+}
+
+/* ---- moving a node: the mirror's half, and the drop arithmetic ----
+   A move echo always carries the whole placement (node, parent, list, index), so the mirror
+   has ONE path for a reorder, a reparent and a page shuffle alike. Everything below the
+   mirror block is arrange.ts, which is pure on purpose: a browser decides where the rows
+   ARE, but which parent and which index a drop means is arithmetic, and it is the part that
+   makes tree dragging feel right or maddening. */
+{
+  const leaf = (id, label) => ({ id, kind: "widget", type: "Label", label,
+                                 grow: 1, min: 0, slots: {}, locals: [], feeds: [], flows: [] });
+  const frame = (id, name, children) => ({ id, kind: "frame", name, layout: "col", gap: 0, pad: 0,
+                                           align: "stretch", justify: "start", surface: "",
+                                           border: "", border_w: 1, radius: 0, grow: 1, min: 0,
+                                           children });
+  /* Left[ A, Inner[ E ] ], Right[ C ], D */
+  const movePage = () => ({
+    id: 700,
+    name: "Move",
+    children: [
+      frame(710, "Left", [leaf(711, "A"), frame(715, "Inner", [leaf(716, "E")])]),
+      frame(720, "Right", [leaf(721, "C")]),
+      leaf(730, "D"),
+    ],
+  });
+  const ids = (list) => (list ?? []).map((n) => n.id).join(",");
+
+  const moveStore = new DocStore();
+  moveStore.load({ version: 1, next_id: 900, globals: [], tokens: [], components: [],
+                   pages: [movePage(), { id: 800, name: "Second", children: [] }] });
+
+  moveStore.apply(2, [{ op: "move", node: 711, parent: 720, list: "children", index: 0 }]);
+  check(ids(moveStore.frame(710).children) === "715", "a reparent echo takes the node out of its old frame");
+  check(ids(moveStore.frame(720).children) === "711,721", "and splices it in where the echo says");
+  check(moveStore.parentOf(711)?.id === 720, "and the mirror re-indexes it under its new parent");
+  /* what the shell's selectable() filter reads after every echo: a selected node that only
+     MOVED must still resolve, or the inspector empties under the author's hands */
+  check(Boolean(moveStore.widget(711) ?? moveStore.frame(711)),
+        "a selected node survives its own reparent echo");
+
+  moveStore.apply(3, [{ op: "move", node: 700, parent: 0, list: "pages", index: 1 }]);
+  check(ids(moveStore.pages()) === "800,700", "a page echo reorders the one list hanging off the root");
+
+  moveStore.apply(4, [{ op: "move", node: 711, index: 1 }]);
+  check(ids(moveStore.frame(720).children) === "721,711",
+        "and an echo with no parent at all reorders where the node already is");
+
+  /* the wrap echo: an insert of an EMPTY frame, then one addressed move per node, so the
+     mirror never holds the same widget in two places */
+  moveStore.apply(5, [
+    { op: "insert", parent: 700, list: "children", index: 0,
+      node: frame(750, "Row", []) },
+    { op: "move", node: 710, parent: 750, list: "children", index: 0 },
+    { op: "move", node: 720, parent: 750, list: "children", index: 1 },
+  ]);
+  check(ids(moveStore.page(700).children) === "750,730", "the wrap echo lands the frame where the nodes were");
+  check(ids(moveStore.frame(750).children) === "710,720", "with both of them inside it");
+  check(moveStore.parentOf(710)?.id === 750 && moveStore.parentOf(720)?.id === 750,
+        "and nowhere else");
+
+  /* ---- arrange.ts ---- */
+  const tree = movePage();
+  const at = (drag, target, zone, open) => {
+    const plan = dropPlan(tree, drag, target, zone, open);
+    return plan ? plan.parent + ":" + plan.index : "none";
+  };
+
+  check(at(730, 720, "into") === "720:1", "dropping INTO a frame appends to it");
+  check(at(730, 711, "before") === "710:0", "before a row is that row's own place in its parent");
+  check(at(730, 711, "after") === "710:1", "and after it is one past");
+  check(at(716, 730, "after") === "700:3", "a top-level row's parent is the page");
+
+  /* THE ERASE-FIRST SHIFT, in the smallest case there is: children [A,B,C], A dropped
+     after B, is index 1 — the list the server inserts into is [B,C]. */
+  const abc = { id: 600, name: "ABC", children: [leaf(601, "A"), leaf(602, "B"), leaf(603, "C")] };
+  const abcAt = (drag, target, zone) => {
+    const plan = dropPlan(abc, drag, target, zone);
+    return plan ? plan.parent + ":" + plan.index : "none";
+  };
+  check(abcAt(601, 602, "after") === "600:1", "dragging A after B sends index 1, not 2");
+  check(abcAt(601, 603, "after") === "600:2", "and past C sends 2, not 3");
+  check(abcAt(603, 601, "before") === "600:0", "while dragging the other way needs no shift");
+  check(abcAt(603, 602, "before") === "600:1", "nor does landing between the two above it");
+
+  /* the gap under an OPEN frame row is the gap above its first child */
+  check(at(730, 710, "after", true) === "710:0", "after an open frame means into it, at the top");
+  check(at(730, 710, "after", false) === "700:1", "while a folded one keeps its own place in the page");
+  check(at(730, 720, "after", true) === "720:0", "an open frame with children, the same way");
+
+  /* refusals: a frame into its own subtree, a row onto itself, and a drop that moves nothing */
+  check(at(710, 715, "into") === "none", "a frame cannot be dropped inside its own child");
+  check(at(710, 716, "before") === "none", "nor beside anything within it");
+  check(at(710, 710, "into") === "none", "nor into itself");
+  check(at(730, 730, "before") === "none", "a row is never its own target");
+  check(at(711, 715, "before") === "none", "and the place it already occupies is not a move");
+  check(at(721, 721, "after") === "none", "the only child of a frame, dropped after itself");
+  check(at(999, 710, "into") === "none", "an id the page does not hold plans nothing");
+  check(at(730, 999, "into") === "none", "and neither does a target it does not hold");
+  check(at(730, 711, "into") === "none", "a widget row has no inside to drop into");
+
+  /* the empty room under the last row: the end of the page */
+  const end = dropAtPageEnd(tree, 711);
+  check(end?.parent === 700 && end?.index === 3, "the space below the tree appends to the page");
+  check(dropAtPageEnd(tree, 730) === null, "unless the node is already the last thing on it");
+
+  /* the zone the pointer names, from the row's own proportions */
+  check(dropZone(true, 0.2) === "before" && dropZone(true, 0.5) === "into" &&
+          dropZone(true, 0.8) === "after",
+        "a frame row means INSIDE through its middle, and a gap at either edge");
+  check(dropZone(false, 0.4) === "before" && dropZone(false, 0.6) === "after",
+        "a widget row has no middle: it splits at the halfway mark");
 }
 
 /* What used to close this file -- the repeat/path round trip and the code-part escape

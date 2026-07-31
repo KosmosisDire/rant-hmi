@@ -1,8 +1,9 @@
-/* The five document ops (PLAN.md, sync protocol) applied server-side. A batch is
+/* The six document ops (PLAN.md, sync protocol) applied server-side. A batch is
  * atomic: it validates and applies on a scratch copy, so a rejected batch leaves the
  * document untouched. What comes back out is the batch AS APPLIED (ids issued,
- * indices clamped, a rename expanded into the set_props its fan-out performed), which
- * is exactly what gets broadcast: a client applies ops mechanically and holds no rule. */
+ * indices clamped, a rename expanded into the set_props its fan-out performed, a wrap
+ * expanded into the insert and moves it performed), which is exactly what gets
+ * broadcast: a client applies ops mechanically and holds no rule. */
 #pragma once
 
 #include "doc.h"

@@ -106,11 +106,16 @@ export class DocStore {
     return out;
   }
 
+  /* Between ops, not merely after them: one batch's later op may address what an earlier
+     one put there — a wrap's moves target the frame its own insert just created. The
+     backend reindexes between the ops of a batch for the same reason (ops.cpp). */
   apply(version: number, ops: Op[]): void {
     if (!this.doc) return;
-    for (const op of ops) this.applyOne(op);
+    for (const op of ops) {
+      this.applyOne(op);
+      this.reindex();
+    }
     this.doc.version = version;
-    this.reindex();
   }
 
   private applyOne(op: Op): void {
@@ -141,14 +146,26 @@ export class DocStore {
         if (at >= 0) list.splice(at, 1);
         return;
       }
+      /* An echo always names the whole placement, so a reorder, a reparent and a page
+         shuffle are the same three steps: out of the list it is in, into the one named,
+         at the index the backend already resolved. Parent 0 is the document itself, the
+         only parent that is not a node. */
       case "move": {
         const entry = this.index.get(op.node);
         if (!entry || !entry.parent) return;
-        const list = entry.parent[entry.list];
-        const at = list.indexOf(entry.node);
+        const parent =
+          op.parent === undefined ? entry.parent : op.parent === 0 ? (this.doc as Json) : this.node(op.parent);
+        if (!parent) return;
+        const key = op.list ?? entry.list;
+        if (!Array.isArray(parent[key])) parent[key] = [];
+        const from = entry.parent[entry.list];
+        const into = parent[key];
+        const at = from.indexOf(entry.node);
         if (at < 0) return;
-        list.splice(at, 1);
-        list.splice(Math.max(0, Math.min(op.index, list.length)), 0, entry.node);
+        /* out first, then in, even when it is the same array: the backend resolved this
+           index against the list with the node already gone */
+        from.splice(at, 1);
+        into.splice(Math.max(0, Math.min(op.index, into.length)), 0, entry.node);
         return;
       }
     }

@@ -188,6 +188,11 @@ bool op_remove(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     return true;
 }
 
+/* Move a node: a reorder within the list it already sits in, or — with `parent` — a
+ * REPARENT into that node's `children`. There is no `list` in the request, because
+ * neither form chooses one: a reorder stays where the node is, and a reparent is only
+ * ever legal into `children`. The ECHO always carries the whole resolved placement
+ * (node, parent, list, index), reorder included, so the client mirror has one path. */
 bool op_move(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     uint64_t id = 0;
     if (!id_field(op, "node", id, err)) return false;
@@ -200,16 +205,147 @@ bool op_move(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     Json* arr = nullptr;
     if (!parent_list(d, *e, arr, err)) return false;
     if (e->index >= arr->size()) { err = "node index is stale"; return false; }
+    const long long want = at.get<long long>();
 
+    const Json& into = value_field(op, "parent");
+    if (into.is_null()) {
+        const uint64_t parent = e->parent;
+        const std::string list = e->list;
+        Json node = (*arr)[e->index];
+        arr->erase(arr->begin() + static_cast<long>(e->index));
+        const size_t index = want < 0 ? 0 : std::min<size_t>(static_cast<size_t>(want), arr->size());
+        arr->insert(arr->begin() + static_cast<long>(index), node);
+
+        r.ops.push_back(Json{
+            {"op", "move"}, {"node", id}, {"parent", parent}, {"list", list}, {"index", index}});
+        r.touched.push_back(id);
+        r.touched.push_back(parent);
+        return true;
+    }
+
+    uint64_t target = 0;
+    if (!json_u64(into, target)) { err = "move's 'parent' must be a node id"; return false; }
+
+    /* PAGE COMPOSITION IS THE ONE TIER WHERE PLACEMENT IS PURE: a frame or a widget means
+       the same thing wherever it sits, so where it sits is the author's free choice. Every
+       other node's position carries scope or meaning — a local belongs to its widget, a
+       part's props are addressed through its path, a step's turn comes from its order — so
+       there is nothing to choose and this op does not offer it. */
+    if (e->kind != Kind::Frame && e->kind != Kind::Widget) {
+        err = "only a frame or a widget moves to another parent";
+        return false;
+    }
+    NodeEntry* pe = nullptr;
+    if (!node_at(d, target, pe, err)) return false;
+    const ChildList* cl = find_list(pe->kind, "children");
+    if (!cl || std::find(cl->children.begin(), cl->children.end(), e->kind) == cl->children.end()) {
+        err = node_spec(pe->kind).name + " does not hold " + node_spec(e->kind).name + "s";
+        return false;
+    }
+    /* walking UP from the target: a frame dropped inside its own subtree would take the
+       document it belongs to with it, and nothing would hold it afterwards */
+    for (uint64_t climb = target;;) {
+        if (climb == id) { err = "a frame cannot move into its own subtree"; return false; }
+        if (climb == kDocId) break;
+        NodeEntry* up = d.find(climb);
+        if (!up) break;
+        climb = up->parent;
+    }
+
+    /* Nothing above has touched the document, and from here the ORDER is the whole trick:
+       a json array is a vector, so erasing the moved node shifts the storage of every
+       later element of its list — including the target frame, when that frame is a later
+       sibling of what is being dropped into it. So the node leaves BY VALUE, the index is
+       rebuilt, and only then is the target looked up again. */
+    const uint64_t old_parent = e->parent;
     Json node = (*arr)[e->index];
     arr->erase(arr->begin() + static_cast<long>(e->index));
-    const long long want = at.get<long long>();
-    const size_t index = want < 0 ? 0 : std::min<size_t>(static_cast<size_t>(want), arr->size());
-    arr->insert(arr->begin() + static_cast<long>(index), node);
+    d.reindex();
 
-    r.ops.push_back(Json{{"op", "move"}, {"node", id}, {"index", index}});
+    NodeEntry* dest = d.find(target);
+    if (!dest) { err = "no node " + std::to_string(target); return false; }
+    auto it = dest->node->find("children");
+    if (it == dest->node->end() || !it->is_array()) { err = "list 'children' is gone"; return false; }
+    Json& kids = *it;
+    const size_t index = want < 0 ? 0 : std::min<size_t>(static_cast<size_t>(want), kids.size());
+    kids.insert(kids.begin() + static_cast<long>(index), node);
+
+    r.ops.push_back(Json{
+        {"op", "move"}, {"node", id}, {"parent", target}, {"list", "children"}, {"index", index}});
     r.touched.push_back(id);
-    r.touched.push_back(e->parent);
+    r.touched.push_back(old_parent);
+    r.touched.push_back(target);
+    return true;
+}
+
+/* Wrap a run of siblings in a fresh frame, in one transaction.
+ *
+ * This is a server op because the frame's id is issued inside prepare(), so a client
+ * composing insert-then-move by hand has no name for the frame its moves must target. It
+ * is the rename pattern: ONE request op whose echo is the mechanical ops the client
+ * applies without deciding anything — here an insert of an EMPTY frame followed by a
+ * fully addressed move per node, so nothing is ever duplicated client-side. The inverse,
+ * dissolving a frame, needs no help — every id involved is already known — and stays a
+ * client-composed batch.
+ *
+ * It decides nothing itself either: each half is the existing op, called with a
+ * synthesized request, so validation, echo and `touched` all fall out of them. */
+bool op_wrap(Document& d, const Json& op, ApplyResult& r, std::string& err) {
+    const Json& nodes = value_field(op, "nodes");
+    if (!nodes.is_array() || nodes.empty()) { err = "wrap needs a node to wrap"; return false; }
+    const std::string layout = str_field(op, "layout");
+    if (layout != "row" && layout != "col" && layout != "stack") {
+        err = "wrap needs a layout of 'row', 'col' or 'stack'";
+        return false;
+    }
+
+    uint64_t parent = 0;
+    std::string list;
+    std::vector<std::pair<size_t, uint64_t>> ordered;   /* position in the parent list, id */
+    for (const Json& item : nodes) {
+        uint64_t id = 0;
+        if (!json_u64(item, id)) { err = "wrap needs node ids"; return false; }
+        for (const auto& seen : ordered)
+            if (seen.second == id) {
+                err = "wrap names node " + std::to_string(id) + " twice";
+                return false;
+            }
+        NodeEntry* e = nullptr;
+        if (!node_at(d, id, e, err)) return false;
+        if (e->kind != Kind::Frame && e->kind != Kind::Widget) {
+            err = "only a frame or a widget wraps into a frame";
+            return false;
+        }
+        if (ordered.empty()) {
+            parent = e->parent;
+            list = e->list;
+        } else if (e->parent != parent || e->list != list) {
+            err = "wrap needs siblings";
+            return false;
+        }
+        ordered.push_back({e->index, id});
+    }
+    /* document order, whatever order they were named in: the frame reads top to bottom */
+    std::sort(ordered.begin(), ordered.end());
+
+    const char* name = layout == "row" ? "Row" : layout == "col" ? "Column" : "Stack";
+    Json insert = Json{{"op", "insert"},
+                       {"parent", parent},
+                       {"list", list},
+                       {"index", ordered.front().first},
+                       {"node", Json{{"kind", "frame"}, {"name", name}, {"layout", layout}}}};
+    if (!op_insert(d, insert, r, err)) return false;
+    d.reindex();
+
+    uint64_t frame = 0;
+    if (!json_u64(r.ops.back()["node"]["id"], frame)) { err = "the fresh frame has no id"; return false; }
+    size_t index = 0;
+    for (const auto& row : ordered) {
+        Json move = Json{{"op", "move"}, {"node", row.second}, {"index", index}, {"parent", frame}};
+        if (!op_move(d, move, r, err)) return false;
+        d.reindex();
+        ++index;
+    }
     return true;
 }
 
@@ -370,6 +506,7 @@ bool apply_ops(Document& doc, const Json& ops, ApplyResult& out, std::string& er
         else if (kind == "insert") ok = op_insert(scratch, op, r, err);
         else if (kind == "remove") ok = op_remove(scratch, op, r, err);
         else if (kind == "move") ok = op_move(scratch, op, r, err);
+        else if (kind == "wrap") ok = op_wrap(scratch, op, r, err);
         else if (kind == "rename") ok = op_rename(scratch, op, r, err);
         else err = "unknown op '" + kind + "'";
         if (!ok) return false;

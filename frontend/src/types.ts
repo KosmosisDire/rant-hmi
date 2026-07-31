@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 6;
+export const PROTO = 7;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 
@@ -314,11 +314,17 @@ export interface Registry {
 
 /* ---- document ops ---- */
 
+/* A MOVE is a reorder where it stands, or — with `parent` — a reparent into that node's
+   `children`. A request may leave both out; an ECHO always carries the whole resolved
+   placement, so the mirror splices out of one list and into another by one rule.
+   A WRAP never reaches the mirror: it is a request only, and comes back as the insert
+   and moves the backend performed (its frame's id is the backend's to issue). */
 export type Op =
   | { op: "set_prop"; node: number; key: string; value: Json }
   | { op: "insert"; parent: number; list: string; index?: number; node: Json }
   | { op: "remove"; node: number }
-  | { op: "move"; node: number; index: number }
+  | { op: "move"; node: number; index: number; parent?: number; list?: string }
+  | { op: "wrap"; nodes: number[]; layout: "row" | "col" | "stack" }
   | { op: "rename"; node: number; name: string };
 
 /* ---- live state ---- */

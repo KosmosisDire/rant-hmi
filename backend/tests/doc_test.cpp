@@ -53,6 +53,12 @@ Json& named_frame(Document& d, const char* name) { return *frame_in(d.root["page
 
 uint64_t id_of(const Json& node) { return node["id"].get<uint64_t>(); }
 
+bool touched(const ApplyResult& r, uint64_t id) {
+    for (uint64_t at : r.touched)
+        if (at == id) return true;
+    return false;
+}
+
 /* find a global variable by name */
 Json* global_named(Document& d, const std::string& name) {
     for (Json& v : d.root["globals"])
@@ -596,6 +602,181 @@ void test_frames() {
                              {"key", "label"}, {"value", "still editable"}}}, err), err);
 }
 
+/* REPARENTING: the move op's second form, where `parent` names the frame or page the node
+ * lands in. It is the only op that carries a node from one parent to another, and the only
+ * one whose echo the client applies against a list it was not already in — which is why the
+ * echo always spells the whole placement out, reorder or not. */
+void test_reparent() {
+    Document d = Document::make_default();
+    std::string err;
+    const uint64_t page_id = id_of(d.root["pages"][0]);
+    const uint64_t main_col = id_of(named_frame(d, "Main"));
+    const uint64_t side = id_of(named_frame(d, "Side"));
+    const uint64_t lamps = id_of(named_frame(d, "Lamps"));
+    const uint64_t status = id_of(named_frame(d, "Status group"));
+    const uint64_t body = id_of(named_frame(d, "Body"));
+    const uint64_t pump = id_of(labelled(d, "Pump"));
+    const uint64_t setpoint = id_of(labelled(d, "Setpoint"));
+
+    /* out of a frame and onto the page; the echo carries the whole placement, and both
+       ends of the journey are touched */
+    ApplyResult out;
+    Json up = ops_of({Json{{"op", "move"}, {"node", pump}, {"parent", page_id}, {"index", 0}}});
+    CHECK_MSG(apply_ops(d, up, out, err), err);
+    CHECK(id_of(d.root["pages"][0]["children"][0]) == pump);
+    CHECK((*d.node(main_col))["children"].size() == 3);
+    CHECK(out.ops.size() == 1);
+    CHECK(out.ops[0]["op"] == "move" && out.ops[0]["node"] == pump);
+    CHECK(out.ops[0]["parent"] == page_id && out.ops[0]["list"] == "children" &&
+          out.ops[0]["index"] == 0);
+    CHECK(touched(out, pump) && touched(out, page_id) && touched(out, main_col));
+
+    /* and back down into a different frame, at a position of its own */
+    ApplyResult down;
+    Json into = ops_of({Json{{"op", "move"}, {"node", pump}, {"parent", lamps}, {"index", 1}}});
+    CHECK_MSG(apply_ops(d, into, down, err), err);
+    CHECK(id_of((*d.node(lamps))["children"][1]) == pump);
+    CHECK((*d.node(lamps))["children"].size() == 3);
+    CHECK(d.root["pages"][0]["children"].size() == 2);   /* the page is frames again */
+    const NodeEntry* pe = d.find(pump);
+    CHECK(pe && pe->parent == lamps && pe->list == "children" && pe->index == 1);
+    /* the widget travelled whole: its label, slots and lists came with it */
+    CHECK((*d.node(pump))["label"] == "Pump");
+    CHECK((*d.node(pump))["slots"]["value"] == true);
+
+    /* a FRAME reparents by the same op, subtree and all */
+    CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", status}, {"parent", main_col}, {"index", 0}}},
+                    err), err);
+    CHECK(id_of((*d.node(main_col))["children"][0]) == status);
+    CHECK((*d.node(status))["children"].size() == 2);
+    CHECK(d.find(id_of((*d.node(status))["children"][0])) != nullptr);
+
+    /* THE ERASE-THEN-LOOK-UP CASE: a json array is a vector, so taking the node out of the
+       page shifts the storage of every later element — the target frame included, since it
+       sits AFTER the node on the very same list. A target captured before the erase points
+       at whatever slid into its place. */
+    ApplyResult made;
+    Json add = ops_of({Json{{"op", "insert"},
+                            {"parent", page_id},
+                            {"list", "children"},
+                            {"index", 0},
+                            {"node", {{"kind", "widget"}, {"type", "Label"}, {"label", "Loose"}}}}});
+    CHECK_MSG(apply_ops(d, add, made, err), err);
+    const uint64_t loose = made.ops[0]["node"]["id"].get<uint64_t>();
+    CHECK(id_of(d.root["pages"][0]["children"][0]) == loose);
+    CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", body}, {"index", 0}}}, err),
+              err);
+    CHECK(id_of((*d.node(body))["children"][0]) == loose);
+    CHECK((*d.node(loose))["label"] == "Loose");         /* not a shifted neighbour */
+    CHECK((*d.node(body))["children"].size() == 3);
+    CHECK(d.root["pages"][0]["children"].size() == 2);
+
+    /* the same parent supplied is a plain reorder: the erase happens first, so an index
+       past the node's own position lands where the author pointed */
+    CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", setpoint}, {"parent", main_col}, {"index", 3}}},
+                    err), err);
+    const Json& kids = (*d.node(main_col))["children"];
+    CHECK(id_of(kids[kids.size() - 1]) == setpoint);
+
+    /* REFUSALS, each leaving the document exactly as it was */
+    const uint64_t before = d.version();
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", side}, {"parent", lamps}, {"index", 0}}}, err));
+    CHECK(err.find("subtree") != std::string::npos);
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", side}, {"parent", side}, {"index", 0}}}, err));
+    const uint64_t a_var = id_of(*global_named(d, "flow"));
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", a_var}, {"parent", page_id}, {"index", 0}}}, err));
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", setpoint}, {"index", 0}}}, err));
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", 999999}, {"index", 0}}}, err));
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", page_id}}}, err));
+    CHECK_EQ(d.version(), before);
+    CHECK(d.find(side) != nullptr && d.find(lamps) != nullptr);
+    CHECK(id_of((*d.node(body))["children"][0]) == loose);
+
+    /* A PAGE still reorders, because the kind rule is the REPARENT form's: nothing else in
+       the document may choose its parent, but everything may still choose its turn. */
+    ApplyResult fresh;
+    Json add_page = ops_of({Json{{"op", "insert"}, {"parent", kDocId}, {"list", "pages"},
+                                 {"node", {{"name", "Second"}}}}});
+    CHECK_MSG(apply_ops(d, add_page, fresh, err), err);
+    const uint64_t second = fresh.ops[0]["node"]["id"].get<uint64_t>();
+    ApplyResult shuffled;
+    Json reorder = ops_of({Json{{"op", "move"}, {"node", page_id}, {"index", 1}}});
+    CHECK_MSG(apply_ops(d, reorder, shuffled, err), err);
+    CHECK(id_of(d.root["pages"][0]) == second && id_of(d.root["pages"][1]) == page_id);
+    /* and its echo names the document itself as the parent, so the mirror needs no
+       special case for the one list that hangs off the root */
+    CHECK(shuffled.ops[0]["parent"] == kDocId && shuffled.ops[0]["list"] == "pages" &&
+          shuffled.ops[0]["index"] == 1);
+    /* the same page WITH a parent is refused: a page is not composition */
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", page_id}, {"parent", kDocId}, {"index", 0}}}, err));
+}
+
+/* WRAP: one request op, because the frame it creates is named by an id only the backend
+ * can issue. What comes back is the insert and the moves it performed, in that order. */
+void test_wrap() {
+    Document d = Document::make_default();
+    std::string err;
+    const uint64_t main_col = id_of(named_frame(d, "Main"));
+    const uint64_t header = id_of(named_frame(d, "Header"));
+    const uint64_t setpoint = id_of(labelled(d, "Setpoint"));
+    const uint64_t flow = id_of(labelled(d, "Flow"));
+    const uint64_t pump = id_of(labelled(d, "Pump"));
+    const uint64_t reset = id_of(labelled(d, "Reset"));
+
+    /* two of the four, named back to front: the frame lands at the FIRST of them and
+       holds them in document order regardless */
+    ApplyResult r;
+    Json batch = ops_of({Json{{"op", "wrap"},
+                              {"nodes", Json::array({flow, setpoint})},
+                              {"layout", "row"}}});
+    CHECK_MSG(apply_ops(d, batch, r, err), err);
+    const Json& main_kids = (*d.node(main_col))["children"];
+    CHECK(main_kids.size() == 3);
+    CHECK(id_of(main_kids[0]) == pump && id_of(main_kids[2]) == reset);
+    const uint64_t frame_id = id_of(main_kids[1]);
+    const Json& inside = (*d.node(frame_id))["children"];
+    CHECK(inside.size() == 2);
+    CHECK(id_of(inside[0]) == setpoint && id_of(inside[1]) == flow);
+    CHECK((*d.node(frame_id))["name"] == "Row" && (*d.node(frame_id))["layout"] == "row");
+
+    /* the echo is an insert of an EMPTY frame and then one addressed move per node, so a
+       client applying it mechanically never holds the same widget twice */
+    CHECK(r.ops.size() == 3);
+    CHECK(r.ops[0]["op"] == "insert" && r.ops[0]["parent"] == main_col &&
+          r.ops[0]["list"] == "children" && r.ops[0]["index"] == 1);
+    CHECK(r.ops[0]["node"]["children"].is_array() && r.ops[0]["node"]["children"].empty());
+    /* and the frame arrives PREPARED: every default the document holds is already on it */
+    CHECK(r.ops[0]["node"]["grow"] == 1 && r.ops[0]["node"]["align"] == "stretch");
+    CHECK(r.ops[1]["op"] == "move" && r.ops[1]["node"] == setpoint &&
+          r.ops[1]["parent"] == frame_id && r.ops[1]["list"] == "children" &&
+          r.ops[1]["index"] == 0);
+    CHECK(r.ops[2]["op"] == "move" && r.ops[2]["node"] == flow && r.ops[2]["index"] == 1);
+
+    /* one node is a wrap too: grouping a single widget so it can be padded or surfaced */
+    CHECK_MSG(apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({reset})}, {"layout", "stack"}}},
+                    err), err);
+    const Json& after = (*d.node(main_col))["children"];
+    CHECK(after.size() == 3);
+    const uint64_t solo = id_of(after[2]);
+    CHECK((*d.node(solo))["name"] == "Stack" && (*d.node(solo))["layout"] == "stack");
+    CHECK(id_of((*d.node(solo))["children"][0]) == reset);
+
+    /* REFUSALS: siblings or nothing, and every id named once */
+    const uint64_t before = d.version();
+    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({header, pump})},
+                          {"layout", "row"}}}, err));
+    CHECK(err.find("siblings") != std::string::npos);
+    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array()}, {"layout", "row"}}}, err));
+    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({pump, pump})},
+                          {"layout", "row"}}}, err));
+    const uint64_t a_var = id_of(*global_named(d, "flow"));
+    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({a_var})}, {"layout", "row"}}}, err));
+    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({pump})}, {"layout", "grid"}}}, err));
+    CHECK_EQ(d.version(), before);
+    CHECK((*d.node(main_col))["children"].size() == 3);
+    CHECK(d.find(pump) != nullptr);
+}
+
 /* A component's DESIGN FRAME: the size it is AUTHORED at. It is ordinary document data —
  * defaults fill exactly like any other prop, and it round-trips through set_prop and a
  * save/reload — but it is NOT an instance size, and this proves only the document side
@@ -641,6 +822,8 @@ int main() {
     test_validation();
     test_structure_ops();
     test_frames();
+    test_reparent();
+    test_wrap();
     test_rename();
     test_expr_rewrite();
     test_retype();
