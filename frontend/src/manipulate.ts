@@ -54,7 +54,6 @@ interface Drag {
 
 /* the boundary between two adjacent children, which is what a resize actually grabs */
 interface Boundary {
-  container: HTMLElement;
   dir: "row" | "col";
   a: number;
   b: number;
@@ -130,7 +129,6 @@ function boundaryIn(editor: Editor, container: HTMLElement, x: number, y: number
   const index = boundaryAt(extents, row ? x : y, row ? y : x, GRAB);
   if (index === null) return null;
   return {
-    container,
     dir: row ? "row" : "col",
     a: idOf(kids[index]),
     b: idOf(kids[index + 1]),
@@ -187,7 +185,6 @@ function remark(): void {
   const rb = b.getBoundingClientRect();
   const row = resize.dir === "row";
   markLine(resize.host, {
-    container: resize.host,
     dir: resize.dir,
     a: resize.a,
     b: resize.b,

@@ -107,7 +107,9 @@ function nodeRows(editor: Editor, node: Frame | Widget, depth: number): HTMLElem
  * the pointer going straight out of the sidebar — would otherwise leave a ring standing on
  * the stage with nothing under the pointer. */
 function hoverable(editor: Editor, row: HTMLElement, id: number): HTMLElement {
-  row.addEventListener("mouseenter", () => editor.setHover(id));
+  /* a row crossed while one is being CARRIED is not a row being pointed at: the drop line
+     and the page's own reflow already say where the pointer is */
+  row.addEventListener("mouseenter", () => editor.setHover(drag ? 0 : id));
   row.addEventListener("mouseleave", () => editor.setHover(0));
   return row;
 }
