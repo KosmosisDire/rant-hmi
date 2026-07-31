@@ -406,7 +406,7 @@ export class App implements Editor {
     this.diagnostics = Array.isArray(rows) ? rows : [];
     this.view.faults = {};
     for (const row of this.diagnostics) {
-      const widget = this.owningWidget(row.node);
+      const widget = this.store.owningWidget(row.node);
       if (!widget) continue;
       const worst = this.view.faults[widget];
       if (worst === "error" || (worst === "warning" && row.grade === "info")) continue;
@@ -428,27 +428,14 @@ export class App implements Editor {
     const row =
       this.diagnostics.find((d) => d.grade === "error") ?? this.diagnostics[0] ?? null;
     if (!row) return;
-    const widget = this.owningWidget(row.node);
+    const widget = this.store.owningWidget(row.node);
     if (widget) this.select([widget]);
     this.flash(row.message);
   }
 
-  private owningWidget(node: number): number {
-    let at: Json = this.store.node(node);
-    let id = node;
-    while (at) {
-      if (at.type !== undefined && at.geom !== undefined) return id;
-      const parent = this.store.parentOf(id);
-      if (!parent || typeof parent.id !== "number") return 0;
-      id = parent.id;
-      at = parent;
-    }
-    return 0;
-  }
-
   /* every finding about this widget or anything inside it */
   diagFor(widget: number): Diag[] {
-    return this.diagnostics.filter((row) => this.owningWidget(row.node) === widget);
+    return this.diagnostics.filter((row) => this.store.owningWidget(row.node) === widget);
   }
 
   diagAt(node: number, where?: string): Diag[] {

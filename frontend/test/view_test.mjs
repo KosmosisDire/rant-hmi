@@ -598,6 +598,20 @@ check(
   "a feed finding marks the feed's one line",
 );
 
+/* ...and the same finding ATTRIBUTES UP to the widget that owns the feed. The shell's
+   diagFor and the topbar findings chip both walk a finding's node to its widget through
+   store.owningWidget, and the Layers tree's per-widget badge is what that walk feeds. It
+   silently returned 0 for every node once already (it identified a widget by a `geom`
+   field that no node carries any more), so the walk is pinned here through the shape the
+   badge actually depends on rather than in isolation. */
+check(
+  leftShape({
+    ...editor,
+    diagFor: (w) => feedRows.filter((d) => store.owningWidget(d.node) === w),
+  }).includes(readoutW.id + ":feed_source:"),
+  "a feed's finding attributes to its widget, so the Layers row badge exists",
+);
+
 /* ---- the Layers tree, part selection and the part-scoped inspector ----
    The left sidebar's tree lists the CURRENT page's widgets and each widget's named
    template parts from the REGISTRY type (all of them, rendered or not); pages live in

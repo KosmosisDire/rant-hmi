@@ -72,6 +72,26 @@ export class DocStore {
     return node && node.kind === "frame" ? (node as Frame) : null;
   }
 
+  /* The WIDGET that owns a node, or 0. A compile finding is addressed to whatever node is
+     wrong — a feed, a flow step, a local — and every view that MARKS one marks the widget
+     it belongs to (spec 3.8), so each finding is walked up here. A widget is identified by
+     its `kind` discriminator, the same one `widget()` above reads: it used to be "carries a
+     geom", which stopped being true of any node when manual geometry was removed and left
+     this answering 0 for everything. A global variable, or anything inside a component,
+     belongs to no widget and walks off the top of the document. */
+  owningWidget(id: number): number {
+    let at: Json = this.node(id);
+    let node = id;
+    while (at) {
+      if (at.kind === "widget") return node;
+      const parent = this.parentOf(node);
+      if (!parent || typeof parent.id !== "number") return 0;
+      node = parent.id;
+      at = parent;
+    }
+    return 0;
+  }
+
   /* every widget on this page, wherever it nests: a page-level where-used scan (Data,
      Style) wants every widget regardless of frame grouping, never a frame itself */
   widgetsOn(page: Page): Widget[] {
