@@ -196,6 +196,19 @@ let armed: { editor: Editor; id: number; x: number; y: number } | null = null;
 let drag: Drag | null = null;
 /* a press and release on one row fires a click even when a drag happened in between */
 let swallow = false;
+/* the drop the STAGE is currently showing: the tree's line says where the node would land,
+   and the page behind it reflows into that arrangement (stage.ts owns the mechanism, and the
+   stage's own drag feeds it the same way). Fed on CHANGE alone — a rebuild per pointermove
+   would be a rebuild per pixel. */
+let shown: DropPlan | null = null;
+
+function preview(editor: Editor, id: number, plan: DropPlan | null): void {
+  const same = plan && shown ? plan.parent === shown.parent && plan.index === shown.index
+                             : plan === shown;
+  if (same) return;
+  shown = plan;
+  editor.previewMove(id, plan);
+}
 
 function rowId(row: Element | null): number {
   const key = row?.getAttribute("data-key") ?? "";
@@ -340,6 +353,7 @@ function onMove(ev: PointerEvent): void {
     if (drag.plan && last) markLine(host, last.getBoundingClientRect(), true);
   }
   drag.ghost.classList.toggle("no", !drag.plan);
+  preview(drag.editor, drag.id, drag.plan);
 }
 
 function onUp(): void {
@@ -348,7 +362,10 @@ function onUp(): void {
   if (!held) return;
   swallow = true;
   const plan = held.plan;
-  if (!plan) return;
+  if (!plan) {
+    held.editor.previewMove(0, null);
+    return;
+  }
   /* the client always sends the whole placement, reparent or reorder: one path */
   held.editor.apply([
     { op: "move", node: held.id, parent: plan.parent, list: "children", index: plan.index },
@@ -365,7 +382,9 @@ function onKey(ev: KeyboardEvent): void {
 }
 
 function cancel(): void {
+  const held = drag;
   end();
+  if (held) held.editor.previewMove(0, null);
 }
 
 function end(): void {
@@ -377,6 +396,9 @@ function end(): void {
     layersHost()?.classList.remove("dragging");
     drag = null;
   }
+  /* what the stage is showing is the stage's from here: a drop leaves its preview standing
+     until the echo retires it, and every other end path has already put the document back */
+  shown = null;
   window.removeEventListener("pointermove", onMove);
   window.removeEventListener("pointerup", onUp);
   window.removeEventListener("pointercancel", cancel);

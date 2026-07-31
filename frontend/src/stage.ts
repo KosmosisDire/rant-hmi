@@ -15,7 +15,9 @@
  * live frame at 30 Hz must NOT do that, so each render records the live cells it actually
  * read, and a live frame rebuilds only when one of those moved. */
 
+import { DropPlan, seatOf } from "./arrange.js";
 import { Editor } from "./editor.js";
+import { armStage, stageBusy } from "./manipulate.js";
 import { Frame, Json, Live, Page, Token, Widget, WidgetType } from "./types.js";
 import { typeOf } from "./slots.js";
 
@@ -36,7 +38,19 @@ interface StageState {
   rings: HTMLElement[];
   /* the one ring that follows the pointer rather than the selection */
   hover: HTMLElement | null;
+  /* the arrangement being SHOWN instead of the document's, while a drag is live */
+  preview: Preview | null;
   wired: boolean;
+}
+
+/* A drop preview is held against the document version it was spliced from, and that is what
+ * retires it: the echo of its own drop bumps the version and replaces it with the identical
+ * arrangement (so there is nothing to see), and an edit arriving from another window replaces
+ * it with the truth (the live drag re-reads on its next move). */
+interface Preview {
+  node: number;
+  plan: DropPlan;
+  version: number;
 }
 
 const states = new WeakMap<HTMLElement, StageState>();
@@ -45,7 +59,7 @@ function stateOf(host: HTMLElement): StageState {
   let state = states.get(host);
   if (!state) {
     state = { page: null, signature: "", consumed: new Map(), rings: [],
-              hover: null, wired: false };
+              hover: null, preview: null, wired: false };
     states.set(host, state);
   }
   return state;
@@ -294,13 +308,75 @@ function positionRings(host: HTMLElement, editor: Editor): void {
   ringOver(host, state.hover, shown ? nodeElement(host, hovered) : null);
 }
 
+/* ---- the drop preview ----
+ *
+ * While a node is being dragged — from the stage or from the Layers tree — the page is drawn
+ * AS IF it were already in the candidate slot. That reflow IS the preview: there is no ghost
+ * rectangle to keep in step with the layout, because the layout is the answer to the question
+ * the drag is asking.
+ *
+ * It is a rendering and never an edit. The store is untouched and no op is in flight, so an
+ * abandoned drag costs nothing, and a drag that lands sends exactly one op whose echo draws
+ * the same picture that is already on screen. */
+
+/* the page with one node lifted out of its seat and put down at the plan's, on a copy: the
+ * document is not touched, and the ERASE-THEN-INSERT order is the one the plan's index was
+ * already counted against (arrange.ts) */
+function arrangedPage(page: Page, node: number, plan: DropPlan): Page | null {
+  const clone: Page = JSON.parse(JSON.stringify(page));
+  const seat = seatOf(clone, node);
+  if (!seat) return null;
+  seat.siblings.splice(seat.index, 1);
+  const holder: Page | Frame | Widget | null =
+    plan.parent === clone.id ? clone : seatOf(clone, plan.parent)?.node ?? null;
+  if (!holder || (holder !== clone && (holder as Frame).kind !== "frame")) return null;
+  const list = (holder as Page | Frame).children ?? ((holder as Frame).children = []);
+  list.splice(Math.max(0, Math.min(plan.index, list.length)), 0, seat.node);
+  return clone;
+}
+
+/* what is being carried, and where it would land: both wear a mark, because a reflow alone
+ * does not say which of the two things that moved is the one in your hand */
+function markPreview(host: HTMLElement, preview: Preview | null): void {
+  const state = stateOf(host);
+  if (!state.page || !preview) return;
+  nodeElement(host, preview.node)?.classList.add("preview-moving");
+  /* the page is the one frame with no id of its own on it (buildPage), so a parent with no
+     element IS the page */
+  (nodeElement(host, preview.plan.parent) ?? state.page).classList.add("drop-target");
+}
+
+/* The one preview mechanism, driven from wherever the drag lives: the stage's own pointer
+ * gestures (manipulate.ts) and the Layers tree's (inspector/panel.ts) both arrive here, so a
+ * drop looks the same however it was aimed. A null plan puts the document back — which is
+ * also how a cancelled resize drops the inline styles it was writing. */
+export function previewArrangement(
+  host: HTMLElement,
+  editor: Editor,
+  node: number,
+  plan: DropPlan | null,
+): void {
+  const state = stateOf(host);
+  if (node && plan) state.preview = { node, plan, version: editor.store.version() };
+  else {
+    state.preview = null;
+    /* whatever is on screen, it is not the document: rebuild rather than reposition */
+    state.signature = "";
+  }
+  renderStage(host, editor);
+}
+
 /* ---- the one entry point ---- */
 
 export function renderStage(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   wire(host, editor);
 
-  const page = editor.page();
+  const doc = editor.page();
+  if (state.preview && state.preview.version !== editor.store.version()) state.preview = null;
+  const page = doc && state.preview
+    ? arrangedPage(doc, state.preview.node, state.preview.plan) ?? doc
+    : doc;
   if (!page) {
     state.page?.remove();
     state.page = null;
@@ -309,7 +385,9 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     return;
   }
 
-  const signature = page.id + ":" + editor.store.version();
+  const preview = state.preview;
+  const signature = page.id + ":" + editor.store.version() +
+    (preview ? ":" + preview.node + ">" + preview.plan.parent + "@" + preview.plan.index : "");
   let rebuild = !state.page || signature !== state.signature;
   if (!rebuild)
     for (const [cell, was] of state.consumed)
@@ -327,6 +405,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     state.page = next;
     state.signature = signature;
   }
+  markPreview(host, preview);
   positionRings(host, editor);
 }
 
@@ -352,14 +431,18 @@ function wire(host: HTMLElement, editor: Editor): void {
   });
   /* HOVER, the other direction of the Layers tree's own: the pointer names a node here and
      the row standing for it lights up, out of the same one piece of state. mouseover, not
-     mouseenter, because it bubbles — one listener covers every node the page ever builds. */
+     mouseenter, because it bubbles — one listener covers every node the page ever builds.
+     A manipulation under way owns the pointer and takes the highlight with it. */
   host.addEventListener("mouseover", (ev) => {
-    if (editor.view.mode !== "edit") return;
+    if (editor.view.mode !== "edit" || stageBusy()) return;
     editor.setHover(idUnder(ev.target));
   });
   host.addEventListener("mouseout", () => {
     if (editor.view.mode === "edit") editor.setHover(0);
   });
+  /* the press gestures: dragging a widget through the layout, and dragging the boundary
+     between two children (manipulate.ts, which owns their precedence) */
+  armStage(host, editor);
   /* the pane resizes when a sidebar is dragged or the window changes: the layout re-solves
      itself, and the ring has to be told where everything landed */
   if (typeof ResizeObserver === "function")

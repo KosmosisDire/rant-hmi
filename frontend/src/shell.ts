@@ -12,6 +12,7 @@
  * document mirror, selection, the four workspaces' panels, and structural editing by TREE
  * POSITION rather than by coordinate. */
 
+import { DropPlan } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
 import { Editor, Mode, ViewState } from "./editor.js";
@@ -21,7 +22,7 @@ import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
-import { renderStage } from "./stage.js";
+import { previewArrangement, renderStage } from "./stage.js";
 import { AttrTable, BuiltinDef, Diag, Doc, Frame, Json, Lang, Live, Mesh, Op, Page, Registry, Widget } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
@@ -189,6 +190,13 @@ export class App implements Editor {
     if (!id) return;
     const key = this.store.frame(id) ? "f" + id : "w" + id;
     this.root.querySelector('.layers [data-key="' + key + '"]')?.classList.add("hover");
+  }
+
+  /* one preview mechanism for both drags: the tree hands its plan straight through to the
+     stage, so a row dragged in the sidebar reflows the page exactly as dragging the node
+     itself does. Nothing about it touches the document. */
+  previewMove(node: number, plan: DropPlan | null): void {
+    previewArrangement(this.nodes.stage, this, node, plan);
   }
 
   /* part selection: the widget is selected and the focus narrows to one named template

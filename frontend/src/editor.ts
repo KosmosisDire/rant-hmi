@@ -5,6 +5,7 @@
  * the same event to a sidebar: the shape is unchanged, so every binding re-reads and assigns.
  * One reconciliation path with two triggers (reconcile.ts). */
 
+import { DropPlan } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
@@ -82,6 +83,12 @@ export interface Editor {
      for are one thing seen twice, so both surfaces write this and both read it (0 = none).
      It is a highlight, so it costs a ring and a class — never a sidebar rebuild. */
   setHover(id: number): void;
+  /* THE DROP PREVIEW, fed by whichever drag is live — the stage's own pointer gestures or
+     the Layers tree's row drag. The page renders as if `node` were already at `plan`, so the
+     reflow is the preview and there is nothing to keep in step with it. A null plan puts the
+     document back on screen (which is also how a cancelled resize drops its inline styles).
+     Nothing here reaches the store: a preview is a rendering. */
+  previewMove(node: number, plan: DropPlan | null): void;
   /* the verbs of ONE node (a widget's or a frame's), opened at a screen position. The
      stage's right-click and the Layers tree's are the same menu over the same node: the
      tree is the only place a frame can be right-clicked at all, since on the stage its
