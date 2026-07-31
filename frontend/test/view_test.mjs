@@ -39,7 +39,8 @@ const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
 const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
 const { renderStage } = await import(mod("stage.js"));
-const { dropAtPageEnd, dropPlan, dropZone } = await import(mod("arrange.js"));
+const { boundaryAt, dropAtPageEnd, dropPlan, dropZone, gapIndex, resizeAt, settle, withoutHeld } =
+  await import(mod("arrange.js"));
 
 let failures = 0;
 let checks = 0;
@@ -1428,6 +1429,108 @@ check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell r
         "a frame row means INSIDE through its middle, and a gap at either edge");
   check(dropZone(false, 0.4) === "before" && dropZone(false, 0.6) === "after",
         "a widget row has no middle: it splits at the halfway mark");
+
+  /* ---- the stage's own geometry ----
+     The tree names a row and a zone; the stage names a container and a pointer. The midpoint
+     rule turns the second into an index, and both then go through settle(), which is why a
+     drop means the same thing on this page however it was aimed. */
+
+  check(gapIndex([], 50) === 0, "an empty container takes the only slot there is");
+  check(gapIndex([10, 30, 50], 5) === 0, "before every midpoint is the front");
+  check(gapIndex([10, 30, 50], 20) === 1 && gapIndex([10, 30, 50], 40) === 2,
+        "between two midpoints is the gap between them");
+  check(gapIndex([10, 30, 50], 99) === 3, "and past the last is the end");
+  check(gapIndex([10], 10) === 0, "a pointer exactly on a midpoint has not passed it yet");
+
+  /* read against the PREVIEW, which already holds the dragged node */
+  check(withoutHeld(2, 0) === 1 && withoutHeld(3, 1) === 2,
+        "a slot past the held node is one too far");
+  check(withoutHeld(1, 1) === 1 && withoutHeld(0, 2) === 0, "a slot at or before it is not");
+  check(withoutHeld(2, -1) === 2, "and a container the node is not in shifts nothing");
+
+  /* settle(), reached the way the stage reaches it: a container and an index, no row and no
+     zone in between, but the same legality and the same erase-first shift */
+  check(settle(tree, 730, { parent: 720, index: 1 })?.index === 1, "a plain append settles as itself");
+  check(settle(tree, 711, { parent: 710, index: 2 })?.index === 1,
+        "a slot further down its own list still loses one to the erase");
+  check(settle(tree, 710, { parent: 715, index: 0 }) === null, "a frame still refuses its own subtree");
+  check(settle(tree, 711, { parent: 710, index: 0 }) === null, "and the seat it already holds is no move");
+
+  /* WHICH BOUNDARY the pointer is on: a strip centred on the gap-line between two siblings,
+     across the cross extent the pair actually shares */
+  const band = (start, end, from = 0, to = 100) => ({ start, end, from, to });
+  const three = [band(0, 100), band(100, 240), band(240, 300)];
+  check(boundaryAt(three, 100, 50, 5) === 0, "the line between the first two children is boundary 0");
+  check(boundaryAt(three, 243, 50, 5) === 1, "the next one along is boundary 1");
+  check(boundaryAt(three, 170, 50, 5) === null, "the middle of a child is no boundary");
+  check(boundaryAt(three, 107, 50, 5) === null, "nor is a point past the tolerance");
+  check(boundaryAt([band(0, 100)], 100, 50, 5) === null, "one child has no boundary at all");
+  check(boundaryAt([], 0, 0, 5) === null, "and an empty container none either");
+  check(boundaryAt([band(0, 100), band(110, 200)], 105, 50, 5) === 0,
+        "with a gap between them the line is the middle of the gap");
+  const uneven = [band(0, 100, 0, 40), band(100, 200, 0, 100)];
+  check(boundaryAt(uneven, 100, 20, 5) === 0, "inside the shared cross extent the strip grabs");
+  check(boundaryAt(uneven, 100, 70, 5) === null, "past where the shorter one ends, it does not");
+  /* DEEPEST FIRST is the caller's walk, and this is what makes it matter: a nested container
+     has boundaries of its own inside one child of its parent's */
+  const nested = [band(0, 150), band(150, 300)];
+  check(boundaryAt(nested, 150, 50, 5) === 0 && boundaryAt(three, 150, 50, 5) === null,
+        "a pointer inside a child can only mean that child's own boundary");
+  check(boundaryAt(three, 100, 50, 5) === 0 && boundaryAt(nested, 100, 50, 5) === null,
+        "and where the inner has none, the container's own answers");
+
+  /* ---- and what dragging one writes ---- */
+  const side = (grow, min, outer, chrome = 0) => ({ grow, min, outer, chrome });
+
+  /* TRANSFER: 200px and 100px of a 300px row at weights 2 and 1, so one grow unit is 100px */
+  const share = resizeAt(side(2, 0, 200), side(1, 0, 100));
+  const moved = share.apply(50);
+  check(Math.abs(moved.a.grow - 2.5) < 1e-9 && Math.abs(moved.b.grow - 0.5) < 1e-9,
+        "50px at 100px per grow unit is half a unit each way, got " + JSON.stringify(moved));
+  check(Math.abs(moved.a.grow + moved.b.grow - 3) < 1e-9,
+        "the pair's sum is conserved, so no other sibling's share moves");
+  check(moved.a.min === undefined && moved.b.min === undefined, "and a transfer writes no min");
+  /* the same 100px unit under 30px of padding and border: those come off the shared pool
+     before the division, so half a unit is still 50px of pointer */
+  const padded = resizeAt(side(2, 0, 220, 20), side(1, 0, 110, 10));
+  check(Math.abs(padded.apply(50).a.grow - 2.5) < 1e-9,
+        "a side's own padding and border are outside the share it is paid, got " +
+          padded.apply(50).a.grow);
+  const far = share.apply(1e6);
+  check(Math.abs(far.b.grow * 100 - 24) < 1e-9,
+        "the shrinking side stops at a graspable 24px, got " + far.b.grow * 100);
+  check(Math.abs(far.a.grow + far.b.grow - 3) < 1e-9, "with the sum still conserved at the stop");
+  check(Math.abs(resizeAt(side(2, 60, 200), side(1, 40, 100)).apply(-1e6).a.grow * 100 - 60) < 1e-9,
+        "a side's own min outranks that floor when it is the larger");
+  check(share.apply(-1e6).a.grow >= 0.05, "and a drag never writes a grow of zero");
+  check(resizeAt(side(1, 0, 0), side(1, 0, 0)) === null,
+        "a boundary with nothing either side of it is inert, not a division by zero");
+  const rough = resizeAt(side(1, 0, 100), side(1, 0, 100));
+  check(Math.abs(rough.apply(3.7).a.grow - 1.037) < 1e-9, "the live preview uses raw values");
+  check(rough.commit(3.7).a.grow === 1.04 && rough.commit(3.7).b.grow === 0.96,
+        "and the commit rounds grow to two decimals, got " + JSON.stringify(rough.commit(3.7)));
+
+  /* ONE FIXED SIDE — the header band over the body, which is the case the default document
+     opens with: the drag is the header's min, and the body absorbs it with no write at all */
+  const band52 = resizeAt(side(0, 52, 52), side(1, 0, 400));
+  check(band52.apply(18).a.min === 70 && band52.apply(18).b === null,
+        "a fixed side takes the whole drag as min, and the flexible side takes nothing");
+  check(band52.apply(18).a.grow === undefined, "no grow is written on either side of it");
+  check(band52.apply(-1e6).a.min === 24, "it stops at the graspable floor");
+  check(band52.apply(1e6).a.min === 52 + 400 - 24, "and at what the absorbing side can give");
+  const after = resizeAt(side(1, 0, 400), side(0, 52, 52));
+  check(after.apply(10).b.min === 42 && after.apply(10).a === null,
+        "a fixed side AFTER the boundary takes the same drag the other way");
+  check(after.commit(0.4).b.min === 52, "and min commits as a whole pixel");
+  check(resizeAt(side(0, 4, 4), side(1, 0, 400)).apply(-1e6).a.min === 24,
+        "no min write ever lands below the floor, let alone below zero");
+
+  /* NEITHER FLEXES: the pair of mins, one taking exactly what the other gives */
+  const fixed = resizeAt(side(0, 100, 100), side(0, 60, 60));
+  check(fixed.apply(20).a.min === 120 && fixed.apply(20).b.min === 40,
+        "two fixed sides trade min for min");
+  check(fixed.apply(1e6).b.min === 24 && fixed.apply(-1e6).a.min === 24,
+        "and either of them stops at the floor rather than vanishing");
 }
 
 /* What used to close this file -- the repeat/path round trip and the code-part escape
