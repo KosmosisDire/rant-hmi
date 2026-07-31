@@ -182,8 +182,8 @@ uint32_t gradient(double t, const double stops[][4], int count) noexcept {
     return pack_rgba(s[1], s[2], s[3], 1.0);
 }
 
-/* Degrees, both ways (docs/spec.md 6.2): every trig builtin takes and returns degrees,
- * matching this codebase's one angle convention (degrees, 0 = up, clockwise), rather
+/* Degrees, both ways: every trig builtin takes and returns degrees, matching the
+ * project-wide angle convention (degrees, 0 = up, clockwise), rather
  * than the radians every libm function actually wants. Defined locally
  * rather than pulled from <cmath>'s nonstandard M_PI, which is not guaranteed on every
  * toolchain this project builds with (notably MSVC without _USE_MATH_DEFINES). */

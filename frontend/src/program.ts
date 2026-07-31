@@ -12,10 +12,10 @@ export type Cells = (cell: string) => Json;
 
 const NIL: Json = null;
 
-/* degrees, both ways: every trig opcode takes and returns degrees (docs/spec.md 6.2),
- * these are the ordinary trig functions (sin(0) == 0, cos(0) == 1), with the "0 = up,
- * clockwise" polar convention left to whoever calls them, exactly as on the scalar tier
- * (backend/src/vm/vm.cpp) */
+/* degrees, both ways: every trig opcode takes and returns degrees, the project-wide angle
+ * convention (degrees, 0 = up, clockwise). These are the ordinary trig functions
+ * (sin(0) == 0, cos(0) == 1), with the polar half of that convention left to whoever calls
+ * them, exactly as on the scalar tier (backend/src/vm/vm.cpp) */
 const DEG = Math.PI / 180;
 
 function nil(v: Json): boolean {
@@ -178,9 +178,10 @@ export function run(program: Program | undefined, cells: Cells): Json {
         break;
       }
       case "ADD": {
-        /* `+` CONCATENATES when either side is text (docs/spec.md 6.2), rendering the
-         * other operand the way str()/attrText() renders it -- a number as its plain
-         * string, a bool as true/false -- so the two spellings can never disagree.
+        /* `+` CONCATENATES when either side is text — the language's own rule on both
+         * tiers, not a view convenience — rendering the other operand the way
+         * str()/attrText() renders it -- a number as its plain string, a bool as
+         * true/false -- so the two spellings can never disagree.
          * Numeric addition is unchanged: neither side being a string is the ordinary
          * case and falls straight through to the existing arith() path below. */
         const b = pop();
@@ -273,8 +274,9 @@ export function run(program: Program | undefined, cells: Cells): Json {
         break;
       }
       case "RGB": {
-        /* every channel FRACTIONAL 0..1 (docs/spec.md 6.2), pushed r, g, b, a in that
-           order (template_expr.cpp defaults the 4th to 1 when a call omits it) */
+        /* every channel FRACTIONAL 0..1 — the convention rgb()/hsv() take on both tiers,
+           never 0..255 — pushed r, g, b, a in that order (template_expr.cpp defaults the
+           4th to 1 when a call omits it) */
         const a = num(pop());
         const b = num(pop());
         const g = num(pop());

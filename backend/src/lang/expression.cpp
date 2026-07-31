@@ -140,9 +140,9 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         /* view-only: the template tier's saturating 0..1 fold, which the scalar language
            spells clamp(x, 0, 1) and has no separate opcode for */
         {"clamp01", {Builtin::Clamp, 1, 1, {NUM}, Shape::Num, false, "CLAMP01", true}},
-        /* ordinary trigonometry (docs/spec.md 6.2): degrees in and out on BOTH tiers,
-           matching the codebase's one angle convention (degrees, 0 = up, clockwise)
-           rather than inventing a radians dialect nothing else in the document uses */
+        /* ordinary trigonometry: degrees in and out on BOTH tiers, matching the
+           project-wide angle convention (degrees, 0 = up, clockwise) rather than
+           inventing a radians dialect nothing else in the document uses */
         {"sin", {Builtin::Sin, 1, 1, {NUM}, Shape::Num, false, "SIN"}},
         {"cos", {Builtin::Cos, 1, 1, {NUM}, Shape::Num, false, "COS"}},
         {"tan", {Builtin::Tan, 1, 1, {NUM}, Shape::Num, false, "TAN"}},

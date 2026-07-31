@@ -1,7 +1,9 @@
-/* ---------- the Design workspace (workspaces/design.ts): the component list, a live
-   preview of the selected component in its own stage (the middle column reuses the
-   Content stage's own .stage/.layer/.artboard anatomy below), and the component/part
-   inspector. ---------- */
+/* ---------- the Design workspace (workspaces/design.ts): the component list and the
+   component/part inspector, either side of an EMPTY middle column. The preview that stood
+   between them was a second artboard, and its .stage/.layer/.artboard anatomy went with
+   the renderer that drew into it; the middle column is a bare `.stage.empty` here purely
+   to hold the grid's third track open. The rules below are the two side columns only,
+   until the DOM preview lands and brings its own. ---------- */
 
 .workspace-design {
   flex: 1 1 auto;

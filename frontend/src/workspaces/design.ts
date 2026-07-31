@@ -6,10 +6,13 @@
  * different tree with a different lifetime (it belongs to the TYPE, not to the page), so
  * it gets its own workspace rather than a second section under the page's own tree.
  *
- * Three columns: the component list on the left, a live preview of the selected
- * component in the middle (shell.ts owns its own Viewport and render loop, mirroring the
- * Content stage; this module supplies the pure lookups it drives), the component/part
- * inspector on the right. */
+ * Three columns: the component list on the left, the component/part inspector on the
+ * right, and BETWEEN THEM AN EMPTY STAGE. The preview that stood there was a second
+ * artboard driven by the SVG renderer, with a camera of its own; both are gone, and with
+ * them the part addressing that translated a click on the glass into a selection. This
+ * module is now the two side columns and nothing else. Authoring a component still works
+ * end to end — the tree selects, the inspector edits — it just cannot be watched while it
+ * happens, until the DOM preview lands and defines its own addressing. */
 
 import { Editor } from "../editor.js";
 import { el } from "../dom.js";

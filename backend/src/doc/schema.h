@@ -29,7 +29,7 @@ enum class PropType {
     Num,     /* number */
     Bool,    /* boolean */
     Enum,    /* string from `variants` */
-    Object,  /* free-form object (geom, slots, entity refs) */
+    Object,  /* free-form object (slots, entity refs) */
     Array,   /* free-form array (trigger list) */
     Any,     /* any JSON value (a slot value, a variable's init) */
 };

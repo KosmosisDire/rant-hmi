@@ -141,9 +141,10 @@ enum class Builtin : uint16_t {
     Values,
     Keys,
     Invert,
-    /* ordinary trigonometry, degrees in and out (docs/spec.md 6.2): both tiers gain
-     * these together, which is the piece that unblocks authoring a needle's capsule or
-     * an arc's annular sector as arithmetic instead of a hard-coded draw kind */
+    /* ordinary trigonometry, degrees in and out (the project-wide angle convention):
+     * both tiers gain these together, which is the piece that unblocks authoring a
+     * needle's capsule or an arc's annular sector as arithmetic instead of a hard-coded
+     * draw kind */
     Sin,
     Cos,
     Tan,

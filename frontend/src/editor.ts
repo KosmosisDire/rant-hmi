@@ -23,8 +23,9 @@ export interface ViewState {
   part: string;
   selection: number[];
   hover: number;
-  /* per-widget interaction state, read by the attr programs through cellsFor. Nothing
-     writes it while the gesture primitives are gone, so it stands empty. */
+  /* per-widget interaction state, the "state:" half of the cell space an attr program
+     reads. Nothing writes it and nothing reads it: the gesture primitives that set it and
+     the cell reader that served it are both gone, so it stands empty until the rebuild. */
   state: Record<number, Record<string, Json>>;
   faults: Record<number, string>;               /* worst compile grade, per widget */
   /* which side of every theme token this view paints (spec 2.10): a local preview
