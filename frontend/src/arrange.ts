@@ -191,9 +191,9 @@ export function boundaryAt(
  * A side is measured, never guessed: its outer size along the container's main axis and the
  * padding+border inside that, plus the two props the document holds for it.
  *
- * KNOWN QUIRK: an aspect-locked widget next to a boundary can fight this arithmetic, since its
- * cross axis feeds back into its main size and none of the numbers below know that. The clamps
- * keep it sane; precision there is not promised. */
+ * An aspect-locked child never reaches this arithmetic: its main size is DERIVED from its
+ * cross (stage.ts), so a boundary against it has nothing to write, and manipulate.ts does
+ * not offer one. */
 
 export interface ResizeSide {
   grow: number;

@@ -127,6 +127,9 @@ function boundaryIn(editor: Editor, container: HTMLElement, x: number, y: number
         : { start: at.top, end: at.bottom, from: at.left, to: at.right });
   const index = boundaryAt(extents, row ? x : y, row ? y : x, GRAB);
   if (index === null) return null;
+  /* a boundary needs two negotiable sides: an aspect-locked child's main size is DERIVED
+     from its cross (stage.ts), so there is nothing a drag on its edge could write */
+  if (kids[index].style.aspectRatio || kids[index + 1].style.aspectRatio) return null;
   return {
     dir: row ? "row" : "col",
     a: idOf(kids[index]),

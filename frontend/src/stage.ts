@@ -90,22 +90,6 @@ const JUSTIFY_CONTENT: Record<string, string> = {
   start: "flex-start", center: "center", end: "flex-end", between: "space-between",
 };
 
-/* The CROSS component of a widget's 3x3 align slot, as an align-self. A row's cross axis
- * is vertical and a column's is horizontal, so the same slot value reads differently in
- * each — which is why this asks the PARENT. Only the cross half is honoured: placing an
- * aspect-locked box on both axes belongs to the component renderer, with the box. */
-function crossSelf(align: Json, parent: string): string {
-  const value = typeof align === "string" ? align : "";
-  if (parent === "row") {
-    if (value.startsWith("top")) return "flex-start";
-    if (value.startsWith("bottom")) return "flex-end";
-    return "center";
-  }
-  if (value.endsWith("left")) return "flex-start";
-  if (value.endsWith("right")) return "flex-end";
-  return "center";
-}
-
 /* How a container gives one child room. `basis 0` is what makes grow a WEIGHT rather than
  * a tiebreak: two grow-1 children split a row evenly however much CONTENT each holds. A
  * child's own `pad` is not content, though — a flex basis is a content-box size, so a
@@ -206,12 +190,22 @@ function buildLeaf(state: StageState, editor: Editor, widget: Widget,
   const pad = slot("pad");
   if (typeof pad === "number") node.style.padding = (pad < 0 ? AUTO_PAD : pad) + "px";
 
-  /* an aspect-locked box cannot also stretch, or the lock is a lie: the cross axis stops
-     stretching and the align slot says where the box sits along it */
+  /* AN ASPECT-LOCKED BOX IS OUT OF THE WEIGHT SYSTEM. A flex share hands it a definite
+     main size and leaves the ratio only the cross axis to bend — the lock overridden by
+     layout. Anchoring it on a non-stretch align is no better: with neither axis definite
+     it collapses to its content about the chosen edge. So the CROSS axis is the anchor —
+     the box stretches to what the container gives, the ratio derives the main size from
+     that, and it takes no share and no min floor. Cross positioning of an under-sized
+     aspect box returns with the component renderer, which owns the align slot. A stack's
+     cell is definite on both axes, so inside one the lock stays overridden: a stack
+     means "fill the cell". */
   const aspect = slot("aspect");
-  if (typeof aspect === "string" && aspect.trim()) {
+  if (typeof aspect === "string" && aspect.trim() && parent !== "stack") {
     node.style.aspectRatio = aspect.trim().replace("/", " / ");
-    node.style.alignSelf = crossSelf(slot("align"), parent);
+    node.style.flex = "0 0 auto";
+    node.style.alignSelf = "stretch";
+    if (parent === "row") node.style.minWidth = "0";
+    else node.style.minHeight = "0";
   }
 
   const tag = document.createElement("span");
