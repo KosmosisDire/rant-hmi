@@ -23,10 +23,10 @@
   background: var(--acc);
 }
 
-/* The stage: the middle column of the Content and Design workspaces. It is an empty
-   pane — the two stacked artboard SVGs, their shared pan/zoom .layer transform and the
-   click-through .overlay that carried the selection ring and grips have all gone with the
-   renderer. The dot grid stays so the column still reads as a surface rather than a hole. */
+/* The stage: the middle column of the Content and Design workspaces. Content's holds the
+   page (stage.css) and the selection rings over it, which is why it is positioned and
+   clipped; Design's is still bare, waiting for the multi-size component gallery, so the
+   dot grid stays underneath and reads as a surface rather than a hole. */
 .stage {
   position: relative;
   min-width: 0;

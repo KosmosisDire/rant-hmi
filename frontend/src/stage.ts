@@ -52,7 +52,7 @@ function stateOf(host: HTMLElement): StageState {
 
 /* a colour value as CSS: "$name" reads the token custom property the page carries, and
    anything else is used verbatim (the view never resolves a token itself) */
-export function cssColor(value: Json): string {
+function cssColor(value: Json): string {
   const text = typeof value === "string" ? value : "";
   return text.startsWith("$") ? "var(--t-" + text.slice(1) + ")" : text;
 }
@@ -60,7 +60,7 @@ export function cssColor(value: Json): string {
 /* Is there a colour here to paint at all? "" means the author asked for no surface, and a
  * fully transparent literal is the same picture with more work. A token reference is
  * always painted: what it resolves to is the page's business, not this function's. */
-export function paints(value: Json): boolean {
+function paints(value: Json): boolean {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text || text === "transparent" || text === "none") return false;
   return !/^#[0-9a-fA-F]{6}00$/.test(text);
@@ -77,7 +77,7 @@ const JUSTIFY_CONTENT: Record<string, string> = {
  * is vertical and a column's is horizontal, so the same slot value reads differently in
  * each — which is why this asks the PARENT. Only the cross half is honoured: placing an
  * aspect-locked box on both axes belongs to the component renderer, with the box. */
-export function crossSelf(align: Json, parent: string): string {
+function crossSelf(align: Json, parent: string): string {
   const value = typeof align === "string" ? align : "";
   if (parent === "row") {
     if (value.startsWith("top")) return "flex-start";
