@@ -74,6 +74,15 @@
   white-space: nowrap;
 }
 
+/* the row whose node the pointer is over ON THE STAGE: the treatment the pointer gives this
+   row directly, one step quieter, so the link between the two surfaces reads both ways.
+   Ordered before the pointer's own hover, which is the same specificity and must win when
+   both are true. */
+.layer-row.hover {
+  background: #1c1c1c;
+  color: var(--ink-2);
+}
+
 .layer-row:hover {
   background: #232323;
   color: var(--ink);
@@ -83,6 +92,10 @@
 .layer-row.current {
   background: rgba(78, 142, 247, 0.14);
   color: var(--ink);
+}
+
+.layer-row.current.hover {
+  background: rgba(78, 142, 247, 0.17);
 }
 
 .layer-row.current:hover {

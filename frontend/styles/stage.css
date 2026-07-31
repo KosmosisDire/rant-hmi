@@ -49,3 +49,10 @@
   border: 1.5px solid var(--acc);
   border-radius: 3px;
 }
+
+/* the same ring over whatever the pointer is on, at half strength and one line thinner:
+   a highlight that follows the pointer, never a second selection */
+.ring.hover {
+  border-width: 1px;
+  opacity: 0.45;
+}

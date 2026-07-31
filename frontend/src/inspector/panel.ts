@@ -102,6 +102,16 @@ function nodeRows(editor: Editor, node: Frame | Widget, depth: number): HTMLElem
   return node.kind === "frame" ? frameRows(editor, node, depth) : widgetRows(editor, node, depth);
 }
 
+/* A row and the node it stands for are one thing seen twice, so pointing at either
+ * highlights both (editor.setHover). The leave clears it: a leave with no enter after it —
+ * the pointer going straight out of the sidebar — would otherwise leave a ring standing on
+ * the stage with nothing under the pointer. */
+function hoverable(editor: Editor, row: HTMLElement, id: number): HTMLElement {
+  row.addEventListener("mouseenter", () => editor.setHover(id));
+  row.addEventListener("mouseleave", () => editor.setHover(0));
+  return row;
+}
+
 /* a frame row selects the frame (spec 2.8); its children are indented beneath it using
    the same fold/treeRow idiom a widget's part tree uses, so a group reads exactly like
    any other branch of the tree */
@@ -111,7 +121,7 @@ function frameRows(editor: Editor, frame: Frame, depth: number): HTMLElement[] {
   const current = editor.view.selection.length === 1 && editor.view.selection[0] === frame.id;
   const label = el("span", { class: "layer-label" });
   bindText(frame.id + ":label.layer", label, () => (editor.store.frame(frame.id) ?? frame).name);
-  const row = treeRow(
+  const row = hoverable(editor, treeRow(
     key,
     depth,
     "frame" + (current ? " current" : ""),
@@ -122,7 +132,7 @@ function frameRows(editor: Editor, frame: Frame, depth: number): HTMLElement[] {
       diagIcon(editor.diagAt(frame.id)),
     ],
     () => editor.select([frame.id]),
-  );
+  ), frame.id);
   const rows = [row];
   if (open) for (const child of frame.children) rows.push(...nodeRows(editor, child, depth + 1));
   return rows;
@@ -140,7 +150,7 @@ function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[
     return at ? at.label || at.type : "";
   });
   return [
-    treeRow(
+    hoverable(editor, treeRow(
       key,
       depth,
       cls,
@@ -154,7 +164,7 @@ function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[
         diagIcon(editor.diagFor(widget.id)),
       ],
       () => editor.select([widget.id]),
-    ),
+    ), widget.id),
   ];
 }
 

@@ -34,6 +34,8 @@ interface StageState {
      touches none of them changes nothing on screen */
   consumed: Map<string, string>;
   rings: HTMLElement[];
+  /* the one ring that follows the pointer rather than the selection */
+  hover: HTMLElement | null;
   wired: boolean;
 }
 
@@ -42,7 +44,8 @@ const states = new WeakMap<HTMLElement, StageState>();
 function stateOf(host: HTMLElement): StageState {
   let state = states.get(host);
   if (!state) {
-    state = { page: null, signature: "", consumed: new Map(), rings: [], wired: false };
+    state = { page: null, signature: "", consumed: new Map(), rings: [],
+              hover: null, wired: false };
     states.set(host, state);
   }
   return state;
@@ -233,12 +236,41 @@ function buildPage(state: StageState, editor: Editor, page: Page): HTMLElement {
   return node;
 }
 
-/* ---- the selection ring ---- */
+/* ---- the rings ---- */
+
+/* the node one ring is drawn over, or null when there is nothing there to ring */
+function nodeElement(host: HTMLElement, id: number): HTMLElement | null {
+  const state = stateOf(host);
+  if (!id || !state.page) return null;
+  return state.page.querySelector('[data-id="' + id + '"]') as HTMLElement | null;
+}
+
+/* one breath wider than the thing it rings, and following its corners */
+function ringOver(host: HTMLElement, ring: HTMLElement, target: HTMLElement | null): void {
+  if (!target) {
+    ring.style.display = "none";
+    return;
+  }
+  const box = host.getBoundingClientRect();
+  const at = target.getBoundingClientRect();
+  ring.style.display = "";
+  ring.style.left = at.left - box.left - 2 + "px";
+  ring.style.top = at.top - box.top - 2 + "px";
+  ring.style.width = at.width + 4 + "px";
+  ring.style.height = at.height + 4 + "px";
+  const own = typeof getComputedStyle === "function"
+    ? parseFloat(getComputedStyle(target).borderRadius) || 0
+    : 0;
+  ring.style.borderRadius = own + 2 + "px";
+}
 
 /* One absolutely positioned div per selected node, over the element it rings and outside
  * the layout entirely: nothing about a selection may move what is selected. Frames are
  * ringed too — they have real DOM now — even though they are selectable only from the
- * Layers tree. */
+ * Layers tree.
+ *
+ * The hover ring is the same idea over view.hover, and the two never double up: a node that
+ * is already selected is not ringed twice for being pointed at as well. */
 function positionRings(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   const selection = editor.view.selection ?? [];
@@ -250,26 +282,16 @@ function positionRings(host: HTMLElement, editor: Editor): void {
     host.appendChild(ring);
     state.rings.push(ring);
   }
-  const box = host.getBoundingClientRect();
-  selection.forEach((id, i) => {
-    const ring = state.rings[i];
-    const target = state.page?.querySelector('[data-id="' + id + '"]') as HTMLElement | null;
-    if (!target) {
-      ring.style.display = "none";
-      return;
-    }
-    const at = target.getBoundingClientRect();
-    ring.style.display = "";
-    ring.style.left = at.left - box.left - 2 + "px";
-    ring.style.top = at.top - box.top - 2 + "px";
-    ring.style.width = at.width + 4 + "px";
-    ring.style.height = at.height + 4 + "px";
-    /* follow the shape it is ringing, one breath wider */
-    const own = typeof getComputedStyle === "function"
-      ? parseFloat(getComputedStyle(target).borderRadius) || 0
-      : 0;
-    ring.style.borderRadius = own + 2 + "px";
-  });
+  selection.forEach((id, i) => ringOver(host, state.rings[i], nodeElement(host, id)));
+
+  if (!state.hover) {
+    state.hover = document.createElement("div");
+    state.hover.className = "ring hover";
+    host.appendChild(state.hover);
+  }
+  const hovered = editor.view.hover;
+  const shown = hovered && selection.indexOf(hovered) < 0 && editor.view.mode === "edit";
+  ringOver(host, state.hover, shown ? nodeElement(host, hovered) : null);
 }
 
 /* ---- the one entry point ---- */
@@ -308,6 +330,13 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
   positionRings(host, editor);
 }
 
+/* the node the browser's own hit test named: the deepest one under the pointer, frame or
+ * widget, 0 where the event landed on the page background */
+export function idUnder(target: EventTarget | null): number {
+  const at = (target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
+  return at ? Number(at.getAttribute("data-id")) : 0;
+}
+
 /* Listeners are attached once per host. A click SELECTS, and only a widget: a frame is
  * selected from the Layers tree alone, because a click landing on a frame is nearly
  * always a click at a gap between its children and would steal the selection from what
@@ -318,9 +347,18 @@ function wire(host: HTMLElement, editor: Editor): void {
   state.wired = true;
   host.addEventListener("click", (ev) => {
     if (editor.view.mode !== "edit") return;
-    const target = (ev.target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
-    const id = target ? Number(target.getAttribute("data-id")) : 0;
+    const id = idUnder(ev.target);
     editor.select(id && editor.store.widget(id) ? [id] : []);
+  });
+  /* HOVER, the other direction of the Layers tree's own: the pointer names a node here and
+     the row standing for it lights up, out of the same one piece of state. mouseover, not
+     mouseenter, because it bubbles — one listener covers every node the page ever builds. */
+  host.addEventListener("mouseover", (ev) => {
+    if (editor.view.mode !== "edit") return;
+    editor.setHover(idUnder(ev.target));
+  });
+  host.addEventListener("mouseout", () => {
+    if (editor.view.mode === "edit") editor.setHover(0);
   });
   /* the pane resizes when a sidebar is dragged or the window changes: the layout re-solves
      itself, and the ring has to be told where everything landed */

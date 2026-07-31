@@ -177,6 +177,20 @@ export class App implements Editor {
     this.queueSidebars();
   }
 
+  /* WHAT THE POINTER IS ON. Deliberately not queueSidebars: no sidebar's shape mentions
+     hover, and rebuilding one per row the pointer crosses would throw away focus, scroll
+     and open dropdowns for a highlight. The stage repositions its overlays (an unchanged
+     signature rebuilds nothing) and exactly one Layers row changes class. */
+  setHover(id: number): void {
+    if (this.view.hover === id) return;
+    this.view.hover = id;
+    renderStage(this.nodes.stage, this);
+    this.root.querySelector(".layers .layer-row.hover")?.classList.remove("hover");
+    if (!id) return;
+    const key = this.store.frame(id) ? "f" + id : "w" + id;
+    this.root.querySelector('.layers [data-key="' + key + '"]')?.classList.add("hover");
+  }
+
   /* part selection: the widget is selected and the focus narrows to one named template
      node; the inspector scopes to it */
   selectPart(id: number, path: string): void {
@@ -634,6 +648,8 @@ export class App implements Editor {
 
   private setMode(mode: Mode): void {
     this.view.mode = mode;
+    /* direct manipulation is edit mode's alone, and so is the highlight that leads it */
+    this.setHover(0);
     this.root.setAttribute("data-mode", mode);
     for (const button of Array.from(this.root.querySelectorAll("button[data-mode]")))
       button.classList.toggle("on", (button as HTMLElement).dataset.mode === mode);
