@@ -15,7 +15,7 @@
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
 import { Editor, Mode, ViewState } from "./editor.js";
-import { armSwallow, closeMenu, openMenu } from "./menu.js";
+import { armSwallow, closeMenu, MenuItem, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
@@ -83,6 +83,9 @@ export class App implements Editor {
   private pagePanel: Panel | null = null;
   /* our "+ New page" is in flight: the echo carries the issued id, switch to it there */
   private pendingPage = false;
+  /* our wrap is in flight: the frame the backend makes is named for the first time in the
+     echo, and that is where the selection can follow it */
+  private pendingWrap = false;
   /* a just-forked or just-added component's name: its insert is in flight, and the ids
      the backend issues arrive with the echo, so selection resolves there by name */
   private pendingComponent: string | null = null;
@@ -350,6 +353,16 @@ export class App implements Editor {
             typeof (op.node as Json)?.id === "number") {
           this.pendingPage = false;
           this.setPage((op.node as Json).id);
+          break;
+        }
+    /* our wrap's echo opens with the insert of the frame it made: select it, so the thing
+       the author just created is the thing the inspector is showing */
+    if (this.pendingWrap)
+      for (const op of ops)
+        if (op.op === "insert" && op.list === "children" &&
+            (op.node as Json)?.kind === "frame" && typeof (op.node as Json)?.id === "number") {
+          this.pendingWrap = false;
+          this.select([(op.node as Json).id]);
           break;
         }
     this.settleComponentSel();
@@ -687,6 +700,14 @@ export class App implements Editor {
     this.openContextAt(ev.clientX, ev.clientY, hit ? Number(hit.getAttribute("data-id")) : 0);
   }
 
+  /* The verbs of one node, wherever the right-click came from: the stage hands us what the
+     browser's hit test named, the Layers tree what the row stands for. Same node, same
+     menu — the tree is the only place a FRAME can be right-clicked at all, since on the
+     stage its own children cover every pixel of it. */
+  openNodeMenu(clientX: number, clientY: number, node: number): void {
+    this.openContextAt(clientX, clientY, node);
+  }
+
   private openContextAt(clientX: number, clientY: number, at: number): void {
     const page = this.page();
     if (!page || this.view.mode !== "edit") return;
@@ -696,16 +717,22 @@ export class App implements Editor {
     if (widget) {
       this.select([widget.id]);
       openMenu(clientX, clientY, widget.type, [
+        ...this.wrapItems([widget.id]),
+        { separator: true },
         { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
         { label: "Delete", icon: "trash", danger: true, run: () => this.removeSelection() },
       ]);
       return;
     }
 
-    /* on a frame or the page background: what can be added INTO it */
-    const parent = at && this.store.frame(at) ? at : page.id;
+    /* on a frame or the page background: what can be added INTO it, and — when there is a
+       real frame under the pointer — what can be done TO it. The page background keeps the
+       Add group alone: there is no node there to act on, and nothing to select. */
+    const frame = at ? this.store.frame(at) : null;
+    const parent = frame ? at : page.id;
+    if (frame) this.select([frame.id]);
     const types = this.registry?.types ?? [];
-    openMenu(clientX, clientY, this.store.frame(parent)?.name ?? page.name, [
+    openMenu(clientX, clientY, frame?.name ?? page.name, [
       {
         label: "Add widget ▸",
         icon: "layers",
@@ -725,7 +752,59 @@ export class App implements Editor {
       { label: "Add row", icon: "frame", run: () => this.addFrame("row", parent) },
       { label: "Add column", icon: "frame", run: () => this.addFrame("col", parent) },
       { label: "Add stack", icon: "frame", run: () => this.addFrame("stack", parent) },
+      ...(frame
+        ? [
+            { separator: true } as const,
+            ...this.wrapItems([frame.id]),
+            { label: "Dissolve frame", icon: "unlink", run: () => this.dissolve(frame.id) },
+            {
+              label: "Delete frame",
+              icon: "trash",
+              danger: true,
+              run: () => this.apply([{ op: "remove", node: frame.id }]),
+            },
+          ]
+        : []),
     ]);
+  }
+
+  private wrapItems(ids: number[]): MenuItem[] {
+    return [
+      { label: "Wrap in row", icon: "frame", run: () => this.wrap(ids, "row") },
+      { label: "Wrap in column", icon: "frame", run: () => this.wrap(ids, "col") },
+      { label: "Wrap in stack", icon: "frame", run: () => this.wrap(ids, "stack") },
+    ];
+  }
+
+  /* Grouping is one op because the frame it makes has an id only the backend can issue
+     (ops.cpp); the echo comes back as that insert plus a move per node, and the selection
+     follows the frame the same way a new page's does. */
+  private wrap(ids: number[], layout: "row" | "col" | "stack"): void {
+    if (!ids.length) return;
+    this.pendingWrap = true;
+    this.apply([{ op: "wrap", nodes: ids, layout }]);
+  }
+
+  /* Ungrouping needs no op of its own: every id is already known, so it is a batch. Each
+     child lands at base + k, where base is the frame's own position — the frame keeps
+     sliding right as its children land in front of it, so the k-th child's slot is k past
+     where the frame started. The frame goes last, when it is empty. */
+  private dissolve(frameId: number): void {
+    const frame = this.store.frame(frameId);
+    const parent = this.store.parentOf(frameId);
+    if (!frame || !parent || typeof parent.id !== "number") return;
+    const base = (parent.children as (Frame | Widget)[]).findIndex((n) => n.id === frameId);
+    if (base < 0) return;
+    const ops: Op[] = frame.children.map((child, k) => ({
+      op: "move",
+      node: child.id,
+      parent: parent.id as number,
+      list: "children",
+      index: base + k,
+    }));
+    ops.push({ op: "remove", node: frameId });
+    this.apply(ops);
+    this.view.selection = [];
   }
 
   /* Append into a frame (or the page). Placement used to be a clash search over every

@@ -13,6 +13,7 @@
  * wholesale, and a binding holding the old object would then quietly show a document that
  * no longer exists. */
 
+import { DropPlan, dropAtPageEnd, dropPlan, dropZone } from "../arrange.js";
 import { clear, commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
@@ -86,10 +87,12 @@ export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   clear(host);
   const children = editor.page()?.children ?? [];
   const count = flattenPage(children).filter((n) => n.kind === "widget").length;
+  const tree = el("div", { class: "layers" }, children.flatMap((n) => nodeRows(editor, n, 0)));
+  armTree(tree, editor);
 
   host.append(
     ...section("layers", "Layers", String(count), () => [
-      el("div", { class: "layers" }, children.flatMap((n) => nodeRows(editor, n, 0))),
+      tree,
       children.length ? null : el("p", { class: "empty", text: "no widgets on this page" }),
     ]),
   );
@@ -114,7 +117,7 @@ function frameRows(editor: Editor, frame: Frame, depth: number): HTMLElement[] {
     "frame" + (current ? " current" : ""),
     frame.children.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
     [
-      el("span", { class: "layer-glyph", html: iconMarkup("frame", 11, 1.7) }),
+      el("span", { class: "layer-glyph", html: iconMarkup("frame-" + frame.layout, 16, 3.5) }),
       label,
       diagIcon(editor.diagAt(frame.id)),
     ],
@@ -145,7 +148,7 @@ function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[
       [
         el("span", {
           class: "layer-glyph",
-          html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 11, 1.7),
+          html: iconMarkup(ICONS[widget.type] ? widget.type : "layers", 16, 3.5),
         }),
         label,
         diagIcon(editor.diagFor(widget.id)),
@@ -153,6 +156,221 @@ function widgetRows(editor: Editor, widget: Widget, depth: number): HTMLElement[
       () => editor.select([widget.id]),
     ),
   ];
+}
+
+/* ---- dragging a row somewhere else: the only way to reparent (spec 2.8) ----
+ *
+ * Pointer events, never the HTML5 drag API: that one owns the drag image and hands back a
+ * drop target, when what this needs is the opposite — our own insertion line, and a target
+ * we compute. The state lives in this module and its listeners on the window, because an
+ * echo (or the auto-expand below) rebuilds these rows MID-DRAG: nothing here holds a row
+ * element, and every move re-reads what is under the pointer. The arithmetic — which parent,
+ * which index, whether the drop is legal — is all arrange.ts; this half feeds it geometry
+ * and paints the answer. */
+
+const DRAG_SLOP = 4;
+const EXPAND_MS = 500;
+
+interface Drag {
+  editor: Editor;
+  id: number;
+  ghost: HTMLElement;
+  line: HTMLElement;
+  into: HTMLElement | null;   /* the frame row lit for a drop INSIDE it */
+  over: number;               /* the row the pointer is on, so the expand timer knows to reset */
+  timer: number;
+  plan: DropPlan | null;
+}
+
+let armed: { editor: Editor; id: number; x: number; y: number } | null = null;
+let drag: Drag | null = null;
+/* a press and release on one row fires a click even when a drag happened in between */
+let swallow = false;
+
+function rowId(row: Element | null): number {
+  const key = row?.getAttribute("data-key") ?? "";
+  return /^[fw][0-9]+$/.test(key) ? Number(key.slice(1)) : 0;
+}
+
+/* the tree as it stands NOW: a rebuild replaces the element the drag started over */
+function layersHost(): HTMLElement | null {
+  return document.querySelector(".layers");
+}
+
+function labelOf(node: Frame | Widget): string {
+  return node.kind === "frame" ? node.name : node.label || node.type;
+}
+
+function armTree(tree: HTMLElement, editor: Editor): void {
+  tree.addEventListener("pointerdown", (ev) => {
+    swallow = false;
+    if (ev.button !== 0) return;
+    const at = ev.target as HTMLElement | null;
+    if (at?.closest?.(".layer-caret")) return;   /* the caret owns folding */
+    const id = rowId(at?.closest?.("[data-key]") ?? null);
+    if (!id) return;
+    armed = { editor, id, x: ev.clientX, y: ev.clientY };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", onKey);
+  });
+  /* the click that closes a real drag: eaten here, before the row it lands on selects */
+  tree.addEventListener("click", (ev) => {
+    if (!swallow) return;
+    swallow = false;
+    ev.stopPropagation();
+    ev.preventDefault();
+  }, true);
+  /* a row's own verbs, the same menu the stage opens over the same node */
+  tree.addEventListener("contextmenu", (ev) => {
+    const id = rowId((ev.target as HTMLElement | null)?.closest?.("[data-key]") ?? null);
+    if (!id) return;
+    ev.preventDefault();
+    editor.openNodeMenu(ev.clientX, ev.clientY, id);
+  });
+}
+
+function begin(): void {
+  if (!armed) return;
+  const editor = armed.editor;
+  const node = editor.store.frame(armed.id) ?? editor.store.widget(armed.id);
+  if (!node) {
+    armed = null;
+    return;
+  }
+  const ghost = el("div", { class: "layer-ghost", text: labelOf(node) });
+  document.body.appendChild(ghost);
+  drag = {
+    editor,
+    id: armed.id,
+    ghost,
+    line: el("div", { class: "layer-drop-line" }),
+    into: null,
+    over: 0,
+    timer: 0,
+    plan: null,
+  };
+  armed = null;
+  layersHost()?.classList.add("dragging");
+}
+
+function unmark(): void {
+  if (!drag) return;
+  drag.line.remove();
+  drag.into?.classList.remove("drop-into");
+  drag.into = null;
+}
+
+function markLine(host: HTMLElement, rect: DOMRect, after: boolean): void {
+  if (!drag) return;
+  /* a rebuild orphans the line, so it is re-hung rather than kept */
+  if (drag.line.parentElement !== host) host.appendChild(drag.line);
+  drag.line.style.top = (after ? rect.bottom : rect.top) - host.getBoundingClientRect().top + "px";
+}
+
+/* hovering a FOLDED frame opens it, so a drop can reach what is inside without letting go */
+function autoExpand(id: number, frame: boolean, open: boolean): void {
+  if (!drag || id === drag.over) return;
+  drag.over = id;
+  if (drag.timer) window.clearTimeout(drag.timer);
+  drag.timer = 0;
+  if (!id || !frame || open) return;
+  const editor = drag.editor;
+  drag.timer = window.setTimeout(() => {
+    if (drag) drag.timer = 0;
+    toggleLayer(editor, "f" + id, true);
+  }, EXPAND_MS);
+}
+
+function onMove(ev: PointerEvent): void {
+  if (armed) {
+    if (Math.abs(ev.clientX - armed.x) < DRAG_SLOP && Math.abs(ev.clientY - armed.y) < DRAG_SLOP)
+      return;
+    begin();
+  }
+  if (!drag) return;
+  ev.preventDefault();
+  drag.ghost.style.left = ev.clientX + 14 + "px";
+  drag.ghost.style.top = ev.clientY + 12 + "px";
+
+  const page = drag.editor.page();
+  const host = layersHost();
+  unmark();
+  drag.plan = null;
+  if (!page || !host) return;
+
+  const under = document.elementFromPoint(ev.clientX, ev.clientY);
+  const row = (under?.closest?.("[data-key]") ?? null) as HTMLElement | null;
+  const id = row && host.contains(row) ? rowId(row) : 0;
+
+  if (id) {
+    const node = drag.editor.store.frame(id) ?? drag.editor.store.widget(id);
+    const rect = row!.getBoundingClientRect();
+    const frame = node?.kind === "frame";
+    const open = frame && layerOpen("f" + id, true);
+    const zone = dropZone(frame, rect.height ? (ev.clientY - rect.top) / rect.height : 0);
+    drag.plan = dropPlan(page, drag.id, id, zone, open);
+    if (drag.plan && zone === "into") {
+      row!.classList.add("drop-into");
+      drag.into = row;
+    } else if (drag.plan) {
+      markLine(host, rect, zone === "after");
+    }
+    autoExpand(id, frame, open);
+  } else {
+    autoExpand(0, false, false);
+    const box = host.getBoundingClientRect();
+    const below = ev.clientX >= box.left && ev.clientX <= box.right && ev.clientY > box.top;
+    /* the empty room under the last row is the end of the page, and says so */
+    if (!below) return;
+    drag.plan = dropAtPageEnd(page, drag.id);
+    const rows = host.querySelectorAll(".layer-row");
+    const last = rows[rows.length - 1];
+    if (drag.plan && last) markLine(host, last.getBoundingClientRect(), true);
+  }
+  drag.ghost.classList.toggle("no", !drag.plan);
+}
+
+function onUp(): void {
+  const held = drag;
+  end();
+  if (!held) return;
+  swallow = true;
+  const plan = held.plan;
+  if (!plan) return;
+  /* the client always sends the whole placement, reparent or reorder: one path */
+  held.editor.apply([
+    { op: "move", node: held.id, parent: plan.parent, list: "children", index: plan.index },
+  ]);
+  held.editor.select([held.id]);
+  /* dropped into a frame that was folded shut: open it, or it lands out of sight */
+  const page = held.editor.page();
+  if (page && plan.parent !== page.id && !layerOpen("f" + plan.parent, true))
+    toggleLayer(held.editor, "f" + plan.parent, true);
+}
+
+function onKey(ev: KeyboardEvent): void {
+  if (ev.key === "Escape") cancel();
+}
+
+function cancel(): void {
+  end();
+}
+
+function end(): void {
+  armed = null;
+  if (drag) {
+    if (drag.timer) window.clearTimeout(drag.timer);
+    unmark();
+    drag.ghost.remove();
+    layersHost()?.classList.remove("dragging");
+    drag = null;
+  }
+  window.removeEventListener("pointermove", onMove);
+  window.removeEventListener("pointerup", onUp);
+  window.removeEventListener("pointercancel", cancel);
+  window.removeEventListener("keydown", onKey);
 }
 
 /* PART ROWS have left this tree. Layers is page composition — which frames and widgets

@@ -78,6 +78,11 @@ export interface Editor {
      switch to the widget's page, select it, and show the content workspace */
   reveal(widget: number): void;
   select(ids: number[]): void;
+  /* the verbs of ONE node (a widget's or a frame's), opened at a screen position. The
+     stage's right-click and the Layers tree's are the same menu over the same node: the
+     tree is the only place a frame can be right-clicked at all, since on the stage its
+     own children cover it. */
+  openNodeMenu(x: number, y: number, node: number): void;
   /* select one widget and narrow to one of its template parts (a part path, spec 2.3);
      "" steps back to the widget. `select` always clears any part. */
   selectPart(id: number, path: string): void;
