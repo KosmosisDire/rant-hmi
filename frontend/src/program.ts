@@ -13,9 +13,9 @@ export type Cells = (cell: string) => Json;
 const NIL: Json = null;
 
 /* degrees, both ways: every trig opcode takes and returns degrees (docs/spec.md 6.2),
- * matching template.ts's polar() -- the ordinary trig functions themselves (sin(0) ==
- * 0, cos(0) == 1), with the "0 = up, clockwise" polar convention left to whoever calls
- * them, exactly as it is on the scalar tier (backend/src/vm/vm.cpp) */
+ * these are the ordinary trig functions (sin(0) == 0, cos(0) == 1), with the "0 = up,
+ * clockwise" polar convention left to whoever calls them, exactly as on the scalar tier
+ * (backend/src/vm/vm.cpp) */
 const DEG = Math.PI / 180;
 
 function nil(v: Json): boolean {

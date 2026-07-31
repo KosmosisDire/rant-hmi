@@ -141,7 +141,7 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
            spells clamp(x, 0, 1) and has no separate opcode for */
         {"clamp01", {Builtin::Clamp, 1, 1, {NUM}, Shape::Num, false, "CLAMP01", true}},
         /* ordinary trigonometry (docs/spec.md 6.2): degrees in and out on BOTH tiers,
-           matching the codebase's one existing angle convention (template.ts's polar())
+           matching the codebase's one angle convention (degrees, 0 = up, clockwise)
            rather than inventing a radians dialect nothing else in the document uses */
         {"sin", {Builtin::Sin, 1, 1, {NUM}, Shape::Num, false, "SIN"}},
         {"cos", {Builtin::Cos, 1, 1, {NUM}, Shape::Num, false, "COS"}},
@@ -166,7 +166,7 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"str", {Builtin::Str, 1, 1, {ANY}, Shape::Text, false, "STR"}},
         /* view-only: the estimated rendered width of TEXT at SIZE, in artboard units --
            the same estimator drawText/richUnits use and the `code` part API's own
-           draw.measure (template.ts), so an author's own layout maths agrees with what
+           the view's own measure(), so an author's own layout maths agrees with what
            actually renders. No wire meaning (a machine does not care how wide a label
            draws), so it never had a scalar Builtin to begin with. */
         {"measure", {Builtin::Clamp, 2, 2, {Shape::Text, NUM}, Shape::Num, true, "MEASURE", true}},

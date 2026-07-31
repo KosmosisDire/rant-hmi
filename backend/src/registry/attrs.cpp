@@ -17,7 +17,7 @@ AttrDef no_def(const char* name, const char* shape, const char* note) {
 }
 
 /* ---- the common set: read by renderOnce/renderBody/renderClipped/expandRepeats/
- * transformOf/radialFrame (template.ts) for ANY node, whatever it draws ---- */
+ * the transform/radial-frame vocabulary honoured on ANY node, whatever it draws ---- */
 const std::vector<AttrDef>& common_attrs_table() {
     static const std::vector<AttrDef> table = {
         no_def("show", "bool",
@@ -80,7 +80,7 @@ const std::vector<AttrDef>& common_attrs_table() {
     return table;
 }
 
-/* ---- per-kind: what a draw* function reads on top of the common set (template.ts) --- */
+/* ---- per-kind: what a draw of this kind reads on top of the common set ---- */
 
 const std::vector<AttrDef>& rect_attrs() {
     static const std::vector<AttrDef> table = {

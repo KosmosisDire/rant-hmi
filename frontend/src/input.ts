@@ -63,8 +63,9 @@ export function installInputGuard(): void {
     GUARD,
   );
 
-  /* The native context menu never opens: a press and hold is the app's own menu (viewport.ts
-     times it and calls openMenu). The one exception is a real right click inside a text
+  /* The native context menu never opens: the app opens its own instead. (A press-and-hold
+     used to raise it too, timed by the artboard camera; that went with the camera, so it is
+     a right click only for now.) The one exception is a real right click inside a text
      field, where cut/paste has no app side replacement; a long press is not a right click
      and never reaches it. */
   window.addEventListener(

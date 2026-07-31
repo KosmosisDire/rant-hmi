@@ -123,26 +123,6 @@
   text-overflow: ellipsis;
 }
 
-/* x y w h on ONE row: four label+field pairs sharing the value column evenly */
-.geom-grid {
-  display: grid;
-  grid-template-columns: repeat(4, auto minmax(0, 1fr));
-  gap: 5px;
-  align-items: center;
-}
-
-.geom-grid label {
-  font: 700 10.5px var(--mono);
-  color: var(--dim);
-}
-
-/* four labelled numbers on one line: at the sidebar's type scale they would clip */
-.geom-grid .field.num {
-  width: 100%;
-  padding: 0 3px;
-  font-size: 11px;
-}
-
 .value-cell {
   display: flex;
   align-items: center;

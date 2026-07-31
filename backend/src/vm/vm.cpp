@@ -183,8 +183,8 @@ uint32_t gradient(double t, const double stops[][4], int count) noexcept {
 }
 
 /* Degrees, both ways (docs/spec.md 6.2): every trig builtin takes and returns degrees,
- * matching the one angle convention already in the codebase (frontend/src/template.ts's
- * polar()), rather than the radians every libm function actually wants. Defined locally
+ * matching this codebase's one angle convention (degrees, 0 = up, clockwise), rather
+ * than the radians every libm function actually wants. Defined locally
  * rather than pulled from <cmath>'s nonstandard M_PI, which is not guaranteed on every
  * toolchain this project builds with (notably MSVC without _USE_MATH_DEFINES). */
 constexpr double kPi = 3.14159265358979323846;
@@ -354,7 +354,7 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
         /* ORDINARY trigonometry: sin(0) == 0, cos(0) == 1, exactly as everywhere else
          * angles are used mathematically. The "0 = up, clockwise" rule (spec 2.3, the
          * radial widgets) is a POLAR convention layered on TOP of these by whoever
-         * calls them (`cx + r*sin(a), cy - r*cos(a)`, template.ts's polar()) -- it is
+         * calls them (`cx + r*sin(a), cy - r*cos(a)`) -- it is
          * not baked in here, so an author composing their own polar placement gets the
          * primitives polar() itself is built from, not a second incompatible dialect. */
         case Builtin::Sin: if (n == 1) return Value::number(std::sin(number(0) * kDegToRad)); break;

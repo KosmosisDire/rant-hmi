@@ -1,22 +1,28 @@
-/* THE DECLARATION of what frontend/src/template.ts's renderer actually reads off a
- * template node's `attrs` (spec 2.3). Until this file existed, `attrs` was an OPEN map
- * — the compiler would lower any key you typed, and the renderer read whatever names
- * it happened to know — so a misspelled `rotation` for `rotate` compiled clean and
- * silently did nothing, and the part inspector could only list attrs already SET,
- * because the attrs object was the only list that existed. This table fixes both: it
- * is the one place the vocabulary is written down, in C++, and it is served (app.cpp,
- * next to `lang`) so the inspector can show every attr a kind supports — set or not,
- * with its default visible as a placeholder — before anyone has typed anything.
+/* THE DECLARATION of the attr vocabulary a template node may carry (spec 2.3). Until
+ * this file existed, `attrs` was an OPEN map — the compiler would lower any key you
+ * typed, and the renderer read whatever names it happened to know — so a misspelled
+ * `rotation` for `rotate` compiled clean and silently did nothing, and the part
+ * inspector could only list attrs already SET, because the attrs object was the only
+ * list that existed. This table fixes both: it is the one place the vocabulary is
+ * written down, in C++, and it is served (app.cpp, next to `lang`) so the inspector can
+ * show every attr a kind supports — set or not, with its default visible as a
+ * placeholder — before anyone has typed anything.
  *
- * THIS FILE AND template.ts MUST MOVE TOGETHER. Touching what a `draw*` function
- * reads in template.ts without touching the matching row here strands a name the
- * inspector can never offer; touching this file without touching template.ts lets
- * compile_attrs (compile/components.cpp) accept a name the renderer silently ignores
- * — exactly the class of bug this table exists to catch. Every default below is the
- * renderer's own fallback, read out of template.ts function by function; where an attr
- * has no fallback because absence means "not applied" (show, repeat, clip, zoom,
- * rotate, at, fit) `default_value` is left null and the note says so instead of
- * inventing a value.
+ * THE RENDERER THIS TABLE DESCRIBED IS GONE. It named exactly what the SVG template
+ * renderer (frontend/src/template.ts) read, function by function, and the pairing was
+ * the point: a name here with no reader stranded an attr the inspector offered and
+ * nothing honoured, and a reader with no name here accepted an attr silently ignored.
+ * The strip removed the renderer and kept this, because it is also the compile-time
+ * vocabulary — compile_attrs (compile/components.cpp) still refuses an undeclared name,
+ * and the part inspector still generates from it. So the rows below now describe an
+ * INTENT rather than an implementation, and the defaults are the departed renderer's
+ * own fallbacks. WHEN COMPONENTS RENDER AS DOM, this table must be re-derived against
+ * whatever actually reads each attr, not assumed to have survived intact: some of it is
+ * SVG-shaped (`fit`, `start`, `sweep`, `core`, `flare`) and belongs to a drawing leaf,
+ * while some (`pad`, `weight`, `min_px`, `aspect`) is layout the browser will own.
+ * Where an attr has no fallback because absence means "not applied" (show, repeat,
+ * clip, zoom, rotate, at, fit) `default_value` is left null and the note says so instead
+ * of inventing a value.
  *
  * `code` is the one open-ended kind (spec 2.3: its body reads `view.attrs` by
  * whatever names its author chose — the registry's own shared tick body alone reads
@@ -51,9 +57,8 @@ struct AttrDef {
  * list a third and fourth time. */
 const std::vector<std::string>& part_kinds();
 
-/* honoured on EVERY kind: the transform/layout/clip vocabulary (spec 2.3) read by
- * template.ts's renderOnce, renderBody, renderClipped, expandRepeats, transformOf and
- * radialFrame regardless of what the node draws. */
+/* honoured on EVERY kind: the transform/layout/clip vocabulary (spec 2.3), read
+ * regardless of what the node draws. */
 const std::vector<AttrDef>& common_attrs();
 
 /* one kind's OWN attrs, on top of the common set: empty for "box" (nothing beyond the

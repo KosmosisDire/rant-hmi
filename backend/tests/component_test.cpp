@@ -153,11 +153,13 @@ void test_template_expr() {
 
 /* The vocabulary this task adds (trig, the exposed numeric builtins, string building,
  * color arithmetic): every one of these compiles in a template attr and lowers to the
- * exact opcode sequence frontend/src/program.ts executes. Where a name is shared with
- * the scalar tier (mapRange, rgb, hsv, sign, mod, str, the color accessors, trig) the
- * TWO-TIER AGREEMENT test lives beside this one, in runtime_test.cpp's test_view_
- * agreement() and frontend/test/render_test.mjs -- both pin the SAME expected numbers
- * for the same inputs, so the two files cannot drift apart silently. */
+ * exact opcode sequence frontend/src/program.ts executes.
+ *
+ * WHAT THIS DOES NOT PROVE: that the two tiers AGREE. Where a name is shared with the
+ * scalar tier (mapRange, rgb, hsv, sign, mod, str, the color accessors, trig) the VM and
+ * program.ts implement it twice, and only the lowering is pinned here -- nothing yet
+ * feeds the same inputs to both and compares the results. Until something does, an
+ * arithmetic difference between the two implementations passes every suite. */
 void test_new_vocabulary() {
     const TemplateScope scope =
         scope_of({"value", "min", "max", "fill_color", "track_color", "text",
@@ -218,10 +220,9 @@ void test_new_vocabulary() {
     CHECK(refuses("#ff0000.invert()", scope, "no encoding in the view"));
 
     /* THE PROOF: trig plus concatenation computes SVG path data -- a needle from the
-       tile center to the point 40 units out at 30 degrees (0 = up, clockwise, the
-       polar() convention template.ts already uses; sin/cos themselves stay ordinary,
-       per docs/spec.md 6.2). Compiled here; frontend/test/render_test.mjs executes it
-       and pins the exact resulting string ("M 50 50 L 70.00 15.36"). */
+       tile center to the point 40 units out at 30 degrees (0 = up, clockwise; sin/cos
+       themselves stay ordinary). Only the LOWERING is pinned: nothing executes it and
+       checks the string it produces ("M 50 50 L 70.00 15.36") any more. */
     CHECK_EQ(lower("'M 50 50 L ' + (50 + 40 * sin(value)).toFixed(2) + ' ' + "
                    "(50 - 40 * cos(value)).toFixed(2)", scope),
              "CONST(\"M 50 50 L \") CONST(50.0) CONST(40.0) LOAD(slot:value) SIN MUL ADD "

@@ -237,9 +237,8 @@ function findById(node: Json, id: number): Json | null {
 /* The INVERSE of `locatePart`: the rendered path a given node in the raw tree would
  * carry, found by object identity (both `root` and `target` come off the SAME snapshot,
  * so identity is exact, not a heuristic). The root itself, and any node the walk cannot
- * find (an unnamed one, or one that has since moved), resolve to "" — no ring — which is
- * exactly how canvas.ts's overlay already treats an absent rect (a part hidden by
- * `show` recorded none either), so this needs no special case of its own. */
+ * find (an unnamed one, or one that has since moved), resolve to "" — nothing addressed —
+ * so a caller needs no special case of its own. */
 function renderedPathOf(root: Json | null, target: Json | null): string {
   if (!root || !target) return "";
   const walk = (node: Json, path: string): string | null => {

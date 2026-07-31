@@ -32,18 +32,6 @@
   color: var(--acc-ink);
 }
 
-/* a part's own switch: quiet until the row is hovered, and standing while it is off so
-   a hidden part reads as hidden from the tree alone */
-.layer-eye {
-  margin-left: auto;
-  opacity: 0;
-}
-
-.layer-row:hover .layer-eye,
-.layer-eye.off {
-  opacity: 0.75;
-}
-
 .layer-row.hidden .layer-label,
 .layer-row.hidden .layer-glyph {
   opacity: 0.42;

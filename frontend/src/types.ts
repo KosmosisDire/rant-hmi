@@ -66,9 +66,9 @@ export interface Lang {
 
 /* ---- the closed attr vocabulary, as a served table (spec 2.3) ----
  *
- * The DECLARATION of every attr name the renderer (template.ts) actually reads off a
- * template node's `attrs`, mirrored from backend/src/registry/attrs.h — that header is
- * the source of truth and carries the full reasoning; this is its wire shape. Snapshot-
+ * The DECLARATION of every attr name a template node's `attrs` may carry, mirrored from
+ * backend/src/registry/attrs.h — that header is the source of truth and carries the full
+ * reasoning, including why it currently describes an intent rather than a renderer. Snapshot-
  * only, like `builtins`: it never changes at runtime. `perKind.code` is always empty —
  * `code` is the one open kind, its attrs read by whatever names the author's own JS
  * body chose, so it keeps the free-form attrs UI instead of this table. */

@@ -29,12 +29,6 @@ export function el(tag: string, attrs: Attrs = {}, children: Kids = []): HTMLEle
   return node;
 }
 
-export function svg(tag: string, attrs: Record<string, string | number> = {}): SVGElement {
-  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
-  return node;
-}
-
 export function clear(node: Element): void {
   while (node.firstChild) node.removeChild(node.firstChild);
 }

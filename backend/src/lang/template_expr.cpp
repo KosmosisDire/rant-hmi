@@ -26,7 +26,7 @@ const char* kTileFields[] = {"w", "h", "aspect"};
 /* the three cells a repeated node's copy answers (spec 2.3): 0-based index, the total
  * copy count, and index / (count - 1) (0 when count < 2, never NaN). `repeat` needs no
  * opcode of its own — like `tile` and `state`, it is a LOAD of a symbolic cell the
- * renderer's per-copy overlay answers at paint time (frontend/src/template.ts). */
+ * renderer's per-copy overlay answers at paint time. */
 const char* kRepeatFields[] = {"index", "count", "fraction"};
 
 class Parser {
