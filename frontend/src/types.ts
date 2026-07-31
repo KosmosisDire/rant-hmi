@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 4;
+export const PROTO = 5;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 
@@ -92,20 +92,6 @@ export interface AttrTable {
 
 /* ---- document ---- */
 
-export interface Canvas {
-  unit_w: number;
-  unit_h: number;
-  cols: number;
-  rows: number;
-}
-
-export interface Geom {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
 export interface Var {
   id: number;
   name: string;
@@ -152,7 +138,6 @@ export interface Widget {
   kind: "widget";
   type: string;
   label: string;
-  geom: Geom;
   /* per-instance slot values, NESTED like the type's parts: a widget-level slot is a
      key here, a part's slot a key inside an object named for the part, so
      {"bar": {"fill_color": "#fff"}} is the slot addressed "bar.fill_color" */
@@ -162,19 +147,14 @@ export interface Widget {
   flows: Flow[];
 }
 
-/* A FRAME (spec 2.8, one level up from the component-internal node model docs/proto/
-   procedural-ui.md 2.2/2.4 previews): a page-level container grouping widgets and other
-   frames in ONE ordered list (z-order and flow order are the same order). A child's
-   `geom` is in ITS PARENT's coordinates: a page child in canvas units exactly like a
-   bare widget, a frame's child relative to that frame's own x/y — so moving a frame
-   moves its children for free, with no op written to them. `layout` is resolved at
-   RENDER time only (frame.ts): the authored geom never changes for a laid-out child. */
+/* A FRAME: a page-level container grouping widgets and other frames in ONE ordered
+   list. Nothing here is a coordinate — order, layout, gap, pad and align are the whole
+   vocabulary, and where a child lands follows from them. */
 export interface Frame {
   id: number;
   kind: "frame";
   name: string;
-  geom: Geom;
-  layout: "none" | "row" | "col";
+  layout: "row" | "col";
   gap: number;
   pad: number;
   align: "start" | "center" | "end" | "stretch";
@@ -231,10 +211,9 @@ export interface ComponentDef {
   props: PropDef[];
   parts: PartNode[]; /* the template's one root node */
   behavior: Flow[];
-  /* the DESIGN FRAME (spec 3.1): the size the Design workspace's own preview viewport
-     draws this component at, canvas units. NOT an instance size — nothing that renders
-     a PLACED widget (canvas.ts's page path) may read these; only the Design preview
-     does. A built-in carries neither field, and the viewport falls back to 240 x 120. */
+  /* the DESIGN FRAME: the size this component is AUTHORED at — its natural size. NOT an
+     instance size: an instance takes whatever box its frame gives it. A built-in carries
+     neither field, and the fallback is 240 x 120. */
   design_w: number;
   design_h: number;
 }
@@ -247,7 +226,6 @@ export type BuiltinDef = Json;
 export interface Doc {
   version: number;
   next_id: number;
-  canvas: Canvas;
   globals: Var[];
   tokens: Token[];
   components: ComponentDef[];

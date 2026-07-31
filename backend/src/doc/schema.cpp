@@ -56,11 +56,6 @@ const std::vector<NodeSpec>& table() {
         doc.props = {
             num("version", 0),
             num("next_id", 1),
-            /* one fixed artboard per HMI, 16:9; 64 x 36 cells of exactly 22 units. The
-             * pitch must divide BOTH axes evenly (unit_w/cols == unit_h/rows): the
-             * editor snaps on that one number, so a fractional pitch puts every
-             * snapped coordinate on a half unit and the inspector rounds it back off */
-            object("canvas", Json{{"unit_w", 1408}, {"unit_h", 792}, {"cols", 64}, {"rows", 36}}),
         };
         doc.lists = {{"globals", {Kind::Var}}, {"tokens", {Kind::Token}},
                      {"components", {Kind::Component}}, {"pages", {Kind::Page}}};
@@ -87,7 +82,6 @@ const std::vector<NodeSpec>& table() {
             text("kind", "widget"),
             text("type", "Button"),
             text("label", ""),
-            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 132}, {"h", 66}}),   /* canvas units: 6 x 3 cells */
             /* per-instance slot values, NESTED like the type's parts: a widget-level
              * slot is a key here, a part's slot a key inside an object named for the
              * part ({"bar": {"fill_color": "#fff"}} = slot address "bar.fill_color") */
@@ -196,13 +190,12 @@ const std::vector<NodeSpec>& table() {
         component.props = {
             text("name", "Component"),
             array("events"),
-            /* the DESIGN FRAME (spec 3.1): the size the Design workspace's own viewport
-             * draws this component's preview at, in the same canvas units a widget's
-             * `geom` uses. Purely an editor convenience for picking a sensible working
-             * size — it is NOT an instance size and every placed instance keeps its own
-             * `geom` regardless, so nothing in the page renderer (canvas.ts) may read
-             * these. A built-in carries no document node and so no design frame either;
-             * the frontend falls back to this same 240 x 120 default for one. */
+            /* the DESIGN FRAME: the size a component is AUTHORED at — its natural size,
+             * the one the envelope contract will report. Purely an authoring convenience
+             * for picking a sensible working size; it is not an instance size, and an
+             * instance takes whatever box its frame gives it. A built-in carries no
+             * document node and so no design frame either; the frontend falls back to
+             * this same 240 x 120 default for one. */
             num("design_w", 240),
             num("design_h", 120),
         };
@@ -275,18 +268,18 @@ const std::vector<NodeSpec>& table() {
          * model it previews): a page-level container that groups widget instances and
          * other frames, and can lay them out in a row or column. It gives the Layers
          * tree a real hierarchy now that a widget's own internal parts are edited in the
-         * Design workspace instead. A child's `geom` is in ITS PARENT's coordinates
-         * (spec 2.8): a page child in canvas units exactly as today, a frame's child
-         * relative to that frame's own x/y — so moving a frame moves its children for
-         * free, with no op written to them. */
+         * Design workspace instead. A frame has NO geometry of its own, and neither do
+         * its children: where a node lands follows from its order among its siblings and
+         * from the container's own row/col, gap, pad and align — which is what lets a page
+         * re-solve at a size nobody authored it at. "none" was the escape hatch back to
+         * coordinates and went with them, so col is both the default and the floor. */
         NodeSpec frame;
         frame.kind = Kind::Frame;
         frame.name = "frame";
         frame.props = {
             text("kind", "frame"),   /* the discriminator; see widget's own "kind" above */
             text("name", "Group"),
-            object("geom", Json{{"x", 0}, {"y", 0}, {"w", 132}, {"h", 66}}),
-            enumer("layout", {"none", "row", "col"}, "none"),
+            enumer("layout", {"row", "col"}, "col"),
             num("gap", 0),
             num("pad", 0),
             enumer("align", {"start", "center", "end", "stretch"}, "start"),

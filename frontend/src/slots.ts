@@ -252,9 +252,14 @@ export function cellsFor(
         /* per-view, animation only; interaction lands with the scheduler stage */
         return state[name] ?? false;
       case "tile":
-        if (name === "w") return widget.geom.w;
-        if (name === "h") return widget.geom.h;
-        if (name === "aspect") return widget.geom.h ? widget.geom.w / widget.geom.h : 1;
+        /* "tile:w|h|aspect": the widget's own box. It used to be read straight off the
+           authored geom, which no longer exists — a widget's box is now whatever its
+           frame gives it, which only the browser knows. Until the rebuild measures it,
+           the honest answer is UNKNOWN: Nil poisons the expression that asked, which is
+           exactly right, because a fabricated size would silently draw the wrong picture.
+           This is the one place the strip leaves a live expression unanswered, and it is
+           the first thing the DOM renderer must reconnect. */
+        if (name === "w" || name === "h" || name === "aspect") return null;
         return null;
       case "hist":
         /* "hist:<slot>": the slot's accumulated history view (a Trend's plot data) */

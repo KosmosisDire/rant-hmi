@@ -22,7 +22,7 @@ namespace hmi {
 /* bumped when a frame shape changes; a client with another number is refused
  * (3: the snapshot carries `builtins`, the built-ins' editable document form; 4: the
  * snapshot also carries `attr_table`, the closed attr vocabulary, spec 2.3) */
-constexpr int kProto = 4;
+constexpr int kProto = 5;
 
 struct AppOptions {
     ServerOptions server;

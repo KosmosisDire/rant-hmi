@@ -125,7 +125,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 4, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 5, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -208,7 +208,6 @@ ws.send(
           kind: "widget",
           type: "Readout",
           label: "Unfed",
-          geom: { x: 1200, y: 60, w: 180, h: 120 },
           /* a part's values nest under the part (spec 2.3) */
           slots: { value: 12.345, reading: { decimals: 1 }, units: { text: "bar" } },
         },

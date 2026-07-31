@@ -335,7 +335,7 @@ Json on_event(const char* name, std::initializer_list<Json> steps) {
  * data.
  *
  * STATE applies to anything that renders at all. FRAME is the tile the shared machinery
- * paints (island merge, surface, border, radius, paddings, aspect box), so declaring it
+ * paints (surface, border, radius, paddings, aspect box), so declaring it
  * gives the type a settable body: for a Button the surface IS the button face, for a
  * Dropdown the field, for a Panel the card. A type whose control is a shape drawn inside
  * the tile (a pill, a bar, a lamp) still declares FRAME for its optional background and
@@ -368,7 +368,6 @@ Json state_slots() {
 
 Json frame_slots() {
     return Json::array({
-        slot("merge", "bool", true, "frame"),
         slot("surface", "color", "#00000000", "frame", "color"),
         slot("border", "color", "#00000000", "frame", "color"),
         /* -1 = auto: the radius that nests concentrically inside the island's corner

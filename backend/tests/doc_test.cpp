@@ -48,7 +48,8 @@ void test_defaults() {
     /* seven flat widgets plus the demo frame (spec 2.8): the frame groups two more
        widgets of its own, which do not count at the PAGE's top level */
     CHECK(d.root["pages"][0]["children"].size() == 8);
-    CHECK(d.root["canvas"]["cols"] == 64);
+    /* no artboard: the document says what is on the page, never how big the screen is */
+    CHECK(d.root.find("canvas") == d.root.end());
 
     /* every node got an id, and the index resolves each one to its place */
     Json& w = first_widget(d);
@@ -108,7 +109,10 @@ void test_round_trip() {
     CHECK(new_id != 0);
     CHECK(d.find(new_id) != nullptr);
     CHECK(first_widget(d)["label"] == "New");
-    CHECK(first_widget(d)["geom"]["w"] == 132);   /* default filled, in canvas units */
+    /* the op named kind/type/label only, so `slots` proves the default fill still runs
+       (and a widget carries no geometry to fill in the first place) */
+    CHECK(first_widget(d)["slots"].is_object());
+    CHECK(first_widget(d).find("geom") == first_widget(d).end());
 
     const char* path = "hmi_doc_test.tmp.json";
     CHECK_MSG(d.to_file(path, err), err);
@@ -441,8 +445,8 @@ void test_frames() {
     CHECK(frame["children"].size() == 1);
     const uint64_t widget_in_frame = id_of(frame["children"][0]);
     const NodeEntry* we = d.find(widget_in_frame);
-    /* a frame's child is indexed under the FRAME, not the page: its geom is read in the
-       frame's own coordinates (spec 2.8), so its structural parent must be the frame */
+    /* a frame's child is indexed under the FRAME, not the page: the frame is what lays
+       it out, so the frame must be its structural parent */
     CHECK(we && we->parent == frame_id && we->list == "children");
 
     /* insert a SECOND widget straight into the frame: a nested insert, not a page one */
@@ -514,11 +518,10 @@ void test_frames() {
                              {"key", "label"}, {"value", "still editable"}}}, err), err);
 }
 
-/* A component's DESIGN FRAME (spec 3.1): the size the Design workspace's own preview
- * viewport draws it at. It is ordinary document data — defaults fill exactly like any
- * other prop, and it round-trips through set_prop and a save/reload — but it is NOT an
- * instance size, so this only proves the document side of the contract; canvas.ts's own
- * page renderer never reading it is proved by render_test.mjs instead. */
+/* A component's DESIGN FRAME: the size it is AUTHORED at. It is ordinary document data —
+ * defaults fill exactly like any other prop, and it round-trips through set_prop and a
+ * save/reload — but it is NOT an instance size, and this proves only the document side
+ * of that contract. */
 void test_component_design_frame() {
     Document d = Document::make_default();
     std::string err;

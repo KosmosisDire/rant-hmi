@@ -14,28 +14,23 @@ Json token(const char* name, const char* group, const char* dark, const char* li
     return Json{{"name", name}, {"group", group}, {"dark", dark}, {"light", light}};
 }
 
-/* geometry is continuous canvas units; the demo places on the 22-unit cell grid.
+/* A widget carries no geometry: what a demo document says is WHAT is on the page and in
+ * WHAT ORDER, and where each one lands is the containing frame's arithmetic.
  * `kind` is the discriminator page.children and frame.children read (schema.cpp): a
  * literal here rather than left to prepare()'s default fill, because a heterogeneous
  * list rejects a child whose kind is absent (spec: never silently defaulted). */
-Json widget(const char* type, const char* label, int cx, int cy, int cw, int ch, Json slots) {
-    const int cell = 22;
+Json widget(const char* type, const char* label, Json slots) {
     return Json{{"kind", "widget"},
                 {"type", type},
                 {"label", label},
-                {"geom", {{"x", cx * cell}, {"y", cy * cell},
-                          {"w", cw * cell}, {"h", ch * cell}}},
                 {"slots", std::move(slots)}};
 }
 
-/* a FRAME, in the same 22-unit demo grid; `children` is filled in by the caller once
-   the widgets it groups exist, so it composes with `widget()` above */
-Json frame(const char* name, int cx, int cy, int cw, int ch, const char* layout, Json children) {
-    const int cell = 22;
+/* a FRAME; `children` is filled in by the caller once the widgets it groups exist, so it
+   composes with `widget()` above */
+Json frame(const char* name, const char* layout, Json children) {
     return Json{{"kind", "frame"},
                 {"name", name},
-                {"geom", {{"x", cx * cell}, {"y", cy * cell},
-                          {"w", cw * cell}, {"h", ch * cell}}},
                 {"layout", layout},
                 {"gap", 8},
                 {"pad", 6},
@@ -275,17 +270,16 @@ Document Document::make_default() {
 
     Json page = Json{{"name", "Overview"}, {"children", Json::array()}};
     Json& ws = page["children"];
-    ws.push_back(widget("Label", "Title", 2, 1, 14, 2, Json{{"text", "Line 1 Overview"}}));
-    ws.push_back(widget("Panel", "Pump group", 2, 4, 22, 11, Json::object()));
-    ws.push_back(widget("Toggle", "Pump", 3, 5, 9, 3, Json{{"value", true}}));
-    ws.push_back(widget("Slider", "Setpoint", 3, 9, 20, 3, Json{{"value", 62}, {"min", 0}, {"max", 100}}));
+    ws.push_back(widget("Label", "Title", Json{{"text", "Line 1 Overview"}}));
+    ws.push_back(widget("Panel", "Pump group", Json::object()));
+    ws.push_back(widget("Toggle", "Pump", Json{{"value", true}}));
+    ws.push_back(widget("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}}));
     /* a part's value nests under the part (spec 2.3): the units are the `units` part's */
-    ws.push_back(widget("Readout", "Flow", 26, 4, 12, 5,
+    ws.push_back(widget("Readout", "Flow",
                         Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}}));
     /* the lamp is a Panel with a bound surface: there is no Indicator type */
-    ws.push_back(widget("Panel", "Fault", 26, 10, 5, 5, Json{{"surface", "#2a2a2a"}}));
-    ws.push_back(widget("Button", "Reset", 33, 10, 8, 5,
-                        Json{{"label", Json{{"text", "Reset"}}}}));
+    ws.push_back(widget("Panel", "Fault", Json{{"surface", "#2a2a2a"}}));
+    ws.push_back(widget("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}}));
 
     /* one feed and one flow so the inspector and the rename fan-out have real work */
     ws[4]["feeds"] = Json::array({Json{{"slot", "value"},
@@ -299,13 +293,13 @@ Document Document::make_default() {
                                  {"from", {{"expr", "0"}}},
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
-    /* a FRAME so the feature has a real example the moment the document opens (spec
-     * 2.8): a label grouped with a switch, laid out in a row — exactly the composition
-     * that used to need two independently-placed widgets and now has real hierarchy. */
+    /* a FRAME so the feature has a real example the moment the document opens: a label
+     * grouped with a switch, laid out in a row — the composition that used to need two
+     * independently-placed widgets and now is the only way to place anything at all. */
     Json group_children = Json::array();
-    group_children.push_back(widget("Label", "Status", 0, 0, 8, 4, Json{{"text", "Status"}}));
-    group_children.push_back(widget("Toggle", "Enabled", 9, 0, 9, 4, Json{{"value", false}}));
-    ws.push_back(frame("Status group", 2, 17, 20, 4, "row", std::move(group_children)));
+    group_children.push_back(widget("Label", "Status", Json{{"text", "Status"}}));
+    group_children.push_back(widget("Toggle", "Enabled", Json{{"value", false}}));
+    ws.push_back(frame("Status group", "row", std::move(group_children)));
 
     j["pages"] = Json::array({page});
 
