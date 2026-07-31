@@ -23,7 +23,13 @@ export interface NameRow {
 }
 
 export interface ExprContext {
-  tier: "display" | "wire";
+  /* "display" (a feed's transform) and "wire" (a flow guard/source) are the two
+     SCALAR positions (spec 6); "attr" is a template attribute, compiled by a
+     different compiler (template_expr.cpp) with a smaller vocabulary again -- a row
+     can be legal on "display" and still have no view encoding (rgb was, until the
+     two tiers gained a shared vocabulary), so this needs its own filter rather than
+     reusing "display"'s. */
+  tier: "display" | "wire" | "attr";
   lang(): Lang | null;
   /* the shape of x at this position, or null when unknown; a struct x carries its
      field table so the dot offers FIELDS, not methods */
@@ -319,6 +325,7 @@ function methodRows(ctx: ExprContext, receiver: Resolved | null, prefix: string)
   for (const entry of lang.methods) {
     if (receiver && entry.receiver !== receiver.shape) continue;
     if (wire && entry.tier === "display") continue;
+    if (ctx.tier === "attr" && !entry.view) continue;
     if (prefix && !entry.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
     /* a property inserts bare; a METHOD is always called, so even a no-arg one
        completes with its parentheses in place */
@@ -369,6 +376,7 @@ function nameRows(ctx: ExprContext, prefix: string): Row[] {
   }
   for (const entry of lang?.builtins ?? []) {
     if (wire && entry.tier === "display") continue;
+    if (ctx.tier === "attr" && !entry.view) continue;
     if (prefix && !entry.name.toLowerCase().startsWith(lower)) continue;
     out.push({
       insert: entry.name + "(",

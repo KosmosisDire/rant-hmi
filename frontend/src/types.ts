@@ -49,6 +49,12 @@ export interface LangEntry {
   min_args: number;
   result: string;      /* result shape; "elem" = the receiver's element shape */
   tier: "display" | "both";
+  /* does the VIEW (a template attribute) have an encoding for this row at all -- a
+     different question from `tier`, which is about the two SCALAR positions (feed vs.
+     flow). An attribute field's autocomplete must offer exactly the rows where this is
+     true; offering one where it is false and then refusing it at compile is the bug
+     this field exists to close (spec 3.7). */
+  view: boolean;
   receiver?: string;   /* method rows only */
   property?: boolean;  /* method rows: reads bare (x.length) vs called (x.trim()) */
 }

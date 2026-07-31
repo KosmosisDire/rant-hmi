@@ -136,10 +136,12 @@ void test_template_expr() {
     CHECK(refuses("state.blink", scope, "unknown field 'state.blink'"));
     CHECK(refuses("x", scope, "unknown name 'x'"));
 
-    /* vocabulary with no view encoding is refused BY NAME, tier explained */
-    CHECK(refuses("rgb(255, 0, 0)", scope, "no encoding in the view"));
+    /* vocabulary with no view encoding is still refused BY NAME, tier explained -- the
+       tonemaps and color(text) stay refused (out of scope: spec 6.2), and so does a
+       METHOD-form mapRange (only the free function gained a view lowering, below) */
     CHECK(refuses("viridis(value)", scope, "no encoding in the view"));
-    CHECK(refuses("str(value)", scope, "no encoding in the view"));
+    CHECK(refuses("jet(value)", scope, "no encoding in the view"));
+    CHECK(refuses("color('#fff')", scope, "no encoding in the view"));
     CHECK(refuses("text.upper()", scope, "no encoding in the view"));
     CHECK(refuses("value.mapRange(0, 1, 0, 100)", scope, "no encoding in the view"));
     CHECK(refuses("[1, 2]", scope, "no list literal"));
@@ -149,14 +151,99 @@ void test_template_expr() {
     CHECK(refuses("value value", scope, "unexpected"));
 }
 
+/* The vocabulary this task adds (trig, the exposed numeric builtins, string building,
+ * color arithmetic): every one of these compiles in a template attr and lowers to the
+ * exact opcode sequence frontend/src/program.ts executes. Where a name is shared with
+ * the scalar tier (mapRange, rgb, hsv, sign, mod, str, the color accessors, trig) the
+ * TWO-TIER AGREEMENT test lives beside this one, in runtime_test.cpp's test_view_
+ * agreement() and frontend/test/render_test.mjs -- both pin the SAME expected numbers
+ * for the same inputs, so the two files cannot drift apart silently. */
+void test_new_vocabulary() {
+    const TemplateScope scope =
+        scope_of({"value", "min", "max", "fill_color", "track_color", "text",
+                  "decimals", "options"});
+
+    /* trigonometry: direct opcodes, degrees in and out */
+    CHECK_EQ(lower("sin(value)", scope), "LOAD(slot:value) SIN");
+    CHECK_EQ(lower("cos(value)", scope), "LOAD(slot:value) COS");
+    CHECK_EQ(lower("tan(value)", scope), "LOAD(slot:value) TAN");
+    CHECK_EQ(lower("asin(value)", scope), "LOAD(slot:value) ASIN");
+    CHECK_EQ(lower("acos(value)", scope), "LOAD(slot:value) ACOS");
+    CHECK_EQ(lower("atan2(value, min)", scope), "LOAD(slot:value) LOAD(slot:min) ATAN2");
+
+    /* SIGN and MOD already existed as program.ts opcodes; only the free-function
+       spelling was missing */
+    CHECK_EQ(lower("sign(value)", scope), "LOAD(slot:value) SIGN");
+    CHECK_EQ(lower("mod(value, 2)", scope), "LOAD(slot:value) CONST(2.0) MOD");
+
+    /* mapRange/roundTo/lerp/hypot: bespoke folds onto arithmetic opcodes that already
+       existed, each argument captured once and spliced as many times as the formula
+       needs it (mapRange needs inLo and outLo twice, lerp needs its start twice,
+       hypot needs each leg twice) */
+    CHECK_EQ(lower("mapRange(value, 10, 20, 100, 200)", scope),
+             "CONST(100.0) LOAD(slot:value) CONST(10.0) SUB CONST(200.0) CONST(100.0) "
+             "SUB MUL CONST(20.0) CONST(10.0) SUB DIV ADD");
+    CHECK_EQ(lower("roundTo(value, 2)", scope),
+             "CONST(10.0) CONST(2.0) POW LOAD(slot:value) MUL ROUND CONST(10.0) "
+             "CONST(2.0) POW DIV");
+    CHECK_EQ(lower("lerp(min, max, value)", scope),
+             "LOAD(slot:min) LOAD(slot:max) LOAD(slot:min) SUB LOAD(slot:value) MUL ADD");
+    CHECK_EQ(lower("hypot(value, min)", scope),
+             "LOAD(slot:value) LOAD(slot:value) MUL LOAD(slot:min) LOAD(slot:min) MUL "
+             "ADD SQRT");
+
+    /* string building: `+` concatenates when either side is text (the ADD opcode
+       decides that at RUN time, since this tier tracks no shapes to decide it at
+       compile), str() and measure() are direct opcodes */
+    CHECK_EQ(lower("'x = ' + value", scope), "CONST(\"x = \") LOAD(slot:value) ADD");
+    CHECK_EQ(lower("str(value)", scope), "LOAD(slot:value) STR");
+    CHECK_EQ(lower("measure(text, 14)", scope), "LOAD(slot:text) CONST(14.0) MEASURE");
+
+    /* color arithmetic: constructors take 3 or 4 arguments (alpha defaults to fully
+       opaque), the accessors read BARE like the scalar tier's, alpha/mix are called */
+    CHECK_EQ(lower("rgb(1, 0, 0)", scope), "CONST(1.0) CONST(0.0) CONST(0.0) CONST(1.0) RGB");
+    CHECK_EQ(lower("rgb(1, 0, 0, 0.5)", scope),
+             "CONST(1.0) CONST(0.0) CONST(0.0) CONST(0.5) RGB");
+    CHECK_EQ(lower("hsv(120, 1, 1)", scope), "CONST(120.0) CONST(1.0) CONST(1.0) CONST(1.0) HSV");
+    CHECK_EQ(lower("#ff0000.r", scope), "CONST(\"#ff0000\") COLOR_R");
+    CHECK_EQ(lower("#ff0000.g", scope), "CONST(\"#ff0000\") COLOR_G");
+    CHECK_EQ(lower("#ff0000.b", scope), "CONST(\"#ff0000\") COLOR_B");
+    CHECK_EQ(lower("#ff0000.a", scope), "CONST(\"#ff0000\") COLOR_A");
+    CHECK_EQ(lower("#ff0000.alpha(0.5)", scope), "CONST(\"#ff0000\") CONST(0.5) COLOR_ALPHA");
+    CHECK_EQ(lower("#ff0000.mix(#0000ff, 0.5)", scope),
+             "CONST(\"#ff0000\") CONST(\"#0000ff\") CONST(0.5) COLOR_MIX");
+    CHECK(refuses("#ff0000.r()", scope, "is a property"));
+    /* invert() is scalar/wire-tier color vocabulary; it stays out of the view (spec
+       6.2 -- nothing in this task's fixed list asks for it) */
+    CHECK(refuses("#ff0000.invert()", scope, "no encoding in the view"));
+
+    /* THE PROOF: trig plus concatenation computes SVG path data -- a needle from the
+       tile center to the point 40 units out at 30 degrees (0 = up, clockwise, the
+       polar() convention template.ts already uses; sin/cos themselves stay ordinary,
+       per docs/spec.md 6.2). Compiled here; frontend/test/render_test.mjs executes it
+       and pins the exact resulting string ("M 50 50 L 70.00 15.36"). */
+    CHECK_EQ(lower("'M 50 50 L ' + (50 + 40 * sin(value)).toFixed(2) + ' ' + "
+                   "(50 - 40 * cos(value)).toFixed(2)", scope),
+             "CONST(\"M 50 50 L \") CONST(50.0) CONST(40.0) LOAD(slot:value) SIN MUL ADD "
+             "CONST(2.0) TO_FIXED ADD CONST(\" \") ADD CONST(50.0) CONST(40.0) "
+             "LOAD(slot:value) COS MUL SUB CONST(2.0) TO_FIXED ADD");
+}
+
 /* every op the view interpreter's switch executes (frontend/src/program.ts); an op
  * outside this list would render as UNKNOWN on every client */
 const std::set<std::string>& view_ops() {
     static const std::set<std::string> ops = {
-        "CONST", "LOAD",  "PICK",  "ADD",  "SUB",   "MUL",     "DIV",  "NEG",
-        "EQ",    "NE",    "LT",    "LE",   "GT",    "GE",      "NOT",  "CLAMP01",
-        "ABS",   "ROUND", "FLOOR", "CEIL", "SQRT",  "INT",     "SIGN", "POW",
-        "MIN",   "MAX",   "MOD",   "TO_FIXED",
+        "CONST",  "LOAD",   "PICK",   "ADD",    "SUB",     "MUL",    "DIV",   "NEG",
+        "EQ",     "NE",     "LT",     "LE",     "GT",      "GE",     "NOT",   "CLAMP01",
+        "ABS",    "ROUND",  "FLOOR",  "CEIL",   "SQRT",    "INT",    "SIGN",  "POW",
+        "MIN",    "MAX",    "MOD",    "TO_FIXED",
+        /* trigonometry (spec 6.2), degrees in and out */
+        "SIN",    "COS",    "TAN",    "ASIN",   "ACOS",    "ATAN2",
+        /* string building */
+        "STR",    "MEASURE",
+        /* color arithmetic */
+        "RGB",    "HSV",    "COLOR_R", "COLOR_G", "COLOR_B", "COLOR_A", "COLOR_ALPHA",
+        "COLOR_MIX",
     };
     return ops;
 }
@@ -675,6 +762,7 @@ void test_attr_vocabulary() {
 
 int main() {
     test_template_expr();
+    test_new_vocabulary();
     test_builtins_compile_clean();
     test_doc_components();
     test_part_properties();

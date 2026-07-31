@@ -182,6 +182,15 @@ uint32_t gradient(double t, const double stops[][4], int count) noexcept {
     return pack_rgba(s[1], s[2], s[3], 1.0);
 }
 
+/* Degrees, both ways (docs/spec.md 6.2): every trig builtin takes and returns degrees,
+ * matching the one angle convention already in the codebase (frontend/src/template.ts's
+ * polar()), rather than the radians every libm function actually wants. Defined locally
+ * rather than pulled from <cmath>'s nonstandard M_PI, which is not guaranteed on every
+ * toolchain this project builds with (notably MSVC without _USE_MATH_DEFINES). */
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kDegToRad = kPi / 180.0;
+constexpr double kRadToDeg = 180.0 / kPi;
+
 /* strtod over a bounded view without allocation: the view is copied into a stack
  * buffer first because strtod needs a terminator */
 bool parse_number(std::string_view view, double& out) noexcept {
@@ -342,6 +351,26 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
         case Builtin::Pow: if (n == 2) return Value::number(std::pow(number(0), number(1))); break;
         case Builtin::Min: if (n == 2) return Value::number(std::min(number(0), number(1))); break;
         case Builtin::Max: if (n == 2) return Value::number(std::max(number(0), number(1))); break;
+        /* ORDINARY trigonometry: sin(0) == 0, cos(0) == 1, exactly as everywhere else
+         * angles are used mathematically. The "0 = up, clockwise" rule (spec 2.3, the
+         * radial widgets) is a POLAR convention layered on TOP of these by whoever
+         * calls them (`cx + r*sin(a), cy - r*cos(a)`, template.ts's polar()) -- it is
+         * not baked in here, so an author composing their own polar placement gets the
+         * primitives polar() itself is built from, not a second incompatible dialect. */
+        case Builtin::Sin: if (n == 1) return Value::number(std::sin(number(0) * kDegToRad)); break;
+        case Builtin::Cos: if (n == 1) return Value::number(std::cos(number(0) * kDegToRad)); break;
+        case Builtin::Tan: if (n == 1) return Value::number(std::tan(number(0) * kDegToRad)); break;
+        case Builtin::Asin:
+            if (n == 1 && number(0) >= -1.0 && number(0) <= 1.0)
+                return Value::number(std::asin(number(0)) * kRadToDeg);
+            break;
+        case Builtin::Acos:
+            if (n == 1 && number(0) >= -1.0 && number(0) <= 1.0)
+                return Value::number(std::acos(number(0)) * kRadToDeg);
+            break;
+        case Builtin::Atan2:
+            if (n == 2) return Value::number(std::atan2(number(0), number(1)) * kRadToDeg);
+            break;
         case Builtin::Rgb:
             /* every channel is FRACTIONAL 0..1, like alpha and hsv's s/v: one scale
                across the whole color vocabulary */

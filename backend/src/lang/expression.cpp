@@ -48,6 +48,11 @@ struct MethodSpec {
      * (`x.trim()`, even with no arguments): plain after a dot is data, parens is
      * work, and the parser holds the line both ways. */
     bool property = false;
+    /* the VIEW's encoding of this method, read by view_method() -- the same idea as
+     * BuiltinSpec::view below, so a method row and a builtin row carry the fact the
+     * same way. "" = no view encoding, "@" = the template compiler folds it itself
+     * (clamp's min/max fold). */
+    const char* view = "";
 };
 
 constexpr Shape ANY = Shape::Unknown;
@@ -59,20 +64,20 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Num, "floor", MethodId::NumFloor, 0, {}, Shape::Num, false},
         {Shape::Num, "ceil", MethodId::NumCeil, 0, {}, Shape::Num, false},
         {Shape::Num, "abs", MethodId::NumAbs, 0, {}, Shape::Num, false},
-        {Shape::Num, "clamp", MethodId::NumClamp, 2, {NUM, NUM}, Shape::Num, false},
+        {Shape::Num, "clamp", MethodId::NumClamp, 2, {NUM, NUM}, Shape::Num, false, false, "@"},
         {Shape::Num, "mapRange", MethodId::NumMapRange, 4, {NUM, NUM, NUM, NUM}, Shape::Num, false},
         {Shape::Num, "sign", MethodId::NumSign, 0, {}, Shape::Num, false},
         {Shape::Bool, "int", MethodId::BoolInt, 0, {}, Shape::Num, false, true},
         {Shape::Bool, "not", MethodId::BoolNot, 0, {}, Shape::Bool, false},
-        {Shape::Bool, "pick", MethodId::BoolPick, 2, {ANY, ANY}, Shape::Unknown, false},
-        {Shape::Color, "r", MethodId::ColorR, 0, {}, Shape::Num, false, true},
-        {Shape::Color, "g", MethodId::ColorG, 0, {}, Shape::Num, false, true},
-        {Shape::Color, "b", MethodId::ColorB, 0, {}, Shape::Num, false, true},
-        {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false, true},
-        {Shape::Color, "alpha", MethodId::ColorAlpha, 1, {NUM}, Shape::Color, true},
-        {Shape::Color, "mix", MethodId::ColorMix, 2, {Shape::Color, NUM}, Shape::Color, true},
+        {Shape::Bool, "pick", MethodId::BoolPick, 2, {ANY, ANY}, Shape::Unknown, false, false, "PICK"},
+        {Shape::Color, "r", MethodId::ColorR, 0, {}, Shape::Num, false, true, "COLOR_R"},
+        {Shape::Color, "g", MethodId::ColorG, 0, {}, Shape::Num, false, true, "COLOR_G"},
+        {Shape::Color, "b", MethodId::ColorB, 0, {}, Shape::Num, false, true, "COLOR_B"},
+        {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false, true, "COLOR_A"},
+        {Shape::Color, "alpha", MethodId::ColorAlpha, 1, {NUM}, Shape::Color, true, false, "COLOR_ALPHA"},
+        {Shape::Color, "mix", MethodId::ColorMix, 2, {Shape::Color, NUM}, Shape::Color, true, false, "COLOR_MIX"},
         {Shape::Color, "invert", MethodId::ColorInvert, 0, {}, Shape::Color, true},
-        {Shape::Num, "toFixed", MethodId::NumToFixed, 1, {NUM}, Shape::Text, true},
+        {Shape::Num, "toFixed", MethodId::NumToFixed, 1, {NUM}, Shape::Text, true, false, "TO_FIXED"},
         /* text: the predicates and length are wire-legal (a gate may test an alarm
          * code); everything text-PRODUCING is formatting and stays display-side */
         {Shape::Text, "length", MethodId::TextLength, 0, {}, Shape::Num, false, true},
@@ -116,9 +121,12 @@ const std::vector<MethodSpec>& methods() {
 const std::unordered_map<std::string, BuiltinSpec>& builtins() {
     static const std::unordered_map<std::string, BuiltinSpec> table = {
         {"clamp", {Builtin::Clamp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false, "@"}},
-        {"mapRange", {Builtin::MapRange, 5, 5, {NUM, NUM, NUM, NUM, NUM}, Shape::Num, false}},
-        {"roundTo", {Builtin::RoundTo, 2, 2, {NUM, NUM}, Shape::Num, false}},
-        {"lerp", {Builtin::Lerp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false}},
+        /* mapRange/roundTo/lerp: pure arithmetic, so the view folds each onto the
+           existing ADD/SUB/MUL/DIV/POW/ROUND opcodes (template_expr.cpp) rather than
+           gaining an opcode of its own -- "@" is the same bespoke marker `clamp` uses */
+        {"mapRange", {Builtin::MapRange, 5, 5, {NUM, NUM, NUM, NUM, NUM}, Shape::Num, false, "@"}},
+        {"roundTo", {Builtin::RoundTo, 2, 2, {NUM, NUM}, Shape::Num, false, "@"}},
+        {"lerp", {Builtin::Lerp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false, "@"}},
         {"abs", {Builtin::Abs, 1, 1, {NUM}, Shape::Num, false, "ABS"}},
         {"round", {Builtin::Round, 1, 1, {NUM}, Shape::Num, false, "ROUND"}},
         {"floor", {Builtin::Floor, 1, 1, {NUM}, Shape::Num, false, "FLOOR"}},
@@ -132,9 +140,36 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         /* view-only: the template tier's saturating 0..1 fold, which the scalar language
            spells clamp(x, 0, 1) and has no separate opcode for */
         {"clamp01", {Builtin::Clamp, 1, 1, {NUM}, Shape::Num, false, "CLAMP01", true}},
-        {"rgb", {Builtin::Rgb, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
-        {"hsv", {Builtin::Hsv, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true}},
-        {"str", {Builtin::Str, 1, 1, {ANY}, Shape::Text, false}},
+        /* ordinary trigonometry (docs/spec.md 6.2): degrees in and out on BOTH tiers,
+           matching the codebase's one existing angle convention (template.ts's polar())
+           rather than inventing a radians dialect nothing else in the document uses */
+        {"sin", {Builtin::Sin, 1, 1, {NUM}, Shape::Num, false, "SIN"}},
+        {"cos", {Builtin::Cos, 1, 1, {NUM}, Shape::Num, false, "COS"}},
+        {"tan", {Builtin::Tan, 1, 1, {NUM}, Shape::Num, false, "TAN"}},
+        {"asin", {Builtin::Asin, 1, 1, {NUM}, Shape::Num, false, "ASIN"}},
+        {"acos", {Builtin::Acos, 1, 1, {NUM}, Shape::Num, false, "ACOS"}},
+        {"atan2", {Builtin::Atan2, 2, 2, {NUM, NUM}, Shape::Num, false, "ATAN2"}},
+        /* view-only: SIGN and MOD already exist as program.ts opcodes (SIGN backs
+           num.sign, MOD backs `%`) but neither had a free-function spelling in the
+           surface grammar; giving them one costs nothing since the opcodes are already
+           proven. hypot is new to both tiers but stays view-only here (nothing in the
+           fixed vocabulary asks for it on the wire), folding onto MUL/ADD/SQRT the way
+           mapRange folds onto arithmetic above. The Builtin id on each row is inert --
+           see the clamp01 row above -- Clamp is reused rather than adding an id with no
+           VM case, since view_only rows never reach the scalar dispatcher that would
+           use it. */
+        {"sign", {Builtin::Clamp, 1, 1, {NUM}, Shape::Num, false, "SIGN", true}},
+        {"mod", {Builtin::Clamp, 2, 2, {NUM, NUM}, Shape::Num, false, "MOD", true}},
+        {"hypot", {Builtin::Clamp, 2, 2, {NUM, NUM}, Shape::Num, false, "@", true}},
+        {"rgb", {Builtin::Rgb, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true, "@"}},
+        {"hsv", {Builtin::Hsv, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true, "@"}},
+        {"str", {Builtin::Str, 1, 1, {ANY}, Shape::Text, false, "STR"}},
+        /* view-only: the estimated rendered width of TEXT at SIZE, in artboard units --
+           the same estimator drawText/richUnits use and the `code` part API's own
+           draw.measure (template.ts), so an author's own layout maths agrees with what
+           actually renders. No wire meaning (a machine does not care how wide a label
+           draws), so it never had a scalar Builtin to begin with. */
+        {"measure", {Builtin::Clamp, 2, 2, {Shape::Text, NUM}, Shape::Num, true, "MEASURE", true}},
         {"name", {Builtin::Name, 1, 1, {ANY}, Shape::Text, false}},
         {"fmtTime", {Builtin::FmtTime, 1, 1, {NUM}, Shape::Text, true}},
         {"fmtDuration", {Builtin::FmtDuration, 1, 1, {NUM}, Shape::Text, true}},
@@ -1120,6 +1155,20 @@ ViewBuiltin view_builtin(const std::string& name) {
     return out;
 }
 
+ViewMethod view_method(const std::string& name) {
+    ViewMethod out;
+    for (const MethodSpec& spec : methods()) {
+        if (name != spec.name) continue;
+        out.known = true;
+        out.bespoke = spec.view[0] == '@';
+        out.op = out.bespoke ? "" : spec.view;
+        out.property = spec.property;
+        out.args = spec.args;
+        break;
+    }
+    return out;
+}
+
 const std::vector<LangRow>& language_reference() {
     static const std::vector<LangRow> table = [] {
         auto doc_shape = [](Shape shape) {
@@ -1141,6 +1190,7 @@ const std::vector<LangRow>& language_reference() {
                 row.args[i] = doc_shape(spec.arg_shape[i]);
             row.result = doc_shape(spec.result);
             row.display_only = spec.display_only;
+            row.view = spec.view[0] != 0;
             rows.push_back(row);
         }
         for (const MethodSpec& spec : methods()) {
@@ -1160,9 +1210,11 @@ const std::vector<LangRow>& language_reference() {
                              : doc_shape(spec.result);
             row.display_only = spec.display_only;
             row.property = spec.property;
+            row.view = spec.view[0] != 0;
             rows.push_back(row);
         }
-        /* the one special form the tables do not carry: enum .is(variant) */
+        /* the one special form the tables do not carry: enum .is(variant) -- no view
+           encoding (view holds no shape to resolve a variant against) */
         LangRow is_row;
         is_row.kind = "method";
         is_row.receiver = "enum";

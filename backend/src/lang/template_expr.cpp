@@ -66,6 +66,48 @@ class Parser {
         code_.push_back(Json{{"op", "LOAD"}, {"cell", cell}});
     }
 
+    /* Parse ONE argument expression into its OWN instruction buffer instead of
+     * straight into `code_`, so a bespoke lowering (below) can SPLICE the result more
+     * than once: mapRange needs its low/high bounds twice, lerp needs its start twice,
+     * hypot needs both legs twice, roundTo needs its scale twice. This is the
+     * alternative to a stack DUP opcode the view has never needed before -- since the
+     * argument text is short and pure, re-emitting its program costs nothing a real
+     * DUP would have saved, and it needs no VM change. */
+    Json capture_arg() {
+        Json saved = std::move(code_);
+        code_ = Json::array();
+        parse_ternary();
+        Json out = std::move(code_);
+        code_ = std::move(saved);
+        return out;
+    }
+    void splice(const Json& captured) {
+        for (const Json& ins : captured) code_.push_back(ins);
+    }
+
+    /* `count` comma-separated, parenthesized arguments, each captured (not emitted):
+     * the bespoke folds below decide how many times and in what order each one lands. */
+    bool bespoke_args(const std::string& name, uint32_t count, std::vector<Json>& out) {
+        if (!expect(TokenKind::LParen,
+                    (name + " takes " + std::to_string(count) + " argument" +
+                     (count == 1 ? "" : "s")).c_str()))
+            return false;
+        advance();
+        for (uint32_t i = 0; i < count; ++i) {
+            out.push_back(capture_arg());
+            if (!error_.empty()) return false;
+            if (i + 1 < count) {
+                if (!expect(TokenKind::Comma, (name + " takes " + std::to_string(count) +
+                                               " arguments").c_str()))
+                    return false;
+                advance();
+            }
+        }
+        if (!expect(TokenKind::RParen, "expected ')'")) return false;
+        advance();
+        return true;
+    }
+
     /* `c ? a : b` (spec 6.2), lowering to the PICK this tier already used for `.pick()`
      * and for the boolean operators below -- the same sugar, over the same opcode, as
      * the scalar tier's. Right-associative, so `a ? b : c ? d : e` chains. */
@@ -175,14 +217,12 @@ class Parser {
             }
             const std::string name = token_.text;
             advance();
-            if (name == "pick") {
-                if (!arguments(name, 2)) return;
-                emit("PICK");
-            } else if (name == "toFixed") {
-                if (!arguments(name, 1)) return;
-                emit("TO_FIXED");
-            } else if (name == "clamp") {
-                /* x.clamp(lo, hi): MAX then MIN, the same fold the builtin uses */
+            if (name == "clamp") {
+                /* x.clamp(lo, hi): MAX then MIN, the same fold the builtin uses. Kept
+                 * as its own case rather than going through view_method()'s bespoke
+                 * flag: the receiver is already on the stack (parse_primary put it
+                 * there), so the fold only ever needs each argument once and a plain
+                 * interleaved MAX/MIN costs less than capturing and splicing would. */
                 if (!expect(TokenKind::LParen, "clamp takes 2 arguments")) return;
                 advance();
                 parse_ternary();
@@ -194,10 +234,38 @@ class Parser {
                 if (!expect(TokenKind::RParen, "expected ')'")) return;
                 advance();
             } else {
-                fail("'" + name + "' has no encoding in the view; template "
-                     "expressions are limited to pick / toFixed / clamp and the "
-                     "numeric builtins");
-                return;
+                /* every other view-encoded method (pick, toFixed, the color accessors
+                 * r/g/b/a, alpha, mix) is a direct opcode with a fixed arity, read off
+                 * the SAME table (lang/expression.cpp) view_builtin() reads for free
+                 * functions -- so this dispatch cannot drift from what
+                 * language_reference() reports as view-legal for autocomplete. */
+                const ViewMethod view = view_method(name);
+                /* `known` alone is not enough to proceed: it is also true for a method
+                 * the SCALAR table has under this name but the view does not (mapRange,
+                 * upper, ...), matching view_builtin()'s meaning for free functions
+                 * exactly. A bespoke row (view.op empty, view.bespoke true) is not
+                 * reachable here either -- the one bespoke method, clamp, is handled by
+                 * name above, before the receiver-blind generic dispatch below would
+                 * have to invent a fold for it -- so a plain "has an opcode" check is
+                 * the whole gate. */
+                if (!view.known || !view.op[0]) {
+                    fail("'" + name + "' has no encoding in the view; template "
+                         "expressions are limited to pick / toFixed / clamp, the "
+                         "color accessors (r / g / b / a / alpha / mix) and the "
+                         "numeric builtins");
+                    return;
+                }
+                if (view.property) {
+                    if (token_.kind == TokenKind::LParen) {
+                        fail("'" + name + "' is a property; write it without "
+                             "parentheses (" + name + ")");
+                        return;
+                    }
+                    emit(view.op);
+                } else {
+                    if (!arguments(name, static_cast<int>(view.args))) return;
+                    emit(view.op);
+                }
             }
         }
         if (error_.empty() && token_.kind == TokenKind::LBracket)
@@ -306,20 +374,91 @@ class Parser {
             return;
         }
         if (view.known && view.bespoke) {
-            /* clamp(x, lo, hi) == min(max(x, lo), hi), folded onto the stack */
-            if (!expect(TokenKind::LParen, "clamp takes 3 arguments")) return;
-            advance();
-            parse_ternary();
-            if (!expect(TokenKind::Comma, "clamp takes 3 arguments")) return;
-            advance();
-            parse_ternary();
-            emit("MAX");
-            if (!expect(TokenKind::Comma, "clamp takes 3 arguments")) return;
-            advance();
-            parse_ternary();
-            emit("MIN");
-            if (!expect(TokenKind::RParen, "expected ')'")) return;
-            advance();
+            /* rgb/hsv are the one variable-arity pair here (alpha optional), which is
+             * exactly what makes a direct opcode wrong for them: the opcode always
+             * wants four channels, so a 3-argument call pushes a default alpha of 1
+             * (fully opaque) before it. Neither needs an argument twice, so this
+             * parses straight into `code_` rather than through capture_arg/splice. */
+            if (name == "rgb" || name == "hsv") {
+                if (!expect(TokenKind::LParen,
+                            (name + " takes 3 or 4 arguments").c_str()))
+                    return;
+                advance();
+                uint32_t count = 0;
+                for (;;) {
+                    parse_ternary();
+                    if (!error_.empty()) return;
+                    ++count;
+                    if (token_.kind != TokenKind::Comma) break;
+                    advance();
+                }
+                if (count < 3 || count > 4) {
+                    fail(name + " takes 3 or 4 arguments");
+                    return;
+                }
+                if (!expect(TokenKind::RParen, "expected ')'")) return;
+                advance();
+                if (count == 3) emit_const(1.0);   /* default alpha: fully opaque */
+                emit(name == "rgb" ? "RGB" : "HSV");
+                return;
+            }
+            /* everything else here is a fixed-arity arithmetic fold: each argument is
+             * captured once and spliced as many times as the formula needs it, so
+             * none of these costs a stack DUP the view has never had (capture_arg). */
+            std::vector<Json> a;
+            if (name == "clamp") {
+                /* clamp(x, lo, hi) == min(max(x, lo), hi) */
+                if (!bespoke_args(name, 3, a)) return;
+                splice(a[0]);
+                splice(a[1]);
+                emit("MAX");
+                splice(a[2]);
+                emit("MIN");
+            } else if (name == "mapRange") {
+                /* outLo + (x - inLo) * (outHi - outLo) / (inHi - inLo). DIV already
+                 * yields Nil on a zero divisor, so an inHi == inLo call poisons the
+                 * same way the scalar builtin's explicit guard does, for free. */
+                if (!bespoke_args(name, 5, a)) return;
+                splice(a[3]);                          /* outLo */
+                splice(a[0]); splice(a[1]); emit("SUB"); /* x - inLo */
+                splice(a[4]); splice(a[3]); emit("SUB"); /* outHi - outLo */
+                emit("MUL");
+                splice(a[2]); splice(a[1]); emit("SUB"); /* inHi - inLo */
+                emit("DIV");
+                emit("ADD");
+            } else if (name == "roundTo") {
+                /* round(x * scale) / scale, scale = 10^dp. POW's result is pushed
+                 * through num(), which already refuses a non-finite value, and DIV
+                 * already refuses a zero divisor -- the same two guards the scalar
+                 * builtin spells out explicitly (`isfinite(scale) && scale != 0`)
+                 * fall out of the opcodes' own Nil rules with no extra check here. */
+                if (!bespoke_args(name, 2, a)) return;
+                auto scale = [&] {
+                    emit_const(10.0);
+                    splice(a[1]);
+                    emit("POW");
+                };
+                scale();
+                splice(a[0]);
+                emit("MUL");
+                emit("ROUND");
+                scale();
+                emit("DIV");
+            } else if (name == "lerp") {
+                /* a + (b - a) * t */
+                if (!bespoke_args(name, 3, a)) return;
+                splice(a[0]);
+                splice(a[1]); splice(a[0]); emit("SUB");
+                splice(a[2]); emit("MUL");
+                emit("ADD");
+            } else if (name == "hypot") {
+                /* sqrt(a*a + b*b) */
+                if (!bespoke_args(name, 2, a)) return;
+                splice(a[0]); splice(a[0]); emit("MUL");
+                splice(a[1]); splice(a[1]); emit("MUL");
+                emit("ADD");
+                emit("SQRT");
+            }
             return;
         }
         if (view.known) {

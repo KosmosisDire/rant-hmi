@@ -63,6 +63,14 @@ struct LangRow {
     bool display_only = false;
     /* method rows: a property reads bare (x.length); a method is called (x.trim()) */
     bool property = false;
+    /* does the VIEW tier (template_expr.cpp) have an encoding for this row at all --
+     * NOT the same question `display_only` answers. A row can be scalar-both-tier and
+     * still have no view opcode (mapRange did, until this was added), and a row can be
+     * display-only and still be perfectly view-legal (rgb). Autocomplete in an
+     * ATTRIBUTE field must offer exactly the rows where this is true; offering a
+     * display-tier row that the view then refuses at compile is the lie spec 3.7
+     * promises never happens. */
+    bool view = false;
 };
 
 const std::vector<LangRow>& language_reference();
@@ -80,5 +88,23 @@ struct ViewBuiltin {
 };
 
 ViewBuiltin view_builtin(const std::string& name);
+
+/* The method-table twin of view_builtin(). parse_postfix (template_expr.cpp) is
+ * hand-rolled rather than table-driven -- unlike free functions, a dotted call also has
+ * to decide property-vs-called and, for a receiver like `x[i]`, the view carries no
+ * shape to check a receiver against -- so this is keyed on the NAME alone. Safe today
+ * because every view-encoded method (pick, toFixed, clamp, the color accessors,
+ * alpha, mix) is a name unique across the whole table; a future name that gained a
+ * namesake on another receiver would need this widened to take the receiver the
+ * caller does not actually have. */
+struct ViewMethod {
+    bool known = false;
+    const char* op = "";
+    bool bespoke = false;
+    bool property = false;
+    uint32_t args = 0;
+};
+
+ViewMethod view_method(const std::string& name);
 
 } // namespace hmi

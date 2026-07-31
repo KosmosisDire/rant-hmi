@@ -423,7 +423,12 @@ Json App::lang_json() {
                    {"args", std::move(args)},
                    {"min_args", row.min_args},
                    {"result", row.result},
-                   {"tier", row.display_only ? "display" : "both"}};
+                   {"tier", row.display_only ? "display" : "both"},
+                   /* does the VIEW have an encoding for this row at all (expression.h):
+                      the question a template attribute's autocomplete must filter on,
+                      separate from `tier`, which only says which SCALAR positions
+                      (feed vs. flow) may use it */
+                   {"view", row.view}};
         if (std::string(row.kind) == "method") {
             entry["receiver"] = row.receiver;
             entry["property"] = row.property;
