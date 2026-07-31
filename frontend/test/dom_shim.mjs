@@ -137,6 +137,16 @@ class Element {
     child.parentElement = null;
     return child;
   }
+  insertBefore(child, before) {
+    const at = before ? this.childNodes.indexOf(before) : -1;
+    child.parentElement = this;
+    if (at < 0) this.childNodes.push(child);
+    else this.childNodes.splice(at, 0, child);
+    return child;
+  }
+  remove() {
+    this.parentElement?.removeChild(this);
+  }
 
   setAttribute(name, value) {
     this.attributes.set(name, String(value));

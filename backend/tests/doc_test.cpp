@@ -101,7 +101,7 @@ void test_defaults() {
     Json& header = named_frame(d, "Header");
     CHECK(header["kind"] == "frame");
     CHECK(header["layout"] == "row");
-    CHECK(header["surface"] == "$surface");
+    CHECK(header["surface"] == "$surface-2");
     CHECK(header["grow"] == 0);
     CHECK(header["min"] == 52);
     const NodeEntry* fe = d.find(id_of(header));
@@ -440,8 +440,8 @@ void test_tokens() {
                                   {"node", id_of(*token_named(d, "surface"))},
                                   {"name", "pane"}}});
     CHECK_MSG(apply_ops(d, pane, fr, err), err);
-    CHECK(named_frame(d, "Header")["surface"] == "$pane");
-    CHECK(named_frame(d, "Main")["surface"] == "$surface-2");
+    CHECK(named_frame(d, "Main")["surface"] == "$pane");
+    CHECK(named_frame(d, "Header")["surface"] == "$surface-2");
     bool echoed_frame = false;
     for (const Json& op : fr.ops)
         if (op["op"] == "set_prop" && op["key"] == "surface" && op["value"] == "$pane")

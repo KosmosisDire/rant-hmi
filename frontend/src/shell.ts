@@ -4,25 +4,24 @@
  * state (selection, mode, active workspace, sidebar widths); every edit leaves as an op
  * and comes back as a broadcast, so two windows are always looking at the same document.
  *
- * THE STAGE IS EMPTY. Everything that drew a page or answered a gesture on it — the two
- * artboard SVGs, the template renderer behind them, the pan/zoom camera, hit testing,
- * drag-move and the resize grips, the four interaction primitives — has been removed
- * rather than adapted, because the substrate under all of it changed: a page becomes real
- * DOM laid out by the browser, so hit testing, dragging and scaling all become things the
- * browser already does and none of the machinery here would have survived the port. What
- * remains is the half that was never about pixels: the connection, the document mirror,
- * selection, the four workspaces' panels, and structural editing by TREE POSITION rather
- * than by coordinate. */
+ * THE STAGE IS REAL DOM (stage.ts). A page is nested divs laid out by flex, so hit
+ * testing, resizing and scaling are the browser's, not ours: what stood here to do those
+ * jobs by hand — the two artboard SVGs, the template renderer, the pan/zoom camera, the
+ * drag-move and resize grips, the four interaction primitives — is gone rather than
+ * ported. This file keeps the half that was never about pixels: the connection, the
+ * document mirror, selection, the four workspaces' panels, and structural editing by TREE
+ * POSITION rather than by coordinate. */
 
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
 import { Editor, Mode, ViewState } from "./editor.js";
-import { closeMenu, openMenu } from "./menu.js";
+import { armSwallow, closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
+import { renderStage } from "./stage.js";
 import { AttrTable, BuiltinDef, Diag, Doc, Frame, Json, Lang, Live, Mesh, Op, Page, Registry, Widget } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
@@ -285,7 +284,9 @@ export class App implements Editor {
   }
 
   /* Everything arriving from the wire is coalesced into one frame, so a burst of op echoes
-     and 30 Hz live frames costs one pass, not one pass each. */
+     and 30 Hz live frames costs one pass, not one pass each. The stage renders on every
+     pass, including while operating (there are no sidebars there, and the page is the
+     whole point of that view); it decides for itself whether anything it draws moved. */
   private schedule(): void {
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
@@ -294,6 +295,7 @@ export class App implements Editor {
         this.sidebarsDirty = false;
         this.renderSidebars();
       }
+      renderStage(this.nodes.stage, this);
     });
   }
 
@@ -323,15 +325,22 @@ export class App implements Editor {
     const page = this.page();
     this.pageId = page ? page.id : 0;
     this.conn.view(this.pageId, true);
-    this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
+    this.view.selection = this.view.selection.filter((id) => this.selectable(id));
     if (!this.view.selection.length) this.view.part = "";
     this.settleComponentSel();
     this.renderAll();
   }
 
+  /* A selection survives an echo while the node it names still exists. Frames count:
+     one is selected from the Layers tree and edited in the inspector, so dropping it on
+     the echo of its own edit would empty the inspector under the author's hands. */
+  private selectable(id: number): boolean {
+    return Boolean(this.store.widget(id) ?? this.store.frame(id));
+  }
+
   private onOps(version: number, ops: Op[]): void {
     this.store.apply(version, ops);
-    this.view.selection = this.view.selection.filter((id) => this.store.widget(id));
+    this.view.selection = this.view.selection.filter((id) => this.selectable(id));
     if (!this.view.selection.length) this.view.part = "";
     if (!this.page()) this.pageId = this.store.pages()[0]?.id ?? 0;
     /* our "+ New page" echo names the issued id: switch to the fresh page */
@@ -463,17 +472,16 @@ export class App implements Editor {
     const problems = el("button", { class: "problems", onclick: () => this.showProblem() });
     const left = el("aside", { class: "sidebar left" });
     const inspector = el("aside", { class: "sidebar right" });
-    /* An honest empty pane. It is a real element and it holds the layout's middle column
-       so the two sidebars and their gutters still have something to sit either side of;
-       it just draws nothing, because nothing here can draw a page any more. */
-    const stage = el("section", { class: "stage empty" });
+    /* the middle column: stage.ts renders the current page into it as real DOM, and the
+       selection rings sit over that, which is why it is a positioned box */
+    const stage = el("section", { class: "stage" });
     const banner = el("div", { class: "banner" });
 
     this.nodes = { left, inspector, stage, banner, problems, pill };
     this.sidebars = { left: new Panel(left), inspector: new Panel(inspector) };
 
     if (this.operate) {
-      /* the deployed view: nothing to deploy while the stage is empty. The banner stays:
+      /* the deployed view: the page, full window, and nothing else. The banner stays —
          reconnects and refused edits still need a voice. The problems button and pill
          exist unattached, so the status handlers have somewhere to write. */
       this.root.appendChild(el("main", { class: "workspace" }, [stage]));
@@ -561,9 +569,8 @@ export class App implements Editor {
       this.restoreSidebarWidths();
     }
 
-    /* The stage listens for one thing: a right-click asking to add a widget. There is
-       nothing under the pointer to hit-test against, so the menu adds by TREE POSITION
-       (append to the current page) rather than at the coordinate clicked. */
+    /* the stage's own click (selection) is stage.ts's, next to the DOM it hit-tests; the
+       right-click belongs here, where the menu and the insert verbs live */
     stage.addEventListener("contextmenu", (ev) => this.onContextMenu(ev as MouseEvent));
     window.addEventListener("keydown", (ev) => this.onKey(ev));
   }
@@ -620,13 +627,12 @@ export class App implements Editor {
     this.renderAll();
   }
 
-  /* Direct manipulation and the four interaction primitives (press, drag1d, drag_radial
-     and the pick tray) stood here and are gone. Both rested on the same two things: a
-     coordinate space this view owned, and a hit test it performed itself against resolved
-     rects. Under DOM neither is ours — the browser hit-tests, and a gesture arrives already
-     addressed to the element it landed on — so every line of it would have been rewritten
-     rather than moved. Selection now comes from the Layers tree only, and TEST MODE drives
-     nothing until the primitives are rebuilt on ordinary DOM events. */
+  /* The four interaction primitives (press, drag1d, drag_radial and the pick tray) stood
+     here and are gone: both they and the drag-move they rode on rested on a coordinate
+     space this view owned and a hit test it ran itself against resolved rects. Neither is
+     ours under DOM — the browser hit-tests, and a gesture arrives already addressed to the
+     element it landed on — so they are rebuilt on ordinary DOM events when widgets render
+     as components. Until then TEST MODE drives nothing. */
 
 
   private onKey(ev: KeyboardEvent): void {
@@ -668,55 +674,75 @@ export class App implements Editor {
     }
   }
 
-  /* ---- context menu (right-click, or long-press on touch) ---- */
+  /* ---- context menu (right-click) ---- */
 
+  /* The stage is real DOM again, so the pointer names a node: the browser's own hit test
+     hands the event to the leaf or frame div it landed on. What it never names is a
+     POSITION — insertion is by tree position only, appending into whichever frame was
+     clicked (the page itself when the click missed every frame). */
   private onContextMenu(ev: MouseEvent): void {
     if (this.view.mode !== "edit") return;
     ev.preventDefault();
-    this.openContextAt(ev.clientX, ev.clientY);
+    const hit = (ev.target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
+    this.openContextAt(ev.clientX, ev.clientY, hit ? Number(hit.getAttribute("data-id")) : 0);
   }
 
-  /* The menu no longer asks WHERE it was opened, only WHAT is selected. With nothing
-     drawn there is nothing under the pointer to hit-test, so the click cannot name a
-     widget and cannot name a position: a selection (made in the Layers tree) offers its
-     own verbs, and an empty selection offers the type list, which appends. */
-  private openContextAt(clientX: number, clientY: number): void {
+  private openContextAt(clientX: number, clientY: number, at: number): void {
     const page = this.page();
     if (!page || this.view.mode !== "edit") return;
-    if (this.view.selection.length) {
-      const widget = this.store.widget(this.view.selection[0]);
-      openMenu(clientX, clientY, widget ? widget.type : "Selection", [
+
+    /* on a widget: its own verbs, acting on it — a right-click selects what it acts on */
+    const widget = at ? this.store.widget(at) : null;
+    if (widget) {
+      this.select([widget.id]);
+      openMenu(clientX, clientY, widget.type, [
         { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
         { label: "Delete", icon: "trash", danger: true, run: () => this.removeSelection() },
       ]);
       return;
     }
-    openMenu(
-      clientX,
-      clientY,
-      "Add widget",
-      (this.registry?.types ?? []).map((type) => ({
-        label: type.name,
-        icon: type.name,
-        run: () => this.addWidget(type.name),
-      })),
-    );
+
+    /* on a frame or the page background: what can be added INTO it */
+    const parent = at && this.store.frame(at) ? at : page.id;
+    const types = this.registry?.types ?? [];
+    openMenu(clientX, clientY, this.store.frame(parent)?.name ?? page.name, [
+      {
+        label: "Add widget ▸",
+        icon: "layers",
+        /* the type list is the same menu re-opened where it stands: a real flyout is a
+           menu.ts feature and this milestone does not need one. The dismiss overlay is
+           about to see this very click, so it is told to let one through. */
+        run: () => {
+          armSwallow();
+          openMenu(clientX, clientY, "Add widget", types.map((type) => ({
+            label: type.name,
+            icon: type.name,
+            run: () => this.addWidget(type.name, parent),
+          })));
+        },
+      },
+      { separator: true },
+      { label: "Add row", icon: "frame", run: () => this.addFrame("row", parent) },
+      { label: "Add column", icon: "frame", run: () => this.addFrame("col", parent) },
+      { label: "Add stack", icon: "frame", run: () => this.addFrame("stack", parent) },
+    ]);
   }
 
-  /* Append to the current page. Placement used to be a clash search over every resolved
-     rect, looking for a free patch of grid; there is no grid and no free patch to find,
-     because order in the tree is the only thing that places a frame's child. A widget
-     carries no geometry at all. */
-  private addWidget(type: string): void {
-    const page = this.page();
-    if (!page) return;
+  /* Append into a frame (or the page). Placement used to be a clash search over every
+     resolved rect, looking for a free patch of grid; there is no grid and no free patch to
+     find, because order in the tree is the only thing that places a frame's child. */
+  private addWidget(type: string, parent: number): void {
     this.apply([
-      {
-        op: "insert",
-        parent: page.id,
-        list: "children",
-        node: { kind: "widget", type, label: type },
-      },
+      { op: "insert", parent, list: "children", node: { kind: "widget", type, label: type } },
+    ]);
+  }
+
+  /* the first frame-creation UI in the product: a fresh frame is empty, and fills, so it
+     shows up as the share of the room its siblings gave it */
+  private addFrame(layout: "row" | "col" | "stack", parent: number): void {
+    const name = layout === "row" ? "Row" : layout === "col" ? "Column" : "Stack";
+    this.apply([
+      { op: "insert", parent, list: "children", node: { kind: "frame", name, layout } },
     ]);
   }
 

@@ -172,7 +172,7 @@ const frameNamed = (node, name) => {
 check(page.children.length === 2, "the page is a header over a body, nothing loose");
 check(frameNamed(page, "Main")?.grow === 2 && frameNamed(page, "Side")?.grow === 1,
       "the body splits two-to-one between its columns");
-check(frameNamed(page, "Header")?.surface === "$surface",
+check(frameNamed(page, "Main")?.surface === "$surface",
       "a pane is dressed with a theme token, not a literal");
 const statusFrame = frameNamed(page, "Status group");
 check(statusFrame !== null, "the default document seeds a demo frame");

@@ -224,7 +224,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     );
     host.appendChild(
       el("div", { class: "inspector-body" }, [
-        el("p", { class: "empty", text: "pick a widget on the artboard" }),
+        el("p", { class: "empty", text: "pick a widget on the page" }),
       ]),
     );
     return;

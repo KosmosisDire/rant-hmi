@@ -297,7 +297,7 @@ Document Document::make_default() {
     header_kids.push_back(widget("Label", "Title", Json{{"text", "Line 1 Overview"}}));
     /* grow 0 + a floor: the band is as tall as it asks to be and the body keeps the rest */
     Json header = frame("Header", "row", std::move(header_kids),
-                        Json{{"surface", "$surface"}, {"align", "center"},
+                        Json{{"surface", "$surface-2"}, {"align", "center"},
                              {"grow", 0}, {"min", 52}});
 
     Json main_kids = Json::array();
@@ -306,7 +306,7 @@ Document Document::make_default() {
     main_kids.push_back(std::move(readout));
     main_kids.push_back(std::move(reset));
     Json main_col = frame("Main", "col", std::move(main_kids),
-                          Json{{"surface", "$surface-2"}, {"radius", 6}, {"grow", 2}});
+                          Json{{"surface", "$surface"}, {"radius", 6}, {"grow", 2}});
 
     Json status_kids = Json::array();
     status_kids.push_back(widget("Label", "Status", Json{{"text", "Status"}}));

@@ -1,0 +1,51 @@
+/* ---------- the page, rendered as real DOM ---------- */
+
+/* The page IS the pane: no artboard, no letterbox, no fixed size anywhere. Resizing the
+   window or dragging a sidebar re-solves the layout, which is the whole model. It is the
+   root frame and takes the same defaults a fresh frame does — a column that fills. */
+.page {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--stage);
+}
+
+/* overflow clips to the radius, so a surfaced pane's corners actually round the content
+   inside them rather than letting a square child paint over the curve */
+.frame {
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* A widget instance, until components render as DOM: its own frame slots painted (a
+   Panel with a bound surface is already a working lamp) around a name. */
+.leaf {
+  box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.leaf-tag {
+  font: 11px/1.4 var(--mono);
+  color: var(--dim);
+  text-align: center;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the selection ring: over the page, never in it — nothing about a selection may move
+   what is selected */
+.ring {
+  position: absolute;
+  pointer-events: none;
+  border: 1.5px solid var(--acc);
+  border-radius: 3px;
+}
