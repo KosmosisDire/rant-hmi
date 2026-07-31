@@ -739,8 +739,13 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     return;
   }
 
+  /* WHAT THE PICTURE IS OF: the page, the document version — and the COMPILE EPOCH, which
+     is the one that catches an edit changing what a field evaluates to rather than what the
+     tree holds. A page node's attrs are programs; editing one leaves the tree identical and
+     the version moved, and the new programs arrive in the snapshot that follows. Without the
+     epoch here a boundary drag would commit its number and then redraw the old one. */
   const preview = state.preview;
-  const signature = page.id + ":" + editor.store.version() +
+  const signature = page.id + ":" + editor.store.version() + ":" + (editor.live?.epoch ?? 0) +
     (preview ? ":" + preview.node + ">" + preview.plan.parent + "@" + preview.plan.index : "");
   let rebuild = !state.page || signature !== state.signature;
   if (!rebuild)

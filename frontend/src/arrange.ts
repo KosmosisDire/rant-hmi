@@ -28,6 +28,21 @@ export interface DropPlan {
   index: number;
 }
 
+/* A FIELD A GESTURE MAY MOVE. Every field is expression text, and direct manipulation is
+ * the act of writing a CONSTANT into one — so a drag may only move a field that holds a
+ * constant NOW. `12` is a number a boundary can push around; `value.pick(2, 1)` is authored
+ * logic, and a drag that overwrote it would be destroying work to save a keystroke. An
+ * absent field reads as its default, which is a constant too.
+ *
+ * Returns null for "there is an expression here": the caller's cue to leave the handle out
+ * rather than to write anyway. */
+export function literalNumber(text: string | undefined, fallback: number): number | null {
+  if (text === undefined || text === null || text === "") return fallback;
+  const trimmed = String(text).trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return null;
+  return Number(trimmed);
+}
+
 /* The zone the pointer names, from the row's own proportions. A frame row has a middle that
  * means INSIDE; a widget row has no inside, so its whole height splits at the halfway mark
  * and every position names a gap. `ratio` is 0 at the row's top edge and 1 at its bottom. */

@@ -1301,8 +1301,9 @@ check(labelInk !== null && labelInk.textContent === "hi",
       "an instance renders its component's own nodes, reading this placement's slots");
 
 /* LIVE FIRST: the cell the runtime publishes outranks what the instance authored, which
-   is the whole of a lamp — a Panel with a bound surface lights up */
-stageEditor.live = { epoch: 2, values: { "903.surface": "#ff0000" } };
+   is the whole of a lamp — a Panel with a bound surface lights up. The EPOCH stays put
+   across these: it moves on a recompile, not on a tick (app.cpp). */
+stageEditor.live = { epoch: 1, values: { "903.surface": "#ff0000" } };
 drawStage();
 check(stageNode("leaf", 903).style.background === "#ff0000",
       "a live cell paints over the authored surface");
@@ -1310,12 +1311,26 @@ check(stageNode("leaf", 903).style.background === "#ff0000",
 /* ...and the price of that is paid ONCE per change, not thirty times a second: a live
    frame that moves no cell this picture read leaves the very same nodes standing */
 const heldRow = stageNode("frame", 901);
-stageEditor.live = { epoch: 3, values: { "903.surface": "#ff0000", "999.value": 7 } };
+stageEditor.live = { epoch: 1, values: { "903.surface": "#ff0000", "999.value": 7 } };
 drawStage();
 check(stageNode("frame", 901) === heldRow, "a live frame touching no consumed cell rebuilds nothing");
-stageEditor.live = { epoch: 4, values: { "903.surface": "#00ff00" } };
+stageEditor.live = { epoch: 1, values: { "903.surface": "#00ff00" } };
 drawStage();
 check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell rebuilds the page");
+
+/* A COMPILE REBUILDS IT REGARDLESS. Editing an attr leaves the tree identical and changes
+   the PROGRAM the field evaluates to, and the new programs arrive in the snapshot that
+   follows the echo — so the epoch is what says "the same document means something else
+   now". Without this a boundary drag commits its number and redraws the old one. */
+const heldAgain = stageNode("frame", 901);
+stageAttrs["901"].attrs.grow = prog(5);
+drawStage();
+check(stageNode("frame", 901) === heldAgain,
+      "fresh programs alone do not rebuild: nothing told the view they were fresh");
+stageEditor.live = { epoch: 2, values: { "903.surface": "#00ff00" } };
+drawStage();
+check(stageNode("frame", 901) !== heldAgain && stageNode("frame", 901).style.flex === "5 1 0",
+      "a new compile epoch rebuilds the page from the programs it just received");
 
 /* ---- the node inspector ----
    A page's frame is a NODE, so it is inspected the way a component's node is: two

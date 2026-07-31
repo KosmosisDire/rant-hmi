@@ -19,8 +19,8 @@
  * what is under the pointer. */
 
 import {
-  boundaryAt, DropPlan, Extent, gapIndex, ResizePlan, ResizeSide, resizeAt, seatOf, settle,
-  SideWrite, withoutHeld,
+  boundaryAt, DropPlan, Extent, gapIndex, literalNumber, ResizePlan, ResizeSide, resizeAt,
+  seatOf, settle, SideWrite, withoutHeld,
 } from "./arrange.js";
 import { Editor } from "./editor.js";
 import { Layout, Op } from "./types.js";
@@ -115,6 +115,15 @@ function nodeIn(host: HTMLElement, id: number): HTMLElement | null {
 
 /* ---- which boundary, if any ---- */
 
+/* can a drag write this side's share and floor at all? Both fields must hold constants
+ * today, because a constant is all a gesture has to offer (arrange.ts, literalNumber). */
+function writable(editor: Editor, id: number): boolean {
+  const node = editor.store.nodeAt(id);
+  if (!node) return false;
+  return literalNumber(node.attrs?.grow, 1) !== null &&
+         literalNumber(node.attrs?.min, 0) !== null;
+}
+
 function boundaryIn(editor: Editor, container: HTMLElement, x: number, y: number): Boundary | null {
   const dir = dirOf(editor, container);
   /* FREE and GRID have no boundary to drag: a free child sets its own x/y/w/h, and a
@@ -133,6 +142,11 @@ function boundaryIn(editor: Editor, container: HTMLElement, x: number, y: number
   /* a boundary needs two negotiable sides: an aspect-locked child's main size is DERIVED
      from its cross (stage.ts), so there is nothing a drag on its edge could write */
   if (kids[index].style.aspectRatio || kids[index + 1].style.aspectRatio) return null;
+  /* ...and neither side may hold an EXPRESSION where the drag would write its constant.
+     Asked here, where the affordance is decided, so the cursor never offers a drag that
+     the release would then have to refuse. */
+  if (!writable(editor, idOf(kids[index])) || !writable(editor, idOf(kids[index + 1])))
+    return null;
   return {
     dir: row ? "row" : "col",
     a: idOf(kids[index]),
@@ -376,9 +390,16 @@ function onUp(): void {
  * travel through arrange.ts, so the drag never chases its own output. */
 
 function measure(editor: Editor, host: HTMLElement, id: number, row: boolean): ResizeSide | null {
-  const node = editor.store.node(id);
+  const node = editor.store.nodeAt(id);
   const element = nodeIn(host, id);
   if (!node || !element) return null;
+  /* THE TWO FIELDS THIS DRAG WRITES, and it may only write constants (arrange.ts): a side
+     whose share or floor is an EXPRESSION is not draggable, because the drag's whole output
+     is a number and there is nowhere to put it that does not destroy what is there. The
+     boundary is simply not offered — see boundaryIn, which asks the same question. */
+  const grow = literalNumber(node.attrs?.grow, 1);
+  const min = literalNumber(node.attrs?.min, 0);
+  if (grow === null || min === null) return null;
   const at = element.getBoundingClientRect();
   const style = typeof getComputedStyle === "function" ? getComputedStyle(element) : null;
   const px = (value: string | undefined) => parseFloat(value ?? "") || 0;
@@ -391,12 +412,7 @@ function measure(editor: Editor, host: HTMLElement, id: number, row: boolean): R
       : px(style.paddingTop) + px(style.paddingBottom) +
         px(style.borderTopWidth) + px(style.borderBottomWidth)
     : 0;
-  return {
-    grow: typeof node.grow === "number" ? node.grow : 1,
-    min: typeof node.min === "number" ? node.min : 0,
-    outer: row ? at.width : at.height,
-    chrome,
-  };
+  return { grow, min, outer: row ? at.width : at.height, chrome };
 }
 
 function beginResize(host: HTMLElement, editor: Editor, edge: Boundary, ev: PointerEvent): void {
@@ -453,15 +469,24 @@ function finishResize(): void {
   swallow = true;
   const move = held.plan.commit(held.delta);
   const ops: Op[] = [];
+  /* ONE op per side, of the whole attr map: a field is expression text, so what a gesture
+     writes is the TEXT of the constant it arrived at — the same thing the inspector would
+     have written by hand, landing in the same field, which is what makes a drag and a typed
+     number the same edit. */
   const write = (id: number, side: SideWrite | null) => {
-    const node = side ? held.editor.store.node(id) : null;
+    const node = side ? held.editor.store.nodeAt(id) : null;
     if (!side || !node) return;
-    const grow = typeof node.grow === "number" ? node.grow : 1;
-    const min = typeof node.min === "number" ? node.min : 0;
-    if (side.grow !== undefined && side.grow !== grow)
-      ops.push({ op: "set_prop", node: id, key: "grow", value: side.grow });
-    if (side.min !== undefined && side.min !== min)
-      ops.push({ op: "set_prop", node: id, key: "min", value: side.min });
+    const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
+    let moved = false;
+    if (side.grow !== undefined && literalNumber(attrs.grow, 1) !== side.grow) {
+      attrs.grow = String(side.grow);
+      moved = true;
+    }
+    if (side.min !== undefined && literalNumber(attrs.min, 0) !== side.min) {
+      attrs.min = String(side.min);
+      moved = true;
+    }
+    if (moved) ops.push({ op: "set_prop", node: id, key: "attrs", value: attrs });
   };
   write(held.a, move.a);
   write(held.b, move.b);

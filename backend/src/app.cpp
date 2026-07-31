@@ -208,21 +208,28 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
     if (opts_.persist && !doc_.to_file(opts_.doc_path, err))
         std::printf("hmi: cannot save %s: %s\n", opts_.doc_path.c_str(), err.c_str());
 
-    /* The registry is a compile product now (derived from the document's components
-     * over the built-ins), and ops_applied does not carry it: when an edit changed
-     * what the derivation produces, every client gets a fresh snapshot AFTER the op
-     * echo. The echo keeps the editing clients' version sequencing and in-flight
-     * batches exact; the snapshot (which settles everything outstanding on the
-     * client, protocol.ts) delivers the new registry. Comparing the derived JSON is
-     * the one detection that cannot drift from whatever ops turn out to touch a
-     * component subtree. */
-    const Json served_before = registry_;
+    /* THE COMPILE PRODUCTS DO NOT RIDE THE ECHO. The registry (built-ins shadowed by the
+     * document's components) and `node_attrs` (every page node's compiled fields) are both
+     * derived, and ops_applied carries neither: when an edit changed what the derivation
+     * produces, every client gets a fresh snapshot AFTER the op echo. The echo keeps the
+     * editing clients' version sequencing and in-flight batches exact; the snapshot (which
+     * settles everything outstanding on the client, protocol.ts) delivers the new product.
+     *
+     * `node_attrs` is why an ordinary set_prop can trigger this now: editing an attr
+     * changes the PROGRAM that field evaluates to, and a view still holding the old one
+     * would keep drawing the old value — a boundary drag would commit and then snap back.
+     * Comparing the derived JSON is the one detection that cannot drift from whatever ops
+     * turn out to touch what. (A per-node delta on the echo is the obvious optimisation;
+     * at this document size a snapshot is cheaper than the machinery to avoid one.) */
+    const Json registry_before = registry_;
+    const Json attrs_before = node_attrs_;
     compile_runtime();
     server_.broadcast(Json{{"type", "ops_applied"},
                            {"version", applied.version},
                            {"ops", applied.ops},
                            {"origin_session", session}});
-    if (registry_ != served_before) server_.broadcast(snapshot());
+    if (registry_ != registry_before || node_attrs_ != attrs_before)
+        server_.broadcast(snapshot());
 }
 
 Json App::live() const {
