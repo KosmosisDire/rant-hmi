@@ -24,7 +24,7 @@
 import { DropPlan, seatOf } from "./arrange.js";
 import { Editor } from "./editor.js";
 import { iconMarkup } from "./icons.js";
-import { armStage, stageBusy } from "./manipulate.js";
+import { armStage, repaintResize, stageBusy } from "./manipulate.js";
 import { attrText, Cells, run } from "./program.js";
 import { typeOf } from "./slots.js";
 import {
@@ -777,6 +777,11 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     host.insertBefore(next, host.firstChild);
     state.page = next;
     state.signature = signature;
+    /* A REBUILD MUST NOT TAKE A GESTURE WITH IT. What a live frame moved is a value, not
+       an arrangement, and the boundary in your hand is holding two sizes that are
+       deliberately not in the document until you let go — so the gesture puts them back
+       on the fresh elements (manipulate.ts owns them; this only says when). */
+    repaintResize();
   }
   markPreview(host, preview);
   positionRings(host, editor);

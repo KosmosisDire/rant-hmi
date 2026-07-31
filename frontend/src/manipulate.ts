@@ -453,6 +453,21 @@ function onResizeMove(ev: PointerEvent): void {
   ev.preventDefault();
   const row = resize.dir === "row";
   resize.delta = (row ? ev.clientX : ev.clientY) - resize.start;
+  repaintResize();
+}
+
+/* THE PAGE MAY BE REBUILT UNDER A LIVE GESTURE, and must not take the gesture with it. A
+ * bound readout is still ticking while you drag a boundary, and a live frame that moves a
+ * cell the picture read rebuilds the page from the DOCUMENT — which is the size the
+ * boundary had before you grabbed it. The two inline styles a resize is holding live
+ * outside the document (deliberately: nothing is committed until release), so they are the
+ * one thing a rebuild cannot know to restore, and the gesture re-asserts them rather than
+ * the renderer trying to remember them.
+ *
+ * Called by stage.ts after every rebuild, and by the pointer move that caused one. */
+export function repaintResize(): void {
+  if (!resize) return;
+  const row = resize.dir === "row";
   const move = resize.plan.apply(resize.delta);
   paint(resize.host, resize.a, move.a, row);
   paint(resize.host, resize.b, move.b, row);
