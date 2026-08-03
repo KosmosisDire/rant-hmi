@@ -21,7 +21,7 @@ import { ownedSlots, partIndex, slotLeaf } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf, withSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
-import { isInstance, Json, Node, SlotSpec, WidgetType } from "../types.js";
+import { isInstance, Json, Node, SlotSpec, TemplateNode, WidgetType } from "../types.js";
 
 import { attrsSection, attrsShape } from "./components.js";
 import { valueEditor } from "./editors.js";
@@ -80,6 +80,9 @@ export function leftShape(editor: Editor): string {
         .map((s) => w.id + ":" + s.name);
     }),
     fold: fold.revision(),
+    /* the instance rows list their component's own subtree, so a recompiled registry
+       (a component edited, a built-in forked) is new rows */
+    registry: editor.registry?.version ?? 0,
     /* findings pin icons on rows and cards, so their coming and going is structure */
     wdiag: widgets.flatMap((w) =>
       editor.diagFor(w.id).map((d) => w.id + ":" + d.code + ":" + d.message),
@@ -115,14 +118,20 @@ function hoverable(editor: Editor, row: HTMLElement, id: number): HTMLElement {
 }
 
 /* ONE ROW FOR ONE NODE, whatever it is. An instance shows its type's glyph and its type
- * as the fallback label; a plain frame shows its layout glyph; a leaf shows its kind's.
- * An instance's own subtree belongs to the component it names, so it is not listed here —
- * it is entered (double-click) rather than unfolded, which is the difference between
- * editing this placement and editing every placement at once. */
+ * as the fallback label; a box shows the box glyph; a leaf shows its kind's.
+ *
+ * AN INSTANCE'S SUBTREE IS SHOWN — the component's own nodes, from the served template —
+ * but it is not THIS page's to touch: the rows are dimmed, they select the instance
+ * rather than themselves, and editing them means entering the widget's own context
+ * (which edits every placement at once, and will say so). Showing the whole tree while
+ * fencing the selection is the difference between hiding structure and protecting it. */
 function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
   const key = "n" + node.id;
   const instance = isInstance(node);
   const kids = instance ? [] : node.children ?? [];
+  const template = instance
+    ? (typeOf(editor.registry, node.type ?? "")?.template?.children ?? [])
+    : [];
   const open = layerOpen(key, true);
   const current =
     editor.view.selection.indexOf(node.id) >= 0 && (!editor.view.part || !instance);
@@ -135,7 +144,9 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
     key,
     depth,
     (instance ? "widget" : node.kind) + (current ? " current" : ""),
-    kids.length ? { open, toggle: () => toggleLayer(editor, key, true) } : null,
+    kids.length || template.length
+      ? { open, toggle: () => toggleLayer(editor, key, true) }
+      : null,
     [
       el("span", { class: "layer-glyph", html: iconMarkup(glyphOf(node), 16, 1.5) }),
       label,
@@ -145,6 +156,34 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
   ), node.id);
   const rows = [row];
   if (open) for (const child of kids) rows.push(...nodeRows(editor, child, depth + 1));
+  if (open && instance)
+    for (const child of template)
+      rows.push(...templateRows(editor, node.id, child, depth + 1, "t" + node.id));
+  return rows;
+}
+
+/* a component-internal row: real structure, not this page's. It carries no node id — the
+ * component owns these — so it selects the INSTANCE, drags nowhere, and wears `.tpl` to
+ * say it is being looked at rather than held. */
+function templateRows(editor: Editor, instanceId: number, node: TemplateNode,
+                      depth: number, prefix: string): HTMLElement[] {
+  const key = prefix + "." + (node.name || node.kind);
+  const row = hoverable(editor, treeRow(
+    key,
+    depth,
+    "tpl " + node.kind,
+    null,
+    [
+      el("span", { class: "layer-glyph",
+                   html: iconMarkup(node.kind === "frame" ? "frame-free" : "node-" + node.kind,
+                                    16, 1.5) }),
+      el("span", { class: "layer-label", text: node.name || node.kind }),
+    ],
+    () => editor.select([instanceId]),
+  ), instanceId);
+  const rows = [row];
+  for (const child of node.children ?? [])
+    rows.push(...templateRows(editor, instanceId, child, depth + 1, key));
   return rows;
 }
 

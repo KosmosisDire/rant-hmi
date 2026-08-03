@@ -127,6 +127,15 @@
   color: var(--ink);
 }
 
+/* A COMPONENT'S OWN NODES under an instance row: shown, and visibly not this page's —
+   dimmed, ordinary weight, and they answer for the instance (clicking one selects it;
+   editing them is entering the widget). The whole tree is on display; only the page's
+   own rows are in reach. */
+.layer-row.tpl {
+  color: var(--dim);
+  font-weight: 400;
+}
+
 .layer-row .badge {
   margin-left: auto;
 }
