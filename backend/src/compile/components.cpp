@@ -351,7 +351,6 @@ Json compile_node(const Json& node, const std::string& path, const Walk& walk, S
         return out;
     }
 
-    out["layout"] = str_or(node, "layout", "free");
     out["children"] = Json::array();
     for (const Json& child : node.value("children", Json::array())) {
         if (!child.is_object()) continue;
@@ -433,8 +432,16 @@ Json compile_component(const Json& component, Sink& sink) {
     root_node["kind"] = "frame";
     Json tmpl = compile_node(root_node, "", walk, sink);
 
+    /* THE DESIGN FRAME RIDES THE TYPE: a child's x/y/w/h are px of this box, and the
+     * view divides by it to fit the instance's own box — so a served template without
+     * its design frame would be numbers with no space to mean anything in */
+    const double design_w = component.value("design_w", 240.0);
+    const double design_h = component.value("design_h", 120.0);
+
     return Json{{"name", name}, {"slots", std::move(walk.slots)},
                 {"events", std::move(events)}, {"template", std::move(tmpl)},
+                {"design_w", design_w > 0 ? design_w : 240.0},
+                {"design_h", design_h > 0 ? design_h : 120.0},
                 {"behavior", std::move(behavior)}};
 }
 
@@ -446,7 +453,13 @@ Json derive(const Json& doc_components, std::vector<Diag>* diags) {
         Sink sink;
         sink.builtin = true;
         sink.component = component.value("name", "");
-        types.push_back(compile_component(component, sink));
+        try {
+            types.push_back(compile_component(component, sink));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "hmi: BUILT-IN '%s' compile threw: %s\n",
+                         sink.component.c_str(), e.what());
+            std::abort();
+        }
         names.push_back(component.value("name", ""));
     }
 

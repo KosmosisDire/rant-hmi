@@ -76,10 +76,10 @@ void test_defaults() {
     Document d = Document::make_default();
     CHECK(d.version() == 1);
     CHECK(d.root["pages"].size() == 1);
-    /* the page is a LAYOUT: a header band over a body, and every widget lives inside one
-       of them. Nothing sits loose at the top level any more. */
-    CHECK(d.root["pages"][0]["children"].size() == 2);
-    /* no artboard: the document says what is on the page, never how big the screen is */
+    /* the page is an ARRANGEMENT ON THE ARTBOARD: the header band, the main pane and the
+       side panes each sit at their own place, and every widget lives inside one of them */
+    CHECK(d.root["pages"][0]["children"].size() == 4);
+    /* the artboard is a constant of the system (1408 x 792), not document data */
     CHECK(d.root.find("canvas") == d.root.end());
 
     /* every node got an id, and the index resolves each one to its place */
@@ -104,28 +104,27 @@ void test_defaults() {
        other field, so it lives in `attrs` and not in a prop of its own */
     CHECK(w["attrs"].is_object());
 
-    /* the header: a surfaced band, held to its own height by a floor rather than taking
-       a share of the page */
+    /* the header: a surfaced band across the top of the artboard, at its own place */
     Json& header = named_frame(d, "Header");
     CHECK(header["kind"] == "frame");
-    CHECK(header["layout"] == "row");
+    /* a frame is a BOX: there is no layout mode any more, only a place */
+    CHECK(header.find("layout") == header.end());
     CHECK(header["type"] == "");     /* a plain frame names no component */
     CHECK(header["attrs"]["surface"] == "$surface-2");
-    CHECK(header["attrs"]["grow"] == "0");
-    CHECK(header["attrs"]["min"] == "52");
+    CHECK(header["attrs"]["x"] == "0");
+    CHECK(header["attrs"]["w"] == "1408");
+    CHECK(header["attrs"]["h"] == "66");
     const NodeEntry* fe = d.find(id_of(header));
     CHECK(fe && fe->kind == Kind::Node);
     /* a frame's child is indexed under the FRAME as parent, not the page */
     const NodeEntry* ce = d.find(id_of(header["children"][0]));
     CHECK(ce && ce->parent == id_of(header) && ce->list == "children");
 
-    /* the body splits two-to-one between the main column and the side column of panes */
-    Json& body = named_frame(d, "Body");
-    CHECK(body["layout"] == "row");
-    CHECK(body["children"].size() == 2);
-    /* every field is expression text in one map, a literal being the degenerate case */
-    CHECK(named_frame(d, "Main")["attrs"]["grow"] == "2");
-    CHECK(named_frame(d, "Side")["attrs"]["grow"] == "1");
+    /* the main pane and the side panes each carry their own box, every value on the
+       22px grid; every field is expression text in one map, a literal the degenerate case */
+    CHECK(named_frame(d, "Main")["attrs"]["x"] == "22");
+    CHECK(named_frame(d, "Main")["attrs"]["w"] == "880");
+    CHECK(named_frame(d, "Lamps")["attrs"]["x"] == "924");
     CHECK(named_frame(d, "Status group")["children"].size() == 2);
     /* a name is a LABEL until something under it needs an address, so a page's frames
        are free to be called what they are */
@@ -160,10 +159,11 @@ void test_round_trip() {
     Json& fresh = d.root["pages"][0]["children"][0];
     CHECK(fresh["name"] == "New");
     /* the op named kind/type/name only, so `slots`, `attrs` and the frame variant's own
-       lists prove the default fill still runs */
+       lists prove the default fill still runs — and no `layout` appears, because the
+       vocabulary no longer has one */
     CHECK(fresh["slots"].is_object());
     CHECK(fresh["attrs"].is_object());
-    CHECK(fresh["layout"] == "free");
+    CHECK(fresh.find("layout") == fresh.end());
     CHECK(fresh["feeds"].is_array());
 
     const char* path = "hmi_doc_test.tmp.json";
@@ -463,7 +463,7 @@ void test_tokens() {
 
     /* the same rewrite reaches INTO an expression, which is the case a whole-string
        comparison could never have handled */
-    const uint64_t body_id = id_of(named_frame(d, "Body"));
+    const uint64_t body_id = id_of(named_frame(d, "Lamps"));
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", body_id}, {"key", "attrs"},
                              {"value", Json{{"surface", "true.pick($pane, $ink)"}}}}}, err),
               err);
@@ -508,14 +508,12 @@ void test_frames() {
                                  {"list", "children"},
                                  {"node", {{"kind", "frame"},
                                            {"name", "Fresh"},
-                                           {"layout", "col"},
                                            {"children", Json::array({
                                                Json{{"kind", "frame"}, {"type", "Label"}}})}}}}});
     CHECK_MSG(apply_ops(d, add, r, err), err);
     const uint64_t frame_id = r.ops[0]["node"]["id"].get<uint64_t>();
     const Json& frame = *d.node(frame_id);
     CHECK(frame["kind"] == "frame");
-    CHECK(frame["layout"] == "col");
     /* UNDRESSED AND UNPLACED UNTIL SOMEONE SAYS OTHERWISE: an unset attr is absent, not
        set to something — the defaults live in the served vocabulary (registry/attrs.h),
        so the document stays what the author actually wrote */
@@ -524,22 +522,15 @@ void test_frames() {
     CHECK(frame["children"].size() == 1);
     const uint64_t widget_in_frame = id_of(frame["children"][0]);
     const NodeEntry* we = d.find(widget_in_frame);
-    /* a frame's child is indexed under the FRAME, not the page: the frame is what lays
-       it out, so the frame must be its structural parent */
+    /* a frame's child is indexed under the FRAME, not the page: the frame is what holds
+       it, so the frame must be its structural parent */
     CHECK(we && we->parent == frame_id && we->list == "children");
 
-    /* the four modes: free is the general one (children place themselves), row/col queue,
-       grid tracks. "stack" dissolved into free — an overlay is free children filling — and
-       "none" was the escape hatch back to coordinates; both are refused now. */
-    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", frame_id}, {"key", "layout"},
-                             {"value", "grid"}}}, err), err);
-    CHECK((*d.node(frame_id))["layout"] == "grid");
+    /* THERE IS NO LAYOUT MODE: a frame is a box, its children place themselves, and the
+       prop that used to pick row/col/grid left the vocabulary — writing it is refused
+       like any unknown prop, which is what keeps stale clients honest */
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", frame_id}, {"key", "layout"},
-                          {"value", "stack"}}}, err));
-    CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", frame_id}, {"key", "layout"},
-                          {"value", "none"}}}, err));
-    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", frame_id}, {"key", "layout"},
-                             {"value", "col"}}}, err), err);
+                          {"value", "col"}}}, err));
 
     /* insert a SECOND widget straight into the frame: a nested insert, not a page one */
     ApplyResult r2;
@@ -610,7 +601,7 @@ void test_frames() {
                           {"key", "kind"}, {"value", "text"}}}, err));
     CHECK(err.find("Label") != std::string::npos);
     CHECK((*d.node(an_instance))["kind"] == "frame");
-    const uint64_t holder = id_of(named_frame(d, "Body"));
+    const uint64_t holder = id_of(named_frame(d, "Main"));
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", holder},
                           {"key", "kind"}, {"value", "icon"}}}, err));
     CHECK(err.find("children") != std::string::npos);
@@ -628,10 +619,8 @@ void test_reparent() {
     std::string err;
     const uint64_t page_id = id_of(d.root["pages"][0]);
     const uint64_t main_col = id_of(named_frame(d, "Main"));
-    const uint64_t side = id_of(named_frame(d, "Side"));
     const uint64_t lamps = id_of(named_frame(d, "Lamps"));
     const uint64_t status = id_of(named_frame(d, "Status group"));
-    const uint64_t body = id_of(named_frame(d, "Body"));
     const uint64_t pump = id_of(labelled(d, "Pump"));
     const uint64_t setpoint = id_of(labelled(d, "Setpoint"));
 
@@ -654,7 +643,7 @@ void test_reparent() {
     CHECK_MSG(apply_ops(d, into, down, err), err);
     CHECK(id_of((*d.node(lamps))["children"][1]) == pump);
     CHECK((*d.node(lamps))["children"].size() == 3);
-    CHECK(d.root["pages"][0]["children"].size() == 2);   /* the page is frames again */
+    CHECK(d.root["pages"][0]["children"].size() == 4);   /* the page is frames again */
     const NodeEntry* pe = d.find(pump);
     CHECK(pe && pe->parent == lamps && pe->list == "children" && pe->index == 1);
     /* the widget travelled whole: its label, slots and lists came with it */
@@ -681,12 +670,12 @@ void test_reparent() {
     CHECK_MSG(apply_ops(d, add, made, err), err);
     const uint64_t loose = made.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(id_of(d.root["pages"][0]["children"][0]) == loose);
-    CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", body}, {"index", 0}}}, err),
+    CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", lamps}, {"index", 0}}}, err),
               err);
-    CHECK(id_of((*d.node(body))["children"][0]) == loose);
+    CHECK(id_of((*d.node(lamps))["children"][0]) == loose);
     CHECK((*d.node(loose))["name"] == "Loose");         /* not a shifted neighbour */
-    CHECK((*d.node(body))["children"].size() == 3);
-    CHECK(d.root["pages"][0]["children"].size() == 2);
+    CHECK((*d.node(lamps))["children"].size() == 4);
+    CHECK(d.root["pages"][0]["children"].size() == 3);
 
     /* the same parent supplied is a plain reorder: the erase happens first, so an index
        past the node's own position lands where the author pointed */
@@ -697,17 +686,18 @@ void test_reparent() {
 
     /* REFUSALS, each leaving the document exactly as it was */
     const uint64_t before = d.version();
-    CHECK(!apply(d, {Json{{"op", "move"}, {"node", side}, {"parent", lamps}, {"index", 0}}}, err));
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", main_col}, {"parent", status}, {"index", 0}}},
+                 err));
     CHECK(err.find("subtree") != std::string::npos);
-    CHECK(!apply(d, {Json{{"op", "move"}, {"node", side}, {"parent", side}, {"index", 0}}}, err));
+    CHECK(!apply(d, {Json{{"op", "move"}, {"node", status}, {"parent", status}, {"index", 0}}}, err));
     const uint64_t a_var = id_of(*global_named(d, "flow"));
     CHECK(!apply(d, {Json{{"op", "move"}, {"node", a_var}, {"parent", page_id}, {"index", 0}}}, err));
     CHECK(!apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", setpoint}, {"index", 0}}}, err));
     CHECK(!apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", 999999}, {"index", 0}}}, err));
     CHECK(!apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", page_id}}}, err));
     CHECK_EQ(d.version(), before);
-    CHECK(d.find(side) != nullptr && d.find(lamps) != nullptr);
-    CHECK(id_of((*d.node(body))["children"][0]) == loose);
+    CHECK(d.find(status) != nullptr && d.find(lamps) != nullptr);
+    CHECK(id_of((*d.node(lamps))["children"][0]) == loose);
 
     /* A PAGE still reorders, because the kind rule is the REPARENT form's: nothing else in
        the document may choose its parent, but everything may still choose its turn. */
@@ -728,9 +718,11 @@ void test_reparent() {
     CHECK(!apply(d, {Json{{"op", "move"}, {"node", page_id}, {"parent", kDocId}, {"index", 0}}}, err));
 }
 
-/* WRAP: one request op, because the frame it creates is named by an id only the backend
- * can issue. What comes back is the insert and the moves it performed, in that order. */
-void test_wrap() {
+/* GROUP: one request op, because the box it creates is named by an id only the backend
+ * can issue. What comes back is the insert and the moves it performed, in that order.
+ * The box's geometry is the CLIENT's to compute (it knows where the children render), so
+ * the op carries it as ordinary attr text and the backend places nothing itself. */
+void test_group() {
     Document d = Document::make_default();
     std::string err;
     const uint64_t main_col = id_of(named_frame(d, "Main"));
@@ -740,12 +732,13 @@ void test_wrap() {
     const uint64_t pump = id_of(labelled(d, "Pump"));
     const uint64_t reset = id_of(labelled(d, "Reset"));
 
-    /* two of the four, named back to front: the frame lands at the FIRST of them and
-       holds them in document order regardless */
+    /* two of the four, named back to front: the box lands at the FIRST of them (z-order
+       survives the grouping) and holds them in document order regardless */
     ApplyResult r;
-    Json batch = ops_of({Json{{"op", "wrap"},
+    Json batch = ops_of({Json{{"op", "group"},
                               {"nodes", Json::array({flow, setpoint})},
-                              {"layout", "row"}}});
+                              {"attrs", Json{{"x", "22"}, {"y", "110"},
+                                             {"w", "836"}, {"h", "264"}}}}});
     CHECK_MSG(apply_ops(d, batch, r, err), err);
     const Json& main_kids = (*d.node(main_col))["children"];
     CHECK(main_kids.size() == 3);
@@ -754,47 +747,43 @@ void test_wrap() {
     const Json& inside = (*d.node(frame_id))["children"];
     CHECK(inside.size() == 2);
     CHECK(id_of(inside[0]) == setpoint && id_of(inside[1]) == flow);
-    CHECK((*d.node(frame_id))["name"] == "Row" && (*d.node(frame_id))["layout"] == "row");
+    CHECK((*d.node(frame_id))["name"] == "Group");
+    /* the geometry the client sent is the box's own attrs, expression text like any */
+    CHECK((*d.node(frame_id))["attrs"]["x"] == "22");
+    CHECK((*d.node(frame_id))["attrs"]["h"] == "264");
 
-    /* the echo is an insert of an EMPTY frame and then one addressed move per node, so a
+    /* the echo is an insert of a childless box and then one addressed move per node, so a
        client applying it mechanically never holds the same widget twice */
     CHECK(r.ops.size() == 3);
     CHECK(r.ops[0]["op"] == "insert" && r.ops[0]["parent"] == main_col &&
           r.ops[0]["list"] == "children" && r.ops[0]["index"] == 1);
     CHECK(r.ops[0]["node"]["children"].is_array() && r.ops[0]["node"]["children"].empty());
-    /* and the frame arrives PREPARED: every default the document holds is already on it —
-       which for a node is its lists and an empty attr map, the dressing being absent
-       rather than set to nothing */
-    CHECK(r.ops[0]["node"]["attrs"].is_object() && r.ops[0]["node"]["attrs"].empty());
+    /* and the box arrives PREPARED: every default the document holds is already on it */
+    CHECK(r.ops[0]["node"]["attrs"]["w"] == "836");
     CHECK(r.ops[0]["node"]["feeds"].is_array() && r.ops[0]["node"]["type"] == "");
     CHECK(r.ops[1]["op"] == "move" && r.ops[1]["node"] == setpoint &&
           r.ops[1]["parent"] == frame_id && r.ops[1]["list"] == "children" &&
           r.ops[1]["index"] == 0);
     CHECK(r.ops[2]["op"] == "move" && r.ops[2]["node"] == flow && r.ops[2]["index"] == 1);
 
-    /* one node is a wrap too: grouping a single widget so it can be padded or surfaced */
-    CHECK_MSG(apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({reset})}, {"layout", "free"}}},
-                    err), err);
+    /* one node groups too — a box around one widget, to surface or to move as one — and
+       with no attrs sent the box simply arrives undressed */
+    CHECK_MSG(apply(d, {Json{{"op", "group"}, {"nodes", Json::array({reset})}}}, err), err);
     const Json& after = (*d.node(main_col))["children"];
     CHECK(after.size() == 3);
     const uint64_t solo = id_of(after[2]);
-    CHECK((*d.node(solo))["name"] == "Group" && (*d.node(solo))["layout"] == "free");
+    CHECK((*d.node(solo))["name"] == "Group");
+    CHECK((*d.node(solo))["attrs"].is_object() && (*d.node(solo))["attrs"].empty());
     CHECK(id_of((*d.node(solo))["children"][0]) == reset);
 
     /* REFUSALS: siblings or nothing, and every id named once */
     const uint64_t before = d.version();
-    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({header, pump})},
-                          {"layout", "row"}}}, err));
+    CHECK(!apply(d, {Json{{"op", "group"}, {"nodes", Json::array({header, pump})}}}, err));
     CHECK(err.find("siblings") != std::string::npos);
-    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array()}, {"layout", "row"}}}, err));
-    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({pump, pump})},
-                          {"layout", "row"}}}, err));
+    CHECK(!apply(d, {Json{{"op", "group"}, {"nodes", Json::array()}}}, err));
+    CHECK(!apply(d, {Json{{"op", "group"}, {"nodes", Json::array({pump, pump})}}}, err));
     const uint64_t a_var = id_of(*global_named(d, "flow"));
-    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({a_var})}, {"layout", "row"}}}, err));
-    /* the layouts come from the frame variant's own list, so a mode that dissolved
-       ("stack", now expressed as free children filling) is refused here with no second
-       list to remember */
-    CHECK(!apply(d, {Json{{"op", "wrap"}, {"nodes", Json::array({pump})}, {"layout", "stack"}}}, err));
+    CHECK(!apply(d, {Json{{"op", "group"}, {"nodes", Json::array({a_var})}}}, err));
     CHECK_EQ(d.version(), before);
     CHECK((*d.node(main_col))["children"].size() == 3);
     CHECK(d.find(pump) != nullptr);
@@ -846,7 +835,7 @@ int main() {
     test_structure_ops();
     test_frames();
     test_reparent();
-    test_wrap();
+    test_group();
     test_rename();
     test_expr_rewrite();
     test_retype();

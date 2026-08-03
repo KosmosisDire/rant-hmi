@@ -168,8 +168,9 @@ int main() {
     if (!welcome || !snapshot) return check::summary("sync_test");
     CHECK((*welcome)["proto"] == kProto);
     CHECK((*snapshot)["version"] == app.document().version());
-    /* the page is a layout: a header band over a body, everything else nested inside */
-    CHECK((*snapshot)["doc"]["pages"][0]["children"].size() == 2);
+    /* the page is an arrangement on the artboard: the header band, the main pane and
+       the side panes, everything else nested inside them */
+    CHECK((*snapshot)["doc"]["pages"][0]["children"].size() == 4);
     CHECK((*snapshot)["registry"]["types"].size() == 12);
     CHECK((*snapshot)["live"]["values"].is_object());
     /* Compile findings ride the snapshot. They are produced once, at startup, so a view
@@ -242,8 +243,8 @@ int main() {
     if (echo) {
         CHECK((*echo)["ops"][0]["node"]["id"].is_number());
         CHECK((*echo)["ops"][0]["node"]["slots"].is_object());
-        /* appended after the header band and the body */
-        CHECK((*echo)["ops"][0]["index"] == 2);
+        /* appended after the four top-level panes */
+        CHECK((*echo)["ops"][0]["index"] == 4);
     }
 
     /* a rejection always brings a snapshot with it, so a view can never sit desynced */
@@ -370,7 +371,6 @@ int main() {
                                                {"shape", "color"},
                                                {"default", "#ff0000"},
                                                {"group", "appearance"}}})},
-                   {"layout", "free"},
                    {"children",
                     Json::array({Json{{"kind", "frame"},
                                       {"name", "lamp"},

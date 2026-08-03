@@ -417,9 +417,8 @@ Document component_document() {
             Json{{"id", 102}, {"name", "fill_color"}, {"shape", "color"},
                  {"default", "$accent"}, {"group", "appearance"}, {"editor", "color"}},
         })},
-        /* THE COMPONENT IS THE ROOT FRAME: its own layout and attrs describe the box an
+        /* THE COMPONENT IS THE ROOT FRAME: its own attrs describe the box an
            instance renders as, and its children are what stands inside it */
-        {"layout", "free"},
         {"children", Json::array({
             Json{{"id", 111}, {"kind", "frame"}, {"name", "face"},
                  {"attrs", Json{{"surface", "fill_color"},
@@ -437,7 +436,6 @@ Document component_document() {
         })},
         {"events", Json::array({Json{{"name", "tap"}, {"x", "bool"},
                                      {"value", "!widget.value"}}})},
-        {"layout", "free"},
         {"children", Json::array({
             Json{{"id", 211}, {"kind", "frame"}, {"name", "lamp"},
                  {"attrs", Json{{"surface", "#ff0000"}}}},
@@ -532,7 +530,6 @@ void test_part_properties() {
             Json{{"id", 401}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
                  {"group", "value"}},
         })},
-        {"layout", "free"},
         {"children", Json::array({
             Json{{"id", 420}, {"kind", "frame"}, {"name", "gauge"},
                  /* declared on the frame, so BOTH its children read it */
@@ -763,7 +760,7 @@ void test_attr_vocabulary() {
         Json root = {
             {"version", 1}, {"next_id", 1000},
             {"components", Json::array({Json{
-                {"id", 640}, {"name", "Vocab3"}, {"layout", "free"},
+                {"id", 640}, {"name", "Vocab3"},
                 {"children", std::move(children)}}})},
             {"pages", Json::array()},
         };

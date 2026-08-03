@@ -103,9 +103,14 @@ const std::vector<NodeSpec>& table() {
         };
         node.lists = {{"props", Kind::PropDef}};
         node.variants = {
+            /* A FRAME IS A BOX, and a box is all a frame is: it can hold children (that
+               is grouping), and it can wear a surface (that is a pane). There is no
+               layout mode — everything sits at its own x/y in the one static px space,
+               and sibling ORDER is z-order. The arrangement vocabulary (row/col/grid,
+               grow, gap...) lived here once and was deliberately removed: it made the
+               picture a negotiation, and the artboard is not one. */
             {"frame",
-             {enumer("layout", {"free", "row", "col", "grid"}, "free"),
-              /* "" = a plain frame; a component name = an instance of it */
+             {/* "" = a plain frame; a component name = an instance of it */
               text("type", ""),
               /* per-instance slot values, NESTED like the component's own nodes: a
                  top-level property is a key here, a nested node's property a key inside an
@@ -232,15 +237,14 @@ const std::vector<NodeSpec>& table() {
         component.props = {
             text("name", "Component"),
             array("events"),
-            /* the DESIGN FRAME: the size a component is AUTHORED at — its natural size,
-             * the one the envelope contract will report. Purely an authoring convenience
-             * for picking a sensible working size; it is not an instance size, and an
-             * instance takes whatever box its parent gives it. A built-in carries no
-             * document node and so no design frame either; the frontend falls back to
-             * this same 240 x 120 default for one. */
+            /* the DESIGN FRAME: the px space a component's internals are AUTHORED in.
+             * A child's x/y/w/h are canvas px of THIS box, and an instance's own box
+             * scales them per axis — so the design frame is the component's whole
+             * coordinate system, not just a preview convenience. An instance still
+             * takes whatever box it is given. A built-in carries no document node;
+             * the same 240 x 120 default stands in for one. */
             num("design_w", 240),
             num("design_h", 120),
-            enumer("layout", {"free", "row", "col", "grid"}, "free"),
             object("attrs", Json::object()),
             object("interact", nullptr),
         };

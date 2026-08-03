@@ -37,9 +37,9 @@ using Str = std::string;
  * name is UNIQUE AMONG SIBLINGS and the names joined with "." from the root are the
  * node's ADDRESS, which is how a property is reached and stored. */
 
-Json frame(const char* layout, const char* name, Json attrs, Json children = Json::array(),
+Json frame(const char* name, Json attrs, Json children = Json::array(),
            Json interact = nullptr) {
-    Json node = Json{{"kind", "frame"}, {"name", name}, {"layout", layout},
+    Json node = Json{{"kind", "frame"}, {"name", name},
                      {"attrs", std::move(attrs)}, {"children", std::move(children)}};
     if (!interact.is_null()) node["interact"] = std::move(interact);
     return node;
@@ -229,7 +229,6 @@ Json box_slots() {
         slot("border", "color", "#00000000", "frame", "color"),
         slot("border_w", "num", 1, "frame"),
         slot("radius", "num", 4, "frame"),
-        slot("pad", "num", 6, "frame"),
     });
 }
 
@@ -250,8 +249,7 @@ Json box_attrs() {
                 {"surface", "surface"},
                 {"border", "border"},
                 {"border_w", "border_w"},
-                {"radius", "radius"},
-                {"pad", "pad"}};
+                {"radius", "radius"}};
 }
 
 Json with(Json base, Json extra) {
@@ -277,12 +275,20 @@ Json compose_slots(Json base, std::initializer_list<Json> own) {
 }
 
 /* ONE COMPONENT = one pre-made frame: its own props, events and behavior, plus the
- * layout, attrs and children of the box an instance renders as. There is no wrapper node
- * and no "one root part" rule — the component record IS the root. */
-Json component(const char* name, Json props, Json events, const char* layout, Json attrs,
-               Json children, Json behavior = Json::array(), Json interact = nullptr) {
+ * attrs and children of the box an instance renders as. There is no wrapper node and no
+ * "one root part" rule — the component record IS the root.
+ *
+ * THE DESIGN FRAME (design_w x design_h, canvas px, on the 22px grid) is the component's
+ * NATURAL SIZE: the size it is authored against, previewed at, and dropped onto a page
+ * at. It is not a coordinate space — the internals place themselves in FRACTIONS of
+ * their parent, which is what lets one authoring render honestly at every box an
+ * instance is given (a component is scalable by nature; the page is the static thing). */
+Json component(const char* name, int design_w, int design_h, Json props, Json events,
+               Json attrs, Json children, Json behavior = Json::array(),
+               Json interact = nullptr) {
     Json out = Json{{"name", name}, {"props", std::move(props)},
-                    {"events", std::move(events)}, {"layout", layout},
+                    {"events", std::move(events)},
+                    {"design_w", design_w}, {"design_h", design_h},
                     {"attrs", std::move(attrs)}, {"children", std::move(children)},
                     {"behavior", std::move(behavior)}};
     if (!interact.is_null()) out["interact"] = std::move(interact);
@@ -301,7 +307,7 @@ Json press_interact() {
 }
 
 Json button_component() {
-    return component("Button",
+    return component("Button", 176, 66,
                 compose_slots(tile_base(), {
                     /* the button's face IS its root frame: surface, border and radius all
                      * land on the thing the user presses */
@@ -315,17 +321,16 @@ Json button_component() {
                 Json::array({event("tap", "bool"), event("release", "bool"),
                              event("press", "bool"), event("pressrelease", "bool"),
                              event("held", "bool")}),
-                "row", with(box_attrs(), Json{{"align", "'center'"},
-                                              {"justify", "'center'"}}),
+                box_attrs(),
                 Json::array({
                     /* the caption is the LABEL's, not the button's: it is the one node
-                     * that draws text, so it owns the text, its colour and its size */
+                     * that draws text, so it owns the text, its colour and its size.
+                     * It fills the face — the text block centres its own line. */
                     owns(text("label", Json{{"text", "text"},
                                             {"color", "text_color"},
                                             {"size", "text_size"},
                                             {"align", "align"},
-                                            {"bold", "true"},
-                                            {"grow", "0"}}),
+                                            {"bold", "true"}}),
                          Json::array({slot("text", "text", "", "appearance"),
                                       /* a literal, not $ink: the label sits on the accent
                                        * face, which is the same colour in both modes, so
@@ -338,7 +343,7 @@ Json button_component() {
 }
 
 Json toggle_component() {
-    return component("Toggle",
+    return component("Toggle", 132, 66,
                 compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
                 }),
@@ -349,14 +354,19 @@ Json toggle_component() {
                              event("release", "bool", "!widget.value"),
                              event("press", "bool", "!widget.value"),
                              event("held", "bool", "!widget.value")}),
-                "row", with(box_attrs(), Json{{"align", "'center'"},
-                                              {"justify", "'center'"}}),
+                box_attrs(),
                 Json::array({
                     /* the interact rides the PILL, not the root: the pill is what the
                        pointer must be inside, so a visible frame behind the toggle never
-                       toggles it */
-                    owns(frame("free", "pill",
+                       toggles it. Centred in the box, sized by height, twice as wide as
+                       tall by its lock. */
+                    owns(frame("pill",
                                Json{{"aspect", "2"},
+                                    {"h", "0.8"},
+                                    {"y", "0.5"},
+                                    {"x", "0.5"},
+                                    {"origin_x", "0.5"},
+                                    {"origin_y", "0.5"},
                                     /* the track shows BOTH states, so it owns both
                                        colours: `fill_color` is what it wears when on */
                                     {"surface", "value.pick(fill_color, track_color)"},
@@ -365,7 +375,7 @@ Json toggle_component() {
                                    /* the knob is placed, not laid out: its centre slides
                                       between two ends of the pill, which is the whole of
                                       what a toggle animates */
-                                   owns(frame("free", "knob",
+                                   owns(frame("knob",
                                               Json{{"surface", "handle_color"},
                                                    {"radius", "999"},
                                                    {"aspect", "1"},
@@ -392,10 +402,11 @@ Json toggle_component() {
  * axis by its own copy's fraction. This is what the `ticks` draw kind and its shared JS
  * body used to do, in the vocabulary every other node already uses. */
 Json linear_scale() {
-    return owns(frame("free", "scale",
-                      Json{{"grow", "0"}, {"min", "14"}},
+    /* the strip under the track: the bottom 28% of the slider's box */
+    return owns(frame("scale",
+                      Json{{"x", "0"}, {"y", "0.74"}, {"w", "1"}, {"h", "0.26"}},
                       Json::array({
-                          frame("free", "mark",
+                          frame("mark",
                                 Json{{"repeat", "divisions"},
                                      {"surface", "$scale"},
                                      {"w", "0.004"},
@@ -434,7 +445,7 @@ Json slider_component() {
                      {"y", "0.5"},
                      {"origin_y", "0.5"},
                      {"w", "0.4"}};
-    return component("Slider",
+    return component("Slider", 396, 66,
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
@@ -442,19 +453,23 @@ Json slider_component() {
                     slot("step", "num", 0, "config"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
-                "col", with(box_attrs(), Json{{"gap", "4"}}),
+                box_attrs(),
                 Json::array({
                     /* the control IS the track: it carries the drag, wears the track
-                       colour, and holds the fill that marks the value */
-                    owns(frame("free", "control",
+                       colour, and holds the fill that marks the value. It keeps the whole
+                       box until the scale shows, then leaves it the bottom strip. */
+                    owns(frame("control",
                                Json{{"surface", "track_color"},
                                     {"radius", "control_radius"},
                                     {"clip", "true"},
-                                    {"min", "16"}},
+                                    {"x", "0"},
+                                    {"y", "0"},
+                                    {"w", "1"},
+                                    {"h", "scale.shown.pick(0.7, 1)"}},
                                Json::array({
                                    /* the fill IS the handle: one bar whose leading edge is
                                       the value */
-                                   frame("free", "fill",
+                                   frame("fill",
                                          Json{{"surface", "fill_color"},
                                               {"radius", "control_radius"},
                                               {"x", "0"},
@@ -498,10 +513,9 @@ Json slider_component() {
 }
 
 Json readout_component() {
-    return component("Readout",
+    return component("Readout", 264, 88,
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
-                    align_slot("center"),
                 }),
                 /* a press on a Readout is about the value it is SHOWING, and the backend
                    knows that value: the view never has to supply its own copy */
@@ -509,18 +523,20 @@ Json readout_component() {
                              event("release", "num", "widget.value"),
                              event("press", "num", "widget.value"),
                              event("held", "num", "widget.value")}),
-                "row", with(box_attrs(), Json{{"align", "'center'"},
-                                              {"justify", "align"},
-                                              {"gap", "4"}}),
+                box_attrs(),
                 Json::array({
                     /* named `reading`, not `value`: a node's name and a component-level
                        property share the slots object's top level, so a node named for the
-                       property it displays would collide with it */
+                       property it displays would collide with it. The value keeps the left
+                       two thirds and reads to its right edge; the units answer from just
+                       past it — the classic value-unit pair, with no row to negotiate. */
                     owns(text("reading", Json{{"text", "value.toFixed(decimals)"},
                                               {"color", "text_color"},
                                               {"size", "text_size"},
                                               {"bold", "true"},
-                                              {"grow", "0"}}),
+                                              {"align", "'end'"},
+                                              {"x", "0"}, {"y", "0"},
+                                              {"w", "0.64"}, {"h", "1"}}),
                          Json::array({slot("text_color", "color", "$ink", "appearance", "color"),
                                       slot("text_size", "num", 22, "appearance"),
                                       slot("decimals", "num", 1, "config")})),
@@ -529,7 +545,9 @@ Json readout_component() {
                     owns(text("units", Json{{"text", "text"},
                                             {"color", "text_color"},
                                             {"size", "text_size"},
-                                            {"grow", "0"},
+                                            {"align", "'start'"},
+                                            {"x", "0.68"}, {"y", "0"},
+                                            {"w", "0.32"}, {"h", "1"},
                                             {"show", "text != ''"}}),
                          Json::array({slot("text", "text", "", "appearance"),
                                       slot("text_color", "color", "$ink-muted", "appearance",
@@ -546,7 +564,7 @@ Json readout_component() {
 Json trend_component() {
     Json value = slot("value", "series", nullptr, "value");
     value["history"] = true;
-    return component("Trend",
+    return component("Trend", 396, 242,
                 compose_slots(tile_base(), {
                     value,
                     /* the SAMPLING is the widget's: the backend reads rate and window to
@@ -556,7 +574,7 @@ Json trend_component() {
                     slot("surface", "color", "$surface-2", "frame", "color"),
                 }),
                 Json::array(),
-                "free", box_attrs(),
+                box_attrs(),
                 Json::array({
                     owns(path("plot", Json{{"points", "hist(value)"},
                                            {"y_min", "min"},
@@ -572,7 +590,7 @@ Json trend_component() {
 }
 
 Json dropdown_component() {
-    return component("Dropdown",
+    return component("Dropdown", 264, 66,
                 compose_slots(tile_base(), {
                     /* a TypeRef naming an enum: the view expands it to the variant names,
                      * so the options can never drift from the schema */
@@ -584,19 +602,23 @@ Json dropdown_component() {
                 }),
                 /* the selection is the gesture's own payload; opening proposes nothing new */
                 Json::array({event("select", "text"), event("open", "text", "widget.value")}),
-                "row", with(box_attrs(), Json{{"align", "'center'"}, {"gap", "6"}}),
+                box_attrs(),
                 Json::array({
+                    /* the label keeps the field, less a margin and the chevron's corner */
                     owns(text("label", Json{{"text", "value"},
                                             {"color", "text_color"},
                                             {"size", "text_size"},
                                             {"align", "'start'"},
-                                            {"grow", "1"}}),
+                                            {"x", "0.05"}, {"y", "0"},
+                                            {"w", "0.78"}, {"h", "1"}}),
                          Json::array({slot("text_color", "color", "$ink", "appearance", "color"),
                                       slot("text_size", "num", 13, "appearance")})),
                     icon("chevron", Json{{"name", "'chevron-down'"},
                                          {"color", "$ink-muted"},
                                          {"aspect", "1"},
-                                         {"grow", "0"}}),
+                                         {"h", "0.4"},
+                                         {"x", "0.95"}, {"y", "0.5"},
+                                         {"origin_x", "1"}, {"origin_y", "0.5"}}),
                 }),
                 Json::array({on_event("select", {sets_slot("value", "x")})}),
                 interact("pick", Json{{"options", "options"}},
@@ -647,7 +669,7 @@ Json radial_arcs(const Str& outer, double thickness) {
     const Str a1 = "start_angle + sweep_angle";
     const Str value_a1 = "start_angle + (" + Str(kFraction) + ") * sweep_angle";
     const Str r_in = "(" + outer + ") - thickness";
-    return owns(frame("free", "arc", Json::object(),
+    return owns(frame("arc", Json::object(),
                       Json::array({
                           path("track", Json{{"fill", "track_color"}},
                                sector(a0, a1, outer, r_in)),
@@ -664,9 +686,9 @@ Json radial_scale(const Str& outer, const char* len, bool shown, bool labels_out
     const Str mark_r = "(" + outer + ") - " + len + " * 0.5";
     const Str label_r = labels_outside ? "(" + outer + ") + " + len + " * 1.6"
                                        : "(" + outer + ") - " + len + " * 2.2";
-    return owns(frame("free", "scale", Json::object(),
+    return owns(frame("scale", Json::object(),
                       Json::array({
-                          frame("free", "mark",
+                          frame("mark",
                                 Json{{"repeat", "divisions"},
                                      {"surface", "$scale"},
                                      {"w", "0.012"},
@@ -719,7 +741,7 @@ Json knob_component() {
        expression over the arc's own thickness, read by address because the thickness
        belongs to the arc that draws it */
     const Str face = "(1 - dial.arc.thickness * 2 - 0.12) * dial.scale.shown.pick(0.74, 1)";
-    return component("Knob",
+    return component("Knob", 176, 198,
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
@@ -730,17 +752,23 @@ Json knob_component() {
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
-                "col", with(box_attrs(), Json{{"align", "'center'"}, {"gap", "2"}}),
+                box_attrs(),
                 Json::array({
-                    /* the dial IS the circle: square by its aspect lock, and it carries
-                       the drag, so the whole face turns rather than just the arc */
-                    frame("free", "dial", Json{{"aspect", "1"}},
+                    /* the dial IS the circle: square by its aspect lock, centred, and it
+                       carries the drag, so the whole face turns rather than just the arc.
+                       It cedes the bottom strip to the label only when there is one. */
+                    frame("dial", Json{{"aspect", "1"},
+                                       {"h", "(label.text != '').pick(0.78, 0.94)"},
+                                       {"x", "0.5"},
+                                       {"y", "(label.text != '').pick(0.44, 0.5)"},
+                                       {"origin_x", "0.5"},
+                                       {"origin_y", "0.5"}},
                           Json::array({
                               radial_arcs("1", 0.14),
                               radial_scale("1 - dial.arc.thickness - 0.03", "0.1", false, false),
                               /* the FACE turns to the value, and the dot rides it as a
                                  real child — it orbits because its parent rotates */
-                              owns(frame("free", "face",
+                              owns(frame("face",
                                          Json{{"surface", "body_color"},
                                               {"radius", "999"},
                                               {"aspect", "1"},
@@ -751,7 +779,7 @@ Json knob_component() {
                                               {"origin_y", "0.5"},
                                               {"rotate", angle}},
                                          Json::array({
-                                             owns(frame("free", "dot",
+                                             owns(frame("dot",
                                                         Json{{"surface", "handle_color"},
                                                              {"radius", "999"},
                                                              {"aspect", "1"},
@@ -778,7 +806,9 @@ Json knob_component() {
                                             {"size", "text_size"},
                                             {"align", "'center'"},
                                             {"bold", "true"},
-                                            {"grow", "0"},
+                                            {"x", "0.5"}, {"y", "1"},
+                                            {"w", "0.9"}, {"h", "0.16"},
+                                            {"origin_x", "0.5"}, {"origin_y", "1"},
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
@@ -786,7 +816,7 @@ Json knob_component() {
 }
 
 Json radial_slider_component() {
-    return component("RadialSlider",
+    return component("RadialSlider", 176, 198,
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
@@ -797,11 +827,16 @@ Json radial_slider_component() {
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
                 Json::array({event("input", "num"), event("commit", "num")}),
-                "col", with(box_attrs(), Json{{"align", "'center'"}, {"gap", "2"}}),
+                box_attrs(),
                 Json::array({
                     /* no handle: the fill's leading edge IS the value, exactly as on the
                        linear bar */
-                    frame("free", "dial", Json{{"aspect", "1"}},
+                    frame("dial", Json{{"aspect", "1"},
+                                       {"h", "(label.text != '').pick(0.78, 0.94)"},
+                                       {"x", "0.5"},
+                                       {"y", "(label.text != '').pick(0.44, 0.5)"},
+                                       {"origin_x", "0.5"},
+                                       {"origin_y", "0.5"}},
                           Json::array({
                               radial_arcs("1", 0.18),
                               radial_scale("1 - dial.arc.thickness - 0.04", "0.09", false, false),
@@ -817,7 +852,9 @@ Json radial_slider_component() {
                                             {"size", "text_size"},
                                             {"align", "'center'"},
                                             {"bold", "true"},
-                                            {"grow", "0"},
+                                            {"x", "0.5"}, {"y", "1"},
+                                            {"w", "0.9"}, {"h", "0.16"},
+                                            {"origin_x", "0.5"}, {"origin_y", "1"},
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
@@ -826,7 +863,7 @@ Json radial_slider_component() {
 
 Json gauge_component() {
     const Str angle = "start_angle + (" + Str(kFraction) + ") * sweep_angle";
-    return component("Gauge",
+    return component("Gauge", 198, 198,
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
@@ -839,18 +876,23 @@ Json gauge_component() {
                              event("release", "num", "widget.value"),
                              event("press", "num", "widget.value"),
                              event("held", "num", "widget.value")}),
-                "col", with(box_attrs(), Json{{"align", "'center'"}, {"gap", "2"}}),
+                box_attrs(),
                 Json::array({
                     /* read-only, so no interact on the dial: the tap-to-read press rides
                        the whole box, exactly like a Readout */
-                    frame("free", "dial", Json{{"aspect", "1"}},
+                    frame("dial", Json{{"aspect", "1"},
+                                       {"h", "(label.text != '').pick(0.78, 0.94)"},
+                                       {"x", "0.5"},
+                                       {"y", "(label.text != '').pick(0.44, 0.5)"},
+                                       {"origin_x", "0.5"},
+                                       {"origin_y", "0.5"}},
                           Json::array({
                               radial_arcs("1", 0.1),
                               /* a gauge is a scale you read, so its scale starts ON */
                               radial_scale("1 - dial.arc.thickness - 0.03", "0.1", true, false),
                               radial_needle("0.62", "0.09", angle),
                               /* the hub caps the needle where it meets the centre */
-                              frame("free", "hub",
+                              frame("hub",
                                     Json{{"surface", "$surface-2"},
                                          {"radius", "999"},
                                          {"aspect", "1"},
@@ -865,7 +907,9 @@ Json gauge_component() {
                                             {"size", "text_size"},
                                             {"align", "'center'"},
                                             {"bold", "true"},
-                                            {"grow", "0"},
+                                            {"x", "0.5"}, {"y", "1"},
+                                            {"w", "0.9"}, {"h", "0.16"},
+                                            {"origin_x", "0.5"}, {"origin_y", "1"},
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
@@ -874,7 +918,7 @@ Json gauge_component() {
 
 Json selector_component() {
     const Str angle = "start_angle + (optfrac(value, options)) * sweep_angle";
-    return component("Selector",
+    return component("Selector", 176, 176,
                 compose_slots(tile_base(), {
                     /* options is a TypeRef naming an enum, exactly as on Dropdown */
                     slot("options", "text", "", "value", "enum-type"),
@@ -884,13 +928,17 @@ Json selector_component() {
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
                 Json::array({event("select", "text")}),
-                "row", with(box_attrs(), Json{{"align", "'center'"},
-                                              {"justify", "'center'"}}),
+                box_attrs(),
                 Json::array({
-                    frame("free", "dial", Json{{"aspect", "1"}},
+                    frame("dial", Json{{"aspect", "1"},
+                                       {"h", "0.94"},
+                                       {"x", "0.5"},
+                                       {"y", "0.5"},
+                                       {"origin_x", "0.5"},
+                                       {"origin_y", "0.5"}},
                           Json::array({
                               /* the round body the detents ring */
-                              owns(frame("free", "face",
+                              owns(frame("face",
                                          Json{{"surface", "body_color"},
                                               {"radius", "999"},
                                               {"aspect", "1"},
@@ -905,7 +953,7 @@ Json selector_component() {
                                  by its own copy's fraction. Their NAMES wait on a view
                                  tier that can index a list — the same gap the Trend's
                                  fold is on. */
-                              frame("free", "detent",
+                              frame("detent",
                                     Json{{"repeat", "optcount(options)"},
                                          {"surface", "$scale"},
                                          {"w", "0.02"},
@@ -930,7 +978,7 @@ Json selector_component() {
 }
 
 Json label_component() {
-    return component("Label",
+    return component("Label", 264, 44,
                 compose_slots(tile_base(), {
                     /* the text a Label shows is the widget's own DATA, not one node's
                        dressing: it is what a feed binds and what a press proposes */
@@ -942,13 +990,13 @@ Json label_component() {
                              event("release", "text", "widget.text"),
                              event("press", "text", "widget.text"),
                              event("held", "text", "widget.text")}),
-                "row", with(box_attrs(), Json{{"align", "'center'"}, {"justify", "align"}}),
+                box_attrs(),
                 Json::array({
+                    /* the line fills the box and places its own text by the align slot */
                     owns(text("line", Json{{"text", "text"},
                                            {"color", "text_color"},
                                            {"size", "text_size"},
-                                           {"align", "align"},
-                                           {"grow", "0"}}),
+                                           {"align", "align"}}),
                          Json::array({slot("text_color", "color", "$ink", "appearance", "color"),
                                       slot("text_size", "num", 14, "appearance")})),
                 }),
@@ -958,7 +1006,7 @@ Json label_component() {
 Json panel_component() {
     /* a Panel is its box and nothing else: it redeclares the surface and border and holds
      * no children, which is what makes it the lamp — bind `surface` and it lights up */
-    return component("Panel",
+    return component("Panel", 264, 176,
                 compose_slots(tile_base(), {
                     slot("surface", "color", "$surface", "frame", "color"),
                     slot("border", "color", "$line", "frame", "color"),
@@ -966,7 +1014,7 @@ Json panel_component() {
                 Json::array({event("tap", "bool"), event("release", "bool"),
                              event("press", "bool"), event("pressrelease", "bool"),
                              event("held", "bool")}),
-                "free", box_attrs(), Json::array(), Json::array(), press_interact());
+                box_attrs(), Json::array(), Json::array(), press_interact());
 }
 
 } // namespace
@@ -975,10 +1023,25 @@ const Json& builtin_components() {
     static const Json built = [] {
         /* no Indicator: a lamp is a Panel with a bound surface, and one less type keeps
          * the vocabulary honest (colors bind anywhere) */
-        return Json::array({button_component(), toggle_component(), slider_component(),
-                            knob_component(), radial_slider_component(), gauge_component(),
-                            selector_component(), trend_component(), readout_component(),
-                            dropdown_component(), label_component(), panel_component()});
+        Json out = Json::array();
+        const struct { const char* name; Json (*make)(); } makers[] = {
+            {"Button", button_component}, {"Toggle", toggle_component},
+            {"Slider", slider_component}, {"Knob", knob_component},
+            {"RadialSlider", radial_slider_component}, {"Gauge", gauge_component},
+            {"Selector", selector_component}, {"Trend", trend_component},
+            {"Readout", readout_component}, {"Dropdown", dropdown_component},
+            {"Label", label_component}, {"Panel", panel_component},
+        };
+        for (const auto& maker : makers) {
+            try {
+                out.push_back(maker.make());
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "hmi: BUILT-IN '%s' failed to construct: %s\n",
+                             maker.name, e.what());
+                std::abort();
+            }
+        }
+        return out;
     }();
     return built;
 }

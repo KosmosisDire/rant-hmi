@@ -24,8 +24,7 @@ const std::vector<AttrDef>& common_attrs_table() {
                "(the node is not emitted at all, so it takes no room either)"),
         no_def("repeat", "num",
                "absent = renders once; present, it renders that many copies (clamped to "
-               "512), each seeing its own repeat.index/count/fraction cells. In a row, "
-               "col or grid the copies are real siblings; in a free frame each places "
+               "512), each seeing its own repeat.index/count/fraction cells and placing "
                "itself, which is how a scale's ticks are authored"),
         no_def("clip", "any",
                "absent = content may overflow; true clips to the node's own box, a number "
@@ -36,29 +35,21 @@ const std::vector<AttrDef>& common_attrs_table() {
                "still SELECTS in the editor: a control you cannot operate is not a control "
                "you cannot edit"),
 
-        /* ARRANGEMENT: read by the PARENT's row/col/grid, ignored in a free frame */
-        def("grow", "num", 1.0,
-            "share of the free space this child takes on the container's main axis; 0 = "
-            "only what `min` and its content ask for. A WEIGHT, never a fraction of the "
-            "pane (flex-grow, with a sub-one sum scaled back to one)"),
-        def("min", "num", 0.0,
-            "floor in CSS pixels on the container's main axis (min-width / min-height)"),
-        def("aspect", "num", 0.0,
-            "0 = free; > 0 locks width/height to that ratio. An aspect-locked child is "
-            "OUT of the weight system: it stretches on the cross axis and derives its "
-            "main size from the lock (aspect-ratio + flex: 0 0 auto)"),
-
-        /* MEASUREMENT: read by a child of a FREE frame, ignored in row/col/grid */
+        /* THE BOX, in canvas px: one static space, relative to the parent's origin. On a
+           page that space is the 1408 x 792 artboard; inside a component it is the
+           component's own design frame, which an instance's box scales per axis. */
         no_def("x", "num",
-               "left edge as a fraction of the containing box's width; absent with `w` "
-               "absent stretches the axis, absent with `w` set pins to 0 (left: %)"),
-        no_def("y", "num",
-               "top edge as a fraction of the containing box's height; same rule as `x` "
-               "(top: %)"),
+               "the ORIGIN POINT's position in canvas px from the parent's origin (with "
+               "origin_x 0 that is the left edge). Absent with `w` absent stretches the "
+               "axis to the parent; absent with `w` set pins to 0"),
+        no_def("y", "num", "the origin point's vertical position in canvas px; as `x`"),
         no_def("w", "num",
-               "width as a fraction of the containing box; absent = the axis stretches "
-               "(both edges pinned) or, where `x` is set, the content's own width"),
-        no_def("h", "num", "height as a fraction of the containing box; as `w`"),
+               "width in canvas px; absent = the axis stretches to the parent (both edges "
+               "pinned) or, where `x` is set, the content's own width"),
+        no_def("h", "num", "height in canvas px; as `w`"),
+        def("aspect", "num", 0.0,
+            "0 = free; > 0 derives the UNAUTHORED one of w/h from the authored one at "
+            "that ratio (aspect-ratio). With both authored it is inert"),
         def("origin_x", "num", 0.0,
             "the node's OWN reference point on x, a fraction of its own width: the point "
             "`x` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle"),
@@ -74,23 +65,12 @@ const std::vector<AttrDef>& common_attrs_table() {
 
 const std::vector<AttrDef>& frame_attrs() {
     static const std::vector<AttrDef> table = {
-        def("gap", "num", 0.0, "space between children in CSS pixels (gap)"),
-        def("pad", "num", 0.0, "inset around the children in CSS pixels (padding)"),
-        def("align", "text", "stretch",
-            "CROSS-axis placement of the children in a row or col: start | center | end | "
-            "stretch (align-items). Text, so it is written quoted: 'center'"),
-        def("justify", "text", "start",
-            "MAIN-axis placement of the children: start | center | end | between "
-            "(justify-content)"),
-        def("cols", "num", 2.0, "grid layout only: how many equal columns"),
-        def("rows", "num", 0.0,
-            "grid layout only: how many equal rows; 0 = as many as the children need"),
         no_def("surface", "color",
                "absent = no surface at all, which is not the same as a transparent one "
                "(background)"),
         no_def("border", "color", "absent = no border (border-color)"),
-        def("border_w", "num", 1.0, "border width in CSS pixels"),
-        def("radius", "num", 0.0, "corner radius in CSS pixels (border-radius)"),
+        def("border_w", "num", 1.0, "border width in canvas px"),
+        def("radius", "num", 0.0, "corner radius in canvas px (border-radius)"),
     };
     return table;
 }

@@ -307,77 +307,67 @@ bool op_move(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     return true;
 }
 
-/* Wrap a run of siblings in a fresh frame, in one transaction.
+/* GROUP a run of siblings under a fresh box, in one transaction.
  *
- * This is a server op because the frame's id is issued inside prepare(), so a client
- * composing insert-then-move by hand has no name for the frame its moves must target. It
+ * This is a server op because the box's id is issued inside prepare(), so a client
+ * composing insert-then-move by hand has no name for the box its moves must target. It
  * is the rename pattern: ONE request op whose echo is the mechanical ops the client
- * applies without deciding anything — here an insert of an EMPTY frame followed by a
- * fully addressed move per node, so nothing is ever duplicated client-side. The inverse,
- * dissolving a frame, needs no help — every id involved is already known — and stays a
+ * applies without deciding anything — here an insert of a box followed by a fully
+ * addressed move per node, so nothing is ever duplicated client-side. The inverse,
+ * ungrouping, needs no help — every id involved is already known — and stays a
  * client-composed batch.
  *
- * It decides nothing itself either: each half is the existing op, called with a
- * synthesized request, so validation, echo and `touched` all fall out of them. */
-bool op_wrap(Document& d, const Json& op, ApplyResult& r, std::string& err) {
+ * `attrs` is the box's geometry, computed by the CLIENT (it is the one that knows where
+ * the children render): the bbox in canvas px, as ordinary attr expression text. The
+ * caller re-bases the children's own x/y in the same batch, since positions are relative
+ * to the parent's origin. This op decides nothing itself: each half is the existing op,
+ * called with a synthesized request, so validation, echo and `touched` fall out of them. */
+bool op_group(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     const Json& nodes = value_field(op, "nodes");
-    if (!nodes.is_array() || nodes.empty()) { err = "wrap needs a node to wrap"; return false; }
-    /* the layout list is the frame variant's own, so a mode added there is offered here
-       with nothing to remember */
-    const std::string layout = str_field(op, "layout");
-    const Prop* modes = find_prop(node_spec(Kind::Node), "frame", "layout");
-    if (!modes || std::find(modes->variants.begin(), modes->variants.end(), layout) ==
-                      modes->variants.end()) {
-        std::string legal;
-        for (const std::string& v : modes ? modes->variants : std::vector<std::string>{})
-            legal += (legal.empty() ? "'" : ", '") + v + "'";
-        err = "wrap needs a layout of " + legal;
-        return false;
-    }
+    if (!nodes.is_array() || nodes.empty()) { err = "group needs a node to hold"; return false; }
+    const Json& attrs = value_field(op, "attrs");
 
     uint64_t parent = 0;
     std::string list;
     std::vector<std::pair<size_t, uint64_t>> ordered;   /* position in the parent list, id */
     for (const Json& item : nodes) {
         uint64_t id = 0;
-        if (!json_u64(item, id)) { err = "wrap needs node ids"; return false; }
+        if (!json_u64(item, id)) { err = "group needs node ids"; return false; }
         for (const auto& seen : ordered)
             if (seen.second == id) {
-                err = "wrap names node " + std::to_string(id) + " twice";
+                err = "group names node " + std::to_string(id) + " twice";
                 return false;
             }
         NodeEntry* e = nullptr;
         if (!node_at(d, id, e, err)) return false;
         if (e->kind != Kind::Node) {
-            err = "only a node wraps into a frame";
+            err = "only a node groups into a box";
             return false;
         }
         if (ordered.empty()) {
             parent = e->parent;
             list = e->list;
         } else if (e->parent != parent || e->list != list) {
-            err = "wrap needs siblings";
+            err = "group needs siblings";
             return false;
         }
         ordered.push_back({e->index, id});
     }
-    /* document order, whatever order they were named in: the frame reads top to bottom */
+    /* document order, whatever order they were named in: z-order survives the grouping */
     std::sort(ordered.begin(), ordered.end());
 
-    const char* name = layout == "row"    ? "Row"
-                       : layout == "col"  ? "Column"
-                       : layout == "grid" ? "Grid"
-                                          : "Group";
+    Json box{{"kind", "frame"}, {"name", "Group"}};
+    if (attrs.is_object()) box["attrs"] = attrs;
     Json insert = Json{{"op", "insert"},
                        {"parent", parent},
                        {"list", list},
                        {"index", ordered.front().first},
-                       {"node", Json{{"kind", "frame"}, {"name", name}, {"layout", layout}}}};
+                       {"node", std::move(box)}};
     if (!op_insert(d, insert, r, err)) return false;
     d.reindex();
 
     uint64_t frame = 0;
-    if (!json_u64(r.ops.back()["node"]["id"], frame)) { err = "the fresh frame has no id"; return false; }
+    if (!json_u64(r.ops.back()["node"]["id"], frame)) { err = "the fresh box has no id"; return false; }
     size_t index = 0;
     for (const auto& row : ordered) {
         Json move = Json{{"op", "move"}, {"node", row.second}, {"index", index}, {"parent", frame}};
@@ -566,7 +556,7 @@ bool apply_ops(Document& doc, const Json& ops, ApplyResult& out, std::string& er
         else if (kind == "insert") ok = op_insert(scratch, op, r, err);
         else if (kind == "remove") ok = op_remove(scratch, op, r, err);
         else if (kind == "move") ok = op_move(scratch, op, r, err);
-        else if (kind == "wrap") ok = op_wrap(scratch, op, r, err);
+        else if (kind == "group") ok = op_group(scratch, op, r, err);
         else if (kind == "rename") ok = op_rename(scratch, op, r, err);
         else err = "unknown op '" + kind + "'";
         if (!ok) return false;

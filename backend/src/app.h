@@ -29,7 +29,7 @@ namespace hmi {
  * variants (frame | text | icon | path), every field is expression text in `attrs`, an
  * instance is a frame carrying a `type`, a component holds `children` and describes its
  * own root box, and the snapshot carries `node_attrs`, every page node's compiled attrs) */
-constexpr int kProto = 8;
+constexpr int kProto = 9;
 
 struct AppOptions {
     ServerOptions server;

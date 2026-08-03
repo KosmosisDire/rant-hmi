@@ -26,22 +26,26 @@ Json instance(const char* type, const char* name, Json slots,
                 {"attrs", std::move(attrs)}};
 }
 
-/* a control that keeps a strip's height instead of taking a share of the column: the
-   place vocabulary an author reaches for constantly, said once here */
-Json strip(int px) {
-    return Json{{"grow", "0"}, {"min", std::to_string(px)}};
+/* A BOX at its place on the artboard: x/y/w/h in canvas px, relative to the parent's
+   origin, written as the expression text every attr is. The demo keeps everything on the
+   22px grid (1408 x 792 is 64 x 36 cells), which is what makes it read as designed
+   rather than merely placed. */
+Json at(int x, int y, int w, int h) {
+    return Json{{"x", std::to_string(x)}, {"y", std::to_string(y)},
+                {"w", std::to_string(w)}, {"h", std::to_string(h)}};
 }
 
-/* a plain FRAME; `children` is filled in by the caller once what it groups exists, so it
-   composes with instance() above. `attrs` are expression text like every other field — a
-   demo pane's surface reads `$surface`, its gap reads `8`. */
-Json frame(const char* name, const char* layout, Json children, Json attrs = Json::object()) {
-    Json own = Json{{"gap", "8"}, {"pad", "8"}};
-    for (const auto& item : attrs.items()) own[item.key()] = item.value();
+Json with(Json base, Json extra) {
+    for (const auto& item : extra.items()) base[item.key()] = item.value();
+    return base;
+}
+
+/* a plain FRAME — a box that holds children; `children` is filled in by the caller once
+   what it groups exists, so it composes with instance() above */
+Json frame(const char* name, Json children, Json attrs = Json::object()) {
     return Json{{"kind", "frame"},
                 {"name", name},
-                {"layout", layout},
-                {"attrs", std::move(own)},
+                {"attrs", std::move(attrs)},
                 {"children", std::move(children)}};
 }
 
@@ -282,23 +286,23 @@ Document Document::make_default() {
         token("bad", "status", "#e0857c", "#b2443b"),
     });
 
-    /* THE DEMO PAGE IS A LAYOUT, not a pile of widgets: a header band over a body that
-     * splits two-to-one between a main column and a side column of panes. Nothing here
-     * says where anything is — the shape comes entirely from nesting, grow shares and the
-     * one floor the header needs (a header should keep its height, not take a share of
-     * the page), so opening the document at any window size is the feature working. */
+    /* THE DEMO PAGE IS AN ARRANGEMENT ON THE ARTBOARD: a header band across the top, a
+     * main pane and a side column of panes below it, every box at its own place on the
+     * 22px grid. Nothing negotiates — what is written is what renders, at every window
+     * size, because the whole artboard scales as one picture. */
 
     /* one feed and one flow so the inspector and the rename fan-out have real work */
     Json readout = instance("Readout", "Flow",
                             /* a nested node's value nests under its name: the units are
                                the `units` node's */
-                            Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}});
+                            Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}},
+                            at(22, 198, 836, 176));
     readout["feeds"] = Json::array({Json{{"slot", "value"},
                                          {"src", {{"kind", "L"}, {"name", "flow"}}},
                                          {"path", ""},
                                          {"xf", "x.round(1)"}}});
     Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}},
-                          strip(40));
+                          at(22, 396, 176, 66));
     reset["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
         {"when_mode", "first"},
@@ -307,55 +311,47 @@ Document Document::make_default() {
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
     Json header_kids = Json::array();
-    header_kids.push_back(instance("Label", "Title", Json{{"text", "Line 1 Overview"}}));
-    /* grow 0 + a floor: the band is as tall as it asks to be and the body keeps the rest */
-    Json header = frame("Header", "row", std::move(header_kids),
-                        Json{{"surface", "$surface-2"}, {"align", "'center'"},
-                             {"grow", "0"}, {"min", "52"}});
+    header_kids.push_back(instance("Label", "Title", Json{{"text", "Line 1 Overview"}},
+                                   at(22, 11, 308, 44)));
+    Json header = frame("Header", std::move(header_kids),
+                        with(at(0, 0, 1408, 66), Json{{"surface", "$surface-2"}}));
 
-    /* the controls keep a strip each and the readout takes what is left: a column reads as
-       an HMI rather than as four equal quarters, and it is all said in `grow` and `min` */
     Json main_kids = Json::array();
-    main_kids.push_back(instance("Toggle", "Pump", Json{{"value", true}}, strip(44)));
+    main_kids.push_back(instance("Toggle", "Pump", Json{{"value", true}},
+                                 at(22, 22, 396, 66)));
     main_kids.push_back(
         instance("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}},
-                 strip(58)));
+                 at(22, 110, 836, 66)));
     main_kids.push_back(std::move(readout));
     main_kids.push_back(std::move(reset));
-    Json main_col = frame("Main", "col", std::move(main_kids),
-                          Json{{"surface", "$surface"}, {"radius", "6"}, {"grow", "2"}});
+    Json main_pane = frame("Main", std::move(main_kids),
+                           with(at(22, 88, 880, 682),
+                                Json{{"surface", "$surface"}, {"radius", "6"}}));
 
     Json status_kids = Json::array();
-    status_kids.push_back(instance("Label", "Status", Json{{"text", "Status"}}));
-    status_kids.push_back(instance("Toggle", "Enabled", Json{{"value", false}}));
-    /* A STRIP, not a pane: grow 0 and a floor, so the label and its switch keep a strip's
-       height and the lamps below take the rest. No `align` on purpose — stretch is the
-       default, and a centred row would size its children to their content, which for a
-       control that fills whatever box it is given is nothing at all. */
-    Json status = frame("Status group", "row", std::move(status_kids),
-                        Json{{"surface", "$surface"}, {"radius", "6"},
-                             {"grow", "0"}, {"min", "56"}});
+    status_kids.push_back(instance("Label", "Status", Json{{"text", "Status"}},
+                                   at(22, 22, 176, 44)));
+    status_kids.push_back(instance("Toggle", "Enabled", Json{{"value", false}},
+                                   at(286, 22, 154, 44)));
+    Json status = frame("Status group", std::move(status_kids),
+                        with(at(924, 88, 462, 88),
+                             Json{{"surface", "$surface"}, {"radius", "6"}}));
 
     Json lamp_kids = Json::array();
-    lamp_kids.push_back(instance("Panel", "Pump group", Json::object()));
+    lamp_kids.push_back(instance("Panel", "Pump group", Json::object(),
+                                 at(22, 22, 418, 242)));
     /* the lamp is a Panel with a bound surface: there is no Indicator type */
-    lamp_kids.push_back(instance("Panel", "Fault", Json{{"surface", "#2a2a2a"}}));
-    Json lamps = frame("Lamps", "col", std::move(lamp_kids),
-                       Json{{"surface", "$surface"}, {"radius", "6"}});
-
-    Json side_kids = Json::array();
-    side_kids.push_back(std::move(status));
-    side_kids.push_back(std::move(lamps));
-    Json side = frame("Side", "col", std::move(side_kids), Json{{"pad", "0"}, {"grow", "1"}});
-
-    Json body_kids = Json::array();
-    body_kids.push_back(std::move(main_col));
-    body_kids.push_back(std::move(side));
-    Json body = frame("Body", "row", std::move(body_kids), Json{{"pad", "0"}});
+    lamp_kids.push_back(instance("Panel", "Fault", Json{{"surface", "#2a2a2a"}},
+                                 at(22, 286, 418, 242)));
+    Json lamps = frame("Lamps", std::move(lamp_kids),
+                       with(at(924, 198, 462, 572),
+                            Json{{"surface", "$surface"}, {"radius", "6"}}));
 
     Json page = Json{{"name", "Overview"}, {"children", Json::array()}};
     page["children"].push_back(std::move(header));
-    page["children"].push_back(std::move(body));
+    page["children"].push_back(std::move(main_pane));
+    page["children"].push_back(std::move(status));
+    page["children"].push_back(std::move(lamps));
 
     j["pages"] = Json::array({page});
 
