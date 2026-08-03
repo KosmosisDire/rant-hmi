@@ -39,7 +39,7 @@ const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
 const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
 const { renderStage } = await import(mod("stage.js"));
-const { dropAtPageEnd, dropPlan, dropZone, fmtPx, freeAllowed, freeBoxOf,
+const { dropAtPageEnd, dropPlan, dropZone, fmtFraction, fmtPx, freeAllowed, freeBoxOf,
         freePlan, settle, snapPx } =
   await import(mod("arrange.js"));
 
@@ -203,6 +203,8 @@ const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
   const treeEditor = {
     store, registry: snapshot.registry, view,
     page: () => page,
+    contexts: [], root: () => page, artboard: () => ({ w: 1408, h: 792 }),
+    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     diagFor: () => [], diagAt: () => [], diagNode: () => [],
     select: () => undefined, selectPart: () => undefined,
   };
@@ -256,6 +258,47 @@ ws.send(
 );
 const second = await next("ops_applied");
 store.apply(second.version, second.ops);
+
+/* ---- a doc component's nodes compile into node_attrs too: THE ENTERED WIDGET's other
+   half. Same programs the served template carries, keyed by the nodes' own document ids,
+   which is what lets the stage render a component context through the page's own path.
+   The insert changes the registry, so a fresh snapshot follows the echo; its node_attrs
+   must know the new ids. */
+ws.send(JSON.stringify({
+  type: "apply_ops",
+  base_version: store.version(),
+  ops: [{
+    op: "insert", parent: 0, list: "components",
+    node: {
+      name: "Pill",
+      props: [{ name: "text", shape: "text", default: "go", group: "appearance" }],
+      attrs: { surface: "'#222222'" },
+      children: [
+        { kind: "frame", name: "body",
+          attrs: { x: "0.1", y: "0.1", w: "0.8", h: "0.8" },
+          children: [{ kind: "text", name: "label", attrs: { text: "text" } }] },
+      ],
+      behavior: [],
+    },
+  }],
+}));
+const compEcho = await next("ops_applied");
+store.apply(compEcho.version, compEcho.ops);
+const pill = store.components().find((c) => c.name === "Pill");
+check(!!pill && typeof pill.id === "number", "the component insert echoed with issued ids");
+/* earlier edits queued their own snapshots (they moved node_attrs too): drain to the
+   one that knows the fresh component */
+let refreshed = await next("snapshot");
+while (!refreshed.node_attrs?.[String(pill.id)]) refreshed = await next("snapshot");
+const pillBody = pill.children[0];
+check((refreshed.node_attrs?.[String(pill.id)]?.attrs?.surface?.code?.length ?? 0) > 0,
+      "a doc component's ROOT compiles into node_attrs under its own id");
+check(refreshed.node_attrs?.[String(pillBody.id)]?.attrs?.x?.code?.[0]?.op === "CONST",
+      "and its internal nodes too: an entered widget renders through the page's path");
+check(refreshed.node_attrs?.[String(pillBody.children[0].id)]?.attrs?.text?.code?.[0]?.op
+        === "LOAD",
+      "a prop reference compiles to the same cell load the template serves");
+
 /* everything below this point simulates further edits as LOCAL-ONLY echoes (store.apply
    with no ws.send), which is deliberate — it exercises the reconciler without a round
    trip — so store.version() drifts far ahead of what the backend actually saw. */
@@ -283,7 +326,12 @@ const editor = {
   builtinSel: null,
   view,
   page: () => store.pages()[0],
-  selectedNode: () => store.nodeAt(readout.id),
+  contexts: [],
+  root() { return this.page(); },
+  artboard: () => ({ w: 1408, h: 792 }),
+  enterWidget: () => undefined,
+  exitTo: () => undefined,
+  resizePreview: () => undefined,
   selectedNode: () => store.nodeAt(readout.id), selectedWidget: () => store.widget(readout.id),
   apply: () => undefined,
   setPage: () => undefined,
@@ -1261,6 +1309,13 @@ const stageEditor = {
   live: { epoch: 1, values: {} },
   view: stageView,
   page: () => stageStore.pages()[0],
+  contexts: [],
+  root() { return this.page(); },
+  artboard() { const c = this.contexts[this.contexts.length - 1];
+               return c ? { w: c.w, h: c.h } : { w: 1408, h: 792 }; },
+  enterWidget: () => undefined,
+  exitTo: () => undefined,
+  resizePreview: () => undefined,
   select: (ids) => { stageView.selection = ids; },
 };
 const drawStage = () => renderStage(stageHost, stageEditor);
@@ -1591,6 +1646,160 @@ check(stageNode("frame", 901) !== heldAgain &&
   check(hubMove.x === 176 + 55,
         "a centred origin: the snapped LEFT EDGE plus half the width, got " +
           JSON.stringify(hubMove));
+
+  /* ---- INSIDE A COMPONENT: the same plan, seamed at the read and the write ----
+     A component's literals are FRACTIONS of the parent. `scale` blows them up to px on
+     the way in, so every rule above — snap, floors, origins, freeAllowed — runs
+     unchanged; the commit's caller divides back down and writes fmtFraction
+     (manipulate.ts holds the divisors it measured). */
+  const fracBox = freeBoxOf(freeNode({ x: "0.25", y: "0.5", w: "0.5", h: "0.25" }),
+                            flat, { x: 440, y: 220 });
+  check(fracBox.x.value === 110 && fracBox.w.value === 220 &&
+          fracBox.y.value === 110 && fracBox.h.value === 55,
+        "fraction literals scale by the parent's box into plan px");
+  const fracSlid = freePlan("move", fracBox, origin).commit(23, 0, true);
+  check(fracSlid.x === 132, "the plan itself still snaps on the artboard's own grid");
+  check(fmtFraction(fracSlid.x / 440) === "0.3",
+        "and the caller divides back to a clean fraction of the parent");
+  check(fmtFraction(0.123456789) === "0.1235" && fmtFraction(0.5) === "0.5",
+        "a written fraction holds at most 4 decimals, got " + fmtFraction(0.123456789));
+}
+
+/* ---- ENTER A WIDGET: the breadcrumb strip and the context tree (panel.ts) ----
+   Inside a component the left sidebar's strip names the trail and says the edit is to
+   the COMPONENT; the tree lists the component's own nodes as REAL rows (they carry ids,
+   so everything works on them), while an unforked built-in's rows stay fenced. */
+{
+  /* a component of this block's own (the Lamp above was deleted by the revert test),
+     plus one instance of it on the page to have entered through */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: 0, list: "components",
+      node: { id: 9800, name: "Bulb", events: [], props: [], attrs: {},
+              children: [
+                { id: 9810, kind: "frame", name: "body", attrs: {},
+                  children: [{ id: 9811, kind: "text", name: "label",
+                               attrs: { text: "'on'" } }] },
+              ],
+              behavior: [] } },
+    { op: "insert", parent: store.pages()[0].id, list: "children",
+      node: { id: 9880, kind: "frame", type: "Bulb", name: "Glow",
+              attrs: { x: "44", y: "44", w: "220", h: "110" },
+              slots: {}, locals: [], feeds: [], flows: [] } },
+  ]);
+  const ctxEditor = {
+    ...editor,
+    contexts: [{ component: 9800, builtin: "", from: 9880,
+                 w: 220, h: 110, w0: 220, h0: 110 }],
+    root() {
+      const c = this.contexts[this.contexts.length - 1];
+      if (!c) return this.page();
+      if (!c.component) return null;
+      const comp = store.node(c.component);
+      return comp ? { id: comp.id, name: comp.name ?? "", children: comp.children ?? [] }
+                  : null;
+    },
+  };
+  const ctxPanel = new Panel(new Element("aside"));
+  ctxPanel.render(leftShape(ctxEditor), (host) => renderLeftSidebar(host, ctxEditor));
+  const strip = ctxPanel.host.querySelector(".context-strip");
+  check(strip !== null && strip.className.includes("on"),
+        "inside a widget the breadcrumb strip turns on");
+  const crumbs = ctxPanel.host.querySelectorAll(".crumb");
+  check(crumbs.length === 2 && crumbs[1].textContent === "Bulb" &&
+          crumbs[1].className.includes("current"),
+        "the trail reads page › component, standing on the component");
+  check(!!ctxPanel.host.querySelector(".crumb-note")?.textContent
+          ?.includes("every instance follows"),
+        "and the strip says out loud what an edit here reaches");
+  const keys = ctxPanel.host.querySelectorAll(".layer-row")
+    .map((r) => r.getAttribute("data-key"));
+  check(keys.includes("n9810") && keys.includes("n9811"),
+        "the tree lists the component's own nodes as real rows, got " + keys.join(","));
+  check(ctxPanel.host.querySelectorAll(".layer-row.tpl").length === 0,
+        "nothing here is fenced: these rows are the component's to edit");
+
+  /* the built-in variant: fenced rows and the Override verb */
+  const roEditor = {
+    ...ctxEditor,
+    contexts: [{ component: 0, builtin: "Toggle", from: 9880,
+                 w: 396, h: 66, w0: 396, h0: 66 }],
+  };
+  const roPanel = new Panel(new Element("aside"));
+  roPanel.render(leftShape(roEditor), (host) => renderLeftSidebar(host, roEditor));
+  check(roPanel.host.querySelector(".crumb-override") !== null,
+        "an unforked built-in offers Override in the strip");
+  check(!!roPanel.host.querySelector(".crumb-note")?.textContent?.includes("read-only"),
+        "and says read-only beside it");
+  const roRows = roPanel.host.querySelectorAll(".layer-row");
+  check(roRows.length > 0 && roRows.every((r) => r.className.includes("tpl")),
+        "every row of a built-in's context is fenced until the fork");
+}
+
+/* ---- ENTER A WIDGET on the stage: the component's own artboard (stage.ts) ----
+   The artboard becomes the context's preview box, the design frame wears the component
+   root's dressing, and the component's nodes render carrying their ids, placed in
+   FRACTIONS of their parent — resizing the preview re-solves them. */
+{
+  const ctxStore = new DocStore();
+  ctxStore.load({
+    version: 1, next_id: 999, globals: [], tokens: [],
+    components: [
+      { id: 950, name: "Chip", events: [], props: [],
+        attrs: { surface: "'#333333'" },
+        children: [{ id: 951, kind: "frame", name: "body",
+                     attrs: { x: "0.25", y: "0.25", w: "0.5", h: "0.5" } }],
+        behavior: [] },
+    ],
+    pages: [{ id: 940, name: "P", children: [
+      { id: 941, kind: "frame", type: "Chip", name: "chip1",
+        attrs: { x: "22", y: "22", w: "440", h: "220" },
+        slots: {}, locals: [], feeds: [], flows: [] },
+    ] }],
+  });
+  const prog2 = (v) => ({ code: [{ op: "CONST", v }] });
+  const ctxAttrs = {
+    "941": { attrs: { x: prog2(22), y: prog2(22), w: prog2(440), h: prog2(220) } },
+    "950": { attrs: { surface: prog2("#333333") } },
+    "951": { attrs: { x: prog2(0.25), y: prog2(0.25), w: prog2(0.5), h: prog2(0.5) } },
+  };
+  const ctxHost = new Element("section");
+  const ctxView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const ctxStage = {
+    store: ctxStore, registry: snapshot.registry, nodeAttrs: ctxAttrs,
+    live: { epoch: 1, values: {} }, view: ctxView,
+    page: () => ctxStore.pages()[0],
+    contexts: [{ component: 950, builtin: "", from: 941,
+                 w: 440, h: 220, w0: 440, h0: 220 }],
+    root() {
+      const c = this.contexts[this.contexts.length - 1];
+      if (!c) return this.page();
+      const comp = ctxStore.node(c.component);
+      return comp ? { id: comp.id, name: comp.name, children: comp.children ?? [] } : null;
+    },
+    artboard() {
+      const c = this.contexts[this.contexts.length - 1];
+      return c ? { w: c.w, h: c.h } : { w: 1408, h: 792 };
+    },
+    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    select: () => undefined,
+  };
+  renderStage(ctxHost, ctxStage);
+  const ctxPage = ctxHost.querySelector(".page");
+  check(ctxPage !== null && ctxPage.style.width === "440px" &&
+          ctxPage.style.height === "220px",
+        "an entered widget's artboard is the context's preview box");
+  check(ctxPage.style.background === "#333333",
+        "the design frame wears the component root's own dressing");
+  const body = ctxHost.querySelectorAll(".frame")
+    .find((n) => n.getAttribute("data-id") === "951") ?? null;
+  check(body !== null,
+        "a component's own node renders CARRYING ITS ID: selectable, draggable");
+  check(body.style.left === "25%" && body.style.width === "50%",
+        "and places itself in FRACTIONS of its parent, got " + body.style.left);
+  ctxStage.contexts[0].w = 880;
+  renderStage(ctxHost, ctxStage);
+  check(ctxHost.querySelector(".page").style.width === "880px",
+        "resizing the preview resizes the artboard: the fractions re-solve");
 }
 
 /* What used to close this file -- the repeat/path round trip and the code-part escape

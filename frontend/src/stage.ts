@@ -27,7 +27,7 @@
  * live frame at 30 Hz must NOT do that, so each render records the live cells it actually
  * read, and a live frame rebuilds only when one of those moved. */
 
-import { DropPlan, freeAllowed, freeBoxOf } from "./arrange.js";
+import { DropPlan, freeAllowed, freeBoxOf, snapPx } from "./arrange.js";
 import { Editor } from "./editor.js";
 import { HANDLE_MARGIN, handleMarkup, handlesOff } from "./handles.js";
 import { iconMarkup } from "./icons.js";
@@ -64,6 +64,14 @@ interface StageState {
   /* the selection handles over a lone selected node: ring, pills, brackets (handles.ts) */
   handles: SVGSVGElement | null;
   cam: Camera;
+  /* THE ARTBOARD'S OWN SIZE: the fixed canvas on a page, the context's preview box
+     inside an entered widget — what the camera fits and the gestures divide by */
+  art: { w: number; h: number };
+  /* which page or entered-widget chain the picture is of (preview size excluded): a
+     step in or out refits the camera, a preview resize deliberately does not */
+  ctxPath: string;
+  /* the preview-resize grips on the artboard's edge, up only inside a context */
+  artGrips: HTMLElement[];
   wired: boolean;
 }
 
@@ -74,6 +82,7 @@ function stateOf(host: HTMLElement): StageState {
   if (!state) {
     state = { page: null, signature: "", consumed: new Map(), rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
+              art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
               wired: false };
     states.set(host, state);
   }
@@ -83,13 +92,14 @@ function stateOf(host: HTMLElement): StageState {
 /* ---- the camera ---- */
 
 /* the artboard, scaled to sit whole in the pane with a breath of margin around it */
-function fitCamera(host: HTMLElement, cam: Camera): void {
+function fitCamera(host: HTMLElement, state: StageState): void {
   const w = host.clientWidth;
   const h = host.clientHeight;
   if (!(w > 0) || !(h > 0)) return;
-  cam.k = Math.min(w / CANVAS_W, h / CANVAS_H) * 0.96;
-  cam.x = (w - CANVAS_W * cam.k) / 2;
-  cam.y = (h - CANVAS_H * cam.k) / 2;
+  const cam = state.cam;
+  cam.k = Math.min(w / state.art.w, h / state.art.h) * 0.96;
+  cam.x = (w - state.art.w * cam.k) / 2;
+  cam.y = (h - state.art.h * cam.k) / 2;
 }
 
 function applyCamera(state: StageState): void {
@@ -98,13 +108,13 @@ function applyCamera(state: StageState): void {
     "translate(" + state.cam.x + "px, " + state.cam.y + "px) scale(" + state.cam.k + ")";
 }
 
-/* THE SCALE between screen px and canvas px, which is what the gestures divide by: read
+/* THE SCALE between screen px and artboard px, which is what the gestures divide by: read
  * off the rendered page rather than the camera, so a caller needs no camera at all */
 export function stageScale(host: HTMLElement): number {
-  const page = stateOf(host).page;
-  if (!page) return 1;
-  const at = page.getBoundingClientRect();
-  return at.width > 0 ? at.width / CANVAS_W : 1;
+  const state = stateOf(host);
+  if (!state.page) return 1;
+  const at = state.page.getBoundingClientRect();
+  return at.width > 0 ? at.width / state.art.w : 1;
 }
 
 /* ---- what one node looks like to the renderer ----
@@ -115,7 +125,7 @@ export function stageScale(host: HTMLElement): number {
  * instance, and what you would edit inside it is the component's own node in its own
  * tree. */
 interface ViewNode {
-  id: number;                 /* 0 inside a component: not addressable from the page */
+  id: number;                 /* 0 where the node is nobody's to address: a template's */
   /* this node IS an instance's box (already resolved to its component's root): the drag
      and select rules mark it, and nothing else about it is special */
   instance: boolean;
@@ -132,21 +142,29 @@ interface ViewNode {
   /* the address prefix inside the component ("" at its root): a slot's own address is
      this plus the node's name, which is exactly how the backend built the slot table */
   path: string;
+  /* which unit system this node's numbers are in: FRACTIONS of the parent inside a
+     component (a template's nodes, and the doc nodes of an entered one), canvas px on a
+     page. A fact set where the node is built, not inferred — an entered component's
+     nodes carry ids AND fractions. */
+  frac: boolean;
 }
 
-/* One page node, with its compiled attrs found by id.
+/* One document node, with its compiled attrs found by id — a page's, or an entered
+ * component's: `owner`, `type` and `frac` say whose cells its programs read and which
+ * space its numbers live in, and both callers pass their own.
  *
  * AN INSTANCE RESOLVES HERE, once: the component's root node IS the instance's box, so
  * this returns that root wearing the instance's id — the component's layout, attrs and
  * children, with the instance's own attrs overriding per key (that is how one placement
  * is dressed and placed). There is no wrapper box and no second node, which is also why
  * nothing downstream has to know an instance from a frame. */
-function pageNode(editor: Editor, node: Node): ViewNode {
+function pageNode(editor: Editor, node: Node, owner = 0,
+                  type: WidgetType | null = null, frac = false): ViewNode {
   const compiled = editor.nodeAttrs?.[String(node.id)];
   if (isInstance(node)) {
-    const type = typeOf(editor.registry, node.type ?? "");
-    const root = type?.template
-      ? templateNode(type.template, node.id, type, "")
+    const instType = typeOf(editor.registry, node.type ?? "");
+    const root = instType?.template
+      ? templateNode(instType.template, node.id, instType, "")
       : null;
     return {
       id: node.id,
@@ -158,8 +176,9 @@ function pageNode(editor: Editor, node: Node): ViewNode {
       closed: root?.closed ?? false,
       children: root?.children ?? [],
       owner: node.id,
-      type,
+      type: instType,
       path: "",
+      frac,
     };
   }
   return {
@@ -170,10 +189,11 @@ function pageNode(editor: Editor, node: Node): ViewNode {
     attrs: compiled?.attrs ?? {},
     anchors: compiled?.anchors ?? [],
     closed: node.closed ?? false,
-    children: (node.children ?? []).map((c) => pageNode(editor, c)),
-    owner: 0,
-    type: null,
+    children: (node.children ?? []).map((c) => pageNode(editor, c, owner, type, frac)),
+    owner,
+    type,
     path: "",
+    frac,
   };
 }
 
@@ -194,6 +214,7 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
     owner,
     type,
     path,
+    frac: true,
   };
 }
 
@@ -318,8 +339,8 @@ function attrOf(node: ViewNode, name: string, cells: Cells): Json {
 function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   el.style.position = "absolute";
   /* which unit system this node's numbers are in: page nodes are canvas px, a
-     component's internals are fractions of their parent */
-  const px = node.id !== 0;
+     component's internals are fractions of their parent (the builder said which) */
+  const px = !node.frac;
   const unit = (value: number) => (px ? value + "px" : pct(value));
   const aspect = num(attrOf(node, "aspect", cells));
   const x = num(attrOf(node, "x", cells));
@@ -547,16 +568,53 @@ function emitTokens(page: HTMLElement, tokens: Token[]): void {
     if (token?.name) page.style.setProperty("--t-" + token.name, token.dark);
 }
 
-/* THE ARTBOARD: a fixed 1408 x 792 px surface the camera scales into the pane. Its
- * children are page nodes in canvas px; the document never describes the artboard itself,
- * because it is a constant of the system, not a thing anyone authors. */
-function buildPage(state: StageState, editor: Editor, page: Page): HTMLElement {
+/* THE ARTBOARD: a fixed px surface the camera scales into the pane. On a page it is the
+ * system's 1408 x 792 and its children are page nodes in canvas px. Inside an ENTERED
+ * WIDGET it is the component's design frame at the context's preview size, its children
+ * the component's OWN nodes in fractions — the same nodes with their ids, which is what
+ * lets selection and the gestures work on them — reading the entered instance's cells,
+ * so the component behaves as that placement does while it is edited. An unforked
+ * BUILT-IN renders from its served template instead: no ids anywhere, and that absence
+ * IS the read-only. */
+function buildPage(state: StageState, editor: Editor, page: Page | null): HTMLElement {
   const el = document.createElement("div");
   el.className = "page";
-  el.style.width = CANVAS_W + "px";
-  el.style.height = CANVAS_H + "px";
+  el.style.width = state.art.w + "px";
+  el.style.height = state.art.h + "px";
   emitTokens(el, editor.store.tokens());
-  for (const child of (page.children ?? []).map((c) => pageNode(editor, c)))
+
+  const ctx = editor.contexts[editor.contexts.length - 1] ?? null;
+  let kids: ViewNode[] = [];
+  let rootAttrs: Attrs | null = null;
+  let owner = 0;
+  let type: WidgetType | null = null;
+  if (!ctx) {
+    kids = (page?.children ?? []).map((c) => pageNode(editor, c));
+  } else {
+    type = typeOf(editor.registry,
+                  editor.store.nodeAt(ctx.from)?.type ?? ctx.builtin);
+    owner = ctx.from;
+    if (ctx.component) {
+      const comp = editor.store.node(ctx.component);
+      kids = ((comp?.children ?? []) as Node[]).map((c) =>
+        pageNode(editor, c, owner, type, true));
+      rootAttrs = editor.nodeAttrs?.[String(ctx.component)]?.attrs ?? null;
+    } else if (type) {
+      kids = (type.template.children ?? []).map((c) => templateNode(c, owner, type, ""));
+      rootAttrs = type.template.attrs ?? null;
+    }
+  }
+
+  /* the design frame wears the component ROOT's own dressing — an instance's box IS
+     this node — over the artboard surface the page style gives it */
+  if (rootAttrs) {
+    const root: ViewNode = { id: 0, instance: false, kind: "frame", name: "",
+                             attrs: rootAttrs, anchors: [], closed: false, children: [],
+                             owner, type, path: "", frac: true };
+    dress(el, root, cellsFor(state, editor, root, null));
+  }
+
+  for (const child of kids)
     for (const copy of expand(state, editor, child, null))
       el.appendChild(copy);
   return el;
@@ -660,10 +718,71 @@ function positionRings(host: HTMLElement, editor: Editor): void {
     if (state.rings[0]) state.rings[0].style.display = "none";
   }
 
-  /* THE GRID: the artboard's own 22px cells, up whenever the page is being edited. The
+  /* THE GRID: the artboard's own cells, up whenever the page is being edited. The
      lines live in canvas space (stage.css) and scale with the camera, so the picture and
      the numbers always agree. */
   state.page?.classList.toggle("gridded", editor.view.mode === "edit");
+  positionArtGrips(host, editor);
+}
+
+/* ---- the preview-resize grips: trying the component at another size ----
+ *
+ * Only inside a context, and deliberately NOT the selection handles: these resize the
+ * SESSION'S preview box — nothing is written anywhere — so they sit on the artboard's
+ * own edge (E, S and the corner, the frame grips) and talk to the context directly.
+ * Alt slips the grid here exactly as it does in a real resize. */
+function positionArtGrips(host: HTMLElement, editor: Editor): void {
+  const state = stateOf(host);
+  const on = editor.contexts.length > 0 && !!state.page && editor.view.mode === "edit";
+  if (!on) {
+    for (const grip of state.artGrips) grip.remove();
+    state.artGrips = [];
+    return;
+  }
+  if (!state.artGrips.length) {
+    for (const edge of ["e", "s", "se"]) {
+      const grip = document.createElement("div");
+      grip.className = "art-grip";
+      grip.setAttribute("data-edge", edge);
+      grip.addEventListener("pointerdown", (ev) =>
+        beginArtResize(host, editor, edge, ev as PointerEvent));
+      host.appendChild(grip);
+      state.artGrips.push(grip);
+    }
+  }
+  const box = host.getBoundingClientRect();
+  const at = state.page!.getBoundingClientRect();
+  const [e, s, se] = state.artGrips;
+  e.style.left = at.right - box.left + "px";
+  e.style.top = at.top - box.top + at.height / 2 + "px";
+  s.style.left = at.left - box.left + at.width / 2 + "px";
+  s.style.top = at.bottom - box.top + "px";
+  se.style.left = at.right - box.left + "px";
+  se.style.top = at.bottom - box.top + "px";
+}
+
+function beginArtResize(host: HTMLElement, editor: Editor, edge: string,
+                        ev: PointerEvent): void {
+  if (ev.button !== 0) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const ctx = editor.contexts[editor.contexts.length - 1];
+  if (!ctx) return;
+  const k = stageScale(host);
+  const start = { x: ev.clientX, y: ev.clientY, w: ctx.w, h: ctx.h };
+  const move = (mv: PointerEvent) => {
+    const snap = !mv.altKey;
+    const size = (raw: number) => Math.max(44, snap ? snapPx(raw) : Math.round(raw));
+    editor.resizePreview(
+      edge.includes("e") ? size(start.w + (mv.clientX - start.x) / k) : start.w,
+      edge.includes("s") ? size(start.h + (mv.clientY - start.y) / k) : start.h);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
 }
 
 /* ---- where a tree drop would land ----
@@ -701,8 +820,9 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   wire(host, editor);
 
+  const ctx = editor.contexts[editor.contexts.length - 1] ?? null;
   const page = editor.page();
-  if (!page) {
+  if (!page && !ctx) {
     state.page?.remove();
     state.page = null;
     state.signature = "";
@@ -710,12 +830,26 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     return;
   }
 
-  /* WHAT THE PICTURE IS OF: the page, the document version — and the COMPILE EPOCH, which
-     is the one that catches an edit changing what a field evaluates to rather than what the
-     tree holds. A page node's attrs are programs; editing one leaves the tree identical and
-     the version moved, and the new programs arrive in the snapshot that follows. Without the
-     epoch here a resize would commit its number and then redraw the old one. */
-  const signature = page.id + ":" + editor.store.version() + ":" + (editor.live?.epoch ?? 0);
+  /* the picture's own size, and the chain it is of: a step in or out of a widget refits
+     the camera; a preview RESIZE deliberately does not (the artboard grows under the
+     author's pointer, and yanking the camera mid-drag would fight them) */
+  state.art = ctx ? { w: ctx.w, h: ctx.h } : { w: CANVAS_W, h: CANVAS_H };
+  const ctxPath = (page ? page.id : 0) + "|" +
+    editor.contexts.map((c) => (c.component ? "c" + c.component : "b" + c.builtin) +
+                               ":" + c.from).join("/");
+  if (state.ctxPath !== ctxPath) {
+    state.ctxPath = ctxPath;
+    state.cam.manual = false;
+  }
+
+  /* WHAT THE PICTURE IS OF: the context, its size, the document version — and the
+     COMPILE EPOCH, which is the one that catches an edit changing what a field evaluates
+     to rather than what the tree holds. A node's attrs are programs; editing one leaves
+     the tree identical and the version moved, and the new programs arrive in the
+     snapshot that follows. Without the epoch here a resize would commit its number and
+     then redraw the old one. */
+  const signature = ctxPath + ":" + state.art.w + "x" + state.art.h + ":" +
+    editor.store.version() + ":" + (editor.live?.epoch ?? 0);
   let rebuild = !state.page || signature !== state.signature;
   if (!rebuild)
     for (const [cell, was] of state.consumed) {
@@ -736,7 +870,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     host.insertBefore(next, host.firstChild);
     state.page = next;
     state.signature = signature;
-    if (!state.cam.manual) fitCamera(host, state.cam);
+    if (!state.cam.manual) fitCamera(host, state);
     applyCamera(state);
     /* A REBUILD MUST NOT TAKE A GESTURE WITH IT. What a live frame moved is a value, not
        an arrangement, and the box in your hand is holding numbers that are deliberately
@@ -766,8 +900,19 @@ function wire(host: HTMLElement, editor: Editor): void {
   state.wired = true;
   host.addEventListener("click", (ev) => {
     if (editor.view.mode !== "edit") return;
+    /* the preview-resize grips are the artboard's, not a node's: a click on one must not
+       read as "clicked past everything" and clear the selection */
+    if ((ev.target as HTMLElement | null)?.closest?.(".art-grip")) return;
     const id = idUnder(ev.target);
     editor.select(id ? [id] : []);
+  });
+  /* ENTER A WIDGET: double-click an instance to step into its component's own context —
+     the same artboard editing, on the component's design frame, editing the component
+     (every instance follows; the breadcrumb says so) */
+  host.addEventListener("dblclick", (ev) => {
+    if (editor.view.mode !== "edit") return;
+    const id = idUnder(ev.target);
+    if (id && editor.store.widget(id)) editor.enterWidget(id);
   });
   /* HOVER, the other direction of the Layers tree's own: the pointer names a node here and
      the row standing for it lights up, out of the same one piece of state. mouseover, not
@@ -836,7 +981,7 @@ function wire(host: HTMLElement, editor: Editor): void {
     new ResizeObserver(() => {
       const state2 = stateOf(host);
       if (!state2.cam.manual) {
-        fitCamera(host, state2.cam);
+        fitCamera(host, state2);
         applyCamera(state2);
       }
       positionRings(host, editor);

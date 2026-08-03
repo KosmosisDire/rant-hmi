@@ -61,12 +61,18 @@ function flattenPage(children: Node[]): Node[] {
 }
 
 export function leftShape(editor: Editor): string {
-  const page = editor.page();
-  const nodes = flattenPage(page?.children ?? []);
+  const root = editor.root();
+  const nodes = flattenPage(root?.children ?? []);
   const widgets = nodes.filter(isInstance);
   return JSON.stringify({
     /* the CURRENT page's tree only: pages live in the topbar selector */
-    page: page ? page.id : 0,
+    page: editor.page()?.id ?? 0,
+    /* the editing root — the page, or the entered component — and the crumb trail down
+       to it, names included so a rename redraws the strip */
+    root: root ? root.id : 0,
+    ctx: editor.contexts.map((c) => [c.component, c.builtin, c.from]),
+    names: [editor.page()?.name ?? "", ...editor.contexts.map((c) =>
+      c.component ? String((editor.store.node(c.component) as Json)?.name ?? "") : c.builtin)],
     nodes: nodes.map((n) => [n.id, n.kind, n.type || n.name]),
     /* the tree highlights the selection and lists rows per expansion state */
     selection: editor.view.selection,
@@ -90,19 +96,83 @@ export function leftShape(editor: Editor): string {
   });
 }
 
+/* ---- the breadcrumb strip: where the editor is standing ----
+ *
+ * Always over the tree: the page's name alone on a page, then one crumb per entered
+ * widget. Every crumb but the last steps back OUT to that level. Inside a component the
+ * strip also carries the honesty line — the edit is to the COMPONENT, and every instance
+ * follows — or, over an unforked built-in, the read-only notice and the Override verb.
+ * The preview size reads here too, with a reset back to the entered instance's box. */
+function breadcrumbs(editor: Editor): HTMLElement {
+  const page = editor.page();
+  const inside = editor.contexts.length > 0;
+  const crumb = (label: string, current: boolean, jump: (() => void) | undefined) =>
+    el("button", { class: "crumb" + (current ? " current" : ""), text: label,
+                   onclick: current ? undefined : jump });
+  const row = el("div", { class: "crumbs" }, [
+    crumb(page?.name || "Page", !inside, () => editor.exitTo(0)),
+    ...editor.contexts.flatMap((ctx, i) => {
+      const name = ctx.component
+        ? String((editor.store.node(ctx.component) as Json)?.name ?? "?")
+        : ctx.builtin;
+      const last = i === editor.contexts.length - 1;
+      return [el("span", { class: "crumb-sep", text: "›" }),
+              crumb(name, last, () => editor.exitTo(i + 1))];
+    }),
+  ]);
+  if (!inside) return el("div", { class: "context-strip" }, [row]);
+
+  const ctx = editor.contexts[editor.contexts.length - 1];
+  const note = ctx.component
+    ? el("p", { class: "crumb-note",
+                text: "editing the component — every instance follows" })
+    : el("p", { class: "crumb-note ro" }, [
+        el("span", { text: "built-in — read-only" }),
+        el("button", {
+          class: "crumb-override", text: "Override",
+          title: "copy " + ctx.builtin + " into this document and edit it; " +
+                 "every instance follows the override",
+          onclick: () => editor.forkBuiltin(ctx.builtin),
+        }),
+      ]);
+  const size = el("span", { class: "crumb-size",
+                            title: "the preview box: drag the grips on the artboard's " +
+                                   "edge to try the component at other sizes" });
+  bindText("ctx:size", size, () => {
+    const at = editor.contexts[editor.contexts.length - 1];
+    return at ? at.w + " × " + at.h : "";
+  });
+  const reset = iconButton("rotate-ccw", "reset the preview to the entered instance's size",
+    () => {
+      const at = editor.contexts[editor.contexts.length - 1];
+      if (at) editor.resizePreview(at.w0, at.h0);
+    });
+  return el("div", { class: "context-strip on" }, [
+    row, note, el("div", { class: "crumb-size-row" }, [size, reset]),
+  ]);
+}
+
 export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
   clear(host);
-  const children = editor.page()?.children ?? [];
-  const count = flattenPage(children).length;
-  const tree = el("div", { class: "layers" }, children.flatMap((n) => nodeRows(editor, n, 0)));
+  host.appendChild(breadcrumbs(editor));
+  const ctx = editor.contexts[editor.contexts.length - 1] ?? null;
+  const root = editor.root();
+  let rows: HTMLElement[] = [];
+  let empty = "nothing on this page yet";
+  if (ctx && !ctx.component) {
+    /* an unforked built-in: the served template's rows, read-only until Override */
+    const type = typeOf(editor.registry, ctx.builtin);
+    rows = (type?.template?.children ?? [])
+      .flatMap((c) => readonlyRows(c, 0, "ro" + ctx.builtin));
+    empty = "this component is its box alone";
+  } else if (root) {
+    rows = (root.children ?? []).flatMap((n) => nodeRows(editor, n, 0));
+    if (ctx) empty = "this component is empty — right-click the artboard to add";
+  }
+  const tree = el("div", { class: "layers" }, rows);
   armTree(tree, editor);
-
-  host.append(
-    ...section("layers", "Layers", String(count), () => [
-      tree,
-      children.length ? null : el("p", { class: "empty", text: "nothing on this page yet" }),
-    ]),
-  );
+  host.appendChild(tree);
+  if (!rows.length) host.appendChild(el("p", { class: "empty", text: empty }));
 }
 
 /* A row and the node it stands for are one thing seen twice, so pointing at either
@@ -164,10 +234,13 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
 
 /* a component-internal row: real structure, not this page's. It carries no node id — the
  * component owns these — so it selects the INSTANCE, drags nowhere, and wears `.tpl` to
- * say it is being looked at rather than held. */
+ * say it is being looked at rather than held. Double-clicking one ENTERS the widget and
+ * lands selected on this very node (armTree below): the fence is an invitation, not only
+ * a refusal. The row's KEY carries the whole name path for exactly that. */
 function templateRows(editor: Editor, instanceId: number, node: TemplateNode,
                       depth: number, prefix: string): HTMLElement[] {
-  const key = prefix + "." + (node.name || node.kind);
+  const name = node.name || node.kind;
+  const key = prefix + "." + name;
   const row = hoverable(editor, treeRow(
     key,
     depth,
@@ -177,13 +250,37 @@ function templateRows(editor: Editor, instanceId: number, node: TemplateNode,
       el("span", { class: "layer-glyph",
                    html: iconMarkup(node.kind === "frame" ? "frame-free" : "node-" + node.kind,
                                     16, 1.5) }),
-      el("span", { class: "layer-label", text: node.name || node.kind }),
+      el("span", { class: "layer-label", text: name }),
     ],
     () => editor.select([instanceId]),
   ), instanceId);
   const rows = [row];
   for (const child of node.children ?? [])
     rows.push(...templateRows(editor, instanceId, child, depth + 1, key));
+  return rows;
+}
+
+/* an unforked BUILT-IN's rows, inside its own context: the served template with nothing
+ * to select, drag or rename — the tree half of read-only, worn honestly */
+function readonlyRows(node: TemplateNode, depth: number, prefix: string): HTMLElement[] {
+  const name = node.name || node.kind;
+  const key = prefix + "." + name;
+  const row = treeRow(
+    key,
+    depth,
+    "tpl " + node.kind,
+    null,
+    [
+      el("span", { class: "layer-glyph",
+                   html: iconMarkup(node.kind === "frame" ? "frame-free" : "node-" + node.kind,
+                                    16, 1.5) }),
+      el("span", { class: "layer-label", text: name }),
+    ],
+    () => {},
+  );
+  const rows = [row];
+  for (const child of node.children ?? [])
+    rows.push(...readonlyRows(child, depth + 1, key));
   return rows;
 }
 
@@ -223,6 +320,13 @@ let armed: { editor: Editor; id: number; x: number; y: number } | null = null;
 let drag: Drag | null = null;
 /* a press and release on one row fires a click even when a drag happened in between */
 let swallow = false;
+/* DOUBLE-CLICK BY KEY, not by element: the first click SELECTS, selection rebuilds this
+   very tree, and the replaced row resets the browser's own dblclick counter — so a
+   double-click on a row would never fire natively. The row's key survives the rebuild;
+   two presses on one key inside the window are the double. */
+let lastPress = { key: "", time: 0, x: 0, y: 0 };
+const DOUBLE_MS = 450;
+const DOUBLE_SLOP = 6;
 /* the drop the STAGE is currently showing: the tree's line says where the node would land,
    and the page behind it reflows into that arrangement (stage.ts owns the mechanism, and the
    stage's own drag feeds it the same way). Fed on CHANGE alone — a rebuild per pointermove
@@ -257,7 +361,33 @@ function armTree(tree: HTMLElement, editor: Editor): void {
     if (ev.button !== 0) return;
     const at = ev.target as HTMLElement | null;
     if (at?.closest?.(".layer-caret")) return;   /* the caret owns folding */
-    const id = rowId(at?.closest?.("[data-key]") ?? null);
+    const keyed = at?.closest?.("[data-key]") as HTMLElement | null;
+
+    /* ENTER A WIDGET on a double press: an instance row from itself, a fenced `.tpl`
+       row from its key — `t<instance>.<name path>` — landing selected on that very
+       node. The click that follows is eaten (`swallow`): it would land on whichever
+       row the fresh context tree put under the pointer. */
+    const key = keyed?.getAttribute("data-key") ?? "";
+    const twice = key !== "" && key === lastPress.key &&
+      ev.timeStamp - lastPress.time < DOUBLE_MS &&
+      Math.abs(ev.clientX - lastPress.x) < DOUBLE_SLOP &&
+      Math.abs(ev.clientY - lastPress.y) < DOUBLE_SLOP;
+    lastPress = { key, time: ev.timeStamp, x: ev.clientX, y: ev.clientY };
+    if (twice) {
+      const fenced = /^t(\d+)\.(.+)$/.exec(key);
+      const plain = /^n(\d+)$/.exec(key);
+      const inst = fenced ? Number(fenced[1])
+        : plain && isInstance(editor.store.nodeAt(Number(plain[1]))) ? Number(plain[1])
+        : 0;
+      if (inst) {
+        lastPress = { key: "", time: 0, x: 0, y: 0 };
+        swallow = true;
+        editor.enterWidget(inst, fenced ? fenced[2] : undefined);
+        return;
+      }
+    }
+
+    const id = rowId(keyed);
     if (!id) return;
     armed = { editor, id, x: ev.clientX, y: ev.clientY };
     window.addEventListener("pointermove", onMove);
@@ -344,7 +474,8 @@ function onMove(ev: PointerEvent): void {
   drag.ghost.style.left = ev.clientX + 14 + "px";
   drag.ghost.style.top = ev.clientY + 12 + "px";
 
-  const page = drag.editor.page();
+  /* the editing root, page or entered component: the same drop arithmetic serves both */
+  const page = drag.editor.root();
   const host = layersHost();
   unmark();
   drag.plan = null;
@@ -403,7 +534,7 @@ function onUp(): void {
   ]);
   held.editor.select([held.id]);
   /* dropped into a frame that was folded shut: open it, or it lands out of sight */
-  const page = held.editor.page();
+  const page = held.editor.root();
   if (page && plan.parent !== page.id && !layerOpen("n" + plan.parent, true))
     toggleLayer(held.editor, "n" + plan.parent, true);
 }

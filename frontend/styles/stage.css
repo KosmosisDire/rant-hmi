@@ -173,3 +173,31 @@
   cursor: move;
   user-select: none;
 }
+
+/* THE PREVIEW-RESIZE GRIPS, only inside an entered widget: they resize the SESSION'S
+   preview of the component — nothing is written — so they sit on the artboard's own
+   edge, outside the page and its camera transform, and are deliberately not the
+   selection handles' shape. */
+.art-grip {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid var(--acc);
+  border-radius: 50%;
+  background: var(--stage);
+  filter: drop-shadow(0 0 3px black);
+  z-index: 5;
+}
+
+.art-grip[data-edge="e"] {
+  cursor: ew-resize;
+}
+
+.art-grip[data-edge="s"] {
+  cursor: ns-resize;
+}
+
+.art-grip[data-edge="se"] {
+  cursor: nwse-resize;
+}

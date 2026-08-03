@@ -12,17 +12,17 @@
  * document mirror, selection, the four workspaces' panels, and structural editing by TREE
  * POSITION rather than by coordinate. */
 
-import { DropPlan, fmtPx, holds, literalNumber, snapPx } from "./arrange.js";
+import { DropPlan, fmtFraction, fmtPx, holds, literalNumber, snapPx } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
-import { Editor, Mode, ViewState } from "./editor.js";
+import { Editor, Mode, StageContext, ViewState } from "./editor.js";
 import { armSwallow, closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
-import { previewArrangement, renderStage } from "./stage.js";
+import { previewArrangement, renderStage, stageScale } from "./stage.js";
 import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
@@ -56,6 +56,9 @@ export class App implements Editor {
   builtinSel: { name: string; path: string } | null = null;
   live: Live | null = null;
   diagnostics: Diag[] = [];
+  /* the entered-widget stack (editor.ts): empty = editing the page itself. Never synced
+     and never persisted, like the selection it travels with. */
+  contexts: StageContext[] = [];
   view: ViewState = {
     mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {},
     /* the theme preview mode is a local preference, like the sidebar widths */
@@ -97,7 +100,7 @@ export class App implements Editor {
   private sidebarsDirty = true;
 
   /* `operate` is the deployed view: no topbar, no sidebars, the artboard alone */
-  constructor(private root: HTMLElement, url: string, private operate = false) {
+  constructor(private shellHost: HTMLElement, url: string, private operate = false) {
     this.build();
     if (this.operate) this.setMode("operate");
     this.conn = new Connection(url, {
@@ -131,6 +134,107 @@ export class App implements Editor {
     return this.store.page(this.pageId) ?? this.store.pages()[0] ?? null;
   }
 
+  /* THE EDITING ROOT: the page, or — inside an entered widget — the component shaped as
+     one (a ComponentDef is {id, name, children} too, and its children array is the LIVE
+     array, so the drop plans splice what the document holds). Null while looking at an
+     unforked built-in: its nodes are nobody's to edit. */
+  root(): Page | null {
+    const ctx = this.contexts[this.contexts.length - 1];
+    if (!ctx) return this.page();
+    if (!ctx.component) return null;
+    const comp = this.store.node(ctx.component);
+    return comp
+      ? { id: comp.id, name: comp.name ?? "", children: comp.children ?? [] }
+      : null;
+  }
+
+  artboard(): { w: number; h: number } {
+    const ctx = this.contexts[this.contexts.length - 1];
+    return ctx ? { w: ctx.w, h: ctx.h } : { w: CANVAS_W, h: CANVAS_H };
+  }
+
+  /* ENTER A WIDGET: the instance's component becomes the editing context — the same
+     artboard editing on its own design frame, editing the COMPONENT (every instance
+     follows) — previewed at this instance's rendered size, with this instance's data.
+     An unforked built-in enters READ-ONLY (component 0): its nodes carry no ids until
+     Override copies it into the document, and the context upgrades itself when that
+     echo lands (settleContexts). */
+  enterWidget(id: number, path?: string): void {
+    const inst = this.store.widget(id);
+    const type = inst?.type ?? "";
+    if (!inst || !type) return;
+    const comp = this.store.components().find((c) => c.name === type) ?? null;
+    if (!comp && !this.builtins.some((b) => b?.name === type)) return;
+    const box = this.canvasBox(id);
+    const spec = (this.registry?.types ?? []).find((t) => t.name === type);
+    const w = Math.max(44, Math.round(box?.w ?? spec?.design_w ?? 240));
+    const h = Math.max(44, Math.round(box?.h ?? spec?.design_h ?? 120));
+    this.contexts.push({ component: comp?.id ?? 0, builtin: comp ? "" : type,
+                         from: id, w, h, w0: w, h0: h });
+    this.view.selection = [];
+    this.view.part = "";
+    this.setHover(0);
+    /* land selected on the internal node the author pointed at (a fenced tree row):
+       the path is template names joined with dots, walked down the component's own
+       children by name */
+    if (path && comp) {
+      let at: Node | undefined;
+      let kids: Node[] = comp.children ?? [];
+      for (const segment of path.split(".")) {
+        at = kids.find((n) => (n.name || n.kind) === segment);
+        if (!at) break;
+        kids = at.children ?? [];
+      }
+      if (at) this.view.selection = [at.id];
+    }
+    this.queueSidebars();
+  }
+
+  /* step out to `depth` contexts (0 = the page), landing selected on the instance the
+     dropped context was entered through — back exactly where the author left */
+  exitTo(depth: number): void {
+    if (depth >= this.contexts.length) return;
+    const dropped = this.contexts[depth];
+    this.contexts.length = depth;
+    this.view.selection = dropped && this.store.nodeAt(dropped.from) ? [dropped.from] : [];
+    this.view.part = "";
+    this.setHover(0);
+    this.queueSidebars();
+  }
+
+  /* the context's preview box: session-local, never written anywhere */
+  resizePreview(w: number, h: number): void {
+    const ctx = this.contexts[this.contexts.length - 1];
+    if (!ctx || (ctx.w === w && ctx.h === h)) return;
+    ctx.w = w;
+    ctx.h = h;
+    this.queueSidebars();
+  }
+
+  /* a context stands while what it points at does. A deleted component (or entered-from
+     instance) drops the stack from that level; an unforked built-in whose Override just
+     landed upgrades IN PLACE to the doc component, which is what arms editing the moment
+     the fork's echo arrives. */
+  private settleContexts(): void {
+    for (let i = 0; i < this.contexts.length; i++) {
+      const ctx = this.contexts[i];
+      if (!ctx.component && ctx.builtin) {
+        const held = this.store.components().find((c) => c.name === ctx.builtin);
+        if (held) {
+          ctx.component = held.id;
+          ctx.builtin = "";
+        }
+      }
+      const alive = this.store.nodeAt(ctx.from) &&
+        (ctx.component ? this.store.node(ctx.component) : ctx.builtin);
+      if (!alive) {
+        this.contexts.length = i;
+        this.view.selection = this.view.selection.filter((id) => this.selectable(id));
+        break;
+      }
+    }
+  }
+
   selectedNode(): Node | null {
     const id = this.view.selection[0];
     return id ? this.store.nodeAt(id) : null;
@@ -149,6 +253,9 @@ export class App implements Editor {
 
   setPage(id: number): void {
     this.pageId = id;
+    /* a page switch is a change of subject: whatever widget was entered, the author
+       asked for a different page, not that component on it */
+    this.contexts = [];
     this.view.selection = [];
     this.view.part = "";
     this.conn.view(id, true);
@@ -169,6 +276,8 @@ export class App implements Editor {
     const parent = this.store.parentOf(widget);
     if (parent && typeof parent.id === "number" && this.page()?.id !== parent.id)
       this.setPage(parent.id);
+    /* the revealed widget lives on the page: whatever was entered steps aside */
+    this.contexts = [];
     this.select([widget]);
     this.setWorkspace("content");
   }
@@ -190,11 +299,11 @@ export class App implements Editor {
     if (this.view.hover === id) return;
     this.view.hover = id;
     renderStage(this.nodes.stage, this);
-    this.root.querySelector(".layers .layer-row.hover")?.classList.remove("hover");
+    this.shellHost.querySelector(".layers .layer-row.hover")?.classList.remove("hover");
     if (!id) return;
     /* ONE row key for one kind of node: the tree stopped needing to know which of two
        shapes a row stood for the day there stopped being two */
-    this.root.querySelector('.layers [data-key="n' + id + '"]')?.classList.add("hover");
+    this.shellHost.querySelector('.layers [data-key="n' + id + '"]')?.classList.add("hover");
   }
 
   /* one preview mechanism for both drags: the tree hands its plan straight through to the
@@ -355,6 +464,7 @@ export class App implements Editor {
     this.view.selection = this.view.selection.filter((id) => this.selectable(id));
     if (!this.view.selection.length) this.view.part = "";
     this.settleComponentSel();
+    this.settleContexts();
     this.renderAll();
   }
 
@@ -390,6 +500,7 @@ export class App implements Editor {
           break;
         }
     this.settleComponentSel();
+    this.settleContexts();
     this.renderAll();
   }
 
@@ -503,7 +614,7 @@ export class App implements Editor {
   /* ---- shell construction ---- */
 
   private build(): void {
-    clear(this.root);
+    clear(this.shellHost);
     const pill = el("span", { class: "pill connecting", title: "connecting" });
     /* clicking a compile finding selects the widget it names */
     const problems = el("button", { class: "problems", onclick: () => this.showProblem() });
@@ -521,8 +632,8 @@ export class App implements Editor {
       /* the deployed view: the page, full window, and nothing else. The banner stays —
          reconnects and refused edits still need a voice. The problems button and pill
          exist unattached, so the status handlers have somewhere to write. */
-      this.root.appendChild(el("main", { class: "workspace" }, [stage]));
-      this.root.appendChild(banner);
+      this.shellHost.appendChild(el("main", { class: "workspace" }, [stage]));
+      this.shellHost.appendChild(banner);
     } else {
       const content = el("main", { class: "workspace" }, [
         left,
@@ -590,7 +701,7 @@ export class App implements Editor {
         ),
       );
 
-      this.root.appendChild(
+      this.shellHost.appendChild(
         el("header", { class: "topbar" }, [
           el("div", { class: "wordmark", text: "DART HMI" }),
           tabs,
@@ -600,9 +711,9 @@ export class App implements Editor {
       );
       for (const ws of this.workspaces) {
         ws.root.hidden = ws.id !== this.workspace;
-        this.root.appendChild(ws.root);
+        this.shellHost.appendChild(ws.root);
       }
-      this.root.appendChild(banner);
+      this.shellHost.appendChild(banner);
       this.restoreSidebarWidths();
     }
 
@@ -650,7 +761,7 @@ export class App implements Editor {
   private setWorkspace(id: WorkspaceId): void {
     this.workspace = id;
     for (const ws of this.workspaces) ws.root.hidden = ws.id !== id;
-    for (const tab of Array.from(this.root.querySelectorAll("button[data-workspace]")))
+    for (const tab of Array.from(this.shellHost.querySelectorAll("button[data-workspace]")))
       tab.classList.toggle("on", (tab as HTMLElement).dataset.workspace === id);
     /* the mode switch and play act on the artboard: they mean nothing over Data or Style */
     for (const tool of this.stageTools) tool.hidden = id !== "content";
@@ -660,8 +771,8 @@ export class App implements Editor {
     this.view.mode = mode;
     /* direct manipulation is edit mode's alone, and so is the highlight that leads it */
     this.setHover(0);
-    this.root.setAttribute("data-mode", mode);
-    for (const button of Array.from(this.root.querySelectorAll("button[data-mode]")))
+    this.shellHost.setAttribute("data-mode", mode);
+    for (const button of Array.from(this.shellHost.querySelectorAll("button[data-mode]")))
       button.classList.toggle("on", (button as HTMLElement).dataset.mode === mode);
     this.renderAll();
   }
@@ -680,11 +791,13 @@ export class App implements Editor {
     if (ev.key === "Escape") {
       closeMenu();
       /* Escape steps out one level WITHIN the active workspace: in Design, part ->
-         component -> none; in Content, widget part -> widget -> none. */
+         component -> none; in Content, widget part -> widget -> selection -> the
+         entered widget's own context, one crumb at a time -> none. */
       if (this.workspace !== "design") {
         if (this.view.part && this.view.selection.length)
           this.selectPart(this.view.selection[0], "");
-        else this.select([]);
+        else if (this.view.selection.length) this.select([]);
+        else if (this.contexts.length) this.exitTo(this.contexts.length - 1);
         return;
       }
       if (this.componentSel) {
@@ -734,7 +847,9 @@ export class App implements Editor {
   }
 
   private openContextAt(clientX: number, clientY: number, at: number): void {
-    const page = this.page();
+    /* the editing root: the page, or the entered component. Null means an unforked
+       built-in is on the artboard — read-only, so no verbs at all. */
+    const page = this.root();
     if (!page || this.view.mode !== "edit") return;
 
     /* on a widget: its own verbs, acting on it — a right-click selects what it acts on */
@@ -805,15 +920,14 @@ export class App implements Editor {
     ]);
   }
 
-  /* a node's box in CANVAS px relative to its parent's origin, read off the rendered
+  /* a node's box in ARTBOARD px relative to its parent's origin, read off the rendered
      page — the one place the truth of a stretch or an expression-driven position lives */
   private canvasBox(id: number): { x: number; y: number; w: number; h: number } | null {
     const host = this.nodes.stage;
     const pageEl = host?.querySelector(".page") as HTMLElement | null;
     const el = host?.querySelector('.page [data-id="' + id + '"]') as HTMLElement | null;
     if (!pageEl || !el) return null;
-    const pageAt = pageEl.getBoundingClientRect();
-    const k = pageAt.width / CANVAS_W;
+    const k = stageScale(host);
     if (!(k > 0)) return null;
     const parent = this.store.parentOf(id);
     const pel = (typeof parent?.id === "number"
@@ -829,36 +943,78 @@ export class App implements Editor {
     };
   }
 
+  /* which unit system writes under `parent` take: canvas px on a page, fractions of the
+     parent's own rendered box inside a component. `pw`/`ph` are that box's size in
+     artboard px — the artboard itself when the parent IS the component root. */
+  private writeSpace(parent: number): { frac: boolean; pw: number; ph: number } {
+    const ctx = this.contexts[this.contexts.length - 1];
+    if (!ctx || !ctx.component) return { frac: false, pw: 1, ph: 1 };
+    if (parent === ctx.component) return { frac: true, pw: ctx.w, ph: ctx.h };
+    const box = this.canvasBox(parent);
+    return { frac: true, pw: box?.w || ctx.w, ph: box?.h || ctx.h };
+  }
+
+  private fmtCoord(space: { frac: boolean; pw: number; ph: number }, value: number,
+                   axis: "x" | "y"): string {
+    return space.frac ? fmtFraction(value / (axis === "x" ? space.pw : space.ph))
+                      : fmtPx(value);
+  }
+
   /* GROUPING is one op because the box it makes has an id only the backend can issue
      (ops.cpp); the echo comes back as that insert plus a move per node, and the selection
      follows the box the same way a new page's does. The box's geometry is ours to
      compute — the bbox of the children as rendered — and the children's own literal x/y
      re-base under the new origin in the same batch, so nothing on screen moves. A child
-     whose position is authored logic keeps its expression untouched. */
+     whose position is authored logic keeps its expression untouched.
+     Inside a component the same rules hold in FRACTIONS: the box's attrs are fractions
+     of the parent, and a child's literals re-scale from the parent's box to the group's
+     — x/y re-base AND re-scale, w/h re-scale, all through the rendered px both boxes
+     share. */
   private group(ids: number[]): void {
     if (!ids.length) return;
+    const root = this.root();
+    if (!root) return;
     const boxes = ids.map((id) => this.canvasBox(id));
     if (boxes.some((b) => b === null)) return;
     const x0 = Math.min(...boxes.map((b) => b!.x));
     const y0 = Math.min(...boxes.map((b) => b!.y));
     const x1 = Math.max(...boxes.map((b) => b!.x + b!.w));
     const y1 = Math.max(...boxes.map((b) => b!.y + b!.h));
+    const bw = x1 - x0;
+    const bh = y1 - y0;
+    if (!(bw > 0) || !(bh > 0)) return;
+    const parent = this.store.parentOf(ids[0]);
+    const space = this.writeSpace(typeof parent?.id === "number" ? parent.id : root.id);
     const ops: Op[] = [{
       op: "group", nodes: ids,
-      attrs: { x: fmtPx(x0), y: fmtPx(y0), w: fmtPx(x1 - x0), h: fmtPx(y1 - y0) },
+      attrs: { x: this.fmtCoord(space, x0, "x"), y: this.fmtCoord(space, y0, "y"),
+               w: this.fmtCoord(space, bw, "x"), h: this.fmtCoord(space, bh, "y") },
     }];
     for (const id of ids) {
       const node = this.store.nodeAt(id);
       if (!node) continue;
       const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
       let moved = false;
-      for (const [key, delta] of [["x", x0], ["y", y0]] as const) {
+      const rebase = (key: string, axis: "x" | "y", delta: number): void => {
         const text = attrs[key];
-        if (text === undefined || String(text).trim() === "") continue;
+        if (text === undefined || String(text).trim() === "") return;
         const lit = literalNumber(text, 0);
-        if (lit === null) continue;
-        attrs[key] = fmtPx(lit - delta);
+        if (lit === null) return;
+        if (space.frac) {
+          const px = lit * (axis === "x" ? space.pw : space.ph);
+          attrs[key] = fmtFraction((px - delta) / (axis === "x" ? bw : bh));
+        } else {
+          attrs[key] = fmtPx(lit - delta);
+        }
         moved = true;
+      };
+      rebase("x", "x", x0);
+      rebase("y", "y", y0);
+      /* a px size means the same inside the box; a fraction was of the PARENT and must
+         become one of the group */
+      if (space.frac) {
+        rebase("w", "x", 0);
+        rebase("h", "y", 0);
       }
       if (moved) ops.push({ op: "set_prop", node: id, key: "attrs", value: attrs });
     }
@@ -868,15 +1024,23 @@ export class App implements Editor {
 
   /* Ungrouping needs no op of its own: every id is already known, so it is a batch. Each
      child lands at base + k in the group's own parent with its literal x/y carried back
-     out through the group's origin, then the empty box goes. */
+     out through the group's origin, then the empty box goes.
+     In FRACTIONS the carry-out is closed-form over the literals alone: the group sits at
+     gx with size gw (fractions of ITS parent), so a child's x becomes gx + x*gw and its
+     w becomes w*gw — no rendering consulted. An axis whose group size is authored logic
+     is skipped: there is no constant to carry the child out through. */
   private ungroup(frameId: number): void {
     const frame = this.store.nodeAt(frameId);
     const parent = this.store.parentOf(frameId);
     if (!frame || !parent || typeof parent.id !== "number") return;
     const base = (parent.children as Node[]).findIndex((n) => n.id === frameId);
     if (base < 0) return;
+    const ctx = this.contexts[this.contexts.length - 1];
+    const frac = !!ctx && !!ctx.component;
     const gx = literalNumber(frame.attrs?.x, 0) ?? 0;
     const gy = literalNumber(frame.attrs?.y, 0) ?? 0;
+    const gw = literalNumber(frame.attrs?.w, NaN);
+    const gh = literalNumber(frame.attrs?.h, NaN);
     const ops: Op[] = (frame.children ?? []).map((child, k) => ({
       op: "move",
       node: child.id,
@@ -887,12 +1051,25 @@ export class App implements Editor {
     for (const child of frame.children ?? []) {
       const attrs: Record<string, string> = { ...(child.attrs ?? {}) };
       let moved = false;
-      for (const [key, delta] of [["x", gx], ["y", gy]] as const) {
-        if (!delta) continue;
-        const lit = literalNumber(attrs[key], 0);
-        if (lit === null) continue;
-        attrs[key] = fmtPx(lit + delta);
+      const carry = (key: string, shift: number, scale: number | null): void => {
+        if (scale === null || !Number.isFinite(scale)) return;
+        const text = attrs[key];
+        if (text === undefined || String(text).trim() === "") return;
+        const lit = literalNumber(text, 0);
+        if (lit === null) return;
+        const next = shift + lit * scale;
+        if (next === lit) return;
+        attrs[key] = frac ? fmtFraction(next) : fmtPx(next);
         moved = true;
+      };
+      if (frac) {
+        carry("x", gx, gw);
+        carry("y", gy, gh);
+        carry("w", 0, gw);
+        carry("h", 0, gh);
+      } else {
+        carry("x", gx, 1);
+        carry("y", gy, 1);
       }
       if (moved) ops.push({ op: "set_prop", node: child.id, key: "attrs", value: attrs });
     }
@@ -901,13 +1078,28 @@ export class App implements Editor {
     this.view.selection = [];
   }
 
-  /* where a fresh node lands: centred on the artboard when it joins the page, a couple of
+  /* where a fresh node lands: centred on the artboard when it joins the root, a couple of
      cells in when it joins a box — deterministic, on the grid, and always in view */
   private freshSpot(parent: number, w: number, h: number): { x: number; y: number } {
-    const page = this.page();
-    return parent === page?.id
-      ? { x: snapPx((CANVAS_W - w) / 2), y: snapPx((CANVAS_H - h) / 2) }
+    const root = this.root();
+    const art = this.artboard();
+    return parent === root?.id
+      ? { x: snapPx((art.w - w) / 2), y: snapPx((art.h - h) / 2) }
       : { x: 44, y: 44 };
+  }
+
+  /* one insert of one node with a starter box, wherever it goes: the spot and size are
+     figured in artboard px and written in the space the parent reads — px on a page,
+     fractions of the parent inside a component */
+  private insertNode(parent: number, node: Json, w: number, h: number): void {
+    const at = this.freshSpot(parent, w, h);
+    const space = this.writeSpace(parent);
+    node.attrs = {
+      ...(node.attrs ?? {}),
+      x: this.fmtCoord(space, at.x, "x"), y: this.fmtCoord(space, at.y, "y"),
+      w: this.fmtCoord(space, w, "x"), h: this.fmtCoord(space, h, "y"),
+    };
+    this.apply([{ op: "insert", parent, list: "children", node }]);
   }
 
   /* A WIDGET IS A FRAME THAT NAMES A COMPONENT — there is no widget kind to ask for — so
@@ -917,21 +1109,11 @@ export class App implements Editor {
     const spec = (this.registry?.types ?? []).find((t) => t.name === type);
     const w = Math.max(22, snapPx(spec?.design_w ?? 240));
     const h = Math.max(22, snapPx(spec?.design_h ?? 120));
-    const at = this.freshSpot(parent, w, h);
-    this.apply([
-      { op: "insert", parent, list: "children",
-        node: { kind: "frame", type, name: type,
-                attrs: { x: fmtPx(at.x), y: fmtPx(at.y), w: fmtPx(w), h: fmtPx(h) } } },
-    ]);
+    this.insertNode(parent, { kind: "frame", type, name: type }, w, h);
   }
 
   private addBox(parent: number): void {
-    const at = this.freshSpot(parent, 352, 264);
-    this.apply([
-      { op: "insert", parent, list: "children",
-        node: { kind: "frame", name: "Box",
-                attrs: { x: fmtPx(at.x), y: fmtPx(at.y), w: "352", h: "264" } } },
-    ]);
+    this.insertNode(parent, { kind: "frame", name: "Box" }, 352, 264);
   }
 
   /* the ink kinds, added the same way: one node, one insert, each with a starter box so
@@ -940,13 +1122,7 @@ export class App implements Editor {
     const size = kind === "text" ? { w: 264, h: 44 }
                : kind === "icon" ? { w: 66, h: 66 }
                : { w: 264, h: 264 };
-    const at = this.freshSpot(parent, size.w, size.h);
-    this.apply([
-      { op: "insert", parent, list: "children",
-        node: { kind, name: kind,
-                attrs: { x: fmtPx(at.x), y: fmtPx(at.y),
-                         w: fmtPx(size.w), h: fmtPx(size.h) } } },
-    ]);
+    this.insertNode(parent, { kind, name: kind }, size.w, size.h);
   }
 
   /* duplicate every selected widget OR frame into its OWN parent, directly after it: a

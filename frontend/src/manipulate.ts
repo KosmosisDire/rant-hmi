@@ -16,11 +16,10 @@
  * re-reads what is under the pointer. */
 
 import {
-  fmtPx, freeBoxOf, FreeHandle, freePlan, FreePlan, FreeWrite, seatOf,
+  fmtFraction, fmtPx, freeBoxOf, FreeHandle, freePlan, FreePlan, FreeWrite, seatOf,
 } from "./arrange.js";
 import { Editor } from "./editor.js";
 import { handleCursor } from "./handles.js";
-import { CANVAS_W } from "./types.js";
 
 /* a press travels this far (screen px) before it is a drag rather than a click */
 const SLOP = 4;
@@ -45,6 +44,11 @@ interface FreeGesture {
   plan: FreePlan;
   /* screen px per canvas px at the press: the camera's scale, measured once */
   k: number;
+  /* WHAT THE COMMIT DIVIDES BY, per axis: inside a component the plan's px become
+     fractions of the parent's box on release; 0 means page space, where px are written
+     as they are. Measured once, with everything else. */
+  sx: number;
+  sy: number;
   startX: number;
   startY: number;
   dx: number;
@@ -120,22 +124,28 @@ function onDown(host: HTMLElement, editor: Editor, ev: PointerEvent): void {
 
 /* ---- measuring: the one look at the screen a gesture takes ---- */
 
-/* The box and its writability, in CANVAS px. clientWidth/clientLeft report layout px —
- * which under the camera's transform ARE canvas px — while getBoundingClientRect reports
- * screen px; dividing by the page's own rendered scale converts between them. `base` is
- * the parent's origin on the artboard, which is what lets a nested box snap to the one
- * global grid. */
+/* The box and its writability, in ARTBOARD px. clientWidth/clientLeft report layout px —
+ * which under the camera's transform ARE artboard px — while getBoundingClientRect
+ * reports screen px; dividing by the page's own rendered scale converts between them.
+ * `base` is the parent's origin on the artboard, which is what lets a nested box snap to
+ * the one global grid.
+ *
+ * INSIDE A COMPONENT the document holds fractions, and the whole plan still runs in px:
+ * `scale` blows the doc's literals up to px going in (freeBoxOf), and `sx`/`sy` — the
+ * parent's own px size — divide the commit back down on the way out. The seam is exactly
+ * at the read and the write; every rule between them is unit-blind. */
 function measure(host: HTMLElement, editor: Editor, id: number):
-    { plan: (handle: FreeHandle) => FreePlan | null; k: number } | null {
-  const page = editor.page();
-  const seat = page ? seatOf(page, id) : null;
+    { plan: (handle: FreeHandle) => FreePlan | null; k: number;
+      sx: number; sy: number } | null {
+  const root = editor.root();
+  const seat = root ? seatOf(root, id) : null;
   const pageEl = host.querySelector(".page") as HTMLElement | null;
   const el = nodeIn(host, id);
-  if (!page || !seat || !pageEl || !el) return null;
+  if (!root || !seat || !pageEl || !el) return null;
   const pageAt = pageEl.getBoundingClientRect();
-  const k = pageAt.width / CANVAS_W;
+  const k = pageAt.width / editor.artboard().w;
   if (!(k > 0)) return null;
-  const pel = seat.parent === page.id ? pageEl : nodeIn(host, seat.parent);
+  const pel = seat.parent === root.id ? pageEl : nodeIn(host, seat.parent);
   if (!pel) return null;
   const pat = pel.getBoundingClientRect();
   const at = el.getBoundingClientRect();
@@ -143,13 +153,17 @@ function measure(host: HTMLElement, editor: Editor, id: number):
     x: (pat.left - pageAt.left) / k + pel.clientLeft,
     y: (pat.top - pageAt.top) / k + pel.clientTop,
   };
+  const frac = editor.contexts.length > 0;
+  const scale = frac ? { x: pel.clientWidth, y: pel.clientHeight } : { x: 1, y: 1 };
+  if (frac && !(scale.x > 0 && scale.y > 0)) return null;
   const box = freeBoxOf(editor.store.nodeAt(id), {
     left: (at.left - pat.left) / k - pel.clientLeft,
     top: (at.top - pat.top) / k - pel.clientTop,
     w: at.width / k,
     h: at.height / k,
-  });
-  return { plan: (handle) => freePlan(handle, box, base), k };
+  }, scale);
+  return { plan: (handle) => freePlan(handle, box, base), k,
+           sx: frac ? scale.x : 0, sy: frac ? scale.y : 0 };
 }
 
 /* ---- the gestures ---- */
@@ -164,7 +178,7 @@ function beginMove(): void {
      where that logic is edited */
   if (!found || !plan) return;
   free = { host, editor, id, pointer, handle: "move", plan, k: found.k,
-           startX: x, startY: y, dx: 0, dy: 0, snap: true };
+           sx: found.sx, sy: found.sy, startX: x, startY: y, dx: 0, dy: 0, snap: true };
   host.setPointerCapture?.(pointer);
   editor.setHover(0);
   host.classList.add("freemoving");
@@ -182,6 +196,7 @@ function beginResize(host: HTMLElement, editor: Editor, hit: Element, ev: Pointe
   const plan = found?.plan(handle) ?? null;
   if (!found || !plan) return;   /* a disabled grip has no hit rect; belt and braces */
   free = { host, editor, id, pointer: ev.pointerId, handle, plan, k: found.k,
+           sx: found.sx, sy: found.sy,
            startX: ev.clientX, startY: ev.clientY, dx: 0, dy: 0, snap: !ev.altKey };
   host.setPointerCapture?.(ev.pointerId);
   editor.setHover(0);
@@ -240,9 +255,15 @@ function onUp(ev: PointerEvent): void {
     return;
   }
   /* one op of the whole attr map, each field the TEXT of the constant the gesture
-     reached — the same edit the inspector would have made, landing in the same fields */
+     reached — the same edit the inspector would have made, landing in the same fields.
+     On a page that text is whole px; inside a component the px divide back to a
+     fraction of the parent's box (the divisors were measured with everything else). */
   const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
-  for (const key of moved) attrs[key] = fmtPx(to[key] as number);
+  for (const key of moved) {
+    const value = to[key] as number;
+    const divisor = key === "x" || key === "w" ? held.sx : held.sy;
+    attrs[key] = divisor ? fmtFraction(value / divisor) : fmtPx(value);
+  }
   held.editor.apply([{ op: "set_prop", node: held.id, key: "attrs", value: attrs }]);
   held.editor.select([held.id]);
 }

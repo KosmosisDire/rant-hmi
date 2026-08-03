@@ -38,6 +38,30 @@ export interface ViewState {
  * fabricated number, and never blank — blank reads as "empty", which is a different claim. */
 export const UNKNOWN_TEXT = "--";
 
+/* ONE ENTERED WIDGET: the editor is inside a component's own context, editing the
+ * component itself (every instance follows). A stack of these is the breadcrumb — a
+ * component whose internals hold another instance can be entered again.
+ *
+ * `component` is the doc component's id; 0 means an UNFORKED BUILT-IN is being looked at
+ * (named by `builtin`), whose nodes carry no document ids — which is exactly what makes
+ * that context read-only until Override copies it into the document.
+ *
+ * `from` is the instance the author entered THROUGH. It is the context's data owner —
+ * the preview reads that instance's live cells and slot values, so the component is
+ * edited while behaving as that placement does — and its rendered box seeds `w`/`h`.
+ *
+ * `w`/`h` are the PREVIEW size in artboard px: session-local, resized freely to try the
+ * component at other sizes, never written anywhere. `w0`/`h0` remember the seed. */
+export interface StageContext {
+  component: number;
+  builtin: string;
+  from: number;
+  w: number;
+  h: number;
+  w0: number;
+  h0: number;
+}
+
 export interface Editor {
   store: DocStore;
   registry: Registry | null;
@@ -68,7 +92,24 @@ export interface Editor {
      Read-only, and mutually exclusive with both other selections. */
   builtinSel: { name: string; path: string } | null;
   view: ViewState;
+  /* the entered-widget stack, outermost first; empty = editing the page itself */
+  contexts: StageContext[];
   page(): Page | null;
+  /* THE EDITING ROOT the stage, the Layers tree and every structural verb operate on:
+     the current page, or — inside a context — the component shaped as one (a
+     ComponentDef is {id, name, children} too). Null while looking at an unforked
+     built-in, whose nodes are nobody's to edit. */
+  root(): Page | null;
+  /* the artboard's current dimensions in artboard px: the fixed canvas on a page, the
+     preview size inside a context. Gestures divide the screen by this. */
+  artboard(): { w: number; h: number };
+  /* ENTER A WIDGET: push the instance's component onto the context stack. `path` names
+     an internal node (template names joined with dots) to land selected. */
+  enterWidget(id: number, path?: string): void;
+  /* step out to `depth` contexts (0 = the page), selecting the instance stepped out of */
+  exitTo(depth: number): void;
+  /* resize the current context's preview box: session-local, never written */
+  resizePreview(w: number, h: number): void;
   /* WHATEVER IS SELECTED: one kind of node, so one accessor. From its Layers row, or from
      its own pixels on the stage — for a frame, the padding, gaps and empty room its
      children do not cover. */

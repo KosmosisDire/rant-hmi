@@ -186,6 +186,13 @@ export function fmtPx(value: number): string {
   return String(Math.round(value));
 }
 
+/* the TEXT a gesture writes INSIDE A COMPONENT: a fraction of the parent's box, at most
+   4 decimals — a ten-thousandth of the box is below anything a pointer said, and the
+   rounding keeps float tails out of the document */
+export function fmtFraction(value: number): string {
+  return String(Math.round(value * 10000) / 10000);
+}
+
 /* one of the four box fields, resolved for a gesture */
 export interface FreeField {
   value: number;      /* the canvas px actually showing */
@@ -222,23 +229,30 @@ export interface MeasuredBox {
  * — x places the origin point, so reading it off the screen goes through w — the same
  * order the renderer solves in. Null when `origin_x`/`origin_y` hold expressions: the
  * origin converts between the box's edges and the doc's x/y, and an expression there
- * leaves nothing a gesture can safely write through. */
-export function freeBoxOf(node: Node | null | undefined, measured: MeasuredBox): FreeBox | null {
+ * leaves nothing a gesture can safely write through.
+ *
+ * `scale` converts a FRACTION-space document (a component's internals) into the px the
+ * plan's arithmetic runs in: a doc literal is multiplied by the parent's rendered size on
+ * its axis, so the whole gesture thinks in artboard px and only the commit divides back.
+ * On a page the scale is 1 and a literal is already the px it says. */
+export function freeBoxOf(node: Node | null | undefined, measured: MeasuredBox,
+                          scale: { x: number; y: number } = { x: 1, y: 1 }): FreeBox | null {
   if (!node) return null;
   const attrs = node.attrs ?? {};
-  const field = (key: string, fallback: number): FreeField => {
+  const field = (key: string, fallback: number, k: number): FreeField => {
     const text = attrs[key];
     const present = text !== undefined && text !== null && String(text).trim() !== "";
     const lit = literalNumber(text, fallback);
-    return { value: lit ?? fallback, literal: lit !== null, present };
+    return { value: lit !== null ? (present ? lit * k : fallback) : fallback,
+             literal: lit !== null, present };
   };
   const ox = literalNumber(attrs.origin_x, 0);
   const oy = literalNumber(attrs.origin_y, 0);
   if (ox === null || oy === null) return null;
-  const w = field("w", measured.w);
-  const h = field("h", measured.h);
-  const x = field("x", measured.left + ox * w.value);
-  const y = field("y", measured.top + oy * h.value);
+  const w = field("w", measured.w, scale.x);
+  const h = field("h", measured.h, scale.y);
+  const x = field("x", measured.left + ox * w.value, scale.x);
+  const y = field("y", measured.top + oy * h.value, scale.y);
   /* aspect pins one size to the other. Only the one-authored-size case DERIVES: with both
      written aspect is inert, and with neither the axis insets win. An expression counts —
      whatever it evaluates to is still a lock. (When the derived axis is ALSO stretched by
