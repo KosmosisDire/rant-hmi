@@ -373,6 +373,37 @@ Json compile_node(const Json& node, const std::string& path, const Walk& walk, S
     return out;
 }
 
+/* A doc component's nodes, compiled a SECOND way: keyed by their own document ids, in
+ * the same {attrs, anchors} rows a page node gets. The template (compile_node) serves an
+ * instance's rendering, where nodes are addressed by name under an owner; this serves the
+ * component CONTEXT — entering a widget — where the stage walks the doc tree it already
+ * holds and pulls each node's programs by id, exactly as it does for a page. Same nodes,
+ * same scopes, same programs; a second key, not a second compiler. */
+void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk,
+                     Sink& sink, Json& out) {
+    const uint64_t node_id = id_of(node);
+    const std::string kind = str_or(node, "kind", "frame");
+    auto found = walk.scopes.find(path);
+    const TemplateScope& scope =
+        found != walk.scopes.end() ? found->second : walk.scopes.at("");
+    const Json attrs = shown_attrs(node.value("attrs", Json::object()), path, walk);
+    Json row{{"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
+    if (kind == "path")
+        row["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
+                                         node_id, sink);
+    if (node_id) out[std::to_string(node_id)] = std::move(row);
+    for (const Json& child : node.value("children", Json::array())) {
+        if (!child.is_object()) continue;
+        const std::string child_name = str_or(child, "name", "");
+        /* the path pass one gave it, by compile_node's own rule: a name that could not
+           address left the child on its parent's path */
+        const std::string named = path.empty() ? child_name : path + "." + child_name;
+        const std::string child_path =
+            !child_name.empty() && walk.scopes.count(named) ? named : path;
+        emit_node_attrs(child, child_path, walk, sink, out);
+    }
+}
+
 /* One PropDef row (document or built-in data alike) -> the served SlotSpec shape.
  * `address` is the name the rest of the system uses: bare for a component-level property,
  * prefixed by the owning node's path for one a node declares. name/shape/default/group
@@ -542,6 +573,26 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
     if (pages != document.root.end() && pages->is_array())
         for (const Json& page : *pages)
             for (const Json& child : array_or_empty(page, "children")) walk(child);
+
+    /* DOC COMPONENTS COMPILE HERE TOO, keyed by their own node ids (globally unique, so
+     * the two key spaces cannot collide). The sink is SILENT: derive_registry has already
+     * pinned every finding these same compiles produce, and one mistake gets one finding.
+     * Built-ins are deliberately absent — they carry no document ids until forked, which
+     * is exactly what makes an unforked built-in's context read-only. */
+    Sink quiet;
+    auto components = document.root.find("components");
+    if (components != document.root.end() && components->is_array()) {
+        for (const Json& component : *components) {
+            if (!component.is_object()) continue;
+            Walk pass;
+            TemplateScope component_root;
+            component_root.addresses = pass.addresses;
+            collect_tree(component, "", true, component_root, pass, quiet);
+            Json root_node = component;
+            root_node["kind"] = "frame";
+            emit_node_attrs(root_node, "", pass, quiet, out);
+        }
+    }
     return out;
 }
 

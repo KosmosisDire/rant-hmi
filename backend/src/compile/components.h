@@ -33,9 +33,11 @@ Json derive_registry(const Document& document, std::vector<Diag>& diags);
  * fails to compile, so a bad built-in definition cannot ship. */
 const Json& builtin_registry();
 
-/* Every PAGE node's attrs, compiled: {"<node id>": {"<attr>": {"code": [...]}}}. The
+/* Every PAGE node's attrs, compiled: {"<node id>": {"<attr>": {"code": [...]}}} — and
+ * every DOC COMPONENT node's too, keyed the same way (ids are globally unique). The
  * renderer walks the document tree it already holds and pulls each node's programs from
- * here, so page and component nodes render through one path. */
+ * here, so a page and an entered component render through one path. Component findings
+ * are NOT re-reported here; derive_registry already pinned them. */
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags);
 
 } // namespace hmi
