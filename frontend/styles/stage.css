@@ -110,10 +110,12 @@
 
 /* ---- the grid, and the handles on a selected node ---- */
 
-/* THE ONE STATIC GRID: 22px cells in canvas space, drawn whenever the page is being
-   edited. The lines ride the camera's transform, so the picture and the numbers always
-   agree. On ::before so it never fights the artboard's surface; under the children,
-   because their positioned boxes paint over it. */
+/* THE ONE STATIC GRID: 11px cells in canvas space, drawn whenever the page is being
+   edited — a fainter minor line per cell, a firmer one every fourth, graph-paper style,
+   so the fine grid reads as texture and the 44s carry the eye. The lines ride the
+   camera's transform, so the picture and the numbers always agree. On ::before so it
+   never fights the artboard's surface; under the children, because their positioned
+   boxes paint over it. */
 .gridded::before {
   content: "";
   position: absolute;
@@ -121,8 +123,10 @@
   pointer-events: none;
   background-image:
     linear-gradient(to right, rgba(128, 128, 128, 0.16) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(128, 128, 128, 0.16) 1px, transparent 1px);
-  background-size: 22px 22px;
+    linear-gradient(to bottom, rgba(128, 128, 128, 0.16) 1px, transparent 1px),
+    linear-gradient(to right, rgba(128, 128, 128, 0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(128, 128, 128, 0.09) 1px, transparent 1px);
+  background-size: 44px 44px, 44px 44px, 11px 11px, 11px 11px;
 }
 
 /* THE SELECTION HANDLES (handles.ts): the old designer's box over a free child — the

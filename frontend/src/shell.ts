@@ -269,8 +269,9 @@ export class App implements Editor {
     this.apply([{ op: "insert", parent: 0, list: "components", node: copy }]);
   }
 
-  /* a minimal fresh component: a body box holding one text part wired to one starter
-     property, so the new type renders (and binds) something the moment it is placed */
+  /* a minimal fresh component: one text node wired to one starter property, so the new
+     type renders (and binds) something the moment it is placed. The component record IS
+     the root frame; the label fills it, in fractions of whatever box an instance gives. */
   addComponent(): void {
     const taken = new Set<string>(this.store.components().map((c) => c.name));
     for (const type of this.registry?.types ?? []) taken.add(type.name);
@@ -285,15 +286,9 @@ export class App implements Editor {
         node: {
           name,
           props: [{ name: "text", shape: "text", default: "new", group: "appearance" }],
-          parts: [
-            {
-              kind: "box",
-              name: "body",
-              dir: "stack",
-              attrs: {},
-              children: [{ kind: "text", name: "label", attrs: { text: "text" } }],
-            },
-          ],
+          attrs: {},
+          children: [{ kind: "text", name: "label",
+                       attrs: { text: "text", align: "'center'" } }],
         },
       },
     ]);

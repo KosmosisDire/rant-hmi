@@ -264,11 +264,6 @@ function renderBuiltinPartView(host: HTMLElement, editor: Editor, at: BuiltinAt)
     el("span", { class: "row-label", text: "KIND" }),
     el("span", { class: "kw", text: kind }),
   ]);
-  if (kind === "frame")
-    kindRow.append(
-      el("span", { class: "row-label", text: "LAYOUT" }),
-      el("span", { class: "kw", text: String(part?.layout ?? "free") }),
-    );
   body.append(
     el("div", { class: "part-def" }, [
       kindRow,
@@ -620,17 +615,6 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     el("span", { class: "row-label", text: "KIND" }),
     el("span", { class: "kw", text: part.kind }),
   ]);
-  /* a frame is the one kind that PLACES anything, so it is the one kind with a layout:
-     free lets its children measure themselves, row/col/grid arrange them */
-  if (part.kind === "frame") {
-    const layout = selectField(
-      ["free", "row", "col", "grid"].map((v) => ({ value: v })),
-      (part as Json).layout ?? "free",
-      (v) => editor.apply([{ op: "set_prop", node: part.id, key: "layout", value: v }]),
-    );
-    bindChoice(part.id + ":layout", pickerOf(layout), () => (at() as Json).layout ?? "free");
-    kindRow.append(el("span", { class: "row-label", text: "LAYOUT" }), layout);
-  }
   kindRow.appendChild(el("span", { class: "spacer" }));
   if (index > 0)
     kindRow.appendChild(
@@ -702,7 +686,7 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
     const add = el("button", {
       class: "dashed-btn",
       text: "+ Child",
-      title: "placed by this frame's own layout",
+      title: "placed by its own x/y/w/h, fractions of this frame",
     });
     add.addEventListener("click", () => {
       const rect = add.getBoundingClientRect();

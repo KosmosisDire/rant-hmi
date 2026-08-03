@@ -7,11 +7,12 @@ export const PROTO = 9;
 
 /* THE ARTBOARD: one static px space, 16:9, with one static grid — a system constant,
  * not document data. Every page-node x/y/w/h is a px of this space; the stage scales the
- * whole picture into the pane and pan/zoom navigate it. 1408 x 792 is 64 x 36 cells of
- * 22px, the old designer's exact grid. */
+ * whole picture into the pane and pan/zoom navigate it. 1408 x 792 is 128 x 72 cells of
+ * 11px — twice the old designer's 22px resolution, so its coarser placements all still
+ * sit on the lines. */
 export const CANVAS_W = 1408;
 export const CANVAS_H = 792;
-export const CELL = 22;
+export const CELL = 11;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 

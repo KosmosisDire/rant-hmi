@@ -19,7 +19,6 @@ export interface PartEntry {
   path: string; /* names joined with "." from the root; "" is the instance itself */
   name: string;
   kind: string; /* frame | text | icon | path */
-  layout: string; /* a frame's own layout; "" on a leaf */
   slots: string[]; /* the slot addresses this node OWNS, declaration order */
   children: PartEntry[];
 }
@@ -62,7 +61,6 @@ export function partIndex(type: WidgetType): PartIndex {
     path,
     name,
     kind: String(node?.kind ?? "frame"),
-    layout: node?.kind === "frame" ? String(node?.layout ?? "free") : "",
     slots: owned.get(path) ?? [],
     children: [],
   });

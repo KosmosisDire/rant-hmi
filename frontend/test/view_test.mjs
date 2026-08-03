@@ -1501,11 +1501,11 @@ check(stageNode("frame", 901) !== heldAgain &&
   check(settle(tree, 711, { parent: 710, index: 0 }) === null, "and the seat it already holds is no move");
 
   /* ---- the artboard: the grid, the box, and what a gesture may write ----
-     Everything is canvas px on the one 22px grid; `base` is the parent's own origin on
+     Everything is canvas px on the one 11px grid; `base` is the parent's own origin on
      the artboard, which is what keeps a nested box snapping to the GLOBAL lines. */
 
-  check(snapPx(100) === 110 && snapPx(250) === 242,
-        "px snap to the 22px cells");
+  check(snapPx(100) === 99 && snapPx(250) === 253,
+        "px snap to the 11px cells");
   check(fmtPx(153.6) === "154" && fmtPx(22) === "22",
         "a written position is whole px, got " + fmtPx(153.6));
 
@@ -1546,8 +1546,8 @@ check(stageNode("frame", 901) !== heldAgain &&
 
   /* the move plan: snapped, axis-locked, and quiet about what did not change */
   const slide = freePlan("move", plain, origin);
-  const slid = slide.commit(15, 0, true);   /* 110 + 15 = 125, snapped to 132 */
-  check(slid.x === 132 && !("y" in slid) && !("w" in slid),
+  const slid = slide.commit(15, 0, true);   /* 110 + 15 = 125, snapped to 121 */
+  check(slid.x === 121 && !("y" in slid) && !("w" in slid),
         "a move writes the snapped x it reached and nothing it did not touch, got " +
           JSON.stringify(slid));
   check(slide.commit(15, 0, false).x === 125,
@@ -1557,24 +1557,24 @@ check(stageNode("frame", 901) !== heldAgain &&
 
   /* THE GRID IS GLOBAL: the same drag inside a parent that sits off the origin snaps to
      the artboard's lines, not to lines of the parent's own */
-  const nested = freePlan("move", plain, { x: 11, y: 0 });
-  check(nested.commit(15, 0, true).x === 121,
+  const nested = freePlan("move", plain, { x: 5, y: 0 });
+  check(nested.commit(15, 0, true).x === 127,
         "a nested box snaps where the ARTBOARD's line is, got " +
           JSON.stringify(nested.commit(15, 0, true)));
 
   /* a STRETCHED axis pins its size when first moved: the doc held neither x nor w */
   const stretched = freeBoxOf(freeNode({}), { left: 0, top: 0, w: 1408, h: 792 });
   const pinned = freePlan("move", stretched, origin).commit(30, 0, true);
-  check(pinned.x === 22 && pinned.w === 1408 && !("h" in pinned),
+  check(pinned.x === 33 && pinned.w === 1408 && !("h" in pinned),
         "moving a stretched box writes the size the stretch was giving, got " +
           JSON.stringify(pinned));
 
   /* the resize plan: the grabbed edge moves, the opposite edge stands */
   const wider = freePlan("R", plain, origin).commit(15, 0, true);
-  check(wider.w === 242 && !("x" in wider),
+  check(wider.w === 231 && !("x" in wider),
         "dragging R at origin 0 writes only w, got " + JSON.stringify(wider));
   const fromLeft = freePlan("L", plain, origin).commit(15, 0, true);
-  check(fromLeft.x === 132 && fromLeft.w === 198,
+  check(fromLeft.x === 121 && fromLeft.w === 209,
         "dragging L moves x and w together and the right edge stands, got " +
           JSON.stringify(fromLeft));
   check(freePlan("R", plain, origin).apply(-1e6, 0, true).w >= 8 - 1e-9,
