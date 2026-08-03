@@ -145,6 +145,7 @@
 
 .handles .sel-grip {
   fill: var(--acc);
+  filter: drop-shadow(0 0 3px black);
 }
 
 .handles .sel-arc {
@@ -152,6 +153,7 @@
   stroke: var(--acc);
   stroke-linecap: round;
   stroke-linejoin: round;
+  filter: drop-shadow(0 0 3px black);
 }
 
 .handles .sel-hit {
