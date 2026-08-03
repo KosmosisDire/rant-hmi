@@ -1,16 +1,19 @@
-/* ---------- the page, rendered as real DOM ---------- */
+/* ---------- the artboard, rendered as real DOM ---------- */
 
-/* The page IS the pane: no artboard, no letterbox, no fixed size anywhere. Resizing the
-   window or dragging a sidebar re-solves the layout, which is the whole model. It is the
-   root frame and takes the same defaults a fresh frame does — a column that fills. */
+/* THE PAGE IS AN ARTBOARD: a fixed 1408 x 792 px surface (stage.ts sizes it) the camera
+   scales into the pane — one picture, letterboxed, panned and zoomed, never reflowed.
+   The pane around it is the pasteboard. */
+.stage {
+  overflow: hidden;
+}
+
 .page {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
   background: var(--stage);
+  box-shadow: 0 2px 24px rgba(0, 0, 0, 0.5);
 }
 
 /* overflow clips to the radius, so a surfaced pane's corners actually round the content
@@ -22,7 +25,7 @@
 
 .page .frame,
 .page .leaf {
-  box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.45);
+  /* box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.45); */
 }
 
 /* A WIDGET INSTANCE renders as its component's own root box — a frame in every way except
@@ -90,67 +93,77 @@
   opacity: 0.45;
 }
 
-/* ---------- carrying a node through the layout ---------- */
+/* ---------- a Layers-tree drag, mirrored on the artboard ---------- */
 
-/* every arrangement a drag can point at is one the document allows — a container inside the
-   carried subtree never even answers the hit test — so the cursor has only the one thing to
-   say */
-.stage.dragging {
-  cursor: grabbing;
-  user-select: none;
-}
-
-/* WHERE IT WOULD LAND: a line in the gap it would be inserted into, drawn across the
-   container's own width. THE PAGE DOES NOT MOVE while a drag is live — a preview that
-   reflows slides the children out from under the pointer, which names a different slot,
-   which reflows again — so this line is the only thing that follows the pointer. */
-.insert-caret {
-  position: absolute;
-  pointer-events: none;
-  border-radius: 1px;
-  background: var(--acc);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
-}
-
-/* WHAT IS IN YOUR HAND, dimmed where it still sits: it has not moved, and pretending
-   otherwise is what the reflow preview got wrong. Inset rather than an outline, because a
-   frame clips to its own radius and would cut an outline off. */
+/* WHAT IS IN YOUR HAND, dimmed where it still sits: nothing moves until the drop. Inset
+   rather than an outline, because a box clips to its own radius and would cut one off. */
 .carrying {
   opacity: 0.55;
   box-shadow: inset 0 0 0 1px var(--acc);
 }
 
-/* and the container that would receive it, so a drop into an empty frame — where there is
-   no gap to draw a line in — still says where it is going */
+/* and the box that would receive it. There is no insertion line: order is Z-ORDER on the
+   artboard, not a place on an axis. */
 .drop-target {
   box-shadow: inset 0 0 0 1px var(--acc);
 }
 
-/* ---------- the boundary between two children ---------- */
+/* ---- the grid, and the handles on a selected node ---- */
 
-/* A container with n children has n-1 boundaries, and dragging one grows the side before it
-   by exactly what it takes from the side after. The strip that grabs one is wider than the
-   line that shows it, so the line is drawn where the edge IS rather than where the pointer
-   may be. */
-.boundary {
+/* THE ONE STATIC GRID: 22px cells in canvas space, drawn whenever the page is being
+   edited. The lines ride the camera's transform, so the picture and the numbers always
+   agree. On ::before so it never fights the artboard's surface; under the children,
+   because their positioned boxes paint over it. */
+.gridded::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(128, 128, 128, 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(128, 128, 128, 0.16) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* THE SELECTION HANDLES (handles.ts): the old designer's box over a free child — the
+   ring on the box's own line, four edge pills, four corner brackets tracing the ring's
+   corners. The overlay ignores the pointer; only the invisible hit rects take it, so the
+   page underneath keeps its own hover and click. */
+.handles {
   position: absolute;
   pointer-events: none;
-  border-radius: 1px;
-  background: var(--acc);
 }
 
-/* the cursor names the axis the boundary moves along, and keeps naming it for the length of
-   the drag, wherever the pointer has wandered to by then */
-.stage.resize-x,
-.stage.resizing.resize-x {
-  cursor: col-resize;
+.handles .sel-ring {
+  fill: none;
+  stroke: var(--acc);
 }
 
-.stage.resize-y,
-.stage.resizing.resize-y {
-  cursor: row-resize;
+.handles .sel-grip {
+  fill: var(--acc);
 }
 
-.stage.resizing {
+.handles .sel-arc {
+  fill: none;
+  stroke: var(--acc);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.handles .sel-hit {
+  pointer-events: all;
+}
+
+/* a grip whose field holds an EXPRESSION: still drawn — "there is a handle here" — but
+   dimmed and taking no pointer, because a drag writes constants, never over authored
+   logic. The hit rect is simply not emitted. */
+.handles .off {
+  opacity: 0.3;
+}
+
+/* moving or resizing a node; a resize overrides the cursor inline with the handle's own
+   direction for the length of the drag */
+.stage.freemoving {
+  cursor: move;
   user-select: none;
 }

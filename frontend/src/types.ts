@@ -3,7 +3,15 @@
 
 export type Json = any;
 
-export const PROTO = 8;
+export const PROTO = 9;
+
+/* THE ARTBOARD: one static px space, 16:9, with one static grid — a system constant,
+ * not document data. Every page-node x/y/w/h is a px of this space; the stage scales the
+ * whole picture into the pane and pan/zoom navigate it. 1408 x 792 is 64 x 36 cells of
+ * 22px, the old designer's exact grid. */
+export const CANVAS_W = 1408;
+export const CANVAS_H = 792;
+export const CELL = 22;
 
 /* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
 
@@ -136,14 +144,16 @@ export interface Flow {
  * `kind` says what a node draws; everything a node LOOKS like is expression text in
  * `attrs`, checked against the served vocabulary (AttrTable) and compiled to view
  * programs by the backend. Only what is structural stays a field of its own: `kind`,
- * `name`, `layout`, and a path's anchors.
+ * `name`, and a path's anchors.
+ *
+ * A FRAME IS A BOX and a box is all a frame is: it can hold children (grouping), it can
+ * wear a surface (a pane), and sibling ORDER is z-order. There is no layout mode — the
+ * arrangement vocabulary was deliberately removed; everything sits at its own x/y.
  *
  * A FRAME WITH A `type` IS AN INSTANCE: it names a component, that component's children
  * are its subtree (hidden here, entered to edit), and `slots`/`feeds`/`flows`/`locals`
  * are how this one placement is wired. */
 export type NodeKind = "frame" | "text" | "icon" | "path";
-
-export type Layout = "free" | "row" | "col" | "grid";
 
 /* one anchor of a path, in the DOCUMENT form: every coordinate is expression text, and
    `arc` (an elliptical segment ending at this anchor) is a row of the same */
@@ -162,7 +172,6 @@ export interface Node {
   attrs: Record<string, string>;   /* attr -> expression text */
   props?: PropDef[];
   /* frame only */
-  layout?: Layout;
   type?: string;                   /* "" = a plain frame; a component name = an instance */
   /* per-instance slot values, NESTED like the component's own nodes: a top-level property
      is a key here, a nested node's property a key inside an object named for that node, so
@@ -218,16 +227,16 @@ export interface ComponentDef {
   name: string;
   events: EventSpec[];
   props: PropDef[];
-  /* the ROOT BOX: the same three fields the frame variant carries, because the record IS
+  /* the ROOT BOX: the same fields the frame variant carries, because the record IS
      the root node */
-  layout: Layout;
   attrs: Record<string, string>;
   interact?: Json;
   children: Node[];
   behavior: Flow[];
-  /* the DESIGN FRAME: the size this component is AUTHORED at — its natural size. NOT an
-     instance size: an instance takes whatever box its parent gives it. A built-in carries
-     neither field, and the fallback is 240 x 120. */
+  /* the DESIGN FRAME: the component's NATURAL SIZE in canvas px — the size it is
+     authored against, previewed at, and dropped onto a page at. Not a coordinate space:
+     the internals place themselves in FRACTIONS of their parent, which is what lets one
+     authoring fill every box an instance is given. */
   design_w: number;
   design_h: number;
 }
@@ -297,7 +306,6 @@ export interface TemplateNode {
   kind: NodeKind;
   name?: string;
   attrs: Attrs;
-  layout?: Layout;
   children?: TemplateNode[];
   interact?: Interact;
   anchors?: CompiledAnchor[];
@@ -318,6 +326,9 @@ export interface WidgetType {
   slots: SlotSpec[];
   events: EventSpec[];
   template: TemplateNode;
+  /* the design frame, served with the type: the natural size an instance is dropped at */
+  design_w: number;
+  design_h: number;
   /* the type's default flows: ordinary flow rows the backend compiles per instance and
      drops where a feed or an authored flow already writes the slot. The view never runs
      them, it only shows them, so this is document-shaped data like everything else. */
@@ -334,14 +345,16 @@ export interface Registry {
 /* A MOVE is a reorder where it stands, or — with `parent` — a reparent into that node's
    `children`. A request may leave both out; an ECHO always carries the whole resolved
    placement, so the mirror splices out of one list and into another by one rule.
-   A WRAP never reaches the mirror: it is a request only, and comes back as the insert
-   and moves the backend performed (its frame's id is the backend's to issue). */
+   A GROUP never reaches the mirror: it is a request only, and comes back as the insert
+   and moves the backend performed (its box's id is the backend's to issue). The box's
+   geometry rides the request as ordinary attr text, computed by the client — it is the
+   one that knows where the children render. */
 export type Op =
   | { op: "set_prop"; node: number; key: string; value: Json }
   | { op: "insert"; parent: number; list: string; index?: number; node: Json }
   | { op: "remove"; node: number }
   | { op: "move"; node: number; index: number; parent?: number; list?: string }
-  | { op: "wrap"; nodes: number[]; layout: Layout }
+  | { op: "group"; nodes: number[]; attrs?: Record<string, string> }
   | { op: "rename"; node: number; name: string };
 
 /* ---- live state ---- */

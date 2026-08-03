@@ -39,7 +39,8 @@ const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
 const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
 const { renderStage } = await import(mod("stage.js"));
-const { boundaryAt, dropAtPageEnd, dropPlan, dropZone, gapIndex, resizeAt, settle, withoutHeld } =
+const { dropAtPageEnd, dropPlan, dropZone, fmtPx, freeAllowed, freeBoxOf,
+        freePlan, settle, snapPx } =
   await import(mod("arrange.js"));
 
 let failures = 0;
@@ -126,7 +127,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 8, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 9, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -165,10 +166,10 @@ const view = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost:
 const page = store.pages()[0];
 const slider = store.widgetsOn(page).find((w) => w.type === "Slider");
 
-/* ---- frames: the page is a TREE of them now — a header band over a body that splits
-   between a main column and a side column of panes — so the default document exercises
-   nesting, grow shares and surfaces the moment it opens. What those numbers RESOLVE to
-   is the browser's arithmetic and so Playwright's question, not this file's. */
+/* ---- boxes: the page is an ARRANGEMENT ON THE ARTBOARD — the header band, the main
+   pane and the side panes each at their own place in canvas px, on the 22px grid. What
+   those numbers look like on screen is the browser's arithmetic and so Playwright's
+   question, not this file's. */
 const frameNamed = (node, name) => {
   for (const child of node.children ?? []) {
     if (child.name === name) return child;
@@ -177,12 +178,12 @@ const frameNamed = (node, name) => {
   }
   return null;
 };
-check(page.children.length === 2, "the page is a header over a body, nothing loose");
+check(page.children.length === 4, "the page is the four top-level panes, nothing loose");
 /* EVERY FIELD IS EXPRESSION TEXT, a literal being the degenerate case: the place a
-   column takes and the token it is painted with live in one map, and are read the same */
-check(frameNamed(page, "Main")?.attrs?.grow === "2" &&
-        frameNamed(page, "Side")?.attrs?.grow === "1",
-      "the body splits two-to-one between its columns");
+   pane sits and the token it is painted with live in one map, and are read the same */
+check(frameNamed(page, "Main")?.attrs?.x === "22" &&
+        frameNamed(page, "Main")?.attrs?.w === "880",
+      "the main pane carries its own box in canvas px");
 check(frameNamed(page, "Main")?.attrs?.surface === "$surface",
       "a pane is dressed with a theme token, not a literal");
 const statusFrame = frameNamed(page, "Status group");
@@ -241,10 +242,10 @@ ws.send(
 const applied = await next("ops_applied");
 check(applied.version === snapshot.version + 1, "the version advanced by one");
 store.apply(applied.version, applied.ops);
-/* the header, the body, and the freshly appended Readout beside them */
-check(store.pages()[0].children.length === 3, "the insert reached the mirror");
+/* the four panes, and the freshly appended Readout beside them */
+check(store.pages()[0].children.length === 5, "the insert reached the mirror");
 
-const unfed = store.pages()[0].children[2];
+const unfed = store.pages()[0].children[4];
 ws.send(
   JSON.stringify({
     type: "apply_ops",
@@ -269,7 +270,7 @@ store.apply(second.version, second.ops);
 const sidebar = new Element("aside");
 sidebar.className = "sidebar right";
 const panel = new Panel(sidebar);
-const readout = store.pages()[0].children[2];
+const readout = store.pages()[0].children[4];
 const editor = {
   store,
   registry: snapshot.registry,
@@ -307,12 +308,11 @@ const echo = (ops) => {
   store.apply(store.version() + 1, ops);
   draw();
 };
-/* The x/y/w/h grid these checks used to drive is gone with manual geometry, so they now
-   drive two ordinary NUMBER SLOTS instead (radius and pad, base frame slots every type
-   carries). Nothing about what is being proved changes: these are reconciliation rules —
-   same node, new value, no rebuild; focus found by document address rather than tree
-   position — and they need any two standing numeric controls, not those two in
-   particular. Each echo spreads the CURRENT slots so an earlier check's write survives. */
+/* These checks drive two ordinary NUMBER SLOTS (radius and border_w, base frame slots
+   every type carries). Nothing about what is being proved depends on which two: these are
+   reconciliation rules — same node, new value, no rebuild; focus found by document
+   address rather than tree position — and they need any two standing numeric controls.
+   Each echo spreads the CURRENT slots so an earlier check's write survives. */
 const slotInput = (name) => slotControl(name).children[0];
 const slotsNow = () => store.widget(readout.id).slots ?? {};
 const echoSlot = (name, value) =>
@@ -407,7 +407,7 @@ fire(rebuiltLabel, "change");
 
 /* 5. an insert that puts controls ABOVE the focused one must not redirect focus into a
       different control, which is exactly what a numeric DOM path would do */
-const heightField = slotInput("pad");
+const heightField = slotInput("border_w");
 heightField.focus();
 echo([
   {
@@ -417,8 +417,9 @@ echo([
     node: { id: 9002, name: "tmp2", type: "f64", init: 0, persist: false },
   },
 ]);
-check(slotInput("pad") !== heightField, "the second insert rebuilt the inspector");
-check(document.activeElement === slotInput("pad"), "focus follows the key past inserted controls");
+check(slotInput("border_w") !== heightField, "the second insert rebuilt the inspector");
+check(document.activeElement === slotInput("border_w"),
+      "focus follows the key past inserted controls");
 check(
   document.activeElement.getAttribute("type") === "number",
   "and lands on the same kind of control",
@@ -700,11 +701,11 @@ for (const grid of widgetPanel.host.querySelectorAll(".prop-grid"))
 check(!widgetLabels.includes("handle_color") && !widgetLabels.includes("fill_color"),
       "the widget view shows no property a part owns, got " + widgetLabels.join(","));
 check(widgetLabels.includes("surface"), "and keeps the widget's own frame slots");
-/* PLACE IS NOT A SLOT and not a prop: an instance is a node, so how its container gives
-   it room is the same attr row a plain frame gets, through the same commit */
+/* PLACE IS NOT A SLOT and not a prop: an instance is a node, so its box on the artboard
+   is the same attr row a plain box gets, through the same commit */
 const widgetAttrNames = widgetPanel.host.querySelectorAll(".attr-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(widgetAttrNames.includes("grow") && widgetAttrNames.includes("min"),
+check(widgetAttrNames.includes("x") && widgetAttrNames.includes("w"),
       "the widget view places the instance, got " + widgetAttrNames.join(","));
 {
   /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
@@ -1222,13 +1223,13 @@ stageStore.load({
     id: 900,
     name: "Stage",
     children: [
-      { id: 901, kind: "frame", name: "Row", layout: "row", type: "", attrs: {}, children: [
+      { id: 901, kind: "frame", name: "Pane", type: "", attrs: {}, children: [
           { id: 903, kind: "frame", type: "Panel", name: "Lamp", attrs: {},
             slots: { surface: "#123456" }, locals: [], feeds: [], flows: [] },
           { id: 904, kind: "frame", type: "Label", name: "", attrs: {},
             slots: { text: "hi" }, locals: [], feeds: [], flows: [] },
         ] },
-      { id: 902, kind: "frame", name: "Deck", layout: "free", type: "", attrs: {}, children: [
+      { id: 902, kind: "frame", name: "Deck", type: "", attrs: {}, children: [
           { id: 905, kind: "frame", type: "Panel", name: "Under", attrs: {},
             slots: {}, locals: [], feeds: [], flows: [] },
         ] },
@@ -1238,16 +1239,16 @@ stageStore.load({
 
 /* A PAGE NODE'S FIELDS ARE PROGRAMS, exactly like a component's — the backend compiles
    both with the same compiler, and this is the wire form it serves them in. A literal is
-   the degenerate program, which is why one CONST covers most of a page. */
+   the degenerate program, which is why one CONST covers most of a page. Page nodes are
+   CANVAS PX of the artboard; the instances' internals below them are fractions. */
 const prog = (v) => ({ code: [{ op: "CONST", v }] });
 const loads = (cell) => ({ code: [{ op: "LOAD", cell }] });
 const stageAttrs = {
-  "901": { attrs: { grow: prog(2), min: prog(40), gap: prog(6), pad: prog(4),
-                    radius: prog(3), align: prog("center"), justify: prog("between"),
-                    surface: loads("theme:accent") } },
-  "902": { attrs: { grow: prog(1) } },
-  "903": { attrs: { grow: prog(1) } },
-  "904": { attrs: { grow: prog(3) } },
+  "901": { attrs: { x: prog(22), y: prog(22), w: prog(440), h: prog(220),
+                    radius: prog(3), surface: loads("theme:accent") } },
+  "902": { attrs: { x: prog(484), y: prog(22), w: prog(440), h: prog(220) } },
+  "903": { attrs: { x: prog(22), y: prog(22), w: prog(198), h: prog(110) } },
+  "904": { attrs: { x: prog(242), y: prog(22), w: prog(176), h: prog(110) } },
   "905": { attrs: {} },
 };
 
@@ -1269,36 +1270,28 @@ const stageNode = (cls, id) =>
 drawStage();
 const stagePage = stageHost.querySelector(".page");
 check(stagePage !== null, "the stage renders a page element");
+check(stagePage.style.width === "1408px" && stagePage.style.height === "792px",
+      "the page is the ARTBOARD: a fixed 1408 x 792 surface the camera scales");
 const row = stageNode("frame", 901);
 const deck = stageNode("frame", 902);
-check(row !== null && deck !== null, "each frame is a div carrying its own id");
+check(row !== null && deck !== null, "each box is a div carrying its own id");
 check(row.parentElement === stagePage && deck.parentElement === stagePage,
-      "the page's frames are its own children");
-check(stageNode("leaf", 903)?.parentElement === row, "and a frame's widgets nest inside it");
-check(row.style.display === "flex" && row.style.flexDirection === "row",
-      "a row lays out as a flex row");
-/* FREE is measurement space: the box is the origin, and a child with nothing said about
-   its x/y/w/h pins to all four edges — which is what "stack" used to mean before it
-   dissolved into the general rule */
-check(deck.style.position === "relative", "a free frame is its children's origin");
+      "the page's boxes are its own children");
+check(stageNode("leaf", 903)?.parentElement === row, "and a box's widgets nest inside it");
+/* A PAGE NODE IS CANVAS PX: what is written is what renders, relative to its parent */
+check(row.style.position === "absolute" && row.style.left === "22px" &&
+        row.style.top === "22px" && row.style.width === "440px" &&
+        row.style.height === "220px",
+      "a page box sits at its own px, absolutely placed");
+check(stageNode("leaf", 903).style.left === "22px" &&
+        stageNode("leaf", 903).style.width === "198px",
+      "a nested node's px are relative to its parent's origin");
+/* a child with nothing said about its box pins to all four edges of its parent */
 check(stageNode("leaf", 905).style.position === "absolute" &&
         stageNode("leaf", 905).style.left === "0" &&
         stageNode("leaf", 905).style.right === "0",
-      "and an unplaced free child fills it");
-check(row.style.alignItems === "center" && row.style.justifyContent === "space-between",
-      "align is the cross axis and justify the main one");
-check(stageNode("leaf", 903).style.flex === "1 1 0" &&
-        stageNode("leaf", 904).style.flex === "3 1 0",
-      "grow is a flex weight over a zero basis");
-check(stageNode("leaf", 903).style.minWidth === "0" &&
-        stageNode("leaf", 903).style.minHeight === "0",
-      "and every child is free to shrink below its content");
-/* `min` is a floor on the CONTAINER's main axis, so the same number on the same node
-   means a height under the page's column and a width under a row */
-check(row.style.minHeight === "40px" && row.style.minWidth === "0",
-      "an authored min floors the container's main axis");
-check(row.style.gap === "6px" && row.style.padding === "4px" && row.style.borderRadius === "3px",
-      "gap, pad and radius reach the style");
+      "an unplaced child stretches over its parent");
+check(row.style.borderRadius === "3px", "radius reaches the style");
 check(stagePage.style["--t-accent"] === "#4e8ef7",
       "the document's tokens are emitted as custom properties on the page");
 check(row.style.background === "var(--t-accent)",
@@ -1334,22 +1327,23 @@ check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell r
 /* A COMPILE REBUILDS IT REGARDLESS. Editing an attr leaves the tree identical and changes
    the PROGRAM the field evaluates to, and the new programs arrive in the snapshot that
    follows the echo — so the epoch is what says "the same document means something else
-   now". Without this a boundary drag commits its number and redraws the old one. */
+   now". Without this a resize commits its number and redraws the old one. */
 const heldAgain = stageNode("frame", 901);
-stageAttrs["901"].attrs.grow = prog(5);
+stageAttrs["901"].attrs.w = prog(660);
 drawStage();
 check(stageNode("frame", 901) === heldAgain,
       "fresh programs alone do not rebuild: nothing told the view they were fresh");
 stageEditor.live = { epoch: 2, values: { "903.surface": "#00ff00" } };
 drawStage();
-check(stageNode("frame", 901) !== heldAgain && stageNode("frame", 901).style.flex === "5 1 0",
+check(stageNode("frame", 901) !== heldAgain &&
+        stageNode("frame", 901).style.width === "660px",
       "a new compile epoch rebuilds the page from the programs it just received");
 
 /* ---- the node inspector ----
-   A page's frame is a NODE, so it is inspected the way a component's node is: two
-   structural fields (what it is, how it places its children) and then every attr its kind
-   declares, generated from the served vocabulary. There is no hand-written field list for
-   a page frame and a second one for a component's frame, because there is one node. */
+   A page's box is a NODE, so it is inspected the way a component's node is: one
+   structural field (what it is) and then every attr its kind declares, generated from
+   the served vocabulary. There is no hand-written field list for a page box and a
+   second one for a component's box, because there is one node. */
 {
   const group = frameNamed(store.pages()[0], "Status group");
   const applied = [];
@@ -1361,36 +1355,25 @@ check(stageNode("frame", 901) !== heldAgain && stageNode("frame", 901).style.fle
   };
   const framePanel = new Panel(new Element("aside"));
   framePanel.render(inspectorShape(frameEditor), (host) => renderInspector(host, frameEditor));
-  const cellFor = (name) => {
-    for (const grid of framePanel.host.querySelectorAll(".prop-grid")) {
-      const kids = grid.children;
-      for (let i = 0; i + 1 < kids.length; i++)
-        if (kids[i].tagName === "LABEL" && kids[i].textContent === name) return kids[i + 1];
-    }
-    return null;
-  };
-  const options = cellFor("layout").querySelectorAll("option").map((o) => o.value);
-  check(options.join(",") === "free,row,col,grid",
-        "layout offers the four modes, got " + options.join(","));
 
   const attrRowFor = (name) =>
     framePanel.host.querySelectorAll(".attr-row")
       .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
-  /* the frame's own dressing, and the placement half that applies: this frame sits in a
-     COLUMN, so it is arranged by a share and a floor and places itself nowhere */
-  for (const name of ["gap", "pad", "align", "justify", "surface", "border", "border_w",
-                      "radius", "grow", "min", "aspect"])
+  /* the box's own dressing and its one placement vocabulary: everything sits at its own
+     x/y in the one static space, so the same eight rows stand on every node */
+  for (const name of ["surface", "border", "border_w", "radius",
+                      "x", "y", "w", "h", "aspect", "origin_x", "origin_y", "rotate"])
     check(attrRowFor(name) !== null, "the node inspector edits " + name);
-  for (const name of ["x", "y", "w", "h", "rotate"])
+  for (const name of ["gap", "pad", "align", "justify", "grow", "min", "layout"])
     check(attrRowFor(name) === null,
-          "and does not offer " + name + ", which its parent's layout ignores");
+          "and does not offer " + name + ", which left the vocabulary with the layouts");
 
   /* editing one writes the WHOLE attrs map, exactly as a component's node does */
-  const gapField = attrRowFor("gap").querySelectorAll("input")[0];
-  gapField.value = "12";
-  fire(gapField, "change");
+  const radiusField = attrRowFor("radius").querySelectorAll("input")[0];
+  radiusField.value = "12";
+  fire(radiusField, "change");
   const op = applied.find((o) => o.key === "attrs");
-  check(op && op.op === "set_prop" && op.node === group.id && op.value.gap === "12",
+  check(op && op.op === "set_prop" && op.node === group.id && op.value.radius === "12",
         "editing an attr writes one set_prop of the map, got " + JSON.stringify(op));
   /* and clearing it back to empty REMOVES the key rather than storing "" */
   applied.length = 0;
@@ -1410,11 +1393,8 @@ check(stageNode("frame", 901) !== heldAgain && stageNode("frame", 901).style.fle
    makes tree dragging feel right or maddening. */
 {
   const leaf = (id, name) => ({ id, kind: "frame", type: "Label", name,
-                                 attrs: { grow: "1", min: "0" }, slots: {}, locals: [], feeds: [], flows: [] });
-  const frame = (id, name, children) => ({ id, kind: "frame", name, layout: "col", gap: 0, pad: 0,
-                                           align: "stretch", justify: "start", surface: "",
-                                           border: "", border_w: 1, radius: 0, attrs: { grow: "1", min: "0" },
-                                           children });
+                                 attrs: {}, slots: {}, locals: [], feeds: [], flows: [] });
+  const frame = (id, name, children) => ({ id, kind: "frame", name, attrs: {}, children });
   /* Left[ A, Inner[ E ] ], Right[ C ], D */
   const movePage = () => ({
     id: 700,
@@ -1447,15 +1427,15 @@ check(stageNode("frame", 901) !== heldAgain && stageNode("frame", 901).style.fle
   check(ids(moveStore.nodeAt(720).children) === "721,711",
         "and an echo with no parent at all reorders where the node already is");
 
-  /* the wrap echo: an insert of an EMPTY frame, then one addressed move per node, so the
-     mirror never holds the same widget in two places */
+  /* the group echo: an insert of a childless box, then one addressed move per node, so
+     the mirror never holds the same widget in two places */
   moveStore.apply(5, [
     { op: "insert", parent: 700, list: "children", index: 0,
-      node: frame(750, "Row", []) },
+      node: frame(750, "Group", []) },
     { op: "move", node: 710, parent: 750, list: "children", index: 0 },
     { op: "move", node: 720, parent: 750, list: "children", index: 1 },
   ]);
-  check(ids(moveStore.page(700).children) === "750,730", "the wrap echo lands the frame where the nodes were");
+  check(ids(moveStore.page(700).children) === "750,730", "the group echo lands the box where the nodes were");
   check(ids(moveStore.nodeAt(750).children) === "710,720", "with both of them inside it");
   check(moveStore.parentOf(710)?.id === 750 && moveStore.parentOf(720)?.id === 750,
         "and nowhere else");
@@ -1512,107 +1492,105 @@ check(stageNode("frame", 901) !== heldAgain && stageNode("frame", 901).style.fle
   check(dropZone(false, 0.4) === "before" && dropZone(false, 0.6) === "after",
         "a widget row has no middle: it splits at the halfway mark");
 
-  /* ---- the stage's own geometry ----
-     The tree names a row and a zone; the stage names a container and a pointer. The midpoint
-     rule turns the second into an index, and both then go through settle(), which is why a
-     drop means the same thing on this page however it was aimed. */
-
-  check(gapIndex([], 50) === 0, "an empty container takes the only slot there is");
-  check(gapIndex([10, 30, 50], 5) === 0, "before every midpoint is the front");
-  check(gapIndex([10, 30, 50], 20) === 1 && gapIndex([10, 30, 50], 40) === 2,
-        "between two midpoints is the gap between them");
-  check(gapIndex([10, 30, 50], 99) === 3, "and past the last is the end");
-  check(gapIndex([10], 10) === 0, "a pointer exactly on a midpoint has not passed it yet");
-
-  /* read against the PREVIEW, which already holds the dragged node */
-  check(withoutHeld(2, 0) === 1 && withoutHeld(3, 1) === 2,
-        "a slot past the held node is one too far");
-  check(withoutHeld(1, 1) === 1 && withoutHeld(0, 2) === 0, "a slot at or before it is not");
-  check(withoutHeld(2, -1) === 2, "and a container the node is not in shifts nothing");
-
-  /* settle(), reached the way the stage reaches it: a container and an index, no row and no
-     zone in between, but the same legality and the same erase-first shift */
+  /* settle(), reached with a container and an index: the same legality and the same
+     erase-first shift however a drop was aimed */
   check(settle(tree, 730, { parent: 720, index: 1 })?.index === 1, "a plain append settles as itself");
   check(settle(tree, 711, { parent: 710, index: 2 })?.index === 1,
         "a slot further down its own list still loses one to the erase");
   check(settle(tree, 710, { parent: 715, index: 0 }) === null, "a frame still refuses its own subtree");
   check(settle(tree, 711, { parent: 710, index: 0 }) === null, "and the seat it already holds is no move");
 
-  /* WHICH BOUNDARY the pointer is on: a strip centred on the gap-line between two siblings,
-     across the cross extent the pair actually shares */
-  const band = (start, end, from = 0, to = 100) => ({ start, end, from, to });
-  const three = [band(0, 100), band(100, 240), band(240, 300)];
-  check(boundaryAt(three, 100, 50, 5) === 0, "the line between the first two children is boundary 0");
-  check(boundaryAt(three, 243, 50, 5) === 1, "the next one along is boundary 1");
-  check(boundaryAt(three, 170, 50, 5) === null, "the middle of a child is no boundary");
-  check(boundaryAt(three, 107, 50, 5) === null, "nor is a point past the tolerance");
-  check(boundaryAt([band(0, 100)], 100, 50, 5) === null, "one child has no boundary at all");
-  check(boundaryAt([], 0, 0, 5) === null, "and an empty container none either");
-  check(boundaryAt([band(0, 100), band(110, 200)], 105, 50, 5) === 0,
-        "with a gap between them the line is the middle of the gap");
-  const uneven = [band(0, 100, 0, 40), band(100, 200, 0, 100)];
-  check(boundaryAt(uneven, 100, 20, 5) === 0, "inside the shared cross extent the strip grabs");
-  check(boundaryAt(uneven, 100, 70, 5) === null, "past where the shorter one ends, it does not");
-  /* DEEPEST FIRST is the caller's walk, and this is what makes it matter: a nested container
-     has boundaries of its own inside one child of its parent's */
-  const nested = [band(0, 150), band(150, 300)];
-  check(boundaryAt(nested, 150, 50, 5) === 0 && boundaryAt(three, 150, 50, 5) === null,
-        "a pointer inside a child can only mean that child's own boundary");
-  check(boundaryAt(three, 100, 50, 5) === 0 && boundaryAt(nested, 100, 50, 5) === null,
-        "and where the inner has none, the container's own answers");
+  /* ---- the artboard: the grid, the box, and what a gesture may write ----
+     Everything is canvas px on the one 22px grid; `base` is the parent's own origin on
+     the artboard, which is what keeps a nested box snapping to the GLOBAL lines. */
 
-  /* ---- and what dragging one writes ---- */
-  const side = (grow, min, outer, chrome = 0) => ({ grow, min, outer, chrome });
+  check(snapPx(100) === 110 && snapPx(250) === 242,
+        "px snap to the 22px cells");
+  check(fmtPx(153.6) === "154" && fmtPx(22) === "22",
+        "a written position is whole px, got " + fmtPx(153.6));
 
-  /* TRANSFER: 200px and 100px of a 300px row at weights 2 and 1, so one grow unit is 100px */
-  const share = resizeAt(side(2, 0, 200), side(1, 0, 100));
-  const moved = share.apply(50);
-  check(Math.abs(moved.a.grow - 2.5) < 1e-9 && Math.abs(moved.b.grow - 0.5) < 1e-9,
-        "50px at 100px per grow unit is half a unit each way, got " + JSON.stringify(moved));
-  check(Math.abs(moved.a.grow + moved.b.grow - 3) < 1e-9,
-        "the pair's sum is conserved, so no other sibling's share moves");
-  check(moved.a.min === undefined && moved.b.min === undefined, "and a transfer writes no min");
-  /* the same 100px unit under 30px of padding and border: those come off the shared pool
-     before the division, so half a unit is still 50px of pointer */
-  const padded = resizeAt(side(2, 0, 220, 20), side(1, 0, 110, 10));
-  check(Math.abs(padded.apply(50).a.grow - 2.5) < 1e-9,
-        "a side's own padding and border are outside the share it is paid, got " +
-          padded.apply(50).a.grow);
-  const far = share.apply(1e6);
-  check(Math.abs(far.b.grow * 100 - 24) < 1e-9,
-        "the shrinking side stops at a graspable 24px, got " + far.b.grow * 100);
-  check(Math.abs(far.a.grow + far.b.grow - 3) < 1e-9, "with the sum still conserved at the stop");
-  check(Math.abs(resizeAt(side(2, 60, 200), side(1, 40, 100)).apply(-1e6).a.grow * 100 - 60) < 1e-9,
-        "a side's own min outranks that floor when it is the larger");
-  check(share.apply(-1e6).a.grow >= 0.05, "and a drag never writes a grow of zero");
-  check(resizeAt(side(1, 0, 0), side(1, 0, 0)) === null,
-        "a boundary with nothing either side of it is inert, not a division by zero");
-  const rough = resizeAt(side(1, 0, 100), side(1, 0, 100));
-  check(Math.abs(rough.apply(3.7).a.grow - 1.037) < 1e-9, "the live preview uses raw values");
-  check(rough.commit(3.7).a.grow === 1.04 && rough.commit(3.7).b.grow === 0.96,
-        "and the commit rounds grow to two decimals, got " + JSON.stringify(rough.commit(3.7)));
+  const freeNode = (attrs) => ({ id: 9, kind: "frame", name: "n", attrs });
+  const flat = { left: 0, top: 0, w: 0, h: 0 };
+  const origin = { x: 0, y: 0 };
 
-  /* ONE FIXED SIDE — the header band over the body, which is the case the default document
-     opens with: the drag is the header's min, and the body absorbs it with no write at all */
-  const band52 = resizeAt(side(0, 52, 52), side(1, 0, 400));
-  check(band52.apply(18).a.min === 70 && band52.apply(18).b === null,
-        "a fixed side takes the whole drag as min, and the flexible side takes nothing");
-  check(band52.apply(18).a.grow === undefined, "no grow is written on either side of it");
-  check(band52.apply(-1e6).a.min === 24, "it stops at the graspable floor");
-  check(band52.apply(1e6).a.min === 52 + 400 - 24, "and at what the absorbing side can give");
-  const after = resizeAt(side(1, 0, 400), side(0, 52, 52));
-  check(after.apply(10).b.min === 42 && after.apply(10).a === null,
-        "a fixed side AFTER the boundary takes the same drag the other way");
-  check(after.commit(0.4).b.min === 52, "and min commits as a whole pixel");
-  check(resizeAt(side(0, 4, 4), side(1, 0, 400)).apply(-1e6).a.min === 24,
-        "no min write ever lands below the floor, let alone below zero");
+  /* the resolved box prefers the doc's own constants and falls back to the screen */
+  const authored = freeBoxOf(freeNode({ x: "110", y: "110", w: "220", h: "110" }),
+                             { left: 900, top: 900, w: 900, h: 900 });
+  check(authored.x.value === 110 && authored.x.literal && authored.w.value === 220,
+        "a literal field reads from the document, not the measurement");
+  const measured = freeBoxOf(freeNode({ x: "value.pick(2, 1)" }),
+                             { left: 396, top: 66, w: 220, h: 110 });
+  check(!measured.x.literal && Math.abs(measured.x.value - 396) < 1e-9,
+        "an expression field reads off the screen and may not be written");
+  check(freeBoxOf(freeNode({ origin_x: "value" }), flat) === null,
+        "an expression origin refuses the whole gesture: nothing safe to write through");
 
-  /* NEITHER FLEXES: the pair of mins, one taking exactly what the other gives */
-  const fixed = resizeAt(side(0, 100, 100), side(0, 60, 60));
-  check(fixed.apply(20).a.min === 120 && fixed.apply(20).b.min === 40,
-        "two fixed sides trade min for min");
-  check(fixed.apply(1e6).b.min === 24 && fixed.apply(-1e6).a.min === 24,
-        "and either of them stops at the floor rather than vanishing");
+  /* which handles are offered */
+  const plain = freeBoxOf(freeNode({ x: "110", y: "110", w: "220", h: "110" }), flat);
+  check(freeAllowed(plain, "move") && freeAllowed(plain, "BR") && freeAllowed(plain, "L"),
+        "a box of constants offers everything");
+  const boundX = freeBoxOf(freeNode({ x: "value.mapRange(0,1,0,1408)", y: "220",
+                                      w: "220", h: "110" }), flat);
+  check(freeAllowed(boundX, "move"), "one authored axis still leaves an axis-locked move");
+  check(!freeAllowed(boundX, "L") && freeAllowed(boundX, "R") && freeAllowed(boundX, "B"),
+        "a bound x takes the left grip away but not the right (origin 0: R never writes x)");
+  const spun = freeBoxOf(freeNode({ x: "220", y: "220", w: "220", h: "110",
+                                    rotate: "45" }), flat);
+  check(freeAllowed(spun, "move") && !freeAllowed(spun, "BR") && !freeAllowed(spun, "R"),
+        "a rotated box still moves point-for-point but resizes through nothing");
+  const locked = freeBoxOf(freeNode({ x: "22", y: "22", w: "440", aspect: "2" }), flat);
+  check(!freeAllowed(locked, "T") && !freeAllowed(locked, "B"),
+        "aspect derives the unauthored size, whose own edges have nothing to write");
+  check(freeAllowed(locked, "BR") && freeAllowed(locked, "R"),
+        "while the authored axis keeps its edge and its corners");
+
+  /* the move plan: snapped, axis-locked, and quiet about what did not change */
+  const slide = freePlan("move", plain, origin);
+  const slid = slide.commit(15, 0, true);   /* 110 + 15 = 125, snapped to 132 */
+  check(slid.x === 132 && !("y" in slid) && !("w" in slid),
+        "a move writes the snapped x it reached and nothing it did not touch, got " +
+          JSON.stringify(slid));
+  check(slide.commit(15, 0, false).x === 125,
+        "Alt suspends the snap and the same travel lands raw");
+  check(Object.keys(slide.commit(3, 0, true)).length === 0,
+        "a move that snaps back to where it began writes nothing at all");
+
+  /* THE GRID IS GLOBAL: the same drag inside a parent that sits off the origin snaps to
+     the artboard's lines, not to lines of the parent's own */
+  const nested = freePlan("move", plain, { x: 11, y: 0 });
+  check(nested.commit(15, 0, true).x === 121,
+        "a nested box snaps where the ARTBOARD's line is, got " +
+          JSON.stringify(nested.commit(15, 0, true)));
+
+  /* a STRETCHED axis pins its size when first moved: the doc held neither x nor w */
+  const stretched = freeBoxOf(freeNode({}), { left: 0, top: 0, w: 1408, h: 792 });
+  const pinned = freePlan("move", stretched, origin).commit(30, 0, true);
+  check(pinned.x === 22 && pinned.w === 1408 && !("h" in pinned),
+        "moving a stretched box writes the size the stretch was giving, got " +
+          JSON.stringify(pinned));
+
+  /* the resize plan: the grabbed edge moves, the opposite edge stands */
+  const wider = freePlan("R", plain, origin).commit(15, 0, true);
+  check(wider.w === 242 && !("x" in wider),
+        "dragging R at origin 0 writes only w, got " + JSON.stringify(wider));
+  const fromLeft = freePlan("L", plain, origin).commit(15, 0, true);
+  check(fromLeft.x === 132 && fromLeft.w === 198,
+        "dragging L moves x and w together and the right edge stands, got " +
+          JSON.stringify(fromLeft));
+  check(freePlan("R", plain, origin).apply(-1e6, 0, true).w >= 8 - 1e-9,
+        "a resize stops at a graspable floor rather than vanishing");
+  const corner = freePlan("BR", locked, origin).commit(30, 30, true);
+  check("w" in corner && !("h" in corner) && !("y" in corner),
+        "a corner on an aspect-locked box drags the authored axis only, got " +
+          JSON.stringify(corner));
+
+  /* an origin off the corner rides the writes: x places the origin, not the left edge */
+  const hub = freeBoxOf(freeNode({ x: "220", y: "220", w: "110", h: "110",
+                                   origin_x: "0.5", origin_y: "0.5" }), flat);
+  const hubMove = freePlan("move", hub, origin).commit(15, 0, true);
+  check(hubMove.x === 176 + 55,
+        "a centred origin: the snapped LEFT EDGE plus half the width, got " +
+          JSON.stringify(hubMove));
 }
 
 /* What used to close this file -- the repeat/path round trip and the code-part escape

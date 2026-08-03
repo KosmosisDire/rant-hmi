@@ -148,10 +148,11 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
   return rows;
 }
 
-/* which icon stands for a node: its component's, its layout's, or its kind's */
+/* which icon stands for a node: its component's, or its kind's — a frame is a box, and
+   there is one box glyph because there is one kind of box */
 function glyphOf(node: Node): string {
   if (isInstance(node)) return ICONS[node.type ?? ""] ? node.type ?? "" : "layers";
-  if (node.kind === "frame") return "frame-" + (node.layout ?? "free");
+  if (node.kind === "frame") return "frame-free";
   return "node-" + node.kind;
 }
 
@@ -413,7 +414,7 @@ function selectedPart(editor: Editor, type: WidgetType | null): string {
 
 /* The CONTENT inspector, routed by WHAT THE NODE IS rather than by which of three kinds
    it used to be: an instance shows the component's own vocabulary (data in, behavior,
-   locals, appearance), and any other node shows its name, its layout and its attrs. */
+   locals, appearance), and any other node shows its name, its kind and its attrs. */
 export function inspectorShape(editor: Editor): string {
   const node = editor.selectedNode();
   if (!node) return "empty";
@@ -421,7 +422,6 @@ export function inspectorShape(editor: Editor): string {
     return JSON.stringify({
       node: node.id,
       kind: node.kind,
-      layout: node.layout ?? "",
       attrs: attrsShape(editor, node),
       diag: editor.diagAt(node.id).map((d) => d.code + ":" + d.message),
     });
@@ -675,26 +675,10 @@ function renderPartInspector(
   );
 }
 
-/* THE ONE FIELD A NODE STILL WRITES AS A PROP: `layout` is structural — the tree's glyph,
- * the drop arithmetic and this inspector all read it without evaluating anything — so it is
- * a typed enum on the node rather than expression text like every other field. */
-function layoutField(editor: Editor, node: number): HTMLElement {
-  const spec: SlotSpec = { name: "layout", shape: "enum", default: "free", group: "config",
-                           variants: ["free", "row", "col", "grid"] };
-  return valueEditor(spec, "enum", node + ":layout",
-                     () => (editor.store.node(node) ?? {}).layout,
-                     (v) => editor.apply([{ op: "set_prop", node, key: "layout", value: v }]),
-                     false, editor);
-}
-
-/* THE NODE INSPECTOR: a frame, a text, an icon or a path on the page — its name, what it
+/* THE NODE INSPECTOR: a box, a text, an icon or a path on the page — its name, what it
  * is, and its attrs. There is no hand-written field list any more: `attrsSection` (the
  * Design inspector's own) generates every row from the served vocabulary, so a page's
- * frame and a component's frame edit identically because they are the same node.
- *
- * What used to be three little sections of typed props — Layout, Surface, Place — is one
- * table now, and the split between "arrangement" and "measurement" is the parent's
- * layout, said once in the vocabulary rather than mirrored here. */
+ * box and a component's box edit identically because they are the same node. */
 function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): void {
   const at = () => editor.store.nodeAt(node.id) ?? node;
 
@@ -711,19 +695,12 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
-  /* the two structural facts, side by side: WHAT it is, and — for a frame — how it places
-     what is inside it. Everything else is an expression in the table below. */
+  /* the one structural fact: WHAT it is. Everything else is an expression in the table. */
   const kindRow: (HTMLElement | null)[] = [
     el("label", { text: "kind" }),
     el("span", { class: "kw", text: node.kind }),
     el("span"),
   ];
-  if (node.kind === "frame")
-    kindRow.push(
-      el("label", { text: "layout", title: "free places children by their own x/y/w/h" }),
-      layoutField(editor, node.id),
-      el("span"),
-    );
   body.append(
     ...section("node", "Node", null, () => [el("div", { class: "prop-grid" }, kindRow)]),
   );

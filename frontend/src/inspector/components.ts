@@ -19,7 +19,7 @@ import { diagIcon, Editor, section } from "../editor.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
-import { AttrDef, ComponentDef, Json, Layout, Node, PropDef, SlotSpec } from "../types.js";
+import { AttrDef, ComponentDef, Json, Node, PropDef, SlotSpec } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "series"];
@@ -742,7 +742,7 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
     editor.apply([{ op: "set_prop", node: node.id, key: "attrs", value: next }]);
   const row = (d: AttrDef) => attrDefRow(editor, node.id, d, attrsOf, commitAttrs);
   const ownDefs = ownAttrsOf(editor, node.kind);
-  const place = placementAttrs(editor, node);
+  const place = placementAttrs(editor);
   const commonDefs = commonAttrs(editor).filter((d) => !PLACEMENT.has(d.name));
   const strays = strayAttrs(editor, node);
   return section("node-attrs", "Attrs",
@@ -751,7 +751,7 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
     ...(ownDefs.length
       ? [attrGroupHeading("THIS " + node.kind.toUpperCase()), ...ownDefs.map(row)]
       : []),
-    attrGroupHeading(placementHeading(editor, node)),
+    attrGroupHeading("THE BOX"),
     ...place.map(row),
     attrGroupHeading("COMMON"),
     ...commonDefs.map(row),
@@ -762,42 +762,24 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
   ]);
 }
 
-/* ---- the two placement vocabularies, and which one a node is actually in ----
+/* ---- the placement vocabulary: one, because there is one space ----
  *
- * A node does not choose how it is placed; its PARENT does. In a row, col or grid it is
- * arranged (a share, a floor, a ratio) and x/y/w/h mean nothing; in a free frame it places
- * itself and the share means nothing. Offering both sets at once would be offering a field
- * that does nothing half the time, which is exactly the sort of dead row this vocabulary
- * exists to prevent — so the inspector shows the half that applies, named for it. */
-const ARRANGED = ["grow", "min", "aspect"];
+ * Everything sits at its own x/y in canvas px (a component's internals in fractions of
+ * their parent, same fields), so the box group is the same eight rows on every node. */
 const MEASURED = ["x", "y", "w", "h", "aspect", "origin_x", "origin_y", "rotate"];
-const PLACEMENT = new Set([...ARRANGED, ...MEASURED]);
+const PLACEMENT = new Set(MEASURED);
 
-/* the layout of whatever holds this node: a page's root children are placed by the page,
-   which is the one frame the document does not describe (a column, stage.ts) */
-export function parentLayout(editor: Editor, node: Node): Layout {
-  const parent = editor.store.parentOf(node.id) as Node | null;
-  if (!parent || typeof parent.kind !== "string") return "col";
-  return (parent.layout ?? "free") as Layout;
-}
-
-function placementAttrs(editor: Editor, node: Node): AttrDef[] {
-  const names = parentLayout(editor, node) === "free" ? MEASURED : ARRANGED;
+function placementAttrs(editor: Editor): AttrDef[] {
   const table = commonAttrs(editor);
-  return names
+  return MEASURED
     .map((name) => table.find((d) => d.name === name))
     .filter((d): d is AttrDef => d !== undefined);
 }
 
-function placementHeading(editor: Editor, node: Node): string {
-  return parentLayout(editor, node) === "free" ? "PLACES ITSELF" : "PLACED BY ITS PARENT";
-}
-
-/* which attrs a node's inspector will show, as a shape string: the declared set is fixed by
- * kind and by how its parent places it, so only those two and the strays move it */
+/* which attrs a node's inspector will show, as a shape string: the declared set is fixed
+ * by kind, so only it and the strays move it */
 export function attrsShape(editor: Editor, node: Node): string {
-  return node.kind + ":" + parentLayout(editor, node) + ":" +
-         strayAttrs(editor, node).join(",");
+  return node.kind + ":" + strayAttrs(editor, node).join(",");
 }
 
 function attrDefRow(

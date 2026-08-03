@@ -1,34 +1,29 @@
-/* DIRECT MANIPULATION ON THE STAGE: dragging a node — a widget, or a frame by its own
- * pixels — to another place in the layout, and dragging the boundary between two children
- * to change how their container's room is split.
+/* DIRECT MANIPULATION ON THE ARTBOARD: grab a box's body to move it, grab a selection
+ * handle to resize it. That is the whole gesture vocabulary now — order is z-order, so
+ * there is no slot to carry a node to and no boundary to trade weight across; structure
+ * (reparent, reorder) is the Layers tree's business.
  *
- * Pointer events over the page's own DOM, never the HTML5 drag API — what this needs is the
- * opposite of what that one offers. There is no drag image to carry, because the page itself
- * carries no drag image (the node stays where it is, dimmed, and a caret says where it
- * would go), and the drop target is computed here rather than nominated by the browser,
- * because the answer is a slot between two children — not a thing the browser can hand back.
+ * Pointer events over the page's own DOM, never the HTML5 drag API: what moves is painted
+ * live in place()'s own vocabulary and committed as constants on release. None of the
+ * arithmetic is here — which fields a handle may write, what snaps where, the origin
+ * algebra — that is arrange.ts (freePlan), measured ONCE at the press, so the gesture
+ * never chases its own output. What IS here is the pointer's own business: precedence
+ * (a grip beats a body), slop, capture, Escape, and the screen-to-canvas conversion the
+ * camera makes necessary.
  *
- * None of the arithmetic is here. Which gap the pointer names, whether the drop is legal, what
- * index the op carries, which boundary the pointer is on and what moving it does to grow and
- * min are all arrange.ts — the same rules the Layers tree drag goes through; this half reads
- * geometry off the DOM, hands it over, and shows the answer. What IS here is precedence, which
- * only a pointer can settle: a boundary beats a drag, and a drag beats a click.
- *
- * State is module-level and the listeners are on the window, because a render replaces every
- * element mid-drag: nothing below holds an element between events, and every move re-reads
- * what is under the pointer. */
+ * State is module-level and the listeners are on the window, because a render replaces
+ * every element mid-drag: nothing below holds an element between events, and every move
+ * re-reads what is under the pointer. */
 
 import {
-  boundaryAt, DropPlan, Extent, gapIndex, literalNumber, ResizePlan, ResizeSide, resizeAt,
-  seatOf, settle, SideWrite, withoutHeld,
+  fmtPx, freeBoxOf, FreeHandle, freePlan, FreePlan, FreeWrite, seatOf,
 } from "./arrange.js";
 import { Editor } from "./editor.js";
-import { Layout, Op } from "./types.js";
+import { handleCursor } from "./handles.js";
+import { CANVAS_W } from "./types.js";
 
-/* a press travels this far before it is a drag rather than a click */
+/* a press travels this far (screen px) before it is a drag rather than a click */
 const SLOP = 4;
-/* half the strip that grabs a boundary: a ~10px band centred on the gap-line */
-const GRAB = 5;
 
 interface Armed {
   host: HTMLElement;
@@ -39,55 +34,43 @@ interface Armed {
   pointer: number;
 }
 
-interface Drag {
+/* a live gesture: moving a box by its body, or resizing it by a handle. One shape for
+ * both — the handle decides which fields the plan writes. */
+interface FreeGesture {
   host: HTMLElement;
   editor: Editor;
   id: number;
   pointer: number;
-  /* where the PREVIEW currently has it: the reading every candidate is normalised against */
-  parent: number;
-  index: number;
-  /* the last LEGAL plan, which is what a release would send */
-  plan: DropPlan | null;
-}
-
-/* the boundary between two adjacent children, which is what a resize actually grabs */
-interface Boundary {
-  dir: "row" | "col";
-  a: number;
-  b: number;
-  /* where the gap-line sits, and the cross extent the pair shares, in client pixels */
-  line: number;
-  from: number;
-  to: number;
-}
-
-interface Resize {
-  host: HTMLElement;
-  editor: Editor;
-  dir: "row" | "col";
-  a: number;
-  b: number;
-  pointer: number;
-  plan: ResizePlan;
-  /* the pointer's main coordinate at the press, and how far it has travelled since */
-  start: number;
-  delta: number;
+  handle: FreeHandle;
+  plan: FreePlan;
+  /* screen px per canvas px at the press: the camera's scale, measured once */
+  k: number;
+  startX: number;
+  startY: number;
+  dx: number;
+  dy: number;
+  snap: boolean;
 }
 
 let armed: Armed | null = null;
-let drag: Drag | null = null;
-let resize: Resize | null = null;
-/* the boundary the pointer is resting on, which owns the pointer while it is there */
-let hot: Boundary | null = null;
+let free: FreeGesture | null = null;
 /* a press and a release on one node fire a click even when a drag happened in between */
 let swallow = false;
 
-/* is the pointer in the middle of something, or about to be? The hover highlight steps aside
- * for it: a second highlight following the pointer through a drag is noise, not information,
- * and a lit boundary is already telling you what the press would do. */
+/* how a gesture asks the stage for its services without importing it (stage imports this
+ * module): `refresh` repositions the overlay, `restore` puts the document's own picture
+ * back after a cancelled or no-op gesture */
+const overlayRefresh = new WeakMap<HTMLElement, () => void>();
+const documentRestore = new WeakMap<HTMLElement, () => void>();
+
+function refreshOverlay(host: HTMLElement): void {
+  overlayRefresh.get(host)?.();
+}
+
+/* is the pointer in the middle of something? The hover highlight steps aside for it: a
+ * second highlight following the pointer through a gesture is noise, not information. */
 export function stageBusy(): boolean {
-  return drag !== null || resize !== null || hot !== null;
+  return free !== null;
 }
 
 function idOf(node: Element | null): number {
@@ -95,134 +78,17 @@ function idOf(node: Element | null): number {
   return id ? Number(id) : 0;
 }
 
-/* a container's direct children, in the order they are laid out */
-function kidsOf(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.children).filter((c) => c.hasAttribute("data-id")) as HTMLElement[];
-}
-
-/* the page is the root frame and the one frame the document does not describe, so it takes
- * the same default a fresh frame does: a column */
-function dirOf(editor: Editor, container: HTMLElement): Layout {
-  const frame = editor.store.nodeAt(idOf(container));
-  return frame?.layout ?? "col";
-}
-
-/* the element one id is drawn as, re-read every time rather than held: a render between two
- * pointer events replaces it */
+/* the element one id is drawn as, re-read every time rather than held: a render between
+ * two pointer events replaces it */
 function nodeIn(host: HTMLElement, id: number): HTMLElement | null {
   return host.querySelector('.page [data-id="' + id + '"]') as HTMLElement | null;
 }
 
-/* ---- which boundary, if any ---- */
-
-/* can a drag write this side's share and floor at all? Both fields must hold constants
- * today, because a constant is all a gesture has to offer (arrange.ts, literalNumber). */
-function writable(editor: Editor, id: number): boolean {
-  const node = editor.store.nodeAt(id);
-  if (!node) return false;
-  return literalNumber(node.attrs?.grow, 1) !== null &&
-         literalNumber(node.attrs?.min, 0) !== null;
-}
-
-function boundaryIn(editor: Editor, container: HTMLElement, x: number, y: number): Boundary | null {
-  const dir = dirOf(editor, container);
-  /* FREE and GRID have no boundary to drag: a free child sets its own x/y/w/h, and a
-     grid's tracks are equal by definition. Only a row or a column shares a line whose
-     two sides trade weight. */
-  if (dir !== "row" && dir !== "col") return null;
-  const kids = kidsOf(container);
-  if (kids.length < 2) return null;
-  const row = dir === "row";
-  const rects = kids.map((kid) => kid.getBoundingClientRect());
-  const extents: Extent[] = rects.map((at) =>
-    row ? { start: at.left, end: at.right, from: at.top, to: at.bottom }
-        : { start: at.top, end: at.bottom, from: at.left, to: at.right });
-  const index = boundaryAt(extents, row ? x : y, row ? y : x, GRAB);
-  if (index === null) return null;
-  /* a boundary needs two negotiable sides: an aspect-locked child's main size is DERIVED
-     from its cross (stage.ts), so there is nothing a drag on its edge could write */
-  if (kids[index].style.aspectRatio || kids[index + 1].style.aspectRatio) return null;
-  /* ...and neither side may hold an EXPRESSION where the drag would write its constant.
-     Asked here, where the affordance is decided, so the cursor never offers a drag that
-     the release would then have to refuse. */
-  if (!writable(editor, idOf(kids[index])) || !writable(editor, idOf(kids[index + 1])))
-    return null;
-  return {
-    dir: row ? "row" : "col",
-    a: idOf(kids[index]),
-    b: idOf(kids[index + 1]),
-    line: (extents[index].end + extents[index + 1].start) / 2,
-    from: Math.max(extents[index].from, extents[index + 1].from),
-    to: Math.min(extents[index].to, extents[index + 1].to),
-  };
-}
-
-/* DEEPEST FIRST: the innermost container under the pointer owns it, and the question only
- * goes up to that container's own parent where the inner one has no boundary there. Without
- * that order a pane's edge would always answer for the widget edges inside it. */
-function boundaryUnder(host: HTMLElement, editor: Editor, x: number, y: number): Boundary | null {
-  let at = (document.elementFromPoint(x, y) as HTMLElement | null)
-    ?.closest?.(".frame, .page") as HTMLElement | null;
-  while (at && host.contains(at)) {
-    const found = boundaryIn(editor, at, x, y);
-    if (found) return found;
-    at = at.parentElement?.closest?.(".frame, .page") as HTMLElement | null;
-  }
-  return null;
-}
-
-/* THE AFFORDANCE: a line drawn where the boundary is, so it can be seen and not just felt
- * through a cursor. One absolutely positioned element over the page, like the rings. */
-let mark: HTMLElement | null = null;
-
-function markLine(host: HTMLElement, at: Boundary | null): void {
-  host.classList.toggle("resize-x", at?.dir === "row");
-  host.classList.toggle("resize-y", at?.dir === "col");
-  if (!at) {
-    mark?.remove();
-    mark = null;
-    return;
-  }
-  if (!mark) mark = document.createElement("div");
-  mark.className = "boundary";
-  if (mark.parentElement !== host) host.appendChild(mark);
-  const box = host.getBoundingClientRect();
-  const row = at.dir === "row";
-  mark.style.left = (row ? at.line - 1 : at.from) - box.left + "px";
-  mark.style.top = (row ? at.from : at.line - 1) - box.top + "px";
-  mark.style.width = (row ? 2 : at.to - at.from) + "px";
-  mark.style.height = (row ? at.to - at.from : 2) + "px";
-}
-
-/* the line follows the edge it is dragging, which is the same edge re-measured */
-function remark(): void {
-  if (!resize) return;
-  const a = nodeIn(resize.host, resize.a);
-  const b = nodeIn(resize.host, resize.b);
-  if (!a || !b) return;
-  const ra = a.getBoundingClientRect();
-  const rb = b.getBoundingClientRect();
-  const row = resize.dir === "row";
-  markLine(resize.host, {
-    dir: resize.dir,
-    a: resize.a,
-    b: resize.b,
-    line: row ? (ra.right + rb.left) / 2 : (ra.bottom + rb.top) / 2,
-    from: row ? Math.max(ra.top, rb.top) : Math.max(ra.left, rb.left),
-    to: row ? Math.min(ra.bottom, rb.bottom) : Math.min(ra.right, rb.right),
-  });
-}
-
-export function armStage(host: HTMLElement, editor: Editor): void {
+export function armStage(host: HTMLElement, editor: Editor,
+                         refresh: () => void, restore: () => void): void {
+  overlayRefresh.set(host, refresh);
+  documentRestore.set(host, restore);
   host.addEventListener("pointerdown", (ev) => onDown(host, editor, ev as PointerEvent));
-  /* the boundary under the pointer, hunted on every move so the affordance is there before
-     the press rather than after it */
-  host.addEventListener("mousemove", (ev) => onHover(host, editor, ev as MouseEvent));
-  host.addEventListener("mouseleave", () => {
-    if (drag || resize) return;
-    hot = null;
-    markLine(host, null);
-  });
   /* the click that closes a real drag, eaten before the node it lands on can select */
   host.addEventListener("click", (ev) => {
     if (!swallow) return;
@@ -232,304 +98,178 @@ export function armStage(host: HTMLElement, editor: Editor): void {
   }, true);
 }
 
-function onHover(host: HTMLElement, editor: Editor, ev: MouseEvent): void {
-  if (armed || drag || resize) return;
-  if (editor.view.mode !== "edit") {
-    markLine(host, null);
-    return;
-  }
-  hot = boundaryUnder(host, editor, ev.clientX, ev.clientY);
-  markLine(host, hot);
-  /* the boundary owns the pointer while it is under it: the node's own highlight steps
-     aside, and comes back the moment the pointer leaves the strip */
-  const on = (ev.target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
-  editor.setHover(hot ? 0 : idOf(on));
-}
-
 function onDown(host: HTMLElement, editor: Editor, ev: PointerEvent): void {
   swallow = false;
   if (editor.view.mode !== "edit" || ev.button !== 0) return;
-  /* PRECEDENCE: a boundary is a thinner target than the children either side of it, so it
-     wins the press it is under; everything else about the node stays a press on the node. */
-  const edge = boundaryUnder(host, editor, ev.clientX, ev.clientY);
-  if (edge) {
-    beginResize(host, editor, edge, ev);
+  /* PRECEDENCE: an explicit grip beats the body under it — it only exists over the
+     selection, and pressing it can only mean the resize it names */
+  const hit = (ev.target as Element | null)?.closest?.(".sel-hit");
+  if (hit) {
+    beginResize(host, editor, hit, ev);
     return;
   }
-  /* A GRAB TAKES THE DEEPEST NODE, the same one a click would select and the hover ring is
-     already showing: a press on a widget carries the widget, a press on a frame's own
-     pixels (its padding, its gaps, its empty room) carries the frame and everything in it.
-     The page background belongs to no node and arms nothing. */
+  /* A GRAB TAKES THE DEEPEST NODE, the same one a click would select and the hover ring
+     is already showing: a press on a widget moves the widget, a press on a box's own
+     pixels (its surface, its empty room) moves the box and everything riding it. The
+     artboard background belongs to no node and arms nothing. */
   const grip = (ev.target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
   if (!grip || !host.contains(grip) || !idOf(grip)) return;
   armed = { host, editor, id: idOf(grip), x: ev.clientX, y: ev.clientY, pointer: ev.pointerId };
   listen();
 }
 
-function begin(): void {
-  if (!armed) return;
-  const { host, editor, id, pointer } = armed;
+/* ---- measuring: the one look at the screen a gesture takes ---- */
+
+/* The box and its writability, in CANVAS px. clientWidth/clientLeft report layout px —
+ * which under the camera's transform ARE canvas px — while getBoundingClientRect reports
+ * screen px; dividing by the page's own rendered scale converts between them. `base` is
+ * the parent's origin on the artboard, which is what lets a nested box snap to the one
+ * global grid. */
+function measure(host: HTMLElement, editor: Editor, id: number):
+    { plan: (handle: FreeHandle) => FreePlan | null; k: number } | null {
   const page = editor.page();
   const seat = page ? seatOf(page, id) : null;
-  armed = null;
-  if (!seat) return;
-  drag = {
-    host,
-    editor,
-    id,
-    pointer,
-    parent: seat.parent,
-    index: seat.index,
-    plan: null,
+  const pageEl = host.querySelector(".page") as HTMLElement | null;
+  const el = nodeIn(host, id);
+  if (!page || !seat || !pageEl || !el) return null;
+  const pageAt = pageEl.getBoundingClientRect();
+  const k = pageAt.width / CANVAS_W;
+  if (!(k > 0)) return null;
+  const pel = seat.parent === page.id ? pageEl : nodeIn(host, seat.parent);
+  if (!pel) return null;
+  const pat = pel.getBoundingClientRect();
+  const at = el.getBoundingClientRect();
+  const base = {
+    x: (pat.left - pageAt.left) / k + pel.clientLeft,
+    y: (pat.top - pageAt.top) / k + pel.clientTop,
   };
-  /* Capture from HERE, not from the press: a captured pointer retargets the click that
-     closes it onto the capturing element, and a press that never became a drag has to stay
-     an ordinary click on the node it landed on. Once it is a drag, the release ends the
-     gesture wherever it happens, including outside the window. */
+  const box = freeBoxOf(editor.store.nodeAt(id), {
+    left: (at.left - pat.left) / k - pel.clientLeft,
+    top: (at.top - pat.top) / k - pel.clientTop,
+    w: at.width / k,
+    h: at.height / k,
+  });
+  return { plan: (handle) => freePlan(handle, box, base), k };
+}
+
+/* ---- the gestures ---- */
+
+function beginMove(): void {
+  if (!armed) return;
+  const { host, editor, id, pointer, x, y } = armed;
+  armed = null;
+  const found = measure(host, editor, id);
+  const plan = found?.plan("move") ?? null;
+  /* every position holds authored logic: the press stays a click, and the inspector is
+     where that logic is edited */
+  if (!found || !plan) return;
+  free = { host, editor, id, pointer, handle: "move", plan, k: found.k,
+           startX: x, startY: y, dx: 0, dy: 0, snap: true };
   host.setPointerCapture?.(pointer);
   editor.setHover(0);
-  host.classList.add("dragging");
+  host.classList.add("freemoving");
+  refreshOverlay(host);
 }
 
-function onMove(ev: PointerEvent): void {
-  if (resize) {
-    onResizeMove(ev);
-    return;
-  }
-  if (armed) {
-    if (Math.abs(ev.clientX - armed.x) < SLOP && Math.abs(ev.clientY - armed.y) < SLOP) return;
-    begin();
-  }
-  if (!drag) return;
-  ev.preventDefault();
-  const { host, editor } = drag;
-  const page = editor.page();
-  if (!page) return;
-
-  /* HIT-TEST THE PAGE, which does not move while a drag is live: hovering a leaf resolves
-     to the container holding it, and that leaf takes part in the midpoint rule below like
-     any other. A carried FRAME needs one step more — the pointer mostly rides over the
-     frame's own interior, and nothing can be dropped into what is being carried, so the
-     question climbs up past the carried subtree to the nearest container that stays put.
-     That is what makes dragging a frame read like dragging a widget instead of a wall of
-     refusals. Off the page entirely, the last legal candidate stands. */
-  const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
-  let container = under?.closest?.(".frame, .page") as HTMLElement | null;
-  const carried = nodeIn(host, drag.id);
-  while (container && carried?.contains(container))
-    container = container.parentElement?.closest?.(".frame, .page") as HTMLElement | null;
-  if (!container || !host.contains(container)) return;
-  const holder = idOf(container) || page.id;
-  const kids = kidsOf(container);
-  const dir = dirOf(editor, container);
-
-  /* THE MIDPOINT RULE along the container's main axis. A stack has no main axis to read, so
-     it accepts at the end and nothing more. */
-  let raw = kids.length;
-  if (dir === "row" || dir === "col") {
-    const row = dir === "row";
-    const mids = kids.map((kid) => {
-      const at = kid.getBoundingClientRect();
-      return row ? at.left + at.width / 2 : at.top + at.height / 2;
-    });
-    raw = gapIndex(mids, row ? ev.clientX : ev.clientY);
-  }
-  /* the page still holds the dragged node — nothing moves until the drop — so every slot
-     past it is one too far for an op, which counts the list the server inserts into */
-  const index = withoutHeld(raw, kids.findIndex((kid) => idOf(kid) === drag!.id));
-  if (holder === drag.parent && index === drag.index) return;   /* already promising this */
-
-  drag.parent = holder;
-  drag.index = index;
-  /* A refused candidate means ONE thing here: it is the seat the node already holds. The
-     other refusals cannot reach this line — a container inside the carried subtree was
-     climbed past above, and a node the document no longer holds has nothing to plan — so
-     the caret stays where it is, promising the truth, and a release does nothing. */
-  drag.plan = settle(page, drag.id, { parent: holder, index });
-  editor.previewMove(drag.id, drag.plan ?? { parent: holder, index });
-}
-
-function onUp(): void {
-  if (resize) {
-    finishResize();
-    return;
-  }
-  const held = drag;
-  end();
-  if (!held) return;
+function beginResize(host: HTMLElement, editor: Editor, hit: Element, ev: PointerEvent): void {
+  /* even a press that never becomes a drag must not click through the overlay and
+     deselect the node whose handles were pressed */
   swallow = true;
-  /* the caret goes at the release, whatever happens next: it promised where the node would
-     land, and the answer is about to be on screen */
-  held.editor.previewMove(0, null);
-  if (!held.plan) return;
-  /* the client always sends the whole placement, reparent or reorder: the same op the tree
-     sends, through the same rules. The page moves ONCE, when the echo lands — which is the
-     first and only time anything under the pointer has moved during this gesture. */
-  held.editor.apply([
-    { op: "move", node: held.id, parent: held.plan.parent, list: "children", index: held.plan.index },
-  ]);
-  held.editor.select([held.id]);
-}
-
-/* ---- dragging the boundary ----
- *
- * The two sides are measured ONCE, at the press: what they are worth in pixels now, and what
- * the document says they are worth in grow and min. Everything after that is the pointer's
- * travel through arrange.ts, so the drag never chases its own output. */
-
-function measure(editor: Editor, host: HTMLElement, id: number, row: boolean): ResizeSide | null {
-  const node = editor.store.nodeAt(id);
-  const element = nodeIn(host, id);
-  if (!node || !element) return null;
-  /* THE TWO FIELDS THIS DRAG WRITES, and it may only write constants (arrange.ts): a side
-     whose share or floor is an EXPRESSION is not draggable, because the drag's whole output
-     is a number and there is nowhere to put it that does not destroy what is there. The
-     boundary is simply not offered — see boundaryIn, which asks the same question. */
-  const grow = literalNumber(node.attrs?.grow, 1);
-  const min = literalNumber(node.attrs?.min, 0);
-  if (grow === null || min === null) return null;
-  const at = element.getBoundingClientRect();
-  const style = typeof getComputedStyle === "function" ? getComputedStyle(element) : null;
-  const px = (value: string | undefined) => parseFloat(value ?? "") || 0;
-  /* the part of the outer size that is NOT the flex share: a basis of 0 means a side is its
-     own padding and border plus what it is paid */
-  const chrome = style
-    ? row
-      ? px(style.paddingLeft) + px(style.paddingRight) +
-        px(style.borderLeftWidth) + px(style.borderRightWidth)
-      : px(style.paddingTop) + px(style.paddingBottom) +
-        px(style.borderTopWidth) + px(style.borderBottomWidth)
-    : 0;
-  return { grow, min, outer: row ? at.width : at.height, chrome };
-}
-
-function beginResize(host: HTMLElement, editor: Editor, edge: Boundary, ev: PointerEvent): void {
-  const row = edge.dir === "row";
-  const a = measure(editor, host, edge.a, row);
-  const b = measure(editor, host, edge.b, row);
-  const plan = a && b ? resizeAt(a, b) : null;
-  if (!plan) return;   /* an inert boundary is not a gesture: the press stays a press */
-  resize = {
-    host, editor, dir: edge.dir, a: edge.a, b: edge.b, pointer: ev.pointerId, plan,
-    start: row ? ev.clientX : ev.clientY,
-    delta: 0,
-  };
+  const handle = (hit.getAttribute("data-handle") ?? "") as FreeHandle;
+  const id = Number(hit.closest(".handles")?.getAttribute("data-for") ?? "");
+  if (!handle || !id) return;
+  const found = measure(host, editor, id);
+  const plan = found?.plan(handle) ?? null;
+  if (!found || !plan) return;   /* a disabled grip has no hit rect; belt and braces */
+  free = { host, editor, id, pointer: ev.pointerId, handle, plan, k: found.k,
+           startX: ev.clientX, startY: ev.clientY, dx: 0, dy: 0, snap: !ev.altKey };
   host.setPointerCapture?.(ev.pointerId);
-  host.classList.add("resizing");
   editor.setHover(0);
-  markLine(host, edge);
+  host.classList.add("freemoving");
+  /* the cursor keeps naming the handle for the length of the drag, wherever the pointer
+     has wandered off the grip by then */
+  host.style.cursor = handleCursor(handle);
+  refreshOverlay(host);
   listen();
 }
 
-/* The same vocabulary place() emits, written inline for the length of the drag: the browser
- * re-solves the layout on every move with no op in flight and nothing to undo. Raw grows,
- * without the sub-one-sum scale the build applies — a boundary drag conserves the pair's
- * sum, so a container the build left unscaled stays unscaled; only inside an already
- * sub-one container do the live ratios drift, and the echo settles them at release. */
-function paint(host: HTMLElement, id: number, write: SideWrite | null, row: boolean): void {
-  const element = write ? nodeIn(host, id) : null;
-  if (!element || !write) return;
-  if (write.grow !== undefined) element.style.flex = write.grow + " 1 0";
-  if (write.min !== undefined) {
-    if (row) element.style.minWidth = write.min + "px";
-    else element.style.minHeight = write.min + "px";
+function onMove(ev: PointerEvent): void {
+  if (armed) {
+    if (Math.abs(ev.clientX - armed.x) < SLOP && Math.abs(ev.clientY - armed.y) < SLOP) return;
+    beginMove();
   }
-}
-
-function onResizeMove(ev: PointerEvent): void {
-  if (!resize) return;
+  if (!free) return;
   ev.preventDefault();
-  const row = resize.dir === "row";
-  resize.delta = (row ? ev.clientX : ev.clientY) - resize.start;
-  repaintResize();
+  /* the pointer travels in screen px; the plan thinks in canvas px */
+  free.dx = (ev.clientX - free.startX) / free.k;
+  free.dy = (ev.clientY - free.startY) / free.k;
+  /* Alt suspends the grid for exactly as long as it is held */
+  free.snap = !ev.altKey;
+  repaintFree();
 }
 
-/* THE PAGE MAY BE REBUILT UNDER A LIVE GESTURE, and must not take the gesture with it. A
- * bound readout is still ticking while you drag a boundary, and a live frame that moves a
- * cell the picture read rebuilds the page from the DOCUMENT — which is the size the
- * boundary had before you grabbed it. The two inline styles a resize is holding live
- * outside the document (deliberately: nothing is committed until release), so they are the
- * one thing a rebuild cannot know to restore, and the gesture re-asserts them rather than
- * the renderer trying to remember them.
- *
- * Called by stage.ts after every rebuild, and by the pointer move that caused one. */
-export function repaintResize(): void {
-  if (!resize) return;
-  const row = resize.dir === "row";
-  const move = resize.plan.apply(resize.delta);
-  paint(resize.host, resize.a, move.a, row);
-  paint(resize.host, resize.b, move.b, row);
-  remark();
+/* the numbers on screen, in place()'s own vocabulary — and the same re-assertion after a
+ * live rebuild replaces the element the gesture is holding. Called by stage.ts after
+ * every rebuild, and by the pointer move that caused one. */
+export function repaintFree(): void {
+  if (!free) return;
+  const el = nodeIn(free.host, free.id);
+  if (el) {
+    const to = free.plan.apply(free.dx, free.dy, free.snap);
+    if (to.x !== undefined) el.style.left = to.x + "px";
+    if (to.y !== undefined) el.style.top = to.y + "px";
+    if (to.w !== undefined) el.style.width = to.w + "px";
+    if (to.h !== undefined) el.style.height = to.h + "px";
+  }
+  /* the handles ride the box they ring */
+  refreshOverlay(free.host);
 }
 
-/* One batch on release, of the one or two props that actually moved. The echo rebuilds the
- * page into the picture the inline styles are already showing, so there is nothing to see —
- * and the inspector's own Place rows pick the new numbers up the ordinary way. */
-function finishResize(): void {
-  const held = resize;
+function onUp(ev: PointerEvent): void {
+  const held = free;
   end();
   if (!held) return;
   swallow = true;
-  const move = held.plan.commit(held.delta);
-  const ops: Op[] = [];
-  /* ONE op per side, of the whole attr map: a field is expression text, so what a gesture
-     writes is the TEXT of the constant it arrived at — the same thing the inspector would
-     have written by hand, landing in the same field, which is what makes a drag and a typed
-     number the same edit. */
-  const write = (id: number, side: SideWrite | null) => {
-    const node = side ? held.editor.store.nodeAt(id) : null;
-    if (!side || !node) return;
-    const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
-    let moved = false;
-    if (side.grow !== undefined && literalNumber(attrs.grow, 1) !== side.grow) {
-      attrs.grow = String(side.grow);
-      moved = true;
-    }
-    if (side.min !== undefined && literalNumber(attrs.min, 0) !== side.min) {
-      attrs.min = String(side.min);
-      moved = true;
-    }
-    if (moved) ops.push({ op: "set_prop", node: id, key: "attrs", value: attrs });
-  };
-  write(held.a, move.a);
-  write(held.b, move.b);
-  /* the boundary ended where it started: drop the inline styles rather than sending a move
-     of nothing, by rebuilding the page from the document */
-  if (!ops.length) {
-    held.editor.previewMove(0, null);
+  const to = held.plan.commit((ev.clientX - held.startX) / held.k,
+                              (ev.clientY - held.startY) / held.k, !ev.altKey);
+  const node = held.editor.store.nodeAt(held.id);
+  const moved = Object.keys(to) as (keyof FreeWrite)[];
+  if (!node || !moved.length) {
+    /* it ended where it began: put the document's own picture back */
+    documentRestore.get(held.host)?.();
     return;
   }
-  held.editor.apply(ops);
+  /* one op of the whole attr map, each field the TEXT of the constant the gesture
+     reached — the same edit the inspector would have made, landing in the same fields */
+  const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
+  for (const key of moved) attrs[key] = fmtPx(to[key] as number);
+  held.editor.apply([{ op: "set_prop", node: held.id, key: "attrs", value: attrs }]);
+  held.editor.select([held.id]);
 }
 
 function onKey(ev: KeyboardEvent): void {
   if (ev.key === "Escape") cancel();
 }
 
-/* Escape drops whichever manipulation is live, and both are undone the same way: what is on
- * screen is not the document, so the document is drawn again. */
+/* Escape drops the manipulation: what is on screen is not the document, so the document
+ * is drawn again */
 function cancel(): void {
-  const editor = drag?.editor ?? resize?.editor ?? null;
+  const host = free?.host ?? null;
   end();
-  editor?.previewMove(0, null);
+  if (host) documentRestore.get(host)?.();
 }
 
-/* Every end path comes through here, unconditionally: a cursor, a class or a window listener
- * left behind by an abandoned gesture is a stuck editor. */
+/* Every end path comes through here, unconditionally: a cursor, a class or a window
+ * listener left behind by an abandoned gesture is a stuck editor. */
 function end(): void {
   armed = null;
-  hot = null;
-  if (drag) {
-    if (drag.host.hasPointerCapture?.(drag.pointer)) drag.host.releasePointerCapture(drag.pointer);
-    drag.host.classList.remove("dragging");
-    drag = null;
-  }
-  if (resize) {
-    if (resize.host.hasPointerCapture?.(resize.pointer))
-      resize.host.releasePointerCapture(resize.pointer);
-    resize.host.classList.remove("resizing");
-    markLine(resize.host, null);
-    resize = null;
+  if (free) {
+    if (free.host.hasPointerCapture?.(free.pointer)) free.host.releasePointerCapture(free.pointer);
+    free.host.classList.remove("freemoving");
+    free.host.style.cursor = "";
+    const host = free.host;
+    free = null;
+    refreshOverlay(host);
   }
   unlisten();
 }

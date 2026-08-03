@@ -1,39 +1,55 @@
-/* The stage: a page, rendered as real DOM — and, inside every instance, the component it
- * names, rendered the same way.
+/* The stage: the ARTBOARD, rendered as real DOM — and, inside every instance, the
+ * component it names, rendered the same way.
  *
- * ONE RENDERER, because there is one tree. A page's frames and a component's internals are
+ * ONE RENDERER, because there is one tree. A page's boxes and a component's internals are
  * the same four kinds (frame, text, icon, path) with the same fields, so this walks a
- * VIEW NODE — kind, layout, compiled attrs, children — and never asks where it came from.
- * A page node's programs ride the snapshot (`node_attrs`), a component's ride its served
+ * VIEW NODE — kind, compiled attrs, children — and never asks where it came from. A page
+ * node's programs ride the snapshot (`node_attrs`), a component's ride its served
  * template, and both are run by the same interpreter over the same cells.
  *
- * WHAT THE BROWSER OWNS: layout, hit testing and scaling. A row is `display: flex`, a free
- * frame is `position: relative` with absolutely-placed children, ink is an `<svg>` leaf.
- * There is no coordinate space here and no camera: the page IS the pane it sits in, so
- * resizing the window re-solves the whole layout, which is the point of the model.
+ * TWO SPACES, one rule each. A PAGE NODE is canvas px of the 1408x792 artboard, relative
+ * to its parent's origin: what is written is what renders, and the whole artboard scales
+ * into the pane as ONE picture (the camera below). A COMPONENT'S INTERNALS are fractions
+ * of their parent, because a component must fill whatever box an instance gives it — its
+ * design frame is its natural size, not a coordinate space. Which space a node is in is
+ * a fact the tree already states: page nodes carry ids, template nodes do not.
+ *
+ * THE CAMERA: scale-to-fit letterbox by default, wheel pans, ctrl+wheel zooms at the
+ * pointer, middle-drag pans. One transform on the .page element; everything drawn OVER
+ * the page (rings, handles) reads post-transform rects and never knows the camera exists.
  *
  * WHAT EXPRESSIONS OWN: values. Every field is a program over cells — a slot's live value,
  * a theme token, this view's gesture state, which copy of a `repeat` this is — and what
- * comes out is a colour, a fraction, a string. Expressions compute; CSS lays out.
+ * comes out is a colour, a number, a string. Expressions compute; CSS places.
  *
  * Re-render policy: the page is rebuilt wholesale when the document version moves (cheap
  * at this scale, and reconciliation would buy nothing while nothing here holds state). A
  * live frame at 30 Hz must NOT do that, so each render records the live cells it actually
  * read, and a live frame rebuilds only when one of those moved. */
 
-import { caretIndex, DropPlan } from "./arrange.js";
+import { DropPlan, freeAllowed, freeBoxOf } from "./arrange.js";
 import { Editor } from "./editor.js";
+import { HANDLE_MARGIN, handleMarkup, handlesOff } from "./handles.js";
 import { iconMarkup } from "./icons.js";
-import { armStage, repaintResize, stageBusy } from "./manipulate.js";
+import { armStage, repaintFree, stageBusy } from "./manipulate.js";
 import { attrText, Cells, run } from "./program.js";
 import { typeOf } from "./slots.js";
 import {
-  Attrs, CompiledAnchor, isInstance, Json, Layout, Node, Page, Program, TemplateNode,
-  Token, WidgetType,
+  Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, isInstance, Json, Node, Page, Program,
+  TemplateNode, Token, WidgetType,
 } from "./types.js";
 
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
 const REPEAT_CAP = 512;
+
+/* the camera: where the artboard sits in the pane, and at what scale */
+interface Camera {
+  x: number;
+  y: number;
+  k: number;
+  /* the user has taken the camera: a pane resize stops re-fitting over their head */
+  manual: boolean;
+}
 
 interface StageState {
   page: HTMLElement | null;
@@ -45,8 +61,9 @@ interface StageState {
   rings: HTMLElement[];
   /* the one ring that follows the pointer rather than the selection */
   hover: HTMLElement | null;
-  /* the line promising where a dragged node would land, while a drag is live */
-  caret: HTMLElement | null;
+  /* the selection handles over a lone selected node: ring, pills, brackets (handles.ts) */
+  handles: SVGSVGElement | null;
+  cam: Camera;
   wired: boolean;
 }
 
@@ -56,10 +73,38 @@ function stateOf(host: HTMLElement): StageState {
   let state = states.get(host);
   if (!state) {
     state = { page: null, signature: "", consumed: new Map(), rings: [],
-              hover: null, caret: null, wired: false };
+              hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
+              wired: false };
     states.set(host, state);
   }
   return state;
+}
+
+/* ---- the camera ---- */
+
+/* the artboard, scaled to sit whole in the pane with a breath of margin around it */
+function fitCamera(host: HTMLElement, cam: Camera): void {
+  const w = host.clientWidth;
+  const h = host.clientHeight;
+  if (!(w > 0) || !(h > 0)) return;
+  cam.k = Math.min(w / CANVAS_W, h / CANVAS_H) * 0.96;
+  cam.x = (w - CANVAS_W * cam.k) / 2;
+  cam.y = (h - CANVAS_H * cam.k) / 2;
+}
+
+function applyCamera(state: StageState): void {
+  if (!state.page) return;
+  state.page.style.transform =
+    "translate(" + state.cam.x + "px, " + state.cam.y + "px) scale(" + state.cam.k + ")";
+}
+
+/* THE SCALE between screen px and canvas px, which is what the gestures divide by: read
+ * off the rendered page rather than the camera, so a caller needs no camera at all */
+export function stageScale(host: HTMLElement): number {
+  const page = stateOf(host).page;
+  if (!page) return 1;
+  const at = page.getBoundingClientRect();
+  return at.width > 0 ? at.width / CANVAS_W : 1;
 }
 
 /* ---- what one node looks like to the renderer ----
@@ -76,7 +121,6 @@ interface ViewNode {
   instance: boolean;
   kind: string;
   name: string;
-  layout: Layout;
   attrs: Attrs;
   anchors: CompiledAnchor[];
   closed: boolean;
@@ -109,7 +153,6 @@ function pageNode(editor: Editor, node: Node): ViewNode {
       instance: true,
       kind: root?.kind ?? "frame",
       name: node.name || (node.type ?? ""),
-      layout: root?.layout ?? "free",
       attrs: { ...(root?.attrs ?? {}), ...(compiled?.attrs ?? {}) },
       anchors: root?.anchors ?? [],
       closed: root?.closed ?? false,
@@ -124,7 +167,6 @@ function pageNode(editor: Editor, node: Node): ViewNode {
     instance: false,
     kind: node.kind,
     name: node.name ?? "",
-    layout: (node.layout ?? "free") as Layout,
     attrs: compiled?.attrs ?? {},
     anchors: compiled?.anchors ?? [],
     closed: node.closed ?? false,
@@ -144,7 +186,6 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
     instance: false,
     kind: node.kind,
     name,
-    layout: (node.layout ?? "free") as Layout,
     attrs: node.attrs ?? {},
     anchors: node.anchors ?? [],
     closed: node.closed ?? false,
@@ -183,18 +224,12 @@ function truthy(value: Json): boolean {
          (typeof value === "string" && value.length > 0);
 }
 
-const ALIGN_ITEMS: Record<string, string> = {
-  start: "flex-start", center: "center", end: "flex-end", stretch: "stretch",
-};
-const JUSTIFY_CONTENT: Record<string, string> = {
-  start: "flex-start", center: "center", end: "flex-end", between: "space-between",
-};
 const TEXT_ALIGN: Record<string, string> = {
   start: "left", center: "center", end: "right",
 };
 
-/* a percentage from a FRACTION of the containing box: the coordinate system every
-   measured field works in, so a component is right at every size the page gives it */
+/* a percentage from a FRACTION of the containing box: the coordinate system a
+   component's internals work in, so one authoring is right at every instance size */
 function pct(value: number): string {
   return value * 100 + "%";
 }
@@ -280,115 +315,37 @@ function attrOf(node: ViewNode, name: string, cells: Cells): Json {
  *   when neither x nor w is set, which is why an overlay needs nothing said about it: that
  *   is what "stack" used to mean, and it falls out of the general rule rather than being
  *   a mode of its own. */
-function place(el: HTMLElement, node: ViewNode, parent: Layout, cells: Cells,
-               scale: number): void {
+function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
+  el.style.position = "absolute";
+  /* which unit system this node's numbers are in: page nodes are canvas px, a
+     component's internals are fractions of their parent */
+  const px = node.id !== 0;
+  const unit = (value: number) => (px ? value + "px" : pct(value));
   const aspect = num(attrOf(node, "aspect", cells));
+  const x = num(attrOf(node, "x", cells));
+  const y = num(attrOf(node, "y", cells));
+  const w = num(attrOf(node, "w", cells));
+  const h = num(attrOf(node, "h", cells));
+  const ox = num(attrOf(node, "origin_x", cells)) ?? 0;
+  const oy = num(attrOf(node, "origin_y", cells)) ?? 0;
+  if (w === null && x === null) { el.style.left = "0"; el.style.right = "0"; }
+  else { el.style.left = unit(x ?? 0); if (w !== null) el.style.width = unit(w); }
+  if (h === null && y === null) { el.style.top = "0"; el.style.bottom = "0"; }
+  else { el.style.top = unit(y ?? 0); if (h !== null) el.style.height = unit(h); }
+  if (aspect !== null && aspect > 0) el.style.aspectRatio = String(aspect);
 
-  if (parent === "free") {
-    el.style.position = "absolute";
-    const x = num(attrOf(node, "x", cells));
-    const y = num(attrOf(node, "y", cells));
-    const w = num(attrOf(node, "w", cells));
-    const h = num(attrOf(node, "h", cells));
-    const ox = num(attrOf(node, "origin_x", cells)) ?? 0;
-    const oy = num(attrOf(node, "origin_y", cells)) ?? 0;
-    if (w === null && x === null) { el.style.left = "0"; el.style.right = "0"; }
-    else { el.style.left = pct(x ?? 0); if (w !== null) el.style.width = pct(w); }
-    if (h === null && y === null) { el.style.top = "0"; el.style.bottom = "0"; }
-    else { el.style.top = pct(y ?? 0); if (h !== null) el.style.height = pct(h); }
-    if (aspect !== null && aspect > 0) el.style.aspectRatio = String(aspect);
-
-    /* ONE REFERENCE POINT serves both jobs: the point `x`/`y` places, and the pivot
-       `rotate` turns about. A needle authored with its origin at its hub therefore
-       rotates about the dial's centre with nothing else said. */
-    const rotate = num(attrOf(node, "rotate", cells));
-    const parts: string[] = [];
-    if (ox || oy) parts.push("translate(" + pct(-ox) + ", " + pct(-oy) + ")");
-    if (rotate !== null) parts.push("rotate(" + rotate + "deg)");
-    if (parts.length) {
-      el.style.transform = parts.join(" ");
-      el.style.transformOrigin = pct(ox) + " " + pct(oy);
-    }
-    return;
+  /* ONE REFERENCE POINT serves both jobs: the point `x`/`y` places, and the pivot
+     `rotate` turns about — a fraction of the node's OWN box in either unit system, so a
+     needle authored with its origin at its hub rotates about the dial's centre with
+     nothing else said. */
+  const rotate = num(attrOf(node, "rotate", cells));
+  const parts: string[] = [];
+  if (ox || oy) parts.push("translate(" + pct(-ox) + ", " + pct(-oy) + ")");
+  if (rotate !== null) parts.push("rotate(" + rotate + "deg)");
+  if (parts.length) {
+    el.style.transform = parts.join(" ");
+    el.style.transformOrigin = pct(ox) + " " + pct(oy);
   }
-
-  const grow = num(attrOf(node, "grow", cells)) ?? 1;
-  const min = num(attrOf(node, "min", cells)) ?? 0;
-  if (parent === "grid") {
-    el.style.minWidth = "0";
-    el.style.minHeight = "0";
-    if (aspect !== null && aspect > 0) el.style.aspectRatio = String(aspect);
-    return;
-  }
-
-  /* AN ASPECT-LOCKED CHILD IS OUT OF THE WEIGHT SYSTEM. A flex share hands it a definite
-     main size and leaves the ratio only the cross axis to bend — the lock overridden by
-     layout. Anchoring it on a non-stretch align is no better: with neither axis definite
-     it collapses to its content. So the CROSS axis is the anchor: it stretches to what the
-     container gives, and the ratio derives the main size from that. */
-  if (aspect !== null && aspect > 0) {
-    el.style.aspectRatio = String(aspect);
-    el.style.flex = "0 0 auto";
-    el.style.alignSelf = "stretch";
-    /* the cell can REFUSE the ratio: clamped rather than allowed to overflow into a
-       sibling, because a shape that spills is a worse lie than one that squares up. A cell
-       that cannot hold the ratio is really a finding about the size the component was
-       given, which is what the envelope contract will say properly. */
-    el.style.maxWidth = "100%";
-    el.style.maxHeight = "100%";
-    if (parent === "row") el.style.minWidth = "0";
-    else el.style.minHeight = "0";
-    return;
-  }
-  /* GROW 0 MEANS "TAKE NO SHARE", NOT "TAKE NOTHING": with a zero basis it would also
-     give up its content's own size, and a caption asking for no share of the row would
-     vanish rather than sit at its natural width. So a weighted child gets basis 0 (which
-     is what makes grow a weight) and an unweighted one gets its content. */
-  el.style.flex = grow > 0 ? grow * scale + " 1 0" : "0 0 auto";
-  el.style.minWidth = "0";
-  el.style.minHeight = "0";
-  if (min > 0) {
-    if (parent === "row") el.style.minWidth = min + "px";
-    else el.style.minHeight = min + "px";
-  }
-}
-
-/* THE SUB-ONE SUM RULE: when a container's grow factors sum below 1, flexbox hands its
- * children only that FRACTION of the free space — weights quietly become "fractions of the
- * pane" and the container shows through the remainder. The document means grow as a pure
- * weight, so a sub-one sum is scaled back up to one; at or above one the authored numbers
- * ride through untouched, which keeps devtools legible. */
-function growScale(children: ViewNode[], cells: (node: ViewNode) => Cells): number {
-  let sum = 0;
-  for (const child of children)
-    sum += Math.max(0, num(attrOf(child, "grow", cells(child))) ?? 1);
-  return sum > 0 && sum < 1 ? 1 / sum : 1;
-}
-
-/* the container half: what a frame does to what is inside it */
-function container(el: HTMLElement, node: ViewNode, cells: Cells): void {
-  const gap = num(attrOf(node, "gap", cells)) ?? 0;
-  const pad = num(attrOf(node, "pad", cells)) ?? 0;
-  if (node.layout === "free") {
-    /* free children are absolute, so the box only has to be their origin */
-    el.style.position = el.style.position || "relative";
-    if (!el.style.position) el.style.position = "relative";
-  } else if (node.layout === "grid") {
-    const cols = Math.max(1, Math.round(num(attrOf(node, "cols", cells)) ?? 2));
-    const rows = Math.round(num(attrOf(node, "rows", cells)) ?? 0);
-    el.style.display = "grid";
-    el.style.gridTemplateColumns = "repeat(" + cols + ", minmax(0, 1fr))";
-    if (rows > 0) el.style.gridTemplateRows = "repeat(" + rows + ", minmax(0, 1fr))";
-  } else {
-    const align = attrText(attrOf(node, "align", cells)) ?? "stretch";
-    const justify = attrText(attrOf(node, "justify", cells)) ?? "start";
-    el.style.display = "flex";
-    el.style.flexDirection = node.layout === "row" ? "row" : "column";
-    el.style.alignItems = ALIGN_ITEMS[align] ?? "stretch";
-    el.style.justifyContent = JUSTIFY_CONTENT[justify] ?? "flex-start";
-  }
-  if (gap) el.style.gap = gap + "px";
-  if (pad) el.style.padding = pad + "px";
 }
 
 /* the dressing every box wears, whatever holds it */
@@ -525,12 +482,12 @@ function buildIcon(node: ViewNode, cells: Cells): HTMLElement {
 
 /* ---- building ---- */
 
-function buildNode(state: StageState, editor: Editor, node: ViewNode, parent: Layout,
-                   scale: number, repeat: { index: number; count: number } | null): HTMLElement | null {
+function buildNode(state: StageState, editor: Editor, node: ViewNode,
+                   repeat: { index: number; count: number } | null): HTMLElement | null {
   const cells = cellsFor(state, editor, node, repeat);
 
-  /* `show` false hides the node AND everything under it, and it is not emitted at all, so
-     it takes no room either — the honest reading of "not shown" in a layout */
+  /* `show` false hides the node AND everything under it, and it is not emitted at all —
+     the honest reading of "not shown" */
   const show = attrOf(node, "show", cells);
   if (show !== undefined && !truthy(show)) return null;
 
@@ -539,9 +496,9 @@ function buildNode(state: StageState, editor: Editor, node: ViewNode, parent: La
            : node.kind === "icon" ? buildIcon(node, cells)
            : document.createElement("div");
   /* `.frame` MEANS "CAN HOLD A CHILD", and an instance cannot: what is inside it belongs
-     to the component it names. The class is what every container search reads — the drag's
-     candidate, the boundary hunt — so an instance wearing it would let a drop aim into a
-     widget's internals. It is a leaf here, which is exactly what it is to this page. */
+     to the component it names. The class is what every container search reads — the drop's
+     candidate hunt — so an instance wearing it would let a drop aim into a widget's
+     internals. It is a leaf here, which is exactly what it is to this page. */
   if (node.kind === "frame") el.className = node.instance ? "leaf" : "frame";
 
   /* FAIL-SAFE, and only in a mode that operates: a disabled control is dimmed everywhere,
@@ -553,35 +510,31 @@ function buildNode(state: StageState, editor: Editor, node: ViewNode, parent: La
     if (editor.view.mode !== "edit") el.style.pointerEvents = "none";
   }
   if (node.id) el.setAttribute("data-id", String(node.id));
-  place(el, node, parent, cells, scale);
+  place(el, node, cells);
 
   if (node.kind !== "frame") return el;
 
   dress(el, node, cells);
-  container(el, node, cells);
-  const inner = growScale(node.children, (child) => cellsFor(state, editor, child, repeat));
   for (const child of node.children)
-    for (const copy of expand(state, editor, child, node.layout, inner, repeat))
+    for (const copy of expand(state, editor, child, repeat))
       el.appendChild(copy);
   return el;
 }
 
-/* `repeat` N copies of one node, each seeing which copy it is. In a row, col or grid the
- * copies are real siblings; in a free frame each places itself, which is how a scale's
- * ticks and an option ring are authored — one node, N answers. */
-function expand(state: StageState, editor: Editor, node: ViewNode, parent: Layout,
-                scale: number,
+/* `repeat` N copies of one node, each seeing which copy it is and placing itself, which
+ * is how a scale's ticks and an option ring are authored — one node, N answers */
+function expand(state: StageState, editor: Editor, node: ViewNode,
                 outer: { index: number; count: number } | null): HTMLElement[] {
   const cells = cellsFor(state, editor, node, outer);
   const declared = node.attrs?.repeat ? num(attrOf(node, "repeat", cells)) : null;
   if (declared === null) {
-    const one = buildNode(state, editor, node, parent, scale, outer);
+    const one = buildNode(state, editor, node, outer);
     return one ? [one] : [];
   }
   const count = Math.max(0, Math.min(REPEAT_CAP, Math.round(declared)));
   const out: HTMLElement[] = [];
   for (let index = 0; index < count; index++) {
-    const copy = buildNode(state, editor, node, parent, scale, { index, count });
+    const copy = buildNode(state, editor, node, { index, count });
     if (copy) out.push(copy);
   }
   return out;
@@ -594,17 +547,17 @@ function emitTokens(page: HTMLElement, tokens: Token[]): void {
     if (token?.name) page.style.setProperty("--t-" + token.name, token.dark);
 }
 
+/* THE ARTBOARD: a fixed 1408 x 792 px surface the camera scales into the pane. Its
+ * children are page nodes in canvas px; the document never describes the artboard itself,
+ * because it is a constant of the system, not a thing anyone authors. */
 function buildPage(state: StageState, editor: Editor, page: Page): HTMLElement {
   const el = document.createElement("div");
   el.className = "page";
+  el.style.width = CANVAS_W + "px";
+  el.style.height = CANVAS_H + "px";
   emitTokens(el, editor.store.tokens());
-  /* The page is the ROOT frame, and the one frame the document does not describe: it has
-     no layout of its own, so it takes the same default a fresh frame does — a column,
-     filling the pane. Its own display/direction live in stage.css. */
-  const children = (page.children ?? []).map((child) => pageNode(editor, child));
-  const scale = growScale(children, (child) => cellsFor(state, editor, child, null));
-  for (const child of children)
-    for (const copy of expand(state, editor, child, "col", scale, null))
+  for (const child of (page.children ?? []).map((c) => pageNode(editor, c)))
+    for (const copy of expand(state, editor, child, null))
       el.appendChild(copy);
   return el;
 }
@@ -663,96 +616,83 @@ function positionRings(host: HTMLElement, editor: Editor): void {
   const hovered = editor.view.hover;
   const shown = hovered && selection.indexOf(hovered) < 0 && editor.view.mode === "edit";
   ringOver(host, state.hover, shown ? nodeElement(host, hovered) : null);
-}
 
-/* ---- where a drop would land ----
- *
- * THE PAGE DOES NOT MOVE WHILE YOU DRAG. It used to: the page was rebuilt as if the node
- * were already in the candidate slot, so the reflow itself was the preview. That reads
- * beautifully and is unusable, because the thing you are aiming AT is part of what moves —
- * the reflow slides the children out from under the pointer, which names a different slot,
- * which reflows again. Aiming at a moving target you are moving by aiming at it.
- *
- * So the layout stands still and a CARET says where the node will go: a line in the gap it
- * would be inserted into, drawn across the container's own width, plus a mark on the
- * container that would receive it. Nothing about the page changes until the drop, and the
- * only thing that follows the pointer is the line. */
-
-/* the gap the caret sits in, in client pixels: the leading edge of the child now at that
- * index, or the trailing edge of the last one when the drop is at the end. An empty
- * container has no children to measure, so the line is its own leading edge. */
-function caretLine(container: HTMLElement, index: number, row: boolean):
-    { at: number; from: number; to: number } {
-  const box = container.getBoundingClientRect();
-  const kids = Array.from(container.children)
-    .filter((c) => (c as HTMLElement).hasAttribute?.("data-id")) as HTMLElement[];
-  const cross = { from: row ? box.top : box.left, to: row ? box.bottom : box.right };
-  if (!kids.length) return { at: row ? box.left : box.top, ...cross };
-  const clamped = Math.max(0, Math.min(index, kids.length));
-  if (clamped === kids.length) {
-    const last = kids[kids.length - 1].getBoundingClientRect();
-    return { at: row ? last.right : last.bottom, ...cross };
+  /* THE HANDLES: a lone selected node wears the old designer's selection box — a ring on
+     its own line, four edge pills, four corner brackets (handles.ts) — in place of the
+     plain ring. Everything on the artboard is in measurement space now, so every node
+     qualifies; a grip whose fields hold expressions is drawn disarmed, because direct
+     manipulation writes constants, never over authored logic (arrange.ts). */
+  const lone = selection.length === 1 ? selection[0] : 0;
+  const target = lone ? nodeElement(host, lone) : null;
+  const dressed = !!target && editor.view.mode === "edit";
+  if (!dressed) {
+    state.handles?.remove();
+    state.handles = null;
+  } else {
+    if (!state.handles) {
+      state.handles = document.createElementNS("http://www.w3.org/2000/svg", "svg") as
+        SVGSVGElement;
+      state.handles.setAttribute("class", "handles");
+      host.appendChild(state.handles);
+    }
+    const svg = state.handles;
+    const box = host.getBoundingClientRect();
+    const at = target!.getBoundingClientRect();
+    /* legality reads only the document's own flags, so the measured half can be zeros */
+    const shape = freeBoxOf(editor.store.nodeAt(lone), { left: 0, top: 0, w: 0, h: 0 });
+    const off = handlesOff((handle) => freeAllowed(shape, handle));
+    /* redrawn only when what it says changes; repositioned every time */
+    const signature = [lone, at.width.toFixed(1), at.height.toFixed(1),
+                       Array.from(off).join(",")].join("|");
+    if (svg.getAttribute("data-sig") !== signature) {
+      svg.setAttribute("data-sig", signature);
+      svg.setAttribute("data-for", String(lone));
+      const w = at.width + 2 * HANDLE_MARGIN;
+      const h = at.height + 2 * HANDLE_MARGIN;
+      svg.setAttribute("width", String(w));
+      svg.setAttribute("height", String(h));
+      svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+      svg.innerHTML = handleMarkup(at.width, at.height, off);
+    }
+    svg.style.left = at.left - box.left - HANDLE_MARGIN + "px";
+    svg.style.top = at.top - box.top - HANDLE_MARGIN + "px";
+    /* the plain ring under the overlay would double the line: it draws its own */
+    if (state.rings[0]) state.rings[0].style.display = "none";
   }
-  const next = kids[clamped].getBoundingClientRect();
-  return { at: row ? next.left : next.top, ...cross };
+
+  /* THE GRID: the artboard's own 22px cells, up whenever the page is being edited. The
+     lines live in canvas space (stage.css) and scale with the camera, so the picture and
+     the numbers always agree. */
+  state.page?.classList.toggle("gridded", editor.view.mode === "edit");
 }
 
-/* Draw it, or take it away. Driven from wherever the drag lives — the stage's own pointer
- * gestures (manipulate.ts) and the Layers tree's row drag (inspector/panel.ts) — so a drop
- * is promised the same way however it was aimed. A null plan clears everything. */
+/* ---- where a tree drop would land ----
+ *
+ * THE PAGE DOES NOT MOVE WHILE YOU DRAG a Layers row: the node in hand dims where it
+ * still sits, and the box that would receive it wears a mark. There is no insertion line
+ * any more — order is Z-ORDER on the artboard, not a place on an axis, so a line between
+ * two children would promise a position that order does not decide. */
 export function previewArrangement(
   host: HTMLElement,
-  editor: Editor,
+  _editor: Editor,
   node: number,
   plan: DropPlan | null,
 ): void {
   const state = stateOf(host);
   for (const el of Array.from(host.querySelectorAll(".carrying, .drop-target")))
     el.classList.remove("carrying", "drop-target");
-  if (!node || !plan) {
-    state.caret?.remove();
-    state.caret = null;
-    return;
-  }
-
-  const page = editor.page();
+  if (!node || !plan) return;
   const target = nodeElement(host, plan.parent) ?? state.page;
-  if (!page || !target) return;
+  if (!target) return;
   nodeElement(host, node)?.classList.add("carrying");
   target.classList.add("drop-target");
+}
 
-  /* FREE and GRID place by their own rules rather than by order, so a line between two
-     children would be promising something order does not decide there: the container's own
-     mark is the whole of what can honestly be shown. */
-  const holder = editor.store.nodeAt(plan.parent);
-  const layout = plan.parent === page.id ? "col" : holder?.layout ?? "free";
-  if (layout !== "row" && layout !== "col") {
-    state.caret?.remove();
-    state.caret = null;
-    return;
-  }
-
-  if (!state.caret) {
-    state.caret = document.createElement("div");
-    state.caret.className = "insert-caret";
-    host.appendChild(state.caret);
-  }
-  const row = layout === "row";
-  const line = caretLine(target, caretIndex(page, node, plan), row);
-  const box = host.getBoundingClientRect();
-  const caret = state.caret;
-  caret.classList.toggle("row", row);
-  if (row) {
-    caret.style.left = line.at - box.left - 1 + "px";
-    caret.style.top = line.from - box.top + "px";
-    caret.style.width = "2px";
-    caret.style.height = line.to - line.from + "px";
-  } else {
-    caret.style.left = line.from - box.left + "px";
-    caret.style.top = line.at - box.top - 1 + "px";
-    caret.style.width = line.to - line.from + "px";
-    caret.style.height = "2px";
-  }
+/* the document's own picture, forced back on screen: what a cancelled or no-op gesture
+ * calls, since the inline styles it painted are exactly what a plain render would keep */
+export function repaintDocument(host: HTMLElement, editor: Editor): void {
+  stateOf(host).signature = "";
+  renderStage(host, editor);
 }
 
 /* ---- the one entry point ---- */
@@ -774,7 +714,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
      is the one that catches an edit changing what a field evaluates to rather than what the
      tree holds. A page node's attrs are programs; editing one leaves the tree identical and
      the version moved, and the new programs arrive in the snapshot that follows. Without the
-     epoch here a boundary drag would commit its number and then redraw the old one. */
+     epoch here a resize would commit its number and then redraw the old one. */
   const signature = page.id + ":" + editor.store.version() + ":" + (editor.live?.epoch ?? 0);
   let rebuild = !state.page || signature !== state.signature;
   if (!rebuild)
@@ -796,11 +736,13 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     host.insertBefore(next, host.firstChild);
     state.page = next;
     state.signature = signature;
+    if (!state.cam.manual) fitCamera(host, state.cam);
+    applyCamera(state);
     /* A REBUILD MUST NOT TAKE A GESTURE WITH IT. What a live frame moved is a value, not
-       an arrangement, and the boundary in your hand is holding two sizes that are
-       deliberately not in the document until you let go — so the gesture puts them back
-       on the fresh elements (manipulate.ts owns them; this only says when). */
-    repaintResize();
+       an arrangement, and the box in your hand is holding numbers that are deliberately
+       not in the document until you let go — so the gesture puts them back on the fresh
+       elements (manipulate.ts owns them; this only says when). */
+    repaintFree();
   }
   positionRings(host, editor);
 }
@@ -838,11 +780,65 @@ function wire(host: HTMLElement, editor: Editor): void {
   host.addEventListener("mouseout", () => {
     if (editor.view.mode === "edit") editor.setHover(0);
   });
-  /* the press gestures: dragging a node through the layout, and dragging the boundary
-     between two children (manipulate.ts, which owns their precedence) */
-  armStage(host, editor);
-  /* the pane resizes when a sidebar is dragged or the window changes: the layout re-solves
-     itself, and the ring has to be told where everything landed */
+  /* the press gestures: moving a box, resizing it by a handle (manipulate.ts, which owns
+     their precedence) — handed the overlay so a gesture can keep it on the box it rings,
+     and the document repaint a cancelled gesture puts back */
+  armStage(host, editor, () => positionRings(host, editor),
+           () => repaintDocument(host, editor));
+
+  /* THE CAMERA: wheel pans, ctrl+wheel (a pinch, on most trackpads) zooms at the pointer,
+     middle-drag pans. Taking any of them marks the camera the user's: a pane resize stops
+     re-fitting over their head. Everything after a change is one transform + the overlay
+     told where things landed — the page itself never rebuilds for a camera move. */
+  host.addEventListener("wheel", (ev) => {
+    const state2 = stateOf(host);
+    const cam = state2.cam;
+    ev.preventDefault();
+    if (ev.ctrlKey) {
+      const at = host.getBoundingClientRect();
+      const px = ev.clientX - at.left;
+      const py = ev.clientY - at.top;
+      const next = Math.min(8, Math.max(0.1, cam.k * Math.exp(-ev.deltaY * 0.0015)));
+      cam.x = px - ((px - cam.x) / cam.k) * next;
+      cam.y = py - ((py - cam.y) / cam.k) * next;
+      cam.k = next;
+    } else {
+      cam.x -= ev.deltaX;
+      cam.y -= ev.deltaY;
+    }
+    cam.manual = true;
+    applyCamera(state2);
+    positionRings(host, editor);
+  }, { passive: false });
+  host.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 1) return;
+    ev.preventDefault();
+    const state2 = stateOf(host);
+    const start = { x: ev.clientX, y: ev.clientY, cx: state2.cam.x, cy: state2.cam.y };
+    const move = (mv: PointerEvent) => {
+      state2.cam.x = start.cx + (mv.clientX - start.x);
+      state2.cam.y = start.cy + (mv.clientY - start.y);
+      state2.cam.manual = true;
+      applyCamera(state2);
+      positionRings(host, editor);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+
+  /* the pane resizes when a sidebar is dragged or the window changes: an untouched camera
+     re-fits the artboard, and the rings are told where everything landed either way */
   if (typeof ResizeObserver === "function")
-    new ResizeObserver(() => positionRings(host, editor)).observe(host);
+    new ResizeObserver(() => {
+      const state2 = stateOf(host);
+      if (!state2.cam.manual) {
+        fitCamera(host, state2.cam);
+        applyCamera(state2);
+      }
+      positionRings(host, editor);
+    }).observe(host);
 }

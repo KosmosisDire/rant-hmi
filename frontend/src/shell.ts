@@ -12,18 +12,18 @@
  * document mirror, selection, the four workspaces' panels, and structural editing by TREE
  * POSITION rather than by coordinate. */
 
-import { DropPlan, holds } from "./arrange.js";
+import { DropPlan, fmtPx, holds, literalNumber, snapPx } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
 import { Editor, Mode, ViewState } from "./editor.js";
-import { armSwallow, closeMenu, MenuItem, openMenu } from "./menu.js";
+import { armSwallow, closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { previewArrangement, renderStage } from "./stage.js";
-import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Layout, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry } from "./types.js";
+import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
 import { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } from "./workspaces/design.js";
@@ -89,7 +89,7 @@ export class App implements Editor {
   private pendingPage = false;
   /* our wrap is in flight: the frame the backend makes is named for the first time in the
      echo, and that is where the selection can follow it */
-  private pendingWrap = false;
+  private pendingGroup = false;
   /* a just-forked or just-added component's name: its insert is in flight, and the ids
      the backend issues arrive with the echo, so selection resolves there by name */
   private pendingComponent: string | null = null;
@@ -384,13 +384,13 @@ export class App implements Editor {
           this.setPage((op.node as Json).id);
           break;
         }
-    /* our wrap's echo opens with the insert of the frame it made: select it, so the thing
+    /* our group's echo opens with the insert of the box it made: select it, so the thing
        the author just created is the thing the inspector is showing */
-    if (this.pendingWrap)
+    if (this.pendingGroup)
       for (const op of ops)
         if (op.op === "insert" && op.list === "children" &&
             (op.node as Json)?.kind === "frame" && typeof (op.node as Json)?.id === "number") {
-          this.pendingWrap = false;
+          this.pendingGroup = false;
           this.select([(op.node as Json).id]);
           break;
         }
@@ -747,7 +747,7 @@ export class App implements Editor {
     if (widget) {
       this.select([widget.id]);
       openMenu(clientX, clientY, widget.type ?? "", [
-        ...this.wrapItems([widget.id]),
+        { label: "Group", icon: "frame", run: () => this.group([widget.id]) },
         { separator: true },
         { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
         { label: "Delete", icon: "trash", danger: true, run: () => this.removeSelection() },
@@ -783,24 +783,21 @@ export class App implements Editor {
         },
       },
       { separator: true },
-      { label: "Add row", icon: "frame-row", run: () => this.addFrame("row", parent) },
-      { label: "Add column", icon: "frame-col", run: () => this.addFrame("col", parent) },
-      { label: "Add grid", icon: "frame-grid", run: () => this.addFrame("grid", parent) },
-      /* FREE is where a child places itself, which is the overlay `stack` used to name */
-      { label: "Add free frame", icon: "frame-free", run: () => this.addFrame("free", parent) },
+      /* ONE box: a frame is a box and a box is all a frame is */
+      { label: "Add box", icon: "frame", run: () => this.addBox(parent) },
       { separator: true },
-      /* THE INK, reachable at last: text, a glyph and an outline are ordinary nodes now, so
-         a page can hold a caption or a mimic line without a component around it */
+      /* THE INK: text, a glyph and an outline are ordinary nodes, so a page can hold a
+         caption or a mimic line without a component around it */
       { label: "Add text", icon: "node-text", run: () => this.addLeaf("text", parent) },
       { label: "Add icon", icon: "node-icon", run: () => this.addLeaf("icon", parent) },
       { label: "Add path", icon: "node-path", run: () => this.addLeaf("path", parent) },
       ...(node
         ? [
             { separator: true } as const,
-            ...this.wrapItems([node.id]),
+            { label: "Group", icon: "frame", run: () => this.group([node.id]) } as const,
             ...(holds(node)
-              ? [{ label: "Dissolve frame", icon: "unlink",
-                   run: () => this.dissolve(node.id) } as const]
+              ? [{ label: "Ungroup", icon: "unlink",
+                   run: () => this.ungroup(node.id) } as const]
               : []),
             {
               label: "Delete",
@@ -813,36 +810,78 @@ export class App implements Editor {
     ]);
   }
 
-  private wrapItems(ids: number[]): MenuItem[] {
-    return [
-      { label: "Wrap in row", icon: "frame", run: () => this.wrap(ids, "row") },
-      { label: "Wrap in column", icon: "frame", run: () => this.wrap(ids, "col") },
-      { label: "Wrap in grid", icon: "frame", run: () => this.wrap(ids, "grid") },
-      /* free is the overlay: children fill the box unless they place themselves, which
-         is what "stack" used to mean before it dissolved into the general rule */
-      { label: "Wrap in free frame", icon: "frame", run: () => this.wrap(ids, "free") },
-    ];
+  /* a node's box in CANVAS px relative to its parent's origin, read off the rendered
+     page — the one place the truth of a stretch or an expression-driven position lives */
+  private canvasBox(id: number): { x: number; y: number; w: number; h: number } | null {
+    const host = this.nodes.stage;
+    const pageEl = host?.querySelector(".page") as HTMLElement | null;
+    const el = host?.querySelector('.page [data-id="' + id + '"]') as HTMLElement | null;
+    if (!pageEl || !el) return null;
+    const pageAt = pageEl.getBoundingClientRect();
+    const k = pageAt.width / CANVAS_W;
+    if (!(k > 0)) return null;
+    const parent = this.store.parentOf(id);
+    const pel = (typeof parent?.id === "number"
+      ? host!.querySelector('.page [data-id="' + parent.id + '"]') as HTMLElement | null
+      : null) ?? pageEl;
+    const pat = pel.getBoundingClientRect();
+    const at = el.getBoundingClientRect();
+    return {
+      x: (at.left - pat.left) / k - pel.clientLeft,
+      y: (at.top - pat.top) / k - pel.clientTop,
+      w: at.width / k,
+      h: at.height / k,
+    };
   }
 
-  /* Grouping is one op because the frame it makes has an id only the backend can issue
+  /* GROUPING is one op because the box it makes has an id only the backend can issue
      (ops.cpp); the echo comes back as that insert plus a move per node, and the selection
-     follows the frame the same way a new page's does. */
-  private wrap(ids: number[], layout: Layout): void {
+     follows the box the same way a new page's does. The box's geometry is ours to
+     compute — the bbox of the children as rendered — and the children's own literal x/y
+     re-base under the new origin in the same batch, so nothing on screen moves. A child
+     whose position is authored logic keeps its expression untouched. */
+  private group(ids: number[]): void {
     if (!ids.length) return;
-    this.pendingWrap = true;
-    this.apply([{ op: "wrap", nodes: ids, layout }]);
+    const boxes = ids.map((id) => this.canvasBox(id));
+    if (boxes.some((b) => b === null)) return;
+    const x0 = Math.min(...boxes.map((b) => b!.x));
+    const y0 = Math.min(...boxes.map((b) => b!.y));
+    const x1 = Math.max(...boxes.map((b) => b!.x + b!.w));
+    const y1 = Math.max(...boxes.map((b) => b!.y + b!.h));
+    const ops: Op[] = [{
+      op: "group", nodes: ids,
+      attrs: { x: fmtPx(x0), y: fmtPx(y0), w: fmtPx(x1 - x0), h: fmtPx(y1 - y0) },
+    }];
+    for (const id of ids) {
+      const node = this.store.nodeAt(id);
+      if (!node) continue;
+      const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
+      let moved = false;
+      for (const [key, delta] of [["x", x0], ["y", y0]] as const) {
+        const text = attrs[key];
+        if (text === undefined || String(text).trim() === "") continue;
+        const lit = literalNumber(text, 0);
+        if (lit === null) continue;
+        attrs[key] = fmtPx(lit - delta);
+        moved = true;
+      }
+      if (moved) ops.push({ op: "set_prop", node: id, key: "attrs", value: attrs });
+    }
+    this.pendingGroup = true;
+    this.apply(ops);
   }
 
   /* Ungrouping needs no op of its own: every id is already known, so it is a batch. Each
-     child lands at base + k, where base is the frame's own position — the frame keeps
-     sliding right as its children land in front of it, so the k-th child's slot is k past
-     where the frame started. The frame goes last, when it is empty. */
-  private dissolve(frameId: number): void {
+     child lands at base + k in the group's own parent with its literal x/y carried back
+     out through the group's origin, then the empty box goes. */
+  private ungroup(frameId: number): void {
     const frame = this.store.nodeAt(frameId);
     const parent = this.store.parentOf(frameId);
     if (!frame || !parent || typeof parent.id !== "number") return;
     const base = (parent.children as Node[]).findIndex((n) => n.id === frameId);
     if (base < 0) return;
+    const gx = literalNumber(frame.attrs?.x, 0) ?? 0;
+    const gy = literalNumber(frame.attrs?.y, 0) ?? 0;
     const ops: Op[] = (frame.children ?? []).map((child, k) => ({
       op: "move",
       node: child.id,
@@ -850,38 +889,68 @@ export class App implements Editor {
       list: "children",
       index: base + k,
     }));
+    for (const child of frame.children ?? []) {
+      const attrs: Record<string, string> = { ...(child.attrs ?? {}) };
+      let moved = false;
+      for (const [key, delta] of [["x", gx], ["y", gy]] as const) {
+        if (!delta) continue;
+        const lit = literalNumber(attrs[key], 0);
+        if (lit === null) continue;
+        attrs[key] = fmtPx(lit + delta);
+        moved = true;
+      }
+      if (moved) ops.push({ op: "set_prop", node: child.id, key: "attrs", value: attrs });
+    }
     ops.push({ op: "remove", node: frameId });
     this.apply(ops);
     this.view.selection = [];
   }
 
-  /* Append into a frame (or the page). A WIDGET IS A FRAME THAT NAMES A COMPONENT — there
-     is no widget kind to ask for — so this inserts the same node `addFrame` does, carrying
-     a `type`. Placement used to be a clash search over every resolved rect, looking for a
-     free patch of grid; there is no grid and no free patch to find, because order in the
-     tree is the only thing that places a frame's child. */
+  /* where a fresh node lands: centred on the artboard when it joins the page, a couple of
+     cells in when it joins a box — deterministic, on the grid, and always in view */
+  private freshSpot(parent: number, w: number, h: number): { x: number; y: number } {
+    const page = this.page();
+    return parent === page?.id
+      ? { x: snapPx((CANVAS_W - w) / 2), y: snapPx((CANVAS_H - h) / 2) }
+      : { x: 44, y: 44 };
+  }
+
+  /* A WIDGET IS A FRAME THAT NAMES A COMPONENT — there is no widget kind to ask for — so
+     this inserts the same node `addBox` does, carrying a `type`, at the component's own
+     NATURAL SIZE: the design frame it was authored against. */
   private addWidget(type: string, parent: number): void {
+    const spec = (this.registry?.types ?? []).find((t) => t.name === type);
+    const w = Math.max(22, snapPx(spec?.design_w ?? 240));
+    const h = Math.max(22, snapPx(spec?.design_h ?? 120));
+    const at = this.freshSpot(parent, w, h);
     this.apply([
       { op: "insert", parent, list: "children",
-        node: { kind: "frame", type, name: type } },
+        node: { kind: "frame", type, name: type,
+                attrs: { x: fmtPx(at.x), y: fmtPx(at.y), w: fmtPx(w), h: fmtPx(h) } } },
     ]);
   }
 
-  /* a fresh frame is empty and fills, so it shows up as the share of the room its siblings
-     gave it */
-  private addFrame(layout: Layout, parent: number): void {
-    const name = layout === "row" ? "Row"
-               : layout === "col" ? "Column"
-               : layout === "grid" ? "Grid" : "Group";
+  private addBox(parent: number): void {
+    const at = this.freshSpot(parent, 352, 264);
     this.apply([
-      { op: "insert", parent, list: "children", node: { kind: "frame", name, layout } },
+      { op: "insert", parent, list: "children",
+        node: { kind: "frame", name: "Box",
+                attrs: { x: fmtPx(at.x), y: fmtPx(at.y), w: "352", h: "264" } } },
     ]);
   }
 
-  /* the ink kinds, added the same way: one node, one insert, no second path */
+  /* the ink kinds, added the same way: one node, one insert, each with a starter box so
+     it lands graspable rather than stretched over its whole parent */
   private addLeaf(kind: NodeKind, parent: number): void {
+    const size = kind === "text" ? { w: 264, h: 44 }
+               : kind === "icon" ? { w: 66, h: 66 }
+               : { w: 264, h: 264 };
+    const at = this.freshSpot(parent, size.w, size.h);
     this.apply([
-      { op: "insert", parent, list: "children", node: { kind, name: kind } },
+      { op: "insert", parent, list: "children",
+        node: { kind, name: kind,
+                attrs: { x: fmtPx(at.x), y: fmtPx(at.y),
+                         w: fmtPx(size.w), h: fmtPx(size.h) } } },
     ]);
   }
 
