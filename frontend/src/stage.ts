@@ -79,6 +79,16 @@ interface StageState {
   ctxPath: string;
   /* the preview-resize grips on the artboard's edge, up only inside a context */
   artGrips: HTMLElement[];
+  /* every built plot: the path element and what redraws its `d`. A STREAMING RING MUST
+     NOT REBUILD THE PAGE — a trend appends samples many times a second forever, and a
+     full rebuild per sample replaces the DOM a press is holding — so a change that is
+     ONLY hist-cells redraws these in place and touches nothing else. */
+  plots: { el: SVGPathElement; node: ViewNode; cells: Cells }[];
+  /* a program is reading hist cells inside a plot's own `points`: what lets cellsFor
+     tell a plot's consumption from a loose one (a label showing hist(value).avg), which
+     still needs the full rebuild */
+  inPlot: boolean;
+  histLoose: boolean;
   wired: boolean;
 }
 
@@ -91,6 +101,7 @@ function stateOf(host: HTMLElement): StageState {
               consumedState: new Set(), repaint: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
+              plots: [], inPlot: false, histLoose: false,
               wired: false };
     states.set(host, state);
   }
@@ -331,6 +342,9 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         const key = node.owner + "." + name;
         const ring = editor.hist?.(key) ?? null;
         state.consumed.set("hist:" + key, histMark(ring));
+        /* a hist read OUTSIDE a plot's `points` (a label showing hist(value).avg) keeps
+           the full rebuild honest: the in-place redraw below only repaints plots */
+        if (!state.inPlot) state.histLoose = true;
         if (!ring) return null;
         return ring.series === 1 ? ring.values : histRows(ring);
       }
@@ -503,7 +517,7 @@ function pathData(node: ViewNode, cells: Cells): string {
   return parts.join(" ");
 }
 
-function buildPath(node: ViewNode, cells: Cells): HTMLElement {
+function buildPath(state: StageState, node: ViewNode, cells: Cells): HTMLElement {
   const host = document.createElement("div");
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 1 1");
@@ -513,7 +527,10 @@ function buildPath(node: ViewNode, cells: Cells): HTMLElement {
   svg.style.display = "block";
   svg.style.overflow = "visible";
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  state.inPlot = true;
   path.setAttribute("d", pathData(node, cells));
+  state.inPlot = false;
+  state.plots.push({ el: path, node, cells });
   const fill = attrOf(node, "fill", cells);
   path.setAttribute("fill", paints(fill) ? cssColor(fill) : "none");
   const stroke = attrOf(node, "stroke", cells);
@@ -576,7 +593,7 @@ function buildNode(state: StageState, editor: Editor, node: ViewNode,
   const show = attrOf(node, "show", cells);
   if (show !== undefined && !truthy(show)) return null;
 
-  const el = node.kind === "path" ? buildPath(node, cells)
+  const el = node.kind === "path" ? buildPath(state, node, cells)
            : node.kind === "text" ? buildText(node, cells)
            : node.kind === "icon" ? buildIcon(node, cells)
            : document.createElement("div");
@@ -939,22 +956,42 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     state.art.w + "x" + state.art.h + ":" +
     editor.store.version() + ":" + (editor.live?.epoch ?? 0);
   let rebuild = !state.page || signature !== state.signature;
-  if (!rebuild)
+  let histOnly = !rebuild;
+  if (!rebuild) {
+    let moved = false;
     for (const [cell, was] of state.consumed) {
       /* a trend compares by its ring's VERSION -- an append moves it, and nothing else
          has to be looked at -- while an ordinary cell compares by its value */
       const now = cell.startsWith("hist:")
         ? histMark(editor.hist?.(cell.slice(5)) ?? null)
         : JSON.stringify(editor.live?.values?.[cell] ?? null);
-      if (now !== was) {
-        rebuild = true;
+      if (now === was) continue;
+      moved = true;
+      if (!cell.startsWith("hist:")) {
+        histOnly = false;
         break;
       }
     }
+    rebuild = moved && (!histOnly || state.histLoose || !state.plots.length);
+    /* A STREAMING RING REDRAWS ITS PLOTS IN PLACE. A trend appends samples many times a
+       second forever, and a full rebuild per sample replaces the DOM under a press —
+       killing the click it was part of — to change one path's `d`. When everything that
+       moved is hist cells and every reader is a plot, redraw exactly those: pathData
+       re-reads the rings through the same cells, which re-marks the consumed entries. */
+    if (moved && !rebuild) {
+      for (const plot of state.plots) {
+        state.inPlot = true;
+        plot.el.setAttribute("d", pathData(plot.node, plot.cells));
+        state.inPlot = false;
+      }
+    }
+  }
 
   if (rebuild) {
     state.consumed = new Map();
     state.consumedState = new Set();
+    state.plots = [];
+    state.histLoose = false;
     const next = buildPage(state, editor, page);
     state.page?.remove();
     /* the rings are children of the host too, and the page must sit under them */
@@ -984,26 +1021,49 @@ export function idUnder(target: EventTarget | null): number {
  * instance from its own pixels, a frame from ITS own pixels (its padding, the gap between
  * its children, its empty room). No kind is special-cased: the hover ring has already
  * announced exactly which node those pixels belong to, so the click confirms what is shown
- * rather than guessing what was meant. Clicking the page background clears. */
+ * rather than guessing what was meant. Clicking the page background clears.
+ *
+ * SELECTION RIDES THE POINTER PAIR, NOT THE NATIVE CLICK. A live rebuild replaces the
+ * page's elements, and a press whose element is detached before release never fires a
+ * usable click — the browser retargets it to the host, which reads as "clicked past
+ * everything" and CLEARS the selection instead of making one. A streaming trend rebuilds
+ * many times a second, so any human-speed press straddles one. The id is taken at the
+ * press (the node the user aimed at) and the release only asks "did it stay a click"
+ * (slop), holding no element in between — the same discipline the drags and the tree's
+ * own double-click already follow. Double-click is the manual two-press detection from
+ * the Layers tree, for the same reason: a rebuild between the presses resets the
+ * browser's counter. */
 function wire(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   if (state.wired) return;
   state.wired = true;
-  host.addEventListener("click", (ev) => {
-    if (editor.view.mode !== "edit") return;
-    /* the preview-resize grips are the artboard's, not a node's: a click on one must not
-       read as "clicked past everything" and clear the selection */
-    if ((ev.target as HTMLElement | null)?.closest?.(".art-grip")) return;
-    const id = idUnder(ev.target);
-    editor.select(id ? [id] : []);
+  let press: { id: number; x: number; y: number } | null = null;
+  let last = { id: 0, x: 0, y: 0, at: 0 };
+  host.addEventListener("pointerdown", (ev) => {
+    press = null;
+    if (editor.view.mode !== "edit" || ev.button !== 0) return;
+    const at = ev.target as HTMLElement | null;
+    /* grips belong to their own gestures: the selection handles to manipulate.ts, the
+       preview-resize grips to the artboard — neither press may read as a click here */
+    if (at?.closest?.(".sel-hit") || at?.closest?.(".art-grip")) return;
+    press = { id: idUnder(ev.target), x: ev.clientX, y: ev.clientY };
   });
-  /* ENTER A WIDGET: double-click an instance to step into its component's own context —
-     the same artboard editing, on the component's design frame, editing the component
-     (every instance follows; the breadcrumb says so) */
-  host.addEventListener("dblclick", (ev) => {
-    if (editor.view.mode !== "edit") return;
-    const id = idUnder(ev.target);
-    if (id && editor.store.widget(id)) editor.enterWidget(id);
+  host.addEventListener("pointerup", (ev) => {
+    const held = press;
+    press = null;
+    if (!held || editor.view.mode !== "edit" || ev.button !== 0) return;
+    /* past the slop it was a drag, and manipulate.ts owns what a drag selects */
+    if (Math.abs(ev.clientX - held.x) > 4 || Math.abs(ev.clientY - held.y) > 4) return;
+    /* ENTER A WIDGET: two clicks on one instance within the tree rows' own window */
+    const again = held.id !== 0 && held.id === last.id && ev.timeStamp - last.at < 450 &&
+                  Math.abs(ev.clientX - last.x) < 6 && Math.abs(ev.clientY - last.y) < 6;
+    last = again ? { id: 0, x: 0, y: 0, at: 0 }
+                 : { id: held.id, x: ev.clientX, y: ev.clientY, at: ev.timeStamp };
+    if (again && editor.store.widget(held.id)) {
+      editor.enterWidget(held.id);
+      return;
+    }
+    editor.select(held.id ? [held.id] : []);
   });
   /* HOVER, the other direction of the Layers tree's own: the pointer names a node here and
      the row standing for it lights up, out of the same one piece of state. mouseover, not
