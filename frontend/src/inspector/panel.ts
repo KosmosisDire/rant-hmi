@@ -21,9 +21,11 @@ import { ownedSlots, partIndex, slotLeaf } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
 import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf, withSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
-import { isInstance, Json, Node, SlotSpec, TemplateNode, WidgetType } from "../types.js";
+import { ComponentDef, isInstance, Json, Node, PropDef, SlotSpec, TemplateNode,
+         WidgetType } from "../types.js";
 
-import { attrsSection, attrsShape } from "./components.js";
+import { attrsSection, attrsShape, componentViewShape, interactSection, ownedShape,
+         propsSection, renderBuiltinComponent, renderComponentView } from "./components.js";
 import { valueEditor } from "./editors.js";
 import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
@@ -587,13 +589,26 @@ function selectedPart(editor: Editor, type: WidgetType | null): string {
    locals, appearance), and any other node shows its name, its kind and its attrs. */
 export function inspectorShape(editor: Editor): string {
   const node = editor.selectedNode();
+  const ctx = editor.contexts[editor.contexts.length - 1];
+  if (!node && ctx) {
+    /* nothing selected inside an entered widget: the inspector stands on the
+       COMPONENT itself — its events, properties, behavior and design frame */
+    const comp = ctx.component
+      ? (editor.store.node(ctx.component) as ComponentDef | null) : null;
+    if (comp) return "ctx-comp:" + componentViewShape(editor, comp);
+    if (ctx.builtin) return "ctx-builtin:" + ctx.builtin;
+  }
   if (!node) return "empty";
   if (!isInstance(node))
     return JSON.stringify({
       node: node.id,
       kind: node.kind,
       attrs: attrsShape(editor, node),
-      diag: editor.diagAt(node.id).map((d) => d.code + ":" + d.message),
+      /* inside a context the node's own declarations get sections of their own */
+      own: ctx ? ownedShape(node) : null,
+      diag: editor.diagNode(node.id).map((d) => (d.where ?? "") + ":" + d.code + ":" + d.message)
+        .concat((node.props ?? []).flatMap((p) =>
+          editor.diagNode(p.id).map((d) => p.id + ":" + d.code + ":" + d.message))),
     });
   const widget = node;
   const type = typeOf(editor.registry, widget.type ?? "");
@@ -630,6 +645,16 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   }
   const widget = node;
   if (!widget) {
+    /* inside an entered widget, nothing selected IS a selection: the component. The
+       very views the Design workspace edits it with, so the two places cannot drift. */
+    const ctx = editor.contexts[editor.contexts.length - 1];
+    const comp = ctx?.component
+      ? (editor.store.node(ctx.component) as ComponentDef | null) : null;
+    if (comp) {
+      renderComponentView(host, editor, comp);
+      return;
+    }
+    if (ctx?.builtin && renderBuiltinComponent(host, editor, ctx.builtin)) return;
     host.appendChild(
       el("div", { class: "inspector-head" }, [
         el("span", { class: "type", text: "nothing selected" }),
@@ -874,7 +899,15 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
   body.append(
     ...section("node", "Node", null, () => [el("div", { class: "prop-grid" }, kindRow)]),
   );
+  /* inside a component a node OWNS things a page node never does: the properties it
+     declares (addressed under its name path) and the gesture it carries. The very
+     sections the Design part view builds — same node, same rows. */
+  if (editor.contexts.length)
+    body.append(...propsSection(editor, node.id, "part-props",
+                                () => (at().props ?? []) as PropDef[],
+                                "no properties of its own"));
   body.append(...attrsSection(editor, node));
+  if (editor.contexts.length) body.append(...interactSection(editor, node));
 }
 
 /* one Data-in row for a value slot, bound or not */

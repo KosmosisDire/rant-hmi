@@ -344,6 +344,37 @@ function diagShape(editor: Editor, id: number): string[] {
   return editor.diagNode(id).map((d) => id + ":" + (d.where ?? "") + ":" + d.code + ":" + d.message);
 }
 
+/* What a node OWNS beyond its attrs — the properties it declares and the interact it
+ * carries — as shape data: the rows exist per prop and per param, so every inspector
+ * whose render builds those sections carries this in its shape string. */
+export function ownedShape(node: Json): Json {
+  const interact = node?.interact as Json;
+  return {
+    props: ((node?.props ?? []) as PropDef[]).map((p) =>
+      [p.id, p.shape, p.group, (p.variants ?? []).join("|"), p.editor ?? ""]),
+    interact: interact && typeof interact === "object"
+      ? { primitive: interact.primitive ?? "press",
+          params: Object.keys(interact.params ?? {}),
+          emits: interact.emits ?? {} }
+      : null,
+  };
+}
+
+/* the component view's structure, parameterized by the component so the Content
+ * inspector can stand on an entered context's component as well as the Design
+ * selection */
+export function componentViewShape(editor: Editor, comp: ComponentDef): string {
+  return JSON.stringify({
+    comp: comp.id,
+    props: (comp.props ?? []).map((p) => [p.id, p.shape, p.group,
+                                          (p.variants ?? []).join("|"), p.editor ?? ""]),
+    events: comp.events ?? [],
+    behavior: (comp.behavior ?? []).map(flowSummary),
+    diag: diagShape(editor, comp.id)
+      .concat((comp.props ?? []).flatMap((p) => diagShape(editor, p.id))),
+  });
+}
+
 /* the component inspector's structure, or null when no component is selected (which
  * is what routes the inspector back to the widget views) */
 export function componentInspectorShape(editor: Editor): string | null {
@@ -356,39 +387,24 @@ export function componentInspectorShape(editor: Editor): string | null {
   const { comp, part } = at;
   if (part) {
     const siblings = siblingsOf(editor, part.id);
-    const interact = part.interact as Json;
     return JSON.stringify({
       comp: comp.id,
       part: part.id,
       kind: part.kind,
-      props: ((part as Json).props ?? []).map((p: PropDef) =>
-        [p.id, p.shape, p.group, (p.variants ?? []).join("|"), p.editor ?? ""]),
+      own: ownedShape(part),
       /* the closed vocabulary fixes the declared row SET by kind, already covered by the
          `kind` key above, so a value or diag change needs no shape bump (bindField and the
          diag icon's own hover state handle those live). One thing still adds a row: an
          undeclared key the document carries, which gets one of its own so it can be
          removed. */
       attrs: strayAttrs(editor, part),
-      interact: interact
-        ? { primitive: interact.primitive ?? "press",
-            params: Object.keys(interact.params ?? {}),
-            emits: interact.emits ?? {} }
-        : null,
       index: siblings.findIndex((node: Json) => node?.id === part.id),
       count: siblings.length,
       diag: diagShape(editor, part.id).concat(
         ((part as Json).props ?? []).flatMap((p: PropDef) => diagShape(editor, p.id))),
     });
   }
-  return JSON.stringify({
-    comp: comp.id,
-    props: (comp.props ?? []).map((p) => [p.id, p.shape, p.group,
-                                          (p.variants ?? []).join("|"), p.editor ?? ""]),
-    events: comp.events ?? [],
-    behavior: (comp.behavior ?? []).map(flowSummary),
-    diag: diagShape(editor, comp.id)
-      .concat((comp.props ?? []).flatMap((p) => diagShape(editor, p.id))),
-  });
+  return componentViewShape(editor, comp);
 }
 
 export function renderComponentInspector(host: HTMLElement, editor: Editor): void {
@@ -404,9 +420,12 @@ export function renderComponentInspector(host: HTMLElement, editor: Editor): voi
   else renderComponentView(host, editor, at.comp);
 }
 
-/* ---- the component view ---- */
+/* ---- the component view ----
+ *
+ * Exported: the Content inspector shows this very view while standing inside an entered
+ * widget with nothing selected — the context's component IS the selection there. */
 
-function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentDef): void {
+export function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentDef): void {
   const at = () => (editor.store.node(comp.id) as ComponentDef | null) ?? comp;
   const name = commitInput(
     comp.name,
@@ -488,9 +507,11 @@ function renderComponentView(host: HTMLElement, editor: Editor, comp: ComponentD
 }
 
 /* The properties one owner declares — a component (the widget's own vocabulary) or a
- * part (what that part paints). One section, two callers, because the row is the same
- * thing in both places and so is the rule: a property is declared where it is read. */
-function propsSection(
+ * part (what that part paints). One section, three callers (the Design component and
+ * part views, and the Content node inspector inside an entered context), because the
+ * row is the same thing in every place and so is the rule: a property is declared
+ * where it is read. */
+export function propsSection(
   editor: Editor,
   ownerId: number,
   key: string,
@@ -655,28 +676,7 @@ function renderPartView(host: HTMLElement, editor: Editor, comp: ComponentDef,
 
   body.append(...attrsSection(editor, part));
 
-  /* the interact, when the part carries one: primitive and emits are read-only (the
-   * primitive's vocabulary is closed), the params are expressions like any attr */
-  const interact = part.interact as Json;
-  if (interact && typeof interact === "object") {
-    const params = Object.keys(interact.params ?? {});
-    const emits = Object.entries((interact.emits ?? {}) as Record<string, string>);
-    body.append(
-      ...section("part-interact", "Interact", null, () => [
-        el("div", { class: "row" }, [
-          el("span", { class: "row-label", text: "PRIMITIVE" }),
-          el("span", { class: "kw", text: String(interact.primitive ?? "press") }),
-        ]),
-        ...params.map((param) => interactParamRow(editor, part.id, param, at)),
-        ...emits.map(([gesture, event]) =>
-          el("div", { class: "row" }, [
-            el("span", { class: "row-label", text: "EMITS" }),
-            el("span", { class: "kw", text: gesture + " → " + event }),
-          ]),
-        ),
-      ]),
-    );
-  }
+  body.append(...interactSection(editor, part));
 
   /* A FRAME IS THE ONE KIND THAT HOLDS CHILDREN: text, icon and path are ink, and
      anything that wants to sit over them is a free frame's child, placed by its own
@@ -821,6 +821,42 @@ function unknownAttrRow(
       commitAttrs(next);
     }),
   ]);
+}
+
+/* THE INTERACT SECTION, for any node that carries one: primitive and emits are
+ * read-only (the primitive's vocabulary is closed), the params are expressions like
+ * any attr. One implementation for the Design part view and the Content node
+ * inspector inside an entered context — same node, same rows. */
+export function interactSection(editor: Editor, node: Node): HTMLElement[] {
+  const at = () => (editor.store.node(node.id) as Node | null) ?? node;
+  const interact = node.interact as Json;
+  if (!interact || typeof interact !== "object") return [];
+  const params = Object.keys(interact.params ?? {});
+  const emits = Object.entries((interact.emits ?? {}) as Record<string, string>);
+  return section("part-interact", "Interact", null, () => [
+    el("div", { class: "row" }, [
+      el("span", { class: "row-label", text: "PRIMITIVE" }),
+      el("span", { class: "kw", text: String(interact.primitive ?? "press") }),
+    ]),
+    ...params.map((param) => interactParamRow(editor, node.id, param, at)),
+    ...emits.map(([gesture, event]) =>
+      el("div", { class: "row" }, [
+        el("span", { class: "row-label", text: "EMITS" }),
+        el("span", { class: "kw", text: gesture + " → " + event }),
+      ]),
+    ),
+  ]);
+}
+
+/* the built-in component view addressed by NAME: what an entered-but-unforked
+ * built-in context stands on (the Design browse path builds the same view from
+ * `builtinSel`). False when no built-in wears the name, so the caller can fall back. */
+export function renderBuiltinComponent(host: HTMLElement, editor: Editor,
+                                       name: string): boolean {
+  const comp = (editor.builtins ?? []).find((b: Json) => b?.name === name);
+  if (!comp) return false;
+  renderBuiltinComponentView(host, editor, { comp, part: null, path: "", address: "" });
+  return true;
 }
 
 function interactParamRow(

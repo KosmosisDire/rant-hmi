@@ -1665,10 +1665,13 @@ check(stageNode("frame", 901) !== heldAgain &&
         "a written fraction holds at most 4 decimals, got " + fmtFraction(0.123456789));
 }
 
-/* ---- ENTER A WIDGET: the breadcrumb strip and the context tree (panel.ts) ----
+/* ---- ENTER A WIDGET: the strip, the context tree AND the context inspector ----
    Inside a component the left sidebar's strip names the trail and says the edit is to
    the COMPONENT; the tree lists the component's own nodes as REAL rows (they carry ids,
-   so everything works on them), while an unforked built-in's rows stay fenced. */
+   so everything works on them), while an unforked built-in's rows stay fenced. The
+   right sidebar follows the same standing: nothing selected = the component's own
+   editable record; a selected node = its attrs PLUS what only a component's node owns
+   (declared properties, the interact). */
 {
   /* a component of this block's own (the Lamp above was deleted by the revert test),
      plus one instance of it on the page to have entered through */
@@ -1677,6 +1680,10 @@ check(stageNode("frame", 901) !== heldAgain &&
       node: { id: 9800, name: "Bulb", events: [], props: [], attrs: {},
               children: [
                 { id: 9810, kind: "frame", name: "body", attrs: {},
+                  props: [{ id: 9812, name: "glow_color", shape: "color",
+                            default: "#ff0000", group: "appearance" }],
+                  interact: { primitive: "press", params: { hold_ms: "600" },
+                              emits: { tap: "tap" } },
                   children: [{ id: 9811, kind: "text", name: "label",
                                attrs: { text: "'on'" } }] },
               ],
@@ -1733,6 +1740,47 @@ check(stageNode("frame", 901) !== heldAgain &&
   const roRows = roPanel.host.querySelectorAll(".layer-row");
   check(roRows.length > 0 && roRows.every((r) => r.className.includes("tpl")),
         "every row of a built-in's context is fenced until the fork");
+
+  /* ---- the RIGHT sidebar inside a context ----
+     Nothing selected stands the inspector on the COMPONENT itself — the Design
+     workspace's own editable view — and a selected internal node gains the sections a
+     page node never shows: the properties it declares and the interact it carries. */
+  const sel = [];
+  const insEditor = {
+    ...ctxEditor,
+    selectedNode: () => (sel[0] ? store.nodeAt(sel[0]) : null),
+    selectedWidget: () => (sel[0] ? store.widget(sel[0]) : null),
+  };
+  const compPanel = new Panel(new Element("aside"));
+  compPanel.render(inspectorShape(insEditor), (host) => renderInspector(host, insEditor));
+  check(compPanel.host.querySelector(".head-tag")?.textContent === "component",
+        "nothing selected inside a context stands the inspector on the component");
+  check(compPanel.host.querySelectorAll(".dashed-btn")
+          .some((b) => b.textContent === "+ Property"),
+        "and the component's properties are declared right there");
+
+  sel[0] = 9810;
+  const nodeShape = inspectorShape(insEditor);
+  check(nodeShape.includes("glow_color") === false && nodeShape.includes("9812"),
+        "a selected node's own declarations ride the inspector's shape");
+  compPanel.render(nodeShape, (host) => renderInspector(host, insEditor));
+  check(compPanel.host.querySelector(".propdef") !== null &&
+          compPanel.host.querySelectorAll(".dashed-btn")
+            .some((b) => b.textContent === "+ Property"),
+        "a component's node declares and edits its properties from the content view");
+  check(compPanel.host.textContent.includes("PRIMITIVE") &&
+          compPanel.host.textContent.includes("tap → tap"),
+        "and the interact it carries shows with its params and emits");
+
+  /* the built-in context: the shipped definition, read-only, Override one click away */
+  const roIns = { ...roEditor, selectedNode: () => null, selectedWidget: () => null };
+  const roPanel2 = new Panel(new Element("aside"));
+  roPanel2.render(inspectorShape(roIns), (host) => renderInspector(host, roIns));
+  check(roPanel2.host.querySelector(".head-tag")?.textContent === "built-in",
+        "an unforked built-in context shows the shipped definition in the inspector");
+  check(roPanel2.host.querySelectorAll(".dashed-btn")
+          .some((b) => (b.textContent ?? "").startsWith("Override")),
+        "with Override one click away there too");
 }
 
 /* ---- ENTER A WIDGET on the stage: the component's own artboard (stage.ts) ----
