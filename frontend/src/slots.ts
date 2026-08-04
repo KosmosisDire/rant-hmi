@@ -83,6 +83,28 @@ export function runtimeSlots(widget: Node, type: WidgetType | null): Set<string>
   return out;
 }
 
+/* Would a gesture on this widget DO anything? An authored flow on an event answers yes.
+ * So does the type's default behavior — but only where a slot that default writes is
+ * NOT fed: a fed control is a pure view of the machine and the compiler drops its
+ * default, so pressing it runs nothing. Outside edit mode a widget that answers no is
+ * INERT PASS-THROUGH (the stage gives it pointer-events none): a picture must never
+ * swallow the press aimed at what it overlays. */
+export function operable(widget: Node | null, type: WidgetType | null): boolean {
+  if (!widget) return false;
+  const onEvent = (flow: Json) =>
+    ((flow?.when ?? []) as Json[]).some((t: Json) => t?.kind === "event");
+  if ((widget.flows ?? []).some(onEvent)) return true;
+  const fed = fedSlots(widget);
+  for (const flow of (type?.behavior ?? []) as Json[]) {
+    if (!onEvent(flow)) continue;
+    for (const step of (flow?.do ?? []) as Json[])
+      if (step?.kind === "move" && typeof step.to?.slot === "string" && step.to.slot &&
+          !fed.has(step.to.slot))
+        return true;
+  }
+  return false;
+}
+
 /* the live cell key for a widget slot; the backend owns this naming */
 export function slotCell(widget: Node, slot: string): string {
   return widget.id + "." + slot;

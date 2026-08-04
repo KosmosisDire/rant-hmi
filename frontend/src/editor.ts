@@ -25,8 +25,9 @@ export interface ViewState {
   selection: number[];
   hover: number;
   /* per-widget interaction state, the "state:" half of the cell space an attr program
-     reads. Nothing writes it and nothing reads it: the gesture primitives that set it and
-     the cell reader that served it are both gone, so it stands empty until the rebuild. */
+     reads (state.pressed / dragging / open / hover): view-local, written by the gesture
+     primitives (gestures.ts) outside edit mode, never synced — a pressed LOOK is this
+     view's own; the pressed CONSEQUENCE comes back as a live cell like any other. */
   state: Record<number, Record<string, Json>>;
   faults: Record<number, string>;               /* worst compile grade, per widget */
   /* which side of every theme token this view paints: a local preview
@@ -119,6 +120,11 @@ export interface Editor {
      they ask this rather than testing a kind themselves */
   selectedWidget(): Node | null;
   apply(ops: Op[]): void;
+  /* post one gesture event (sequenced per session): the view reports what the pointer
+     did, the backend derives what the widget proposes and runs every flow — identically
+     for every view, which is the product's own rule. Omit `value` where the type
+     declares a derivation; the backend evaluates and pins it. */
+  input(widget: number, event: string, value?: Json): void;
   setPage(id: number): void;
   /* insert a fresh page and switch to it once the echo issues its id (the topbar page
      selector's "+ New page") */

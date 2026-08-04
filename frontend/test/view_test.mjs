@@ -1850,6 +1850,89 @@ check(stageNode("frame", 901) !== heldAgain &&
         "resizing the preview resizes the artboard: the fractions re-solve");
 }
 
+/* ---- TEST MODE: the pointer regime and the gesture arithmetic (stage.ts, gestures.ts) ----
+   Outside edit mode the pointer OPERATES. A bare page node never takes it; an instance
+   takes it only where a gesture would RUN something (INERT PASS-THROUGH: a Toggle's
+   default toggles an unfed value, a Panel with no flows is a picture and presses pass
+   through it). The drag arithmetic is pure, so the numbers pin exactly. */
+{
+  const { steppedValue, bearingDeg, sweepFraction } = await import(mod("gestures.js"));
+  const { operable } = await import(mod("slots.js"));
+
+  check(steppedValue(0.5, 0, 100, 0) === 50 && steppedValue(1.7, 0, 100, 0) === 100,
+        "a range fraction maps into min..max and holds at the ends");
+  check(steppedValue(0.5, 0, 100, 20) === 60,
+        "a step quantizes to the range's own detents, got " + steppedValue(0.5, 0, 100, 20));
+  check(bearingDeg(0, -1) === 0 && bearingDeg(1, 0) === 90 && bearingDeg(0, 1) === 180,
+        "the bearing speaks the system's one convention: degrees, 0 up, clockwise");
+  check(sweepFraction(-135, -135, 270) === 0 && sweepFraction(135, -135, 270) === 1 &&
+          sweepFraction(0, -135, 270) === 0.5,
+        "a bearing inside the sweep is its fraction of it");
+  check(sweepFraction(170, -135, 270) === 1 && sweepFraction(-170, -135, 270) === 0,
+        "a bearing in the dead arc belongs to the NEARER end, never wrapped");
+
+  const toggleType = snapshot.registry.types.find((t) => t.name === "Toggle");
+  const panelType = snapshot.registry.types.find((t) => t.name === "Panel");
+  const inst = (type, extra) => ({ id: 1, kind: "frame", type, name: "w", attrs: {},
+                                   slots: {}, locals: [], feeds: [], flows: [], ...extra });
+  check(operable(inst("Toggle"), toggleType) === true,
+        "a Toggle's default behavior writes its unfed value: operable");
+  check(operable(inst("Toggle", { feeds: [{ slot: "value", xf: "" }] }), toggleType) === false,
+        "the same Toggle FED is a pure view of the machine: inert");
+  check(operable(inst("Panel"), panelType) === false,
+        "a Panel with no flows is a picture: inert");
+  check(operable(inst("Panel", { flows: [{ when: [{ kind: "event", name: "tap" }],
+                                           when_mode: "first", do: [] }] }),
+                 panelType) === true,
+        "an authored flow on an event makes any widget operable");
+
+  const tStore = new DocStore();
+  tStore.load({
+    version: 1, next_id: 999, globals: [], tokens: [], components: [],
+    pages: [{ id: 960, name: "T", children: [
+      { id: 961, kind: "frame", name: "box",
+        attrs: { x: "22", y: "22", w: "220", h: "110" } },
+      { id: 962, kind: "frame", type: "Toggle", name: "tog",
+        attrs: { x: "264", y: "22", w: "132", h: "66" },
+        slots: {}, locals: [], feeds: [], flows: [] },
+      { id: 963, kind: "frame", type: "Panel", name: "pan",
+        attrs: { x: "440", y: "22", w: "264", h: "176" },
+        slots: {}, locals: [], feeds: [], flows: [] },
+    ] }],
+  });
+  const prog3 = (v) => ({ code: [{ op: "CONST", v }] });
+  const boxOf = (x, y, w, h) =>
+    ({ attrs: { x: prog3(x), y: prog3(y), w: prog3(w), h: prog3(h) } });
+  const tHost = new Element("section");
+  const tView = { mode: "test", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const tEditor = {
+    store: tStore, registry: snapshot.registry,
+    nodeAttrs: { 961: boxOf(22, 22, 220, 110), 962: boxOf(264, 22, 132, 66),
+                 963: boxOf(440, 22, 264, 176) },
+    live: { epoch: 1, values: {} }, view: tView,
+    mesh: { entities: [], types: [] },
+    page: () => tStore.pages()[0],
+    contexts: [],
+    root() { return this.page(); },
+    artboard: () => ({ w: 1408, h: 792 }),
+    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    select: () => undefined, input: () => undefined,
+  };
+  renderStage(tHost, tEditor);
+  const at = (id) => tHost.querySelectorAll("[data-id]")
+    .find((n) => n.getAttribute("data-id") === String(id));
+  check(at(961).style.pointerEvents === "none",
+        "test mode: a bare page node never takes the operating pointer");
+  check(at(962).style.pointerEvents === "auto",
+        "test mode: an operable Toggle takes it");
+  check(at(963).style.pointerEvents === "none",
+        "test mode: an inert Panel lets the press through");
+  tView.mode = "edit";
+  renderStage(tHost, tEditor);
+  check(!at(961).style.pointerEvents && !at(963).style.pointerEvents,
+        "flipping the mode rebuilds the picture: edit takes the regime back off");
+}
+
 /* What used to close this file -- the repeat/path round trip and the code-part escape
    hatch, both proved by rendering a backend-compiled component to SVG, plus trend
    smoothing out of template.ts -- went with the SVG renderer. Those are real behaviours

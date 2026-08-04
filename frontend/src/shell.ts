@@ -98,6 +98,8 @@ export class App implements Editor {
   private pendingComponent: string | null = null;
   private frame = 0;
   private sidebarsDirty = true;
+  /* the gesture sequence (protocol `input.seq`): monotonic for the session's life */
+  private inputSeq = 1;
 
   /* `operate` is the deployed view: no topbar, no sidebars, the artboard alone */
   constructor(private shellHost: HTMLElement, url: string, private operate = false) {
@@ -249,6 +251,13 @@ export class App implements Editor {
 
   apply(ops: Op[]): void {
     this.conn.apply(ops);
+  }
+
+  /* one gesture event out. The sequence is per-session monotonic — the backend drops
+     what arrives out of order, which is also what lets its fail-safe synthesize a
+     release for a session that vanished mid-press. */
+  input(widget: number, event: string, value?: Json): void {
+    this.conn.input(widget, event, value ?? null, this.inputSeq++);
   }
 
   setPage(id: number): void {
@@ -777,13 +786,9 @@ export class App implements Editor {
     this.renderAll();
   }
 
-  /* The four interaction primitives (press, drag1d, drag_radial and the pick tray) stood
-     here and are gone: both they and the drag-move they rode on rested on a coordinate
-     space this view owned and a hit test it ran itself against resolved rects. Neither is
-     ours under DOM — the browser hit-tests, and a gesture arrives already addressed to the
-     element it landed on — so they are rebuilt on ordinary DOM events when widgets render
-     as components. Until then TEST MODE drives nothing. */
-
+  /* The four interaction primitives live in gestures.ts now, on ordinary DOM events:
+     the stage arms the node the served interact rides, the browser hit-tests, and this
+     shell's only part is `input()` above — a gesture is a report, never a decision. */
 
   private onKey(ev: KeyboardEvent): void {
     const typing = (ev.target as HTMLElement)?.matches?.("input, select, textarea");

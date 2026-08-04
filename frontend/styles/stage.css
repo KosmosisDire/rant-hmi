@@ -201,3 +201,42 @@
 .art-grip[data-edge="se"] {
   cursor: nwse-resize;
 }
+
+/* THE PICK TRAY (gestures.ts): a Dropdown's options, opened by a tap outside edit mode.
+   The context menu's own anatomy — same surface, same row treatment — because it is the
+   same kind of thing: a transient list the next press dismisses. */
+.pick-tray {
+  position: fixed;
+  z-index: 60;
+  max-height: 330px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  background: var(--menu);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+
+.pick-tray button {
+  display: block;
+  width: 100%;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 13px var(--sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pick-tray button:hover {
+  background: #242424;
+  color: var(--ink);
+}
+
+.pick-tray .tray-empty {
+  padding: 5px 9px;
+  color: var(--dim-2);
+  font: italic 12px var(--sans);
+}

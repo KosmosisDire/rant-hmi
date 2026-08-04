@@ -29,14 +29,15 @@
 
 import { DropPlan, freeAllowed, freeBoxOf, snapPx } from "./arrange.js";
 import { Editor } from "./editor.js";
+import { armInteract } from "./gestures.js";
 import { HANDLE_MARGIN, handleMarkup, handlesOff } from "./handles.js";
 import { iconMarkup } from "./icons.js";
 import { armStage, repaintFree, stageBusy } from "./manipulate.js";
 import { attrText, Cells, run } from "./program.js";
-import { typeOf } from "./slots.js";
+import { operable, typeOf } from "./slots.js";
 import {
-  Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, isInstance, Json, Node, Page, Program,
-  TemplateNode, Token, WidgetType,
+  Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, Interact, isInstance, Json, Node, Page,
+  Program, TemplateNode, Token, WidgetType,
 } from "./types.js";
 
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
@@ -58,6 +59,12 @@ interface StageState {
   /* the live cells that render actually read, and what they read — a live frame that
      touches none of them changes nothing on screen */
   consumed: Map<string, string>;
+  /* the state: cells the render read ("<owner>:<name>"): a gesture writing one of these
+     repaints; writing any other is invisible and costs nothing */
+  consumedState: Set<string>;
+  /* rebuild and re-render this host: what a gesture's state write calls when it landed
+     on a consumed cell (set by renderStage, which knows the host) */
+  repaint: () => void;
   rings: HTMLElement[];
   /* the one ring that follows the pointer rather than the selection */
   hover: HTMLElement | null;
@@ -80,7 +87,8 @@ const states = new WeakMap<HTMLElement, StageState>();
 function stateOf(host: HTMLElement): StageState {
   let state = states.get(host);
   if (!state) {
-    state = { page: null, signature: "", consumed: new Map(), rings: [],
+    state = { page: null, signature: "", consumed: new Map(),
+              consumedState: new Set(), repaint: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
               wired: false };
@@ -147,6 +155,11 @@ interface ViewNode {
      page. A fact set where the node is built, not inferred — an entered component's
      nodes carry ids AND fractions. */
   frac: boolean;
+  /* the gesture riding this node, COMPILED (params are programs): the served template is
+     the one compiled source of interact rows, so only template-built nodes — and the
+     instance box wearing its component root — carry one. An entered component's doc
+     nodes hold interact as authored text and stay unarmed here. */
+  interact: Interact | null;
 }
 
 /* One document node, with its compiled attrs found by id — a page's, or an entered
@@ -179,6 +192,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
       type: instType,
       path: "",
       frac,
+      interact: root?.interact ?? null,
     };
   }
   return {
@@ -194,6 +208,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     type,
     path: "",
     frac,
+    interact: null,
   };
 }
 
@@ -215,6 +230,7 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
     type,
     path,
     frac: true,
+    interact: node.interact ?? null,
   };
 }
 
@@ -288,11 +304,14 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
          carries the values and the browser swaps them with the theme */
       case "theme":
         return "$" + name;
-      /* this view's own gesture state. Nothing drives it in edit mode — gestures on DOM
-         events are their own milestone — so it reads false rather than inventing a
-         pressed-looking widget nobody is pressing. */
-      case "state":
+      /* this view's own gesture state (gestures.ts writes it outside edit mode). The
+         read is RECORDED so a write repaints exactly the pictures that bind it; in edit
+         mode nothing writes, and it honestly reads false — never a pressed-looking
+         widget nobody is pressing. */
+      case "state": {
+        state.consumedState.add(node.owner + ":" + name);
         return editor.view.state?.[node.owner]?.[name] ?? false;
+      }
       case "repeat": {
         if (!repeat) return null;
         if (name === "index") return repeat.index;
@@ -321,6 +340,19 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
 function attrOf(node: ViewNode, name: string, cells: Cells): Json {
   const program = node.attrs?.[name] as Program | undefined;
   return program ? run(program, cells) : undefined;
+}
+
+/* A gesture's view-local look (state.pressed / dragging / open) lands here. The write is
+ * free; the REPAINT happens only when some rendered program actually read that cell —
+ * which the build recorded — so a widget that never binds its state costs nothing to
+ * press. */
+function gestureStateWriter(state: StageState, editor: Editor) {
+  return (owner: number, name: string, value: Json): void => {
+    const bucket = (editor.view.state[owner] ??= {});
+    if (bucket[name] === value) return;
+    bucket[name] = value;
+    if (state.consumedState.has(owner + ":" + name)) state.repaint();
+  };
 }
 
 /* ---- placing and painting ---- */
@@ -522,6 +554,24 @@ function buildNode(state: StageState, editor: Editor, node: ViewNode,
      internals. It is a leaf here, which is exactly what it is to this page. */
   if (node.kind === "frame") el.className = node.instance ? "leaf" : "frame";
 
+  /* OUTSIDE EDIT MODE THE POINTER OPERATES THE MACHINE. An instance takes it only where
+     a gesture would RUN something (INERT PASS-THROUGH: a widget with no event-triggered
+     flow and no live default is a picture, and a picture must never swallow the press
+     aimed at what it overlays); a bare page node never takes it at all. pointer-events
+     inherits, so the instance root's answer covers its internals — and the gesture the
+     component put on a node (the pill, the track, the dial) arms on that very node, so
+     the pressable area is the painted control, hit-tested by the browser. */
+  if (editor.view.mode !== "edit") {
+    if (node.instance)
+      el.style.pointerEvents =
+        operable(editor.store.widget(node.id), node.type) ? "auto" : "none";
+    else if (!node.owner) el.style.pointerEvents = "none";
+    if (node.interact && node.owner)
+      armInteract(el, { editor, owner: node.owner, type: node.type,
+                        interact: node.interact, cells,
+                        setState: gestureStateWriter(state, editor) });
+  }
+
   /* FAIL-SAFE, and only in a mode that operates: a disabled control is dimmed everywhere,
      and inert only where a pointer would be operating it. In EDIT mode it still takes the
      pointer, because a control you cannot operate is not a control you cannot select. */
@@ -610,7 +660,7 @@ function buildPage(state: StageState, editor: Editor, page: Page | null): HTMLEl
   if (rootAttrs) {
     const root: ViewNode = { id: 0, instance: false, kind: "frame", name: "",
                              attrs: rootAttrs, anchors: [], closed: false, children: [],
-                             owner, type, path: "", frac: true };
+                             owner, type, path: "", frac: true, interact: null };
     dress(el, root, cellsFor(state, editor, root, null));
   }
 
@@ -842,13 +892,19 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     state.cam.manual = false;
   }
 
-  /* WHAT THE PICTURE IS OF: the context, its size, the document version — and the
-     COMPILE EPOCH, which is the one that catches an edit changing what a field evaluates
-     to rather than what the tree holds. A node's attrs are programs; editing one leaves
-     the tree identical and the version moved, and the new programs arrive in the
-     snapshot that follows. Without the epoch here a resize would commit its number and
-     then redraw the old one. */
-  const signature = ctxPath + ":" + state.art.w + "x" + state.art.h + ":" +
+  /* WHAT THE PICTURE IS OF: the MODE (edit and test build different pointer regimes, so
+     flipping the segment must rebuild), the context, its size, the document version —
+     and the COMPILE EPOCH, which is the one that catches an edit changing what a field
+     evaluates to rather than what the tree holds. A node's attrs are programs; editing
+     one leaves the tree identical and the version moved, and the new programs arrive in
+     the snapshot that follows. Without the epoch here a resize would commit its number
+     and then redraw the old one. */
+  state.repaint = () => {
+    state.signature = "";
+    renderStage(host, editor);
+  };
+  const signature = editor.view.mode + ":" + ctxPath + ":" +
+    state.art.w + "x" + state.art.h + ":" +
     editor.store.version() + ":" + (editor.live?.epoch ?? 0);
   let rebuild = !state.page || signature !== state.signature;
   if (!rebuild)
@@ -864,6 +920,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
 
   if (rebuild) {
     state.consumed = new Map();
+    state.consumedState = new Set();
     const next = buildPage(state, editor, page);
     state.page?.remove();
     /* the rings are children of the host too, and the page must sit under them */
