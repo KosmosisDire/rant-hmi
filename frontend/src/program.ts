@@ -139,8 +139,60 @@ function measureText(text: string, size: number): number {
   return 0.58 * size * longest;
 }
 
+/* ---- lists ----
+ *
+ * A DISPLAY-TIER LIST is an ordinary JS array on the stack, and a Nil ELEMENT is a value
+ * the list holds rather than a poison: a plot's missing sample is a gap in the picture,
+ * not an unknown picture. Nil still poisons everything ABOUT a list -- a non-array receiver,
+ * an index off the end, an aggregate over a gap -- because those are questions with no
+ * honest answer.
+ *
+ * THE AGGREGATES ARE PINNED TO THE SCALAR VM (backend/src/vm/vm.cpp, MethodId::ListSum /
+ * ListAvg / ListMax / ListMin): an EMPTY list sums to 0 and avg/max/min to Nil, and ANY
+ * element that is not a number takes the whole aggregate to Nil -- a gap does not average
+ * over the samples around it. The one thing this tier is stricter about is a non-finite
+ * number, which the view's own num() has never accepted as a number at all. */
+
+/* how many elements one ITERATE will walk. The view's ring is larger than the scalar
+ * tier's 512-element ceiling (a trend keeps thousands of samples), so this is its own
+ * number; past it the loop simply stops, which is bounded work and a short answer rather
+ * than a hung frame. */
+const ITERATE_CAP = 4096;
+
+/* nothing outside an ITERATE body has arguments to read, so ARG there is Nil */
+const NO_ARGS: Json[] = [];
+
+/* what ITERATE can be asked to do with the values its body returned */
+const ITERATE_MODES = new Set(["MAP", "FILTER", "ANY", "ALL", "SORT_BY", "REDUCE"]);
+
+/* the ordering SORT_BY imposes on the keys a body produced: numbers first and ascending,
+ * then text lexicographically, then everything a key has no order in (Nil, an object, a
+ * bool) in the order it already stood. Nil LAST is vm.cpp's sorts_before rule -- an UNKNOWN
+ * never quietly leads the list. */
+function keyRank(key: Json): number {
+  if (typeof key === "number" && Number.isFinite(key)) return 0;
+  if (typeof key === "string") return 1;
+  return 2;
+}
+
+function keysBefore(a: Json, b: Json): number {
+  const ra = keyRank(a);
+  const rb = keyRank(b);
+  if (ra !== rb) return ra - rb;
+  if (ra === 0) return (a as number) - (b as number);
+  if (ra === 1) return (a as string) < (b as string) ? -1 : (a as string) > (b as string) ? 1 : 0;
+  return 0;
+}
+
 export function run(program: Program | undefined, cells: Cells): Json {
   if (!program || !Array.isArray(program.code)) return NIL;
+  return exec(program.code, cells, NO_ARGS);
+}
+
+/* One run of one instruction list. The body of an ITERATE is a list like any other, so it
+ * runs here too, on its own stack, with the loop's per-element values in `args` (what ARG
+ * reads). */
+function exec(code: Instr[], cells: Cells, args: Json[]): Json {
   const stack: Json[] = [];
   const pop = (): Json => (stack.length ? stack.pop() : NIL);
 
@@ -162,7 +214,7 @@ export function run(program: Program | undefined, cells: Cells): Json {
     return NIL;
   };
 
-  for (const instr of program.code as Instr[]) {
+  for (const instr of code) {
     switch (instr.op) {
       case "CONST":
         stack.push(instr.v === undefined ? NIL : instr.v);
@@ -322,6 +374,111 @@ export function run(program: Program | undefined, cells: Cells): Json {
         const to = parseColorBytes(pop());
         const from = parseColorBytes(pop());
         stack.push(!from || !to || t === null ? NIL : mixRgba(from, to, t));
+        break;
+      }
+      /* the elements were pushed left to right, so the tail of the stack IS the list in
+         order; a Nil among them stays exactly where it was pushed */
+      case "MAKE_LIST": {
+        const want = typeof instr.n === "number" && Number.isFinite(instr.n)
+          ? Math.max(0, Math.trunc(instr.n)) : 0;
+        const take = Math.min(want, stack.length);
+        stack.push(stack.splice(stack.length - take, take));
+        break;
+      }
+      case "INDEX": {
+        const at = pop();
+        const list = pop();
+        stack.push(
+          !Array.isArray(list) || typeof at !== "number" || !Number.isInteger(at) ||
+          at < 0 || at >= list.length
+            ? NIL
+            : list[at],
+        );
+        break;
+      }
+      case "LENGTH": {
+        const value = pop();
+        stack.push(typeof value === "string" || Array.isArray(value) ? value.length : NIL);
+        break;
+      }
+      /* -1 for "not in the list" is the scalar VM's own answer (MethodId::ListIndexOf), so
+         the two tiers spell a miss the same way. A Nil NEEDLE misses everything, including
+         a gap in the list: the scalar tier's same_value calls two Nils identical, but a
+         value that is not known is not a value to search for. */
+      case "INDEX_OF": {
+        const needle = pop();
+        const list = pop();
+        if (!Array.isArray(list)) { stack.push(NIL); break; }
+        stack.push(nil(needle) ? -1 : list.findIndex((elem) => elem === needle));
+        break;
+      }
+      case "LIST_SUM": case "LIST_AVG": case "LIST_MAX": case "LIST_MIN": {
+        const list = pop();
+        if (!Array.isArray(list)) { stack.push(NIL); break; }
+        if (!list.length) { stack.push(instr.op === "LIST_SUM" ? 0 : NIL); break; }
+        let sum = 0;
+        let low = 0;
+        let high = 0;
+        let ok = true;
+        for (let at = 0; at < list.length && ok; at++) {
+          const v = list[at];
+          if (typeof v !== "number" || !Number.isFinite(v)) { ok = false; break; }
+          sum += v;
+          if (at === 0 || v < low) low = v;
+          if (at === 0 || v > high) high = v;
+        }
+        stack.push(!ok ? NIL
+                 : instr.op === "LIST_SUM" ? sum
+                 : instr.op === "LIST_AVG" ? sum / list.length
+                 : instr.op === "LIST_MAX" ? high : low);
+        break;
+      }
+      /* a point of a path, in the fractions of the box the renderer draws in. Either
+         coordinate missing makes the whole anchor Nil, which is the GAP a plot draws as a
+         break in the line rather than as a point at zero (stage.ts). */
+      case "ANCHOR": {
+        const y = num(pop());
+        const x = num(pop());
+        stack.push(x === null || y === null ? NIL : { x, y });
+        break;
+      }
+      case "ARG":
+        stack.push(typeof instr.i === "number" ? args[instr.i] ?? NIL : NIL);
+        break;
+      /* THE ONE LOOP, over one list, running `body` per element. REDUCE takes its seed on
+         top of the list (the emitter pushes the list, then the init); every other mode
+         takes the list alone. What the body sees is `args`: [element, index], and for
+         REDUCE [acc, element, index]. */
+      case "ITERATE": {
+        const mode = instr.mode ?? "";
+        const seed = mode === "REDUCE" ? pop() : NIL;
+        const list = pop();
+        const body = Array.isArray(instr.body) ? instr.body : [];
+        /* a mode this view does not know: fail as UNKNOWN before running a single body,
+           never as a wrong picture */
+        if (!ITERATE_MODES.has(mode)) return NIL;
+        if (!Array.isArray(list)) { stack.push(NIL); break; }
+        const count = Math.min(list.length, ITERATE_CAP);
+        if (mode === "REDUCE") {
+          let acc = seed;
+          for (let at = 0; at < count; at++) acc = exec(body, cells, [acc, list[at], at]);
+          stack.push(acc);
+          break;
+        }
+        const results: Json[] = [];
+        for (let at = 0; at < count; at++) results.push(exec(body, cells, [list[at], at]));
+        if (mode === "MAP") stack.push(results);
+        else if (mode === "FILTER")
+          stack.push(list.slice(0, count).filter((_, at) => truthy(results[at]) === true));
+        else if (mode === "ANY") stack.push(results.some((r) => truthy(r) === true));
+        else if (mode === "ALL") stack.push(results.every((r) => truthy(r) === true));
+        else {
+          /* SORT_BY: the ELEMENTS travel, ordered by the keys the body made, and the sort
+             is stable -- equal keys leave the list in the order it arrived */
+          const order = results.map((key, at) => ({ key, at }));
+          order.sort((a, b) => keysBefore(a.key, b.key));
+          stack.push(order.map((row) => list[row.at]));
+        }
         break;
       }
       default:

@@ -9,7 +9,7 @@ import { DropPlan } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
-import { AttrTable, BuiltinDef, Diag, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry, Var } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, HistFrame, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry, Var } from "./types.js";
 
 export type Mode = "edit" | "test" | "operate";
 
@@ -63,6 +63,69 @@ export interface StageContext {
   h0: number;
 }
 
+/* ---- the trend rings ----
+ *
+ * One standing series per "<widget>.<slot>" cell, folded from the frames the wire carries
+ * (types.ts, HistFrame). The shell owns the store; a `hist:` cell reads one (stage.ts).
+ *
+ * ERASE AND REBASELINE, never bridge a hole. A live frame's `from` says which absolute
+ * sample it starts at: exactly at the cursor and it appends, anywhere else -- a dropped
+ * frame, a reconnect, a recompile that widened the series -- and the local ring is thrown
+ * away and the frame becomes the whole of it. Guessing what fell in the gap would draw a
+ * line through samples nobody took, which is the one thing a trend must never do. */
+export interface HistRing {
+  /* how many numbers make one sample: `values` is sample-major and series-strided */
+  series: number;
+  /* how many samples the ring keeps, from the backend's own ring */
+  cap: number;
+  /* the absolute index one PAST the last sample held: what a frame's `from` must equal
+     for it to be the continuation of this ring */
+  end: number;
+  values: (number | null)[];
+  /* a mutation counter, so a reader can tell "this moved" from "this is the same series"
+     without comparing thousands of samples */
+  version: number;
+  /* the per-sample chunking a multi-series reader caches here, tagged with the version it
+     was built at (stage.ts owns the shape and the invalidation) */
+  chunks?: { version: number; rows: (number | null)[][] };
+}
+
+/* is this entry a series at all? A frame the view cannot read says nothing about what the
+   ring holds, so it is dropped rather than allowed to erase good samples */
+function readableHist(frame: Json): frame is HistFrame {
+  return !!frame && typeof frame === "object" && Array.isArray(frame.values) &&
+         Number.isInteger(frame.series) && frame.series >= 1 &&
+         Number.isFinite(frame.cap) && frame.cap >= 1 &&
+         Number.isInteger(frame.from) && frame.from >= 0;
+}
+
+/* fold one frame's history into the standing rings: the live frame's deltas, or a
+   snapshot's full blocks after the store has been cleared */
+export function foldHist(store: Map<string, HistRing>, hist: Live["hist"]): void {
+  for (const [key, frame] of Object.entries(hist ?? {})) {
+    if (!readableHist(frame)) continue;
+    const cap = Math.floor(frame.cap);
+    const samples = Math.floor(frame.values.length / frame.series);
+    /* WHOLE SAMPLES ONLY: a ragged tail folded in would shift every sample after it into
+       the wrong series, which is a plot that is wrong rather than short */
+    const whole = frame.values.slice(0, samples * frame.series);
+    const held = store.get(key);
+    const appends = !!held && held.series === frame.series && held.end === frame.from;
+    const ring: HistRing = appends
+      ? held!
+      : { series: frame.series, cap, end: 0, values: whole, version: held?.version ?? 0 };
+    if (appends) for (const value of whole) ring.values.push(value);
+    ring.cap = cap;
+    ring.end = frame.from + samples;
+    /* the front falls off the moment the ring is longer than the backend keeps: the
+       absolute cursor is unaffected, since what was dropped is still behind us */
+    const over = ring.values.length - cap * frame.series;
+    if (over > 0) ring.values.splice(0, over);
+    ring.version++;
+    store.set(key, ring);
+  }
+}
+
 export interface Editor {
   store: DocStore;
   registry: Registry | null;
@@ -95,6 +158,9 @@ export interface Editor {
   view: ViewState;
   /* the entered-widget stack, outermost first; empty = editing the page itself */
   contexts: StageContext[];
+  /* one cell's standing trend ring, or null where nothing has arrived for it. The frames
+     are deltas, so this -- not `live` -- is where a series is read from. */
+  hist(key: string): HistRing | null;
   page(): Page | null;
   /* THE EDITING ROOT the stage, the Layers tree and every structural verb operate on:
      the current page, or — inside a context — the component shaped as one (a

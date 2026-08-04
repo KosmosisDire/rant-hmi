@@ -319,11 +319,36 @@ Document Document::make_default() {
     Json main_kids = Json::array();
     main_kids.push_back(instance("Toggle", "Pump", Json{{"value", true}},
                                  at(22, 22, 396, 66)));
-    main_kids.push_back(
-        instance("Slider", "Setpoint", Json{{"value", 62}, {"min", 0}, {"max", 100}},
-                 at(22, 110, 836, 66)));
+    /* the slider streams its input into `flow`, so dragging it in Test literally draws
+       the Trend below and moves the Readout — the demo's one live signal path */
+    Json slider = instance("Slider", "Setpoint",
+                           Json{{"value", 62}, {"min", 0}, {"max", 100}},
+                           at(22, 110, 836, 66));
+    slider["flows"] = Json::array({Json{
+        {"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
+        {"when_mode", "any"},
+        {"do", Json::array({Json{{"kind", "move"},
+                                 {"from", {{"expr", "x"}}},
+                                 {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
+    main_kids.push_back(std::move(slider));
     main_kids.push_back(std::move(readout));
     main_kids.push_back(std::move(reset));
+    /* the Trend holds `flow`'s past: its ring samples the fed cell whether or not
+       anything draws it, and the plot is the template's own map over that series */
+    main_kids.push_back([] {
+        Json trend = instance("Trend", "History",
+                              Json{{"window", 30}}, at(22, 484, 418, 176));
+        trend["feeds"] = Json::array({Json{{"slot", "value"},
+                                           {"src", {{"kind", "L"}, {"name", "flow"}}},
+                                           {"path", ""}}});
+        return trend;
+    }());
+    /* the options a Selector offers are a LIST the instance authors; the value is one of
+       its names, so the demo has a live list cell the moment it opens */
+    main_kids.push_back(instance("Selector", "Mode",
+                                 Json{{"options", Json::array({"Off", "Low", "High"})},
+                                      {"value", "Off"}},
+                                 at(462, 396, 176, 176)));
     Json main_pane = frame("Main", std::move(main_kids),
                            with(at(22, 88, 880, 682),
                                 Json{{"surface", "$surface"}, {"radius", "6"}}));

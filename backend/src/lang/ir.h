@@ -108,6 +108,11 @@ enum class IterateMode : uint16_t {
     Any,      /* true if the body is true for any element   -> bool */
     All,      /* true if the body is true for every element -> bool */
     SortBy,   /* order the elements by the body's value     -> list */
+    /* fold: the body takes the accumulator and the element and returns the next
+     * accumulator, starting from the initial value the call's second argument pushed.
+     * The one mode that consumes TWO stack operands (list then init) and the one whose
+     * result shape is the body's rather than the receiver's. */
+    Reduce,
 };
 
 enum class Builtin : uint16_t {

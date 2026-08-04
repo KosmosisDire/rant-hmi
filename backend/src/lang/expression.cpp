@@ -80,7 +80,7 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Num, "toFixed", MethodId::NumToFixed, 1, {NUM}, Shape::Text, true, false, "TO_FIXED"},
         /* text: the predicates and length are wire-legal (a gate may test an alarm
          * code); everything text-PRODUCING is formatting and stays display-side */
-        {Shape::Text, "length", MethodId::TextLength, 0, {}, Shape::Num, false, true},
+        {Shape::Text, "length", MethodId::TextLength, 0, {}, Shape::Num, false, true, "LENGTH"},
         {Shape::Text, "upper", MethodId::TextUpper, 0, {}, Shape::Text, true},
         {Shape::Text, "lower", MethodId::TextLower, 0, {}, Shape::Text, true},
         {Shape::Text, "title", MethodId::TextTitle, 0, {}, Shape::Text, true},
@@ -96,20 +96,23 @@ const std::vector<MethodSpec>& methods() {
         {Shape::Text, "split", MethodId::TextSplit, 1, {Shape::Text}, Shape::List, true},
         /* aggregates ride mid-expression on either tier (max over a list is a wire
          * value); the wire-result rule alone keeps a LIST from going to a machine */
-        {Shape::List, "length", MethodId::ListLength, 0, {}, Shape::Num, false, true},
+        /* the list rows the VIEW also encodes ("LENGTH" is receiver-blind there: one
+         * opcode answers text, list and map alike, so the three namesake rows must all
+         * carry it — view_method() is keyed on the name alone) */
+        {Shape::List, "length", MethodId::ListLength, 0, {}, Shape::Num, false, true, "LENGTH"},
         {Shape::List, "first", MethodId::ListFirst, 0, {}, Shape::Unknown, false, true},
         {Shape::List, "last", MethodId::ListLast, 0, {}, Shape::Unknown, false, true},
-        {Shape::List, "sum", MethodId::ListSum, 0, {}, Shape::Num, false, true},
-        {Shape::List, "avg", MethodId::ListAvg, 0, {}, Shape::Num, false, true},
-        {Shape::List, "max", MethodId::ListMax, 0, {}, Shape::Num, false, true},
-        {Shape::List, "min", MethodId::ListMin, 0, {}, Shape::Num, false, true},
+        {Shape::List, "sum", MethodId::ListSum, 0, {}, Shape::Num, false, true, "LIST_SUM"},
+        {Shape::List, "avg", MethodId::ListAvg, 0, {}, Shape::Num, false, true, "LIST_AVG"},
+        {Shape::List, "max", MethodId::ListMax, 0, {}, Shape::Num, false, true, "LIST_MAX"},
+        {Shape::List, "min", MethodId::ListMin, 0, {}, Shape::Num, false, true, "LIST_MIN"},
         {Shape::List, "join", MethodId::ListJoin, 1, {Shape::Text}, Shape::Text, true},
         {Shape::List, "sort", MethodId::ListSort, 0, {}, Shape::List, false},
         {Shape::List, "reverse", MethodId::ListReverse, 0, {}, Shape::List, false},
         {Shape::List, "slice", MethodId::ListSlice, 2, {NUM, NUM}, Shape::List, false},
         {Shape::List, "contains", MethodId::ListContains, 1, {ANY}, Shape::Bool, false},
-        {Shape::List, "indexOf", MethodId::ListIndexOf, 1, {ANY}, Shape::Num, false},
-        {Shape::Map, "length", MethodId::MapLength, 0, {}, Shape::Num, false, true},
+        {Shape::List, "indexOf", MethodId::ListIndexOf, 1, {ANY}, Shape::Num, false, false, "INDEX_OF"},
+        {Shape::Map, "length", MethodId::MapLength, 0, {}, Shape::Num, false, true, "LENGTH"},
         {Shape::Map, "keys", MethodId::MapKeys, 0, {}, Shape::List, false},
         {Shape::Map, "values", MethodId::MapValues, 0, {}, Shape::List, false},
         {Shape::Map, "has", MethodId::MapHas, 1, {Shape::Text}, Shape::Bool, false},
@@ -182,6 +185,11 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"coolWarm", {Builtin::CoolWarm, 1, 1, {NUM}, Shape::Color, true}},
         {"viridis", {Builtin::Viridis, 1, 1, {NUM}, Shape::Color, true}},
         {"grayscale", {Builtin::Grayscale, 1, 1, {NUM}, Shape::Color, true}},
+        /* view-only: one point of a computed path, in fractions of the node's box —
+         * what a `points` attr's map produces per sample. No wire meaning (a machine
+         * has no boxes), so it never had a scalar Builtin; the id on the row is inert,
+         * the clamp01 pattern. */
+        {"anchor", {Builtin::Clamp, 2, 2, {NUM, NUM}, Shape::Struct, true, "ANCHOR", true}},
     };
     return table;
 }
@@ -335,14 +343,43 @@ class Parser {
         if (name == "any") { out = IterateMode::Any; return true; }
         if (name == "all") { out = IterateMode::All; return true; }
         if (name == "sortBy") { out = IterateMode::SortBy; return true; }
+        if (name == "reduce") { out = IterateMode::Reduce; return true; }
         return false;
     }
 
-    /* `list.<mode>(p => body)`. The body compiles to its own instruction run, held aside
-     * as a sub-program and invoked once per element; the enclosing run emits ONE Iterate
-     * naming it. Deliberately crippled per spec 6.4: one parameter, one expression body,
-     * legal only here, and never nested — which is also what lets the stack be sized for
-     * exactly two frames.
+    /* How many parameters a mode's lambda may take, and in what order they arrive. The
+     * INDEX is always last and always optional, so `v => ...` keeps meaning what it
+     * always meant; a fold leads with the accumulator because that is the order every
+     * language spells a fold in. */
+    static void iterate_arity(IterateMode mode, uint32_t& least, uint32_t& most) {
+        switch (mode) {
+            case IterateMode::Map: least = 1; most = 2; break;
+            case IterateMode::Reduce: least = 2; most = 3; break;
+            default: least = most = 1; break;
+        }
+    }
+
+    /* the whole legal shape of this mode's call, so a refusal ends on what to write */
+    static std::string lambda_form(IterateMode mode, const std::string& name) {
+        if (mode == IterateMode::Reduce)
+            return name + "((acc, v) => ..., start) or " + name +
+                   "((acc, v, i) => ..., start): the accumulator, the element, "
+                   "optionally the 0-based index, and the value the fold starts from";
+        if (mode == IterateMode::Map)
+            return name + "(v => ...) or " + name +
+                   "((v, i) => ...): the element, optionally its 0-based index";
+        return name + "(v => ...): one parameter, the element";
+    }
+
+    /* `list.<mode>(p => body)`, and `list.reduce((acc, v) => body, start)`. The body
+     * compiles to its own instruction run, held aside as a sub-program and invoked once
+     * per element; the enclosing run emits ONE Iterate naming it. Deliberately crippled
+     * per spec 6.4: one expression body, legal only here, and never nested — which is
+     * also what lets the stack be sized for exactly two frames.
+     *
+     * A parameter rides the slot `x` rides, addressed by its POSITION in the instruction
+     * (LoadX's operand), so more than one of them costs the VM two more registers and
+     * costs the stack nothing.
      *
      * The trip bound is the element ceiling, the same worst case every other
      * list-producing site reserves, so the run's step count stays a compile-time
@@ -355,29 +392,76 @@ class Parser {
             return Shape::Unknown;
         }
         if (token_.kind != TokenKind::LParen) {
-            fail(name + " takes a lambda, called with parentheses (" + name +
-                 "(p => ...))");
+            fail(name + " takes a lambda, called with parentheses: " +
+                 lambda_form(mode, name));
             return Shape::Unknown;
         }
         advance();
-        if (token_.kind != TokenKind::Ident) {
-            fail(name + " takes a lambda: a parameter name, then '=>', then one "
-                        "expression");
+        /* the head is one bare name or a parenthesised list of them; nothing else can
+           precede the arrow */
+        std::vector<std::string> params;
+        const std::string head_help =
+            name + " takes a lambda: a parameter name (or a parenthesised list of "
+                   "names), then '=>', then one expression. " + lambda_form(mode, name);
+        if (token_.kind == TokenKind::LParen) {
+            advance();
+            for (;;) {
+                if (token_.kind != TokenKind::Ident) {
+                    fail(head_help);
+                    return Shape::Unknown;
+                }
+                params.push_back(token_.text);
+                advance();
+                if (token_.kind != TokenKind::Comma) break;
+                advance();
+            }
+            if (token_.kind != TokenKind::RParen) {
+                fail("expected ')' after the lambda's parameters. " +
+                     lambda_form(mode, name));
+                return Shape::Unknown;
+            }
+            advance();
+        } else if (token_.kind == TokenKind::Ident) {
+            params.push_back(token_.text);
+            advance();
+        } else {
+            fail(head_help);
             return Shape::Unknown;
         }
-        const std::string param = token_.text;
-        if (param == "x") {
-            fail("'x' cannot name a lambda parameter (spec 6.4)");
+        uint32_t least = 1, most = 1;
+        iterate_arity(mode, least, most);
+        if (params.size() < least || params.size() > most) {
+            fail(name + " takes " +
+                 (least == most ? std::to_string(least) + " lambda parameter" +
+                                      (least == 1 ? "" : "s")
+                                : std::to_string(least) + " or " + std::to_string(most) +
+                                      " lambda parameters") +
+                 ", this one takes " + std::to_string(params.size()) + ". " +
+                 lambda_form(mode, name));
             return Shape::Unknown;
         }
-        if (scope_.names.count(param)) {
-            fail("the lambda parameter '" + param +
-                 "' shadows a variable of the same name; pick another name");
-            return Shape::Unknown;
+        for (uint32_t i = 0; i < params.size(); ++i) {
+            if (params[i] == "x") {
+                fail("'x' cannot name a lambda parameter (spec 6.4); pick a name of "
+                     "your own. " + lambda_form(mode, name));
+                return Shape::Unknown;
+            }
+            if (scope_.names.count(params[i])) {
+                fail("the lambda parameter '" + params[i] +
+                     "' shadows a variable of the same name; pick another name");
+                return Shape::Unknown;
+            }
+            for (uint32_t k = 0; k < i; ++k)
+                if (params[k] == params[i]) {
+                    fail("the lambda parameter '" + params[i] +
+                         "' is named twice; each parameter needs its own name. " +
+                         lambda_form(mode, name));
+                    return Shape::Unknown;
+                }
         }
-        advance();
         if (token_.kind != TokenKind::Arrow) {
-            fail("expected '=>' after the lambda parameter");
+            fail("expected '=>' after the lambda parameters. " +
+                 lambda_form(mode, name));
             return Shape::Unknown;
         }
         advance();
@@ -393,14 +477,21 @@ class Parser {
         depth_ = 0;
         max_depth_ = 0;
         in_lambda_ = true;
-        lambda_param_ = param;
-        lambda_elem_ = elem;
+        lambda_params_ = params;
+        /* what each parameter IS, positionally: a fold leads with the accumulator, whose
+           shape is whatever the body itself settles on and so is not known here; every
+           mode ends with the index, which is a number */
+        lambda_shapes_.assign(params.size(), Shape::Num);
+        lambda_at_ = mode == IterateMode::Reduce ? 1u : 0u;
+        if (mode == IterateMode::Reduce) lambda_shapes_[0] = Shape::Unknown;
+        if (lambda_at_ < lambda_shapes_.size()) lambda_shapes_[lambda_at_] = elem;
         lambda_enum_ = 0;
 
         const Shape body_shape = parse_ternary();
 
         in_lambda_ = false;
-        lambda_param_.clear();
+        lambda_params_.clear();
+        lambda_shapes_.clear();
         const uint32_t body_stack = max_depth_ ? max_depth_ : 1;
         depth_ = saved_depth;
         max_depth_ = saved_max;
@@ -409,12 +500,49 @@ class Parser {
         code_.swap(outer);       /* and give the caller its run back */
 
         if (!error_.empty()) return Shape::Unknown;
+        /* A fold's SECOND argument is the value it starts from, an ordinary expression
+           compiled into the enclosing run: the stack reads [list, start] when Iterate
+           takes over, which is the only two-operand mode. */
+        Shape init_shape = Shape::Unknown;
+        if (mode == IterateMode::Reduce) {
+            if (token_.kind != TokenKind::Comma) {
+                fail("reduce takes a lambda AND the value the fold starts from: " +
+                     lambda_form(mode, name));
+                return Shape::Unknown;
+            }
+            advance();
+            init_shape = parse_ternary();
+            if (!error_.empty()) return Shape::Unknown;
+        }
         if (token_.kind != TokenKind::RParen) {
-            fail("expected ')' after the lambda; a body is ONE expression (spec 6.4)");
+            fail(mode == IterateMode::Reduce
+                     ? "expected ')' after reduce's starting value; a body is ONE "
+                       "expression and reduce takes exactly two arguments (spec 6.4)"
+                     : "expected ')' after the lambda; a body is ONE expression "
+                       "(spec 6.4)");
             return Shape::Unknown;
         }
         advance();
 
+        if (mode == IterateMode::Reduce) {
+            /* the accumulator is carried by value from one iteration to the next, so a
+               body that yields an aggregate would hand on a window into scratch that the
+               next iteration is free to reuse; a fold stays scalar */
+            if (body_shape == Shape::List || body_shape == Shape::Map) {
+                fail("reduce folds to ONE value, and this lambda returns a " +
+                     std::string(shape_name(body_shape)) +
+                     "; fold to a scalar (a sum, a count, joined text)");
+                return Shape::Unknown;
+            }
+            if (body_shape != Shape::Unknown && body_shape != Shape::Nil &&
+                init_shape != Shape::Unknown && init_shape != Shape::Nil &&
+                body_shape != init_shape) {
+                fail("reduce starts from " + std::string(shape_name(init_shape)) +
+                     " but its lambda returns " + shape_name(body_shape) +
+                     "; the fold has to stay one shape");
+                return Shape::Unknown;
+            }
+        }
         if ((mode == IterateMode::Any || mode == IterateMode::All) &&
             body_shape != Shape::Unknown && body_shape != Shape::Bool) {
             fail(name + " needs a lambda returning a condition, this one returns " +
@@ -435,18 +563,24 @@ class Parser {
         }
 
         const uint32_t sub = sink_.add_sub(std::move(body), body_stack);
-        if (mode != IterateMode::Any && mode != IterateMode::All) {
-            /* A TEXT-producing body writes into the one slot its site was assigned at
-               compile, so every mapped element would alias the last iteration's text.
-               Map re-homes each result into its own element text slot at run time (the
-               same thing split does for its pieces), which has to be reserved here.
-               Filter and sortBy store the ELEMENT, which already owns its text. */
+        /* A TEXT-producing body writes into the one slot its site was assigned at
+           compile, so a result kept past the next iteration would alias the last one's
+           text. Map re-homes each element's result into its own element text slot at run
+           time (the same thing split does for its pieces), and a fold re-homes the
+           accumulator for exactly the same reason; both have to be reserved here. Filter
+           and sortBy store the ELEMENT, which already owns its text. */
+        if (mode == IterateMode::Reduce) {
+            if (body_shape == Shape::Text || body_shape == Shape::Unknown)
+                sink_.reserve_elems(0, kVarrCeiling);
+        } else if (mode != IterateMode::Any && mode != IterateMode::All) {
             const bool texts =
                 mode == IterateMode::Map && body_shape == Shape::Text;
             sink_.reserve_elems(kVarrCeiling, texts ? kVarrCeiling : 0);
         }
         emit(OpCode::Iterate, sub, kVarrCeiling, static_cast<uint16_t>(mode));
-        /* the list was on the stack and the result replaces it: depth is unchanged */
+        /* the list was on the stack and the result replaces it: depth is unchanged,
+           except for a fold, which also consumed the value it started from */
+        if (mode == IterateMode::Reduce && depth_) --depth_;
         switch (mode) {
             case IterateMode::Any:
             case IterateMode::All:
@@ -455,6 +589,10 @@ class Parser {
             case IterateMode::Map:
                 out_elem = body_shape;
                 return Shape::List;
+            case IterateMode::Reduce:
+                /* a fold is whatever its body is: the list's element shape is spent */
+                out_elem = Shape::Unknown;
+                return body_shape;
             default:                  /* Filter and SortBy keep the element they took */
                 out_elem = elem;
                 return Shape::List;
@@ -720,7 +858,9 @@ class Parser {
             if (receiver == Shape::List && iterate_mode(name, mode)) {
                 Shape out_elem = Shape::Unknown;
                 const Shape out = parse_iterate(mode, name, receiver_elem, out_elem);
-                if (out == Shape::Unknown) return Shape::Unknown;
+                /* a fold's result is its BODY's shape, which may legitimately be
+                   Unknown, so the refusal is the error and not the shape */
+                if (!error_.empty()) return Shape::Unknown;
                 receiver = out;
                 /* the loop re-reads receiver_elem / receiver_enum from these next pass */
                 enum_type_ = 0;
@@ -947,22 +1087,28 @@ class Parser {
             pushed();
             return Shape::Bool;
         }
-        /* Inside a lambda body the PARAMETER shadows everything and rides the slot a
-         * flow's `x` rides, so reading it is an ordinary LoadX and needs no opcode of
-         * its own. Checked before `x` itself, which spec 6.4 puts out of scope here:
-         * shadowing x inside a comprehension is the kind of cleverness that produces
-         * unreadable rows, and with the parameter occupying x's slot it would also be
-         * a lie about which value you were reading. */
-        if (in_lambda_ && name == lambda_param_) {
-            emit(OpCode::LoadX);
-            pushed();
-            enum_type_ = lambda_elem_ == Shape::Enum ? lambda_enum_ : 0;
-            elem_ = Shape::Unknown;
-            return lambda_elem_;
+        /* Inside a lambda body the PARAMETERS shadow everything and ride the slots a
+         * flow's `x` rides, so reading one is an ordinary LoadX naming its position and
+         * needs no opcode of its own. Checked before `x` itself, which spec 6.4 puts out
+         * of scope here: shadowing x inside a comprehension is the kind of cleverness
+         * that produces unreadable rows, and with a parameter occupying x's slot it
+         * would also be a lie about which value you were reading. */
+        if (in_lambda_) {
+            for (uint32_t k = 0; k < lambda_params_.size(); ++k) {
+                if (lambda_params_[k] != name) continue;
+                emit(OpCode::LoadX, k);
+                pushed();
+                const Shape shape = lambda_shapes_[k];
+                enum_type_ = shape == Shape::Enum ? lambda_enum_ : 0;
+                elem_ = Shape::Unknown;
+                return shape;
+            }
         }
         if (in_lambda_ && name == "x") {
             fail("x is not in scope inside a lambda (spec 6.4); the parameter '" +
-                 lambda_param_ + "' is the element being visited");
+                 (lambda_at_ < lambda_params_.size() ? lambda_params_[lambda_at_]
+                                                     : std::string("v")) +
+                 "' is the element being visited");
             return Shape::Unknown;
         }
         if (name == "x") {
@@ -1123,11 +1269,13 @@ class Parser {
        while it compiles the body, so a body's code never lands in its caller's run */
     std::vector<Instruction>& code_;
     /* lambda state (spec 6.4). in_lambda_ doubles as the no-nesting guard and as what
-       puts `x` out of scope; the parameter rides x's slot, so lambda_elem_ is the shape
-       a bare read of it reports. */
+       puts `x` out of scope; the parameters ride x's slots positionally, so
+       lambda_shapes_ is what a bare read of each one reports and lambda_at_ says which
+       of them is the ELEMENT (the accumulator leads in a fold). */
     bool in_lambda_ = false;
-    std::string lambda_param_;
-    Shape lambda_elem_ = Shape::Unknown;
+    std::vector<std::string> lambda_params_;
+    std::vector<Shape> lambda_shapes_;
+    uint32_t lambda_at_ = 0;
     uint16_t lambda_enum_ = 0;
     std::string& error_;
     uint32_t depth_ = 0;
@@ -1227,16 +1375,20 @@ const std::vector<LangRow>& language_reference() {
            LAMBDA where every other method takes values, so the parser handles them
            directly. Autocomplete still has to know they exist, and that the argument is
            a lambda rather than a value, so they are declared here. */
-        struct IterRow { const char* name; const char* result; };
-        for (const IterRow& iter : {IterRow{"map", "list"}, IterRow{"filter", "list"},
-                                    IterRow{"any", "bool"}, IterRow{"all", "bool"},
-                                    IterRow{"sortBy", "list"}}) {
+        struct IterRow { const char* name; const char* result; uint32_t args; };
+        for (const IterRow& iter : {IterRow{"map", "list", 1}, IterRow{"filter", "list", 1},
+                                    IterRow{"any", "bool", 1}, IterRow{"all", "bool", 1},
+                                    IterRow{"sortBy", "list", 1},
+                                    /* the one two-argument form: the lambda, then the
+                                       value the fold starts from */
+                                    IterRow{"reduce", "any", 2}}) {
             LangRow row;
             row.kind = "method";
             row.receiver = "list";
             row.name = iter.name;
-            row.min_args = row.max_args = 1;
+            row.min_args = row.max_args = iter.args;
             row.args[0] = "lambda";
+            if (iter.args > 1) row.args[1] = "any";
             row.result = iter.result;
             rows.push_back(row);
         }

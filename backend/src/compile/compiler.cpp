@@ -3,6 +3,7 @@
 #include "lang/expression.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <functional>
 #include <set>
@@ -141,6 +142,13 @@ std::string slot_of(const Json& side) {
 std::string json_brief(const Json& value) {
     const std::string text = value.dump();
     return text.size() > 32 ? text.substr(0, 29) + "..." : text;
+}
+
+std::string trimmed(const std::string& text) {
+    size_t from = 0, to = text.size();
+    while (from < to && std::isspace(static_cast<unsigned char>(text[from]))) ++from;
+    while (to > from && std::isspace(static_cast<unsigned char>(text[to - 1]))) --to;
+    return text.substr(from, to - from);
 }
 
 /* the locals a flow has declared so far, by name. `x` is not in here: it is the flow's
@@ -335,6 +343,9 @@ class Compiler {
             cell.text_slot = program_.layout.text_slots++;
             cell.text_cap = 256;
         }
+        /* a list-shaped cell owns retained storage: the run's element pool resets every
+           run, so a cell that holds a list needs a slot that does not */
+        if (shape == Shape::List) cell.list_slot = program_.layout.list_slots++;
         program_.cells.push_back(std::move(cell));
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
@@ -515,9 +526,21 @@ class Compiler {
                                 initial = *override;
                             if (shape == Shape::Color) initial = resolve_token(info.id, name, initial);
                             check_variants(info.id, name, slot, initial);
-                            check_enum_type_slot(info.id, name, slot, initial);
+                            /* a LIST slot's authored value has its own accepted
+                               spellings and lands in the cell's constant list, not in
+                               the scalar initial, which stays Nil */
+                            std::vector<Value> list_init;
+                            const bool has_list =
+                                shape == Shape::List &&
+                                list_slot_initial(info.id, name, initial, list_init);
                             info.slots[name] =
-                                add_cell(CellKind::Slot, info.id, info.id, name, shape, initial, false);
+                                add_cell(CellKind::Slot, info.id, info.id, name, shape,
+                                         shape == Shape::List ? Json() : initial, false);
+                            if (has_list) {
+                                program_.cells[info.slots[name]].has_list = true;
+                                program_.cells[info.slots[name]].list_init =
+                                    std::move(list_init);
+                            }
                             /* a slot the type flags `history` gets a sampling ring (spec
                              * 2.9): rate and window read from the sibling slots' authored
                              * values (an edit recompiles, so compile-time is live enough) */
@@ -584,19 +607,91 @@ class Compiler {
         return name == "enum" ? Shape::Text : shape_from_name(name);
     }
 
-    /* A slot whose editor is the type picker (a Dropdown's `options`) holds a TypeRef
-     * naming an enum (spec 6.2). The view expands it to the variant names itself; what
-     * the compiler owns is the finding when the reference stops resolving. */
-    void check_enum_type_slot(uint64_t widget_id, const std::string& slot, const Json& spec,
-                              const Json& value) {
-        if (spec.value("editor", "") != "enum-type") return;
-        if (!value.is_string() || value.get<std::string>().empty()) return;
-        const std::string text = value.get<std::string>();
-        const int type_id = find_type_ref(text);
-        if (type_id < 0 || program_.types[type_id].kind != TypeKind::Enum)
-            diag(widget_id, "unresolved_type",
-                 "slot '" + slot + "': '" + text + "' does not name an enum in the mesh",
-                 DiagGrade::Error, slot);
+    /* THE AUTHORED VALUE OF A LIST SLOT (a Dropdown's or a Selector's `options`), in
+     * exactly two spellings:
+     *
+     *   ["Off", "Low", "High"]     the list itself, elements scalar
+     *   variants(Motor.mode)       every variant NAME of a mesh enum, in declaration
+     *                              order, so the options cannot drift from the schema
+     *
+     * The array may arrive as JSON or as the TEXT of that JSON, because an inspector
+     * field commits a string and the document keeps what it was given. Nothing else is
+     * accepted: a value that cannot be a list would otherwise compile to Nil, and Nil is
+     * also the honest "nothing authored", so the mistake would be invisible.
+     *
+     * Returns whether an initial was authored at all; the elements land in `out`, text
+     * among them as constant-pool refs. */
+    bool list_slot_initial(uint64_t widget_id, const std::string& slot, const Json& value,
+                           std::vector<Value>& out) {
+        const auto refuse = [&](const std::string& why) {
+            return refuse_list(widget_id, slot, why);
+        };
+        if (value.is_null()) return false;
+        if (value.is_string()) {
+            const std::string text = trimmed(value.get<std::string>());
+            if (text.empty()) return false;
+            if (text.compare(0, 9, "variants(") == 0 && text.back() == ')') {
+                const std::string ref = trimmed(text.substr(9, text.size() - 10));
+                const int type_id = find_type_ref(ref);
+                if (type_id < 0 || program_.types[type_id].kind != TypeKind::Enum) {
+                    diag(widget_id, "unresolved_type",
+                         "slot '" + slot + "': variants(" + ref + ") needs '" + ref +
+                             "' to name an enum in the mesh (a field's type reads "
+                             "Type.field)",
+                         DiagGrade::Error, slot);
+                    return false;
+                }
+                for (const auto& row : program_.types[type_id].variants)
+                    out.push_back(Value::text(program_.add_text(row.first)));
+                return list_within_bounds(widget_id, slot, out);
+            }
+            const Json parsed = Json::parse(text, nullptr, false);
+            if (!parsed.is_array())
+                return refuse("'" + text + "' is neither a list nor a variants() "
+                              "reference");
+            return list_elements(widget_id, slot, parsed, out);
+        }
+        if (!value.is_array()) return refuse("its value is " + json_brief(value));
+        return list_elements(widget_id, slot, value, out);
+    }
+
+    bool refuse_list(uint64_t widget_id, const std::string& slot, const std::string& why) {
+        diag(widget_id, "value_shape",
+             "slot '" + slot + "' is a list: " + why +
+                 ". Write the options as a list ([\"Off\", \"Low\", \"High\"]) or as "
+                 "variants(Type.field), naming an enum in the mesh",
+             DiagGrade::Error, slot);
+        return false;
+    }
+
+    bool list_elements(uint64_t widget_id, const std::string& slot, const Json& array,
+                       std::vector<Value>& out) {
+        for (const Json& item : array) {
+            if (item.is_string())
+                out.push_back(Value::text(program_.add_text(item.get<std::string>())));
+            else if (item.is_number()) out.push_back(Value::number(item.get<double>()));
+            else if (item.is_boolean()) out.push_back(Value::boolean(item.get<bool>()));
+            else {
+                out.clear();
+                return refuse_list(widget_id, slot,
+                                   "the element " + json_brief(item) +
+                                       " is not a string, a number or a boolean");
+            }
+        }
+        return list_within_bounds(widget_id, slot, out);
+    }
+
+    /* the element ceiling is a compile-time bound, so a longer list is a finding rather
+       than a truncation nobody sees */
+    bool list_within_bounds(uint64_t widget_id, const std::string& slot,
+                            std::vector<Value>& out) {
+        if (out.size() <= kVarrCeiling) return true;
+        diag(widget_id, "value_shape",
+             "slot '" + slot + "' holds " + std::to_string(out.size()) +
+                 " elements; a list slot holds at most " + std::to_string(kVarrCeiling),
+             DiagGrade::Error, slot);
+        out.clear();
+        return false;
     }
 
     /* a value outside a slot's declared variant set is a typo, not a new option */
@@ -769,7 +864,13 @@ class Compiler {
                     continue;
                 }
                 feed.cell = destination->second;
+                /* A FED slot starts UNKNOWN: what the instance authored is not this
+                   cell's value, the source is, and showing the authored constant until
+                   the first update reads as live data that is not. A list slot's
+                   authored constant goes the same way. */
                 program_.cells[feed.cell].initial = Value::nil();
+                program_.cells[feed.cell].has_list = false;
+                program_.cells[feed.cell].list_init.clear();
                 const Json& ref = node["src"];
                 const std::string kind = ref.value("kind", "");
 

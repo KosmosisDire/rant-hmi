@@ -98,6 +98,9 @@ class Element {
   get firstChild() {
     return this.childNodes[0] ?? null;
   }
+  get childElementCount() {
+    return this.children.length;
+  }
   get isConnected() {
     return true;
   }

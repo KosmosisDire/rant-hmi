@@ -40,6 +40,20 @@ function tokenAccess(editor: Editor): TokenAccess {
 import { openSourceTree, resolveShape, SourcePick, SourceTreeOptions } from "./sourcetree.js";
 import { openTypeTree } from "./typetree.js";
 
+/* the spelling the enum picker writes: an enum's variants AS A LIST, named through the
+   schema rather than copied out of it */
+export function variantsCall(ref: string): string {
+  return "variants(" + ref + ")";
+}
+
+/* the enum a value already names, so the picker opens standing on it. Only a bare
+   variants(...) call names one -- a list literal names no type at all, and neither does
+   half-typed text. */
+export function variantsRef(value: string): string {
+  const at = value.trim();
+  return at.startsWith("variants(") && at.endsWith(")") ? at.slice(9, -1).trim() : "";
+}
+
 export function valueEditor(
   spec: SlotSpec | null,
   shape: string,
@@ -59,20 +73,27 @@ export function valueEditor(
     bindGroup(key, grid, () => text(read()) || (unknown ? "" : "center"));
     return grid;
   }
-  /* ... and a Dropdown's options hold a TypeRef naming an enum, picked from
-     the type tree so the option list can never drift from the schema */
+  /* ... and an OPTIONS slot holds a LIST SPELLING: a literal like ["Off", "Low", "High"],
+     or variants(Valve.mode), which is the same list named through the schema so it can
+     never drift from it. The field edits that text like any other expression; the chip
+     beside it is SUGAR -- it picks an enum from the type tree and writes the variants(...)
+     call the author would otherwise type -- which is why the value stays legible and
+     hand-editable instead of being locked behind a picker. */
   if (spec?.editor === "enum-type") {
-    const node = el("button", { class: "chip pad-mark source-chip", title: "pick an enum" });
-    bindFlag(key + ".ghost", node, "ghost-chip", () => !text(read()));
-    const name = el("span", { class: "name" });
-    bindText(key + ".name", name, () => text(read()) || "pick an enum");
-    node.appendChild(name);
+    const field = commitTextInput(text(value), commit, { class: "field grow", ...placeholder });
+    bindField(key, field, () => text(read()));
+    /* a constant affordance, like the colour row's $ button: the VALUE is the field's to
+       show, so this button only ever says what it does */
+    const node = el("button", {
+      class: "chip source-chip",
+      title: "picking an enum writes variants(...) into the field",
+    }, [el("span", { class: "name", text: "enum" })]);
     node.addEventListener("click", () => {
       if (editor)
-        openTypeTree(node, editor, { enums: true }, (pick) => commit(pick.ref),
-                     text(read()));
+        openTypeTree(node, editor, { enums: true },
+                     (pick) => commit(variantsCall(pick.ref)), variantsRef(text(read())));
     });
-    return node;
+    return el("span", { class: "value-cell grow" }, [field, node]);
   }
   switch (shape) {
     case "bool": {

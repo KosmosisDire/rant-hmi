@@ -239,7 +239,7 @@ void test_structure_ops() {
     CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", readout}}}, err), err);
     CHECK(d.find(readout) == nullptr);
     CHECK(d.find(feed) == nullptr);
-    CHECK((*d.node(main_col))["children"].size() == 3);   /* 4 minus the removed readout */
+    CHECK((*d.node(main_col))["children"].size() == 5);   /* 5 minus the removed readout */
     CHECK(d.find(page_id) != nullptr);
 
     /* a DO step flipped to another kind gains that kind's fields */
@@ -297,7 +297,7 @@ void test_rename() {
     int set_props = 0;
     for (const Json& op : rr.ops)
         if (op["op"] == "set_prop") ++set_props;
-    CHECK(set_props == 3);
+    CHECK(set_props == 5);
 
     /* collisions and captures are refused */
     CHECK(!apply(d, {Json{{"op", "rename"}, {"node", var_id}, {"name", "setpoint"}}}, err));
@@ -630,7 +630,7 @@ void test_reparent() {
     Json up = ops_of({Json{{"op", "move"}, {"node", pump}, {"parent", page_id}, {"index", 0}}});
     CHECK_MSG(apply_ops(d, up, out, err), err);
     CHECK(id_of(d.root["pages"][0]["children"][0]) == pump);
-    CHECK((*d.node(main_col))["children"].size() == 3);
+    CHECK((*d.node(main_col))["children"].size() == 5);
     CHECK(out.ops.size() == 1);
     CHECK(out.ops[0]["op"] == "move" && out.ops[0]["node"] == pump);
     CHECK(out.ops[0]["parent"] == page_id && out.ops[0]["list"] == "children" &&
@@ -682,7 +682,7 @@ void test_reparent() {
     CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", setpoint}, {"parent", main_col}, {"index", 3}}},
                     err), err);
     const Json& kids = (*d.node(main_col))["children"];
-    CHECK(id_of(kids[kids.size() - 1]) == setpoint);
+    CHECK(id_of(kids[3]) == setpoint);
 
     /* REFUSALS, each leaving the document exactly as it was */
     const uint64_t before = d.version();
@@ -741,7 +741,7 @@ void test_group() {
                                              {"w", "836"}, {"h", "264"}}}}});
     CHECK_MSG(apply_ops(d, batch, r, err), err);
     const Json& main_kids = (*d.node(main_col))["children"];
-    CHECK(main_kids.size() == 3);
+    CHECK(main_kids.size() == 5);
     CHECK(id_of(main_kids[0]) == pump && id_of(main_kids[2]) == reset);
     const uint64_t frame_id = id_of(main_kids[1]);
     const Json& inside = (*d.node(frame_id))["children"];
@@ -770,7 +770,7 @@ void test_group() {
        with no attrs sent the box simply arrives undressed */
     CHECK_MSG(apply(d, {Json{{"op", "group"}, {"nodes", Json::array({reset})}}}, err), err);
     const Json& after = (*d.node(main_col))["children"];
-    CHECK(after.size() == 3);
+    CHECK(after.size() == 5);
     const uint64_t solo = id_of(after[2]);
     CHECK((*d.node(solo))["name"] == "Group");
     CHECK((*d.node(solo))["attrs"].is_object() && (*d.node(solo))["attrs"].empty());
@@ -785,7 +785,7 @@ void test_group() {
     const uint64_t a_var = id_of(*global_named(d, "flow"));
     CHECK(!apply(d, {Json{{"op", "group"}, {"nodes", Json::array({a_var})}}}, err));
     CHECK_EQ(d.version(), before);
-    CHECK((*d.node(main_col))["children"].size() == 3);
+    CHECK((*d.node(main_col))["children"].size() == 5);
     CHECK(d.find(pump) != nullptr);
 }
 

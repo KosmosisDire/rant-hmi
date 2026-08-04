@@ -107,6 +107,13 @@ struct CellDef {
     /* a struct variable's authored DEFAULTS (spec 2.7): field index -> start value,
      * applied over the type's zero at state construction and by New (reset) */
     std::vector<std::pair<uint32_t, Value>> struct_init;
+    /* List-shaped cells only: the run's retained slot holding this cell's elements, and
+     * the constant list it starts from. `has_list` is what separates an authored EMPTY
+     * list from no initial at all, which starts the cell UNKNOWN. Element text values
+     * here are constant-pool refs, copied into the slot's own storage at start. */
+    uint32_t list_slot = UINT32_MAX;
+    bool has_list = false;
+    std::vector<Value> list_init;
     /* Temp only: the flow it belongs to, so two flows may reuse a name */
     uint64_t owner_flow = 0;
 };
@@ -218,6 +225,9 @@ struct ProgramLayout {
      * the schemas' bounds plus each list-producing expression site's worst case */
     uint32_t elem_values = 0;
     uint32_t elem_texts = 0;
+    /* retained list storage: one slot per list-shaped cell (a list a cell holds across
+     * ticks cannot live in the scratch pool, which resets every run) */
+    uint32_t list_slots = 0;
     /* the deepest lambda body's frame, already included in stack_values above: a body
      * executes on top of its caller, so the stack is sized for both (spec 6.4) */
     uint32_t sub_stack = 0;

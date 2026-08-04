@@ -22,8 +22,7 @@
 
 import { el } from "./dom.js";
 import { Editor } from "./editor.js";
-import { run } from "./program.js";
-import { variantNames } from "./slots.js";
+import { attrText, run } from "./program.js";
 import { Interact, Json, Program, WidgetType } from "./types.js";
 
 /* what one armed node needs from the stage that built it */
@@ -57,6 +56,23 @@ function num(value: Json, fallback: number): number {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+/* THE OPTIONS ARE A LIST. `options` evaluates like every other param, and what it
+ * evaluates to is a real list -- an authored literal, or the variants of an enum named
+ * through the schema -- so this only has to read it. Each element is rendered the way
+ * every other value is rendered as text (a number as its plain string), and an element
+ * with no text -- a Nil, an object -- is dropped rather than offered as a blank row.
+ * Anything that is not a list offers nothing, which draws no detents rather than wrong
+ * ones. */
+export function optionNames(value: Json): string[] {
+  if (!Array.isArray(value)) return [];
+  const names: string[] = [];
+  for (const item of value) {
+    const text = attrText(item);
+    if (text !== null) names.push(text);
+  }
+  return names;
 }
 
 /* the payload rule, applied at the one place events leave */
@@ -243,9 +259,7 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
        nothing resolvable to select = nothing armed, the same honest state as the
        detents it would land on */
     const selects = Boolean(seat.interact.emits?.select);
-    const options = selects
-      ? variantNames(seat.editor.mesh, String(param(seat, "options") ?? ""))
-      : [];
+    const options = selects ? optionNames(param(seat, "options")) : [];
     if (selects && !options.length) return;
 
     const min = num(param(seat, "min"), 0);
@@ -300,7 +314,7 @@ function armPick(node: HTMLElement, seat: GestureSeat): void {
     }
     post(seat, "open", true);
     seat.setState(seat.owner, "open", true);
-    const names = variantNames(seat.editor.mesh, String(param(seat, "options") ?? ""));
+    const names = optionNames(param(seat, "options"));
     const at = node.getBoundingClientRect();
     const tray = el("div", { class: "pick-tray", "data-input": "scroll" },
       names.length
@@ -309,7 +323,8 @@ function armPick(node: HTMLElement, seat: GestureSeat): void {
               post(seat, "select", name);
               close();
             } }))
-        : [el("div", { class: "tray-empty", text: "no options — bind an enum type" })]);
+        : [el("div", { class: "tray-empty",
+                       text: "no options -- bind a list or an enum type" })]);
     tray.style.left = at.left + "px";
     tray.style.top = at.bottom + 4 + "px";
     tray.style.minWidth = Math.max(120, at.width) + "px";

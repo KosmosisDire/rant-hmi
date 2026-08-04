@@ -27,7 +27,8 @@ TemplateScope scope_of(std::initializer_list<const char*> props) {
     return scope.extend("", names);
 }
 
-/* the compiled code as "OP OP(operand) ..." so a lowering pins in one readable line */
+/* the compiled code as "OP OP(operand) ..." so a lowering pins in one readable line;
+ * an ITERATE prints its mode and its body's own line in braces, so a lambda pins whole */
 std::string ops_of(const Json& program) {
     std::string out;
     if (!program.is_object() || !program.contains("code")) return "(no program)";
@@ -36,6 +37,11 @@ std::string ops_of(const Json& program) {
         out += ins.value("op", "?");
         if (ins.contains("cell")) out += "(" + ins["cell"].get<std::string>() + ")";
         else if (ins.contains("v")) out += "(" + ins["v"].dump() + ")";
+        else if (ins.contains("n")) out += "(" + ins["n"].dump() + ")";
+        else if (ins.contains("i")) out += "(" + ins["i"].dump() + ")";
+        if (ins.contains("mode"))
+            out += "[" + ins["mode"].get<std::string>() + "]{" +
+                   ops_of(Json{{"code", ins.value("body", Json::array())}}) + "}";
     }
     return out;
 }
@@ -112,21 +118,26 @@ void test_template_expr() {
              "LOAD(slot:max) CONST(2.0) MUL PICK");
     CHECK(refuses("value > 0 ? 1", scope, "expected ':'"));
 
-    /* Lambdas are SCALAR-tier only (spec 6.4): the view interpreter has no sub-programs
-       and no list values, and a template attr has nothing to iterate over. The arrow
-       lexes everywhere, so this must be refused by the parser, not by the lexer. */
-    CHECK(refuses("options.map(v => v)", scope, "no encoding in the view"));
+    /* lambdas ride the view now: the body is its own instruction list carried INSIDE
+       the one ITERATE instruction, and a parameter reference is an ARG load of the
+       loop's per-element bindings — element then index, in declaration order */
+    CHECK_EQ(lower("options.map(v => v)", scope),
+             "LOAD(slot:options) ITERATE[MAP]{ARG(0)}");
+    CHECK_EQ(lower("options.map((v, i) => i)", scope),
+             "LOAD(slot:options) ITERATE[MAP]{ARG(1)}");
+    /* a bare arrow outside an iterating method is still nothing */
     CHECK(refuses("value => value", scope, "unexpected"));
     CHECK_EQ(lower("pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) POW");
     CHECK_EQ(lower("floor(value)", scope), "LOAD(slot:value) FLOOR");
 
-    /* the cell-addressing builtins over bare property names */
+    /* the one cell-addressing builtin over a bare property name; the option resolver
+       cells died with the list vocabulary, and their refusals teach the spelling */
     CHECK_EQ(lower("hist(value)", scope), "LOAD(hist:value)");
-    CHECK_EQ(lower("optfrac(value, options)", scope), "LOAD(optfrac:value@options)");
-    CHECK_EQ(lower("optcount(options)", scope), "LOAD(optcount:options)");
-    CHECK_EQ(lower("optnames(options)", scope), "LOAD(optnames:options)");
     CHECK(refuses("hist(12)", scope, "property name"));
-    CHECK(refuses("optfrac(value, nope)", scope, "not a property in scope"));
+    CHECK(refuses("optcount(options)", scope, "options.length"));
+    CHECK(refuses("optnames(options)", scope, "the list itself"));
+    CHECK(refuses("optfrac(value, options)", scope, "options.indexOf(value)"));
+    CHECK(refuses("variants(options)", scope, "a slot's authored value"));
 
     /* unknown names and fields are errors, not silent Nil */
     CHECK(refuses("nope", scope, "unknown name 'nope'"));
@@ -146,11 +157,83 @@ void test_template_expr() {
     CHECK(refuses("color('#fff')", scope, "no encoding in the view"));
     CHECK(refuses("text.upper()", scope, "no encoding in the view"));
     CHECK(refuses("value.mapRange(0, 1, 0, 100)", scope, "no encoding in the view"));
-    CHECK(refuses("[1, 2]", scope, "no list literal"));
-    CHECK(refuses("options[0]", scope, "indexing is not available"));
+    CHECK_EQ(lower("[1, 2]", scope), "CONST(1.0) CONST(2.0) MAKE_LIST(2)");
+    CHECK_EQ(lower("options[0]", scope), "LOAD(slot:options) CONST(0.0) INDEX");
     CHECK(refuses("hopefully(value)", scope, "unknown function"));
     CHECK(refuses("value +", scope, "expected an expression"));
     CHECK(refuses("value value", scope, "unexpected"));
+}
+
+/* THE LIST VOCABULARY (display-tier lists): indexing, the encoded list methods, and
+ * the iterating methods with their widened lambda heads — map (v, i) and reduce
+ * (acc, v[, i]) with a seed. Every lowering here is the exact instruction shape
+ * frontend/src/program.ts executes, ARG indices included. */
+void test_list_vocabulary() {
+    const TemplateScope scope =
+        scope_of({"value", "min", "max", "options"});
+
+    CHECK_EQ(lower("[]", scope), "MAKE_LIST(0)");
+    CHECK_EQ(lower("['Off', 'On']", scope),
+             "CONST(\"Off\") CONST(\"On\") MAKE_LIST(2)");
+    CHECK_EQ(lower("options[value + 1]", scope),
+             "LOAD(slot:options) LOAD(slot:value) CONST(1.0) ADD INDEX");
+    CHECK_EQ(lower("options[0][1]", scope),
+             "LOAD(slot:options) CONST(0.0) INDEX CONST(1.0) INDEX");
+
+    /* the encoded methods: length is a property, the aggregates are properties, and
+       indexOf is a call — exactly the scalar tier's spellings */
+    CHECK_EQ(lower("options.length", scope), "LOAD(slot:options) LENGTH");
+    CHECK_EQ(lower("options.indexOf(value)", scope),
+             "LOAD(slot:options) LOAD(slot:value) INDEX_OF");
+    CHECK_EQ(lower("hist(value).max", scope), "LOAD(hist:value) LIST_MAX");
+    CHECK_EQ(lower("hist(value).min", scope), "LOAD(hist:value) LIST_MIN");
+    CHECK_EQ(lower("hist(value).sum", scope), "LOAD(hist:value) LIST_SUM");
+    CHECK_EQ(lower("hist(value).avg", scope), "LOAD(hist:value) LIST_AVG");
+    CHECK(refuses("options.length()", scope, "without parentheses"));
+
+    /* the Selector's needle fraction, whole: what optfrac used to be, as arithmetic */
+    CHECK_EQ(lower("max(options.indexOf(value), 0) / max(options.length - 1, 1)", scope),
+             "LOAD(slot:options) LOAD(slot:value) INDEX_OF CONST(0.0) MAX "
+             "LOAD(slot:options) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV");
+
+    /* anchor() builds one point of a computed path */
+    CHECK_EQ(lower("anchor(0.5, value)", scope),
+             "CONST(0.5) LOAD(slot:value) ANCHOR");
+
+    /* the Trend's whole plot: a map from the series to anchors, the seed of the
+       no-privileged-renderer-paths acceptance test */
+    CHECK_EQ(lower("hist(value).map((v, i) => anchor("
+                   "i / max(hist(value).length - 1, 1), "
+                   "1 - (v - min) / (max - min)))", scope),
+             "LOAD(hist:value) ITERATE[MAP]{"
+             "ARG(1) LOAD(hist:value) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
+             "CONST(1.0) ARG(0) LOAD(slot:min) SUB "
+             "LOAD(slot:max) LOAD(slot:min) SUB DIV SUB ANCHOR}");
+
+    /* reduce carries its seed after the lambda, landing above the list on the stack */
+    CHECK_EQ(lower("options.reduce((acc, v) => acc + v, '')", scope),
+             "LOAD(slot:options) CONST(\"\") ITERATE[REDUCE]{ARG(0) ARG(1) ADD}");
+    CHECK_EQ(lower("options.reduce((acc, v, i) => acc + i, 0)", scope),
+             "LOAD(slot:options) CONST(0.0) ITERATE[REDUCE]{ARG(0) ARG(2) ADD}");
+    CHECK_EQ(lower("options.filter(v => v != '').length", scope),
+             "LOAD(slot:options) ITERATE[FILTER]{ARG(0) CONST(\"\") NE} LENGTH");
+    CHECK_EQ(lower("options.any(v => v == value)", scope),
+             "LOAD(slot:options) ITERATE[ANY]{ARG(0) LOAD(slot:value) EQ}");
+    CHECK_EQ(lower("options.sortBy(v => v)", scope),
+             "LOAD(slot:options) ITERATE[SORT_BY]{ARG(0)}");
+
+    /* the refusals hold the scalar tier's lines, and teach */
+    CHECK(refuses("options.map(v => options.map(w => w))", scope,
+                  "one level of iteration"));
+    CHECK(refuses("options.map((a, b, c) => a)", scope, "lambda parameter"));
+    CHECK(refuses("options.reduce(acc => acc, 0)", scope, "lambda parameter"));
+    CHECK(refuses("options.map((v, v) => v)", scope, "duplicate lambda parameter"));
+    CHECK(refuses("options.map(value => value)", scope, "shadows the property"));
+    CHECK(refuses("options.map(x => x)", scope, "cannot name a lambda parameter"));
+    CHECK(refuses("options.map(state => state)", scope, "cannot name a lambda parameter"));
+    CHECK(refuses("options.reduce((acc, v) => acc + v)", scope,
+                  "reduce takes (lambda, start)"));
+    CHECK(refuses("options.map(v => v", scope, "expected ')'"));
 }
 
 /* The vocabulary this task adds (trig, the exposed numeric builtins, string building,
@@ -247,8 +330,24 @@ const std::set<std::string>& view_ops() {
         /* color arithmetic */
         "RGB",    "HSV",    "COLOR_R", "COLOR_G", "COLOR_B", "COLOR_A", "COLOR_ALPHA",
         "COLOR_MIX",
+        /* the list vocabulary (display-tier lists) */
+        "MAKE_LIST", "INDEX", "LENGTH", "INDEX_OF",
+        "LIST_SUM",  "LIST_AVG", "LIST_MAX", "LIST_MIN",
+        "ANCHOR", "ARG", "ITERATE",
     };
     return ops;
+}
+
+/* an op in a lambda body would render UNKNOWN exactly as one at the top would, so the
+ * walk descends into every ITERATE's carried body */
+void check_ops(const std::string& type, const std::string& attr, const Json& code) {
+    for (const Json& ins : code) {
+        CHECK_MSG(view_ops().count(ins.value("op", "")) == 1,
+                  type + ": attr '" + attr + "' uses op '" + ins.value("op", "") +
+                      "' the view cannot run");
+        if (ins.contains("body") && ins["body"].is_array())
+            check_ops(type, attr, ins["body"]);
+    }
 }
 
 void check_attrs(const std::string& type, const Json& attrs) {
@@ -256,10 +355,7 @@ void check_attrs(const std::string& type, const Json& attrs) {
     for (auto it = attrs.begin(); it != attrs.end(); ++it) {
         CHECK_MSG(it->is_object() && it->contains("code") && (*it)["code"].is_array(),
                   type + ": attr '" + it.key() + "' is not a compiled program");
-        for (const Json& ins : (*it)["code"])
-            CHECK_MSG(view_ops().count(ins.value("op", "")) == 1,
-                      type + ": attr '" + it.key() + "' uses op '" +
-                          ins.value("op", "") + "' the view cannot run");
+        check_ops(type, it.key(), (*it)["code"]);
     }
 }
 
@@ -355,11 +451,14 @@ void test_builtins_compile_clean() {
     CHECK_EQ(ops_of(mark["attrs"]["repeat"]), "LOAD(slot:scale.divisions)");
     CHECK_EQ(ops_of(mark["attrs"]["x"]), "LOAD(repeat:fraction)");
 
-    /* A PLOT IS A PATH whose anchors are data: the series rides an attr, and the fold that
-       will turn it into ordinary anchors is the only thing still missing */
+    /* A PLOT IS A PATH whose anchors are data: the series maps to anchor records in
+       the template's own text, and no renderer knows what a plot is */
     const Json& trend = registry["types"][7];
     CHECK_EQ(ops_of(trend["template"]["children"][0]["attrs"]["points"]),
-             "LOAD(hist:value)");
+             "LOAD(hist:value) ITERATE[MAP]{"
+             "ARG(1) LOAD(hist:value) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
+             "CONST(1.0) ARG(0) LOAD(slot:plot.min) SUB "
+             "LOAD(slot:plot.max) LOAD(slot:plot.min) SUB DIV SUB ANCHOR}");
     bool trend_history = false;
     for (const Json& slot : trend["slots"])
         if (slot.value("name", "") == "value") trend_history = slot.value("history", false);
@@ -369,10 +468,16 @@ void test_builtins_compile_clean() {
     CHECK_EQ(ops_of(readout["template"]["children"][0]["attrs"]["text"]),
              "LOAD(slot:value) LOAD(slot:reading.decimals) TO_FIXED");
 
+    /* the Selector's detents count the list, the labels index it, and the needle
+       rides indexOf — the resolver cells are gone whole */
     const Json& selector = registry["types"][6];
     const Json& dial = selector["template"]["children"][0];
-    CHECK_EQ(ops_of(dial["children"][1]["attrs"]["repeat"]), "LOAD(optcount:options)");
-    CHECK(ops_of(dial["children"][2]["attrs"]["rotate"]).find("LOAD(optfrac:value@options)") !=
+    CHECK_EQ(ops_of(dial["children"][1]["attrs"]["repeat"]),
+             "LOAD(slot:options) LENGTH");
+    CHECK_EQ(ops_of(dial["children"][2]["attrs"]["text"]),
+             "LOAD(slot:options) LOAD(repeat:index) INDEX");
+    CHECK(ops_of(dial["children"][3]["attrs"]["rotate"])
+              .find("LOAD(slot:options) LOAD(slot:value) INDEX_OF CONST(0.0) MAX") !=
           std::string::npos);
 
     /* AN ARC IS A PATH: its anchors are the trig the language already had, so the corner
@@ -777,6 +882,7 @@ void test_attr_vocabulary() {
 
 int main() {
     test_template_expr();
+    test_list_vocabulary();
     test_new_vocabulary();
     test_builtins_compile_clean();
     test_doc_components();

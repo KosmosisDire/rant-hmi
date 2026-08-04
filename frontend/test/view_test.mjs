@@ -27,6 +27,7 @@ installDom();
 
 const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
+const { foldHist } = await import(mod("editor.js"));
 const { run } = await import(mod("program.js"));
 const { syncUrl } = await import(mod("endpoint.js"));
 const { Panel } = await import(mod("reconcile.js"));
@@ -505,6 +506,108 @@ check(run({ code: [{ op: "CONST", v: -3 }, { op: "ABS" }] }, () => null) === 3,
 check(run({ code: [{ op: "CONST", v: 7 }, { op: "CONST", v: 3 }, { op: "MOD" }] }, () => null) === 1,
       "the full scalar interpreter runs MOD");
 check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is UNKNOWN");
+
+/* ---- DISPLAY-TIER LISTS: the opcode family a list expression compiles to ----
+   A list is an ordinary value on the stack, and a Nil ELEMENT is a value the list HOLDS --
+   a plot's missing sample is a gap in the picture, not an unknown picture -- while every
+   question ABOUT a list that has no honest answer is still Nil. The aggregates are pinned
+   to the scalar VM's own (backend/src/vm/vm.cpp, MethodId::ListSum and friends): an empty
+   list sums to 0 and avg/max/min to Nil, and one element that is not a number takes the
+   whole aggregate to Nil rather than averaging over the samples around a gap. */
+{
+  const nothing = () => null;
+  const vm = (...code) => run({ code }, nothing);
+  const lit = (v) => ({ op: "CONST", v });
+  const json = (v) => JSON.stringify(v);
+  const arg = (i) => ({ op: "ARG", i });
+  const over = (mode, body) => ({ op: "ITERATE", mode, body });
+
+  check(json(vm(lit(1), lit(2), lit(3), { op: "MAKE_LIST", n: 3 })) === "[1,2,3]",
+        "MAKE_LIST takes its values in the order they were pushed");
+  check(json(vm(lit(1), lit(null), lit(3), { op: "MAKE_LIST", n: 3 })) === "[1,null,3]",
+        "and a Nil element stays put: a gap does not poison the list holding it");
+
+  const three = [lit(10), lit(20), lit(30), { op: "MAKE_LIST", n: 3 }];
+  check(vm(...three, lit(1), { op: "INDEX" }) === 20, "INDEX reads the element it names");
+  check(vm(...three, lit(3), { op: "INDEX" }) === null, "past the end is Nil, never a wrap");
+  check(vm(...three, lit(-1), { op: "INDEX" }) === null, "and so is a negative index");
+  check(vm(...three, lit(1.5), { op: "INDEX" }) === null,
+        "a fractional index names no element, so it is Nil rather than truncated");
+  check(vm(lit(7), lit(0), { op: "INDEX" }) === null, "and indexing a non-list is Nil");
+
+  check(vm(lit("abc"), { op: "LENGTH" }) === 3, "LENGTH counts a string's characters");
+  check(vm(...three, { op: "LENGTH" }) === 3, "and a list's elements");
+  check(vm(lit(5), { op: "LENGTH" }) === null, "a number has no length: Nil");
+
+  const names = [lit("a"), lit("b"), { op: "MAKE_LIST", n: 2 }];
+  check(vm(...names, lit("b"), { op: "INDEX_OF" }) === 1, "INDEX_OF finds the first match");
+  check(vm(...names, lit("z"), { op: "INDEX_OF" }) === -1,
+        "a miss is -1, the scalar VM's own answer");
+  check(vm(...names, lit(null), { op: "INDEX_OF" }) === -1,
+        "and a Nil needle matches nothing at all");
+  check(vm(lit("ab"), lit("a"), { op: "INDEX_OF" }) === null, "INDEX_OF on a non-list is Nil");
+
+  const nums = [lit(1), lit(2), lit(6), { op: "MAKE_LIST", n: 3 }];
+  const gap = [lit(1), lit(null), lit(6), { op: "MAKE_LIST", n: 3 }];
+  const empty = [{ op: "MAKE_LIST", n: 0 }];
+  check(vm(...nums, { op: "LIST_SUM" }) === 9 && vm(...nums, { op: "LIST_AVG" }) === 3,
+        "LIST_SUM and LIST_AVG over the elements");
+  check(vm(...nums, { op: "LIST_MAX" }) === 6 && vm(...nums, { op: "LIST_MIN" }) === 1,
+        "LIST_MAX and LIST_MIN too");
+  check(vm(...empty, { op: "LIST_SUM" }) === 0,
+        "an EMPTY list sums to 0 -- the VM's own answer, not Nil");
+  check(vm(...empty, { op: "LIST_AVG" }) === null && vm(...empty, { op: "LIST_MAX" }) === null &&
+          vm(...empty, { op: "LIST_MIN" }) === null,
+        "while its average, maximum and minimum are Nil: there is nothing to report");
+  check(vm(...gap, { op: "LIST_SUM" }) === null && vm(...gap, { op: "LIST_AVG" }) === null &&
+          vm(...gap, { op: "LIST_MAX" }) === null && vm(...gap, { op: "LIST_MIN" }) === null,
+        "one gap takes the whole aggregate to Nil, again matching the VM");
+  check(vm(lit(3), { op: "LIST_SUM" }) === null, "and a non-list aggregates to Nil");
+
+  check(json(vm(lit(0.5), lit(0.25), { op: "ANCHOR" })) === '{"x":0.5,"y":0.25}',
+        "ANCHOR builds a point from x then y");
+  check(vm(lit(0.5), lit(null), { op: "ANCHOR" }) === null,
+        "a missing coordinate makes the whole anchor a gap");
+
+  /* ITERATE: one loop, one body, the mode saying what to do with what the body returned.
+     ARG 0 is the element and ARG 1 its index -- for REDUCE, ARG 0 is the accumulator and
+     the pair shifts up one. */
+  check(json(vm(...three, over("MAP", [arg(0), arg(1), { op: "ADD" }]))) === "[10,21,32]",
+        "MAP runs the body per element, with the index beside it");
+  check(json(vm(lit(1), lit(null), lit(2), lit(6), { op: "MAKE_LIST", n: 4 },
+                over("FILTER", [arg(0), lit(2), { op: "GE" }]))) === "[2,6]",
+        "FILTER keeps what the body called true, and a Nil answer is not true");
+  check(vm(lit(0), lit(1), { op: "MAKE_LIST", n: 2 }, over("ANY", [arg(0)])) === true &&
+          vm(lit(0), lit(1), { op: "MAKE_LIST", n: 2 }, over("ALL", [arg(0)])) === false,
+        "ANY and ALL answer over the same body");
+  check(vm(...empty, over("ANY", [arg(0)])) === false &&
+          vm(...empty, over("ALL", [arg(0)])) === true,
+        "and an empty list answers ANY false, ALL true");
+  check(json(vm(lit(3), lit(1), lit(4), lit(1), lit(5), { op: "MAKE_LIST", n: 5 },
+                over("SORT_BY", [arg(0), lit(2), { op: "MOD" }]))) === "[4,3,1,1,5]",
+        "SORT_BY moves the ELEMENTS by the body's key, and equal keys keep their order");
+  check(json(vm(lit(1), lit(2), lit(3), { op: "MAKE_LIST", n: 3 },
+                over("SORT_BY", [arg(0), lit(2), { op: "EQ" }, lit(null), arg(0),
+                                 { op: "PICK" }]))) === "[1,3,2]",
+        "a key with no order to it sorts last, so an UNKNOWN never leads the list");
+  check(vm(lit(1), lit(2), lit(3), { op: "MAKE_LIST", n: 3 }, lit(0),
+           over("REDUCE", [arg(0), arg(1), { op: "ADD" }])) === 6,
+        "REDUCE folds the list into its accumulator");
+  check(vm(...empty, lit(7), over("REDUCE", [arg(0), arg(1), { op: "ADD" }])) === 7,
+        "over an empty list it is the seed it started from");
+  check(vm(lit("a"), lit("b"), { op: "MAKE_LIST", n: 2 }, lit(""),
+           over("REDUCE", [arg(0), arg(1), { op: "ADD" }])) === "ab",
+        "and it builds text as readily as a number, since + concatenates");
+  check(vm(lit(5), over("MAP", [arg(0)])) === null, "iterating a non-list is Nil");
+  check(vm(...three, { op: "ITERATE", mode: "WAT", body: [arg(0)] }) === null,
+        "and a mode this view does not know fails as UNKNOWN");
+
+  /* the loop is BOUNDED: the view's ring holds more samples than the scalar tier's 512
+     ceiling, so it has a ceiling of its own and stops there rather than hanging a frame */
+  const long = vm(lit(Array.from({ length: 5000 }, (_, i) => i)), over("MAP", [arg(0)]));
+  check(Array.isArray(long) && long.length === 4096,
+        "ITERATE walks at most 4096 elements, got " + (long ?? []).length);
+}
 
 /* ---- default behavior and diagnostics ----
    A control has to work the moment it is placed, and the view has to be able to say why
@@ -1850,14 +1953,190 @@ check(stageNode("frame", 901) !== heldAgain &&
         "resizing the preview resizes the artboard: the fractions re-solve");
 }
 
+/* ---- THE TREND RINGS: what the wire delivers vs. what the view holds (editor.ts) ----
+   Every `hist` entry is a DELTA against an absolute sample cursor, so the fold either
+   continues the ring it has or throws it away: ERASE AND REBASELINE, never bridge a hole.
+   Guessing what fell in a gap would draw a line through samples nobody took. */
+{
+  const rings = new Map();
+  const wire = (from, values, series = 1, cap = 4) =>
+    ({ "1.series": { rate: 10, series, cap, from, values } });
+  const ring = () => rings.get("1.series");
+  const held = () => (ring()?.values ?? []).join(",");
+
+  foldHist(rings, wire(0, [1, 2]));
+  check(held() === "1,2" && ring().end === 2,
+        "the first frame becomes the ring, and the cursor lands past it");
+  const first = ring().version;
+  foldHist(rings, wire(2, [3]));
+  check(held() === "1,2,3" && ring().end === 3,
+        "a frame starting exactly at the cursor APPENDS, got " + held());
+  check(ring().version > first, "and the version moves, which is what a reader watches");
+
+  const before = ring().version;
+  foldHist(rings, wire(9, [7, 8]));
+  check(held() === "7,8" && ring().end === 11,
+        "a frame starting anywhere else discards the ring and rebaselines, got " + held());
+  check(ring().version > before,
+        "a rebaseline moves the version too: the reader must be told to redraw");
+
+  foldHist(rings, wire(11, [9, 10, 11]));
+  check(held() === "8,9,10,11" && ring().end === 14,
+        "the front falls off at `cap` samples, and the cursor is unaffected, got " + held());
+
+  const narrow = ring().version;
+  foldHist(rings, wire(14, [1, 2, 3, 4], 2));
+  check(ring().series === 2 && held() === "1,2,3,4" && ring().end === 16,
+        "a wider series arrives rebaselining: four numbers are two samples, got " + held());
+  check(ring().version > narrow, "a width change is a change like any other");
+  foldHist(rings, wire(16, [5, 6], 1));
+  check(ring().series === 1 && held() === "5,6",
+        "and a width that disagrees on an APPEND rebaselines too, rather than interleaving");
+
+  foldHist(rings, { "1.series": { rate: 10, series: 0, cap: 4, from: 0, values: [1] } });
+  check(held() === "5,6", "a frame the view cannot read is dropped, never allowed to erase");
+  foldHist(rings, wire(18, [1, 2, 3], 2));
+  check(held() === "1,2" && ring().end === 19,
+        "and a ragged tail is left off: a half sample would shift the series, got " + held());
+}
+
+/* ---- A PLOT, END TO END: ring -> hist cell -> map -> anchors -> path `d` (stage.ts) ----
+   The privileged points-are-numbers branch is gone. `points` is an ordinary expression
+   over the trend cell and what the renderer receives is a list of POINTS, so the shape of
+   a plot is language work. A gap in the data is a gap in the line. */
+{
+  const plotStore = new DocStore();
+  plotStore.load({
+    version: 1, next_id: 999, globals: [], tokens: [], components: [],
+    pages: [{ id: 970, name: "Plot", children: [
+      { id: 971, kind: "frame", type: "Trend", name: "trend",
+        attrs: {}, slots: {}, locals: [], feeds: [], flows: [] },
+    ] }],
+  });
+  const K = (v) => ({ op: "CONST", v });
+  const A = (i) => ({ op: "ARG", i });
+  /* x is the sample's index, y its value: one map over the cell, one anchor per sample */
+  const pointsProgram = { code: [
+    { op: "LOAD", cell: "hist:series" },
+    { op: "ITERATE", mode: "MAP", body: [A(1), A(0), { op: "ANCHOR" }] },
+  ] };
+  /* the LAST sample, read by index off the same cell -- a scalar while the series is one
+     wide, a list of series once it is wider */
+  const lastProgram = { code: [
+    { op: "LOAD", cell: "hist:series" },
+    { op: "LOAD", cell: "hist:series" }, { op: "LENGTH" }, K(1), { op: "SUB" },
+    { op: "INDEX" }, { op: "STR" },
+  ] };
+  const rowProgram = { code: [
+    { op: "LOAD", cell: "hist:series" },
+    { op: "LOAD", cell: "hist:series" }, { op: "LENGTH" }, K(1), { op: "SUB" },
+    { op: "INDEX" }, K(0), { op: "INDEX" }, { op: "STR" },
+  ] };
+  const trace = { kind: "path", name: "trace", attrs: { points: pointsProgram },
+                  anchors: [], closed: false };
+  const plotType = {
+    name: "Trend", slots: [], events: [], design_w: 220, design_h: 110,
+    template: { kind: "frame", name: "", attrs: {}, children: [
+      trace,
+      { kind: "text", name: "last", attrs: { text: lastProgram } },
+      { kind: "text", name: "row", attrs: { text: rowProgram } },
+    ] },
+  };
+  const rings = new Map();
+  const plotHost = new Element("section");
+  const plotView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const plotEditor = {
+    store: plotStore, registry: { version: 1, types: [plotType] },
+    nodeAttrs: { 971: { attrs: {} } },
+    live: { epoch: 1, values: {} }, view: plotView,
+    hist: (key) => rings.get(key) ?? null,
+    page: () => plotStore.pages()[0],
+    contexts: [],
+    root() { return this.page(); },
+    artboard: () => ({ w: 1408, h: 792 }),
+    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    select: () => undefined,
+  };
+  const drawPlot = () => renderStage(plotHost, plotEditor);
+  const traceD = () => plotHost.querySelector("path")?.getAttribute("d");
+  const inks = () => plotHost.querySelectorAll(".ink-text").map((n) => n.textContent);
+
+  foldHist(rings, { "971.series": { rate: 10, series: 1, cap: 8, from: 0,
+                                    values: [1, 2, null, 4] } });
+  drawPlot();
+  check(traceD() === "M0 1 L1 2 M3 4",
+        "a gap BREAKS the line: the next sample opens a new subpath, got " + traceD());
+  check(inks()[0] === "4", "the same cell indexes as a plain list, got " + inks()[0]);
+  check(inks()[1] === "--", "and a sample of a one-wide series has no series to index into");
+
+  /* AN APPEND MUST REPAINT: the render recorded the ring's version, and the diff that
+     decides whether a live frame rebuilds compares exactly that */
+  const standing = plotHost.querySelector("path");
+  plotEditor.live = { epoch: 1, values: { "999.nothing": 1 } };
+  drawPlot();
+  check(plotHost.querySelector("path") === standing,
+        "a live frame touching no consumed cell leaves the plot standing");
+  foldHist(rings, { "971.series": { rate: 10, series: 1, cap: 8, from: 4, values: [5] } });
+  drawPlot();
+  check(plotHost.querySelector("path") !== standing && traceD() === "M0 1 L1 2 M3 4 L4 5",
+        "while an appended sample repaints it, got " + traceD());
+
+  /* a closed path still closes: the fold produces anchors, and everything downstream of
+     the anchors is what it always was */
+  trace.closed = true;
+  plotEditor.live = { epoch: 2, values: {} };
+  drawPlot();
+  check(traceD().endsWith(" Z"), "a closed path still gets its Z, got " + traceD());
+  trace.closed = false;
+
+  /* A WIDER SERIES reads as one list per SAMPLE, and the chunking is cached on the ring
+     under the version it was built at: a map body may load the cell once per element, and
+     re-chunking per load would make a plot quadratic in its own sample count. */
+  foldHist(rings, { "971.series": { rate: 10, series: 2, cap: 8, from: 9,
+                                    values: [1, 2, 3, 4] } });
+  plotEditor.live = { epoch: 3, values: {} };
+  drawPlot();
+  const wide = rings.get("971.series");
+  check(inks()[1] === "3", "a two-wide series indexes sample then series, got " + inks()[1]);
+  check(inks()[0] === "--", "and a whole sample is not a value a text field can show");
+  check(wide.chunks?.version === wide.version && wide.chunks.rows.length === 2,
+        "the chunking is cached on the ring, tagged with the version it was built at");
+  foldHist(rings, { "971.series": { rate: 10, series: 2, cap: 8, from: 11, values: [5, 6] } });
+  drawPlot();
+  check(inks()[1] === "5", "an append invalidates that cache by version, got " + inks()[1]);
+  check(wide.chunks.rows.length === 3, "and the fresh chunking is the one now held");
+
+  /* `points` that is not a list at all falls through to the authored anchors, which is
+     how every ordinary shape is still drawn */
+  trace.attrs.points = { code: [K("nope")] };
+  trace.anchors = [{ x: { code: [K(0)] }, y: { code: [K(0)] } },
+                   { x: { code: [K(1)] }, y: { code: [K(1)] } }];
+  plotEditor.live = { epoch: 4, values: {} };
+  drawPlot();
+  check(traceD() === "M0 0 L1 1",
+        "a non-list `points` leaves the authored anchors in charge, got " + traceD());
+}
+
 /* ---- TEST MODE: the pointer regime and the gesture arithmetic (stage.ts, gestures.ts) ----
    Outside edit mode the pointer OPERATES. A bare page node never takes it; an instance
    takes it only where a gesture would RUN something (INERT PASS-THROUGH: a Toggle's
    default toggles an unfed value, a Panel with no flows is a picture and presses pass
    through it). The drag arithmetic is pure, so the numbers pin exactly. */
 {
-  const { steppedValue, bearingDeg, sweepFraction } = await import(mod("gestures.js"));
+  const { steppedValue, bearingDeg, sweepFraction, optionNames } =
+    await import(mod("gestures.js"));
   const { operable } = await import(mod("slots.js"));
+
+  /* THE OPTIONS ARE A LIST now, not a TypeRef the view expands: the param evaluates to a
+     real list and the tray only has to read it */
+  check(optionNames(["Off", "Low"]).join(",") === "Off,Low",
+        "a list of names offers exactly those names");
+  check(optionNames([1, 2.5]).join(",") === "1,2.5",
+        "a number offers as its plain string, the way every other value renders");
+  check(optionNames(["a", null, undefined, { x: 1 }, "b"]).join(",") === "a,b",
+        "an element with no text to it is dropped, never offered as a blank row");
+  check(optionNames("ValveCmd.mode").length === 0 && optionNames(null).length === 0,
+        "and anything that is not a list offers nothing: no detents beats wrong ones");
 
   check(steppedValue(0.5, 0, 100, 0) === 50 && steppedValue(1.7, 0, 100, 0) === 100,
         "a range fraction maps into min..max and holds at the ends");
@@ -1931,6 +2210,65 @@ check(stageNode("frame", 901) !== heldAgain &&
   renderStage(tHost, tEditor);
   check(!at(961).style.pointerEvents && !at(963).style.pointerEvents,
         "flipping the mode rebuilds the picture: edit takes the regime back off");
+}
+
+/* ---- THE OPTIONS SLOT: a list spelling, and a picker that is sugar for writing one ----
+   A Dropdown's options used to BE a TypeRef, so the row was a chip and nothing else. The
+   value is a real list now -- a literal, or variants(Valve.mode) naming an enum's variants
+   through the schema -- so the row is an ordinary field holding that text, with the type
+   picker beside it writing the call the author would otherwise type by hand. */
+{
+  /* the popover places itself against the viewport, which this process otherwise has no
+     notion of */
+  globalThis.window = { innerWidth: 1280, innerHeight: 800 };
+  const { valueEditor } = await import(mod("inspector/editors.js"));
+  const optionsEditor = {
+    ...editor,
+    mesh: {
+      entities: [],
+      types: [{
+        name: "Valve", entities: [],
+        fields: [{ path: "mode", shape: "enum",
+                   variants: [{ name: "Off", value: 0 }, { name: "On", value: 1 }] }],
+      }],
+    },
+  };
+  const written = [];
+  let spelling = '["Off", "On"]';
+  const optionsSpec = { name: "options", shape: "text", default: "", group: "config",
+                        editor: "enum-type" };
+  const optionsPanel = new Panel(new Element("div"));
+  const drawOptions = () =>
+    optionsPanel.render("options", (host) =>
+      host.appendChild(valueEditor(optionsSpec, "text", "1:options", () => spelling,
+                                   (next) => { spelling = next; written.push(next); },
+                                   false, optionsEditor)));
+  drawOptions();
+
+  const optionsField = optionsPanel.host.querySelector(".field");
+  const optionsChip = optionsPanel.host.querySelector(".source-chip");
+  check(optionsField !== null && optionsChip !== null,
+        "the options row is a field AND a picker, not a picker standing alone");
+  check(optionsField.value === '["Off", "On"]',
+        "the field carries the list spelling verbatim, got " + optionsField?.value);
+  typeInto(optionsField, '["Off", "Low", "High"]');
+  fire(optionsField, "change");
+  check(written[written.length - 1] === '["Off", "Low", "High"]',
+        "editing it commits the text as written, got " + written[written.length - 1]);
+
+  fire(optionsChip, "click");
+  const treeRow = (label) =>
+    document.body.querySelectorAll(".stree-row")
+      .find((r) => r.textContent.startsWith(label)) ?? null;
+  check(treeRow("Valve") !== null, "the chip opens the type tree on the enums it may pick");
+  fire(treeRow("Valve"), "click", { detail: 0 });
+  fire(treeRow("mode"), "click", { detail: 0 });
+  check(written[written.length - 1] === "variants(Valve.mode)",
+        "and the pick writes the variants(...) call, got " + written[written.length - 1]);
+  drawOptions();
+  check(optionsField.value === "variants(Valve.mode)",
+        "which the field then shows, like anything else the slot holds");
+  document.activeElement = null;
 }
 
 /* What used to close this file -- the repeat/path round trip and the code-part escape

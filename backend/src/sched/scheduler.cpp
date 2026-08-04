@@ -174,7 +174,7 @@ Value Scheduler::intake_aggregate(const MeshUpdate& update, uint32_t field,
         state_.elems[offset + k] = element;
     }
     return is_map ? Value::map(offset, count)
-                  : Value::list(offset, count, static_cast<ValueTag>(head.flags));
+                  : Value::list(offset, count, list_elem_tag(head));
 }
 
 void Scheduler::on_update(const MeshUpdate& update) {

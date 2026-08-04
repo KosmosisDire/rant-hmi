@@ -69,6 +69,12 @@ Value Value::list(uint32_t offset, uint32_t count, ValueTag elem) {
     return out;
 }
 
+Value Value::retained_list(uint32_t slot, uint32_t count, ValueTag elem) {
+    Value out = Value::list(slot, count, elem);
+    out.flags |= kRetainedAgg;
+    return out;
+}
+
 Value Value::map(uint32_t offset, uint32_t count) {
     Value out{};
     out.tag = ValueTag::Map;
@@ -98,6 +104,14 @@ Shape value_shape(const Value& value) {
         case ValueTag::Color: return Shape::Color;
     }
     return Shape::Unknown;
+}
+
+ValueTag list_elem_tag(const Value& value) {
+    return static_cast<ValueTag>(value.flags & kElemTagMask);
+}
+
+bool value_retained(const Value& value) {
+    return (value.flags & kRetainedAgg) != 0;
 }
 
 bool value_truth(const Value& value) {

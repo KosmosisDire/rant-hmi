@@ -232,6 +232,28 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
         server_.broadcast(snapshot());
 }
 
+/* One SCALAR cell value as the wire sees it: numbers and booleans as themselves, text
+ * resolved through the run's slots, a color as its hex, an enum as its variant NAME (the
+ * vocabulary the author picked it by; a value outside it shows its integer). Null for
+ * anything that is not a scalar, which is how an element of a list reads when it is not
+ * one either. */
+static Json wire_scalar(const Program& program, const RuntimeState& state,
+                        const Value& value) {
+    switch (value.tag) {
+        case ValueTag::Num: return value.data.num;
+        case ValueTag::Bool: return value.data.boolean;
+        case ValueTag::Text: return std::string(state.text(program, value));
+        case ValueTag::Color: return format_color(value.data.rgba);
+        case ValueTag::Enum: {
+            if (value.type_id < program.types.size())
+                for (const auto& row : program.types[value.type_id].variants)
+                    if (row.second == value.data.integer) return row.first;
+            return static_cast<double>(value.data.integer);
+        }
+        default: return Json();
+    }
+}
+
 Json App::live() const {
     Json values = Json::object();
     if (!scheduler_) return Json{{"epoch", epoch_}, {"values", values}};
@@ -245,19 +267,21 @@ Json App::live() const {
                 ? std::to_string(cell.owner_widget) + "." + cell.name
                 : "v" + std::to_string(cell.node_id);
         switch (value.tag) {
-            case ValueTag::Num: values[key] = value.data.num; break;
-            case ValueTag::Bool: values[key] = value.data.boolean; break;
-            case ValueTag::Text: values[key] = std::string(state.text(program, value)); break;
-            case ValueTag::Color: values[key] = format_color(value.data.rgba); break;
-            case ValueTag::Enum: {
-                /* an enum reads as its variant NAME (the vocabulary the author picked
-                   it by); a value outside the vocabulary shows its integer */
-                std::string name;
-                if (value.type_id < program.types.size())
-                    for (const auto& row : program.types[value.type_id].variants)
-                        if (row.second == value.data.integer) { name = row.first; break; }
-                if (name.empty()) values[key] = static_cast<double>(value.data.integer);
-                else values[key] = name;
+            case ValueTag::Num:
+            case ValueTag::Bool:
+            case ValueTag::Text:
+            case ValueTag::Color:
+            case ValueTag::Enum:
+                values[key] = wire_scalar(program, state, value);
+                break;
+            /* a LIST cell rides as an array of its elements, each by the same rules; a
+               nested aggregate is null, since nothing in the vocabulary builds one */
+            case ValueTag::List: {
+                const AggView view = state.aggregate(value);
+                Json items = Json::array();
+                for (uint32_t k = 0; k < view.count; ++k)
+                    items.push_back(wire_scalar(program, state, view.data[k]));
+                values[key] = std::move(items);
                 break;
             }
             default: break;

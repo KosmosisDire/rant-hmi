@@ -29,6 +29,15 @@ enum class ValueTag : uint8_t { Nil, Num, Bool, Text, Enum, List, Map, Struct, C
 
 constexpr uint32_t kConstantRef = 0x80000000u;
 
+/* An aggregate's `flags` carries the element ValueTag in its low bits. kRetainedAgg is
+ * the one bit above it: set, the aggregate does NOT live in the run's scratch pool but
+ * in a cell's RETAINED storage, and `ref` is the retained slot rather than a pool
+ * offset. A cell must be able to hold a list across ticks, and the scratch pool resets
+ * every run, so the two storages have to be told apart by the value itself. Every reader
+ * of the element tag MASKS rather than comparing the whole byte. */
+constexpr uint8_t kElemTagMask = 0x0fu;
+constexpr uint8_t kRetainedAgg = 0x80u;
+
 struct Value {
     ValueTag tag = ValueTag::Nil;
     uint8_t flags = 0;
@@ -55,6 +64,8 @@ struct Value {
      * payload = the count (a map counts PAIRS; entries interleave key,value). flags
      * carries the element ValueTag for a list. */
     static Value list(uint32_t offset, uint32_t count, ValueTag elem);
+    /* the same list, held in retained slot `slot` instead of the run's pool */
+    static Value retained_list(uint32_t slot, uint32_t count, ValueTag elem);
     static Value map(uint32_t offset, uint32_t count);
     /* a struct lives in one of the run's struct slots: ref = the slot, type_id = its
      * entry in the type table. Message buffers, struct-valued locals and a struct read
@@ -65,6 +76,9 @@ struct Value {
 static_assert(sizeof(Value) == 16, "Value must stay 16 bytes");
 
 Shape value_shape(const Value& value);
+/* a list's element tag, with the storage bit masked off */
+ValueTag list_elem_tag(const Value& value);
+bool value_retained(const Value& value);
 bool value_truth(const Value& value);
 bool value_same_scalar(const Value& a, const Value& b);
 uint32_t parse_color(std::string_view text, bool& ok);

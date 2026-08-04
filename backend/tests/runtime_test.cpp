@@ -1727,6 +1727,368 @@ void test_lists_and_maps() {
     CHECK(result.shape == Shape::Num);
 }
 
+/* THE FOLD AND THE INDEX (spec 6.4, display tier): reduce carries an accumulator across
+ * the elements, and map/reduce may take the 0-based index as a further parameter. Every
+ * case runs end to end through the scheduler, because a fold's whole hazard is what
+ * happens BETWEEN iterations. */
+void test_reduce() {
+    EntityDef fold;
+    fold.kind = EntityKind::Variable;
+    fold.name = "fold";
+    FieldDef temps;
+    temps.path = "temps";
+    temps.shape = Shape::List;
+    temps.elem = Shape::Num;
+    temps.bound = 8;
+    FieldDef names;
+    names.path = "names";
+    names.shape = Shape::List;
+    names.elem = Shape::Text;
+    names.bound = 4;
+    fold.fields = {temps, names};
+    FakeMesh mesh(std::vector<EntityDef>{fold});
+
+    auto feed = [](const char* slot, const char* path, const char* xf) {
+        return Json{{"slot", slot}, {"src", entity("V", "fold")}, {"path", path}, {"xf", xf}};
+    };
+    auto readout = [](const char* name, Json feeds) {
+        return Json{{"kind", "frame"}, {"type", "Readout"}, {"name", name},
+                    {"slots", Json::object()}, {"feeds", std::move(feeds)}};
+    };
+    Json widgets = Json::array();
+    /* a numeric fold IS the sum, spelled out; the text fold proves each iteration's
+       result is re-homed before it becomes the accumulator */
+    widgets.push_back(readout("a", Json::array({
+        feed("value", "temps", "x.reduce((acc, v) => acc + v, 0)"),
+        feed("reading.decimals", "temps", "x.sum"),
+        feed("units.text", "temps", "x.reduce((acc, v) => acc + str(v), \"\")"),
+    })));
+    /* the index, on both sides: a fold that weights by position, a map that reads it */
+    widgets.push_back(readout("b", Json::array({
+        feed("value", "temps", "x.reduce((acc, v, i) => acc + v * i, 0)"),
+        feed("reading.decimals", "temps", "x.map((v, i) => v * 100 + i).sum"),
+        feed("units.text", "names", "x.map((v, i) => str(i) + v).join(\",\")"),
+    })));
+    /* an empty list leaves the starting value alone, and a fold over text joins */
+    widgets.push_back(readout("c", Json::array({
+        feed("value", "temps", "x.slice(0, 0).reduce((acc, v) => acc + v, 7)"),
+        feed("reading.decimals", "temps", "x.reduce((acc, v) => acc + 1, 0)"),
+        feed("units.text", "names", "x.reduce((acc, v) => acc + v, \"\")"),
+    })));
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("reduce compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+    if (!CHECK(compiled.program.feeds.size() == 9)) return;
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    mesh.push_update(EntityKind::Variable, "fold",
+                     {Value::list(0, 3, ValueTag::Num), Value::list(0, 3, ValueTag::Text)});
+    mesh.push_elems(0, {Value::number(30), Value::number(10), Value::number(20)});
+    mesh.push_elems(1, {Value::text(0), Value::text(1), Value::text(2)}, {"b", "c", "a"});
+    std::string fault;
+    scheduler.tick(fault);
+    const RuntimeState& state = scheduler.state();
+
+    auto cell_num = [&](uint32_t at) {
+        const Value& value = state.values[program.feeds[at].cell];
+        return value.tag == ValueTag::Num ? value.data.num : -1e9;
+    };
+    auto cell_text = [&](uint32_t at) {
+        return std::string(state.text(program, state.values[program.feeds[at].cell]));
+    };
+    CHECK_EQ(cell_num(0), cell_num(1));      /* the fold agrees with .sum */
+    CHECK_EQ(cell_num(0), 60.0);
+    CHECK_EQ(cell_text(2), "301020");        /* every iteration's text survives */
+    CHECK_EQ(cell_num(3), 50.0);             /* 30*0 + 10*1 + 20*2 */
+    CHECK_EQ(cell_num(4), 6003.0);           /* (30,10,20) * 100 + (0,1,2) */
+    CHECK_EQ(cell_text(5), "0b,1c,2a");      /* map with the index, over text */
+    CHECK_EQ(cell_num(6), 7.0);              /* empty list: the start value stands */
+    CHECK_EQ(cell_num(7), 3.0);              /* counting fold */
+    CHECK_EQ(cell_text(8), "bca");
+
+    /* UNKNOWN in, UNKNOWN out: a fold over a list that never arrived reports nothing
+       rather than confidently reporting its starting value */
+    mesh.push_update(EntityKind::Variable, "fold", {Value::nil(), Value::nil()});
+    scheduler.tick(fault);
+    CHECK(state.values[program.feeds[0].cell].tag == ValueTag::Nil);
+
+    /* ---- what the fold refuses (spec 6.4) ---- */
+    Program scratch;
+    ExpressionScope nums;
+    nums.x_shape = Shape::List;
+    nums.x_elem = Shape::Num;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string error;
+    auto refused = [&](const char* text, const char* needle) {
+        code.clear();
+        error.clear();
+        const bool ok = compile_expr(text, ExprTier::Display, nums, scratch, code, result,
+                                     error);
+        return !ok && error.find(needle) != std::string::npos;
+    };
+    /* the arities are per mode, and every refusal spells the legal call out */
+    CHECK(refused("x.reduce(v => v, 0)", "2 or 3 lambda parameters"));
+    CHECK(refused("x.map((v, i, k) => v)", "1 or 2 lambda parameters"));
+    CHECK(refused("x.filter((v, i) => v > 1)", "1 lambda parameter"));
+    /* reduce takes exactly two arguments: the lambda, then where the fold starts */
+    CHECK(refused("x.reduce((acc, v) => acc + v)", "value the fold starts from"));
+    CHECK(refused("x.reduce((acc, v) => acc + v, 0, 1)", "exactly two arguments"));
+    /* the parameters are distinct names, and none of them is x */
+    CHECK(refused("x.map((v, v) => v)", "named twice"));
+    CHECK(refused("x.reduce((acc, x) => acc, 0)", "cannot name a lambda parameter"));
+    /* the fold stays one shape, and it stays scalar */
+    CHECK(refused("x.reduce((acc, v) => acc + v, \"\")", "one shape"));
+    CHECK(refused("x.reduce((acc, v) => [v], 0)", "folds to ONE value"));
+    /* and a fold to a number is an ordinary wire value, unlike the list it came from */
+    code.clear();
+    error.clear();
+    CHECK_MSG(compile_expr("x.reduce((acc, v) => acc + v, 0)", ExprTier::Wire, nums,
+                           scratch, code, result, error), error);
+    CHECK(result.shape == Shape::Num);
+
+    /* the reference the editor autocompletes from carries the new row */
+    bool declared = false;
+    for (const LangRow& row : language_reference())
+        if (std::string(row.name) == "reduce") {
+            declared = true;
+            CHECK(row.min_args == 2 && row.max_args == 2);
+            CHECK(std::string(row.args[0]) == "lambda");
+        }
+    CHECK(declared);
+}
+
+/* A LIST-SHAPED CELL holds its elements across ticks (a Dropdown's or a Selector's
+ * options): the run's element pool resets between runs, so the cell's value has to live
+ * in retained storage of its own, seeded from what the instance authored and replaced
+ * whole by whatever writes it. */
+void test_list_cells() {
+    auto selector = [](const char* name, Json options, Json feeds) {
+        return Json{{"kind", "frame"}, {"type", "Selector"}, {"name", name},
+                    {"slots", Json{{"options", std::move(options)}, {"value", "a"}}},
+                    {"feeds", std::move(feeds)}};
+    };
+    EntityDef plant;
+    plant.kind = EntityKind::Variable;
+    plant.name = "plant";
+    FieldDef names;
+    names.path = "names";
+    names.shape = Shape::List;
+    names.elem = Shape::Text;
+    names.bound = 4;
+    plant.fields = {names};
+    FakeMesh mesh(std::vector<EntityDef>{plant});
+
+    Json widgets = Json::array({
+        selector("authored", Json::array({"a", "b", "c"}), Json::array()),
+        /* the same list spelled as TEXT: what an inspector field commits */
+        selector("typed", Json("[\"x\", \"y\"]"), Json::array()),
+        selector("fed", Json::array(), Json::array({Json{{"slot", "options"},
+                                                         {"src", entity("V", "plant")},
+                                                         {"path", "names"}}})),
+        /* the elements are scalars, not only strings */
+        selector("mixed", Json::array({1, 2.5, true}), Json::array()),
+    });
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("list cell compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+
+    auto options_cell = [](const Program& program, uint64_t widget) {
+        for (uint32_t i = 0; i < program.cells.size(); ++i)
+            if (program.cells[i].kind == CellKind::Slot &&
+                program.cells[i].owner_widget == widget && program.cells[i].name == "options")
+                return static_cast<int>(i);
+        return -1;
+    };
+    const Json& page = document.root["pages"][0]["children"];
+    const uint64_t authored = json_u64_or(page[0]["id"], 0);
+    const uint64_t typed = json_u64_or(page[1]["id"], 0);
+    const uint64_t fed = json_u64_or(page[2]["id"], 0);
+    const int authored_at = options_cell(compiled.program, authored);
+    const int typed_at = options_cell(compiled.program, typed);
+    const int fed_at = options_cell(compiled.program, fed);
+    if (!CHECK(authored_at >= 0 && typed_at >= 0 && fed_at >= 0)) return;
+    CHECK(compiled.program.cells[authored_at].shape == Shape::List);
+    /* every list cell owns retained storage, whether or not anything authored a list */
+    CHECK(compiled.program.cells[authored_at].list_slot != UINT32_MAX);
+    CHECK(compiled.program.cells[fed_at].list_slot != UINT32_MAX);
+    CHECK(compiled.program.layout.list_slots == 4);
+    const int mixed_at = options_cell(compiled.program, json_u64_or(page[3]["id"], 0));
+    if (!CHECK(mixed_at >= 0)) return;
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    const RuntimeState& state = scheduler.state();
+    auto joined = [&](int cell) {
+        const Value& value = state.values[cell];
+        if (value.tag != ValueTag::List) return std::string("<not a list>");
+        const AggView view = state.aggregate(value);
+        std::string out;
+        for (uint32_t i = 0; i < view.count; ++i) {
+            if (i) out += ",";
+            out += std::string(state.text(program, view.data[i]));
+        }
+        return out;
+    };
+    CHECK_EQ(joined(authored_at), "a,b,c");
+    CHECK_EQ(joined(typed_at), "x,y");
+    /* a FED slot starts UNKNOWN whatever it authored: the source owns the value, and an
+       authored list shown before the first update would read as live data that is not */
+    CHECK(state.values[fed_at].tag == ValueTag::Nil);
+    {
+        const AggView mixed = state.aggregate(state.values[mixed_at]);
+        CHECK(mixed.count == 3);
+        if (mixed.count == 3) {
+            CHECK_EQ(mixed.data[0].data.num, 1.0);
+            CHECK_EQ(mixed.data[1].data.num, 2.5);
+            CHECK(mixed.data[2].tag == ValueTag::Bool && mixed.data[2].data.boolean);
+        }
+    }
+
+    /* THE POINT OF RETAINED STORAGE: the scratch pool resets before every run, so a
+       list that only lived there would read as garbage on the very next tick */
+    std::string fault;
+    for (uint32_t i = 0; i < 5; ++i) scheduler.tick(fault);
+    CHECK_EQ(joined(authored_at), "a,b,c");
+    CHECK_EQ(joined(typed_at), "x,y");
+
+    /* a feed writes the whole list, latest wins, and the text comes with it */
+    mesh.push_update(EntityKind::Variable, "plant", {Value::list(0, 3, ValueTag::Text)});
+    mesh.push_elems(0, {Value::text(0), Value::text(1), Value::text(2)}, {"b", "c", "a"});
+    scheduler.tick(fault);
+    CHECK_EQ(joined(fed_at), "b,c,a");
+    for (uint32_t i = 0; i < 3; ++i) scheduler.tick(fault);
+    CHECK_EQ(joined(fed_at), "b,c,a");
+    mesh.push_update(EntityKind::Variable, "plant", {Value::list(0, 2, ValueTag::Text)});
+    mesh.push_elems(0, {Value::text(0), Value::text(1)}, {"low", "high"});
+    scheduler.tick(fault);
+    CHECK_EQ(joined(fed_at), "low,high");
+    CHECK_EQ(joined(authored_at), "a,b,c");   /* one cell's write is one cell's */
+
+    /* a recompile carries a list cell exactly as it carries text: by value, into the
+       new run's own storage, so nothing points at the run being retired */
+    RuntimeState migrated = migrate_state(program, state, program);
+    auto migrated_joined = [&](int cell) {
+        const Value& value = migrated.values[cell];
+        if (value.tag != ValueTag::List) return std::string("<not a list>");
+        const AggView view = migrated.aggregate(value);
+        std::string out;
+        for (uint32_t i = 0; i < view.count; ++i) {
+            if (i) out += ",";
+            out += std::string(migrated.text(program, view.data[i]));
+        }
+        return out;
+    };
+    CHECK_EQ(migrated_joined(authored_at), "a,b,c");
+    CHECK_EQ(migrated_joined(fed_at), "low,high");
+
+    /* re-authoring the options reaches the runtime: an unfed slot's constant IS its
+       value, so an edit that did not survive the recompile would look like nothing */
+    Program restated = program;
+    restated.cells[authored_at].list_init = {
+        Value::text(restated.add_text("one")), Value::text(restated.add_text("two"))};
+    RuntimeState edited = migrate_state(program, state, restated);
+    const AggView after = edited.aggregate(edited.values[authored_at]);
+    CHECK(after.count == 2);
+    CHECK(after.count == 2 && edited.text(restated, after.data[0]) == "one");
+}
+
+/* variants(<TypeRef>): the options ARE the mesh enum's vocabulary, in declaration
+ * order, so they cannot drift from the schema. An unresolvable reference is a finding
+ * on the slot and leaves the cell UNKNOWN -- never a quietly empty picker. */
+void test_variant_options() {
+    auto selector = [](const char* name, const char* options) {
+        return Json{{"kind", "frame"}, {"type", "Selector"}, {"name", name},
+                    {"slots", Json{{"options", options}, {"value", "run"}}},
+                    {"feeds", Json::array()}};
+    };
+    Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                 {"pages", Json::array({Json{
+                      {"name", "P"},
+                      {"children", Json::array({selector("good", "variants(Gear.mode)")})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    FakeMesh mesh(reflection());
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    int cell = -1;
+    for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+        if (compiled.program.cells[i].kind == CellKind::Slot &&
+            compiled.program.cells[i].name == "options")
+            cell = static_cast<int>(i);
+    if (!CHECK(cell >= 0)) return;
+    RuntimeState state(compiled.program);
+    const AggView view = state.aggregate(state.values[cell]);
+    CHECK(view.count == 3);
+    if (view.count == 3) {
+        CHECK_EQ(std::string(state.text(compiled.program, view.data[0])), "stop");
+        CHECK_EQ(std::string(state.text(compiled.program, view.data[1])), "run");
+        CHECK_EQ(std::string(state.text(compiled.program, view.data[2])), "fast");
+    }
+
+    /* an element that is not a scalar is a finding too: a list slot holds values, and
+       anything else would compile to a hole nobody sees */
+    {
+        Json nested = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                       {"pages", Json::array({Json{
+                            {"name", "P"},
+                            {"children", Json::array({Json{
+                                 {"kind", "frame"}, {"type", "Selector"}, {"name", "bad"},
+                                 {"slots", Json{{"options",
+                                                 Json::array({"a", Json::object()})}}},
+                                 {"feeds", Json::array()}}})}}})}};
+        Document doc;
+        CHECK(doc.adopt(std::move(nested), err));
+        CompileResult failed = compile_document(doc, builtin_registry(), mesh);
+        CHECK(!failed.ok);
+    }
+
+    /* a reference that resolves to nothing, and one that resolves to a struct rather
+       than an enum: both are findings, and both leave the cell UNKNOWN */
+    for (const char* bogus : {"variants(Nope.mode)", "variants(Motor)", "just words"}) {
+        Json broken = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                       {"pages", Json::array({Json{
+                            {"name", "P"},
+                            {"children", Json::array({selector("bad", bogus)})}}})}};
+        Document doc;
+        CHECK(doc.adopt(std::move(broken), err));
+        CompileResult failed = compile_document(doc, builtin_registry(), mesh);
+        CHECK_MSG(!failed.ok, std::string("accepted options ") + bogus);
+        int bad_cell = -1;
+        for (uint32_t i = 0; i < failed.program.cells.size(); ++i)
+            if (failed.program.cells[i].kind == CellKind::Slot &&
+                failed.program.cells[i].name == "options")
+                bad_cell = static_cast<int>(i);
+        if (!CHECK(bad_cell >= 0)) continue;
+        CHECK(!failed.program.cells[bad_cell].has_list);
+        RuntimeState empty(failed.program);
+        CHECK(empty.values[bad_cell].tag == ValueTag::Nil);
+    }
+}
+
 /* A suspension captures text BY VALUE: what was held at the delay is what resumes,
  * even if the variable it came from moves meanwhile (the plan's deep-copy rule). */
 void test_suspend_holds_text() {
@@ -1903,6 +2265,9 @@ int main() {
     test_tonemaps();
     test_text_and_enums();
     test_lists_and_maps();
+    test_reduce();
+    test_list_cells();
+    test_variant_options();
     test_suspend_holds_text();
     test_document_tolerance();
     test_theme_tokens();

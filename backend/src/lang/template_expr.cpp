@@ -205,9 +205,127 @@ class Parser {
         parse_postfix();
     }
 
+    /* the iterating methods, by the scalar tier's names, each with its view mode
+     * spelling; nullptr = not one of them */
+    static const char* iterate_mode(const std::string& name) {
+        if (name == "map") return "MAP";
+        if (name == "filter") return "FILTER";
+        if (name == "any") return "ANY";
+        if (name == "all") return "ALL";
+        if (name == "sortBy") return "SORT_BY";
+        if (name == "reduce") return "REDUCE";
+        return nullptr;
+    }
+
+    /* `list.<mode>(v => body)` — and the two widened heads the scalar tier also takes,
+     * map's `(v, i)` and reduce's `(acc, v[, i])` with its seed as a second argument.
+     * The body compiles into its OWN instruction list, carried inside the ITERATE
+     * instruction and run once per element by the view; a parameter reference in the
+     * body is an ARG load of the loop's per-element bindings. The scalar rules hold
+     * here too: one level of iteration ever, and a body is ONE expression. */
+    void parse_iterate(const std::string& name, const char* mode) {
+        if (in_lambda_) {
+            fail("a lambda body may not contain another lambda: one level of "
+                 "iteration, ever");
+            return;
+        }
+        const bool reduces = std::strcmp(mode, "REDUCE") == 0;
+        const size_t least = reduces ? 2 : 1;
+        const size_t most = reduces ? 3 : (name == "map" ? 2 : 1);
+        const std::string usage =
+            reduces ? "reduce((acc, v) => ..., start)" : name + "(v => ...)";
+        if (!expect(TokenKind::LParen, (name + " takes a lambda: " + usage).c_str()))
+            return;
+        advance();
+
+        std::vector<std::string> params;
+        if (token_.kind == TokenKind::LParen) {
+            advance();
+            for (;;) {
+                if (token_.kind != TokenKind::Ident) {
+                    fail("expected a parameter name");
+                    return;
+                }
+                params.push_back(token_.text);
+                advance();
+                if (token_.kind != TokenKind::Comma) break;
+                advance();
+            }
+            if (!expect(TokenKind::RParen, "expected ')' after the parameters")) return;
+            advance();
+        } else if (token_.kind == TokenKind::Ident) {
+            params.push_back(token_.text);
+            advance();
+        } else {
+            fail(name + " takes a lambda: " + usage);
+            return;
+        }
+        if (params.size() < least || params.size() > most) {
+            fail(name + " takes " + (least == most ? std::to_string(least)
+                                                   : std::to_string(least) + " to " +
+                                                         std::to_string(most)) +
+                 " lambda parameter" + (most == 1 ? "" : "s") + ": " + usage);
+            return;
+        }
+        for (size_t i = 0; i < params.size(); ++i) {
+            const std::string& param = params[i];
+            if (param == "x" || param == "state" || param == "repeat" ||
+                param == "tile" || param == "true" || param == "false") {
+                fail("'" + param + "' cannot name a lambda parameter");
+                return;
+            }
+            if (scope_.has_prop(param)) {
+                fail("the lambda parameter '" + param +
+                     "' shadows the property of the same name; pick another name");
+                return;
+            }
+            for (size_t j = 0; j < i; ++j) {
+                if (params[j] != param) continue;
+                fail("duplicate lambda parameter '" + param + "'");
+                return;
+            }
+        }
+        if (token_.kind != TokenKind::Arrow) {
+            fail("expected '=>' after the lambda parameter" +
+                 std::string(params.size() > 1 ? "s" : ""));
+            return;
+        }
+        advance();
+
+        in_lambda_ = true;
+        lambda_params_ = params;
+        Json body = capture_arg();
+        in_lambda_ = false;
+        lambda_params_.clear();
+        if (!error_.empty()) return;
+
+        if (reduces) {
+            /* the seed is an ordinary expression, landing after the list on the stack */
+            if (!expect(TokenKind::Comma, "reduce takes (lambda, start)")) return;
+            advance();
+            parse_ternary();
+            if (!error_.empty()) return;
+        }
+        if (!expect(TokenKind::RParen, "expected ')' after the lambda")) return;
+        advance();
+        code_.push_back(Json{{"op", "ITERATE"}, {"mode", mode}, {"body", std::move(body)}});
+    }
+
     void parse_postfix() {
         parse_primary();
-        while (error_.empty() && token_.kind == TokenKind::Dot) {
+        while (error_.empty() &&
+               (token_.kind == TokenKind::Dot || token_.kind == TokenKind::LBracket)) {
+            if (token_.kind == TokenKind::LBracket) {
+                /* `options[i]`: the receiver is already on the stack, the index is one
+                 * expression; off the end reads Nil, the honest gap */
+                advance();
+                parse_ternary();
+                if (!error_.empty()) return;
+                if (!expect(TokenKind::RBracket, "expected ']'")) return;
+                advance();
+                emit("INDEX");
+                continue;
+            }
             advance();
             if (token_.kind != TokenKind::Ident) {
                 fail("expected a method after '.'");
@@ -215,7 +333,9 @@ class Parser {
             }
             const std::string name = token_.text;
             advance();
-            if (name == "clamp") {
+            if (const char* mode = iterate_mode(name)) {
+                parse_iterate(name, mode);
+            } else if (name == "clamp") {
                 /* x.clamp(lo, hi): MAX then MIN, the same fold the builtin uses. Kept
                  * as its own case rather than going through view_method()'s bespoke
                  * flag: the receiver is already on the stack (parse_primary put it
@@ -249,8 +369,9 @@ class Parser {
                 if (!view.known || !view.op[0]) {
                     fail("'" + name + "' has no encoding in the view; template "
                          "expressions are limited to pick / toFixed / clamp, the "
-                         "color accessors (r / g / b / a / alpha / mix) and the "
-                         "numeric builtins");
+                         "color accessors (r / g / b / a / alpha / mix), the numeric "
+                         "builtins and the list vocabulary (length / indexOf / sum / "
+                         "avg / max / min, indexing, map / filter / reduce)");
                     return;
                 }
                 if (view.property) {
@@ -266,8 +387,6 @@ class Parser {
                 }
             }
         }
-        if (error_.empty() && token_.kind == TokenKind::LBracket)
-            fail("indexing is not available in a template expression");
     }
 
     bool expect(TokenKind kind, const char* message) {
@@ -341,26 +460,26 @@ class Parser {
     }
 
     void parse_call(const std::string& name) {
-        /* the cell-addressing builtins first: their arguments are names, not values */
-        if (name == "hist" || name == "optcount" || name == "optnames") {
+        /* the one cell-addressing builtin: its argument is a name, not a value */
+        if (name == "hist") {
             advance();
             std::string prop;
             if (!prop_argument(name, prop)) return;
             if (!expect(TokenKind::RParen, "expected ')'")) return;
             advance();
-            emit_load((name == "hist" ? "hist:" : name == "optcount" ? "optcount:" : "optnames:") + prop);
+            emit_load("hist:" + prop);
             return;
         }
-        if (name == "optfrac") {
-            advance();
-            std::string value_prop, options_prop;
-            if (!prop_argument(name, value_prop)) return;
-            if (!expect(TokenKind::Comma, "optfrac takes (value, options)")) return;
-            advance();
-            if (!prop_argument(name, options_prop)) return;
-            if (!expect(TokenKind::RParen, "expected ')'")) return;
-            advance();
-            emit_load("optfrac:" + value_prop + "@" + options_prop);
+        /* the resolver cells died when options became a LIST: what they computed is
+         * ordinary list arithmetic now, so the refusal teaches the spelling */
+        if (name == "optcount" || name == "optnames" || name == "optfrac") {
+            fail("'" + name + "' is gone: options are a list — write options.length, "
+                 "the list itself, or options.indexOf(value) / (options.length - 1)");
+            return;
+        }
+        if (name == "variants") {
+            fail("variants(...) is a slot's authored value (the enum picker writes "
+                 "it); a template reads the resulting list from the options property");
             return;
         }
         const ViewBuiltin view = view_builtin(name);
@@ -501,7 +620,21 @@ class Parser {
             return;
         }
         if (token_.kind == TokenKind::LBracket) {
-            fail("a template attribute is one scalar; there is no list literal here");
+            /* the [a, b, c] list literal, exactly the scalar tier's; empty is legal */
+            advance();
+            uint32_t count = 0;
+            if (token_.kind != TokenKind::RBracket) {
+                for (;;) {
+                    parse_ternary();
+                    if (!error_.empty()) return;
+                    ++count;
+                    if (token_.kind != TokenKind::Comma) break;
+                    advance();
+                }
+            }
+            if (!expect(TokenKind::RBracket, "expected ']'")) return;
+            advance();
+            code_.push_back(Json{{"op", "MAKE_LIST"}, {"n", count}});
             return;
         }
         if (token_.kind != TokenKind::Ident) {
@@ -558,6 +691,15 @@ class Parser {
             emit_load(name + ":" + field);
             return;
         }
+        /* inside a lambda body the PARAMETERS resolve first: an ARG load of the loop's
+           per-element bindings, in declaration order */
+        if (in_lambda_) {
+            for (size_t i = 0; i < lambda_params_.size(); ++i) {
+                if (lambda_params_[i] != name) continue;
+                code_.push_back(Json{{"op", "ARG"}, {"i", static_cast<uint32_t>(i)}});
+                return;
+            }
+        }
         if (token_.kind == TokenKind::LParen) {
             parse_call(name);
             return;
@@ -587,6 +729,10 @@ class Parser {
     const TemplateScope& scope_;
     Json code_;
     std::string error_;
+    /* lambda state: in_lambda_ is the no-nesting guard, and the parameter list is what
+       a body's bare names resolve against before the property scope gets to look */
+    bool in_lambda_ = false;
+    std::vector<std::string> lambda_params_;
 };
 
 } // namespace

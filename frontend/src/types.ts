@@ -259,7 +259,19 @@ export interface Doc {
 /* ---- registry ---- */
 
 export type Program = { code: Instr[] };
-export type Instr = { op: string; v?: Json; cell?: string };
+/* One instruction. Most ops carry nothing; the fields below belong to exactly one family
+   each and are absent everywhere else: `v` a CONST's literal, `cell` a LOAD's cell name,
+   `n` how many values MAKE_LIST takes, `i` which binding an ARG reads, `mode` and `body`
+   the loop ITERATE runs per element (program.ts holds the contract). */
+export type Instr = {
+  op: string;
+  v?: Json;
+  cell?: string;
+  n?: number;
+  i?: number;
+  mode?: string;
+  body?: Instr[];
+};
 
 export interface SlotSpec {
   /* the slot's ADDRESS: a widget-level property is a bare name, a part's is its owning
@@ -360,14 +372,26 @@ export type Op =
 
 /* ---- live state ---- */
 
+/* ONE TREND SERIES AS THE WIRE DELIVERS IT. `values` is FLAT -- sample-major, series-
+ * strided, so sample k of series s is values[k * series + s] -- and `from` is the absolute
+ * index of the first SAMPLE in this frame. A live frame carries only the samples taken
+ * since the last one; a snapshot's block carries the whole ring. `cap` is how many samples
+ * the backend keeps, which is what the view's own ring trims to (editor.ts folds them). */
+export interface HistFrame {
+  rate: number;
+  series: number;
+  cap: number;
+  from: number;
+  values: (number | null)[];
+}
+
 export interface Live {
   epoch: number;
   values: Record<string, Json>;
-  /* trend history deltas, keyed "<widget>.<slot>". The backend still computes and sends
-     them; no view accumulates them at present — the standing views and the plot that read
-     them both went with the SVG renderer, and the rebuild folds them again for whatever
-     draws a trend next. Declared here because the frame carries the field. */
-  hist?: Record<string, Json>;
+  /* trend history, keyed "<widget>.<slot>": a DELTA on a live frame, the full ring on a
+     snapshot. The shell folds these into its standing rings (editor.ts) and a `hist:` cell
+     reads one. */
+  hist?: Record<string, HistFrame>;
 }
 
 /* ---- diagnostics ---- */

@@ -31,6 +31,27 @@ struct StructState {
     std::vector<uint32_t> texts;
 };
 
+/* One LIST-shaped cell's retained storage. A list value built during a run lives in the
+ * scratch element pool, which resets before the next one, so a cell that is to hold a
+ * list across ticks needs storage of its own: this is it, written whole, latest wins.
+ * `elems` is sized once to the element ceiling; `texts` names one slot in
+ * RuntimeState::texts per element that has ever held text, so element text resolves
+ * through exactly the machinery every other text value does, and the growth to a list's
+ * working width is a one-time cost rather than a per-tick one. */
+struct ListState {
+    uint32_t count = 0;
+    std::vector<Value> elems;
+    std::vector<uint32_t> texts;
+};
+
+/* a bounds-checked window into an aggregate's elements; `count` is ENTRIES (a map's
+ * PAIRS, entries interleaved key,value). Both storages resolve through it, so a reader
+ * never has to know whether the value it holds is scratch or retained. */
+struct AggView {
+    const Value* data = nullptr;
+    uint32_t count = 0;
+};
+
 struct LastValueState {
     bool known = false;
     std::vector<Value> fields;
@@ -117,6 +138,8 @@ class RuntimeState {
     uint32_t elem_text_base = 0;
     uint32_t elem_text_cursor = 0;
     uint32_t elem_text_count = 0;
+    /* one entry per list-shaped cell, indexed by CellDef::list_slot */
+    std::vector<ListState> lists;
     std::vector<StructState> structs;
     std::vector<LastValueState> last;
     std::vector<Value> deadband;
@@ -135,6 +158,18 @@ class RuntimeState {
     bool store(const Program& program, uint32_t cell, const Value& value) noexcept;
     void clear_outputs() noexcept;
     void fault(uint32_t site) noexcept;
+
+    /* the elements behind a list or a map, whichever storage it names */
+    AggView aggregate(const Value& value) const noexcept;
+    /* Copy a run of elements into a list cell's retained slot and point the cell at it.
+     * The source may live anywhere -- the scratch pool, a program's constant list, the
+     * state being retired at a recompile -- so text is resolved through the pair it
+     * belongs to and copied into the slot's own storage. */
+    bool hold_list(const Program& source_program, const RuntimeState& source,
+                   uint32_t cell, uint32_t list_slot, const Value* data,
+                   uint32_t count) noexcept;
+    /* the text slot backing element `at` of a retained list, allocated on first use */
+    uint32_t list_text(ListState& held, uint32_t at) noexcept;
 
     /* aggregate scratch: reset before seeding a run's x, allocate during the run.
      * alloc_elems returns the pool offset or UINT32_MAX when the layout bound is hit;

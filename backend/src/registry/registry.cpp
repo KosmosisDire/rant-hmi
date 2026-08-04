@@ -15,16 +15,18 @@
  *
  * Every attr is EXPRESSION TEXT in the template-expression dialect (lang/template_expr):
  * bare identifiers are the component's own properties, `$name` is a theme token, `state.`
- * and `repeat.` are the view's own inputs, and hist()/optcount()/optfrac() address the
- * shared machinery's cells. The compiler lowers each to the view program the renderer
- * runs.
+ * and `repeat.` are the view's own inputs, and hist() addresses the sampling ring's
+ * cell. Lists are ordinary values in that dialect — the Selector counts and indexes its
+ * `options`, the Trend maps its series into path anchors — so no resolver cells and no
+ * privileged plot survive. The compiler lowers each attr to the view program the
+ * renderer runs.
  *
  * WHAT THE COLLAPSE DROPPED, deliberately and worth naming: the extent FIT (a partial
  * sweep scaled to fill an oblong tile — an aspect-locked square dial replaces it), text
  * that sizes itself to its box (sizes are px until the DOM measures for us), tick
- * thinning below a pixel floor, rounded arc ends, the Selector's per-detent option NAMES
- * and the Trend's autoscale and display-tier smoothing. The last two wait on the same
- * language work: a view tier that can fold a list, and index one. */
+ * thinning below a pixel floor, rounded arc ends, and the Trend's autoscale and
+ * display-tier smoothing (authorable now — hist(value).min/.max are one edit away —
+ * left un-authored so the config slots stay predictable). */
 
 namespace hmi {
 namespace {
@@ -559,8 +561,9 @@ Json readout_component() {
 
 /* A TREND: the one display whose truth is a PAST, not a value. The backend keeps the
  * history (the `history` flag on `value`), sampling at `rate` into a `window` ring
- * whether or not anyone is viewing; the plot is a PATH whose anchors are that series —
- * data-driven ink, which is what a plot always was. */
+ * whether or not anyone is viewing; the plot is a PATH whose anchors are AUTHORED as a
+ * map over that series — sample index across the box, value against min/max up it, a
+ * Nil sample an honest break in the line. No renderer knows what a plot is. */
 Json trend_component() {
     Json value = slot("value", "series", nullptr, "value");
     value["history"] = true;
@@ -576,9 +579,10 @@ Json trend_component() {
                 Json::array(),
                 box_attrs(),
                 Json::array({
-                    owns(path("plot", Json{{"points", "hist(value)"},
-                                           {"y_min", "min"},
-                                           {"y_max", "max"},
+                    owns(path("plot", Json{{"points",
+                                            "hist(value).map((v, i) => anchor("
+                                            "i / max(hist(value).length - 1, 1), "
+                                            "1 - (v - min) / (max - min)))"},
                                            {"stroke", "fill_color"},
                                            {"stroke_w", "2"}},
                               Json::array(), false),
@@ -592,9 +596,12 @@ Json trend_component() {
 Json dropdown_component() {
     return component("Dropdown", 264, 66,
                 compose_slots(tile_base(), {
-                    /* a TypeRef naming an enum: the view expands it to the variant names,
-                     * so the options can never drift from the schema */
-                    slot("options", "text", "", "value", "enum-type"),
+                    /* THE OPTIONS ARE A LIST: authored as one (["Off", "Low", "High"])
+                     * or written as variants(Type.field), which the compiler expands to
+                     * a mesh enum's variant names so they cannot drift from the schema.
+                     * The editor tag still says enum-type: that is which PICKER the
+                     * inspector offers, not what the cell holds. */
+                    slot("options", "list", Json::array(), "value", "enum-type"),
                     slot("value", "text", "", "value"),
                     /* the field itself is the box */
                     slot("surface", "color", "$surface-2", "frame", "color"),
@@ -917,11 +924,16 @@ Json gauge_component() {
 }
 
 Json selector_component() {
-    const Str angle = "start_angle + (optfrac(value, options)) * sweep_angle";
+    /* the needle rides the value's position in the list: indexOf over the count, the
+     * -1 of a value not in the list clamped to the first detent rather than swinging
+     * below the sweep */
+    const Str frac =
+        "max(options.indexOf(value), 0) / max(options.length - 1, 1)";
+    const Str angle = "start_angle + " + frac + " * sweep_angle";
     return component("Selector", 176, 176,
                 compose_slots(tile_base(), {
-                    /* options is a TypeRef naming an enum, exactly as on Dropdown */
-                    slot("options", "text", "", "value", "enum-type"),
+                    /* options is a list, exactly as on Dropdown */
+                    slot("options", "list", Json::array(), "value", "enum-type"),
                     slot("value", "text", "", "value"),
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
@@ -950,11 +962,10 @@ Json selector_component() {
                                    Json::array({slot("body_color", "color", "$surface-2",
                                                      "appearance", "color")})),
                               /* THE DETENTS ARE THE OPTIONS: one mark per option, placed
-                                 by its own copy's fraction. Their NAMES wait on a view
-                                 tier that can index a list — the same gap the Trend's
-                                 fold is on. */
+                                 by its own copy's fraction, its NAME beside it by index —
+                                 the list indexing the old resolver cells could never do */
                               frame("detent",
-                                    Json{{"repeat", "optcount(options)"},
+                                    Json{{"repeat", "options.length"},
                                          {"surface", "$scale"},
                                          {"w", "0.02"},
                                          {"h", "0.08"},
@@ -966,12 +977,25 @@ Json selector_component() {
                                          {"origin_y", "0.5"},
                                          {"rotate", "start_angle + repeat.fraction * "
                                                     "sweep_angle"}}),
+                              text("names",
+                                   Json{{"repeat", "options.length"},
+                                        {"text", "options[repeat.index]"},
+                                        {"color", "$ink-muted"},
+                                        {"size", "10"},
+                                        {"w", "0.44"},
+                                        {"h", "0.11"},
+                                        {"x", dial_x("start_angle + repeat.fraction * "
+                                                     "sweep_angle", "1.14")},
+                                        {"y", dial_y("start_angle + repeat.fraction * "
+                                                     "sweep_angle", "1.14")},
+                                        {"origin_x", "0.5"},
+                                        {"origin_y", "0.5"}}),
                               radial_needle("0.78", "0.09", angle),
                           }),
                           radial_interact(
                               Json{{"options", "options"},
                                    {"mode", "drag"},
-                                   {"fraction", "optfrac(value, options)"}},
+                                   {"fraction", frac}},
                               Json{{"select", "select"}})),
                 }),
                 Json::array({on_event("select", {sets_slot("value", "x")})}));

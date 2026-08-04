@@ -187,6 +187,20 @@ int main() {
         CHECK(header.is_object());
     }
 
+    /* A LIST cell rides the wire as an array: the demo's Selector authored its options,
+       and a view that had to guess them from a type name could only ever be a tick
+       behind what the backend actually holds. */
+    {
+        const Json mode = widget_of((*snapshot)["doc"], "Mode");
+        const std::string key = std::to_string(json_u64_or(mode["id"], 0)) + ".options";
+        const Json& live = (*snapshot)["live"]["values"];
+        CHECK(live.contains(key));
+        if (live.contains(key)) {
+            CHECK(live[key].is_array());
+            CHECK(live[key] == Json::array({"Off", "Low", "High"}));
+        }
+    }
+
     /* the built-ins' editable DOCUMENT form rides beside the derived registry: nodes
      * with expression-text attrs, no compiled template, no ids (a fork inserts one
      * into doc.components and the backend issues ids through prepare) */

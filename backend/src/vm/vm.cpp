@@ -66,20 +66,10 @@ std::string_view scalar_text(const ExecContext& ctx, const Value& v,
     }
 }
 
-/* a bounds-checked window into the element pool; count is entries (a map's PAIRS,
- * entries interleaved key,value) */
-struct AggView {
-    const Value* data = nullptr;
-    uint32_t count = 0;
-};
-
+/* the elements behind an aggregate, whichever storage it names (the run's pool or a
+ * cell's retained slot): the state owns that distinction, since it owns both */
 AggView agg_view(const ExecContext& ctx, const Value& value) noexcept {
-    const uint32_t count = static_cast<uint32_t>(value.data.integer);
-    const uint32_t need = value.tag == ValueTag::Map ? count * 2 : count;
-    if (value.ref > ctx.state.elems.size() ||
-        need > ctx.state.elems.size() - value.ref)
-        return {};
-    return {ctx.state.elems.data() + value.ref, count};
+    return ctx.state.aggregate(value);
 }
 
 /* scalar equality that compares text by CONTENT (refs differ across slots) */
@@ -708,7 +698,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             }
             if (!numeric_elems && !text_elems && view.count) return Value::nil();
             const Value sorted = copied_list(ctx, view.data, view.count, 1, 0,
-                                             static_cast<ValueTag>(receiver.flags));
+                                             list_elem_tag(receiver));
             if (sorted.tag != ValueTag::List) return sorted;
             Value* begin = ctx.state.elems.data() + sorted.ref;
             if (numeric_elems)
@@ -727,7 +717,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const AggView view = agg_view(ctx, receiver);
             if (!view.data && view.count) return Value::nil();
             const Value copy = copied_list(ctx, view.data, view.count, 1, 0,
-                                           static_cast<ValueTag>(receiver.flags));
+                                           list_elem_tag(receiver));
             if (copy.tag != ValueTag::List) return copy;
             Value* begin = ctx.state.elems.data() + copy.ref;
             std::reverse(begin, begin + view.count);
@@ -748,7 +738,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             to = std::max<int64_t>(0, std::min(length, to));
             const uint32_t count = to > from ? static_cast<uint32_t>(to - from) : 0;
             return copied_list(ctx, view.data, count, 1, static_cast<uint32_t>(from),
-                               static_cast<ValueTag>(receiver.flags));
+                               list_elem_tag(receiver));
         }
         case MethodId::ListContains:
         case MethodId::ListIndexOf: {
@@ -978,11 +968,17 @@ bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_
  * by Iterate (spec 6.4) -- without it a body would write over the operands of the very
  * expression that invoked it, silently, since the stack is shared state rather than a
  * local. The layout sizes the stack for a run plus the deepest body, and bodies never
- * nest, so two frames is the whole depth. */
+ * nest, so two frames is the whole depth.
+ *
+ * `x2` and `x3` are the lambda's SECOND and THIRD parameters (an element's index, a
+ * fold's element): registers rather than stack slots, because a body reads them the way
+ * it reads x -- by position, through LoadX -- and nothing else in the language has more
+ * than one implicit value. Nil for every run that is not a body. */
 static RunResult run_code(const Program& program, const std::vector<Instruction>& code,
                           const FlowProgram* flow, RuntimeState& state, Value event_value,
                           uint32_t start_pc = 0, Value* out_x = nullptr,
-                          uint32_t stack_base = 0) noexcept {
+                          uint32_t stack_base = 0, Value x2 = Value::nil(),
+                          Value x3 = Value::nil()) noexcept {
     RunResult result;
     const ExecContext ctx{program, state};
     Value x = event_value;
@@ -1009,8 +1005,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::Const:
                 if (ins.a >= program.constants.size() || !push(program.constants[ins.a])) fail(ins.c);
                 break;
+            /* `a` names WHICH implicit value: 0 is x itself (a flow's event value, a
+               feed's source, a lambda's first parameter), 1 and 2 the further lambda
+               parameters. Anything else is a malformed instruction, not a Nil. */
             case OpCode::LoadX:
-                if (!push(x)) fail(ins.c);
+                if (ins.a > 2 || !push(ins.a == 0 ? x : ins.a == 1 ? x2 : x3)) fail(ins.c);
                 break;
             case OpCode::Load:
                 if (ins.a >= state.values.size() || !push(state.values[ins.a])) fail(ins.c);
@@ -1450,18 +1449,22 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
              * bound is truncated and faulted rather than iterated, which is the one
              * hazard 6.4 names for an uncapped varr. */
             case OpCode::Iterate: {
-                if (sp == 0 || ins.a >= program.subs.size()) {
+                const IterateMode mode = static_cast<IterateMode>(ins.small);
+                const bool folds = mode == IterateMode::Reduce;
+                if (sp < (folds ? 2u : 1u) || ins.a >= program.subs.size()) {
                     fail(ins.c);
                     break;
                 }
+                /* a fold's operands are [list, start]: the starting value was pushed
+                   last, so it comes off first */
+                const Value init = folds ? pop() : Value::nil();
                 const Value source = pop();
-                const IterateMode mode = static_cast<IterateMode>(ins.small);
                 const bool folds_to_bool =
                     mode == IterateMode::Any || mode == IterateMode::All;
                 if (source.tag != ValueTag::List) {
                     /* Nil in, Nil out: UNKNOWN poisons rather than iterating nothing and
                        reporting a confident empty answer */
-                    if (!push(folds_to_bool ? Value::nil() : Value::nil())) fail(ins.c);
+                    if (!push(Value::nil())) fail(ins.c);
                     break;
                 }
                 const AggView view = agg_view(ctx, source);
@@ -1480,7 +1483,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                    element, taken as a second block so the two sort together. */
                 uint32_t out_at = UINT32_MAX;
                 uint32_t keys_at = UINT32_MAX;
-                if (!folds_to_bool) {
+                if (!folds_to_bool && !folds) {
                     out_at = state.alloc_elems(count);
                     if (out_at == UINT32_MAX) {
                         fail(ins.c);
@@ -1501,10 +1504,20 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 bool body_faulted = false;
                 ValueTag elem_tag = ValueTag::Nil;
                 bool uniform = true;
+                /* the fold's carried value: the body's first parameter each time round,
+                   and what an empty list leaves untouched */
+                Value acc = init;
                 for (uint32_t i = 0; i < count && !body_faulted; ++i) {
                     const Value element = view.data[i];
+                    /* the parameters, positionally: a fold leads with the accumulator
+                       and every mode ends with the element's index */
                     const RunResult sub =
-                        run_code(program, body, nullptr, state, element, 0, nullptr, frame);
+                        folds ? run_code(program, body, nullptr, state, acc, 0, nullptr,
+                                         frame, element,
+                                         Value::number(static_cast<double>(i)))
+                              : run_code(program, body, nullptr, state, element, 0,
+                                         nullptr, frame,
+                                         Value::number(static_cast<double>(i)));
                     result.steps += sub.steps;
                     if (sub.faulted) {
                         body_faulted = true;
@@ -1514,6 +1527,23 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                        bottom of its own frame */
                     const Value value =
                         frame < state.stack.size() ? state.stack[frame] : Value::nil();
+                    if (folds) {
+                        /* the accumulator has to survive the NEXT iteration writing the
+                           body's own text slot, so a text result is re-homed into an
+                           element slot of its own -- the same hazard Map handles below */
+                        if (value.tag == ValueTag::Text) {
+                            const uint32_t slot = state.alloc_elem_text();
+                            if (slot == UINT32_MAX) {
+                                body_faulted = true;
+                                break;
+                            }
+                            state.texts[slot].set(text_of(ctx, value));
+                            acc = Value::text(slot);
+                        } else {
+                            acc = value;
+                        }
+                        continue;
+                    }
                     switch (mode) {
                         case IterateMode::Map: {
                             /* A text-producing body writes into the ONE slot its site was
@@ -1554,6 +1584,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         case IterateMode::All:
                             if (!value_truth(value)) all_true = false;
                             break;
+                        case IterateMode::Reduce:
+                            break;   /* folded above, before the modes that build */
                     }
                 }
                 if (body_faulted) {
@@ -1577,7 +1609,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     }
                 }
                 const bool pushed_ok =
-                    folds_to_bool
+                    folds ? push(acc)
+                    : folds_to_bool
                         ? push(Value::boolean(mode == IterateMode::Any ? any_true
                                                                       : all_true))
                         : push(Value::list(out_at, kept,

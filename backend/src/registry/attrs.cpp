@@ -113,13 +113,11 @@ const std::vector<AttrDef>& path_attrs() {
             "stroke width in CSS pixels — the anchors scale with the box, the stroke does "
             "not (vector-effect: non-scaling-stroke)"),
         def("cap", "text", "butt", "line ends: butt | round | square (stroke-linecap)"),
-        no_def("points", "series",
-            "DATA-DRIVEN ANCHORS: a series (a history slot) plotted across the box, "
-            "left to right, in place of the authored anchors. This is the one shape the "
-            "language cannot yet fold into anchors itself — when it can, this attr "
-            "becomes sugar for that fold and nothing else changes"),
-        def("y_min", "num", 0.0, "the value at the bottom of the box, for `points`"),
-        def("y_max", "num", 1.0, "the value at the top of the box, for `points`"),
+        no_def("points", "list",
+            "COMPUTED ANCHORS: a list of anchor(x, y) records in fractions of the box, "
+            "drawn in place of the authored anchors — a plot is a map over its series "
+            "(hist(value).map((v, i) => anchor(..., ...))). A Nil element is a GAP: the "
+            "line breaks there rather than bridging it"),
     };
     return table;
 }

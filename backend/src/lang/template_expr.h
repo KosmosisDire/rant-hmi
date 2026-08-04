@@ -4,13 +4,15 @@
  * This is how a component's template attrs are authored as text ("value.pick(fill_color,
  * track_color)") and served compiled, with the view still never parsing anything.
  *
- * The vocabulary is exactly what that interpreter can run: scalar literals, property /
- * tile / state / theme loads, arithmetic, comparisons, and/or/not, pick, toFixed, and
- * the numeric builtins with a view opcode. Everything else in the scalar language
- * (colors-as-math, text methods, aggregates, timing) has no view encoding and is
- * refused at compile time with an error that says so. Shape discipline is deliberately
- * light: this is display-tier styling code, and the view's Nil-poisoning renders a
- * wrong shape as UNKNOWN rather than a wrong pixel. */
+ * The vocabulary is exactly what that interpreter can run: scalar and list literals,
+ * property / state / theme loads, arithmetic, comparisons, and/or/not, pick, toFixed,
+ * the numeric builtins with a view opcode, and the list vocabulary — indexing, length /
+ * indexOf / sum / avg / max / min, anchor(), and the iterating methods (map / filter /
+ * any / all / sortBy / reduce) whose lambda bodies ride inside the ITERATE instruction.
+ * Everything else in the scalar language (text methods, timing) has no view encoding
+ * and is refused at compile time with an error that says so. Shape discipline is
+ * deliberately light: this is display-tier styling code, and the view's Nil-poisoning
+ * renders a wrong shape as UNKNOWN rather than a wrong pixel. */
 #pragma once
 
 #include <nlohmann/json.hpp>

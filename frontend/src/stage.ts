@@ -28,7 +28,7 @@
  * read, and a live frame rebuilds only when one of those moved. */
 
 import { DropPlan, freeAllowed, freeBoxOf, snapPx } from "./arrange.js";
-import { Editor } from "./editor.js";
+import { Editor, HistRing } from "./editor.js";
 import { armInteract } from "./gestures.js";
 import { HANDLE_MARGIN, handleMarkup, handlesOff } from "./handles.js";
 import { iconMarkup } from "./icons.js";
@@ -320,21 +320,46 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
            what places a tick at its own value rather than a step past it */
         return repeat.count > 1 ? repeat.index / (repeat.count - 1) : 0;
       }
+      /* A TREND CELL IS A LIST: the shell's standing ring (editor.ts), not the frame's
+         delta. One series reads as the samples themselves -- programs load a cell as often
+         as they like, and a copy per load is a copy per frame for nothing -- and a wider
+         one as a list of samples, each its own list of series (histRows caches that). What
+         is RECORDED is the ring's version: comparing thousands of samples per frame to
+         find out whether a plot moved is the cost this counter exists to remove. */
       case "hist": {
         if (!node.owner) return null;
         const key = node.owner + "." + name;
-        const series = editor.live?.hist?.[key];
-        state.consumed.set("hist:" + key, JSON.stringify(series ?? null));
-        return series ?? null;
+        const ring = editor.hist?.(key) ?? null;
+        state.consumed.set("hist:" + key, histMark(ring));
+        if (!ring) return null;
+        return ring.series === 1 ? ring.values : histRows(ring);
       }
-      /* optcount/optnames/optfrac: an option list is a mesh TYPE's variants, and the
-         resolver that expanded them went with the SVG renderer. Nil until it returns,
-         which draws no detents rather than the wrong ones. Nothing else reaches here —
-         `tile` is refused at compile now, since a node cannot measure itself. */
+      /* optcount/optnames/optfrac: an option list is a value now -- the `options` param
+         evaluates to a real list -- so nothing needs a cell of its own to expand one.
+         Nothing else reaches here: `tile` is refused at compile, since a node cannot
+         measure itself. */
       default:
         return null;
     }
   };
+}
+
+/* what a hist cell's dependency is worth comparing: the ring's version, or one mark for
+   "nothing has arrived", which a first frame moves off */
+function histMark(ring: HistRing | null): string {
+  return ring ? String(ring.version) : "-";
+}
+
+/* a multi-series ring as one list per SAMPLE, cached on the ring and thrown away the
+   moment its version moves: a map body may load the cell once per element, and chunking
+   per load would make a plot quadratic in its own sample count */
+function histRows(ring: HistRing): (number | null)[][] {
+  if (ring.chunks && ring.chunks.version === ring.version) return ring.chunks.rows;
+  const rows: (number | null)[][] = [];
+  for (let at = 0; at + ring.series <= ring.values.length; at += ring.series)
+    rows.push(ring.values.slice(at, at + ring.series));
+  ring.chunks = { version: ring.version, rows };
+  return rows;
 }
 
 function attrOf(node: ViewNode, name: string, cells: Cells): Json {
@@ -433,22 +458,29 @@ function anchorPoint(anchor: CompiledAnchor, cells: Cells): { x: number; y: numb
 }
 
 function pathData(node: ViewNode, cells: Cells): string {
-  /* DATA-DRIVEN ANCHORS: a series plotted across the box, left to right. This is the one
-     shape the language cannot fold into anchors itself yet; when it can, the attr becomes
-     sugar for that fold and this branch goes away. */
+  /* COMPUTED ANCHORS: `points` is a LIST OF POINTS the expression folded itself -- a map
+     over a trend cell, scaled by whatever the author wrote -- so the shape of a plot is
+     ordinary language work rather than a privileged attr the renderer knows the meaning
+     of. Every point is fractions of the box, exactly like an authored anchor.
+     A GAP BREAKS THE LINE: an element that is not a point (a Nil sample, anything
+     malformed) ends the subpath, and the next valid point opens a new one with M. The
+     flat-number branch this replaced drew straight through such a hole, which is a line
+     through samples nobody took. */
   const points = attrOf(node, "points", cells);
   if (Array.isArray(points)) {
-    const lo = num(attrOf(node, "y_min", cells)) ?? 0;
-    const hi = num(attrOf(node, "y_max", cells)) ?? 1;
-    const span = hi - lo || 1;
     const parts: string[] = [];
-    points.forEach((value: Json, i: number) => {
-      const v = num(value);
-      if (v === null) return;   /* an honest gap: no capture, no point */
-      const x = points.length > 1 ? i / (points.length - 1) : 0;
-      const y = 1 - (v - lo) / span;
-      parts.push((parts.length ? "L" : "M") + x + " " + y);
-    });
+    let drawing = false;
+    for (const point of points) {
+      const x = point && typeof point === "object" ? num((point as Json).x) : null;
+      const y = point && typeof point === "object" ? num((point as Json).y) : null;
+      if (x === null || y === null) {
+        drawing = false;
+        continue;
+      }
+      parts.push((drawing ? "L" : "M") + x + " " + y);
+      drawing = true;
+    }
+    if (parts.length && node.closed) parts.push("Z");
     return parts.join(" ");
   }
 
@@ -909,10 +941,12 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
   let rebuild = !state.page || signature !== state.signature;
   if (!rebuild)
     for (const [cell, was] of state.consumed) {
+      /* a trend compares by its ring's VERSION -- an append moves it, and nothing else
+         has to be looked at -- while an ordinary cell compares by its value */
       const now = cell.startsWith("hist:")
-        ? editor.live?.hist?.[cell.slice(5)]
-        : editor.live?.values?.[cell];
-      if (JSON.stringify(now ?? null) !== was) {
+        ? histMark(editor.hist?.(cell.slice(5)) ?? null)
+        : JSON.stringify(editor.live?.values?.[cell] ?? null);
+      if (now !== was) {
         rebuild = true;
         break;
       }
