@@ -177,6 +177,8 @@ function beginMove(): void {
   /* every position holds authored logic: the press stays a click, and the inspector is
      where that logic is edited */
   if (!found || !plan) return;
+  /* a new grab of a node whose commit is still settling takes over from the overlay */
+  if (standing?.id === id) clearStanding();
   free = { host, editor, id, pointer, handle: "move", plan, k: found.k,
            sx: found.sx, sy: found.sy, startX: x, startY: y, dx: 0, dy: 0, snap: true };
   host.setPointerCapture?.(pointer);
@@ -195,6 +197,7 @@ function beginResize(host: HTMLElement, editor: Editor, hit: Element, ev: Pointe
   const found = measure(host, editor, id);
   const plan = found?.plan(handle) ?? null;
   if (!found || !plan) return;   /* a disabled grip has no hit rect; belt and braces */
+  if (standing?.id === id) clearStanding();
   free = { host, editor, id, pointer: ev.pointerId, handle, plan, k: found.k,
            sx: found.sx, sy: found.sy,
            startX: ev.clientX, startY: ev.clientY, dx: 0, dy: 0, snap: !ev.altKey };
@@ -223,21 +226,78 @@ function onMove(ev: PointerEvent): void {
   repaintFree();
 }
 
-/* the numbers on screen, in place()'s own vocabulary — and the same re-assertion after a
- * live rebuild replaces the element the gesture is holding. Called by stage.ts after
- * every rebuild, and by the pointer move that caused one. */
-export function repaintFree(): void {
-  if (!free) return;
-  const el = nodeIn(free.host, free.id);
-  if (el) {
-    const to = free.plan.apply(free.dx, free.dy, free.snap);
-    if (to.x !== undefined) el.style.left = to.x + "px";
-    if (to.y !== undefined) el.style.top = to.y + "px";
-    if (to.w !== undefined) el.style.width = to.w + "px";
-    if (to.h !== undefined) el.style.height = to.h + "px";
+/* A COMMITTED GESTURE'S PICTURE STANDS UNTIL ITS ECHO SETTLES. The commit is an edit
+ * like any other: the document holds the OLD numbers until the backend echoes the op, and
+ * the recompiled programs ride the snapshot AFTER that — so a render pass inside that
+ * window would paint the box back where the drag began (the flash-back). The committed
+ * numbers are re-asserted after every pass instead, until the written fields' attr text
+ * has moved off its pre-commit values AND the compile epoch has moved — our own echo
+ * settling, or someone else's write winning, and either way the document is then the
+ * honest picture. A REFUSED edit changes nothing, ever: the timeout puts the document
+ * back beside the refusal banner. This is view-side optimism only — the document store
+ * is never written ahead of its echo. */
+interface StandingWrite {
+  host: HTMLElement;
+  editor: Editor;
+  id: number;
+  /* the committed numbers, in place()'s own px vocabulary — what keeps being painted */
+  styles: FreeWrite;
+  /* each written field's attr text BEFORE the commit: any change means an echo landed */
+  before: Record<string, string>;
+  epoch: number;
+  timer: number;
+}
+
+let standing: StandingWrite | null = null;
+
+function clearStanding(): void {
+  if (!standing) return;
+  window.clearTimeout(standing.timer);
+  standing = null;
+}
+
+function standingCheck(): void {
+  const held = standing;
+  if (!held) return;
+  const doc = held.editor.store.nodeAt(held.id);
+  if (!doc) {
+    clearStanding();
+    return;
   }
-  /* the handles ride the box they ring */
-  refreshOverlay(free.host);
+  const attrs = doc.attrs ?? {};
+  const landed = Object.keys(held.before)
+    .some((key) => (attrs[key] ?? "") !== held.before[key]);
+  const epoch = held.editor.live?.epoch ?? 0;
+  if (landed && epoch !== held.epoch) {
+    clearStanding();
+    return;
+  }
+  const el = nodeIn(held.host, held.id);
+  if (!el) return;
+  const to = held.styles;
+  if (to.x !== undefined) el.style.left = to.x + "px";
+  if (to.y !== undefined) el.style.top = to.y + "px";
+  if (to.w !== undefined) el.style.width = to.w + "px";
+  if (to.h !== undefined) el.style.height = to.h + "px";
+}
+
+/* the numbers on screen, in place()'s own vocabulary — and the same re-assertion after a
+ * render pass repaints the element the gesture (or a still-settling commit) is holding.
+ * Called by stage.ts after every pass, and by the pointer move that caused one. */
+export function repaintFree(): void {
+  if (free) {
+    const el = nodeIn(free.host, free.id);
+    if (el) {
+      const to = free.plan.apply(free.dx, free.dy, free.snap);
+      if (to.x !== undefined) el.style.left = to.x + "px";
+      if (to.y !== undefined) el.style.top = to.y + "px";
+      if (to.w !== undefined) el.style.width = to.w + "px";
+      if (to.h !== undefined) el.style.height = to.h + "px";
+    }
+    /* the handles ride the box they ring */
+    refreshOverlay(free.host);
+  }
+  standingCheck();
 }
 
 function onUp(ev: PointerEvent): void {
@@ -259,12 +319,24 @@ function onUp(ev: PointerEvent): void {
      On a page that text is whole px; inside a component the px divide back to a
      fraction of the parent's box (the divisors were measured with everything else). */
   const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
+  const before: Record<string, string> = {};
   for (const key of moved) {
+    before[key] = node.attrs?.[key] ?? "";
     const value = to[key] as number;
     const divisor = key === "x" || key === "w" ? held.sx : held.sy;
     attrs[key] = divisor ? fmtFraction(value / divisor) : fmtPx(value);
   }
   held.editor.apply([{ op: "set_prop", node: held.id, key: "attrs", value: attrs }]);
+  clearStanding();
+  const next: StandingWrite = { host: held.host, editor: held.editor, id: held.id,
+                                styles: to, before,
+                                epoch: held.editor.live?.epoch ?? 0, timer: 0 };
+  next.timer = window.setTimeout(() => {
+    if (standing !== next) return;
+    clearStanding();
+    documentRestore.get(next.host)?.();
+  }, 2500);
+  standing = next;
   held.editor.select([held.id]);
 }
 

@@ -124,7 +124,11 @@ class Element {
     return this.markup ?? "";
   }
 
+  /* INSERTING A NODE THAT ALREADY HAS A PARENT MOVES IT, which is the real DOM's own
+     rule and the one the stage's reconciler leans on: a child that changed places is
+     re-inserted where it belongs rather than cloned into two seats. */
   appendChild(child) {
+    child.parentElement?.removeChild(child);
     child.parentElement = this;
     this.childNodes.push(child);
     return child;
@@ -141,6 +145,7 @@ class Element {
     return child;
   }
   insertBefore(child, before) {
+    child.parentElement?.removeChild(child);
     const at = before ? this.childNodes.indexOf(before) : -1;
     child.parentElement = this;
     if (at < 0) this.childNodes.push(child);
@@ -157,6 +162,10 @@ class Element {
   }
   getAttribute(name) {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+  removeAttribute(name) {
+    this.attributes.delete(name);
+    if (SELF_PROPS.has(name)) this[name] = "";
   }
 
   contains(node) {

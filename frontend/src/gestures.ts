@@ -45,6 +45,15 @@ const TAP_SLOP = 10;
 /* linear-mode radial drag: px of vertical travel that covers the whole range */
 const LINEAR_TRAVEL = 160;
 
+/* THE MODE IS ASKED AT EVENT TIME, not at arming time. The stage's elements now outlive
+ * every mode flip (stage.ts: nothing is created or deleted at runtime), so a listener
+ * armed once must decide for itself whether the pointer is operating the machine or
+ * editing the picture. In EDIT mode the press is not this gesture's — and it must pass
+ * through untouched, because selection and direct manipulation are downstream of it. */
+function editing(seat: GestureSeat): boolean {
+  return seat.editor.view.mode === "edit";
+}
+
 function param(seat: GestureSeat, name: string): Json {
   const program = seat.interact.params?.[name] as Program | undefined;
   return program ? run(program, seat.cells) : undefined;
@@ -176,7 +185,7 @@ function pump(first: number, send: (value: number) => void): {
 
 function armPress(node: HTMLElement, seat: GestureSeat): void {
   node.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
+    if (editing(seat) || ev.button !== 0) return;
     /* the DEEPEST armed node wins, the stage's own one-target rule */
     ev.stopPropagation();
     const holdMs = num(param(seat, "hold_ms"), 600);
@@ -205,7 +214,7 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
 
 function armDrag1d(node: HTMLElement, seat: GestureSeat): void {
   node.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
+    if (editing(seat) || ev.button !== 0) return;
     ev.stopPropagation();
     ev.preventDefault();
     const box = node.getBoundingClientRect();
@@ -237,7 +246,7 @@ function armDrag1d(node: HTMLElement, seat: GestureSeat): void {
 
 function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
   node.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
+    if (editing(seat) || ev.button !== 0) return;
     ev.stopPropagation();
     ev.preventDefault();
     const box = node.getBoundingClientRect();
@@ -307,6 +316,7 @@ let standing: (() => void) | null = null;
 
 function armPick(node: HTMLElement, seat: GestureSeat): void {
   node.addEventListener("click", (ev) => {
+    if (editing(seat)) return;
     ev.stopPropagation();
     if (standing) {
       standing();

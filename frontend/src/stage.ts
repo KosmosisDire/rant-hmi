@@ -22,10 +22,29 @@
  * a theme token, this view's gesture state, which copy of a `repeat` this is — and what
  * comes out is a colour, a number, a string. Expressions compute; CSS places.
  *
- * Re-render policy: the page is rebuilt wholesale when the document version moves (cheap
- * at this scale, and reconciliation would buy nothing while nothing here holds state). A
- * live frame at 30 Hz must NOT do that, so each render records the live cells it actually
- * read, and a live frame rebuilds only when one of those moved. */
+ * THE IDENTITY-STABLE RENDERER: NO ELEMENT IS CREATED OR DELETED AT RUNTIME. An element
+ * is a thing the user is holding — a press, a hover, a text selection, a gesture's own
+ * captured box — so replacing it to change a colour breaks the interaction that was
+ * already under way. Instead every rendered node is a BIND: one persistent element, the
+ * view node it is currently of, and the cells its appliers read. Three passes, and only
+ * three:
+ *
+ *   FRESH — first paint, a page switch, stepping into or out of a widget. Keys change
+ *   wholesale there and the camera re-fits anyway, so the tree is built from nothing.
+ *
+ *   RECONCILE — the document version, the compile epoch, the mode or the artboard size
+ *   moved. Every node is re-keyed (by id where ids exist, by index-path inside a
+ *   component's template, plus the repeat copy) and every element whose key survives is
+ *   REUSED with its appliers re-run. Same cost as the old wholesale rebuild; identity
+ *   preserved.
+ *
+ *   LIVE PATCH — a live frame. Each bind recorded which cells its appliers read and each
+ *   parent recorded which cells its child list read; a frame re-runs exactly the binds
+ *   whose cells moved and touches no structure at all. A `show` that flipped or a
+ *   data-driven `repeat` whose count moved reconciles that ONE parent's children.
+ *
+ * Every applier is TOTAL: it writes or clears every property it owns, because the element
+ * it is writing to already carries the last pass's answer. */
 
 import { DropPlan, freeAllowed, freeBoxOf, snapPx } from "./arrange.js";
 import { Editor, HistRing } from "./editor.js";
@@ -43,6 +62,10 @@ import {
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
 const REPEAT_CAP = 512;
 
+/* the .page element's own key: the artboard is a bind like any other, dressed by the
+   component root's attrs inside a context and holding the top-level children */
+const ROOT_KEY = "#root";
+
 /* the camera: where the artboard sits in the pane, and at what scale */
 interface Camera {
   x: number;
@@ -52,19 +75,59 @@ interface Camera {
   manual: boolean;
 }
 
+/* ONE RENDERED NODE, standing. The element is created once and lives until its key leaves
+ * the tree; everything else here is what the engine needs to patch it in place. */
+interface Bind {
+  key: string;
+  el: HTMLElement;
+  /* the view node this element is currently OF — REFRESHED on every reconcile, because
+     the ViewNode tree is rebuilt from the document each time and a held one goes stale */
+  node: ViewNode;
+  /* the enclosing repeat copy this element is, or null outside a repeat */
+  repeat: { index: number; count: number } | null;
+  /* the cells the APPLIERS read: a live frame moving one of these re-runs them */
+  deps: Set<string>;
+  /* the cells the CHILD LIST read (the children's `show` and `repeat`): a live frame
+     moving one of these reconciles this parent's children, and nothing else */
+  kidDeps: Set<string>;
+  /* the child keys this bind managed on the last pass, in order */
+  kidKeys: string[];
+  /* kind "path": the <path> inside the svg scaffolding, patched rather than rebuilt */
+  path: SVGPathElement | null;
+  /* kind "icon": the name+weight last rendered to innerHTML, so a patch that changes
+     neither leaves the glyph's own DOM alone */
+  iconSig: string;
+  /* what kind of element this IS: a key whose node changed kind cannot reuse it */
+  shape: string;
+  /* the pass that last ran these appliers: what keeps one live frame from running a
+     bind twice when both its own cell and its parent's child list moved */
+  pass: number;
+}
+
 interface StageState {
   page: HTMLElement | null;
-  /* what the last render was OF: a change here rebuilds unconditionally */
-  signature: string;
-  /* the live cells that render actually read, and what they read — a live frame that
-     touches none of them changes nothing on screen */
-  consumed: Map<string, string>;
-  /* the state: cells the render read ("<owner>:<name>"): a gesture writing one of these
-     repaints; writing any other is invisible and costs nothing */
-  consumedState: Set<string>;
-  /* rebuild and re-render this host: what a gesture's state write calls when it landed
-     on a consumed cell (set by renderStage, which knows the host) */
-  repaint: () => void;
+  /* the pseudo-bind for the .page element itself */
+  root: Bind | null;
+  /* every standing element, by key */
+  binds: Map<string, Bind>;
+  /* cell -> the binds whose appliers read it */
+  byDep: Map<string, Set<Bind>>;
+  /* cell -> the parent binds whose CHILD LIST read it */
+  byKid: Map<string, Set<Bind>>;
+  /* cell -> what it was worth when a recorded read last saw it: the whole of the live
+     diff, and the reason a frame that moved nothing this picture reads costs nothing */
+  marks: Map<string, string>;
+  /* the set a read is being recorded into, or null OUTSIDE an engine pass — a gesture
+     reading its params through a captured seat must never mask a pending live diff */
+  recording: { deps: Set<string> } | null;
+  pass: number;
+  /* what a RECONCILE is keyed on: mode, artboard size, document version, compile epoch */
+  docSig: string;
+  /* the theme vars last emitted on the page, so a token that left is removed */
+  tokenNames: string[];
+  /* a gesture's state write landed: patch exactly what binds it (set by renderStage,
+     which knows the host) */
+  flushState: (key: string) => void;
   rings: HTMLElement[];
   /* the one ring that follows the pointer rather than the selection */
   hover: HTMLElement | null;
@@ -75,20 +138,10 @@ interface StageState {
      inside an entered widget — what the camera fits and the gestures divide by */
   art: { w: number; h: number };
   /* which page or entered-widget chain the picture is of (preview size excluded): a
-     step in or out refits the camera, a preview resize deliberately does not */
+     step in or out builds FRESH and refits the camera, a preview resize does neither */
   ctxPath: string;
   /* the preview-resize grips on the artboard's edge, up only inside a context */
   artGrips: HTMLElement[];
-  /* every built plot: the path element and what redraws its `d`. A STREAMING RING MUST
-     NOT REBUILD THE PAGE — a trend appends samples many times a second forever, and a
-     full rebuild per sample replaces the DOM a press is holding — so a change that is
-     ONLY hist-cells redraws these in place and touches nothing else. */
-  plots: { el: SVGPathElement; node: ViewNode; cells: Cells }[];
-  /* a program is reading hist cells inside a plot's own `points`: what lets cellsFor
-     tell a plot's consumption from a loose one (a label showing hist(value).avg), which
-     still needs the full rebuild */
-  inPlot: boolean;
-  histLoose: boolean;
   wired: boolean;
 }
 
@@ -97,11 +150,11 @@ const states = new WeakMap<HTMLElement, StageState>();
 function stateOf(host: HTMLElement): StageState {
   let state = states.get(host);
   if (!state) {
-    state = { page: null, signature: "", consumed: new Map(),
-              consumedState: new Set(), repaint: () => undefined, rings: [],
+    state = { page: null, root: null, binds: new Map(), byDep: new Map(),
+              byKid: new Map(), marks: new Map(), recording: null, pass: 0,
+              docSig: "", tokenNames: [], flushState: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
-              plots: [], inPlot: false, histLoose: false,
               wired: false };
     states.set(host, state);
   }
@@ -245,6 +298,43 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
   };
 }
 
+/* THE ARTBOARD'S OWN NODE: what the .page element is dressed by and what hangs off it. On
+ * a page that is the page's children in canvas px. Inside an ENTERED WIDGET it is the
+ * component's design frame at the context's preview size, its children the component's
+ * OWN nodes in fractions — the same nodes with their ids, which is what lets selection and
+ * the gestures work on them — reading the entered instance's cells, so the component
+ * behaves as that placement does while it is edited. An unforked BUILT-IN renders from its
+ * served template instead: no ids anywhere, and that absence IS the read-only. */
+function rootView(editor: Editor, page: Page | null): ViewNode {
+  const ctx = editor.contexts[editor.contexts.length - 1] ?? null;
+  let kids: ViewNode[] = [];
+  let rootAttrs: Attrs | null = null;
+  let owner = 0;
+  let type: WidgetType | null = null;
+  if (!ctx) {
+    kids = (page?.children ?? []).map((c) => pageNode(editor, c));
+  } else {
+    type = typeOf(editor.registry,
+                  editor.store.nodeAt(ctx.from)?.type ?? ctx.builtin);
+    owner = ctx.from;
+    if (ctx.component) {
+      const comp = editor.store.node(ctx.component);
+      kids = ((comp?.children ?? []) as Node[]).map((c) =>
+        pageNode(editor, c, owner, type, true));
+      rootAttrs = editor.nodeAttrs?.[String(ctx.component)]?.attrs ?? null;
+    } else if (type) {
+      kids = (type.template.children ?? []).map((c) => templateNode(c, owner, type, ""));
+      rootAttrs = type.template.attrs ?? null;
+    }
+  }
+  /* the design frame wears the component ROOT's own dressing — an instance's box IS this
+     node — over the artboard surface the page style gives it. No context: an empty attr
+     map, which the (total) dress applier reads as "nothing authored" and clears. */
+  return { id: 0, instance: false, kind: "frame", name: "", attrs: rootAttrs ?? {},
+           anchors: [], closed: false, children: kids, owner, type, path: "", frac: true,
+           interact: null };
+}
+
 /* ---- the pure core: a value -> style ---- */
 
 /* a colour value as CSS: "$name" reads the token custom property the page carries, and
@@ -284,11 +374,22 @@ function pct(value: number): string {
 
 /* ---- reading a node's fields ---- */
 
+/* ONE RECORDED READ. What a cell was worth is remembered against its key, so the live
+ * diff is a string compare per cell and nothing else, and the bind that read it is
+ * indexed against it by whoever is recording.
+ *
+ * OUTSIDE A PASS NOTHING IS RECORDED. A gesture reads its params through the seat it was
+ * armed with (gestures.ts), and marking a cell there would hide a change the next live
+ * frame is supposed to patch. */
+function sawCell(state: StageState, key: string, mark: string): void {
+  if (!state.recording) return;
+  state.recording.deps.add(key);
+  state.marks.set(key, mark);
+}
+
 /* The cells one node's programs read. `slot:` is the instance's own value — LIVE FIRST:
  * the cell the runtime publishes, else what this placement authors, else the type's
- * default, which is the whole of what makes a bound surface a working lamp. Every live key
- * looked up is recorded, so the re-render policy knows exactly which cells this picture
- * depends on. */
+ * default, which is the whole of what makes a bound surface a working lamp. */
 function cellsFor(state: StageState, editor: Editor, node: ViewNode,
                   repeat: { index: number; count: number } | null): Cells {
   return (cell: string): Json => {
@@ -300,7 +401,7 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         if (!node.owner) return null;
         const key = node.owner + "." + name;
         const live = editor.live?.values?.[key];
-        state.consumed.set(key, JSON.stringify(live ?? null));
+        sawCell(state, key, JSON.stringify(live ?? null));
         if (live !== undefined && live !== null) return live;
         const widget = editor.store.nodeAt(node.owner);
         let at: Json = widget?.slots;
@@ -316,12 +417,13 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
       case "theme":
         return "$" + name;
       /* this view's own gesture state (gestures.ts writes it outside edit mode). The
-         read is RECORDED so a write repaints exactly the pictures that bind it; in edit
+         read is RECORDED so a write patches exactly the pictures that bind it; in edit
          mode nothing writes, and it honestly reads false — never a pressed-looking
          widget nobody is pressing. */
       case "state": {
-        state.consumedState.add(node.owner + ":" + name);
-        return editor.view.state?.[node.owner]?.[name] ?? false;
+        const value = editor.view.state?.[node.owner]?.[name] ?? false;
+        sawCell(state, "state:" + node.owner + ":" + name, JSON.stringify(value));
+        return value;
       }
       case "repeat": {
         if (!repeat) return null;
@@ -341,10 +443,7 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         if (!node.owner) return null;
         const key = node.owner + "." + name;
         const ring = editor.hist?.(key) ?? null;
-        state.consumed.set("hist:" + key, histMark(ring));
-        /* a hist read OUTSIDE a plot's `points` (a label showing hist(value).avg) keeps
-           the full rebuild honest: the in-place redraw below only repaints plots */
-        if (!state.inPlot) state.histLoose = true;
+        sawCell(state, "hist:" + key, histMark(ring));
         if (!ring) return null;
         return ring.series === 1 ? ring.values : histRows(ring);
       }
@@ -376,37 +475,40 @@ function histRows(ring: HistRing): (number | null)[][] {
   return rows;
 }
 
+/* what one cell is worth NOW, in the same spelling a recorded read wrote */
+function markNow(editor: Editor, key: string): string {
+  return key.startsWith("hist:")
+    ? histMark(editor.hist?.(key.slice(5)) ?? null)
+    : JSON.stringify(editor.live?.values?.[key] ?? null);
+}
+
 function attrOf(node: ViewNode, name: string, cells: Cells): Json {
   const program = node.attrs?.[name] as Program | undefined;
   return program ? run(program, cells) : undefined;
 }
 
 /* A gesture's view-local look (state.pressed / dragging / open) lands here. The write is
- * free; the REPAINT happens only when some rendered program actually read that cell —
- * which the build recorded — so a widget that never binds its state costs nothing to
+ * free; the PATCH happens only where some rendered program actually read that cell —
+ * which the pass recorded — so a widget that never binds its state costs nothing to
  * press. */
 function gestureStateWriter(state: StageState, editor: Editor) {
   return (owner: number, name: string, value: Json): void => {
     const bucket = (editor.view.state[owner] ??= {});
     if (bucket[name] === value) return;
     bucket[name] = value;
-    if (state.consumedState.has(owner + ":" + name)) state.repaint();
+    state.flushState("state:" + owner + ":" + name);
   };
 }
 
-/* ---- placing and painting ---- */
+/* ---- the appliers ----
+ *
+ * EVERY ONE IS TOTAL. The element already carries the last pass's answer, so an applier
+ * that only writes what is authored would leave a surface standing after it was cleared.
+ * A style property clears with "", an SVG attribute with removeAttribute. */
 
-/* How a node sits in what holds it. TWO SPACES, one rule each:
- *
- *   ARRANGEMENT (row, col, grid) — `grow` is a WEIGHT and `basis 0` is what makes it one:
- *   two grow-1 children split a row evenly however much content each holds. The two zero
- *   minimums are the flex overflow gotcha; without them a long word refuses to shrink and
- *   pushes its siblings out of the box.
- *
- *   MEASUREMENT (free) — the node places itself, in fractions of this box. Both edges pin
- *   when neither x nor w is set, which is why an overlay needs nothing said about it: that
- *   is what "stack" used to mean, and it falls out of the general rule rather than being
- *   a mode of its own. */
+/* How a node sits in what holds it: the node places itself, in canvas px on a page and in
+ * fractions of its parent inside a component. Both edges pin when neither x nor w is set,
+ * which is why an overlay needs nothing said about it. */
 function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   el.style.position = "absolute";
   /* which unit system this node's numbers are in: page nodes are canvas px, a
@@ -420,11 +522,25 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   const h = num(attrOf(node, "h", cells));
   const ox = num(attrOf(node, "origin_x", cells)) ?? 0;
   const oy = num(attrOf(node, "origin_y", cells)) ?? 0;
-  if (w === null && x === null) { el.style.left = "0"; el.style.right = "0"; }
-  else { el.style.left = unit(x ?? 0); if (w !== null) el.style.width = unit(w); }
-  if (h === null && y === null) { el.style.top = "0"; el.style.bottom = "0"; }
-  else { el.style.top = unit(y ?? 0); if (h !== null) el.style.height = unit(h); }
-  if (aspect !== null && aspect > 0) el.style.aspectRatio = String(aspect);
+  if (w === null && x === null) {
+    el.style.left = "0";
+    el.style.right = "0";
+    el.style.width = "";
+  } else {
+    el.style.left = unit(x ?? 0);
+    el.style.right = "";
+    el.style.width = w !== null ? unit(w) : "";
+  }
+  if (h === null && y === null) {
+    el.style.top = "0";
+    el.style.bottom = "0";
+    el.style.height = "";
+  } else {
+    el.style.top = unit(y ?? 0);
+    el.style.bottom = "";
+    el.style.height = h !== null ? unit(h) : "";
+  }
+  el.style.aspectRatio = aspect !== null && aspect > 0 ? String(aspect) : "";
 
   /* ONE REFERENCE POINT serves both jobs: the point `x`/`y` places, and the pivot
      `rotate` turns about — a fraction of the node's OWN box in either unit system, so a
@@ -434,28 +550,64 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   const parts: string[] = [];
   if (ox || oy) parts.push("translate(" + pct(-ox) + ", " + pct(-oy) + ")");
   if (rotate !== null) parts.push("rotate(" + rotate + "deg)");
-  if (parts.length) {
-    el.style.transform = parts.join(" ");
-    el.style.transformOrigin = pct(ox) + " " + pct(oy);
-  }
+  el.style.transform = parts.length ? parts.join(" ") : "";
+  el.style.transformOrigin = parts.length ? pct(ox) + " " + pct(oy) : "";
 }
 
 /* the dressing every box wears, whatever holds it */
 function dress(el: HTMLElement, node: ViewNode, cells: Cells): void {
   const surface = attrOf(node, "surface", cells);
-  if (paints(surface)) el.style.background = cssColor(surface);
+  el.style.background = paints(surface) ? cssColor(surface) : "";
   const border = attrOf(node, "border", cells);
-  if (paints(border))
-    el.style.border = (num(attrOf(node, "border_w", cells)) ?? 1) + "px solid " +
-                      cssColor(border);
+  el.style.border = paints(border)
+    ? (num(attrOf(node, "border_w", cells)) ?? 1) + "px solid " + cssColor(border)
+    : "";
   const radius = num(attrOf(node, "radius", cells));
-  if (radius !== null) el.style.borderRadius = radius + "px";
   const clip = attrOf(node, "clip", cells);
-  if (clip !== undefined && clip !== null && truthy(clip)) {
-    el.style.overflow = "hidden";
-    const rounded = num(clip);
-    if (rounded !== null && rounded > 0) el.style.borderRadius = rounded + "px";
+  const clipped = clip !== undefined && clip !== null && truthy(clip);
+  const rounded = clipped ? num(clip) : null;
+  el.style.overflow = clipped ? "hidden" : "";
+  el.style.borderRadius = rounded !== null && rounded > 0 ? rounded + "px"
+                        : radius !== null ? radius + "px" : "";
+}
+
+function applyText(el: HTMLElement, node: ViewNode, cells: Cells): void {
+  const value = attrOf(node, "text", cells);
+  /* UNKNOWN renders the unknown treatment, never a fabricated value */
+  const text = attrText(value);
+  el.classList.toggle("unknown", text === null);
+  const shown = text === null ? "--" : text;
+  /* ASSIGNED ONLY WHEN IT MOVED: writing textContent replaces the text node, which drops
+     a native selection the user is holding inside it */
+  if (el.textContent !== shown) el.textContent = shown;
+  const color = attrOf(node, "color", cells);
+  el.style.color = paints(color) ? cssColor(color) : "";
+  const size = num(attrOf(node, "size", cells));
+  el.style.fontSize = size !== null ? size + "px" : "";
+  const align = attrText(attrOf(node, "align", cells)) ?? "start";
+  el.style.textAlign = TEXT_ALIGN[align] ?? "left";
+  el.style.fontWeight = truthy(attrOf(node, "bold", cells)) ? "600" : "";
+  const wrap = truthy(attrOf(node, "wrap", cells));
+  el.style.whiteSpace = wrap ? "" : "nowrap";
+  el.style.overflow = wrap ? "" : "hidden";
+  el.style.textOverflow = wrap ? "" : "ellipsis";
+}
+
+function applyIcon(bind: Bind, node: ViewNode, cells: Cells): void {
+  const el = bind.el;
+  const name = attrText(attrOf(node, "name", cells)) ?? "";
+  const stroke = num(attrOf(node, "stroke_w", cells)) ?? 1.5;
+  /* the glyph fills the box the layout gave it (stage.css sizes the svg to 100%), so the
+     markup's own size argument is irrelevant here and the box is the only lever. The
+     markup is rewritten only when it would differ: an icon's svg is a subtree like any
+     other, and re-parsing it per live frame is exactly the churn this renderer removed. */
+  const sig = name + "|" + stroke;
+  if (sig !== bind.iconSig) {
+    bind.iconSig = sig;
+    el.innerHTML = name ? iconMarkup(name, 24, stroke) : "";
   }
+  const color = attrOf(node, "color", cells);
+  el.style.color = paints(color) ? cssColor(color) : "";
 }
 
 /* ---- the ink ----
@@ -517,20 +669,11 @@ function pathData(node: ViewNode, cells: Cells): string {
   return parts.join(" ");
 }
 
-function buildPath(state: StageState, node: ViewNode, cells: Cells): HTMLElement {
-  const host = document.createElement("div");
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 1 1");
-  svg.setAttribute("preserveAspectRatio", "none");
-  svg.style.width = "100%";
-  svg.style.height = "100%";
-  svg.style.display = "block";
-  svg.style.overflow = "visible";
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  state.inPlot = true;
+/* A PLOT IS AN ORDINARY BIND. A path whose `points` reads a trend cell records that cell
+ * like any other program, and a live frame re-runs exactly this — one `d` rewritten, no
+ * element touched. There is no plot list and no hist-only branch any more. */
+function applyPath(path: SVGPathElement, node: ViewNode, cells: Cells): void {
   path.setAttribute("d", pathData(node, cells));
-  state.inPlot = false;
-  state.plots.push({ el: path, node, cells });
   const fill = attrOf(node, "fill", cells);
   path.setAttribute("fill", paints(fill) ? cssColor(fill) : "none");
   const stroke = attrOf(node, "stroke", cells);
@@ -540,183 +683,407 @@ function buildPath(state: StageState, node: ViewNode, cells: Cells): HTMLElement
     path.setAttribute("vector-effect", "non-scaling-stroke");
     const cap = attrText(attrOf(node, "cap", cells));
     if (cap) path.setAttribute("stroke-linecap", cap);
+    else path.removeAttribute("stroke-linecap");
     path.setAttribute("stroke-linejoin", "round");
+  } else {
+    path.removeAttribute("stroke");
+    path.removeAttribute("stroke-width");
+    path.removeAttribute("vector-effect");
+    path.removeAttribute("stroke-linecap");
+    path.removeAttribute("stroke-linejoin");
   }
-  svg.appendChild(path);
-  host.appendChild(svg);
-  return host;
 }
 
-function buildText(node: ViewNode, cells: Cells): HTMLElement {
-  const el = document.createElement("div");
-  const value = attrOf(node, "text", cells);
-  /* UNKNOWN renders the unknown treatment, never a fabricated value */
-  const text = attrText(value);
-  el.className = "ink-text" + (text === null ? " unknown" : "");
-  el.textContent = text === null ? "--" : text;
-  const color = attrOf(node, "color", cells);
-  if (paints(color)) el.style.color = cssColor(color);
-  const size = num(attrOf(node, "size", cells));
-  if (size !== null) el.style.fontSize = size + "px";
-  const align = attrText(attrOf(node, "align", cells)) ?? "start";
-  el.style.textAlign = TEXT_ALIGN[align] ?? "left";
-  if (truthy(attrOf(node, "bold", cells))) el.style.fontWeight = "600";
-  if (!truthy(attrOf(node, "wrap", cells))) {
-    el.style.whiteSpace = "nowrap";
-    el.style.overflow = "hidden";
-    el.style.textOverflow = "ellipsis";
+/* WHO TAKES THE POINTER, patched rather than rebuilt: the elements and their listeners
+ * persist across a mode flip now, so the regime is a property like any other and the
+ * gesture handlers gate on the mode at event time (gestures.ts).
+ *
+ * OUTSIDE EDIT MODE THE POINTER OPERATES THE MACHINE. An instance takes it only where a
+ * gesture would RUN something (INERT PASS-THROUGH: a widget with no event-triggered flow
+ * and no live default is a picture, and a picture must never swallow the press aimed at
+ * what it overlays); a bare page node never takes it at all. pointer-events inherits, so
+ * the instance root's answer covers its internals — and the gesture the component put on
+ * a node (the pill, the track, the dial) arms on that very node, so the pressable area is
+ * the painted control, hit-tested by the browser.
+ *
+ * FAIL-SAFE, and only in a mode that operates: a disabled control is dimmed everywhere,
+ * and inert only where a pointer would be operating it. In EDIT mode it still takes the
+ * pointer, because a control you cannot operate is not a control you cannot select. */
+function regime(el: HTMLElement, node: ViewNode, editor: Editor, cells: Cells): void {
+  const enabled = attrOf(node, "enabled", cells);
+  const disabled = enabled !== undefined && !truthy(enabled);
+  el.classList.toggle("disabled", disabled);
+  if (editor.view.mode === "edit") el.style.pointerEvents = "";
+  else if (disabled) el.style.pointerEvents = "none";
+  else if (node.instance)
+    el.style.pointerEvents =
+      operable(editor.store.widget(node.id), node.type) ? "auto" : "none";
+  else if (!node.owner) el.style.pointerEvents = "none";
+  else el.style.pointerEvents = "";
+}
+
+/* ---- the elements: created once, never again ---- */
+
+/* what kind of element a node needs. A key whose node changed kind cannot reuse the
+   element standing under it: a text applier on a path's svg scaffolding is a wrong
+   picture, so the bind is dropped and rebuilt. */
+function shapeOf(node: ViewNode): string {
+  return node.kind + (node.instance ? "!" : "");
+}
+
+function createElement(node: ViewNode): { el: HTMLElement; path: SVGPathElement | null } {
+  if (node.kind === "path") {
+    const el = document.createElement("div");
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 1 1");
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.style.width = "100%";
+    svg.style.height = "100%";
+    svg.style.display = "block";
+    svg.style.overflow = "visible";
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path") as
+      SVGPathElement;
+    svg.appendChild(path);
+    el.appendChild(svg);
+    return { el, path };
   }
-  return el;
-}
-
-function buildIcon(node: ViewNode, cells: Cells): HTMLElement {
   const el = document.createElement("div");
-  el.className = "ink-icon";
-  const name = attrText(attrOf(node, "name", cells)) ?? "";
-  const stroke = num(attrOf(node, "stroke_w", cells)) ?? 1.5;
-  /* the glyph fills the box the layout gave it (stage.css sizes the svg to 100%), so the
-     markup's own size argument is irrelevant here and the box is the only lever */
-  el.innerHTML = name ? iconMarkup(name, 24, stroke) : "";
-  const color = attrOf(node, "color", cells);
-  if (paints(color)) el.style.color = cssColor(color);
-  return el;
-}
-
-/* ---- building ---- */
-
-function buildNode(state: StageState, editor: Editor, node: ViewNode,
-                   repeat: { index: number; count: number } | null): HTMLElement | null {
-  const cells = cellsFor(state, editor, node, repeat);
-
-  /* `show` false hides the node AND everything under it, and it is not emitted at all —
-     the honest reading of "not shown" */
-  const show = attrOf(node, "show", cells);
-  if (show !== undefined && !truthy(show)) return null;
-
-  const el = node.kind === "path" ? buildPath(state, node, cells)
-           : node.kind === "text" ? buildText(node, cells)
-           : node.kind === "icon" ? buildIcon(node, cells)
-           : document.createElement("div");
+  if (node.kind === "text") el.className = "ink-text";
+  else if (node.kind === "icon") el.className = "ink-icon";
   /* `.frame` MEANS "CAN HOLD A CHILD", and an instance cannot: what is inside it belongs
      to the component it names. The class is what every container search reads — the drop's
      candidate hunt — so an instance wearing it would let a drop aim into a widget's
-     internals. It is a leaf here, which is exactly what it is to this page. */
-  if (node.kind === "frame") el.className = node.instance ? "leaf" : "frame";
-
-  /* OUTSIDE EDIT MODE THE POINTER OPERATES THE MACHINE. An instance takes it only where
-     a gesture would RUN something (INERT PASS-THROUGH: a widget with no event-triggered
-     flow and no live default is a picture, and a picture must never swallow the press
-     aimed at what it overlays); a bare page node never takes it at all. pointer-events
-     inherits, so the instance root's answer covers its internals — and the gesture the
-     component put on a node (the pill, the track, the dial) arms on that very node, so
-     the pressable area is the painted control, hit-tested by the browser. */
-  if (editor.view.mode !== "edit") {
-    if (node.instance)
-      el.style.pointerEvents =
-        operable(editor.store.widget(node.id), node.type) ? "auto" : "none";
-    else if (!node.owner) el.style.pointerEvents = "none";
-    if (node.interact && node.owner)
-      armInteract(el, { editor, owner: node.owner, type: node.type,
-                        interact: node.interact, cells,
-                        setState: gestureStateWriter(state, editor) });
-  }
-
-  /* FAIL-SAFE, and only in a mode that operates: a disabled control is dimmed everywhere,
-     and inert only where a pointer would be operating it. In EDIT mode it still takes the
-     pointer, because a control you cannot operate is not a control you cannot select. */
-  const enabled = attrOf(node, "enabled", cells);
-  if (enabled !== undefined && !truthy(enabled)) {
-    el.classList.add("disabled");
-    if (editor.view.mode !== "edit") el.style.pointerEvents = "none";
-  }
-  if (node.id) el.setAttribute("data-id", String(node.id));
-  place(el, node, cells);
-
-  if (node.kind !== "frame") return el;
-
-  dress(el, node, cells);
-  for (const child of node.children)
-    for (const copy of expand(state, editor, child, repeat))
-      el.appendChild(copy);
-  return el;
+     internals. It is a leaf here, which is exactly what it is to this page.
+     NEVER ASSIGNED AGAIN: previewArrangement parks `carrying`/`drop-target` on these
+     elements and positionRings toggles `gridded`, so everything after this is classList. */
+  else if (node.kind === "frame") el.className = node.instance ? "leaf" : "frame";
+  return { el, path: null };
 }
 
-/* `repeat` N copies of one node, each seeing which copy it is and placing itself, which
- * is how a scale's ticks and an option ring are authored — one node, N answers */
-function expand(state: StageState, editor: Editor, node: ViewNode,
-                outer: { index: number; count: number } | null): HTMLElement[] {
-  const cells = cellsFor(state, editor, node, outer);
-  const declared = node.attrs?.repeat ? num(attrOf(node, "repeat", cells)) : null;
-  if (declared === null) {
-    const one = buildNode(state, editor, node, outer);
-    return one ? [one] : [];
+/* ---- the dependency index ---- */
+
+function indexInto(map: Map<string, Set<Bind>>, keys: Set<string>, bind: Bind): void {
+  for (const key of keys) {
+    let set = map.get(key);
+    if (!set) map.set(key, (set = new Set()));
+    set.add(bind);
   }
-  const count = Math.max(0, Math.min(REPEAT_CAP, Math.round(declared)));
-  const out: HTMLElement[] = [];
-  for (let index = 0; index < count; index++) {
-    const copy = buildNode(state, editor, node, { index, count });
-    if (copy) out.push(copy);
+}
+
+function unindex(map: Map<string, Set<Bind>>, keys: Set<string>, bind: Bind): void {
+  for (const key of keys) {
+    const set = map.get(key);
+    if (!set) continue;
+    set.delete(bind);
+    if (!set.size) map.delete(key);
   }
-  return out;
+}
+
+/* ---- running one bind ---- */
+
+function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
+  bind.pass = state.pass;
+  unindex(state.byDep, bind.deps, bind);
+  const deps = new Set<string>();
+  const outer = state.recording;
+  state.recording = { deps };
+  try {
+    const node = bind.node;
+    const cells = cellsFor(state, editor, node, bind.repeat);
+    /* the artboard is placed by the camera and takes the pointer for the whole pane:
+       what it wears of a node is the dressing, and nothing else */
+    if (bind.key === ROOT_KEY) {
+      dress(bind.el, node, cells);
+    } else {
+      place(bind.el, node, cells);
+      if (node.kind === "frame") dress(bind.el, node, cells);
+      else if (node.kind === "text") applyText(bind.el, node, cells);
+      else if (node.kind === "icon") applyIcon(bind, node, cells);
+      else if (node.kind === "path" && bind.path) applyPath(bind.path, node, cells);
+      regime(bind.el, node, editor, cells);
+    }
+  } finally {
+    state.recording = outer;
+  }
+  bind.deps = deps;
+  indexInto(state.byDep, deps, bind);
+}
+
+/* THE SEAT A GESTURE RIDES, read THROUGH the bind. Every node carrying an interact is
+ * armed ONCE, at creation, and the listener outlives every reconcile — so it must never
+ * close over the view node it was armed with (that one goes stale the moment the document
+ * moves). `cells` is built fresh per read, which also means the read happens with nothing
+ * recording, exactly as a gesture-time read should.
+ *
+ * DELIBERATE SCOPE CUT: which of the four primitives is armed is decided here, once. A
+ * recompile that changes a node's PRIMITIVE takes effect at the next fresh build (a page
+ * switch or stepping into the widget), not at the reconcile that delivered it. */
+function armSeat(state: StageState, editor: Editor, bind: Bind): void {
+  const armed = bind.node.interact;
+  if (!armed || !bind.node.owner) return;
+  armInteract(bind.el, {
+    editor,
+    get owner() { return bind.node.owner; },
+    get type() { return bind.node.type; },
+    get interact() { return bind.node.interact ?? armed; },
+    cells: (cell: string) => cellsFor(state, editor, bind.node, bind.repeat)(cell),
+    setState: gestureStateWriter(state, editor),
+  });
+}
+
+/* ---- the keyed reconcile: the ONE structural algorithm ----
+ *
+ * Used by the fresh build (against an empty registry), by a document reconcile (from the
+ * root, the whole tree), and — scoped to one parent — by a `show` that flipped, a `repeat`
+ * whose count moved, and a gesture's state write. Every element whose key survives is
+ * reused where it stands. */
+
+function childKey(parentKey: string, node: ViewNode, at: number): string {
+  return node.id ? "n" + node.id : parentKey + "/" + at;
+}
+
+function insertAt(parentEl: HTMLElement, el: HTMLElement, at: number): void {
+  const before = (parentEl.children[at] ?? null) as Element | null;
+  if (before === el) return;
+  parentEl.insertBefore(el, before);
+}
+
+function dropBind(state: StageState, key: string): void {
+  const bind = state.binds.get(key);
+  if (!bind) return;
+  state.binds.delete(key);
+  for (const kid of bind.kidKeys) sweepBind(state, kid);
+  bind.kidKeys = [];
+  bind.el.remove();
+  unindex(state.byDep, bind.deps, bind);
+  unindex(state.byKid, bind.kidDeps, bind);
+}
+
+/* a key its parent no longer wants. It stays only if ANOTHER parent claimed it this pass
+   — a node that moved between frames keeps its element, and the old parent must not take
+   the new parent's child away with it. */
+function sweepBind(state: StageState, key: string): void {
+  const bind = state.binds.get(key);
+  if (!bind || bind.pass === state.pass) return;
+  dropBind(state, key);
+}
+
+interface Desired {
+  key: string;
+  node: ViewNode;
+  repeat: { index: number; count: number } | null;
+}
+
+/* is this copy emitted at all? `show` false hides the node AND everything under it, and
+   it is not emitted — the honest reading of "not shown". It is the PARENT's question,
+   because what it decides is which children exist. */
+function visible(state: StageState, editor: Editor, node: ViewNode,
+                 repeat: { index: number; count: number } | null): boolean {
+  if (!node.attrs?.show) return true;
+  const show = attrOf(node, "show", cellsFor(state, editor, node, repeat));
+  return show === undefined || truthy(show);
+}
+
+function reconcileChildren(state: StageState, editor: Editor, parent: Bind,
+                           children: ViewNode[],
+                           outer: { index: number; count: number } | null): void {
+  /* WHAT THE CHILD LIST READS is recorded against the parent: a `repeat` count or a
+     `show` fed by a live cell reconciles this one parent when it moves, and nothing else
+     on the page hears about it. */
+  const deps = new Set<string>();
+  const held = state.recording;
+  state.recording = { deps };
+  const want: Desired[] = [];
+  try {
+    children.forEach((child, at) => {
+      const base = childKey(parent.key, child, at);
+      /* `repeat` N copies of one node, each seeing which copy it is and placing itself,
+         which is how a scale's ticks and an option ring are authored — one node, N
+         answers. The count is evaluated in the OUTER copy's context, exactly as it was
+         when this was a build. */
+      const declared = child.attrs?.repeat
+        ? num(attrOf(child, "repeat", cellsFor(state, editor, child, outer)))
+        : null;
+      if (declared === null) {
+        if (visible(state, editor, child, outer))
+          want.push({ key: base, node: child, repeat: outer });
+        return;
+      }
+      const count = Math.max(0, Math.min(REPEAT_CAP, Math.round(declared)));
+      for (let index = 0; index < count; index++) {
+        const repeat = { index, count };
+        if (visible(state, editor, child, repeat))
+          want.push({ key: base + "@" + index, node: child, repeat });
+      }
+    });
+  } finally {
+    state.recording = held;
+  }
+  unindex(state.byKid, parent.kidDeps, parent);
+  parent.kidDeps = deps;
+  indexInto(state.byKid, deps, parent);
+
+  const parentEl = parent.el;
+  const kept = new Set<string>();
+  want.forEach((entry, at) => {
+    let bind = state.binds.get(entry.key) ?? null;
+    if (bind && bind.shape !== shapeOf(entry.node)) {
+      dropBind(state, entry.key);
+      bind = null;
+    }
+    if (bind) {
+      /* THE VIEW NODES ARE REBUILT EVERY PASS: a held one is last version's document */
+      bind.node = entry.node;
+      bind.repeat = entry.repeat;
+      insertAt(parentEl, bind.el, at);
+      runAppliers(state, editor, bind);
+      if (entry.node.kind === "frame")
+        reconcileChildren(state, editor, bind, entry.node.children, entry.repeat);
+    } else {
+      bind = createBind(state, entry);
+      runAppliers(state, editor, bind);
+      if (entry.node.kind === "frame")
+        reconcileChildren(state, editor, bind, entry.node.children, entry.repeat);
+      insertAt(parentEl, bind.el, at);
+      armSeat(state, editor, bind);
+    }
+    kept.add(entry.key);
+  });
+  for (const key of parent.kidKeys) if (!kept.has(key)) sweepBind(state, key);
+  parent.kidKeys = want.map((entry) => entry.key);
+}
+
+function createBind(state: StageState, entry: Desired): Bind {
+  const made = createElement(entry.node);
+  if (entry.node.id) made.el.setAttribute("data-id", String(entry.node.id));
+  const bind: Bind = {
+    key: entry.key, el: made.el, node: entry.node, repeat: entry.repeat,
+    deps: new Set(), kidDeps: new Set(), kidKeys: [], path: made.path, iconSig: "",
+    shape: shapeOf(entry.node), pass: 0,
+  };
+  state.binds.set(entry.key, bind);
+  return bind;
 }
 
 /* Theme tokens become CSS custom properties on the page, so a "$name" value is an ordinary
- * var() the browser resolves — no view-side colour resolution anywhere below this line. */
-function emitTokens(page: HTMLElement, tokens: Token[]): void {
+ * var() the browser resolves — no view-side colour resolution anywhere below this line. A
+ * token that LEFT the document is cleared: the page element outlives the edit now. */
+function emitTokens(state: StageState, page: HTMLElement, tokens: Token[]): void {
+  const names: string[] = [];
   for (const token of tokens)
-    if (token?.name) page.style.setProperty("--t-" + token.name, token.dark);
+    if (token?.name) {
+      page.style.setProperty("--t-" + token.name, token.dark);
+      names.push("--t-" + token.name);
+    }
+  for (const was of state.tokenNames)
+    if (names.indexOf(was) < 0) page.style.setProperty(was, "");
+  state.tokenNames = names;
 }
 
-/* THE ARTBOARD: a fixed px surface the camera scales into the pane. On a page it is the
- * system's 1408 x 792 and its children are page nodes in canvas px. Inside an ENTERED
- * WIDGET it is the component's design frame at the context's preview size, its children
- * the component's OWN nodes in fractions — the same nodes with their ids, which is what
- * lets selection and the gestures work on them — reading the entered instance's cells,
- * so the component behaves as that placement does while it is edited. An unforked
- * BUILT-IN renders from its served template instead: no ids anywhere, and that absence
- * IS the read-only. */
-function buildPage(state: StageState, editor: Editor, page: Page | null): HTMLElement {
+/* the artboard's own properties: its size, its tokens, its dressing */
+function dressPage(state: StageState, editor: Editor, root: Bind): void {
+  root.el.style.width = state.art.w + "px";
+  root.el.style.height = state.art.h + "px";
+  emitTokens(state, root.el, editor.store.tokens());
+  runAppliers(state, editor, root);
+}
+
+/* ---- the three passes ---- */
+
+function forget(state: StageState): void {
+  state.binds.clear();
+  state.byDep.clear();
+  state.byKid.clear();
+  state.marks.clear();
+  state.root = null;
+  state.tokenNames = [];
+}
+
+/* FIRST PAINT, a page switch, a step into or out of a widget: every key changes, so
+   nothing is worth keeping and the camera re-fits over the new picture anyway */
+function buildFresh(host: HTMLElement, editor: Editor, page: Page | null): void {
+  const state = stateOf(host);
+  forget(state);
+  state.page?.remove();
   const el = document.createElement("div");
   el.className = "page";
-  el.style.width = state.art.w + "px";
-  el.style.height = state.art.h + "px";
-  emitTokens(el, editor.store.tokens());
+  state.page = el;
+  const root: Bind = {
+    key: ROOT_KEY, el, node: rootView(editor, page), repeat: null, deps: new Set(),
+    kidDeps: new Set(), kidKeys: [], path: null, iconSig: "", shape: "root", pass: 0,
+  };
+  state.binds.set(ROOT_KEY, root);
+  state.root = root;
+  dressPage(state, editor, root);
+  reconcileChildren(state, editor, root, root.node.children, null);
+  /* the rings are children of the host too, and the page must sit under them */
+  host.insertBefore(el, host.firstChild);
+}
 
-  const ctx = editor.contexts[editor.contexts.length - 1] ?? null;
-  let kids: ViewNode[] = [];
-  let rootAttrs: Attrs | null = null;
-  let owner = 0;
-  let type: WidgetType | null = null;
-  if (!ctx) {
-    kids = (page?.children ?? []).map((c) => pageNode(editor, c));
-  } else {
-    type = typeOf(editor.registry,
-                  editor.store.nodeAt(ctx.from)?.type ?? ctx.builtin);
-    owner = ctx.from;
-    if (ctx.component) {
-      const comp = editor.store.node(ctx.component);
-      kids = ((comp?.children ?? []) as Node[]).map((c) =>
-        pageNode(editor, c, owner, type, true));
-      rootAttrs = editor.nodeAttrs?.[String(ctx.component)]?.attrs ?? null;
-    } else if (type) {
-      kids = (type.template.children ?? []).map((c) => templateNode(c, owner, type, ""));
-      rootAttrs = type.template.attrs ?? null;
-    }
+/* THE DOCUMENT MOVED (or the mode, or the artboard's size, or the compile epoch — which
+   is the one that catches an edit changing what a field EVALUATES to rather than what the
+   tree holds). Every node is re-keyed and every element whose key survives is reused. */
+function reconcile(host: HTMLElement, editor: Editor, page: Page | null): void {
+  const state = stateOf(host);
+  const root = state.root!;
+  root.node = rootView(editor, page);
+  dressPage(state, editor, root);
+  reconcileChildren(state, editor, root, root.node.children, null);
+}
+
+/* A LIVE FRAME. Nothing structural happens here unless a `show` or a `repeat` count moved,
+   and then only under the one parent that read it. */
+function livePatch(host: HTMLElement, editor: Editor): boolean {
+  const state = stateOf(host);
+  const moved = new Map<string, string>();
+  const look = (key: string) => {
+    /* a state cell is WRITER-DRIVEN: gestureStateWriter patches it the moment it lands,
+       and nothing else can move it */
+    if (moved.has(key) || key.startsWith("state:")) return;
+    const now = markNow(editor, key);
+    if (now !== state.marks.get(key)) moved.set(key, now);
+  };
+  for (const key of state.byDep.keys()) look(key);
+  for (const key of state.byKid.keys()) look(key);
+  if (!moved.size) return false;
+
+  /* the marks move FIRST: a cell whose readers all leave the tree in this same pass must
+     not be reported as moved forever after */
+  const parents = new Set<Bind>();
+  const binds = new Set<Bind>();
+  for (const [key, mark] of moved) {
+    state.marks.set(key, mark);
+    for (const parent of state.byKid.get(key) ?? []) parents.add(parent);
+    for (const bind of state.byDep.get(key) ?? []) binds.add(bind);
   }
+  /* STRUCTURE FIRST, and only where it was read. The parent's own view nodes are
+     fresh enough: a live frame never changes the document, so the children it holds are
+     the ones the last reconcile built. */
+  for (const parent of parents)
+    if (state.binds.get(parent.key) === parent)
+      reconcileChildren(state, editor, parent, parent.node.children, parent.repeat);
+  for (const bind of binds)
+    if (state.binds.get(bind.key) === bind && bind.pass !== state.pass)
+      runAppliers(state, editor, bind);
+  return true;
+}
 
-  /* the design frame wears the component ROOT's own dressing — an instance's box IS
-     this node — over the artboard surface the page style gives it */
-  if (rootAttrs) {
-    const root: ViewNode = { id: 0, instance: false, kind: "frame", name: "",
-                             attrs: rootAttrs, anchors: [], closed: false, children: [],
-                             owner, type, path: "", frac: true, interact: null };
-    dress(el, root, cellsFor(state, editor, root, null));
-  }
-
-  for (const child of kids)
-    for (const copy of expand(state, editor, child, null))
-      el.appendChild(copy);
-  return el;
+/* A GESTURE'S STATE WRITE. Not a live cell and not a document edit: one key, patched into
+   exactly what binds it, and nothing at all where nothing does. */
+function flushCell(host: HTMLElement, editor: Editor, key: string): void {
+  const state = stateOf(host);
+  const parents = Array.from(state.byKid.get(key) ?? []);
+  const binds = Array.from(state.byDep.get(key) ?? []);
+  if (!parents.length && !binds.length) return;
+  state.pass++;
+  for (const parent of parents)
+    if (state.binds.get(parent.key) === parent)
+      reconcileChildren(state, editor, parent, parent.node.children, parent.repeat);
+  for (const bind of binds)
+    if (state.binds.get(bind.key) === bind && bind.pass !== state.pass)
+      runAppliers(state, editor, bind);
+  repaintFree();
+  positionRings(host, editor);
 }
 
 /* ---- the rings ---- */
@@ -907,9 +1274,11 @@ export function previewArrangement(
 }
 
 /* the document's own picture, forced back on screen: what a cancelled or no-op gesture
- * calls, since the inline styles it painted are exactly what a plain render would keep */
+ * calls, since the inline styles it painted are exactly what a plain render would keep.
+ * A RECONCILE, not a fresh build: what is wanted is the document's own numbers re-asserted
+ * onto the very elements the gesture was holding. */
 export function repaintDocument(host: HTMLElement, editor: Editor): void {
-  stateOf(host).signature = "";
+  stateOf(host).docSig = "";
   renderStage(host, editor);
 }
 
@@ -924,86 +1293,50 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
   if (!page && !ctx) {
     state.page?.remove();
     state.page = null;
-    state.signature = "";
+    forget(state);
+    state.docSig = "";
     positionRings(host, editor);
     return;
   }
 
-  /* the picture's own size, and the chain it is of: a step in or out of a widget refits
-     the camera; a preview RESIZE deliberately does not (the artboard grows under the
-     author's pointer, and yanking the camera mid-drag would fight them) */
+  /* the picture's own size, and the chain it is of: a step in or out of a widget builds
+     fresh and refits the camera; a preview RESIZE deliberately does neither (the artboard
+     grows under the author's pointer, and yanking the camera mid-drag would fight them) */
   state.art = ctx ? { w: ctx.w, h: ctx.h } : { w: CANVAS_W, h: CANVAS_H };
   const ctxPath = (page ? page.id : 0) + "|" +
     editor.contexts.map((c) => (c.component ? "c" + c.component : "b" + c.builtin) +
                                ":" + c.from).join("/");
+  let fresh = !state.page || !state.root;
   if (state.ctxPath !== ctxPath) {
     state.ctxPath = ctxPath;
     state.cam.manual = false;
+    fresh = true;
   }
+  state.flushState = (key: string) => flushCell(host, editor, key);
 
-  /* WHAT THE PICTURE IS OF: the MODE (edit and test build different pointer regimes, so
-     flipping the segment must rebuild), the context, its size, the document version —
-     and the COMPILE EPOCH, which is the one that catches an edit changing what a field
-     evaluates to rather than what the tree holds. A node's attrs are programs; editing
-     one leaves the tree identical and the version moved, and the new programs arrive in
-     the snapshot that follows. Without the epoch here a resize would commit its number
-     and then redraw the old one. */
-  state.repaint = () => {
-    state.signature = "";
-    renderStage(host, editor);
-  };
-  const signature = editor.view.mode + ":" + ctxPath + ":" +
-    state.art.w + "x" + state.art.h + ":" +
+  /* WHAT A RECONCILE IS OF: the MODE (edit and test wear different pointer regimes), the
+     artboard's size, the document version — and the COMPILE EPOCH, which catches an edit
+     changing what a field evaluates to rather than what the tree holds. A node's attrs are
+     programs; editing one leaves the tree identical and the version moved, and the new
+     programs arrive in the snapshot that follows. Without the epoch here a resize would
+     commit its number and then redraw the old one. (The context path is not in it: a step
+     in or out is a FRESH build, above.) */
+  const docSig = editor.view.mode + ":" + state.art.w + "x" + state.art.h + ":" +
     editor.store.version() + ":" + (editor.live?.epoch ?? 0);
-  let rebuild = !state.page || signature !== state.signature;
-  let histOnly = !rebuild;
-  if (!rebuild) {
-    let moved = false;
-    for (const [cell, was] of state.consumed) {
-      /* a trend compares by its ring's VERSION -- an append moves it, and nothing else
-         has to be looked at -- while an ordinary cell compares by its value */
-      const now = cell.startsWith("hist:")
-        ? histMark(editor.hist?.(cell.slice(5)) ?? null)
-        : JSON.stringify(editor.live?.values?.[cell] ?? null);
-      if (now === was) continue;
-      moved = true;
-      if (!cell.startsWith("hist:")) {
-        histOnly = false;
-        break;
-      }
-    }
-    rebuild = moved && (!histOnly || state.histLoose || !state.plots.length);
-    /* A STREAMING RING REDRAWS ITS PLOTS IN PLACE. A trend appends samples many times a
-       second forever, and a full rebuild per sample replaces the DOM under a press —
-       killing the click it was part of — to change one path's `d`. When everything that
-       moved is hist cells and every reader is a plot, redraw exactly those: pathData
-       re-reads the rings through the same cells, which re-marks the consumed entries. */
-    if (moved && !rebuild) {
-      for (const plot of state.plots) {
-        state.inPlot = true;
-        plot.el.setAttribute("d", pathData(plot.node, plot.cells));
-        state.inPlot = false;
-      }
-    }
-  }
+  state.pass++;
 
-  if (rebuild) {
-    state.consumed = new Map();
-    state.consumedState = new Set();
-    state.plots = [];
-    state.histLoose = false;
-    const next = buildPage(state, editor, page);
-    state.page?.remove();
-    /* the rings are children of the host too, and the page must sit under them */
-    host.insertBefore(next, host.firstChild);
-    state.page = next;
-    state.signature = signature;
+  if (fresh || docSig !== state.docSig) {
+    if (fresh) buildFresh(host, editor, page);
+    else reconcile(host, editor, page);
+    state.docSig = docSig;
     if (!state.cam.manual) fitCamera(host, state);
     applyCamera(state);
-    /* A REBUILD MUST NOT TAKE A GESTURE WITH IT. What a live frame moved is a value, not
-       an arrangement, and the box in your hand is holding numbers that are deliberately
-       not in the document until you let go — so the gesture puts them back on the fresh
-       elements (manipulate.ts owns them; this only says when). */
+    /* A PASS MUST NOT TAKE A GESTURE WITH IT. What a live frame moved is a value, not an
+       arrangement, and the box in your hand is holding numbers that are deliberately not
+       in the document until you let go — so the gesture puts them back over whatever the
+       appliers just asserted (manipulate.ts owns them; this only says when). */
+    repaintFree();
+  } else if (livePatch(host, editor)) {
     repaintFree();
   }
   positionRings(host, editor);
@@ -1023,16 +1356,11 @@ export function idUnder(target: EventTarget | null): number {
  * announced exactly which node those pixels belong to, so the click confirms what is shown
  * rather than guessing what was meant. Clicking the page background clears.
  *
- * SELECTION RIDES THE POINTER PAIR, NOT THE NATIVE CLICK. A live rebuild replaces the
- * page's elements, and a press whose element is detached before release never fires a
- * usable click — the browser retargets it to the host, which reads as "clicked past
- * everything" and CLEARS the selection instead of making one. A streaming trend rebuilds
- * many times a second, so any human-speed press straddles one. The id is taken at the
- * press (the node the user aimed at) and the release only asks "did it stay a click"
- * (slop), holding no element in between — the same discipline the drags and the tree's
- * own double-click already follow. Double-click is the manual two-press detection from
- * the Layers tree, for the same reason: a rebuild between the presses resets the
- * browser's counter. */
+ * SELECTION RIDES THE POINTER PAIR, NOT THE NATIVE CLICK. The elements stand still under a
+ * live frame now, so a press no longer loses its element mid-gesture — but the pair is
+ * still the honest reading: the id is taken at the press (the node the user aimed at) and
+ * the release only asks "did it stay a click" (slop), holding no element in between, which
+ * is the same discipline the drags and the tree's own double-click already follow. */
 function wire(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   if (state.wired) return;

@@ -1473,29 +1473,223 @@ check(stageNode("leaf", 903).style.background === "#ff0000",
       "a live cell paints over the authored surface");
 
 /* ...and the price of that is paid ONCE per change, not thirty times a second: a live
-   frame that moves no cell this picture read leaves the very same nodes standing */
+   frame that moves no cell this picture read runs nothing at all, and one that moves a
+   cell PATCHES the element that read it — no element on the artboard is ever replaced */
 const heldRow = stageNode("frame", 901);
+const heldLamp = stageNode("leaf", 903);
 stageEditor.live = { epoch: 1, values: { "903.surface": "#ff0000", "999.value": 7 } };
 drawStage();
 check(stageNode("frame", 901) === heldRow, "a live frame touching no consumed cell rebuilds nothing");
 stageEditor.live = { epoch: 1, values: { "903.surface": "#00ff00" } };
 drawStage();
-check(stageNode("frame", 901) !== heldRow, "and one that moves a consumed cell rebuilds the page");
+check(stageNode("frame", 901) === heldRow && stageNode("leaf", 903) === heldLamp,
+      "and one that MOVES a consumed cell keeps every element it patches");
+check(heldLamp.style.background === "#00ff00",
+      "the patch lands on that very element, got " + heldLamp.style.background);
 
-/* A COMPILE REBUILDS IT REGARDLESS. Editing an attr leaves the tree identical and changes
-   the PROGRAM the field evaluates to, and the new programs arrive in the snapshot that
-   follows the echo — so the epoch is what says "the same document means something else
-   now". Without this a resize commits its number and redraws the old one. */
+/* A COMPILE RECONCILES IT REGARDLESS. Editing an attr leaves the tree identical and
+   changes the PROGRAM the field evaluates to, and the new programs arrive in the snapshot
+   that follows the echo — so the epoch is what says "the same document means something
+   else now". Without this a resize commits its number and redraws the old one. */
 const heldAgain = stageNode("frame", 901);
 stageAttrs["901"].attrs.w = prog(660);
 drawStage();
-check(stageNode("frame", 901) === heldAgain,
-      "fresh programs alone do not rebuild: nothing told the view they were fresh");
+check(stageNode("frame", 901) === heldAgain &&
+        stageNode("frame", 901).style.width === "440px",
+      "fresh programs alone re-run nothing: nothing told the view they were fresh");
 stageEditor.live = { epoch: 2, values: { "903.surface": "#00ff00" } };
 drawStage();
-check(stageNode("frame", 901) !== heldAgain &&
+check(stageNode("frame", 901) === heldAgain &&
         stageNode("frame", 901).style.width === "660px",
-      "a new compile epoch rebuilds the page from the programs it just received");
+      "a new compile epoch RECONCILES: the same element, the number it just received");
+
+/* ---- THE IDENTITY-STABLE RENDERER: no element is created or deleted at runtime ----
+   An element is a thing the user is HOLDING — a press, a hover, a text selection, the box
+   a gesture measured — so the engine never replaces one to change what it says. A live
+   frame patches exactly the binds whose cells moved; a document edit, a compile epoch and
+   a mode flip RECONCILE by key onto the very same elements; only a `show` that flipped or
+   a `repeat` whose count moved touches structure, and then only under the one parent that
+   read it. This rig hand-authors all three levers as programs over one instance's cells. */
+{
+  /* the gesture primitives put their fail-safe listeners on the window and the document
+     (gestures.ts), which this process has neither of until the popover block installs one */
+  globalThis.window ??= { addEventListener: () => undefined,
+                          removeEventListener: () => undefined };
+  document.addEventListener ??= () => undefined;
+  document.removeEventListener ??= () => undefined;
+
+  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  /* pressed ? green : blue — the view-local gesture state, bound the way a real widget
+     binds it, so a press has something to move */
+  const pressedTint = { code: [{ op: "LOAD", cell: "state:pressed" },
+                               { op: "CONST", v: "#00ff00" }, { op: "CONST", v: "#0000ff" },
+                               { op: "PICK" }] };
+  const rigType = {
+    name: "Rig", design_w: 220, design_h: 110, events: [],
+    slots: [{ name: "tint", default: "#000000" }, { name: "on", default: 1 },
+            { name: "count", default: 3 }],
+    template: { kind: "frame", name: "", attrs: {}, children: [
+      { kind: "frame", name: "lamp", attrs: { surface: cell("slot:tint") } },
+      { kind: "text", name: "read", attrs: { text: cell("slot:tint") } },
+      { kind: "frame", name: "gate", attrs: { show: cell("slot:on"),
+                                              surface: prog("#111111") } },
+      { kind: "frame", name: "tail", attrs: { surface: prog("#222222") } },
+      { kind: "frame", name: "knob", attrs: { surface: pressedTint },
+        interact: { primitive: "press", params: {}, emits: { tap: "tap" } } },
+      { kind: "frame", name: "tick", attrs: { repeat: cell("slot:count"),
+                                              x: cell("repeat:frac") } },
+    ] },
+  };
+  const rStore = new DocStore();
+  rStore.load({
+    version: 1, next_id: 999, globals: [], tokens: [], components: [],
+    pages: [{ id: 500, name: "Rig", children: [
+      { id: 510, kind: "frame", name: "board", attrs: {}, children: [
+        { id: 511, kind: "frame", type: "Rig", name: "rig", attrs: {},
+          slots: {}, locals: [], feeds: [], flows: [] },
+      ] },
+      { id: 520, kind: "frame", name: "side", attrs: {}, children: [] },
+    ] }],
+  });
+  const rAttrs = {
+    "510": { attrs: { x: prog(11), y: prog(11), w: prog(440), h: prog(220) } },
+    "511": { attrs: { x: prog(22), y: prog(22), w: prog(198), h: prog(110) } },
+    "520": { attrs: { x: prog(484), y: prog(11), w: prog(220), h: prog(110) } },
+  };
+  const rHost = new Element("section");
+  const rView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const rEditor = {
+    store: rStore, registry: { version: 1, types: [rigType] }, nodeAttrs: rAttrs,
+    live: { epoch: 1, values: {} }, view: rView,
+    page: () => rStore.pages()[0],
+    contexts: [],
+    root() { return this.page(); },
+    artboard: () => ({ w: 1408, h: 792 }),
+    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    select: () => undefined, input: () => undefined,
+  };
+  const draw = () => renderStage(rHost, rEditor);
+  const rNode = (id) => rHost.querySelectorAll("[data-id]")
+    .find((n) => n.getAttribute("data-id") === String(id)) ?? null;
+  /* a live frame, at the same epoch: what the runtime sends thirty times a second */
+  const feed = (values) => { rEditor.live = { epoch: 1, values }; draw(); };
+  /* one edit landing as the shell delivers it: the echo bumps the version, the recompiled
+     programs arrive in the snapshot behind it */
+  const edit = (version, change) => {
+    change();
+    rStore.apply(version, [{ op: "set_prop", node: 520, key: "name", value: "side" }]);
+    draw();
+  };
+
+  draw();
+  const rPage = rHost.querySelector(".page");
+  const board = rNode(510);
+  const rig = rNode(511);
+  const side = rNode(520);
+  check(rPage !== null && board !== null && rig !== null && side !== null,
+        "the rig renders: two page boxes and the instance inside one of them");
+  const kids = () => rig.children;
+  check(kids().length === 8,
+        "an instance renders its component's own nodes — lamp, read, gate, tail, knob and " +
+        "three repeat copies — got " + kids().length);
+  const lamp = kids()[0];
+  const read = kids()[1];
+  const gate = kids()[2];
+  const tail = kids()[3];
+  const knob = kids()[4];
+  const ticks = [kids()[5], kids()[6], kids()[7]];
+  check(ticks[1].style.left === "50%",
+        "a repeat copy places itself by its own fraction of the run, got " + ticks[1].style.left);
+
+  /* A DOCUMENT EDIT RECONCILES BY KEY: the page keeps its elements and the edited field
+     lands on the one it belongs to. Page nodes key by id, a component's internals by
+     their index path under the instance — so both survive. */
+  edit(2, () => { rAttrs["510"].attrs.w = prog(660); });
+  check(rHost.querySelector(".page") === rPage && rNode(510) === board &&
+          rNode(511) === rig && rNode(520) === side,
+        "a document edit reuses every element whose key survived");
+  check(board.style.width === "660px",
+        "and the edited attr lands on that very element, got " + board.style.width);
+  check(kids()[0] === lamp && kids()[3] === tail && kids()[5] === ticks[0],
+        "a component's internals are keyed by index path and survive the edit too");
+
+  /* EVERY APPLIER IS TOTAL: the element already carries the last pass's answer, so an
+     attr that LEFT must be cleared rather than left standing */
+  edit(3, () => { rAttrs["520"].attrs.surface = prog("#334455"); });
+  check(side.style.background === "#334455",
+        "an added surface paints on the standing element, got " + side.style.background);
+  edit(4, () => { delete rAttrs["520"].attrs.surface; });
+  check(rNode(520) === side && !side.style.background,
+        "and removing it CLEARS that element: an applier writes or clears all it owns");
+
+  /* A LIVE FRAME PATCHES. Nothing structural, nothing else re-run. */
+  feed({ "511.tint": "#ff0000" });
+  check(rHost.querySelector(".page") === rPage && rNode(511) === rig && kids()[0] === lamp,
+        "a live frame keeps the page, the instance and the leaf it patched");
+  check(lamp.style.background === "#ff0000",
+        "the bound surface moved to the live value, got " + lamp.style.background);
+  check(read.textContent === "#ff0000",
+        "and every reader of that one cell moved with it, got " + read.textContent);
+  /* scribble on the element: an applier that runs would wipe this out */
+  lamp.style.background = "#010203";
+  feed({ "511.tint": "#ff0000", "999.nothing": 5 });
+  check(lamp.style.background === "#010203",
+        "a live frame that moves no cell this picture reads runs no applier at all");
+
+  /* `show`, FED LIVE: the node is not emitted, and nothing around it is disturbed */
+  feed({ "511.tint": "#ff0000", "511.on": 0 });
+  check(kids().length === 7 && kids().indexOf(gate) < 0,
+        "a `show` that flipped off takes that node out, got " + kids().length + " children");
+  check(kids()[0] === lamp && kids()[2] === tail && kids()[3] === knob,
+        "its siblings keep their own elements, and close ranks in order");
+  feed({ "511.tint": "#ff0000", "511.on": 1 });
+  check(kids().length === 8 && kids()[2].style.background === "#111111" &&
+          kids()[3] === tail,
+        "and flipping it back re-emits it in its own sibling seat: z-order is sibling order");
+  check(kids()[0] === lamp && kids()[4] === knob,
+        "the re-emit touched no element but the one that came back");
+
+  /* `repeat`, FED LIVE: the copies that survive a count change are the same elements,
+     re-applied — their index did not move but their count did */
+  feed({ "511.tint": "#ff0000", "511.count": 5 });
+  check(kids().length === 10 && kids()[5] === ticks[0] && kids()[7] === ticks[2],
+        "growing the count keeps every copy that survived, got " + kids().length);
+  check(ticks[1].style.left === "25%",
+        "and re-applies them: copy 1 of 5 is a quarter of the way through, got " +
+          ticks[1].style.left);
+  check(kids()[9].style.left === "100%",
+        "while the new tail copies land at the end, got " + kids()[9].style.left);
+  feed({ "511.tint": "#ff0000", "511.count": 2 });
+  check(kids().length === 7 && kids()[5] === ticks[0] && kids()[6] === ticks[1],
+        "shrinking it destroys only the tail copies, got " + kids().length);
+  check(ticks[1].style.left === "100%",
+        "and the survivors re-solve against the new count, got " + ticks[1].style.left);
+  feed({ "511.tint": "#ff0000", "511.count": 3 });
+
+  /* A MODE FLIP IS A PATCH PASS. The elements and their listeners persist, so the regime
+     is a property like any other — and the gesture armed at BUILD (in edit mode, which
+     never armed anything before this) fires the moment the mode says it may. */
+  check(!knob.style.pointerEvents && knob.style.background === "#0000ff",
+        "in edit mode the knob takes the pointer as a picture does, unpressed");
+  fire(knob, "pointerdown", { button: 0, clientX: 4, clientY: 4 });
+  check(knob.style.background === "#0000ff" && !rView.state[511]?.pressed,
+        "and a press there is NOT the widget's: edit mode gates it at event time");
+  rView.mode = "test";
+  draw();
+  check(rNode(511) === rig && rig.children[4] === knob && rHost.querySelector(".page") === rPage,
+        "flipping to test keeps every element, the page included");
+  check(rNode(510).style.pointerEvents === "none" && rig.style.pointerEvents === "none",
+        "test mode: a bare page node and an inert instance both let the press through");
+  fire(knob, "pointerdown", { button: 0, clientX: 4, clientY: 4 });
+  check(rView.state[511]?.pressed === true,
+        "the gesture armed at build fires after an edit and a mode flip");
+  check(knob.style.background === "#00ff00" && rig.children[4] === knob,
+        "and the state write patches exactly what binds it, on that same element");
+  rView.mode = "edit";
+  draw();
+  check(rNode(511) === rig && !rNode(510).style.pointerEvents,
+        "flipping back is a patch too: same elements, the regime taken off");
+}
 
 /* ---- the node inspector ----
    A page's box is a NODE, so it is inspected the way a component's node is: one
@@ -2070,7 +2264,9 @@ check(stageNode("frame", 901) !== heldAgain &&
   check(inks()[1] === "--", "and a sample of a one-wide series has no series to index into");
 
   /* AN APPEND MUST REPAINT: the render recorded the ring's version, and the diff that
-     decides whether a live frame rebuilds compares exactly that */
+     decides which binds a live frame patches compares exactly that. A PLOT IS AN ORDINARY
+     BIND now — no plot list, no hist-only branch — so the append rewrites one `d` on the
+     path that was already there, which is what lets a press survive a streaming trend. */
   const standing = plotHost.querySelector("path");
   plotEditor.live = { epoch: 1, values: { "999.nothing": 1 } };
   drawPlot();
@@ -2078,8 +2274,8 @@ check(stageNode("frame", 901) !== heldAgain &&
         "a live frame touching no consumed cell leaves the plot standing");
   foldHist(rings, { "971.series": { rate: 10, series: 1, cap: 8, from: 4, values: [5] } });
   drawPlot();
-  check(plotHost.querySelector("path") !== standing && traceD() === "M0 1 L1 2 M3 4 L4 5",
-        "while an appended sample repaints it, got " + traceD());
+  check(plotHost.querySelector("path") === standing && traceD() === "M0 1 L1 2 M3 4 L4 5",
+        "while an appended sample redraws that same path in place, got " + traceD());
 
   /* a closed path still closes: the fold produces anchors, and everything downstream of
      the anchors is what it always was */
@@ -2206,10 +2402,13 @@ check(stageNode("frame", 901) !== heldAgain &&
         "test mode: an operable Toggle takes it");
   check(at(963).style.pointerEvents === "none",
         "test mode: an inert Panel lets the press through");
+  const heldTog = at(962);
   tView.mode = "edit";
   renderStage(tHost, tEditor);
   check(!at(961).style.pointerEvents && !at(963).style.pointerEvents,
-        "flipping the mode rebuilds the picture: edit takes the regime back off");
+        "flipping the mode PATCHES the regime: edit takes it back off");
+  check(at(962) === heldTog,
+        "and every element stands through the flip: a mode is not a reason to rebuild");
 }
 
 /* ---- THE OPTIONS SLOT: a list spelling, and a picker that is sugar for writing one ----
