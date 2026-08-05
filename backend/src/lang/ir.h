@@ -25,6 +25,13 @@ namespace hmi {
  * split can yield at most one piece per input byte */
 constexpr uint32_t kVarrCeiling = 512;
 constexpr uint32_t kSplitCeiling = 256;
+/* THE system ceiling on a RETAINED aggregate cell: how many elements a list variable or
+ * a list slot may hold at once (pairs, for a map). It is larger than kVarrCeiling
+ * because the two bound different things — kVarrCeiling bounds what one RUN builds in
+ * the scratch pool (a mesh delivery, an expression site's worst case), and this bounds
+ * what a cell KEEPS across ticks, which is a history ring's whole point. A keep-less
+ * append that would cross it refuses loudly rather than growing forever. */
+constexpr uint32_t kRetainedCeiling = 4096;
 
 enum class OpCode : uint8_t {
     Const,
@@ -79,15 +86,10 @@ enum class OpCode : uint8_t {
      * seconds, 2 duration seconds): expressions read a timer only by field, the way
      * `myTimer.remaining` spells it; the state lives beside the cells, not in one */
     TmrRead,
-    /* pop into history `a`'s LATEST buffer (a scalar, or every element of a numeric
-     * list, captured while the run's element pool is still valid): the tail of a feed
-     * whose slot the type flagged `history`. The rate timer commits the latest into
-     * the ring; the cell itself is never stored (a series is not a scalar). */
-    StoreHist,
     /* pop `b` values (pushed left to right) into a fresh element run and push the
-     * list: the `[a, b, c]` array literal, how an expression builds a Trend's
-     * multi-series value. A Nil element stays Nil (a gap in that one series), it
-     * does not poison the whole list. */
+     * list: the `[a, b, c]` array literal, how an expression builds a list without
+     * reading one. A Nil element stays Nil (a gap is a value), it does not poison the
+     * whole list. */
     MakeList,
     /* The ONE iterating opcode (spec 6.4): pop a list, run sub-program `a` once per
      * element with that element bound as the body's parameter, and push the result the
@@ -99,6 +101,18 @@ enum class OpCode : uint8_t {
      * each body result, and a single VM case keeps the sub-program plumbing -- the
      * stack frame, the trip bound, the element window -- written once. */
     Iterate,
+    /* APPEND ONE ELEMENT to list cell `a` (`b`: the fault site). The stack reads
+     * [value, keep] -- keep comes off first, having been pushed last. A non-Nil keep
+     * trims the front to that many elements, which is what makes a history ring one
+     * authored step instead of a privileged machine; a Nil keep means unbounded, and
+     * the append REFUSES at the retained ceiling rather than growing forever. The one
+     * verb that changes a list without replacing it. */
+    Append,
+    /* WRITE ONE KEY of map cell `a` (`b`: the fault site). The stack reads [value, key]
+     * -- key comes off first. A Nil value ERASES the key: a map has no other removal
+     * verb, and "this key holds UNKNOWN" and "this key is absent" would otherwise be two
+     * spellings of one thing. Keys stay sorted, so iteration is replay-deterministic. */
+    StoreKey,
 };
 
 /* what Iterate does with each element's body result (rides Instruction::small) */

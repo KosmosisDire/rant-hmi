@@ -333,8 +333,9 @@ Document Document::make_default() {
     main_kids.push_back(std::move(slider));
     main_kids.push_back(std::move(readout));
     main_kids.push_back(std::move(reset));
-    /* the Trend holds `flow`'s past: its ring samples the fed cell whether or not
-       anything draws it, and the plot is the template's own map over that series */
+    /* the Trend holds `flow`'s past: its own cadence flow appends the fed value into its
+       `history` list whether or not anything draws it, and the plot is the template's own
+       map over that list */
     main_kids.push_back([] {
         Json trend = instance("Trend", "History",
                               Json{{"window", 30}}, at(22, 484, 418, 176));

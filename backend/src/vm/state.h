@@ -31,15 +31,27 @@ struct StructState {
     std::vector<uint32_t> texts;
 };
 
-/* One LIST-shaped cell's retained storage. A list value built during a run lives in the
- * scratch element pool, which resets before the next one, so a cell that is to hold a
- * list across ticks needs storage of its own: this is it, written whole, latest wins.
- * `elems` is sized once to the element ceiling; `texts` names one slot in
- * RuntimeState::texts per element that has ever held text, so element text resolves
- * through exactly the machinery every other text value does, and the growth to a list's
- * working width is a one-time cost rather than a per-tick one. */
+/* One AGGREGATE cell's retained storage — a list's elements, or a map's entries
+ * INTERLEAVED (key, value) with `count` counting PAIRS and the keys kept SORTED ascending
+ * by text at all times (deterministic iteration is what makes a replay byte-identical,
+ * and it is the order nlohmann serialises an object in, so the wire agrees for free).
+ *
+ * An aggregate built during a run lives in the scratch element pool, which resets before
+ * the next one, so a cell that is to hold one ACROSS ticks needs storage of its own: this
+ * is it. `elems` starts EMPTY and grows amortized toward the working size a store or an
+ * append asks for, never past kRetainedCeiling — a slot that only ever holds three
+ * options must not carry the ceiling's worth of Values. `texts` names one slot in
+ * RuntimeState::texts per element position that has ever held text, so element text
+ * resolves through exactly the machinery every other text value does.
+ *
+ * `gen` and `total` are the WIRE's truth and have to stay exact: gen bumps on every
+ * discontinuity (a whole store, a clear, a store of Nil, a migration), and total counts
+ * elements ever APPENDED within the current gen — never rewound by a trim, so it is a
+ * cursor a client can compare against. A whole store resets total to the new count. */
 struct ListState {
     uint32_t count = 0;
+    uint32_t gen = 0;
+    uint64_t total = 0;
     std::vector<Value> elems;
     std::vector<uint32_t> texts;
 };
@@ -78,25 +90,6 @@ struct RuntimeFault {
 struct TimerState {
     bool running = false;
     uint32_t remaining = 0;
-};
-
-/* One history's runtime side (HistoryDef is the compile side). `latest` is the capture
- * buffer StoreHist fills (sample-and-hold); the rate timer commits it into the ring.
- * The ring is sample-major at a FIXED stride of series_cap floats, so a series-count
- * change never reallocates: it just resets the ring (stale series must not age out
- * beside fresh ones). An unknown sample is NaN, serialized as null. */
-struct HistoryState {
-    bool has = false;                 /* latest holds a capture */
-    uint32_t latest_count = 1;
-    std::vector<float> latest;        /* series_cap floats */
-    uint32_t series = 1;              /* the ring's current sample width */
-    uint32_t head = 0;                /* index of the OLDEST sample */
-    uint32_t count = 0;               /* valid samples, <= capacity */
-    uint64_t total = 0;               /* samples ever pushed (the wire cursor) */
-    uint64_t next_tick = 0;
-    std::vector<float> data;          /* capacity x series_cap floats */
-
-    void sample(uint32_t capacity, uint32_t series_cap) noexcept;
 };
 
 struct PendingState {
@@ -138,7 +131,7 @@ class RuntimeState {
     uint32_t elem_text_base = 0;
     uint32_t elem_text_cursor = 0;
     uint32_t elem_text_count = 0;
-    /* one entry per list-shaped cell, indexed by CellDef::list_slot */
+    /* one entry per LIST- or MAP-shaped cell, indexed by CellDef::list_slot */
     std::vector<ListState> lists;
     std::vector<StructState> structs;
     std::vector<LastValueState> last;
@@ -146,7 +139,6 @@ class RuntimeState {
     std::vector<uint64_t> throttle;
     std::vector<PendingState> pending;
     std::vector<TimerState> timers;
-    std::vector<HistoryState> histories;
     std::vector<uint8_t> fired;
     std::vector<Value> stack;
     std::vector<EffectRecord> effects;
@@ -161,15 +153,34 @@ class RuntimeState {
 
     /* the elements behind a list or a map, whichever storage it names */
     AggView aggregate(const Value& value) const noexcept;
-    /* Copy a run of elements into a list cell's retained slot and point the cell at it.
-     * The source may live anywhere -- the scratch pool, a program's constant list, the
-     * state being retired at a recompile -- so text is resolved through the pair it
-     * belongs to and copied into the slot's own storage. */
+    /* Copy a run of elements into an aggregate cell's retained slot and point the cell
+     * at it. The source may live anywhere -- the scratch pool, a program's constant
+     * list, the state being retired at a recompile -- so text is resolved through the
+     * pair it belongs to and copied into the slot's own storage. A whole store is a
+     * DISCONTINUITY: gen bumps and total restarts at the new element count. `pairs`
+     * says the run is a map's interleaved entries, which are re-sorted by key here
+     * because the source may be a scratch map the mesh built in arrival order. */
     bool hold_list(const Program& source_program, const RuntimeState& source,
                    uint32_t cell, uint32_t list_slot, const Value* data,
-                   uint32_t count) noexcept;
-    /* the text slot backing element `at` of a retained list, allocated on first use */
+                   uint32_t count, bool pairs = false) noexcept;
+    /* Append ONE element to a list cell. An aggregate element is refused (nested
+     * aggregates do not exist) and so is an append that would cross kRetainedCeiling
+     * with no keep to bound it; both return false so the caller can fault loudly. A Nil
+     * value APPENDS: a gap is a value, and a ring that silently skipped its unknown
+     * samples would draw a lie. `keep`, when it is a number, trims the FRONT afterwards. */
+    bool append_list(const Program& program, uint32_t cell, Value value,
+                     const Value& keep) noexcept;
+    /* Write ONE key of a map cell, at its sorted position. A Nil value ERASES the key
+     * (an absent key is already erased, which is not a failure). A non-text key, an
+     * aggregate value, or a NEW key past the ceiling all return false: a map has no
+     * keep, so a runaway one is a bug by construction. */
+    bool store_key(const Program& program, uint32_t cell, const Value& key,
+                   Value value) noexcept;
+    /* the text slot backing element `at` of a retained aggregate, allocated on first use */
     uint32_t list_text(ListState& held, uint32_t at) noexcept;
+    /* move one entry within a retained slot, its text following it into the destination
+     * position's own slot: what a trim and a keyed insert are both built out of */
+    void move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept;
 
     /* aggregate scratch: reset before seeding a run's x, allocate during the run.
      * alloc_elems returns the pool offset or UINT32_MAX when the layout bound is hit;

@@ -10,7 +10,7 @@
  * pushed into standing controls. */
 
 import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
-import { diagIcon, Editor, liveIsOn, liveText } from "../editor.js";
+import { cellText, diagIcon, Editor, liveIsOn } from "../editor.js";
 import { bind, bindChoice, bindField, bindText } from "../reconcile.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { Json, MeshField, Var } from "../types.js";
@@ -18,7 +18,7 @@ import { valueEditor } from "./editors.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
 const SCALAR_LABEL: Record<string, string> = {
-  f64: "number", bool: "bool", str: "text", timer: "timer",
+  f64: "number", bool: "bool", str: "text", timer: "timer", list: "list", map: "map",
 };
 
 const opened = new Set<number>();
@@ -53,7 +53,7 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
      name; a struct variable has no one live scalar, so its type stands in. */
   const now = el("span", { class: "now-value" });
   bind(variable.id + ":now", now, () => {
-    const live = liveText(editor.live, cell);
+    const live = cellText(editor, cell);
     const text = isStruct && live === "--" ? at().type : live;
     if (now.textContent !== text) now.textContent = text;
     now.classList.toggle("on", liveIsOn(editor.live, cell));
@@ -97,12 +97,40 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
 
   const initShape =
     variable.type === "bool" ? "bool" : variable.type === "str" ? "text" : "num";
+  const isAgg = variable.type === "list" || variable.type === "map";
 
-  /* the INIT rows: a scalar edits one value; an enum picks its start VARIANT; a struct
-     edits a default per scalar field over the type's zero */
+  /* the INIT rows: a scalar edits one value; a list or a map edits the JSON of where it
+     starts (empty means an empty container -- a declared buffer is appendable from
+     birth, never UNKNOWN); an enum picks its start VARIANT; a struct edits a default
+     per scalar field over the type's zero */
   const initRows: (HTMLElement | null)[] = [];
   const resolved = isStruct ? resolveTypeRef(editor.mesh, variable.type) : null;
-  if (!isStruct) {
+  if (isAgg) {
+    initRows.push(
+      el("span", { class: "row-label", text: "INIT" }, [diagIcon(initDiags)]),
+      el("div", { class: "var-line" }, [
+        valueEditor(
+          null,
+          "text",
+          variable.id + ":init",
+          () => {
+            const init = at().init;
+            if (init === undefined || init === null || init === "") return "";
+            return typeof init === "string" ? init : JSON.stringify(init);
+          },
+          /* the document keeps real JSON where the text parses to the right shape and
+             the raw text otherwise -- the compiler's refusal is the teacher, and it
+             must see what was typed */
+          (value) => {
+            const text = typeof value === "string" ? value.trim() : "";
+            if (!text) { setProp("init", null); return; }
+            try { setProp("init", JSON.parse(text)); }
+            catch { setProp("init", text); }
+          },
+        ),
+      ]),
+    );
+  } else if (!isStruct) {
     initRows.push(
       el("span", { class: "row-label",
                    text: variable.type === "timer" ? "SECS" : "INIT" }, [

@@ -82,6 +82,11 @@ class Scheduler final : private MeshSink {
     std::vector<SessionSequence> sequences_;
     std::vector<GesturePin> pins_;
     std::vector<uint32_t> ended_;
+    /* when each CADENCE flow next runs, one entry per flow (0 = seed at the current
+     * tick). Sized at construction, so the pass allocates nothing; it does not survive a
+     * recompile, which restarts the phase — the RING migrates, being a cell, and that is
+     * the part anyone can see. */
+    std::vector<uint64_t> cadence_next_;
 };
 
 } // namespace hmi

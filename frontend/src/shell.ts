@@ -15,7 +15,7 @@
 import { DropPlan, fmtFraction, fmtPx, holds, literalNumber, snapPx } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
-import { Editor, foldHist, HistRing, Mode, StageContext, ViewState } from "./editor.js";
+import { AggEntry, Editor, foldAggs, Mode, StageContext, ViewState } from "./editor.js";
 import { armSwallow, closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
@@ -56,9 +56,9 @@ export class App implements Editor {
   builtinSel: { name: string; path: string } | null = null;
   live: Live | null = null;
   diagnostics: Diag[] = [];
-  /* the standing trend rings, folded from every frame's `hist` deltas (editor.ts): the
-     wire carries what is new, this holds what there is */
-  private hists = new Map<string, HistRing>();
+  /* the standing aggregate cells, folded from every frame's `aggs` deltas (editor.ts):
+     the wire carries what is new, this holds what there is */
+  private aggs = new Map<string, AggEntry>();
   /* the entered-widget stack (editor.ts): empty = editing the page itself. Never synced
      and never persisted, like the selection it travels with. */
   contexts: StageContext[] = [];
@@ -122,7 +122,7 @@ export class App implements Editor {
          assign. The sidebars decide for themselves whether anything structural moved. */
       live: (live) => {
         this.live = live;
-        foldHist(this.hists, live?.hist);
+        foldAggs(this.aggs, live?.aggs);
         this.queueSidebars();
       },
       diag: (rows) => this.onDiag(rows),
@@ -140,8 +140,8 @@ export class App implements Editor {
     return this.store.page(this.pageId) ?? this.store.pages()[0] ?? null;
   }
 
-  hist(key: string): HistRing | null {
-    return this.hists.get(key) ?? null;
+  agg(key: string): AggEntry | null {
+    return this.aggs.get(key) ?? null;
   }
 
   /* THE EDITING ROOT: the page, or — inside an entered widget — the component shaped as
@@ -471,10 +471,10 @@ export class App implements Editor {
 
   /* ---- protocol ----
    *
-   * A frame's `hist` entries are DELTAS, so both entry points below fold them into the
-   * standing rings (editor.ts holds the fold and its erase-and-rebaseline rule). A
-   * SNAPSHOT clears the store first: a recompile can move which slot a cell key names, and
-   * a snapshot's own block is the whole ring anyway. */
+   * A frame's `aggs` entries are DELTAS, so both entry points below fold them into the
+   * standing copies (editor.ts holds the fold and its erase-and-rebaseline rule). A
+   * SNAPSHOT clears the store first: a recompile can move which cell a key names, and a
+   * snapshot's own block carries every aggregate cell whole anyway. */
 
   private onSnapshot(doc: Doc, registry: Registry, live: Live, diag: Diag[], mesh: Mesh,
                      lang: Lang, attrTable: AttrTable, builtins: BuiltinDef[],
@@ -483,8 +483,8 @@ export class App implements Editor {
     this.registry = registry;
     this.nodeAttrs = nodeAttrs;
     this.live = live;
-    this.hists.clear();
-    foldHist(this.hists, live?.hist);
+    this.aggs.clear();
+    foldAggs(this.aggs, live?.aggs);
     this.mesh = { entities: mesh?.entities ?? [], types: mesh?.types ?? [] };
     this.lang = lang;
     this.attrTable = attrTable;

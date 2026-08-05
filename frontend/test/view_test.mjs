@@ -27,7 +27,7 @@ installDom();
 
 const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
-const { foldHist } = await import(mod("editor.js"));
+const { foldAggs } = await import(mod("editor.js"));
 const { run } = await import(mod("program.js"));
 const { syncUrl } = await import(mod("endpoint.js"));
 const { Panel } = await import(mod("reconcile.js"));
@@ -128,7 +128,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 9, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 10, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -634,6 +634,22 @@ check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is
   const long = vm(lit(Array.from({ length: 5000 }, (_, i) => i)), over("MAP", [arg(0)]));
   check(Array.isArray(long) && long.length === 4096,
         "ITERATE walks at most 4096 elements, got " + (long ?? []).length);
+
+  /* A MAP takes the same vocabulary where it has an honest answer: LENGTH counts its
+     pairs, INDEX looks a text key up, and REDUCE walks (acc, key, value) per SORTED key
+     -- the same deterministic order the backend iterates in, so every view folds the
+     same answer. The other loops have no settled result shape over a map: Nil. */
+  const modes = lit({ low: 1, high: 2 });
+  check(vm(modes, { op: "LENGTH" }) === 2, "LENGTH counts a map's pairs");
+  check(vm(modes, lit("high"), { op: "INDEX" }) === 2, "INDEX reads the key it names");
+  check(vm(modes, lit("off"), { op: "INDEX" }) === null, "an absent key is Nil");
+  check(vm(modes, lit(0), { op: "INDEX" }) === null, "and a map takes no numeric index");
+  check(vm(modes, lit(""),
+           over("REDUCE", [arg(0), arg(1), { op: "ADD" }, arg(2), { op: "ADD" }])) ===
+          "high2low1",
+        "REDUCE walks a map as (acc, key, value), per sorted key");
+  check(vm(modes, over("MAP", [arg(0)])) === null,
+        "while the other loops refuse a map as UNKNOWN");
 }
 
 /* ---- default behavior and diagnostics ----
@@ -2399,57 +2415,65 @@ check(stageNode("frame", 901) === heldAgain &&
         "resizing the preview resizes the artboard: the fractions re-solve");
 }
 
-/* ---- THE TREND RINGS: what the wire delivers vs. what the view holds (editor.ts) ----
-   Every `hist` entry is a DELTA against an absolute sample cursor, so the fold either
-   continues the ring it has or throws it away: ERASE AND REBASELINE, never bridge a hole.
-   Guessing what fell in a gap would draw a line through samples nobody took. */
+/* ---- THE STANDING AGGREGATES: what the wire delivers vs. what the view holds ----
+   Every `aggs` entry is a DELTA against a per-cell generation and append cursor, so the
+   fold either continues the copy it has or throws it away: ERASE AND REBASELINE, never
+   bridge a hole. Guessing what fell in a gap would show a list that never existed. */
 {
-  const rings = new Map();
-  const wire = (from, values, series = 1, cap = 4) =>
-    ({ "1.series": { rate: 10, series, cap, from, values } });
-  const ring = () => rings.get("1.series");
-  const held = () => (ring()?.values ?? []).join(",");
+  const store = new Map();
+  const wire = (gen, from, len, values) => ({ "1.ring": { gen, from, len, values } });
+  const held = () => {
+    const values = store.get("1.ring")?.values;
+    return Array.isArray(values) ? values.join(",") : String(values);
+  };
+  const entry = () => store.get("1.ring");
 
-  foldHist(rings, wire(0, [1, 2]));
-  check(held() === "1,2" && ring().end === 2,
-        "the first frame becomes the ring, and the cursor lands past it");
-  const first = ring().version;
-  foldHist(rings, wire(2, [3]));
-  check(held() === "1,2,3" && ring().end === 3,
+  foldAggs(store, wire(1, 0, 2, [1, 2]));
+  check(held() === "1,2" && entry().end === 2,
+        "the first frame becomes the copy, and the cursor lands past it");
+  const first = entry().version;
+  foldAggs(store, wire(1, 2, 3, [3]));
+  check(held() === "1,2,3" && entry().end === 3,
         "a frame starting exactly at the cursor APPENDS, got " + held());
-  check(ring().version > first, "and the version moves, which is what a reader watches");
+  check(entry().version > first, "and the version moves, which is what a reader watches");
 
-  const before = ring().version;
-  foldHist(rings, wire(9, [7, 8]));
-  check(held() === "7,8" && ring().end === 11,
-        "a frame starting anywhere else discards the ring and rebaselines, got " + held());
-  check(ring().version > before,
+  foldAggs(store, wire(1, 3, 3, [4]));
+  check(held() === "2,3,4" && entry().end === 4,
+        "the front falls off to `len` (the backend's own keep), cursor unaffected, got " +
+        held());
+
+  const before = entry().version;
+  foldAggs(store, wire(1, 9, 4, [7, 8]));
+  check(held() === "7,8" && entry().end === 11,
+        "a frame starting anywhere else DISCARDS and rebaselines from its own tail, got " +
+        held());
+  check(entry().version > before,
         "a rebaseline moves the version too: the reader must be told to redraw");
 
-  foldHist(rings, wire(11, [9, 10, 11]));
-  check(held() === "8,9,10,11" && ring().end === 14,
-        "the front falls off at `cap` samples, and the cursor is unaffected, got " + held());
+  foldAggs(store, wire(2, 0, 1, [9]));
+  check(held() === "9" && entry().gen === 2,
+        "a new GENERATION is a whole-store: the frame replaces, whatever the cursor said");
 
-  const narrow = ring().version;
-  foldHist(rings, wire(14, [1, 2, 3, 4], 2));
-  check(ring().series === 2 && held() === "1,2,3,4" && ring().end === 16,
-        "a wider series arrives rebaselining: four numbers are two samples, got " + held());
-  check(ring().version > narrow, "a width change is a change like any other");
-  foldHist(rings, wire(16, [5, 6], 1));
-  check(ring().series === 1 && held() === "5,6",
-        "and a width that disagrees on an APPEND rebaselines too, rather than interleaving");
+  foldAggs(store, { "1.ring": { gen: 2, from: "x", len: 1, values: [1] } });
+  check(held() === "9", "a frame the view cannot read is dropped, never allowed to erase");
 
-  foldHist(rings, { "1.series": { rate: 10, series: 0, cap: 4, from: 0, values: [1] } });
-  check(held() === "5,6", "a frame the view cannot read is dropped, never allowed to erase");
-  foldHist(rings, wire(18, [1, 2, 3], 2));
-  check(held() === "1,2" && ring().end === 19,
-        "and a ragged tail is left off: a half sample would shift the series, got " + held());
+  foldAggs(store, { "1.ring": { gen: 3, nil: true } });
+  check(entry().values === null && entry().version > before,
+        "a Nil cell is held as null -- the honest UNKNOWN a reader falls back from");
+  foldAggs(store, wire(3, 0, 2, [1, 2]));
+  check(held() === "1,2", "and a later frame refills it through the same door");
+
+  foldAggs(store, { "2.modes": { gen: 1, map: true, values: { high: 2, low: 1 } } });
+  const map = store.get("2.modes");
+  check(map && !Array.isArray(map.values) && map.values.low === 1,
+        "a map rides whole on any change and is held as the object itself");
 }
 
-/* ---- A PLOT, END TO END: ring -> hist cell -> map -> anchors -> path `d` (stage.ts) ----
-   The privileged points-are-numbers branch is gone. `points` is an ordinary expression
-   over the trend cell and what the renderer receives is a list of POINTS, so the shape of
-   a plot is language work. A gap in the data is a gap in the line. */
+/* ---- A PLOT, END TO END: list slot -> map -> anchors -> path `d` (stage.ts) ----
+   The privileged points-are-numbers branch AND the privileged hist cell are both gone.
+   `points` is an ordinary expression over an ordinary LIST SLOT (the Trend's `history`),
+   whose value arrives on the aggs lane and is served from the standing copy. A gap in
+   the data is a gap in the line. */
 {
   const plotStore = new DocStore();
   plotStore.load({
@@ -2461,22 +2485,16 @@ check(stageNode("frame", 901) === heldAgain &&
   });
   const K = (v) => ({ op: "CONST", v });
   const A = (i) => ({ op: "ARG", i });
-  /* x is the sample's index, y its value: one map over the cell, one anchor per sample */
+  /* x is the element's index, y its value: one map over the slot, one anchor each */
   const pointsProgram = { code: [
-    { op: "LOAD", cell: "hist:series" },
+    { op: "LOAD", cell: "slot:history" },
     { op: "ITERATE", mode: "MAP", body: [A(1), A(0), { op: "ANCHOR" }] },
   ] };
-  /* the LAST sample, read by index off the same cell -- a scalar while the series is one
-     wide, a list of series once it is wider */
+  /* the LAST element, read by index off the same slot */
   const lastProgram = { code: [
-    { op: "LOAD", cell: "hist:series" },
-    { op: "LOAD", cell: "hist:series" }, { op: "LENGTH" }, K(1), { op: "SUB" },
+    { op: "LOAD", cell: "slot:history" },
+    { op: "LOAD", cell: "slot:history" }, { op: "LENGTH" }, K(1), { op: "SUB" },
     { op: "INDEX" }, { op: "STR" },
-  ] };
-  const rowProgram = { code: [
-    { op: "LOAD", cell: "hist:series" },
-    { op: "LOAD", cell: "hist:series" }, { op: "LENGTH" }, K(1), { op: "SUB" },
-    { op: "INDEX" }, K(0), { op: "INDEX" }, { op: "STR" },
   ] };
   const trace = { kind: "path", name: "trace", attrs: { points: pointsProgram },
                   anchors: [], closed: false };
@@ -2485,17 +2503,16 @@ check(stageNode("frame", 901) === heldAgain &&
     template: { kind: "frame", name: "", attrs: {}, children: [
       trace,
       { kind: "text", name: "last", attrs: { text: lastProgram } },
-      { kind: "text", name: "row", attrs: { text: rowProgram } },
     ] },
   };
-  const rings = new Map();
+  const aggStore = new Map();
   const plotHost = new Element("section");
   const plotView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
   const plotEditor = {
     store: plotStore, registry: { version: 1, types: [plotType] },
     nodeAttrs: { 971: { attrs: {} } },
     live: { epoch: 1, values: {} }, view: plotView,
-    hist: (key) => rings.get(key) ?? null,
+    agg: (key) => aggStore.get(key) ?? null,
     page: () => plotStore.pages()[0],
     contexts: [],
     root() { return this.page(); },
@@ -2507,27 +2524,37 @@ check(stageNode("frame", 901) === heldAgain &&
   const traceD = () => plotHost.querySelector("path")?.getAttribute("d");
   const inks = () => plotHost.querySelectorAll(".ink-text").map((n) => n.textContent);
 
-  foldHist(rings, { "971.series": { rate: 10, series: 1, cap: 8, from: 0,
-                                    values: [1, 2, null, 4] } });
+  foldAggs(aggStore, { "971.history": { gen: 1, from: 0, len: 8,
+                                        values: [1, 2, null, 4] } });
   drawPlot();
   check(traceD() === "M0 1 L1 2 M3 4",
-        "a gap BREAKS the line: the next sample opens a new subpath, got " + traceD());
-  check(inks()[0] === "4", "the same cell indexes as a plain list, got " + inks()[0]);
-  check(inks()[1] === "--", "and a sample of a one-wide series has no series to index into");
+        "a gap BREAKS the line: the next element opens a new subpath, got " + traceD());
+  check(inks()[0] === "4", "the same slot indexes as a plain list, got " + inks()[0]);
 
-  /* AN APPEND MUST REPAINT: the render recorded the ring's version, and the diff that
-     decides which binds a live frame patches compares exactly that. A PLOT IS AN ORDINARY
-     BIND now — no plot list, no hist-only branch — so the append rewrites one `d` on the
-     path that was already there, which is what lets a press survive a streaming trend. */
+  /* AN APPEND MUST REPAINT: the render recorded the copy's VERSION, and the diff that
+     decides which binds a live frame patches compares exactly that. A PLOT IS AN
+     ORDINARY BIND — so the append rewrites one `d` on the path that was already there,
+     which is what lets a press survive a streaming trend. */
   const standing = plotHost.querySelector("path");
   plotEditor.live = { epoch: 1, values: { "999.nothing": 1 } };
   drawPlot();
   check(plotHost.querySelector("path") === standing,
         "a live frame touching no consumed cell leaves the plot standing");
-  foldHist(rings, { "971.series": { rate: 10, series: 1, cap: 8, from: 4, values: [5] } });
+  foldAggs(aggStore, { "971.history": { gen: 1, from: 4, len: 8, values: [5] } });
   drawPlot();
   check(plotHost.querySelector("path") === standing && traceD() === "M0 1 L1 2 M3 4 L4 5",
-        "while an appended sample redraws that same path in place, got " + traceD());
+        "while an appended element redraws that same path in place, got " + traceD());
+
+  /* a Nil cell serves NOTHING, and the read falls through to what the document authors:
+     the same honest fallback an omitted scalar key takes */
+  foldAggs(aggStore, { "971.history": { gen: 2, nil: true } });
+  drawPlot();
+  check(inks()[0] === "--",
+        "a Nil list serves nothing and the readout shows the UNKNOWN mark, got " + inks()[0]);
+  foldAggs(aggStore, { "971.history": { gen: 3, from: 0, len: 8, values: [1, 2, 3] } });
+  drawPlot();
+  check(traceD() === "M0 1 L1 2 L2 3",
+        "a rebaselined generation redraws from its own whole, got " + traceD());
 
   /* a closed path still closes: the fold produces anchors, and everything downstream of
      the anchors is what it always was */
@@ -2536,23 +2563,6 @@ check(stageNode("frame", 901) === heldAgain &&
   drawPlot();
   check(traceD().endsWith(" Z"), "a closed path still gets its Z, got " + traceD());
   trace.closed = false;
-
-  /* A WIDER SERIES reads as one list per SAMPLE, and the chunking is cached on the ring
-     under the version it was built at: a map body may load the cell once per element, and
-     re-chunking per load would make a plot quadratic in its own sample count. */
-  foldHist(rings, { "971.series": { rate: 10, series: 2, cap: 8, from: 9,
-                                    values: [1, 2, 3, 4] } });
-  plotEditor.live = { epoch: 3, values: {} };
-  drawPlot();
-  const wide = rings.get("971.series");
-  check(inks()[1] === "3", "a two-wide series indexes sample then series, got " + inks()[1]);
-  check(inks()[0] === "--", "and a whole sample is not a value a text field can show");
-  check(wide.chunks?.version === wide.version && wide.chunks.rows.length === 2,
-        "the chunking is cached on the ring, tagged with the version it was built at");
-  foldHist(rings, { "971.series": { rate: 10, series: 2, cap: 8, from: 11, values: [5, 6] } });
-  drawPlot();
-  check(inks()[1] === "5", "an append invalidates that cache by version, got " + inks()[1]);
-  check(wide.chunks.rows.length === 3, "and the fresh chunking is the one now held");
 
   /* `points` that is not a list at all falls through to the authored anchors, which is
      how every ordinary shape is still drawn */

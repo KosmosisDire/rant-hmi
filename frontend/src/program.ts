@@ -162,6 +162,14 @@ const ITERATE_CAP = 4096;
 /* nothing outside an ITERATE body has arguments to read, so ARG there is Nil */
 const NO_ARGS: Json[] = [];
 
+/* a MAP value in this tier is a plain object (the aggs lane delivers it as one). The
+   other objects this tier passes around -- anchors, timer records -- never legally meet
+   the list vocabulary; the compiler is what keeps them apart, so this only has to tell
+   a map from a scalar and a list. */
+function isMapValue(value: Json): value is Record<string, Json> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /* what ITERATE can be asked to do with the values its body returned */
 const ITERATE_MODES = new Set(["MAP", "FILTER", "ANY", "ALL", "SORT_BY", "REDUCE"]);
 
@@ -388,6 +396,14 @@ function exec(code: Instr[], cells: Cells, args: Json[]): Json {
       case "INDEX": {
         const at = pop();
         const list = pop();
+        /* a MAP indexes by its text key; an absent key is Nil, the same honest miss an
+           out-of-range list index answers */
+        if (isMapValue(list)) {
+          stack.push(typeof at === "string" && at in (list as Record<string, Json>)
+            ? (list as Record<string, Json>)[at] ?? NIL
+            : NIL);
+          break;
+        }
         stack.push(
           !Array.isArray(list) || typeof at !== "number" || !Number.isInteger(at) ||
           at < 0 || at >= list.length
@@ -398,6 +414,10 @@ function exec(code: Instr[], cells: Cells, args: Json[]): Json {
       }
       case "LENGTH": {
         const value = pop();
+        if (isMapValue(value)) {
+          stack.push(Object.keys(value as Record<string, Json>).length);
+          break;
+        }
         stack.push(typeof value === "string" || Array.isArray(value) ? value.length : NIL);
         break;
       }
@@ -457,6 +477,18 @@ function exec(code: Instr[], cells: Cells, args: Json[]): Json {
         /* a mode this view does not know: fail as UNKNOWN before running a single body,
            never as a wrong picture */
         if (!ITERATE_MODES.has(mode)) return NIL;
+        /* REDUCE is the one loop a MAP takes, per sorted key so the answer is the same
+           on every view: the body sees [acc, key, value]. The other modes have no
+           settled result shape over a map and the compiler refuses them. */
+        if (mode === "REDUCE" && isMapValue(list)) {
+          const keys = Object.keys(list).sort();
+          const pairs = Math.min(keys.length, ITERATE_CAP);
+          let acc = seed;
+          for (let at = 0; at < pairs; at++)
+            acc = exec(body, cells, [acc, keys[at], list[keys[at]] ?? NIL]);
+          stack.push(acc);
+          break;
+        }
         if (!Array.isArray(list)) { stack.push(NIL); break; }
         const count = Math.min(list.length, ITERATE_CAP);
         if (mode === "REDUCE") {

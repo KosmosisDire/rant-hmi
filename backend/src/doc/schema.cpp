@@ -138,10 +138,14 @@ const std::vector<NodeSpec>& table() {
             text("name"),
             /* the type owns the init's shape: a bool variable whose init stayed the
              * number 0 would compile to UNKNOWN and never leave it (Nil poisons).
-             * Anything beyond the four scalars is a TypeRef (spec 2.7): the variable
-             * holds a struct, zeroed, and the compiler resolves the name. */
-            text_retyping("type", "f64", {"f64", "bool", "str", "timer"}, "init",
-                          {Json(0.0), Json(false), Json(""), Json(1.0)}),
+             * A LIST or a MAP is an ordinary variable type — a declared buffer, born
+             * empty, that a flow appends to or writes by key. Anything beyond these is a
+             * TypeRef (spec 2.7): the variable holds a struct, zeroed, and the compiler
+             * resolves the name. */
+            text_retyping("type", "f64",
+                          {"f64", "bool", "str", "timer", "list", "map"}, "init",
+                          {Json(0.0), Json(false), Json(""), Json(1.0), Json::array(),
+                           Json::object()}),
             any("init", 0),
             boolean("persist", false),
         };
@@ -191,10 +195,15 @@ const std::vector<NodeSpec>& table() {
                  from  {"expr": "x"} | {"kind","name","path"} | {"local","path"}
                        | {"init": true}                  (reset: the dest's own start)
                  to    {"local","path","type"?} | {"kind","name","path"} | {"slot"}
-               `mode` applies to a V destination only; every other verb is derived. */
+               `mode` applies to a V destination only (write/force/unforce) or names the
+               APPEND into a list; every other verb is derived. `keep` bounds an append
+               to the last N elements, which is the whole of what a history ring is, and
+               `key` addresses one key of a map destination. Both are expressions. */
             {"move", {object("from", Json{{"expr", "x"}}, Role::MoveRef),
                       object("to", Json::object(), Role::MoveRef),
-                      enumer("mode", {"write", "force", "unforce"}, "write")}},
+                      enumer("mode", {"write", "force", "unforce", "append"}, "write"),
+                      text("keep", "", Role::Expr),
+                      text("key", "", Role::Expr)}},
             {"gate", {text("a", "", Role::Expr)}},
             {"deadband", {num("a", 0)}},
             {"throttle", {num("a", 0)}},
@@ -254,16 +263,20 @@ const std::vector<NodeSpec>& table() {
         t.push_back(component);
 
         /* One declared property = one served SlotSpec row: the optional keys (editor,
-         * variants, step/min/max, history) are served only where they say something,
-         * so a row here round-trips to exactly the wire shape (spec 2.3). A prop row
-         * lives on the component (the widget's own vocabulary) or on any PART, whose
-         * path prefixes its address. */
+         * variants, step/min/max) are served only where they say something, so a row
+         * here round-trips to exactly the wire shape (spec 2.3). A prop row lives on the
+         * component (the widget's own vocabulary) or on any PART, whose path prefixes
+         * its address.
+         *
+         * `list` and `map` are ordinary property shapes: a declared list property is a
+         * Dropdown's options and a Trend's history alike — visible state a flow appends
+         * to, not a privileged ring nothing could point at. */
         NodeSpec prop;
         prop.kind = Kind::PropDef;
         prop.name = "prop";
         prop.props = {
             text("name"),
-            enumer("shape", {"num", "bool", "text", "color", "enum", "series"}, "num"),
+            enumer("shape", {"num", "bool", "text", "color", "enum", "list", "map"}, "num"),
             any("default", 0.0),
             enumer("group", {"value", "appearance", "config", "frame"}, "appearance"),
             text("editor", ""),
@@ -271,7 +284,6 @@ const std::vector<NodeSpec>& table() {
             num("step", nullptr),
             num("min", nullptr),
             num("max", nullptr),
-            boolean("history", false),
         };
         t.push_back(prop);
 
@@ -378,6 +390,19 @@ Json coerce_like(const Json& like, const Json& value) {
         if (value.is_number()) {
             Json out = value.dump();
             return out;
+        }
+        return like;
+    }
+    /* AGGREGATE starts: the value survives when it already IS one, or when it is the
+     * TEXT of one (an inspector field commits a string and the document keeps what it
+     * was given). Anything else was a scalar belonging to the type this row just left,
+     * so it falls back to the empty aggregate rather than to a value nothing can hold. */
+    if (like.is_array() || like.is_object()) {
+        const bool matches = like.is_array() ? value.is_array() : value.is_object();
+        if (matches) return value;
+        if (value.is_string()) {
+            const Json parsed = Json::parse(value.get<std::string>(), nullptr, false);
+            if (like.is_array() ? parsed.is_array() : parsed.is_object()) return value;
         }
         return like;
     }

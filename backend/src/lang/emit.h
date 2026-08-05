@@ -1,11 +1,11 @@
 /* What the expression compiler needs from whatever it is compiling INTO.
  *
  * The scalar compiler used to take a `Program&` and reach into it, which put the whole
- * runtime model — entities, cells, feeds, flows, histories, timers — inside the
- * language's headers for the sake of five operations. This is those five operations, and
- * it is the entire coupling between lang/ and vm/: a constant pool, a text pool, the
- * enum vocabulary shape checking reads, and the two allocation counters a text- or
- * list-producing site bumps.
+ * runtime model — entities, cells, feeds, flows, timers — inside the language's headers
+ * for the sake of a handful of operations. This is those operations, and it is the
+ * entire coupling between lang/ and vm/: a constant pool, a text pool, the enum
+ * vocabulary shape checking reads, the two allocation counters a text- or list-producing
+ * site bumps, the lambda-body table, and the one runtime finding an iteration can hit.
  *
  * Virtual rather than a template because the implementation is 965 lines that have no
  * business in a header, and because this is compile-time work: nothing here is ever
@@ -47,6 +47,12 @@ struct EmitSink {
      * `a` operand. `max_stack` is the body's own frame depth: the sink reports it upward
      * so the layout can size one stack tall enough for a run plus a body on top of it. */
     virtual uint32_t add_sub(std::vector<Instruction> code, uint32_t max_stack) = 0;
+
+    /* register a RUNTIME FINDING an instruction can fault to, returning its site index.
+     * The language needs exactly one: an iteration whose source outran its trip bound
+     * must say so by name rather than quietly fold the part of the list it could reach. */
+    virtual uint32_t add_fault_site(const std::string& code,
+                                    const std::string& message) = 0;
 };
 
 } // namespace hmi

@@ -23,11 +23,11 @@ import { AttrDef, ComponentDef, EVENT_KINDS, EventSpec, Json, Node, PRIMITIVES, 
          SlotSpec, eventKind, primitiveDef } from "../types.js";
 import { valueEditor } from "./editors.js";
 
-const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "series"];
+const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "list", "map"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
-/* what an event's `x` may be: the shapes a PROPOSAL can have. `series` is not one (a
-   gesture never carries a history) and `enum` needs a type to name its variants, which an
-   event row has nowhere to put — the enum's own text name is what travels. */
+/* what an event's `x` may be: the shapes a PROPOSAL can have. A list or a map is not
+   one (a gesture never carries a history) and `enum` needs a type to name its variants,
+   which an event row has nowhere to put — the enum's own text name is what travels. */
 const EVENT_SHAPES = ["bool", "num", "text", "color"];
 
 /* the closed attr vocabulary: `editor.attrTable` is snapshot-only data, so these read

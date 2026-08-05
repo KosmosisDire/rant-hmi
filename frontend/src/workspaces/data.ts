@@ -13,7 +13,7 @@
  * fed cells of its consumers, labeled by the widget.slot they arrive through. */
 
 import { clear, el } from "../dom.js";
-import { Editor, liveText } from "../editor.js";
+import { cellText, Editor } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { sideOf, verbOf } from "../inspector/flows.js";
 import { newVariable, varCard, varShape } from "../inspector/vars.js";
@@ -135,7 +135,7 @@ function leafName(name: string): string {
 }
 
 const SCALAR_LABEL: Record<string, string> = {
-  f64: "number", bool: "bool", str: "text", timer: "timer",
+  f64: "number", bool: "bool", str: "text", timer: "timer", list: "list", map: "map",
 };
 
 function typeKey(type: MeshType, index: number): string {
@@ -324,7 +324,7 @@ export function renderDataTree(host: HTMLElement, editor: Editor): void {
     const live = row.live ? el("span", { class: "data-live" }) : null;
     if (live && row.live) {
       const cell = row.live;
-      bindText("data:live:" + cell, live, () => liveText(editor.live, cell));
+      bindText("data:live:" + cell, live, () => cellText(editor, cell));
     }
     const node = el(
       "button",
@@ -419,7 +419,7 @@ function feedUseRow(editor: Editor, use: FeedUse): HTMLElement {
     title: "live value via " + widgetLabel(use.widget) + "." + use.feed.slot +
            " (the entity itself broadcasts no value)",
   });
-  bindText("data:used:" + use.feed.id, live, () => liveText(editor.live, cell));
+  bindText("data:used:" + use.feed.id, live, () => cellText(editor, cell));
   return usedRow(editor, use.widget, [
     el("span", { class: "used-name", text: widgetLabel(use.widget) + "." + use.feed.slot }),
     el("span", { class: "op", text: "←" }),

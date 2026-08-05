@@ -167,6 +167,9 @@ int main() {
     CHECK(snapshot != nullptr);
     if (!welcome || !snapshot) return check::summary("sync_test");
     CHECK((*welcome)["proto"] == kProto);
+    /* the number itself, pinned: the frontend bumps in lockstep, and a silent drift here
+       is a client that talks a frame shape this backend no longer sends */
+    CHECK(kProto == 10);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
@@ -187,17 +190,21 @@ int main() {
         CHECK(header.is_object());
     }
 
-    /* A LIST cell rides the wire as an array: the demo's Selector authored its options,
-       and a view that had to guess them from a type name could only ever be a tick
-       behind what the backend actually holds. */
+    /* AN AGGREGATE CELL RIDES `aggs`, NOT `values`: the demo's Selector authored its
+       options, and a view that had to guess them from a type name could only ever be a
+       tick behind what the backend actually holds. In a SNAPSHOT every aggregate is
+       whole — generation, the absolute index its window starts at, its length now, and
+       the elements — which is the baseline every later delta counts from. */
     {
         const Json mode = widget_of((*snapshot)["doc"], "Mode");
         const std::string key = std::to_string(json_u64_or(mode["id"], 0)) + ".options";
-        const Json& live = (*snapshot)["live"]["values"];
-        CHECK(live.contains(key));
-        if (live.contains(key)) {
-            CHECK(live[key].is_array());
-            CHECK(live[key] == Json::array({"Off", "Low", "High"}));
+        const Json& aggs = (*snapshot)["live"]["aggs"];
+        CHECK(!(*snapshot)["live"]["values"].contains(key));
+        CHECK(aggs.contains(key));
+        if (aggs.contains(key)) {
+            CHECK(aggs[key]["values"] == Json::array({"Off", "Low", "High"}));
+            CHECK(aggs[key]["len"] == 3);
+            CHECK(aggs[key]["from"] == 0);
         }
     }
 
@@ -363,6 +370,88 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(saw_live);
+
+    /* THE DELTA LANE, LIVE. A list that did not move is ABSENT from `aggs` entirely; a
+     * ring that appended carries ONLY what was appended, starting at the absolute index
+     * the last frame left off at. That cursor is why a 4096-sample window costs one
+     * element a frame instead of four thousand. */
+    {
+        const Json history_widget = widget_of(app.document().root, "History");
+        const std::string ring =
+            std::to_string(json_u64_or(history_widget["id"], 0)) + ".history";
+        const Json mode = widget_of(app.document().root, "Mode");
+        const std::string options =
+            std::to_string(json_u64_or(mode["id"], 0)) + ".options";
+        a.take();
+        int quiet = 0, deltas = 0;
+        bool appends_only = true, continuous = true;
+        uint64_t expect_from = UINT64_MAX;
+        const auto stop =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
+        while (std::chrono::steady_clock::now() < stop) {
+            app.poll();
+            for (const Json& frame : a.take()) {
+                if (frame.value("type", std::string()) != "live") continue;
+                if (!frame.contains("aggs")) continue;
+                const Json& aggs = frame["aggs"];
+                if (!aggs.contains(options)) ++quiet;
+                if (!aggs.contains(ring)) continue;
+                const Json& row = aggs[ring];
+                if (!row.contains("from")) continue;
+                const uint64_t from = json_u64_or(row["from"], 0);
+                /* a live frame never re-sends the window it already sent */
+                if (row["values"].size() > 4) appends_only = false;
+                if (expect_from != UINT64_MAX && from != expect_from) continuous = false;
+                expect_from = from + row["values"].size();
+                ++deltas;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK_MSG(quiet > 0, "an unchanged list should be absent from a live frame");
+        CHECK_MSG(deltas > 0, "the Trend's ring should append on its own cadence");
+        CHECK_MSG(appends_only, "a live delta carried the whole window, not the appends");
+        CHECK_MSG(continuous, "the delta cursor skipped or repeated elements");
+    }
+
+    /* A WHOLE STORE MOVES THE GENERATION, and a client sees that rather than a length
+     * that happens to differ: editing the Selector's authored options reseeds its cell
+     * at the recompile, so the next frame carries the list whole under a new gen. */
+    {
+        const Json mode = widget_of(app.document().root, "Mode");
+        const uint64_t mode_id = json_u64_or(mode["id"], 0);
+        const std::string options = std::to_string(mode_id) + ".options";
+        a.take();
+        a.send(Json{{"type", "apply_ops"},
+                    {"base_version", app.document().version()},
+                    {"ops", Json::array({Json{
+                                {"op", "set_prop"},
+                                {"node", mode_id},
+                                {"key", "slots"},
+                                {"value", Json{{"options", Json::array({"A", "B"})},
+                                               {"value", "A"}}}}})}});
+        /* ONE loop for the echo and the frame that follows it: the first live frame after
+           a recompile carries every aggregate whole, so a pump that swallowed it would
+           leave nothing left to see */
+        bool reseeded = false, echoed = false;
+        const auto stop =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        while (!reseeded && std::chrono::steady_clock::now() < stop) {
+            app.poll();
+            for (const Json& frame : a.take()) {
+                const std::string type = frame.value("type", std::string());
+                if (type == "ops_applied") echoed = true;
+                if (type != "live" || !frame.contains("aggs")) continue;
+                if (!frame["aggs"].contains(options)) continue;
+                const Json& row = frame["aggs"][options];
+                if (row["values"] == Json::array({"A", "B"}) && row["len"] == 2 &&
+                    row["from"] == 0)
+                    reseeded = true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK(echoed);
+        CHECK_MSG(reseeded, "an edited authored list should arrive whole under a new gen");
+    }
 
     /* Widget types are document data (spec 2.3): inserting a component re-derives the
        served registry, and ops_applied does not carry it, so the backend follows the

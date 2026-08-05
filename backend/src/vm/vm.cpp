@@ -1374,44 +1374,23 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 if (!push(value)) fail(ins.c);
                 break;
             }
-            /* a history feed's tail: capture the value (a scalar, or every numeric
-             * element of a list, read while the run's element pool is still valid)
-             * into the history's LATEST buffer; the scheduler's rate timer commits it
-             * into the ring. Anything non-numeric captures as unknown. */
-            case OpCode::StoreHist: {
+            /* THE RING, AUTHORED: one element onto a list cell, trimmed to whatever
+             * `keep` asks for. The operands come off in reverse push order (keep last
+             * in, first out), and a refusal is a FAULT rather than a silent drop —
+             * either the element was an aggregate, or an unbounded list reached the
+             * retained ceiling, and both are things the author has to be told. */
+            case OpCode::Append: {
+                const Value keep = pop();
                 const Value value = pop();
-                if (ins.a >= state.histories.size() ||
-                    ins.a >= program.histories.size())
-                    break;
-                HistoryState& hist = state.histories[ins.a];
-                const uint32_t cap = program.histories[ins.a].series_cap;
-                auto scalar = [](const Value& v, float& out) {
-                    switch (v.tag) {
-                        case ValueTag::Num: out = static_cast<float>(v.data.num); return true;
-                        case ValueTag::Bool: out = v.data.boolean ? 1.0f : 0.0f; return true;
-                        case ValueTag::Enum:
-                            out = static_cast<float>(v.data.integer);
-                            return true;
-                        default: return false;
-                    }
-                };
-                if (value.tag == ValueTag::List) {
-                    const uint32_t n =
-                        std::min<uint32_t>(static_cast<uint32_t>(value.data.integer), cap);
-                    hist.has = n > 0;
-                    hist.latest_count = std::max<uint32_t>(n, 1);
-                    for (uint32_t k = 0; k < n; ++k) {
-                        float out = std::numeric_limits<float>::quiet_NaN();
-                        if (value.ref + k < state.elems.size())
-                            scalar(state.elems[value.ref + k], out);
-                        hist.latest[k] = out;
-                    }
-                } else {
-                    float out = 0;
-                    hist.has = scalar(value, out);
-                    hist.latest_count = 1;
-                    if (hist.has) hist.latest[0] = out;
-                }
+                if (!state.append_list(program, ins.a, value, keep)) fail(ins.b);
+                break;
+            }
+            /* one KEY of a map cell; a Nil value erases it. Same operand order rule:
+             * the key was pushed last, so it comes off first. */
+            case OpCode::StoreKey: {
+                const Value key = pop();
+                const Value value = pop();
+                if (!state.store_key(program, ins.a, key, value)) fail(ins.b);
                 break;
             }
             case OpCode::MakeList: {
@@ -1445,9 +1424,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             /* Bounded iteration (spec 6.4): run the lambda body once per element on a
              * frame ABOVE this one, and fold the results per the mode. `ins.b` is the
              * trip bound the compiler took from the schema, so the worst-case step count
-             * of the whole run is still a compile-time constant; a list longer than the
-             * bound is truncated and faulted rather than iterated, which is the one
-             * hazard 6.4 names for an uncapped varr. */
+             * of the whole run is still a compile-time constant; a source LONGER than
+             * the bound faults and yields nothing, because half a fold is a wrong number
+             * nobody would see.
+             *
+             * A MAP source folds and only folds: the body reads (acc, key, value), which
+             * is the one shape that names both halves of what it is visiting. */
             case OpCode::Iterate: {
                 const IterateMode mode = static_cast<IterateMode>(ins.small);
                 const bool folds = mode == IterateMode::Reduce;
@@ -1461,18 +1443,18 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const Value source = pop();
                 const bool folds_to_bool =
                     mode == IterateMode::Any || mode == IterateMode::All;
-                if (source.tag != ValueTag::List) {
+                const bool over_map = source.tag == ValueTag::Map && folds;
+                if (source.tag != ValueTag::List && !over_map) {
                     /* Nil in, Nil out: UNKNOWN poisons rather than iterating nothing and
                        reporting a confident empty answer */
                     if (!push(Value::nil())) fail(ins.c);
                     break;
                 }
                 const AggView view = agg_view(ctx, source);
-                bool truncated = false;
-                uint32_t count = view.count;
+                const uint32_t count = view.count;
                 if (count > ins.b) {
-                    count = ins.b;
-                    truncated = true;
+                    fail(ins.c);
+                    break;
                 }
                 const std::vector<Instruction>& body = program.subs[ins.a].code;
                 /* the body's frame starts at this run's current top, so it cannot reach
@@ -1508,13 +1490,16 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                    and what an empty list leaves untouched */
                 Value acc = init;
                 for (uint32_t i = 0; i < count && !body_faulted; ++i) {
-                    const Value element = view.data[i];
+                    /* a map's entries interleave, so its "element" is the KEY and the
+                       third parameter is the value beside it */
+                    const Value element = over_map ? view.data[i * 2] : view.data[i];
                     /* the parameters, positionally: a fold leads with the accumulator
                        and every mode ends with the element's index */
                     const RunResult sub =
                         folds ? run_code(program, body, nullptr, state, acc, 0, nullptr,
                                          frame, element,
-                                         Value::number(static_cast<double>(i)))
+                                         over_map ? view.data[i * 2 + 1]
+                                                  : Value::number(static_cast<double>(i)))
                               : run_code(program, body, nullptr, state, element, 0,
                                          nullptr, frame,
                                          Value::number(static_cast<double>(i)));
@@ -1615,7 +1600,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                                                                       : all_true))
                         : push(Value::list(out_at, kept,
                                            uniform && kept ? elem_tag : ValueTag::Nil));
-                if (!pushed_ok || truncated) fail(ins.c);
+                if (!pushed_ok) fail(ins.c);
                 break;
             }
             /* the compile-inserted text -> enum coercion: the top of stack must be one

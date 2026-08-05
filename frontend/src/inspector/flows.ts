@@ -20,7 +20,7 @@
  * list around it. */
 
 import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
-import { diagIcon, Editor, liveText, variablesInScope } from "../editor.js";
+import { cellText, diagIcon, Editor, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
@@ -60,6 +60,8 @@ export function verbOf(step: Json): string {
         if (to.kind === "V" && step.mode === "unforce") return "unforce";
         return "write";
       }
+      /* an append is its own verb: it grows a list rather than replacing it */
+      if (step.mode === "append") return "append";
       return sideOf(step.from) === "entity" ? "read" : "write";
     }
     case "gate": return "gate";
@@ -86,6 +88,7 @@ function pastTense(event: string): string {
 function triggerText(trigger: Json): string {
   if (!trigger) return "?";
   if (trigger.kind === "timer") return "timer " + (trigger.var || "?") + " ends";
+  if (trigger.kind === "every") return "every " + (trigger.ms ?? "?") + " ms";
   return pastTense(String(trigger.name || "?"));
 }
 
@@ -276,7 +279,9 @@ function whenGrid(
     grid.appendChild(el("span", { class: "cell" }, cells));
   };
 
-  /* trigger: the widget's events in past tense, plus "timer ... ends" */
+  /* trigger: the widget's events in past tense, plus "timer ... ends" and "every ... ms"
+     (the cadence trigger: how a sampler is authored — one append on a beat, no timer to
+     start) */
   if (first.kind === "timer") {
     const picker = selectField(
       timers.length ? timers.map((t) => ({ value: t.name })) : [{ value: "" }],
@@ -291,18 +296,35 @@ function whenGrid(
     /* a flow with NO trigger yet (what `+ Behavior` makes on an event-less type) leads
        with the empty offer, so the picker shows what the document actually says instead
        of pointing at whichever event happened to be first */
+    const cadence = first.kind === "every";
     const picker = selectField(
-      (first.name ? [] : [{ value: "", label: "pick a trigger" }])
-        .concat(events, [{ value: "@timer", label: "timer ends" }]),
-      first.name ?? "",
+      (first.name || cadence ? [] : [{ value: "", label: "pick a trigger" }])
+        .concat(events, [{ value: "@timer", label: "timer ends" },
+                         { value: "@every", label: "on a beat" }]),
+      cadence ? "@every" : first.name ?? "",
       (name) =>
         name === "@timer"
-          ? setFirst({ kind: "timer", var: timers[0]?.name ?? "", name: undefined })
-          : setFirst({ name }),
+          ? setFirst({ kind: "timer", var: timers[0]?.name ?? "", name: undefined, ms: undefined })
+          : name === "@every"
+            ? setFirst({ kind: "every", ms: 100, name: undefined, var: undefined })
+            : setFirst({ kind: undefined, name, ms: undefined }),
       "trigger",
     );
-    bindChoice(flow.id + ":when.name", pickerOf(picker), () => head().name ?? "");
+    bindChoice(flow.id + ":when.name", pickerOf(picker), () =>
+      (entries()[0] ?? first).kind === "every" ? "@every" : head().name ?? "");
     row("trigger", picker, diagIcon(editor.diagAt(flow.id)));
+
+    /* the beat: milliseconds, a number or a constant expression over the widget's own
+       slots ("1000 / rate" is how the Trend samples at its authored rate) */
+    if (cadence) {
+      const ms = commitInput(String(first.ms ?? ""), (text) => {
+        const trimmed = text.trim();
+        const numeric = Number(trimmed);
+        setFirst({ ms: trimmed !== "" && Number.isFinite(numeric) ? numeric : trimmed });
+      }, { class: "field num" });
+      bindField(flow.id + ":when.ms", ms, () => String(head().ms ?? ""));
+      row("every", ms, el("span", { class: "op", text: "ms" }));
+    }
   }
 
   if (first.name === "held") {
@@ -457,8 +479,21 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
 
 function liveChip(editor: Editor, key: string, cell: string): HTMLElement {
   const node = chip("", "live");
-  bindText(key, node, () => liveText(editor.live, cell));
+  bindText(key, node, () => cellText(editor, cell));
   return node;
+}
+
+/* the declared shape of a move destination, where the document can say: a bare local's
+   own type, a slot's declared shape. "" where nothing declares one (an entity, a temp
+   declared by use, a dotted path into a struct). */
+function destShape(editor: Editor, widget: Node, type: WidgetType | null, to: Json): string {
+  if (typeof to?.slot === "string")
+    return type?.slots.find((s) => s.name === to.slot)?.shape ?? "";
+  if (typeof to?.local === "string" && !to.path) {
+    const declared = variablesInScope(editor, widget).find((v) => v.name === to.local);
+    return declared?.type === "list" || declared?.type === "map" ? declared.type : "";
+  }
+  return "";
 }
 
 /* ---- one step, one line ---- */
@@ -611,6 +646,32 @@ function stepCell(
       );
       bindChoice(step.id + ":mode", pickerOf(picker), () => String(at().mode ?? "write"));
       cell.appendChild(picker);
+    }
+
+    /* a LIST destination chooses replace-or-grow, and growing offers its window: `keep`
+       is how many elements stand (a ring authors "widget.rate * widget.window"). A MAP
+       destination writes one entry per run, so the key rides the row. Both read the
+       DECLARED shape — a local's type, a slot's shape — and an entity or a fresh temp
+       offers neither (the compiler is the teacher there). */
+    const shape = destShape(editor, widget, type, at().to);
+    if (shape === "list") {
+      const picker = selectField(
+        [{ value: "write" }, { value: "append" }],
+        String(step.mode ?? "write"),
+        (choice) => set("mode", choice),
+        "mode",
+      );
+      bindChoice(step.id + ":mode", pickerOf(picker), () => String(at().mode ?? "write"));
+      cell.appendChild(picker);
+      if (String(step.mode ?? "write") === "append") {
+        cell.appendChild(el("span", { class: "op", text: "keep last" }));
+        cell.appendChild(highlighted(expr(() => String(at().keep ?? ""),
+                                          (text) => set("keep", text), "keep")));
+      }
+    } else if (shape === "map") {
+      cell.appendChild(el("span", { class: "op", text: "at key" }));
+      cell.appendChild(highlighted(expr(() => String(at().key ?? ""),
+                                        (text) => set("key", text), "key")));
     }
     return cell;
   }

@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 9;
+export const PROTO = 10;
 
 /* THE ARTBOARD: one static px space, 16:9, with one static grid — a system constant,
  * not document data. Every page-node x/y/w/h is a px of this space; the stage scales the
@@ -103,7 +103,7 @@ export interface AttrTable {
 export interface Var {
   id: number;
   name: string;
-  /* "f64" | "bool" | "str" | "timer", or any TypeRef from the mesh */
+  /* "f64" | "bool" | "str" | "timer" | "list" | "map", or any TypeRef from the mesh */
   type: string;
   init: Json;
   persist: boolean;
@@ -212,7 +212,7 @@ export function isInstance(node: Node | null | undefined): boolean {
 export interface PropDef {
   id: number;
   name: string;
-  shape: "num" | "bool" | "text" | "color" | "enum" | "series";
+  shape: "num" | "bool" | "text" | "color" | "enum" | "list" | "map";
   default: Json;
   group: "value" | "appearance" | "config" | "frame";
   editor: string;
@@ -220,7 +220,6 @@ export interface PropDef {
   step: number | null;
   min: number | null;
   max: number | null;
-  history: boolean;
 }
 
 export interface ComponentDef {
@@ -466,26 +465,30 @@ export type Op =
 
 /* ---- live state ---- */
 
-/* ONE TREND SERIES AS THE WIRE DELIVERS IT. `values` is FLAT -- sample-major, series-
- * strided, so sample k of series s is values[k * series + s] -- and `from` is the absolute
- * index of the first SAMPLE in this frame. A live frame carries only the samples taken
- * since the last one; a snapshot's block carries the whole ring. `cap` is how many samples
- * the backend keeps, which is what the view's own ring trims to (editor.ts folds them). */
-export interface HistFrame {
-  rate: number;
-  series: number;
-  cap: number;
-  from: number;
-  values: (number | null)[];
+/* ONE AGGREGATE CELL AS THE WIRE DELIVERS IT. List and map cells ride a DELTA lane of
+ * their own, not `values`: a scalar frame is idempotent, but appends are cumulative, so
+ * each entry carries the cell's `gen` (bumps on any whole-store, clear or recompile) and
+ * lists carry `from`, the absolute index of the first element in `values` on the cell's
+ * ever-appended cursor. `len` is how many elements the backend holds NOW — what the
+ * standing copy trims its front to after appending. A map's `values` is the whole object
+ * on any change (`map: true`); `nil: true` says the cell itself is UNKNOWN. A snapshot's
+ * block carries every aggregate cell whole; a live frame only what moved. */
+export interface AggFrame {
+  gen: number;
+  nil?: boolean;
+  map?: boolean;
+  from?: number;
+  len?: number;
+  values?: Json[] | Record<string, Json>;
 }
 
 export interface Live {
   epoch: number;
   values: Record<string, Json>;
-  /* trend history, keyed "<widget>.<slot>": a DELTA on a live frame, the full ring on a
-     snapshot. The shell folds these into its standing rings (editor.ts) and a `hist:` cell
-     reads one. */
-  hist?: Record<string, HistFrame>;
+  /* aggregate cells, keyed like `values` ("<widget>.<slot>" / "v<node>"): deltas on a
+     live frame, the whole cell on a snapshot. The shell folds these into its standing
+     copies (editor.ts) and a `slot:` read serves from those first (stage.ts). */
+  aggs?: Record<string, AggFrame>;
 }
 
 /* ---- diagnostics ---- */

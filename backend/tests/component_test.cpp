@@ -130,10 +130,10 @@ void test_template_expr() {
     CHECK_EQ(lower("pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) POW");
     CHECK_EQ(lower("floor(value)", scope), "LOAD(slot:value) FLOOR");
 
-    /* the one cell-addressing builtin over a bare property name; the option resolver
-       cells died with the list vocabulary, and their refusals teach the spelling */
-    CHECK_EQ(lower("hist(value)", scope), "LOAD(hist:value)");
-    CHECK(refuses("hist(12)", scope, "property name"));
+    /* the cell-addressing builtins are gone whole: the sampling ring became an ordinary
+       list PROPERTY and the option resolvers ordinary list arithmetic, so every one of
+       these refusals teaches the spelling that replaced it */
+    CHECK(refuses("hist(value)", scope, "read the list slot itself"));
     CHECK(refuses("optcount(options)", scope, "options.length"));
     CHECK(refuses("optnames(options)", scope, "the list itself"));
     CHECK(refuses("optfrac(value, options)", scope, "options.indexOf(value)"));
@@ -170,7 +170,7 @@ void test_template_expr() {
  * frontend/src/program.ts executes, ARG indices included. */
 void test_list_vocabulary() {
     const TemplateScope scope =
-        scope_of({"value", "min", "max", "options"});
+        scope_of({"value", "min", "max", "options", "history"});
 
     CHECK_EQ(lower("[]", scope), "MAKE_LIST(0)");
     CHECK_EQ(lower("['Off', 'On']", scope),
@@ -185,10 +185,11 @@ void test_list_vocabulary() {
     CHECK_EQ(lower("options.length", scope), "LOAD(slot:options) LENGTH");
     CHECK_EQ(lower("options.indexOf(value)", scope),
              "LOAD(slot:options) LOAD(slot:value) INDEX_OF");
-    CHECK_EQ(lower("hist(value).max", scope), "LOAD(hist:value) LIST_MAX");
-    CHECK_EQ(lower("hist(value).min", scope), "LOAD(hist:value) LIST_MIN");
-    CHECK_EQ(lower("hist(value).sum", scope), "LOAD(hist:value) LIST_SUM");
-    CHECK_EQ(lower("hist(value).avg", scope), "LOAD(hist:value) LIST_AVG");
+    /* a past is an ordinary LIST property now, so the aggregates read off it by name */
+    CHECK_EQ(lower("history.max", scope), "LOAD(slot:history) LIST_MAX");
+    CHECK_EQ(lower("history.min", scope), "LOAD(slot:history) LIST_MIN");
+    CHECK_EQ(lower("history.sum", scope), "LOAD(slot:history) LIST_SUM");
+    CHECK_EQ(lower("history.avg", scope), "LOAD(slot:history) LIST_AVG");
     CHECK(refuses("options.length()", scope, "without parentheses"));
 
     /* the Selector's needle fraction, whole: what optfrac used to be, as arithmetic */
@@ -200,13 +201,13 @@ void test_list_vocabulary() {
     CHECK_EQ(lower("anchor(0.5, value)", scope),
              "CONST(0.5) LOAD(slot:value) ANCHOR");
 
-    /* the Trend's whole plot: a map from the series to anchors, the seed of the
-       no-privileged-renderer-paths acceptance test */
-    CHECK_EQ(lower("hist(value).map((v, i) => anchor("
-                   "i / max(hist(value).length - 1, 1), "
+    /* the Trend's whole plot: a map from its own history LIST to anchors, the seed of
+       the no-privileged-renderer-paths acceptance test */
+    CHECK_EQ(lower("history.map((v, i) => anchor("
+                   "i / max(history.length - 1, 1), "
                    "1 - (v - min) / (max - min)))", scope),
-             "LOAD(hist:value) ITERATE[MAP]{"
-             "ARG(1) LOAD(hist:value) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
+             "LOAD(slot:history) ITERATE[MAP]{"
+             "ARG(1) LOAD(slot:history) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
              "CONST(1.0) ARG(0) LOAD(slot:min) SUB "
              "LOAD(slot:max) LOAD(slot:min) SUB DIV SUB ANCHOR}");
 
@@ -451,18 +452,33 @@ void test_builtins_compile_clean() {
     CHECK_EQ(ops_of(mark["attrs"]["repeat"]), "LOAD(slot:scale.divisions)");
     CHECK_EQ(ops_of(mark["attrs"]["x"]), "LOAD(repeat:fraction)");
 
-    /* A PLOT IS A PATH whose anchors are data: the series maps to anchor records in
-       the template's own text, and no renderer knows what a plot is */
+    /* A PLOT IS A PATH whose anchors are data: the widget's own history LIST maps to
+       anchor records in the template's own text, and no renderer knows what a plot is */
     const Json& trend = registry["types"][7];
     CHECK_EQ(ops_of(trend["template"]["children"][0]["attrs"]["points"]),
-             "LOAD(hist:value) ITERATE[MAP]{"
-             "ARG(1) LOAD(hist:value) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
+             "LOAD(slot:history) ITERATE[MAP]{"
+             "ARG(1) LOAD(slot:history) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
              "CONST(1.0) ARG(0) LOAD(slot:plot.min) SUB "
              "LOAD(slot:plot.max) LOAD(slot:plot.min) SUB DIV SUB ANCHOR}");
-    bool trend_history = false;
-    for (const Json& slot : trend["slots"])
-        if (slot.value("name", "") == "value") trend_history = slot.value("history", false);
-    CHECK(trend_history);
+    /* THE PAST IS AUTHORED: `history` is an ordinary list slot and the sampler is an
+       ordinary cadence flow, so the whole of what the backend used to do privately is
+       readable here, in the served type */
+    std::string history_shape, value_shape;
+    for (const Json& slot : trend["slots"]) {
+        if (slot.value("name", "") == "history") history_shape = slot.value("shape", "");
+        if (slot.value("name", "") == "value") value_shape = slot.value("shape", "");
+        CHECK(!slot.contains("history"));
+    }
+    CHECK_EQ(history_shape, "list");
+    CHECK_EQ(value_shape, "num");
+    if (CHECK(trend["behavior"].size() == 1)) {
+        const Json& sampler = trend["behavior"][0];
+        CHECK_EQ(sampler["when"][0].value("kind", ""), "every");
+        CHECK_EQ(sampler["when"][0].value("ms", ""), "1000 / rate");
+        CHECK_EQ(sampler["do"][0].value("mode", ""), "append");
+        CHECK_EQ(sampler["do"][0].value("keep", ""), "widget.rate * widget.window");
+        CHECK_EQ(sampler["do"][0]["to"].value("slot", ""), "history");
+    }
 
     const Json& readout = registry["types"][8];
     CHECK_EQ(ops_of(readout["template"]["children"][0]["attrs"]["text"]),

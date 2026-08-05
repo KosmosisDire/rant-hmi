@@ -376,6 +376,109 @@ void test_retype() {
     Document kept;
     CHECK(kept.adopt(std::move(with_null), err));
     CHECK(global_named(kept, "on")->at("init").is_null());
+
+    /* LIST AND MAP ARE VARIABLE TYPES: a declared buffer a flow appends to or writes by
+       key. Retyping into one starts it EMPTY rather than carrying the scalar it left
+       behind, which nothing could hold; retyping back restores the scalar's own start. */
+    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+                                    {"value", "list"}}}),
+                    r, err));
+    CHECK(global_named(d, "setpoint")->at("init") == Json::array());
+    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+                                    {"value", "map"}}}),
+                    r, err));
+    CHECK(global_named(d, "setpoint")->at("init") == Json::object());
+    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+                                    {"value", "f64"}}}),
+                    r, err));
+    /* nothing about a map is a number, so the number's own default stands */
+    CHECK(global_named(d, "setpoint")->at("init") == 0.0);
+
+    /* an authored aggregate SURVIVES the round trip, in either spelling: the value is
+       already the shape the type wants, so there is nothing to coerce */
+    Json seeded = {{"version", 1},
+                   {"next_id", 1},
+                   {"globals",
+                    Json::array({Json{{"name", "log"},
+                                      {"type", "list"},
+                                      {"init", Json::array({1, 2, 3})}},
+                                 Json{{"name", "typed"},
+                                      {"type", "list"},
+                                      {"init", "[4, 5]"}},
+                                 Json{{"name", "table"},
+                                      {"type", "map"},
+                                      {"init", Json{{"a", 1}}}}})},
+                   {"pages", Json::array()}};
+    Document rings;
+    CHECK(rings.adopt(std::move(seeded), err));
+    CHECK(global_named(rings, "log")->at("init") == Json::array({1, 2, 3}));
+    CHECK(global_named(rings, "typed")->at("init") == "[4, 5]");
+    const Json one_key = Json{{"a", 1}};
+    CHECK(global_named(rings, "table")->at("init") == one_key);
+}
+
+/* THE MOVE STEP'S AGGREGATE FIELDS (milestone 4): `mode: append` with a `keep` window,
+ * and `key` for a map's one-key write. Both are ordinary props on the move variant, so
+ * the generic op machinery carries them and the inspector reads them from the schema. */
+void test_aggregate_move_props() {
+    const NodeSpec& step = node_spec(Kind::Step);
+    const Prop* mode = find_prop(step, "move", "mode");
+    if (!CHECK(mode != nullptr)) return;
+    bool appends = false;
+    for (const std::string& variant : mode->variants)
+        if (variant == "append") appends = true;
+    CHECK(appends);
+    const Prop* keep = find_prop(step, "move", "keep");
+    const Prop* key = find_prop(step, "move", "key");
+    if (!CHECK(keep != nullptr && key != nullptr)) return;
+    /* both are EXPRESSIONS, so a rename of a variable they name reaches them */
+    CHECK(keep->role == Role::Expr);
+    CHECK(key->role == Role::Expr);
+
+    /* and they survive an edit through the ordinary op path */
+    Document d = Document::make_default();
+    std::string err;
+    const uint64_t reset = id_of(*widget_in(d.root["pages"][0], "Reset"));
+    ApplyResult r;
+    Json add = Json::array({Json{{"op", "insert"},
+                                 {"parent", reset},
+                                 {"list", "flows"},
+                                 {"node", Json{{"when", Json::array({Json{
+                                                   {"kind", "every"}, {"ms", 100}}})}}}}});
+    CHECK_MSG(apply_ops(d, add, r, err), err);
+    const uint64_t flow = r.ops[0]["node"]["id"].get<uint64_t>();
+    Json row = Json::array({Json{{"op", "insert"},
+                                 {"parent", flow},
+                                 {"list", "do"},
+                                 {"node", Json{{"kind", "move"},
+                                               {"from", Json{{"expr", "x"}}},
+                                               {"to", Json{{"local", "log"}}},
+                                               {"mode", "append"},
+                                               {"keep", "60"}}}}});
+    CHECK_MSG(apply_ops(d, row, r, err), err);
+    const uint64_t moved = r.ops[0]["node"]["id"].get<uint64_t>();
+    CHECK(d.node(moved)->at("mode") == "append");
+    CHECK(d.node(moved)->at("keep") == "60");
+    /* the key field is present and empty on a step that does not use it */
+    CHECK(d.node(moved)->at("key") == "");
+}
+
+/* PROP SHAPES: the served vocabulary a component declares its properties in. `series`
+ * is gone with the sampling ring; `list` and `map` took its place, and a declared list
+ * property is exactly what a Trend's history now is. */
+void test_prop_shapes() {
+    const Prop* shape = find_prop(node_spec(Kind::PropDef), "", "shape");
+    if (!CHECK(shape != nullptr)) return;
+    bool has_list = false, has_map = false, has_series = false;
+    for (const std::string& variant : shape->variants) {
+        if (variant == "list") has_list = true;
+        if (variant == "map") has_map = true;
+        if (variant == "series") has_series = true;
+    }
+    CHECK(has_list && has_map);
+    CHECK(!has_series);
+    /* and the `history` flag went with it: a past is state, not a flag on a slot */
+    CHECK(find_prop(node_spec(Kind::PropDef), "", "history") == nullptr);
 }
 
 /* Theme tokens (spec 2.10): the seeded set, generic ops over the Token kind, and the
@@ -839,6 +942,8 @@ int main() {
     test_rename();
     test_expr_rewrite();
     test_retype();
+    test_aggregate_move_props();
+    test_prop_shapes();
     test_tokens();
     test_component_design_frame();
     return check::summary("doc_test");

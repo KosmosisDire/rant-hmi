@@ -23,6 +23,7 @@ Scheduler::Scheduler(Program program, MeshPort& mesh)
     sequences_.reserve(64);
     pins_.reserve(64);
     ended_.reserve(program_.timers.size());
+    cadence_next_.assign(program_.flows.size(), 0);
 }
 
 void Scheduler::post(InputEvent event) {
@@ -309,16 +310,25 @@ bool Scheduler::tick(std::string& fault) {
 
     apply_local_feeds();
 
-    /* the history rate timers: commit each ring's latest capture on its own cadence,
-     * viewed or not, so a trend has a past the moment a page opens. Runs after the
-     * feeds so a sample lands the same tick its value arrived. */
-    for (uint32_t i = 0; i < program_.histories.size() && i < state_.histories.size(); ++i) {
-        HistoryState& hist = state_.histories[i];
-        if (hist.next_tick == 0) hist.next_tick = state_.tick;
-        if (state_.tick < hist.next_tick) continue;
-        hist.sample(program_.histories[i].capacity, program_.histories[i].series_cap);
-        hist.next_tick += program_.histories[i].rate_ticks;
-        if (hist.next_tick <= state_.tick) hist.next_tick = state_.tick + 1;
+    /* THE CADENCE PASS: every flow with an `every` trigger, on its own clock, viewed or
+     * not — which is how a Trend has a past the moment a page opens now that its ring is
+     * an ordinary list a flow appends to. Runs after the feeds, so a sample lands the
+     * same tick the value it reads arrived. Document order, because the flows vector
+     * already is document order and two rings on one widget must not race.
+     *
+     * The catch-up clamp is what keeps a stalled tick from firing a burst: a cursor that
+     * has fallen behind is pulled forward to the next tick rather than replaying the
+     * cadences it missed. */
+    for (uint32_t i = 0; i < program_.flows.size() && i < cadence_next_.size(); ++i) {
+        const uint32_t cadence = program_.flows[i].cadence_ticks;
+        if (!cadence) continue;
+        uint64_t& next = cadence_next_[i];
+        if (next == 0) next = state_.tick;
+        if (state_.tick < next) continue;
+        state_.reset_scratch();
+        run_one(i, Value::nil());
+        next += cadence;
+        if (next <= state_.tick) next = state_.tick + 1;
     }
 
     return flush_effects(program_, state_, mesh_, fault);

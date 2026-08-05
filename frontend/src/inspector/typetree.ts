@@ -40,6 +40,8 @@ const SCALARS = [
   { ref: "bool", label: "bool" },
   { ref: "str", label: "text" },
   { ref: "timer", label: "timer" },
+  { ref: "list", label: "list" },
+  { ref: "map", label: "map" },
 ];
 
 interface Row {

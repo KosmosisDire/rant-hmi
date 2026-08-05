@@ -166,6 +166,14 @@ uint32_t count_cell(const Program& program) {
     return UINT32_MAX;
 }
 
+/* one named cell of one owner (0 = a global), by index; -1 when nothing declares it */
+int cell_of(const Program& program, uint64_t owner, const std::string& name) {
+    for (uint32_t i = 0; i < program.cells.size(); ++i)
+        if (program.cells[i].owner_widget == owner && program.cells[i].name == name)
+            return static_cast<int>(i);
+    return -1;
+}
+
 void tick(Scheduler& scheduler, uint32_t count) {
     std::string fault;
     for (uint32_t i = 0; i < count; ++i) CHECK_MSG(scheduler.tick(fault), fault);
@@ -625,44 +633,35 @@ void test_flow_entity_read() {
     CHECK_MSG(mesh.transcript()[1] == "unforce V:suction", mesh.transcript()[1]);
 }
 
-/* TREND HISTORY (spec 2.9): a history-flagged slot samples into a backend ring at its
- * authored rate, viewed or not; a scalar and a list series both capture through the
- * feed's StoreHist tail; no arrival samples as NaN (an honest gap); a series-width
- * change resets the ring. */
-void test_trend_history() {
-    EntityDef temp;
-    temp.kind = EntityKind::Variable;
-    temp.name = "temp";
-    temp.readable = true;
-    temp.fields = {FieldDef{"value", Shape::Num}};
-    EntityDef temps;
-    temps.kind = EntityKind::Variable;
-    temps.name = "temps";
-    temps.readable = true;
-    FieldDef vals;
-    vals.path = "vals";
-    vals.shape = Shape::List;
-    vals.elem = Shape::Num;
-    vals.bound = 4;
-    temps.fields = {vals};
-    FakeMesh mesh({temp, temps});
-
-    auto trend = [](const char* source, const char* path) {
-        return Json{{"kind", "frame"}, {"type", "Trend"},
-                    {"slots", Json{{"rate", 100}, {"window", 1}}},
-                    {"feeds", Json::array({Json{{"slot", "value"},
-                                                {"src", Json{{"kind", "V"}, {"name", source}}},
-                                                {"path", path},
-                                                {"xf", ""}}})},
-                    {"flows", Json::array()}};
+/* CADENCE FLOWS (the `every` trigger): a flow that runs on its own clock, with no event
+ * behind it. This is what a history ring IS now — one append step at a cadence, bounded
+ * by keep — so what used to be a privileged sampler is checked here as an ordinary flow:
+ * it fires on its own ticks and no others, two of them run in document order, and once a
+ * ring has reached its window every further append allocates nothing. */
+void test_cadence_flows() {
+    FakeMesh mesh({});
+    Json button = {
+        {"kind", "frame"},
+        {"type", "Button"},
+        {"flows",
+         Json::array({
+             Json{{"when", Json::array({steps::every(10)})},
+                  {"do", Json::array({steps::append_var("fast", "level", "4")})}},
+             Json{{"when", Json::array({steps::every(50)})},
+                  {"do", Json::array({steps::append_var("slow", "level", "16")})}},
+         })},
     };
     Json root = {{"version", 1},
                  {"next_id", 1},
-                 {"globals", Json::array()},
+                 {"globals",
+                  Json::array({
+                      Json{{"name", "level"}, {"type", "f64"}, {"init", 7.0}},
+                      Json{{"name", "fast"}, {"type", "list"}},
+                      Json{{"name", "slow"}, {"type", "list"}},
+                  })},
                  {"pages",
                   Json::array({Json{{"name", "Main"},
-                                    {"children", Json::array({trend("temp", ""),
-                                                              trend("temps", "vals")})}}})}};
+                                    {"children", Json::array({button})}}})}};
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
@@ -670,51 +669,110 @@ void test_trend_history() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    CHECK(compiled.program.histories.size() == 2);
-    CHECK(compiled.program.histories[0].rate_ticks == 10);
-    CHECK(compiled.program.histories[0].capacity == 100);
-    /* the feed's Store tail became StoreHist: nothing ever stores into the cell */
-    bool rewired = false;
-    for (const Instruction& ins : compiled.program.feeds[0].code)
-        if (ins.op == OpCode::StoreHist) rewired = true;
-    CHECK(rewired);
+    /* document order, cadence carried on the flow itself */
+    std::vector<uint32_t> cadences;
+    for (const FlowProgram& flow : compiled.program.flows)
+        if (flow.cadence_ticks) cadences.push_back(flow.cadence_ticks);
+    CHECK(cadences.size() == 2);
+    CHECK(cadences[0] == 10 && cadences[1] == 50);
 
     Scheduler scheduler(std::move(compiled.program), mesh);
-    auto newest = [&](uint32_t h) {
-        const HistoryState& hist = scheduler.state().histories[h];
-        const HistoryDef& def = scheduler.program().histories[h];
-        return hist.data.data() +
-               static_cast<size_t>((hist.head + hist.count - 1) % def.capacity) *
-                   def.series_cap;
-    };
+    const int fast = cell_of(scheduler.program(), 0, "fast");
+    const int slow = cell_of(scheduler.program(), 0, "slow");
+    CHECK(fast >= 0 && slow >= 0);
+    const uint32_t fast_slot = scheduler.program().cells[fast].list_slot;
+    const uint32_t slow_slot = scheduler.program().cells[slow].list_slot;
 
-    /* no arrival yet: the rate still ticks, and it samples UNKNOWN */
+    /* the first firing is at the seeding tick, then one per cadence: ticks 1, 11, 21 */
+    tick(scheduler, 30);
+    CHECK(scheduler.state().lists[fast_slot].total == 3);
+    CHECK(scheduler.state().lists[slow_slot].total == 1);
+    CHECK(scheduler.state().lists[fast_slot].count == 3);
+    /* the appended value is what the cell held when the flow ran, not an event's x */
+    const AggView view = scheduler.state().aggregate(scheduler.state().values[fast]);
+    if (!CHECK(view.count == 3)) return;
+    CHECK(view.data[0].data.num == 7.0);
+
+    /* the keep window is a CEILING the ring settles at: past it, appends replace, and
+       `total` keeps counting them (ticks 31..121 is ten more firings) */
+    tick(scheduler, 100);
+    CHECK(scheduler.state().lists[fast_slot].count == 4);
+    CHECK(scheduler.state().lists[fast_slot].total == 13);
+
+    /* STEADY STATE: with both rings at their window, a tick that appends allocates
+       nothing — the slot's storage reached its working width and stays there */
+    std::string fault;
+    const uint64_t before = allocation_count.load(std::memory_order_relaxed);
+    allocation_trace = true;
+    for (int i = 0; i < 20; ++i) scheduler.tick(fault);
+    allocation_trace = false;
+    const uint64_t after = allocation_count.load(std::memory_order_relaxed);
+    CHECK(scheduler.state().lists[fast_slot].total > 13);
+    CHECK(after == before);
+}
+
+/* THE TREND, RE-AUTHORED: its own behavior flow samples the `value` slot into the
+ * `history` list slot at 1000/rate ms, keeping rate x window of them. Nothing privileged
+ * remains — the ring is a cell, the cadence is a flow, and an UNKNOWN value appends as
+ * an honest gap rather than being skipped. */
+void test_trend_samples() {
+    EntityDef temp;
+    temp.kind = EntityKind::Variable;
+    temp.name = "temp";
+    temp.readable = true;
+    temp.fields = {FieldDef{"value", Shape::Num}};
+    FakeMesh mesh({temp});
+
+    Json trend = {{"kind", "frame"}, {"type", "Trend"},
+                  {"slots", Json{{"rate", 100}, {"window", 1}}},
+                  {"feeds", Json::array({Json{{"slot", "value"},
+                                              {"src", Json{{"kind", "V"}, {"name", "temp"}}},
+                                              {"path", ""},
+                                              {"xf", ""}}})},
+                  {"flows", Json::array()}};
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages",
+                  Json::array({Json{{"name", "Main"},
+                                    {"children", Json::array({trend})}}})}};
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    /* 1000 / rate, folded at compile against the instance's own slot value */
+    uint32_t cadence = 0;
+    for (const FlowProgram& flow : compiled.program.flows)
+        if (flow.cadence_ticks) cadence = flow.cadence_ticks;
+    CHECK(cadence == 10);
+
+    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const int history = cell_of(scheduler.program(), widget, "history");
+    if (!CHECK(history >= 0)) return;
+    const uint32_t slot = scheduler.program().cells[history].list_slot;
+
+    /* no arrival yet: the flow still runs, and it appends UNKNOWN — an honest gap */
     tick(scheduler, 25);
-    CHECK(scheduler.state().histories[0].count >= 2);
-    CHECK(std::isnan(newest(0)[0]));
+    CHECK(scheduler.state().lists[slot].total == 3);
+    const AggView gaps = scheduler.state().aggregate(scheduler.state().values[history]);
+    if (!CHECK(gaps.count == 3)) return;
+    CHECK(gaps.data[0].tag == ValueTag::Nil);
 
-    /* a scalar arrival captures and the next rate tick commits it */
+    /* an arrival fills the value cell, and the next cadence tick appends it */
     mesh.push_update(EntityKind::Variable, "temp", {Value::number(42.5)});
     tick(scheduler, 11);
-    CHECK(newest(0)[0] == 42.5f);
+    const AggView after = scheduler.state().aggregate(scheduler.state().values[history]);
+    if (!CHECK(after.count >= 4)) return;
+    CHECK(after.data[after.count - 1].data.num == 42.5);
 
-    /* a list arrival is a SERIES: one lane per element (the first wide sample already
-       reset the ring away from the width-1 unknowns, so let a few accumulate) */
-    mesh.push_update(EntityKind::Variable, "temps", {Value::list(0, 3, ValueTag::Num)});
-    mesh.push_elems(0, {Value::number(1), Value::number(2), Value::number(3)});
-    tick(scheduler, 35);
-    CHECK(scheduler.state().histories[1].series == 3);
-    CHECK(newest(1)[0] == 1.0f && newest(1)[1] == 2.0f && newest(1)[2] == 3.0f);
-
-    /* a width change resets the ring rather than mixing sample shapes */
-    const uint32_t before = scheduler.state().histories[1].count;
-    CHECK(before > 1);
-    mesh.push_update(EntityKind::Variable, "temps", {Value::list(0, 2, ValueTag::Num)});
-    mesh.push_elems(0, {Value::number(7), Value::number(8)});
-    tick(scheduler, 11);
-    CHECK(scheduler.state().histories[1].series == 2);
-    CHECK(scheduler.state().histories[1].count < before);
-    CHECK(newest(1)[0] == 7.0f && newest(1)[1] == 8.0f);
+    /* rate x window is the keep: 100 samples, and the ring settles there */
+    tick(scheduler, 1200);
+    CHECK(scheduler.state().lists[slot].count == 100);
+    CHECK(scheduler.state().lists[slot].total > 100);
 }
 
 } // namespace
@@ -727,6 +785,7 @@ int main() {
     test_held_proposal();
     test_timer_reads();
     test_flow_entity_read();
-    test_trend_history();
+    test_cadence_flows();
+    test_trend_samples();
     return check::summary("scheduler_test");
 }

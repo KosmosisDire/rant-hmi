@@ -2013,6 +2013,487 @@ void test_list_cells() {
     CHECK(after.count == 2 && edited.text(restated, after.data[0]) == "one");
 }
 
+/* ---- list and map VARIABLES ---- */
+
+Json flow_on(const char* event, std::initializer_list<Json> steps) {
+    return Json{{"when", Json::array({Json{{"kind", "event"}, {"name", event}}})},
+                {"when_mode", "any"},
+                {"do", Json(steps)}};
+}
+
+int named_cell(const Program& program, const std::string& name) {
+    for (uint32_t i = 0; i < program.cells.size(); ++i)
+        if (program.cells[i].name == name) return static_cast<int>(i);
+    return -1;
+}
+
+/* a list cell's elements, joined, so a check reads as the value the author would see */
+std::string list_dump(const Program& program, const RuntimeState& state, int cell) {
+    const Value& value = state.values[cell];
+    if (value.tag != ValueTag::List) return "<not a list>";
+    const AggView view = state.aggregate(value);
+    std::string out;
+    char buffer[64];
+    for (uint32_t i = 0; i < view.count; ++i) {
+        if (i) out += ",";
+        switch (view.data[i].tag) {
+            case ValueTag::Num:
+                std::snprintf(buffer, sizeof buffer, "%.15g", view.data[i].data.num);
+                out += buffer;
+                break;
+            case ValueTag::Text: out += state.text(program, view.data[i]); break;
+            case ValueTag::Nil: out += "?"; break;
+            default: out += "!"; break;
+        }
+    }
+    return out;
+}
+
+/* a map cell's pairs, in the order it holds them: the check IS the sorted-keys rule */
+std::string map_dump(const Program& program, const RuntimeState& state, int cell) {
+    const Value& value = state.values[cell];
+    if (value.tag != ValueTag::Map) return "<not a map>";
+    const AggView view = state.aggregate(value);
+    std::string out;
+    char buffer[64];
+    for (uint32_t i = 0; i < view.count; ++i) {
+        if (i) out += ",";
+        out += state.text(program, view.data[i * 2]);
+        out += "=";
+        const Value& held = view.data[i * 2 + 1];
+        if (held.tag == ValueTag::Text) out += state.text(program, held);
+        else if (held.tag == ValueTag::Num) {
+            std::snprintf(buffer, sizeof buffer, "%.15g", held.data.num);
+            out += buffer;
+        } else {
+            out += "?";
+        }
+    }
+    return out;
+}
+
+/* A LIST OR A MAP IS AN ORDINARY VARIABLE (milestone 4): declared like any other, born
+ * empty (or from an authored literal), and changed by two verbs of its own — APPEND, with
+ * a keep window, and a KEYED write whose Nil erases. A history ring is those two facts and
+ * nothing else, which is why the privileged sampler could be deleted whole. */
+void test_aggregate_variables() {
+    FakeMesh mesh;
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows",
+         Json::array({
+             flow_on("tap", {steps::append_var("log", "n", "3"),
+                             steps::append_var("words", "str(n)", "3"),
+                             steps::set_var("n", "n + 1")}),
+             flow_on("press", {steps::set_key("table", "'aa'", "n"),
+                               steps::set_key("table", "'zz'", "'tail'")}),
+             flow_on("release", {steps::set_key("table", "note", "99")}),
+             /* a division by zero is the honest UNKNOWN this tier already yields, and
+                an UNKNOWN written to a key ERASES it */
+             flow_on("held", {steps::set_key("table", "note", "1 / 0")}),
+         })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({
+                      Json{{"name", "n"}, {"type", "f64"}, {"init", 1}},
+                      Json{{"name", "note"}, {"type", "str"}, {"init", "b"}},
+                      Json{{"name", "log"}, {"type", "list"}},
+                      Json{{"name", "words"}, {"type", "list"}},
+                      Json{{"name", "table"},
+                           {"type", "map"},
+                           {"init", Json{{"b", 2}, {"a", 1}}}},
+                  })},
+                 {"pages",
+                  Json::array({Json{{"name", "P"},
+                                    {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("aggregate compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+    const int log = named_cell(program, "log");
+    const int words = named_cell(program, "words");
+    const int table = named_cell(program, "table");
+    if (!CHECK(log >= 0 && words >= 0 && table >= 0)) return;
+    CHECK(program.cells[log].shape == Shape::List);
+    CHECK(program.cells[table].shape == Shape::Map);
+    /* a declared aggregate starts EMPTY rather than UNKNOWN: that is what makes a fresh
+       ring appendable with no ceremony */
+    CHECK(program.cells[log].has_list && program.cells[log].list_init.empty());
+    /* a map's authored start rides `list_init` as interleaved pairs, sorted */
+    CHECK(program.cells[table].has_list && program.cells[table].list_init.size() == 4);
+    CHECK(program.cells[table].list_slot != UINT32_MAX);
+
+    RuntimeState state(program);
+    const uint32_t log_slot = program.cells[log].list_slot;
+    const uint32_t table_slot = program.cells[table].list_slot;
+    CHECK_EQ(list_dump(program, state, log), "");
+    CHECK_EQ(map_dump(program, state, table), "a=1,b=2");
+    CHECK(state.lists[log_slot].gen == 0 && state.lists[log_slot].total == 0);
+
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    auto raise = [&](const char* event) {
+        state.reset_scratch();
+        run_event(program, state, widget, event, Value::nil());
+    };
+
+    /* APPEND grows the list; the keep window trims the FRONT, and each surviving text
+       element's bytes move down with it */
+    for (int i = 0; i < 5; ++i) raise("tap");
+    CHECK_EQ(list_dump(program, state, log), "3,4,5");
+    CHECK_EQ(list_dump(program, state, words), "3,4,5");
+    /* `total` counts appends EVER and never rewinds on a trim: it is the wire's cursor */
+    CHECK(state.lists[log_slot].total == 5);
+    CHECK(state.lists[log_slot].count == 3);
+    CHECK(state.lists[log_slot].gen == 0);
+
+    /* a KEYED write inserts at its sorted position, whatever order the keys arrive in */
+    raise("press");
+    CHECK_EQ(map_dump(program, state, table), "a=1,aa=6,b=2,zz=tail");
+    /* an existing key UPSERTS in place */
+    raise("release");
+    CHECK_EQ(map_dump(program, state, table), "a=1,aa=6,b=99,zz=tail");
+    /* UNKNOWN erases: a map has no other removal verb, and the text of the keys that
+       shifted down came with them */
+    raise("held");
+    CHECK_EQ(map_dump(program, state, table), "a=1,aa=6,zz=tail");
+    /* every mutation moves `total`, so the wire sees "changed" without diffing */
+    CHECK(state.lists[table_slot].total > 2);
+    CHECK(state.lists[table_slot].gen == 0);
+
+    /* A WHOLE STORE IS A DISCONTINUITY: the generation moves and the append cursor
+       restarts, because no client could describe the change as appends. (A whole
+       aggregate reaches a cell through a FEED, the display tier; the wire tier a flow
+       speaks carries one scalar at a time, which is why append exists at all.) */
+    const uint32_t before_gen = state.lists[log_slot].gen;
+    const Value replacement[2] = {Value::number(7), Value::number(8)};
+    CHECK(state.hold_list(program, state, log, log_slot, replacement, 2));
+    CHECK_EQ(list_dump(program, state, log), "7,8");
+    CHECK(state.lists[log_slot].gen == before_gen + 1);
+    CHECK(state.lists[log_slot].total == 2);
+
+    /* a recompile carries BOTH shapes by value, into the new run's own storage, and
+       moves the generation: a recompile is a new baseline */
+    RuntimeState migrated = migrate_state(program, state, program);
+    CHECK_EQ(list_dump(program, migrated, log), "7,8");
+    CHECK_EQ(list_dump(program, migrated, words), "3,4,5");
+    CHECK_EQ(map_dump(program, migrated, table), "a=1,aa=6,zz=tail");
+    CHECK(migrated.lists[log_slot].gen == state.lists[log_slot].gen + 1);
+    CHECK(migrated.lists[log_slot].total == state.lists[log_slot].total);
+
+    /* an edited authored start RESEEDS the slot on recompile, exactly as a scalar's
+       does — but only for a slot: a variable's init is where a run STARTS, not what it
+       currently holds, so a running variable is left alone */
+    Program restated = compiled.program;
+    restated.cells[table].list_init = {Value::text(restated.add_text("q")),
+                                       Value::number(5)};
+    RuntimeState edited = migrate_state(program, state, restated);
+    CHECK_EQ(map_dump(restated, edited, table), "a=1,aa=6,zz=tail");
+}
+
+/* THE CEILINGS, and what happens at them. An unbounded append refuses at the retained
+ * ceiling with a fault that names the variable; a bounded one just trims. Iteration is
+ * bounded separately and MUCH lower (it runs in the scratch pool), so a long retained
+ * list faults rather than folding the part it could reach — while the in-place readers,
+ * which walk the elements where they lie, keep working past that bound. */
+void test_aggregate_ceilings() {
+    FakeMesh mesh;
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows", Json::array({
+                      flow_on("tap", {steps::append_var("unbounded", "1")}),
+                      flow_on("press", {steps::append_var("bounded", "1", "8")}),
+                      flow_on("release", {steps::set_var("total", "unbounded.sum")}),
+                      flow_on("held",
+                              {steps::set_var("folded",
+                                              "unbounded.reduce((acc, v) => acc + v, 0)")}),
+                  })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({
+                      Json{{"name", "unbounded"}, {"type", "list"}},
+                      Json{{"name", "bounded"}, {"type", "list"}},
+                      Json{{"name", "total"}, {"type", "f64"}, {"init", 0}},
+                      Json{{"name", "folded"}, {"type", "f64"}, {"init", 0}},
+                  })},
+                 {"pages",
+                  Json::array({Json{{"name", "P"},
+                                    {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+    const int unbounded = named_cell(program, "unbounded");
+    const int bounded = named_cell(program, "bounded");
+    const int total = named_cell(program, "total");
+    const int folded = named_cell(program, "folded");
+    if (!CHECK(unbounded >= 0 && bounded >= 0)) return;
+
+    RuntimeState state(program);
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    auto raise = [&](const char* event) {
+        state.reset_scratch();
+        return run_event(program, state, widget, event, Value::nil());
+    };
+
+    /* a bounded ring never faults: it just drops its oldest */
+    for (int i = 0; i < 40; ++i) CHECK(!raise("press").faulted);
+    CHECK(state.lists[program.cells[bounded].list_slot].count == 8);
+
+    /* an unbounded one fills to the ceiling and then REFUSES, loudly */
+    for (uint32_t i = 0; i < kRetainedCeiling; ++i) raise("tap");
+    CHECK(state.lists[program.cells[unbounded].list_slot].count == kRetainedCeiling);
+    const RunResult over = raise("tap");
+    CHECK(over.faulted);
+    CHECK(state.lists[program.cells[unbounded].list_slot].count == kRetainedCeiling);
+    /* the finding names the variable and the way out of it */
+    std::string named;
+    for (uint32_t i = 0; i < state.faults.size(); ++i)
+        if (state.faults[i].count && i < program.runtime_faults.size())
+            named = program.runtime_faults[i].message;
+    CHECK(named.find("'unbounded'") != std::string::npos);
+    CHECK(named.find("keep") != std::string::npos);
+
+    /* the IN-PLACE readers walk the elements where they lie, so they work at 4096 */
+    CHECK(!raise("release").faulted);
+    CHECK_EQ(state.values[total].data.num, static_cast<double>(kRetainedCeiling));
+
+    /* iteration BUILDS, in the scratch pool, whose bound is the varr ceiling — so a
+       longer source faults instead of folding the part it could reach */
+    const RunResult clipped = raise("held");
+    CHECK(clipped.faulted);
+    CHECK(state.values[folded].data.num == 0.0);
+}
+
+/* A MAP FOLDS, and only folds: the lambda visits (acc, key, value), which is the one
+ * head that names both halves of a pair. map/filter/any/all/sortBy over a map are
+ * refused by both tiers with the same teaching, because a list of what, ordered how, is
+ * a question neither tier has an answer for. */
+void test_map_reduce() {
+    FakeMesh mesh;
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows",
+         Json::array({
+             flow_on("tap",
+                     {steps::set_var("total",
+                                     "table.reduce((acc, key, value) => acc + value, 0)"),
+                      /* order-SENSITIVE on purpose: any other visiting order gives
+                         another number, so this is the sorted-keys rule as a value */
+                      steps::set_var("ordered",
+                                     "table.reduce((acc, key, value) => "
+                                     "acc * 10 + value, 0)")}),
+             flow_on("press",
+                     {steps::set_var("keyed",
+                                     "table.reduce((acc, key, value) => "
+                                     "acc + (key == 'b' ? value : 0), 0)"),
+                      /* the IN-PLACE readers over a RETAINED map: length counts pairs
+                         and indexing looks a key up where the entries lie */
+                      steps::set_var("pairs", "table.length"),
+                      steps::set_var("looked_up", "table['c']")}),
+         })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({
+                      Json{{"name", "table"},
+                           {"type", "map"},
+                           {"init", Json{{"b", 20}, {"a", 10}, {"c", 30}}}},
+                      Json{{"name", "total"}, {"type", "f64"}, {"init", 0}},
+                      Json{{"name", "ordered"}, {"type", "f64"}, {"init", 0}},
+                      Json{{"name", "keyed"}, {"type", "f64"}, {"init", 0}},
+                      Json{{"name", "pairs"}, {"type", "f64"}, {"init", 0}},
+                      Json{{"name", "looked_up"}, {"type", "f64"}, {"init", 0}},
+                  })},
+                 {"pages",
+                  Json::array({Json{{"name", "P"},
+                                    {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("map reduce compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+    RuntimeState state(program);
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    state.reset_scratch();
+    run_event(program, state, widget, "tap", Value::nil());
+    state.reset_scratch();
+    run_event(program, state, widget, "press", Value::nil());
+    CHECK_EQ(state.values[named_cell(program, "total")].data.num, 60.0);
+    /* SORTED KEYS, always: the fold visits them in one order and only one, which is what
+       makes a replay byte-identical however the keys were written */
+    CHECK_EQ(state.values[named_cell(program, "ordered")].data.num, 1230.0);
+    /* the key and the value it holds arrive together, in that order */
+    CHECK_EQ(state.values[named_cell(program, "keyed")].data.num, 20.0);
+    CHECK_EQ(state.values[named_cell(program, "pairs")].data.num, 3.0);
+    CHECK_EQ(state.values[named_cell(program, "looked_up")].data.num, 30.0);
+
+    Program scratch;
+    ExpressionScope scope;
+    scope.x_shape = Shape::Map;
+    std::vector<Instruction> code;
+    ExpressionResult result;
+    std::string error;
+    auto refused = [&](const char* text, const char* needle) {
+        code.clear();
+        error.clear();
+        const bool ok =
+            compile_expr(text, ExprTier::Display, scope, scratch, code, result, error);
+        return !ok && error.find(needle) != std::string::npos;
+    };
+    CHECK(refused("x.map(v => v)", "reduce((acc, key, value)"));
+    CHECK(refused("x.filter(v => v)", "reduce((acc, key, value)"));
+    CHECK(refused("x.sortBy(v => v)", "reduce((acc, key, value)"));
+    CHECK(refused("x.reduce((acc, v) => acc, 0)", "3 lambda parameters"));
+}
+
+/* REPLAY DETERMINISM: the same writes in a different ORDER leave byte-identical state,
+ * because a map is held sorted rather than in arrival order. Without that, two runs of
+ * the same event log would iterate differently and every fold over a map would be a
+ * coin toss nobody could reproduce. */
+void test_map_replay() {
+    FakeMesh mesh;
+    auto document_for = [](std::vector<std::pair<const char*, int>> writes) {
+        Json steps_list = Json::array();
+        for (const auto& write : writes)
+            steps_list.push_back(steps::set_key(
+                "table", std::string("'") + write.first + "'",
+                std::to_string(write.second)));
+        Json button = {{"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+                       {"flows", Json::array({Json{
+                            {"when", Json::array({Json{{"kind", "event"},
+                                                       {"name", "tap"}}})},
+                            {"when_mode", "any"},
+                            {"do", std::move(steps_list)}}})}};
+        Json root = {{"version", 1},
+                     {"next_id", 1},
+                     {"globals",
+                      Json::array({Json{{"name", "table"}, {"type", "map"}}})},
+                     {"pages",
+                      Json::array({Json{{"name", "P"},
+                                        {"children", Json::array({button})}}})}};
+        Document out;
+        std::string err;
+        CHECK(out.adopt(std::move(root), err));
+        return out;
+    };
+    auto run = [&](Document& document) {
+        CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+        CHECK(compiled.ok);
+        RuntimeState state(compiled.program);
+        const uint64_t widget =
+            json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+        state.reset_scratch();
+        run_event(compiled.program, state, widget, "tap", Value::nil());
+        return map_dump(compiled.program, state, named_cell(compiled.program, "table"));
+    };
+    Document forwards = document_for({{"a", 1}, {"m", 2}, {"z", 3}});
+    Document backwards = document_for({{"z", 3}, {"m", 2}, {"a", 1}});
+    Document jumbled = document_for({{"m", 2}, {"a", 1}, {"z", 3}});
+    CHECK_EQ(run(forwards), "a=1,m=2,z=3");
+    CHECK_EQ(run(backwards), run(forwards));
+    CHECK_EQ(run(jumbled), run(forwards));
+}
+
+/* THE REFUSALS the two aggregate verbs carry: they exist to be spelled one way, so
+ * every other spelling has to end on the one that works. */
+void test_aggregate_refusals() {
+    EntityDef plant;
+    plant.kind = EntityKind::Variable;
+    plant.name = "plant";
+    FieldDef names;
+    names.path = "names";
+    names.shape = Shape::List;
+    names.elem = Shape::Text;
+    names.bound = 4;
+    plant.fields = {names};
+    FakeMesh mesh(std::vector<EntityDef>{plant});
+    auto refuses = [&](Json flow, const char* needle) {
+        Json button = {{"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+                       {"flows", Json::array({std::move(flow)})}};
+        Json root = {{"version", 1},
+                     {"next_id", 1},
+                     {"globals",
+                      Json::array({
+                          Json{{"name", "log"}, {"type", "list"}},
+                          Json{{"name", "table"}, {"type", "map"}},
+                          Json{{"name", "n"}, {"type", "f64"}, {"init", 0}},
+                      })},
+                     {"pages",
+                      Json::array({Json{{"name", "P"},
+                                        {"children", Json::array({button})}}})}};
+        Document document;
+        std::string err;
+        CHECK(document.adopt(std::move(root), err));
+        CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+        if (compiled.ok) return false;
+        for (const Diag& diag : compiled.program.diagnostics)
+            if (diag.message.find(needle) != std::string::npos) return true;
+        for (const Diag& diag : compiled.program.diagnostics)
+            std::printf("aggregate refusal: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+        return false;
+    };
+    /* append needs a list; a keyed write needs a map */
+    CHECK(refuses(flow_on("tap", {steps::append_var("n", "1", "3")}),
+                  "append writes into a list variable"));
+    CHECK(refuses(flow_on("tap", {steps::set_key("log", "'k'", "1")}),
+                  "a keyed write needs a map"));
+    /* keep belongs to an append, and an append is not also a keyed write */
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
+                                       {"from", {{"expr", "1"}}},
+                                       {"to", {{"local", "log"}}},
+                                       {"keep", "3"}}}),
+                  "keep bounds an APPEND"));
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
+                                       {"from", {{"expr", "1"}}},
+                                       {"to", {{"local", "table"}}},
+                                       {"mode", "append"},
+                                       {"key", "'k'"}}}),
+                  "not both"));
+    /* one element per append: replacing a list is an ordinary write. (An expression that
+       yields a list is refused a step earlier, by the wire tier's own scalar rule; a mesh
+       field that IS one reaches this check.) */
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
+                                       {"from", steps::entity_ref("V", "plant", "names")},
+                                       {"to", {{"local", "log"}}},
+                                       {"mode", "append"},
+                                       {"keep", "3"}}}),
+                  "append takes one element"));
+    CHECK(refuses(flow_on("tap", {steps::append_var("log", "[1, 2]", "3")}),
+                  "a wire value is one scalar"));
+    /* a mesh entity takes a whole value; neither verb reaches one */
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
+                                       {"from", {{"expr", "1"}}},
+                                       {"to", steps::entity_ref("V", "nothing")},
+                                       {"mode", "append"}}}),
+                  "a mesh entity takes a whole value"));
+    /* an every trigger with no readable cadence drops the trigger and says so */
+    CHECK(refuses(Json{{"when", Json::array({steps::every(Json("rate * 2"))})},
+                       {"do", Json::array({steps::append_var("log", "1", "3")})}},
+                  "an 'every' trigger needs `ms`"));
+}
+
 /* variants(<TypeRef>): the options ARE the mesh enum's vocabulary, in declaration
  * order, so they cannot drift from the schema. An unresolvable reference is a finding
  * on the slot and leaves the cell UNKNOWN -- never a quietly empty picker. */
@@ -2267,6 +2748,11 @@ int main() {
     test_lists_and_maps();
     test_reduce();
     test_list_cells();
+    test_aggregate_variables();
+    test_aggregate_ceilings();
+    test_map_reduce();
+    test_map_replay();
+    test_aggregate_refusals();
     test_variant_options();
     test_suspend_holds_text();
     test_document_tolerance();

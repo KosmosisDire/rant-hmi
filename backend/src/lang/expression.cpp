@@ -351,7 +351,11 @@ class Parser {
      * INDEX is always last and always optional, so `v => ...` keeps meaning what it
      * always meant; a fold leads with the accumulator because that is the order every
      * language spells a fold in. */
-    static void iterate_arity(IterateMode mode, uint32_t& least, uint32_t& most) {
+    static void iterate_arity(IterateMode mode, bool over_map, uint32_t& least,
+                              uint32_t& most) {
+        /* a map's fold visits a PAIR, so its head is fixed: there is no shorter form
+           that could still name both halves of what it is looking at */
+        if (over_map) { least = most = 3; return; }
         switch (mode) {
             case IterateMode::Map: least = 1; most = 2; break;
             case IterateMode::Reduce: least = 2; most = 3; break;
@@ -360,7 +364,11 @@ class Parser {
     }
 
     /* the whole legal shape of this mode's call, so a refusal ends on what to write */
-    static std::string lambda_form(IterateMode mode, const std::string& name) {
+    static std::string lambda_form(IterateMode mode, const std::string& name,
+                                   bool over_map = false) {
+        if (over_map)
+            return name + "((acc, key, value) => ..., start): the accumulator, the key, "
+                          "the value it holds, and the value the fold starts from";
         if (mode == IterateMode::Reduce)
             return name + "((acc, v) => ..., start) or " + name +
                    "((acc, v, i) => ..., start): the accumulator, the element, "
@@ -385,7 +393,7 @@ class Parser {
      * list-producing site reserves, so the run's step count stays a compile-time
      * constant and this remains bounded iteration rather than a loop. */
     Shape parse_iterate(IterateMode mode, const std::string& name, Shape elem,
-                        Shape& out_elem) {
+                        Shape& out_elem, bool over_map = false) {
         if (in_lambda_) {
             fail("a lambda body may not contain another lambda (spec 6.4): one level of "
                  "iteration, ever");
@@ -393,7 +401,7 @@ class Parser {
         }
         if (token_.kind != TokenKind::LParen) {
             fail(name + " takes a lambda, called with parentheses: " +
-                 lambda_form(mode, name));
+                 lambda_form(mode, name, over_map));
             return Shape::Unknown;
         }
         advance();
@@ -402,7 +410,7 @@ class Parser {
         std::vector<std::string> params;
         const std::string head_help =
             name + " takes a lambda: a parameter name (or a parenthesised list of "
-                   "names), then '=>', then one expression. " + lambda_form(mode, name);
+                   "names), then '=>', then one expression. " + lambda_form(mode, name, over_map);
         if (token_.kind == TokenKind::LParen) {
             advance();
             for (;;) {
@@ -417,7 +425,7 @@ class Parser {
             }
             if (token_.kind != TokenKind::RParen) {
                 fail("expected ')' after the lambda's parameters. " +
-                     lambda_form(mode, name));
+                     lambda_form(mode, name, over_map));
                 return Shape::Unknown;
             }
             advance();
@@ -429,7 +437,7 @@ class Parser {
             return Shape::Unknown;
         }
         uint32_t least = 1, most = 1;
-        iterate_arity(mode, least, most);
+        iterate_arity(mode, over_map, least, most);
         if (params.size() < least || params.size() > most) {
             fail(name + " takes " +
                  (least == most ? std::to_string(least) + " lambda parameter" +
@@ -437,13 +445,13 @@ class Parser {
                                 : std::to_string(least) + " or " + std::to_string(most) +
                                       " lambda parameters") +
                  ", this one takes " + std::to_string(params.size()) + ". " +
-                 lambda_form(mode, name));
+                 lambda_form(mode, name, over_map));
             return Shape::Unknown;
         }
         for (uint32_t i = 0; i < params.size(); ++i) {
             if (params[i] == "x") {
                 fail("'x' cannot name a lambda parameter (spec 6.4); pick a name of "
-                     "your own. " + lambda_form(mode, name));
+                     "your own. " + lambda_form(mode, name, over_map));
                 return Shape::Unknown;
             }
             if (scope_.names.count(params[i])) {
@@ -455,13 +463,13 @@ class Parser {
                 if (params[k] == params[i]) {
                     fail("the lambda parameter '" + params[i] +
                          "' is named twice; each parameter needs its own name. " +
-                         lambda_form(mode, name));
+                         lambda_form(mode, name, over_map));
                     return Shape::Unknown;
                 }
         }
         if (token_.kind != TokenKind::Arrow) {
             fail("expected '=>' after the lambda parameters. " +
-                 lambda_form(mode, name));
+                 lambda_form(mode, name, over_map));
             return Shape::Unknown;
         }
         advance();
@@ -485,6 +493,13 @@ class Parser {
         lambda_at_ = mode == IterateMode::Reduce ? 1u : 0u;
         if (mode == IterateMode::Reduce) lambda_shapes_[0] = Shape::Unknown;
         if (lambda_at_ < lambda_shapes_.size()) lambda_shapes_[lambda_at_] = elem;
+        /* a map's fold visits (acc, key, value): the KEY is what the second parameter
+           names, and a map's keys are text, always */
+        if (over_map && lambda_shapes_.size() == 3) {
+            lambda_shapes_[1] = Shape::Text;
+            lambda_shapes_[2] = elem;
+            lambda_at_ = 2;
+        }
         lambda_enum_ = 0;
 
         const Shape body_shape = parse_ternary();
@@ -507,7 +522,7 @@ class Parser {
         if (mode == IterateMode::Reduce) {
             if (token_.kind != TokenKind::Comma) {
                 fail("reduce takes a lambda AND the value the fold starts from: " +
-                     lambda_form(mode, name));
+                     lambda_form(mode, name, over_map));
                 return Shape::Unknown;
             }
             advance();
@@ -578,6 +593,15 @@ class Parser {
             sink_.reserve_elems(kVarrCeiling, texts ? kVarrCeiling : 0);
         }
         emit(OpCode::Iterate, sub, kVarrCeiling, static_cast<uint16_t>(mode));
+        /* THE TRIP BOUND IS A FAULT, not a clip. A retained list may hold up to the
+           retained ceiling and this site reserved the scratch ceiling, so a source that
+           outruns it cannot be iterated at all -- and half a fold is a wrong number
+           nobody would see. The site names the limit so the finding reads as an answer. */
+        code_.back().c = sink_.add_fault_site(
+            "iterate_bound",
+            name + " ran over " + std::to_string(kVarrCeiling) +
+                " elements, which is the most one expression may iterate; reduce the "
+                "list first, or hold fewer elements");
         /* the list was on the stack and the result replaces it: depth is unchanged,
            except for a fold, which also consumed the value it started from */
         if (mode == IterateMode::Reduce && depth_) --depth_;
@@ -855,9 +879,20 @@ class Parser {
             /* The iterating methods (spec 6.4) take a LAMBDA rather than a value, so they
                are parsed here instead of through the table's generic argument loop. */
             IterateMode mode = IterateMode::Map;
-            if (receiver == Shape::List && iterate_mode(name, mode)) {
+            if ((receiver == Shape::List || receiver == Shape::Map) &&
+                iterate_mode(name, mode)) {
+                /* A MAP FOLDS AND NOTHING ELSE. map/filter/sortBy would each have to
+                   answer "into what?" — a list of what, ordered how, keyed by what —
+                   and every answer is a second aggregate shape the system does not
+                   have. The refusal names the one form that works. */
+                if (receiver == Shape::Map && mode != IterateMode::Reduce) {
+                    fail("a map has no '" + name +
+                         "'; iterate a map with reduce((acc, key, value) => ..., start)");
+                    return Shape::Unknown;
+                }
                 Shape out_elem = Shape::Unknown;
-                const Shape out = parse_iterate(mode, name, receiver_elem, out_elem);
+                const Shape out = parse_iterate(mode, name, receiver_elem, out_elem,
+                                                receiver == Shape::Map);
                 /* a fold's result is its BODY's shape, which may legitimately be
                    Unknown, so the refusal is the error and not the shape */
                 if (!error_.empty()) return Shape::Unknown;
@@ -1047,7 +1082,7 @@ class Parser {
         }
         if (token_.kind == TokenKind::LBracket) {
             /* an ARRAY literal: [a, b, c] builds a list, which is how an expression
-               hands a Trend a multi-series value ([x.force.x, x.force.y, x.force.z]) */
+               gathers scattered fields into one ([x.force.x, x.force.y, x.force.z]) */
             advance();
             uint32_t count = 0;
             Shape elem = Shape::Unknown;

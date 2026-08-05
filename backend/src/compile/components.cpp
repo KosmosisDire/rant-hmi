@@ -422,9 +422,6 @@ Json slot_row(const Json& prop, const std::string& address) {
         auto it = prop.find(key);
         if (it != prop.end() && it->is_number()) out[key] = *it;
     }
-    auto history = prop.find("history");
-    if (history != prop.end() && history->is_boolean() && history->get<bool>())
-        out["history"] = true;
     return out;
 }
 

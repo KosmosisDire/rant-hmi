@@ -440,34 +440,14 @@ class Parser {
         return false;
     }
 
-    /* a call argument that must name a property (hist / opt* address a cell, not a
-     * value); yields its ADDRESS, which is what names the cell */
-    bool prop_argument(const std::string& call, std::string& out) {
-        if (token_.kind != TokenKind::Ident) {
-            fail(call + " takes a property name");
-            return false;
-        }
-        const std::string head = token_.text;
-        advance();
-        if (token_.kind == TokenKind::Dot) return address_chain(head, out);
-        if (!scope_.has_prop(head)) {
-            fail(call + " takes a property name; '" + head +
-                 "' is not a property in scope here");
-            return false;
-        }
-        out = scope_.address(head);
-        return true;
-    }
-
     void parse_call(const std::string& name) {
-        /* the one cell-addressing builtin: its argument is a name, not a value */
+        /* the sampling ring died when history became an ordinary LIST property: a Trend
+         * authors its own past (an `every` trigger plus one append step), so the past is
+         * a slot anyone can read, feed or clear — and there is no cell left for hist()
+         * to address that the property's own name does not already reach. */
         if (name == "hist") {
-            advance();
-            std::string prop;
-            if (!prop_argument(name, prop)) return;
-            if (!expect(TokenKind::RParen, "expected ')'")) return;
-            advance();
-            emit_load("hist:" + prop);
+            fail("hist() is gone: read the list slot itself (history.map(...)) or a list "
+                 "variable");
             return;
         }
         /* the resolver cells died when options became a LIST: what they computed is

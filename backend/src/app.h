@@ -28,8 +28,11 @@ namespace hmi {
  * fresh frame; 8: ONE TREE — Frame, Widget and Part are one `node` kind with four
  * variants (frame | text | icon | path), every field is expression text in `attrs`, an
  * instance is a frame carrying a `type`, a component holds `children` and describes its
- * own root box, and the snapshot carries `node_attrs`, every page node's compiled attrs) */
-constexpr int kProto = 9;
+ * own root box, and the snapshot carries `node_attrs`, every page node's compiled attrs;
+ * 10: list and map cells LEAVE `values` for the `aggs` delta lane — per-cell generation
+ * and append cursor, appends only in a live frame, whole on a gen change, absent when
+ * nothing moved — and `hist` is gone with the sampling ring it carried) */
+constexpr int kProto = 10;
 
 struct AppOptions {
     ServerOptions server;
@@ -72,10 +75,12 @@ class App {
     void update_viewed_pages();
 
     Json snapshot() const;
-    Json live() const;
-    /* the trend histories: full rings, or only the samples pushed since the last
-     * publish (the broadcast's steady state) */
-    Json hist_json(bool full) const;
+    /* `full` is the SNAPSHOT's reading: every aggregate cell whole. A live frame sends
+     * only what moved — appends since the cursor, or the whole cell when its generation
+     * did — and omits a cell that did not move at all. */
+    Json live(bool full = false) const;
+    /* one aggregate cell's frame entry, or null when it has not moved since the cursor */
+    Json agg_entry(const CellDef& cell, const Value& value, bool full) const;
     Json mesh_json() const;
     /* the expression vocabulary (builtins + shape-scoped methods) for autocomplete */
     static Json lang_json();
@@ -112,9 +117,16 @@ class App {
     std::chrono::steady_clock::time_point next_tick_;
     std::chrono::steady_clock::time_point next_mesh_refresh_;
     uint64_t last_live_tick_ = 0;
-    /* per-history total at the last broadcast; reset on recompile so the next live
-     * frame carries each ring whole (the frame's `from` tells the client to resync) */
-    std::vector<uint64_t> hist_published_;
+    /* WHAT EACH AGGREGATE CELL LOOKED LIKE at the last broadcast, per retained slot: the
+     * generation it was in and how many elements had ever been appended within it. A
+     * frame omits any cell still at this pair, sends the appends past `total` while the
+     * generation holds, and sends the whole cell when it moved. Reset to the unpublished
+     * sentinel on every recompile, so the frame after one carries everything. */
+    struct AggCursor {
+        uint32_t gen = UINT32_MAX;
+        uint64_t total = UINT64_MAX;
+    };
+    std::vector<AggCursor> agg_published_;
 };
 
 } // namespace hmi

@@ -14,18 +14,18 @@
  * same vocabulary their own components use.
  *
  * Every attr is EXPRESSION TEXT in the template-expression dialect (lang/template_expr):
- * bare identifiers are the component's own properties, `$name` is a theme token, `state.`
- * and `repeat.` are the view's own inputs, and hist() addresses the sampling ring's
- * cell. Lists are ordinary values in that dialect — the Selector counts and indexes its
- * `options`, the Trend maps its series into path anchors — so no resolver cells and no
- * privileged plot survive. The compiler lowers each attr to the view program the
- * renderer runs.
+ * bare identifiers are the component's own properties, `$name` is a theme token, and
+ * `state.` and `repeat.` are the view's own inputs. Lists are ordinary values in that
+ * dialect AND ordinary properties — the Selector counts and indexes its `options`, the
+ * Trend maps its own `history` list into path anchors — so no resolver cells, no
+ * privileged plot and no sampling ring survive. The compiler lowers each attr to the
+ * view program the renderer runs.
  *
  * WHAT THE COLLAPSE DROPPED, deliberately and worth naming: the extent FIT (a partial
  * sweep scaled to fill an oblong tile — an aspect-locked square dial replaces it), text
  * that sizes itself to its box (sizes are px until the DOM measures for us), tick
  * thinning below a pixel floor, rounded arc ends, and the Trend's autoscale and
- * display-tier smoothing (authorable now — hist(value).min/.max are one edit away —
+ * display-tier smoothing (authorable now — history.min / history.max are one edit away —
  * left un-authored so the config slots stay predictable). */
 
 namespace hmi {
@@ -192,6 +192,24 @@ Json on_event(const char* name, std::initializer_list<Json> steps) {
     return Json{{"when", Json::array({Json{{"kind", "event"}, {"name", name}}})},
                 {"when_mode", "first"},
                 {"do", Json(steps)}};
+}
+
+/* A CADENCE flow: no event behind it, just its own clock. `ms` is constant arithmetic
+ * over the widget's own slots, folded at compile — which is how a Trend's sampling rate
+ * stays a property of the instance and not of the machine. */
+Json on_every(const char* ms, std::initializer_list<Json> steps) {
+    return Json{{"when", Json::array({Json{{"kind", "every"}, {"ms", ms}}})},
+                {"when_mode", "first"},
+                {"do", Json(steps)}};
+}
+
+/* one element onto the end of a list slot, keeping the last `keep` of them */
+Json appends_slot(const char* slot, const char* expression, const char* keep) {
+    return Json{{"kind", "move"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"slot", slot}}},
+                {"mode", "append"},
+                {"keep", keep}};
 }
 
 /* Two base sets, composed per component rather than forced on every one: a property a
@@ -559,19 +577,27 @@ Json readout_component() {
                 Json::array(), press_interact());
 }
 
-/* A TREND: the one display whose truth is a PAST, not a value. The backend keeps the
- * history (the `history` flag on `value`), sampling at `rate` into a `window` ring
- * whether or not anyone is viewing; the plot is a PATH whose anchors are AUTHORED as a
- * map over that series — sample index across the box, value against min/max up it, a
- * Nil sample an honest break in the line. No renderer knows what a plot is. */
+/* A TREND: the one display whose truth is a PAST, not a value — and it AUTHORS that past.
+ *
+ * `value` is an ordinary number slot, fed like any other. `history` is an ordinary LIST
+ * slot, visible state anyone can read, feed or clear. Between them sits one flow: every
+ * 1000/rate milliseconds, append the value, keep rate x window of them. That is the whole
+ * sampler. Sample-and-hold falls out (the flow reads whatever the cell currently holds)
+ * and so does the honest gap (a Nil value appends as a gap, it is not skipped).
+ *
+ * The plot is a PATH whose anchors are a map over that list — sample index across the box,
+ * value against min/max up it. No renderer knows what a plot is, and no backend machinery
+ * knows what a history is. */
 Json trend_component() {
-    Json value = slot("value", "series", nullptr, "value");
-    value["history"] = true;
     return component("Trend", 396, 242,
                 compose_slots(tile_base(), {
-                    value,
-                    /* the SAMPLING is the widget's: the backend reads rate and window to
-                       size the ring, whether or not anything is drawing it */
+                    slot("value", "num", nullptr, "value"),
+                    /* the PAST, as state: an empty list to start, filled by the flow
+                       below — and bindable, so a mesh-side history can feed it whole and
+                       the sampler stands down (one writer per slot, decided at compile) */
+                    slot("history", "list", Json::array(), "value"),
+                    /* the SAMPLING is the widget's: the cadence and the keep window are
+                       constant arithmetic over these two slots */
                     slot("rate", "num", 10, "config"),
                     slot("window", "num", 60, "config"),
                     slot("surface", "color", "$surface-2", "frame", "color"),
@@ -580,8 +606,8 @@ Json trend_component() {
                 box_attrs(),
                 Json::array({
                     owns(path("plot", Json{{"points",
-                                            "hist(value).map((v, i) => anchor("
-                                            "i / max(hist(value).length - 1, 1), "
+                                            "history.map((v, i) => anchor("
+                                            "i / max(history.length - 1, 1), "
                                             "1 - (v - min) / (max - min)))"},
                                            {"stroke", "fill_color"},
                                            {"stroke_w", "2"}},
@@ -590,7 +616,10 @@ Json trend_component() {
                                            "color"),
                                       slot("min", "num", 0, "config"),
                                       slot("max", "num", 100, "config")})),
-                }));
+                }),
+                Json::array({on_every("1000 / rate",
+                                      {appends_slot("history", "widget.value",
+                                                    "widget.rate * widget.window")})}));
 }
 
 Json dropdown_component() {

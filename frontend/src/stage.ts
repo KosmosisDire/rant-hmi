@@ -47,7 +47,7 @@
  * it is writing to already carries the last pass's answer. */
 
 import { DropPlan, freeAllowed, freeBoxOf, snapPx } from "./arrange.js";
-import { Editor, HistRing } from "./editor.js";
+import { Editor } from "./editor.js";
 import { armInteract } from "./gestures.js";
 import { HANDLE_MARGIN, handleMarkup, handlesOff } from "./handles.js";
 import { iconMarkup } from "./icons.js";
@@ -419,9 +419,21 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
       case "slot": {
         if (!node.owner) return null;
         const key = node.owner + "." + name;
-        const live = editor.live?.values?.[key];
-        sawCell(state, key, JSON.stringify(live ?? null));
-        if (live !== undefined && live !== null) return live;
+        /* an aggregate cell (a list, a map, a history ring) lives in the standing
+           copies, not in `values`: the wire sends deltas and the shell folds them
+           (editor.ts). What is RECORDED is the copy's version — comparing thousands
+           of elements per frame to learn whether a plot moved is the cost that
+           counter exists to remove. A Nil copy falls through to the authored value,
+           exactly as a Nil scalar's omitted key does. */
+        const held = editor.agg?.(key) ?? null;
+        if (held) {
+          sawCell(state, key, "a" + held.version);
+          if (held.values !== null) return held.values;
+        } else {
+          const live = editor.live?.values?.[key];
+          sawCell(state, key, JSON.stringify(live ?? null));
+          if (live !== undefined && live !== null) return live;
+        }
         const widget = editor.store.nodeAt(node.owner);
         let at: Json = widget?.slots;
         for (const segment of name.split(".")) {
@@ -452,53 +464,22 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
            what places a tick at its own value rather than a step past it */
         return repeat.count > 1 ? repeat.index / (repeat.count - 1) : 0;
       }
-      /* A TREND CELL IS A LIST: the shell's standing ring (editor.ts), not the frame's
-         delta. One series reads as the samples themselves -- programs load a cell as often
-         as they like, and a copy per load is a copy per frame for nothing -- and a wider
-         one as a list of samples, each its own list of series (histRows caches that). What
-         is RECORDED is the ring's version: comparing thousands of samples per frame to
-         find out whether a plot moved is the cost this counter exists to remove. */
-      case "hist": {
-        if (!node.owner) return null;
-        const key = node.owner + "." + name;
-        const ring = editor.hist?.(key) ?? null;
-        sawCell(state, "hist:" + key, histMark(ring));
-        if (!ring) return null;
-        return ring.series === 1 ? ring.values : histRows(ring);
-      }
       /* optcount/optnames/optfrac: an option list is a value now -- the `options` param
          evaluates to a real list -- so nothing needs a cell of its own to expand one.
-         Nothing else reaches here: `tile` is refused at compile, since a node cannot
-         measure itself. */
+         hist() left the language with the privileged rings (a history is a list slot or
+         a list variable now). Nothing else reaches here: `tile` is refused at compile,
+         since a node cannot measure itself. */
       default:
         return null;
     }
   };
 }
 
-/* what a hist cell's dependency is worth comparing: the ring's version, or one mark for
-   "nothing has arrived", which a first frame moves off */
-function histMark(ring: HistRing | null): string {
-  return ring ? String(ring.version) : "-";
-}
-
-/* a multi-series ring as one list per SAMPLE, cached on the ring and thrown away the
-   moment its version moves: a map body may load the cell once per element, and chunking
-   per load would make a plot quadratic in its own sample count */
-function histRows(ring: HistRing): (number | null)[][] {
-  if (ring.chunks && ring.chunks.version === ring.version) return ring.chunks.rows;
-  const rows: (number | null)[][] = [];
-  for (let at = 0; at + ring.series <= ring.values.length; at += ring.series)
-    rows.push(ring.values.slice(at, at + ring.series));
-  ring.chunks = { version: ring.version, rows };
-  return rows;
-}
-
 /* what one cell is worth NOW, in the same spelling a recorded read wrote */
 function markNow(editor: Editor, key: string): string {
-  return key.startsWith("hist:")
-    ? histMark(editor.hist?.(key.slice(5)) ?? null)
-    : JSON.stringify(editor.live?.values?.[key] ?? null);
+  const held = editor.agg?.(key) ?? null;
+  if (held) return "a" + held.version;
+  return JSON.stringify(editor.live?.values?.[key] ?? null);
 }
 
 function attrOf(node: ViewNode, name: string, cells: Cells): Json {

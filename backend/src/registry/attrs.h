@@ -34,7 +34,7 @@ namespace hmi {
 
 struct AttrDef {
     const char* name;
-    const char* shape;         /* num | bool | text | color | series */
+    const char* shape;         /* num | bool | text | color | list | map */
     Json default_value;        /* Json(nullptr) = no computed default; see `note` */
     const char* note;
 };

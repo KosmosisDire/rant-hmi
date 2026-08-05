@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <set>
 #include <unordered_map>
@@ -187,7 +188,6 @@ class Compiler {
         copy_entities();
         build_cells();
         build_feeds();
-        wire_history_feeds();
         build_event_values();
         /* The type's defaults are compiled FIRST, so they run first: by the time an
          * authored flow on the same event runs, the widget's own state already reflects
@@ -343,9 +343,10 @@ class Compiler {
             cell.text_slot = program_.layout.text_slots++;
             cell.text_cap = 256;
         }
-        /* a list-shaped cell owns retained storage: the run's element pool resets every
-           run, so a cell that holds a list needs a slot that does not */
-        if (shape == Shape::List) cell.list_slot = program_.layout.list_slots++;
+        /* an aggregate cell owns retained storage: the run's element pool resets every
+           run, so a cell that holds a list or a map needs a slot that does not */
+        if (shape == Shape::List || shape == Shape::Map)
+            cell.list_slot = program_.layout.list_slots++;
         program_.cells.push_back(std::move(cell));
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
@@ -374,6 +375,14 @@ class Compiler {
         const std::string name = var.value("name", "");
         const std::string type_text = var.value("type", "");
         const Shape shape = var_shape(type_text);
+        if (shape == Shape::List || shape == Shape::Map) {
+            /* an aggregate's start has its own spellings and lands in the cell's
+               constant run, not in the scalar initial, which stays Nil */
+            const uint32_t cell = add_cell(kind, owner, id_of(var), name, shape, Json(),
+                                           var.value("persist", false));
+            aggregate_var_initial(var, shape, cell);
+            return cell;
+        }
         if (shape != Shape::Unknown)
             return add_cell(kind, owner, id_of(var), name, shape, var.value("init", Json()),
                             var.value("persist", false));
@@ -526,26 +535,26 @@ class Compiler {
                                 initial = *override;
                             if (shape == Shape::Color) initial = resolve_token(info.id, name, initial);
                             check_variants(info.id, name, slot, initial);
-                            /* a LIST slot's authored value has its own accepted
-                               spellings and lands in the cell's constant list, not in
+                            /* an AGGREGATE slot's authored value has its own accepted
+                               spellings and lands in the cell's constant run, not in
                                the scalar initial, which stays Nil */
+                            const bool aggregate =
+                                shape == Shape::List || shape == Shape::Map;
                             std::vector<Value> list_init;
                             const bool has_list =
-                                shape == Shape::List &&
-                                list_slot_initial(info.id, name, initial, list_init);
+                                shape == Shape::List
+                                    ? list_slot_initial(info.id, name, initial, list_init)
+                                    : shape == Shape::Map &&
+                                          map_slot_initial(info.id, name, initial,
+                                                           list_init);
                             info.slots[name] =
                                 add_cell(CellKind::Slot, info.id, info.id, name, shape,
-                                         shape == Shape::List ? Json() : initial, false);
+                                         aggregate ? Json() : initial, false);
                             if (has_list) {
                                 program_.cells[info.slots[name]].has_list = true;
                                 program_.cells[info.slots[name]].list_init =
                                     std::move(list_init);
                             }
-                            /* a slot the type flags `history` gets a sampling ring (spec
-                             * 2.9): rate and window read from the sibling slots' authored
-                             * values (an edit recompiles, so compile-time is live enough) */
-                            if (slot.value("history", false))
-                                add_history(info, name, info.slots[name], authored);
                         }
                     }
                     widgets_.push_back(std::move(info));
@@ -555,29 +564,141 @@ class Compiler {
         }
     }
 
-    /* One history per flagged slot: the sampling parameters come from the widget's own
-     * `rate` (Hz) and `window` (seconds) slots, authored value first, the type's default
-     * otherwise, clamped to sane sampling (1..100 Hz, ring capped at 4096 samples). */
-    void add_history(const WidgetInfo& info, const std::string& name, uint32_t cell,
-                     const Json& authored) {
-        auto slot_number = [&](const char* slot, double fallback) {
-            const Json* at = authored_slot(authored, slot);
-            if (at && at->is_number()) return at->get<double>();
-            for (const Json& row : info.type->value("slots", Json::array()))
-                if (row.value("name", "") == slot && row["default"].is_number())
-                    return row["default"].get<double>();
-            return fallback;
+    /* ONE SLOT'S AUTHORED NUMBER, the instance's value first and the type's default
+     * otherwise: what a compile-time constant over a widget's own configuration reads
+     * (an edit recompiles, so compile time is live enough). */
+    bool slot_number(const WidgetInfo& widget, const std::string& slot, double& out) const {
+        if (!widget.node || !widget.type) return false;
+        const Json& authored = widget.node->contains("slots") &&
+                                       (*widget.node)["slots"].is_object()
+                                   ? (*widget.node)["slots"]
+                                   : empty_object_;
+        if (const Json* at = authored_slot(authored, slot))
+            if (at->is_number()) {
+                out = at->get<double>();
+                return true;
+            }
+        for (const Json& row : widget.type->value("slots", Json::array()))
+            if (row.value("name", "") == slot) {
+                auto def = row.find("default");
+                if (def == row.end() || !def->is_number()) return false;
+                out = def->get<double>();
+                return true;
+            }
+        return false;
+    }
+
+    /* THE CONSTANT FOLDER: `+ - * / ( )` over numeric literals and the widget's own slot
+     * values, and nothing else. It is what lets a cadence be authored as "1000 / rate"
+     * and a keep as "rate * window" — configuration arithmetic, resolved once at compile
+     * against values an edit would recompile anyway, rather than a second expression
+     * tier the scheduler would have to evaluate per tick.
+     *
+     * `widget.` is accepted as a prefix so the same text reads in a flow's expressions
+     * and here. Anything it cannot resolve fails, and the caller turns that into a
+     * finding: a cadence that quietly fell back to a default would be a lie about how
+     * often something samples. */
+    bool fold_const(const WidgetInfo& widget, const std::string& text, double& out) const {
+        size_t at = 0;
+        bool ok = true;
+        const std::function<double()> sum = [&]() -> double {
+            const std::function<double()> unary = [&]() -> double {
+                while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at])))
+                    ++at;
+                if (at < text.size() && (text[at] == '-' || text[at] == '+')) {
+                    const bool negate = text[at++] == '-';
+                    const double inner = unary();
+                    return negate ? -inner : inner;
+                }
+                if (at < text.size() && text[at] == '(') {
+                    ++at;
+                    const double inner = sum();
+                    while (at < text.size() &&
+                           std::isspace(static_cast<unsigned char>(text[at])))
+                        ++at;
+                    if (at < text.size() && text[at] == ')') ++at;
+                    else ok = false;
+                    return inner;
+                }
+                const size_t start = at;
+                while (at < text.size() &&
+                       (std::isdigit(static_cast<unsigned char>(text[at])) ||
+                        text[at] == '.'))
+                    ++at;
+                if (at > start) return std::strtod(text.substr(start, at - start).c_str(),
+                                                   nullptr);
+                while (at < text.size() &&
+                       (std::isalnum(static_cast<unsigned char>(text[at])) ||
+                        text[at] == '_' || text[at] == '.'))
+                    ++at;
+                if (at == start) {
+                    ok = false;
+                    return 0.0;
+                }
+                std::string name = text.substr(start, at - start);
+                if (name.compare(0, 7, "widget.") == 0) name = name.substr(7);
+                double value = 0.0;
+                if (!slot_number(widget, name, value)) ok = false;
+                return value;
+            };
+            double left = unary();
+            for (;;) {
+                while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at])))
+                    ++at;
+                if (at >= text.size()) break;
+                const char op = text[at];
+                if (op != '+' && op != '-' && op != '*' && op != '/') break;
+                ++at;
+                const double right = unary();
+                /* one precedence level, applied left to right: configuration arithmetic
+                   is short enough that parentheses say what is meant, and a folder that
+                   silently disagreed with the expression tier would be worse than one
+                   that asks for them */
+                switch (op) {
+                    case '+': left += right; break;
+                    case '-': left -= right; break;
+                    case '*': left *= right; break;
+                    default:
+                        if (right == 0.0) ok = false;
+                        else left /= right;
+                        break;
+                }
+            }
+            return left;
         };
-        const double rate = std::min(100.0, std::max(1.0, slot_number("rate", 10.0)));
-        const double window = std::min(3600.0, std::max(1.0, slot_number("window", 60.0)));
-        HistoryDef def;
-        def.widget_id = info.id;
-        def.cell = cell;
-        def.slot = name;
-        def.rate_ticks = static_cast<uint32_t>(std::lround(1000.0 / rate));
-        def.capacity = static_cast<uint32_t>(
-            std::min(4096.0, std::max(2.0, std::round(rate * window))));
-        program_.histories.push_back(std::move(def));
+        const double value = sum();
+        while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at]))) ++at;
+        if (!ok || at != text.size() || !std::isfinite(value)) return false;
+        out = value;
+        return true;
+    }
+
+    /* AN `every` TRIGGER: the flow runs on its own clock, with no event behind it. `ms`
+     * is a number or the text of a constant expression over the widget's slots; anything
+     * unresolvable drops the trigger with a finding rather than picking a rate nobody
+     * asked for. Ticks are milliseconds, clamped to something a scheduler can honour. */
+    bool cadence_trigger(const WidgetInfo& widget, const Json& trigger, uint64_t flow_id,
+                         FlowProgram& flow) {
+        auto ms = trigger.find("ms");
+        double period = 0.0;
+        bool ok = false;
+        if (ms != trigger.end() && ms->is_number()) {
+            period = ms->get<double>();
+            ok = std::isfinite(period);
+        } else if (ms != trigger.end() && ms->is_string()) {
+            ok = fold_const(widget, ms->get<std::string>(), period);
+        }
+        if (!ok || period <= 0.0) {
+            diag(flow_id, "trigger",
+                 "an 'every' trigger needs `ms`: a number, or constant arithmetic over "
+                 "this widget's slots (\"1000 / rate\")");
+            return false;
+        }
+        period = std::min(3600000.0, std::max(10.0, period));
+        flow.event = "every:" + std::to_string(flow_id);
+        flow.event_shape = Shape::Unknown;
+        flow.cadence_ticks = static_cast<uint32_t>(std::lround(period));
+        return true;
     }
 
     /* A color slot value may be a token reference, "$<name>" (spec 2.10), authored or a
@@ -607,6 +728,23 @@ class Compiler {
         return name == "enum" ? Shape::Text : shape_from_name(name);
     }
 
+    /* WHERE an authored aggregate is being read, so one set of parsers can serve a slot
+     * and a declared variable and each finding still names the thing the author is
+     * looking at. `teach` is the spelling that would have worked — a refusal that does
+     * not end on one is only half a finding. */
+    struct AggSite {
+        uint64_t node = 0;
+        std::string subject;   /* "slot 'options'" / "variable 'log'" */
+        std::string where;     /* the inspector field the finding lands on */
+        std::string teach;
+    };
+
+    bool refuse_agg(const AggSite& site, const std::string& why) {
+        diag(site.node, "value_shape", site.subject + ": " + why + ". " + site.teach,
+             DiagGrade::Error, site.where);
+        return false;
+    }
+
     /* THE AUTHORED VALUE OF A LIST SLOT (a Dropdown's or a Selector's `options`), in
      * exactly two spellings:
      *
@@ -623,9 +761,9 @@ class Compiler {
      * among them as constant-pool refs. */
     bool list_slot_initial(uint64_t widget_id, const std::string& slot, const Json& value,
                            std::vector<Value>& out) {
-        const auto refuse = [&](const std::string& why) {
-            return refuse_list(widget_id, slot, why);
-        };
+        const AggSite site{widget_id, "slot '" + slot + "' is a list", slot,
+                           "Write the options as a list ([\"Off\", \"Low\", \"High\"]) "
+                           "or as variants(Type.field), naming an enum in the mesh"};
         if (value.is_null()) return false;
         if (value.is_string()) {
             const std::string text = trimmed(value.get<std::string>());
@@ -643,55 +781,139 @@ class Compiler {
                 }
                 for (const auto& row : program_.types[type_id].variants)
                     out.push_back(Value::text(program_.add_text(row.first)));
-                return list_within_bounds(widget_id, slot, out);
+                return list_within_bounds(site, out);
             }
             const Json parsed = Json::parse(text, nullptr, false);
             if (!parsed.is_array())
-                return refuse("'" + text + "' is neither a list nor a variants() "
-                              "reference");
-            return list_elements(widget_id, slot, parsed, out);
+                return refuse_agg(site, "'" + text +
+                                            "' is neither a list nor a variants() "
+                                            "reference");
+            return list_elements(site, parsed, out);
         }
-        if (!value.is_array()) return refuse("its value is " + json_brief(value));
-        return list_elements(widget_id, slot, value, out);
+        if (!value.is_array())
+            return refuse_agg(site, "its value is " + json_brief(value));
+        return list_elements(site, value, out);
     }
 
-    bool refuse_list(uint64_t widget_id, const std::string& slot, const std::string& why) {
-        diag(widget_id, "value_shape",
-             "slot '" + slot + "' is a list: " + why +
-                 ". Write the options as a list ([\"Off\", \"Low\", \"High\"]) or as "
-                 "variants(Type.field), naming an enum in the mesh",
-             DiagGrade::Error, slot);
-        return false;
+    /* THE AUTHORED VALUE OF A MAP SLOT: an object of scalars, or the text of one. The
+     * same two spellings a list slot takes, for the same reason — an inspector field
+     * commits a string and the document keeps what it was given. */
+    bool map_slot_initial(uint64_t widget_id, const std::string& slot, const Json& value,
+                          std::vector<Value>& out) {
+        const AggSite site{widget_id, "slot '" + slot + "' is a map", slot,
+                           "Write it as an object of scalars ({\"a\": 1, \"b\": 2})"};
+        Json object = value;
+        if (object.is_string()) {
+            const std::string text = trimmed(object.get<std::string>());
+            if (text.empty()) return false;
+            object = Json::parse(text, nullptr, false);
+        }
+        if (object.is_null()) return false;
+        if (!object.is_object())
+            return refuse_agg(site, "its value is " + json_brief(value));
+        return map_entries(site, object, out);
     }
 
-    bool list_elements(uint64_t widget_id, const std::string& slot, const Json& array,
-                       std::vector<Value>& out) {
+    bool list_elements(const AggSite& site, const Json& array, std::vector<Value>& out) {
         for (const Json& item : array) {
-            if (item.is_string())
-                out.push_back(Value::text(program_.add_text(item.get<std::string>())));
-            else if (item.is_number()) out.push_back(Value::number(item.get<double>()));
-            else if (item.is_boolean()) out.push_back(Value::boolean(item.get<bool>()));
-            else {
+            Value element = Value::nil();
+            if (!scalar_element(item, element)) {
                 out.clear();
-                return refuse_list(widget_id, slot,
-                                   "the element " + json_brief(item) +
-                                       " is not a string, a number or a boolean");
+                return refuse_agg(site, "the element " + json_brief(item) +
+                                            " is not a string, a number or a boolean");
             }
+            out.push_back(element);
         }
-        return list_within_bounds(widget_id, slot, out);
+        return list_within_bounds(site, out);
     }
 
-    /* the element ceiling is a compile-time bound, so a longer list is a finding rather
-       than a truncation nobody sees */
-    bool list_within_bounds(uint64_t widget_id, const std::string& slot,
-                            std::vector<Value>& out) {
+    /* ONE MEMBER of an authored aggregate: the three JSON scalars, as themselves. A
+     * nested array or object is refused by the caller — nested aggregates do not exist
+     * anywhere in this system, so an authored one would be a shape nothing can hold. */
+    bool scalar_element(const Json& item, Value& out) {
+        if (item.is_string()) out = Value::text(program_.add_text(item.get<std::string>()));
+        else if (item.is_number()) out = Value::number(item.get<double>());
+        else if (item.is_boolean()) out = Value::boolean(item.get<bool>());
+        else return false;
+        return true;
+    }
+
+    /* the element ceiling is a compile-time bound, so a longer literal is a finding
+       rather than a truncation nobody sees */
+    bool list_within_bounds(const AggSite& site, std::vector<Value>& out) {
         if (out.size() <= kVarrCeiling) return true;
-        diag(widget_id, "value_shape",
-             "slot '" + slot + "' holds " + std::to_string(out.size()) +
-                 " elements; a list slot holds at most " + std::to_string(kVarrCeiling),
-             DiagGrade::Error, slot);
+        diag(site.node, "value_shape",
+             site.subject + ": " + std::to_string(out.size()) +
+                 " elements were authored, and an authored literal holds at most " +
+                 std::to_string(kVarrCeiling),
+             DiagGrade::Error, site.where);
         out.clear();
         return false;
+    }
+
+    /* AN AUTHORED MAP: a JSON object of scalar members, or the TEXT of one (an inspector
+     * field commits a string). nlohmann keeps an object's keys sorted, which is exactly
+     * the order a retained map holds them in, so the pairs land interleaved and already
+     * in place. A non-scalar member names itself in the finding — an aggregate inside an
+     * aggregate has no representation anywhere in this system. */
+    bool map_entries(const AggSite& site, const Json& object, std::vector<Value>& out) {
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            Value value = Value::nil();
+            if (!it->is_null() && !scalar_element(*it, value)) {
+                out.clear();
+                return refuse_agg(site, "the member '" + it.key() + "' is " +
+                                            json_brief(*it) +
+                                            ", which is not a string, a number or a "
+                                            "boolean");
+            }
+            out.push_back(Value::text(program_.add_text(it.key())));
+            out.push_back(value);
+        }
+        if (out.size() <= static_cast<size_t>(kVarrCeiling) * 2) return true;
+        diag(site.node, "value_shape",
+             site.subject + ": " + std::to_string(out.size() / 2) +
+                 " keys were authored, and an authored literal holds at most " +
+                 std::to_string(kVarrCeiling),
+             DiagGrade::Error, site.where);
+        out.clear();
+        return false;
+    }
+
+    /* A DECLARED LIST OR MAP VARIABLE'S START. Absent, null or empty text is an authored
+     * EMPTY aggregate rather than UNKNOWN: a declared buffer starts empty, which is what
+     * makes a fresh ring appendable with no ceremony. Anything that cannot BE the shape
+     * is a finding and the cell still starts empty — the declaration stands, the value
+     * was wrong. `variants(...)` is a SLOT spelling and is refused here by name rather
+     * than compiling to something surprising. */
+    void aggregate_var_initial(const Json& var, Shape shape, uint32_t cell) {
+        const bool pairs = shape == Shape::Map;
+        const std::string name = var.value("name", "");
+        const AggSite site{
+            id_of(var),
+            std::string("variable '") + name + "' is a " + (pairs ? "map" : "list"),
+            "init",
+            pairs ? "Write its start as an object of scalars ({\"a\": 1, \"b\": 2}), or "
+                    "leave it empty"
+                  : "Write its start as a list of scalars ([1, 2, 3]), or leave it empty"};
+        std::vector<Value> out;
+        Json value = var.contains("init") ? var["init"] : Json();
+        if (value.is_string()) {
+            const std::string text = trimmed(value.get<std::string>());
+            if (text.compare(0, 9, "variants(") == 0)
+                refuse_agg(site, "variants(...) is a SLOT's authored value (the enum "
+                                 "picker writes it), not a variable's start");
+            else if (!text.empty())
+                value = Json::parse(text, nullptr, false);
+            else
+                value = Json();
+        }
+        if (!value.is_null()) {
+            if (pairs && value.is_object()) map_entries(site, value, out);
+            else if (!pairs && value.is_array()) list_elements(site, value, out);
+            else refuse_agg(site, "its start is " + json_brief(value));
+        }
+        program_.cells[cell].has_list = true;
+        program_.cells[cell].list_init = std::move(out);
     }
 
     /* a value outside a slot's declared variant set is a typo, not a new option */
@@ -714,6 +936,10 @@ class Compiler {
         if (type == "bool") return Shape::Bool;
         if (type == "str") return Shape::Text;
         if (type == "timer") return Shape::Timer;
+        /* an aggregate is an ORDINARY variable type now: a list is what a flow appends
+           a history into, a map what it writes by key */
+        if (type == "list") return Shape::List;
+        if (type == "map") return Shape::Map;
         return Shape::Unknown;
     }
 
@@ -1034,22 +1260,6 @@ class Compiler {
         }
     }
 
-    /* A feed whose slot has a history ring stores into the ring's LATEST buffer, not
-     * the cell: its value may be a whole numeric list (a series), which no scalar cell
-     * can hold. The rewrite happens after the feed compiled normally, so every feed
-     * form (plain, cased, computed) funnels through the same one Store site. */
-    void wire_history_feeds() {
-        for (FeedProgram& feed : program_.feeds)
-            for (uint32_t h = 0; h < program_.histories.size(); ++h) {
-                if (program_.histories[h].cell != feed.cell) continue;
-                for (Instruction& ins : feed.code)
-                    if (ins.op == OpCode::Store && ins.a == feed.cell) {
-                        ins.op = OpCode::StoreHist;
-                        ins.a = h;
-                    }
-            }
-    }
-
     /* A feed's case arms (spec 2.4): CONDITIONS only, first match wins, top to bottom.
      *
      *   LoadX; JmpNil -> NIL
@@ -1253,6 +1463,27 @@ class Compiler {
             return false;
         }
 
+        /* THE TWO AGGREGATE WRITES (spec 2.6): `mode: append` puts one element on the
+         * end of a list, `key` writes one key of a map. They are separate verbs because
+         * they mean separate things — one grows a history, the other addresses a table —
+         * and asking for both at once is asking for neither. */
+        const std::string mode = str_or(step, "mode", "write");
+        const std::string keep = trimmed(str_or(step, "keep", ""));
+        const std::string key = trimmed(str_or(step, "key", ""));
+        const bool appends = mode == "append";
+        if (appends && !key.empty()) {
+            diag(step_id, "move_mode",
+                 "a move appends to a list OR writes a map by key, not both",
+                 DiagGrade::Error, "key");
+            return false;
+        }
+        if (!keep.empty() && !appends) {
+            diag(step_id, "move_mode",
+                 "keep bounds an APPEND; set mode to append, or clear keep",
+                 DiagGrade::Error, "keep");
+            return false;
+        }
+
         const std::string slot = slot_of(to);
         if (!slot.empty()) {
             auto found = widget.slots.find(slot);
@@ -1261,15 +1492,142 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
+            if (appends || !key.empty())
+                return aggregate_move(widget, step, flow, scope, found->second, appends,
+                                      keep, key);
             return push_typed(widget, step, flow, scope, from,
                               program_.cells[found->second].shape, 0) &&
                    emit_store(flow, step_id, found->second);
         }
 
-        if (to.contains("local")) return move_into_local(widget, step, flow, scope, locals);
-        if (to.contains("kind")) return move_out(widget, step, flow, scope, locals);
+        if (to.contains("local")) {
+            if (appends || !key.empty()) {
+                const std::string name = str_or(to, "local", "");
+                uint32_t cell = UINT32_MAX;
+                auto found = locals.find(name);
+                if (found != locals.end()) cell = found->second;
+                else cell = declared_cell(widget, name);
+                if (cell == UINT32_MAX) {
+                    diag(step_id, "move_dest",
+                         (appends ? "append writes into a list variable or a list slot; '"
+                                  : "a keyed write needs a map variable or a map slot; '") +
+                             name + "' is not declared",
+                         DiagGrade::Error, "to");
+                    return false;
+                }
+                return aggregate_move(widget, step, flow, scope, cell, appends, keep, key);
+            }
+            return move_into_local(widget, step, flow, scope, locals);
+        }
+        if (to.contains("kind")) {
+            if (appends || !key.empty()) {
+                diag(step_id, "move_dest",
+                     "a mesh entity takes a whole value; append writes into a list "
+                     "variable or a list slot, and a keyed write into a map",
+                     DiagGrade::Error, "to");
+                return false;
+            }
+            return move_out(widget, step, flow, scope, locals);
+        }
         diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
         return false;
+    }
+
+    /* APPEND or KEYED WRITE into an aggregate cell. Both push the ELEMENT first and the
+     * bound (keep) or the address (key) after it, because the VM pops what was pushed
+     * last: one instruction shape, two verbs.
+     *
+     * The source is a SCALAR either way. A list into an append would be asking to
+     * replace the list, which is what an ordinary write already is, and a nested
+     * aggregate has no representation at all — so both are refused where the shape can
+     * be seen at compile time. */
+    bool aggregate_move(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                        ExpressionScope& scope, uint32_t cell, bool appends,
+                        const std::string& keep, const std::string& key) {
+        const uint64_t step_id = id_of(step);
+        const Json& from = step.value("from", Json::object());
+        const CellDef& def = program_.cells[cell];
+        const Shape wanted = appends ? Shape::List : Shape::Map;
+        if (def.shape != wanted) {
+            diag(step_id, "move_dest",
+                 "'" + def.name + "' is " + shape_name(def.shape) + "; " +
+                     (appends ? "append writes into a list variable or a list slot"
+                              : "a keyed write needs a map variable or a map slot"),
+                 DiagGrade::Error, "to");
+            return false;
+        }
+        Shape produced = Shape::Unknown;
+        if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+            return false;
+        if (produced == Shape::List || produced == Shape::Map ||
+            produced == Shape::Struct) {
+            diag(step_id, "shape",
+                 appends ? "append takes one element; to replace the list write it whole"
+                         : "a map holds scalars by key; a whole aggregate is not a value",
+                 DiagGrade::Error, "from");
+            return false;
+        }
+        if (appends) {
+            /* the bound is compiled ON TOP of the element already on the stack, so its
+               own depth is one deeper than the expression alone would need */
+            uint32_t bound_stack = 1;
+            if (keep.empty()) {
+                Instruction nothing;
+                nothing.op = OpCode::Const;
+                nothing.a = program_.add_constant(Value::nil());
+                nothing.c = fault_site(step_id, "move_store",
+                                       "the append bound could not be read");
+                flow.code.push_back(nothing);
+                flow.max_stack = std::max(flow.max_stack, 2u);
+            } else {
+                if (!expression(step_id, keep, ExprTier::Wire, scope, Shape::Num,
+                                flow.code, bound_stack, nullptr, "keep"))
+                    return false;
+                flow.max_stack = std::max(flow.max_stack, bound_stack + 1);
+                /* a COURTESY check: a keep the folder can read and that is past the
+                   ceiling is not an error (the list simply holds the last 4096), but it
+                   is not what the author asked for either */
+                double window = 0.0;
+                if (fold_const(widget, keep, window) &&
+                    window > static_cast<double>(kRetainedCeiling))
+                    diag(step_id, "keep_bound",
+                         "keep is " + std::to_string(static_cast<long long>(window)) +
+                             "; a list holds at most " +
+                             std::to_string(kRetainedCeiling) +
+                             " elements, so it keeps the last " +
+                             std::to_string(kRetainedCeiling),
+                         DiagGrade::Warning, "keep");
+            }
+            Instruction ins;
+            ins.op = OpCode::Append;
+            ins.a = cell;
+            ins.b = fault_site(
+                step_id, "append",
+                keep.empty()
+                    ? "list '" + def.name + "' hit the " +
+                          std::to_string(kRetainedCeiling) +
+                          "-element ceiling; add keep to bound it"
+                    : "'" + def.name +
+                          "' could not append: an append takes ONE element, and a keep "
+                          "that is not a number leaves the list unbounded to the " +
+                          std::to_string(kRetainedCeiling) + "-element ceiling");
+            flow.code.push_back(ins);
+            return true;
+        }
+        /* likewise: the key rides above the value the write is carrying */
+        uint32_t key_stack = 1;
+        if (!expression(step_id, key, ExprTier::Wire, scope, Shape::Text, flow.code,
+                        key_stack, nullptr, "key"))
+            return false;
+        flow.max_stack = std::max(flow.max_stack, key_stack + 1);
+        Instruction ins;
+        ins.op = OpCode::StoreKey;
+        ins.a = cell;
+        ins.b = fault_site(step_id, "store_key",
+                           "map '" + def.name + "' needs a text key, and holds at most " +
+                               std::to_string(kRetainedCeiling) + " of them");
+        flow.code.push_back(ins);
+        return true;
     }
 
     bool emit_store(FlowProgram& flow, uint64_t step_id, uint32_t cell) {
@@ -1851,6 +2209,8 @@ class Compiler {
                         flow.event = program_.timers[timer].event;
                         flow.event_shape = Shape::Timer;
                         program_.timers[timer].rearm_groups.push_back(group);
+                    } else if (trigger.value("kind", "") == "every") {
+                        if (!cadence_trigger(widget, trigger, flow_id, flow)) continue;
                     } else {
                         flow.event = trigger.value("name", "");
                         flow.event_shape = event_shape(widget, flow.event, flow_id);
@@ -1979,8 +2339,12 @@ class Compiler {
                     flow.flow_id = widget.id;
                     flow.group = program_.layout.fired_groups++;
                     flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
-                    flow.event = trigger.value("name", "");
-                    flow.event_shape = event_shape(widget, flow.event, widget.id);
+                    if (trigger.value("kind", "") == "every") {
+                        if (!cadence_trigger(widget, trigger, widget.id, flow)) continue;
+                    } else {
+                        flow.event = trigger.value("name", "");
+                        flow.event_shape = event_shape(widget, flow.event, widget.id);
+                    }
                     if (!compile_steps(widget, node, flow)) continue;
                     program_.layout.stack_values =
                         std::max(program_.layout.stack_values, flow.max_stack);

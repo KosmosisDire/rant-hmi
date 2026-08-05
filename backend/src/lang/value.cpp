@@ -83,6 +83,12 @@ Value Value::map(uint32_t offset, uint32_t count) {
     return out;
 }
 
+Value Value::retained_map(uint32_t slot, uint32_t pairs) {
+    Value out = Value::map(slot, pairs);
+    out.flags |= kRetainedAgg;
+    return out;
+}
+
 Value Value::structure(uint32_t slot, uint16_t type) {
     Value out{};
     out.tag = ValueTag::Struct;

@@ -67,6 +67,8 @@ struct Value {
     /* the same list, held in retained slot `slot` instead of the run's pool */
     static Value retained_list(uint32_t slot, uint32_t count, ValueTag elem);
     static Value map(uint32_t offset, uint32_t count);
+    /* the same map, held in retained slot `slot` instead of the run's pool */
+    static Value retained_map(uint32_t slot, uint32_t pairs);
     /* a struct lives in one of the run's struct slots: ref = the slot, type_id = its
      * entry in the type table. Message buffers, struct-valued locals and a struct read
      * off the mesh are all this one representation (spec 5.2). */

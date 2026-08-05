@@ -107,10 +107,12 @@ struct CellDef {
     /* a struct variable's authored DEFAULTS (spec 2.7): field index -> start value,
      * applied over the type's zero at state construction and by New (reset) */
     std::vector<std::pair<uint32_t, Value>> struct_init;
-    /* List-shaped cells only: the run's retained slot holding this cell's elements, and
-     * the constant list it starts from. `has_list` is what separates an authored EMPTY
-     * list from no initial at all, which starts the cell UNKNOWN. Element text values
-     * here are constant-pool refs, copied into the slot's own storage at start. */
+    /* AGGREGATE cells (list AND map): the run's retained slot holding this cell's
+     * entries, and the constant run it starts from — a map's `list_init` holds its
+     * INTERLEAVED (key, value) pairs, already sorted by key, so one field carries both
+     * shapes. `has_list` is what separates an authored EMPTY aggregate from no initial
+     * at all, which starts the cell UNKNOWN. Element text values here are constant-pool
+     * refs, copied into the slot's own storage at start. */
     uint32_t list_slot = UINT32_MAX;
     bool has_list = false;
     std::vector<Value> list_init;
@@ -146,6 +148,11 @@ struct FlowProgram {
     uint32_t runtime_index = 0;
     uint32_t hold_ticks = 0;
     uint32_t every_ticks = 0;
+    /* CADENCE (the `every` trigger): the flow runs on its own clock, every this many
+     * ticks, with no event behind it — 0 means it is event-driven like every other flow.
+     * This is what makes a history ring authorable: an every trigger plus one append
+     * step is the whole of what the privileged sampler used to be. */
+    uint32_t cadence_ticks = 0;
     bool first_only = false;
     std::vector<Instruction> code;
     uint32_t max_stack = 0;
@@ -183,19 +190,6 @@ struct EventValueProgram {
     uint32_t max_stack = 0;
 };
 
-/* One widget slot the backend keeps HISTORY for (a Trend's value): sampled into a ring
- * at a fixed rate whether or not anyone is viewing, so the plot has a past the moment a
- * page opens. Declared by the slot spec's `history` flag; rate and window read from the
- * widget's `rate` / `window` slots at compile (an edit recompiles anyway). */
-struct HistoryDef {
-    uint64_t widget_id = 0;
-    uint32_t cell = UINT32_MAX;       /* the flagged slot's cell */
-    std::string slot;                 /* its name, for the wire key */
-    uint32_t rate_ticks = 100;        /* sample period in 1 ms ticks */
-    uint32_t capacity = 600;          /* ring depth in samples (window x rate, capped) */
-    uint32_t series_cap = 8;          /* widest sample a list capture may fill */
-};
-
 struct FeedProgram {
     uint64_t widget_id = 0;
     uint64_t feed_id = 0;
@@ -225,8 +219,8 @@ struct ProgramLayout {
      * the schemas' bounds plus each list-producing expression site's worst case */
     uint32_t elem_values = 0;
     uint32_t elem_texts = 0;
-    /* retained list storage: one slot per list-shaped cell (a list a cell holds across
-     * ticks cannot live in the scratch pool, which resets every run) */
+    /* retained aggregate storage: one slot per list- or map-shaped cell (an aggregate a
+     * cell holds across ticks cannot live in the scratch pool, which resets every run) */
     uint32_t list_slots = 0;
     /* the deepest lambda body's frame, already included in stack_values above: a body
      * executes on top of its caller, so the stack is sized for both (spec 6.4) */
@@ -249,7 +243,6 @@ struct Program {
     std::vector<SubProgram> subs;
     std::vector<FlowProgram> flows;
     std::vector<FeedProgram> feeds;
-    std::vector<HistoryDef> histories;
     std::vector<EventValueProgram> event_values;
     std::vector<TimerDef> timers;
     std::vector<StateSite> state_sites;
@@ -301,6 +294,11 @@ struct ProgramEmit final : EmitSink {
             program.layout.sub_stack = max_stack;
         }
         return static_cast<uint32_t>(program.subs.size() - 1);
+    }
+
+    uint32_t add_fault_site(const std::string& code, const std::string& message) override {
+        program.runtime_faults.push_back(Diag{0, DiagGrade::Error, code, message});
+        return static_cast<uint32_t>(program.runtime_faults.size() - 1);
     }
 
     Program& program;

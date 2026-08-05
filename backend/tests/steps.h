@@ -32,6 +32,42 @@ inline Json set_slot(const std::string& slot, const std::string& expression) {
     return Json{{"kind", "move"}, {"from", {{"expr", expression}}}, {"to", {{"slot", slot}}}};
 }
 
+/* one element onto the end of a list variable, keeping the last `keep` of them (empty
+ * keep = unbounded, which refuses at the retained ceiling) */
+inline Json append_var(const std::string& name, const std::string& expression,
+                       const std::string& keep = "") {
+    return Json{{"kind", "move"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"local", name}}},
+                {"mode", "append"},
+                {"keep", keep}};
+}
+
+/* one element onto the end of a list SLOT */
+inline Json append_slot(const std::string& slot, const std::string& expression,
+                        const std::string& keep = "") {
+    return Json{{"kind", "move"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"slot", slot}}},
+                {"mode", "append"},
+                {"keep", keep}};
+}
+
+/* <map variable>[<key expression>] = <expression>; a Nil value erases the key */
+inline Json set_key(const std::string& name, const std::string& key,
+                    const std::string& expression) {
+    return Json{{"kind", "move"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"local", name}}},
+                {"key", key}};
+}
+
+/* a flow trigger that runs on its own clock: `ms` is a number or constant arithmetic
+ * over the widget's slots */
+inline Json every(const Json& ms) {
+    return Json{{"kind", "every"}, {"ms", ms}};
+}
+
 /* <expression> -> <entity>.<path>, the verb derived from the kind */
 inline Json write_field(const char* kind, const std::string& name, const std::string& path,
                         const std::string& expression, const char* mode = "write") {
