@@ -61,6 +61,29 @@ const std::vector<AttrDef>& common_attrs_table() {
         no_def("rotate", "num",
                "absent = no rotation; degrees clockwise about (origin_x, origin_y). "
                "Applied to the whole subtree, so an offset child orbits"),
+
+        /* THE SHADOW, one authored intent on every kind. What draws it differs — a box
+           casts a box-shadow, ink casts a filter over its own outline — and the view picks
+           the mechanism, so the author writes the picture rather than the technique. */
+        no_def("shadow", "color",
+               "absent = no shadow; a colour casts one. THE COLOUR IS THE SWITCH, exactly "
+               "as it is for `surface` — a fully transparent one casts nothing. Offset by "
+               "shadow_x/shadow_y, softened by shadow_blur, turned inward by shadow_inset. "
+               "A shadow is never layout and never takes a gesture"),
+        def("shadow_x", "num", 0.0,
+            "how far right the shadow falls, in canvas px. IT DOES NOT TURN WITH THE NODE: "
+            "the offset is read in the artboard's own axes and the view cancels the "
+            "rotation of this node and every parent above it, so a needle sweeping its dial "
+            "keeps one still shadow instead of swinging one around"),
+        def("shadow_y", "num", 0.0, "how far down the shadow falls, in canvas px; as "
+                                    "`shadow_x`, and just as unturning"),
+        def("shadow_blur", "num", 0.0,
+            "how soft the shadow's edge is, in canvas px. 0 is a hard copy of the shape"),
+        def("shadow_inset", "bool", false,
+            "false casts the shadow OUTSIDE the shape; true turns it inward, so the shape "
+            "reads as recessed. A frame does this with box-shadow's own inset; INK (text, "
+            "icon, path) does it with an SVG inner-shadow filter over its outline, which is "
+            "why an inset shadow on ink follows the glyph or the stroke rather than a box"),
     };
     return table;
 }
@@ -75,6 +98,13 @@ const std::vector<AttrDef>& frame_attrs() {
         no_def("border", "color", "absent = no border (border-color)"),
         def("border_w", "num", 1.0, "border width in canvas px"),
         def("radius", "num", 0.0, "corner radius in canvas px (border-radius)"),
+        /* box-shadow's fourth length, and a box's alone: the filter that shadows ink has
+           no such knob, and a row that quietly did nothing on three of the four kinds
+           would be worse than a row that lives where it works. */
+        def("shadow_spread", "num", 0.0,
+            "grows (or, negative, shrinks) the shadow before it is blurred, in canvas px — "
+            "how a lit panel wears a halo. A BOX'S ONLY: ink casts its shadow from its own "
+            "outline, which has no edge to push out"),
     };
     return table;
 }

@@ -83,6 +83,11 @@ interface Bind {
   /* the view node this element is currently OF — REFRESHED on every reconcile, because
      the ViewNode tree is rebuilt from the document each time and a held one goes stale */
   node: ViewNode;
+  /* the bind that holds this one, null at the root. The tree is walked parent-first, so
+     this is set wherever a child is placed — including when a key is ADOPTED by a new
+     parent. It exists for one reader: a shadow, which has to know every rotation between
+     this node and the artboard to keep its offset still (`turnOf` below). */
+  parent: Bind | null;
   /* the enclosing repeat copy this element is, or null outside a repeat */
   repeat: { index: number; count: number } | null;
   /* the cells the APPLIERS read: a live frame moving one of these re-runs them */
@@ -97,6 +102,10 @@ interface Bind {
   /* kind "icon": the name+weight last rendered to innerHTML, so a patch that changes
      neither leaves the glyph's own DOM alone */
   iconSig: string;
+  /* the id of this bind's own INSET-shadow filter, "" until it needs one. Ink cannot turn
+     a shadow inward with any CSS shorthand, so it borrows an SVG filter — one per node,
+     because the offsets and the colour are this node's (shadowDefs below) */
+  shadowId: string;
   /* what kind of element this IS: a key whose node changed kind cannot reuse it */
   shape: string;
   /* the pass that last ran these appliers: what keeps one live frame from running a
@@ -105,6 +114,9 @@ interface Bind {
 }
 
 interface StageState {
+  /* the pane this picture is of: the state is keyed by it anyway, and the shadow filters
+     need somewhere outside the page to hang */
+  host: HTMLElement;
   page: HTMLElement | null;
   /* the pseudo-bind for the .page element itself */
   root: Bind | null;
@@ -125,6 +137,8 @@ interface StageState {
   docSig: string;
   /* the theme vars last emitted on the page, so a token that left is removed */
   tokenNames: string[];
+  /* and the tokens themselves, to seed a filter host created after them */
+  tokens: Token[];
   /* a gesture's state write landed: patch exactly what binds it (set by renderStage,
      which knows the host) */
   flushState: (key: string) => void;
@@ -142,6 +156,11 @@ interface StageState {
   ctxPath: string;
   /* the preview-resize grips on the artboard's edge, up only inside a context */
   artGrips: HTMLElement[];
+  /* the hidden <svg> holding the inset-shadow filters. It hangs off the HOST rather than
+     the page, because a fresh build replaces the page element and these outlive one — and
+     it carries a copy of the theme vars so a filter's flood-color can be a $token like
+     every other colour in the picture. */
+  defs: SVGSVGElement | null;
   wired: boolean;
 }
 
@@ -150,12 +169,12 @@ const states = new WeakMap<HTMLElement, StageState>();
 function stateOf(host: HTMLElement): StageState {
   let state = states.get(host);
   if (!state) {
-    state = { page: null, root: null, binds: new Map(), byDep: new Map(),
+    state = { host, page: null, root: null, binds: new Map(), byDep: new Map(),
               byKid: new Map(), marks: new Map(), recording: null, pass: 0,
-              docSig: "", tokenNames: [], flushState: () => undefined, rings: [],
+              docSig: "", tokenNames: [], tokens: [], flushState: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
-              wired: false };
+              defs: null, wired: false };
     states.set(host, state);
   }
   return state;
@@ -579,8 +598,162 @@ function clipOf(node: ViewNode, cells: Cells): {
   return { authored: true, on, radius: on ? num(value) : null };
 }
 
+/* ---- THE SHADOW: one authored intent, three mechanisms ----
+ *
+ * The author writes a PICTURE — a colour, an offset, a softness, in or out — and the view
+ * picks whatever the element it is drawing can actually cast:
+ *
+ *   a BOX (frame, and an instance wearing its component's root box) → `box-shadow`, which
+ *   follows the border radius, takes a spread and turns inward on its own;
+ *   INK (text, icon, path) → a `filter`, so the shadow follows the GLYPH or the STROKE
+ *   rather than the rectangle around it. Outward that is `drop-shadow()`; inward there is
+ *   no shorthand at all, so it is a real SVG inner-shadow filter (shadowDefs below).
+ *
+ * THE OFFSET DOES NOT TURN. `rotate` turns the element and everything it draws, a shadow
+ * included — which is wrong for a shadow, because light does not orbit the thing it falls
+ * on. So the offset is authored in the ARTBOARD's axes and un-turned here by the total
+ * rotation between this node and the root: a needle sweeping its dial keeps one still
+ * shadow instead of swinging one around with it. */
+interface Shadow {
+  color: string;
+  /* already un-turned: what to hand the mechanism, in the node's own turned axes */
+  dx: number;
+  dy: number;
+  blur: number;
+  spread: number;
+  inset: boolean;
+}
+
+/* every rotation between this node and the artboard, summed. Read THROUGH each ancestor's
+ * own cells while the pass is recording, so an ancestor whose `rotate` is live becomes a
+ * dependency of this node's shadow and a frame that moves it re-runs exactly this bind. */
+function turnOf(state: StageState, editor: Editor, bind: Bind | null): number {
+  let sum = 0;
+  for (let at = bind; at; at = at.parent) {
+    const turn = num(attrOf(at.node, "rotate", cellsFor(state, editor, at.node, at.repeat)));
+    if (turn !== null) sum += turn;
+  }
+  return sum;
+}
+
+function shadowOf(state: StageState, editor: Editor, bind: Bind, node: ViewNode,
+                  cells: Cells): Shadow | null {
+  const color = attrOf(node, "shadow", cells);
+  /* THE COLOUR IS THE SWITCH, the same rule `surface` and `border` follow */
+  if (!paints(color)) return null;
+  const dx = num(attrOf(node, "shadow_x", cells)) ?? 0;
+  const dy = num(attrOf(node, "shadow_y", cells)) ?? 0;
+  /* R(-turn) applied to the authored offset: what the element draws in its own turned
+     axes so that what LANDS on the artboard is the vector the author wrote */
+  const rad = (turnOf(state, editor, bind) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    color: cssColor(color),
+    dx: dx * cos + dy * sin,
+    dy: -dx * sin + dy * cos,
+    blur: Math.max(0, num(attrOf(node, "shadow_blur", cells)) ?? 0),
+    spread: num(attrOf(node, "shadow_spread", cells)) ?? 0,
+    inset: truthy(attrOf(node, "shadow_inset", cells)),
+  };
+}
+
+/* a length as CSS, rounded off the floating-point dust the un-turning leaves behind */
+function shadowPx(value: number): string {
+  return Math.round(value * 1000) / 1000 + "px";
+}
+
+/* ---- the ink half: a filter, and for `inset` a real one ----
+ *
+ * The filters hang off the host in one hidden <svg>. Creating an element at runtime is
+ * exactly what this renderer does not do — but a filter is not a rendered node: nothing
+ * can be selected in it, pressed in it or hold a caret in it, and it lives and dies with
+ * the bind that references it. */
+const SVG_NS = "http://www.w3.org/2000/svg";
+let filterSeq = 0;
+
+function shadowDefs(state: StageState): SVGSVGElement {
+  if (!state.defs) {
+    const svg = document.createElementNS(SVG_NS, "svg") as SVGSVGElement;
+    svg.setAttribute("class", "shadow-defs");
+    svg.setAttribute("width", "0");
+    svg.setAttribute("height", "0");
+    state.host.appendChild(svg);
+    state.defs = svg;
+    /* the vars the page carries, mirrored: a filter is not inside the page, and a
+       flood-color of var(--t-accent) has to resolve somewhere */
+    setTokenVars(svg as unknown as HTMLElement, state.tokens, []);
+  }
+  return state.defs;
+}
+
+/* THE INNER SHADOW, in six primitives: offset the shape's own alpha, blur it, subtract it
+ * FROM the shape (what is left is the band along the edge the offset came from), flood
+ * that band with the colour and lay it over the shape. An offset down-right therefore
+ * darkens the top-left inside, which is what an inset box-shadow does too. */
+function inkFilter(state: StageState, bind: Bind, shadow: Shadow): string {
+  const defs = shadowDefs(state);
+  if (!bind.shadowId) bind.shadowId = "hmi-shadow-" + ++filterSeq;
+  let filter = defs.querySelector("#" + bind.shadowId) as SVGElement | null;
+  if (!filter) {
+    filter = document.createElementNS(SVG_NS, "filter") as SVGElement;
+    filter.setAttribute("id", bind.shadowId);
+    /* room for a blur that reaches past the shape's own box */
+    filter.setAttribute("x", "-50%");
+    filter.setAttribute("y", "-50%");
+    filter.setAttribute("width", "200%");
+    filter.setAttribute("height", "200%");
+    for (const spec of [
+      ["feOffset", { in: "SourceAlpha", result: "off" }],
+      ["feGaussianBlur", { in: "off", result: "soft" }],
+      ["feComposite", { in: "SourceAlpha", in2: "soft", operator: "out", result: "band" }],
+      ["feFlood", { result: "ink" }],
+      ["feComposite", { in: "ink", in2: "band", operator: "in", result: "shade" }],
+      ["feComposite", { in: "shade", in2: "SourceGraphic", operator: "over" }],
+    ] as [string, Record<string, string>][]) {
+      const node = document.createElementNS(SVG_NS, spec[0]);
+      for (const [key, value] of Object.entries(spec[1])) node.setAttribute(key, value);
+      filter.appendChild(node);
+    }
+    defs.appendChild(filter);
+  }
+  const kids = filter.childNodes as unknown as SVGElement[];
+  kids[0].setAttribute("dx", String(shadow.dx));
+  kids[0].setAttribute("dy", String(shadow.dy));
+  /* CSS blur radius is twice the deviation an SVG blur wants */
+  kids[1].setAttribute("stdDeviation", String(shadow.blur / 2));
+  /* as a STYLE, not an attribute: a presentation attribute cannot hold a var() */
+  (kids[3] as unknown as HTMLElement).style.floodColor = shadow.color;
+  (kids[3] as unknown as HTMLElement).style.floodOpacity = "1";
+  return "url(#" + bind.shadowId + ")";
+}
+
+function dropFilter(state: StageState, bind: Bind): void {
+  if (!bind.shadowId) return;
+  const held = state.defs?.querySelector("#" + bind.shadowId);
+  held?.remove();
+  bind.shadowId = "";
+}
+
+/* TOTAL, like every applier: ink with no shadow carries no filter at all */
+function inkShadow(state: StageState, bind: Bind, shadow: Shadow | null): void {
+  if (!shadow) {
+    dropFilter(state, bind);
+    bind.el.style.filter = "";
+    return;
+  }
+  if (!shadow.inset) {
+    dropFilter(state, bind);
+    bind.el.style.filter = "drop-shadow(" + shadowPx(shadow.dx) + " " +
+      shadowPx(shadow.dy) + " " + shadowPx(shadow.blur) + " " + shadow.color + ")";
+    return;
+  }
+  bind.el.style.filter = inkFilter(state, bind, shadow);
+}
+
 /* the dressing every box wears, whatever holds it */
-function dress(el: HTMLElement, node: ViewNode, cells: Cells): void {
+function dress(el: HTMLElement, node: ViewNode, cells: Cells,
+               shadow: Shadow | null): void {
   const surface = attrOf(node, "surface", cells);
   el.style.background = paints(surface) ? cssColor(surface) : "";
   const border = attrOf(node, "border", cells);
@@ -596,6 +769,13 @@ function dress(el: HTMLElement, node: ViewNode, cells: Cells): void {
   el.style.overflow = clip.on ? "hidden" : "visible";
   el.style.borderRadius = clip.radius !== null && clip.radius > 0 ? clip.radius + "px"
                         : radius !== null ? radius + "px" : "";
+  /* A BOX CASTS box-shadow: it follows the radius set just above, takes a spread and does
+     its own `inset`. CLEARED with "", not "none" — the artboard's own drop shadow is a
+     stylesheet rule on `.page`, and this same applier dresses that element. */
+  el.style.boxShadow = shadow
+    ? (shadow.inset ? "inset " : "") + shadowPx(shadow.dx) + " " + shadowPx(shadow.dy) +
+      " " + shadowPx(shadow.blur) + " " + shadowPx(shadow.spread) + " " + shadow.color
+    : "";
 }
 
 function applyText(el: HTMLElement, node: ViewNode, cells: Cells): void {
@@ -823,16 +1003,22 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
   try {
     const node = bind.node;
     const cells = cellsFor(state, editor, node, bind.repeat);
+    /* read ONCE per pass and handed to whichever mechanism draws it: the reading is the
+       same on every kind (that is the point), only the casting differs */
+    const shadow = shadowOf(state, editor, bind, node, cells);
     /* the artboard is placed by the camera and takes the pointer for the whole pane:
        what it wears of a node is the dressing, and nothing else */
     if (bind.key === ROOT_KEY) {
-      dress(bind.el, node, cells);
+      dress(bind.el, node, cells, shadow);
     } else {
       place(bind.el, node, cells);
-      if (node.kind === "frame") dress(bind.el, node, cells);
-      else if (node.kind === "text") applyText(bind.el, node, cells);
-      else if (node.kind === "icon") applyIcon(bind, node, cells);
-      else if (node.kind === "path" && bind.path) applyPath(bind.path, node, cells);
+      if (node.kind === "frame") dress(bind.el, node, cells, shadow);
+      else {
+        if (node.kind === "text") applyText(bind.el, node, cells);
+        else if (node.kind === "icon") applyIcon(bind, node, cells);
+        else if (node.kind === "path" && bind.path) applyPath(bind.path, node, cells);
+        inkShadow(state, bind, shadow);
+      }
       regime(bind.el, node, editor, cells);
     }
   } finally {
@@ -888,6 +1074,7 @@ function dropBind(state: StageState, key: string): void {
   for (const kid of bind.kidKeys) sweepBind(state, kid);
   bind.kidKeys = [];
   bind.el.remove();
+  dropFilter(state, bind);
   unindex(state.byDep, bind.deps, bind);
   unindex(state.byKid, bind.kidDeps, bind);
 }
@@ -967,13 +1154,16 @@ function reconcileChildren(state: StageState, editor: Editor, parent: Bind,
     if (bind) {
       /* THE VIEW NODES ARE REBUILT EVERY PASS: a held one is last version's document */
       bind.node = entry.node;
+      /* and so is the parent, for a key that was ADOPTED: whoever placed it this pass is
+         whose rotation its shadow now stands under */
+      bind.parent = parent;
       bind.repeat = entry.repeat;
       insertAt(parentEl, bind.el, at);
       runAppliers(state, editor, bind);
       if (entry.node.kind === "frame")
         reconcileChildren(state, editor, bind, entry.node.children, entry.repeat);
     } else {
-      bind = createBind(state, entry);
+      bind = createBind(state, entry, parent);
       runAppliers(state, editor, bind);
       if (entry.node.kind === "frame")
         reconcileChildren(state, editor, bind, entry.node.children, entry.repeat);
@@ -986,13 +1176,13 @@ function reconcileChildren(state: StageState, editor: Editor, parent: Bind,
   parent.kidKeys = want.map((entry) => entry.key);
 }
 
-function createBind(state: StageState, entry: Desired): Bind {
+function createBind(state: StageState, entry: Desired, parent: Bind | null): Bind {
   const made = createElement(entry.node);
   if (entry.node.id) made.el.setAttribute("data-id", String(entry.node.id));
   const bind: Bind = {
-    key: entry.key, el: made.el, node: entry.node, repeat: entry.repeat,
+    key: entry.key, el: made.el, node: entry.node, parent, repeat: entry.repeat,
     deps: new Set(), kidDeps: new Set(), kidKeys: [], path: made.path, iconSig: "",
-    shape: shapeOf(entry.node), pass: 0,
+    shadowId: "", shape: shapeOf(entry.node), pass: 0,
   };
   state.binds.set(entry.key, bind);
   return bind;
@@ -1001,16 +1191,24 @@ function createBind(state: StageState, entry: Desired): Bind {
 /* Theme tokens become CSS custom properties on the page, so a "$name" value is an ordinary
  * var() the browser resolves — no view-side colour resolution anywhere below this line. A
  * token that LEFT the document is cleared: the page element outlives the edit now. */
-function emitTokens(state: StageState, page: HTMLElement, tokens: Token[]): void {
+function setTokenVars(el: HTMLElement, tokens: Token[], previous: string[]): string[] {
   const names: string[] = [];
   for (const token of tokens)
     if (token?.name) {
-      page.style.setProperty("--t-" + token.name, token.dark);
+      el.style.setProperty("--t-" + token.name, token.dark);
       names.push("--t-" + token.name);
     }
-  for (const was of state.tokenNames)
-    if (names.indexOf(was) < 0) page.style.setProperty(was, "");
+  for (const was of previous) if (names.indexOf(was) < 0) el.style.setProperty(was, "");
+  return names;
+}
+
+function emitTokens(state: StageState, page: HTMLElement, tokens: Token[]): void {
+  const was = state.tokenNames;
+  const names = setTokenVars(page, tokens, was);
+  /* the shadow filters hang outside the page and resolve their flood colours themselves */
+  if (state.defs) setTokenVars(state.defs as unknown as HTMLElement, tokens, was);
   state.tokenNames = names;
+  state.tokens = tokens;
 }
 
 /* the artboard's own properties: its size, its tokens, its dressing */
@@ -1030,6 +1228,9 @@ function forget(state: StageState): void {
   state.marks.clear();
   state.root = null;
   state.tokenNames = [];
+  /* every bind is gone, so every filter one of them referenced is too */
+  state.defs?.remove();
+  state.defs = null;
 }
 
 /* FIRST PAINT, a page switch, a step into or out of a widget: every key changes, so
@@ -1042,8 +1243,9 @@ function buildFresh(host: HTMLElement, editor: Editor, page: Page | null): void 
   el.className = "page";
   state.page = el;
   const root: Bind = {
-    key: ROOT_KEY, el, node: rootView(editor, page), repeat: null, deps: new Set(),
-    kidDeps: new Set(), kidKeys: [], path: null, iconSig: "", shape: "root", pass: 0,
+    key: ROOT_KEY, el, node: rootView(editor, page), parent: null, repeat: null,
+    deps: new Set(), kidDeps: new Set(), kidKeys: [], path: null, iconSig: "",
+    shadowId: "", shape: "root", pass: 0,
   };
   state.binds.set(ROOT_KEY, root);
   state.root = root;

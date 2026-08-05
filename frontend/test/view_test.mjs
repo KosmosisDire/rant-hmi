@@ -1547,6 +1547,109 @@ check(stageNode("leaf", 905).style.transform === "translate(-50%, -50%) rotate(3
 stageAttrs["905"].attrs = {};
 stageEditor.live = { epoch: 10, values: {} };
 drawStage();
+
+/* ---- THE SHADOW: one authored intent, three mechanisms ----
+   A box casts box-shadow (radius, spread and inset all its own); ink casts a FILTER, so
+   the shadow follows the glyph or the stroke and not the rectangle around it. And the
+   offset is authored in the ARTBOARD's axes: it must not turn when the node does. */
+const shadowOn = (id, attrs, epoch) => {
+  stageAttrs[String(id)].attrs = { ...stageAttrs[String(id)].attrs, ...attrs };
+  stageEditor.live = { epoch, values: {} };
+  drawStage();
+};
+
+shadowOn(901, { shadow: prog("#000000cc"), shadow_x: prog(2), shadow_y: prog(4),
+                shadow_blur: prog(8) }, 11);
+check(row.style.boxShadow === "2px 4px 8px 0px #000000cc",
+      "a box casts box-shadow, got " + row.style.boxShadow);
+shadowOn(901, { shadow_inset: prog(true), shadow_spread: prog(3) }, 12);
+check(row.style.boxShadow === "inset 2px 4px 8px 3px #000000cc",
+      "with its own inset and spread, got " + row.style.boxShadow);
+
+/* THE OFFSET DOES NOT TURN WITH THE NODE. A quarter turn clockwise makes the element's
+   own +x axis point down the screen, so a shadow authored 4px DOWN has to be written 4px
+   along local +x for it to land down. */
+shadowOn(901, { shadow_inset: prog(false), shadow_spread: prog(0),
+                shadow_x: prog(0), shadow_y: prog(4), rotate: prog(90) }, 13);
+check(row.style.boxShadow === "4px 0px 8px 0px #000000cc",
+      "a rotated box un-turns its shadow so the offset stays put, got " + row.style.boxShadow);
+shadowOn(901, { rotate: prog(180) }, 14);
+check(row.style.boxShadow === "-0px -4px 8px 0px #000000cc" ||
+        row.style.boxShadow === "0px -4px 8px 0px #000000cc",
+      "half a turn flips it back the other way, got " + row.style.boxShadow);
+
+/* AND IT COUNTS THE PARENTS TOO: rotation applies to the whole subtree, so a child of a
+   turned box is turned as well and its own shadow has to cancel that too. */
+shadowOn(901, { rotate: prog(90) }, 15);
+shadowOn(903, { shadow: prog("#ff0000"), shadow_x: prog(0), shadow_y: prog(6) }, 16);
+check(stageNode("leaf", 903).style.boxShadow === "6px 0px 0px 0px #ff0000",
+      "a child of a rotated box un-turns by its PARENT's rotation, got " +
+        stageNode("leaf", 903).style.boxShadow);
+shadowOn(903, { rotate: prog(-90) }, 17);
+check(stageNode("leaf", 903).style.boxShadow === "0px 6px 0px 0px #ff0000",
+      "and by the sum when it turns as well — 90 out, 90 back is no turn at all, got " +
+        stageNode("leaf", 903).style.boxShadow);
+shadowOn(901, { rotate: prog(0), shadow: prog("") }, 18);
+shadowOn(903, { rotate: prog(0), shadow: prog("") }, 19);
+check(row.style.boxShadow === "" && stageNode("leaf", 903).style.boxShadow === "",
+      "and a shadow whose COLOUR went away casts nothing, cleared not zeroed");
+
+/* INK casts a filter. One node, page-level, so its attrs are this rig's to write. */
+stageStore.apply(stageStore.version() + 1, [
+  { op: "insert", parent: 900, list: "children",
+    node: { id: 906, kind: "text", name: "Ink", attrs: {} } },
+]);
+stageAttrs["906"] = { attrs: { x: prog(22), y: prog(300), w: prog(200), h: prog(30),
+                               text: prog("shadowed") } };
+stageEditor.live = { epoch: 20, values: {} };
+drawStage();
+const ink = () => stageNode("ink-text", 906);
+check(ink() !== null && ink().style.filter === "", "ink with no shadow carries no filter");
+shadowOn(906, { shadow: prog("#00ff00"), shadow_x: prog(1), shadow_y: prog(2),
+                shadow_blur: prog(4) }, 21);
+check(ink().style.filter === "drop-shadow(1px 2px 4px #00ff00)",
+      "ink casts drop-shadow, which follows the glyph and not its box, got " +
+        ink().style.filter);
+check(ink().style.boxShadow === undefined || ink().style.boxShadow === "",
+      "and never a box-shadow: a text has no box worth shadowing");
+
+/* INSET ON INK has no CSS shorthand at all, so it is a real SVG inner-shadow filter */
+shadowOn(906, { shadow_inset: prog(true) }, 22);
+const filterUrl = ink().style.filter;
+check(/^url\(#hmi-shadow-\d+\)$/.test(filterUrl),
+      "an inset shadow on ink references a filter of its own, got " + filterUrl);
+const filterEl = stageHost.querySelector("filter");
+check(filterEl !== null, "which exists, in a defs svg hung off the host");
+const prims = filterEl ? filterEl.children : [];
+check(prims.length === 6 && prims[0].tagName === "FEOFFSET" &&
+        prims[0].getAttribute("dx") === "1" && prims[0].getAttribute("dy") === "2",
+      "carrying this node's own offset");
+check(prims[1] && prims[1].getAttribute("stdDeviation") === "2",
+      "its blur as a deviation (half the CSS radius), got " +
+        (prims[1] && prims[1].getAttribute("stdDeviation")));
+check(prims[3] && prims[3].style.floodColor === "#00ff00",
+      "and its colour as a STYLE, so a $token would resolve, got " +
+        (prims[3] && prims[3].style.floodColor));
+/* the un-turning reaches the filter too: (1, 2) authored, turned a quarter clockwise, is
+   (2, -1) locally — which lands right-and-down again once the element turns */
+shadowOn(906, { rotate: prog(90) }, 23);
+check(Math.abs(Number(filterEl.children[0].getAttribute("dx")) - 2) < 1e-9 &&
+        Math.abs(Number(filterEl.children[0].getAttribute("dy")) + 1) < 1e-9,
+      "a turned ink node un-turns its inset offset as well, got " +
+        filterEl.children[0].getAttribute("dx") + "," +
+        filterEl.children[0].getAttribute("dy"));
+/* and the filter goes when the shadow does — nothing is left hanging in the defs */
+shadowOn(906, { shadow: prog("") }, 24);
+check(ink().style.filter === "" && stageHost.querySelector("filter") === null,
+      "clearing the shadow takes the filter with it");
+
+stageAttrs["901"].attrs = { x: prog(22), y: prog(22), w: prog(440), h: prog(220),
+                            radius: prog(3), surface: loads("theme:accent") };
+stageAttrs["903"].attrs = { x: prog(22), y: prog(22), w: prog(198), h: prog(110) };
+stageStore.apply(stageStore.version() + 1, [{ op: "remove", node: 906 }]);
+delete stageAttrs["906"];
+stageEditor.live = { epoch: 25, values: {} };
+drawStage();
 check(stagePage.style["--t-accent"] === "#4e8ef7",
       "the document's tokens are emitted as custom properties on the page");
 check(row.style.background === "var(--t-accent)",
