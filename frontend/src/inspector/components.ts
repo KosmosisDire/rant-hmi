@@ -17,13 +17,18 @@
 import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { highlighted } from "../highlight.js";
-import { openMenu } from "../menu.js";
+import { MenuItem, openMenu } from "../menu.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
-import { AttrDef, ComponentDef, Json, Node, PropDef, SlotSpec } from "../types.js";
+import { AttrDef, ComponentDef, EVENT_KINDS, EventSpec, Json, Node, PRIMITIVES, PropDef,
+         SlotSpec, eventKind, primitiveDef } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "series"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
+/* what an event's `x` may be: the shapes a PROPOSAL can have. `series` is not one (a
+   gesture never carries a history) and `enum` needs a type to name its variants, which an
+   event row has nowhere to put — the enum's own text name is what travels. */
+const EVENT_SHAPES = ["bool", "num", "text", "color"];
 
 /* the closed attr vocabulary: `editor.attrTable` is snapshot-only data, so these read
  * straight off it rather than caching — a kind with nothing of its own, or an offline
@@ -368,7 +373,14 @@ export function componentViewShape(editor: Editor, comp: ComponentDef): string {
     comp: comp.id,
     props: (comp.props ?? []).map((p) => [p.id, p.shape, p.group,
                                           (p.variants ?? []).join("|"), p.editor ?? ""]),
-    events: comp.events ?? [],
+    /* an event's NAME is its row's identity (there is no id to bind by), and whether some
+       gesture raises it decides whether the row wears the mark — everything else on the
+       row is a value the bindings push in */
+    events: (comp.events ?? []).map((e) => e.name),
+    raised: Array.from(raisedEvents(comp)).sort(),
+    /* the component record IS the root node, so its gesture rides this view too: the
+       primitive decides which param and posts rows exist */
+    interact: ownedShape(comp as unknown as Json).interact,
     behavior: (comp.behavior ?? []).map(flowSummary),
     diag: diagShape(editor, comp.id)
       .concat((comp.props ?? []).flatMap((p) => diagShape(editor, p.id))),
@@ -449,23 +461,16 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
-  /* 1. Events: what instances can trigger on. Read-only for now: the vocabulary is
-   *    coupled to the interacts in the parts tree, so it is edited there. */
-  const events = comp.events ?? [];
-  body.append(
-    ...section("comp-events", "Events", String(events.length), () => [
-      ...events.map((evt) =>
-        el("div", { class: "event-line" }, [
-          el("span", { class: "kw", text: evt.name }),
-          el("span", { class: "op", text: "x: " + evt.x }),
-          evt.value ? el("code", { class: "event-expr", text: evt.value }) : null,
-        ]),
-      ),
-      events.length ? null : el("p", { class: "empty", text: "no events" }),
-    ]),
-  );
+  /* 1. Events: what instances can trigger a flow on, and what `x` is when they do. */
+  body.append(...eventsSection(editor, comp));
 
-  /* 2. Properties: one PropDef row per served slot. The name, shape, default and
+  /* 2. The root's own gesture. The component record IS its root node, so this is the
+   *    ordinary node-level section — the same one a part inside the tree gets — asked of
+   *    the root. It sits directly under Events because it is the other half of the same
+   *    sentence: the gesture is what RAISES the events above. */
+  body.append(...interactSection(editor, comp as unknown as Node, "the widget's own box"));
+
+  /* 3. Properties: one PropDef row per served slot. The name, shape, default and
    *    group are the whole slot spec an instance sees. These are the WIDGET's own —
    *    what an instance shows while the widget itself is selected; a property that
    *    belongs to one part is declared on that part. */
@@ -474,7 +479,7 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
                     "no properties yet"),
   );
 
-  /* 3. Behavior: the type's default flows, summarized. Full flow editing stays on
+  /* 4. Behavior: the type's default flows, summarized. Full flow editing stays on
    *    instances (and the shared flow editor) for now. */
   const flows = comp.behavior ?? [];
   body.append(
@@ -484,7 +489,7 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
     ]),
   );
 
-  /* 4. Design frame: the component's own authored size — what the future Design
+  /* 5. Design frame: the component's own authored size — what the future Design
    *    preview will draw it at. Never an instance size (an instance carries no
    *    geometry of its own; its box comes from layout), so it is edited here on the
    *    TYPE and nowhere else. Same numeric idiom the frame inspector's gap/pad fields
@@ -504,6 +509,137 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
       ]),
     ]),
   );
+}
+
+/* ---- the events a component declares ----
+ *
+ * AN EVENT IS WHAT AN INSTANCE'S FLOW TRIGGERS ON. The row set is the component's own
+ * `events` array, edited as a whole (it is a plain array prop, not a child list, so there
+ * are no ids to address a row by — the NAME is the identity, which is why it is picked
+ * rather than typed). What each row carries is the two things a trigger needs: the SHAPE
+ * of `x`, and optionally the expression that derives `x` from the widget's own slots — a
+ * Toggle's tap proposes `!widget.value`, so no flow has to restate the widget's logic.
+ *
+ * WHAT IS OFFERED IS WHAT CAN FIRE: the vocabulary is closed (types.ts EVENT_KINDS), and
+ * the add menu separates the events some gesture in this component actually raises from
+ * the ones nothing does. A declared event nothing raises is still shown, marked — it is
+ * the trigger that would never fire, and hiding it would only make it harder to find. */
+function raisedEvents(comp: Json): Set<string> {
+  const out = new Set<string>();
+  const walk = (node: Json) => {
+    const interact = node?.interact;
+    if (interact && typeof interact === "object")
+      for (const event of Object.values((interact.emits ?? {}) as Record<string, string>))
+        if (event) out.add(String(event));
+    for (const kid of (node?.children ?? []) as Json[]) walk(kid);
+  };
+  walk(comp);
+  /* the pair the SCHEDULER derives: a press on the wire fires held (past its hold_ms) and
+     the down half of pressrelease, with nothing in any emits map naming them */
+  if (out.has("press")) { out.add("held"); out.add("pressrelease"); }
+  if (out.has("release")) out.add("pressrelease");
+  return out;
+}
+
+function eventsSection(editor: Editor, comp: ComponentDef): HTMLElement[] {
+  const at = () => (editor.store.node(comp.id) as ComponentDef | null) ?? comp;
+  const eventsAt = (): EventSpec[] => at().events ?? [];
+  const commit = (next: EventSpec[]) =>
+    editor.apply([{ op: "set_prop", node: comp.id, key: "events", value: next }]);
+  const raised = raisedEvents(at());
+  const events = eventsAt();
+
+  const add = (name: string) => {
+    const kind = eventKind(name);
+    commit([...eventsAt(), { name, x: kind?.x ?? "bool" }]);
+  };
+  const openAdd = (host: HTMLElement) => {
+    const rect = host.getBoundingClientRect();
+    const taken = new Set(eventsAt().map((e) => e.name));
+    const free = EVENT_KINDS.filter((k) => !taken.has(k.name));
+    const item = (name: string, past: string): MenuItem =>
+      ({ label: name + " — " + past, run: () => add(name) });
+    const live = free.filter((k) => raised.has(k.name));
+    const dead = free.filter((k) => !raised.has(k.name));
+    const items: MenuItem[] = [
+      ...live.map((k) => item(k.name, k.past)),
+      ...(live.length && dead.length ? [{ separator: true }] : []),
+      ...(dead.length
+        ? [{ node: el("div", { class: "menu-note",
+                               text: "nothing in this component raises these yet" }) },
+           ...dead.map((k) => item(k.name, k.past))]
+        : []),
+      ...(free.length ? [] : [{ node: el("div", { class: "menu-note",
+                                                  text: "every event is already declared" }) }]),
+    ];
+    openMenu(rect.left, rect.bottom + 4, "Add event", items);
+  };
+
+  return section("comp-events", "Events", String(events.length), () => [
+    ...events.map((evt) => eventRow(comp.id, evt.name, raised, eventsAt, commit)),
+    events.length
+      ? null
+      : el("p", { class: "empty",
+                  text: "no events — an instance of this widget can trigger nothing" }),
+    el("button", {
+      class: "dashed-btn",
+      text: "+ Event",
+      onclick: (ev: MouseEvent) => openAdd(ev.currentTarget as HTMLElement),
+    }),
+  ]);
+}
+
+/* NO FINDING RIDES THIS ROW, deliberately: an events array is a plain prop, so the
+   compiler pins a bad proposal to the INSTANCE that failed to compile it (build_event_values
+   has no id for the row), and a diag icon here would have nothing to show. */
+function eventRow(
+  compId: number,
+  name: string,
+  raised: Set<string>,
+  eventsAt: () => EventSpec[],
+  commit: (next: EventSpec[]) => void,
+): HTMLElement {
+  const kind = eventKind(name);
+  const rowAt = (): EventSpec => eventsAt().find((e) => e.name === name) ?? { name, x: "bool" };
+  const patch = (next: Partial<EventSpec>) =>
+    commit(eventsAt().map((e) => (e.name === name ? { ...e, ...next } : e)));
+  const fires = raised.has(name);
+
+  const shape = selectField(EVENT_SHAPES.map((v) => ({ value: v })), rowAt().x || "bool", (v) =>
+    patch({ x: v }),
+  );
+  bindChoice(compId + ":events." + name + ".x", pickerOf(shape), () => rowAt().x || "bool");
+
+  /* the PROPOSAL: a wire-tier expression over this widget's slots, evaluated once and
+     pinned per gesture. Empty means the gesture's own value stands (a drag already carries
+     its number), and clearing the field removes the key rather than storing "" — the same
+     rule every attr row follows. */
+  const value = commitInput(
+    rowAt().value ?? "",
+    (text) => patch({ value: text || undefined }),
+    { class: "field grow", spellcheck: "false",
+      placeholder: "the gesture's own value",
+      title: "what this widget PROPOSES on " + name + ", as an expression over its slots" },
+  );
+  bindField(compId + ":events." + name + ".value", value, () => rowAt().value ?? "");
+
+  return el("div", { class: "eventdef" }, [
+    el("div", { class: "row" }, [
+      el("span", { class: "kw grow", text: name,
+                   title: fires
+                     ? "an instance triggers on this when it is " + (kind?.past ?? name)
+                     : "declared, but no gesture in this component raises it" }),
+      fires ? null : el("span", { class: "badge dead", text: "not raised" }),
+      shape,
+      iconButton("trash", "remove this event", () =>
+        commit(eventsAt().filter((e) => e.name !== name)),
+      ),
+    ]),
+    el("div", { class: "row" }, [
+      el("span", { class: "row-label", text: "x IS" }),
+      highlighted(value),
+    ]),
+  ]);
 }
 
 /* The properties one owner declares — a component (the widget's own vocabulary) or a
@@ -823,28 +959,127 @@ function unknownAttrRow(
   ]);
 }
 
-/* THE INTERACT SECTION, for any node that carries one: primitive and emits are
- * read-only (the primitive's vocabulary is closed), the params are expressions like
- * any attr. One implementation for the Design part view and the Content node
- * inspector inside an entered context — same node, same rows. */
-export function interactSection(editor: Editor, node: Node): HTMLElement[] {
+/* THE INTERACT SECTION, for any node that can carry one.
+ *
+ * A GESTURE IS A PROPERTY OF A NODE, and which of the four primitives it is decides
+ * everything else: the params that mean anything, and the gestures there are to post. So
+ * the PRIMITIVE picker is the whole section's spine, and changing it rewrites the params
+ * and emits to that primitive's — keeping every param the new primitive also reads, so
+ * switching a dial's mode does not throw away its range.
+ *
+ * `none` is a real choice and the one an authored node starts at: without it a node that
+ * never had a gesture could not be given one, which is exactly the hole that left a custom
+ * widget unable to be pressed at all.
+ *
+ * EMITS is gesture → event NAME: the view posts a gesture and the type names the event a
+ * flow triggers on, and mapping a radial's `select` (instead of its input/commit) is what
+ * turns a dial into a detent selector. Empty means the gesture is not posted at all.
+ *
+ * ONLY A BOX TAKES ONE: `interact` is a frame's prop (doc/schema.cpp) because text, icon
+ * and path are ink — anything that wants to be pressed sits in a frame. The component
+ * record carries no `kind` at all and IS its root frame, which is the other case here.
+ *
+ * One implementation for the Design part view, the Content node inspector inside an
+ * entered context, and the component root itself — same node, same rows. */
+export function interactSection(editor: Editor, node: Node, subject = ""): HTMLElement[] {
   const at = () => (editor.store.node(node.id) as Node | null) ?? node;
-  const interact = node.interact as Json;
-  if (!interact || typeof interact !== "object") return [];
-  const params = Object.keys(interact.params ?? {});
-  const emits = Object.entries((interact.emits ?? {}) as Record<string, string>);
+  const held = (): Json => {
+    const interact = at().interact as Json;
+    return interact && typeof interact === "object" ? interact : null;
+  };
+  const write = (value: Json) =>
+    editor.apply([{ op: "set_prop", node: node.id, key: "interact", value }]);
+  const interact = held();
+  const box = !node.kind || node.kind === "frame";
+  /* ink with a hand-written gesture: shown, so it is not invisible, but not offered a
+     picker whose every write the backend would refuse */
+  if (!box && !interact) return [];
+  const primitive = interact ? String(interact.primitive ?? "press") : "";
+  const def = primitiveDef(primitive);
+
+  /* SWITCHING PRIMITIVE: the new one's params, with anything the author already wrote for
+     a param it also reads carried across; its emits fresh, because the gestures they map
+     are the ones that just changed. "none" removes the gesture outright. */
+  const setPrimitive = (name: string) => {
+    if (!name) return write(null);
+    const next = primitiveDef(name);
+    if (!next) return;
+    const kept = (held()?.params ?? {}) as Record<string, string>;
+    const params: Record<string, string> = {};
+    for (const [param, seed] of Object.entries(next.params))
+      params[param] = kept[param] ?? seed;
+    write({ primitive: name, params, emits: { ...next.emits } });
+  };
+
+  const picker = selectField(
+    [{ value: "", label: "none" },
+     ...PRIMITIVES.map((p) => ({ value: p.name, label: p.name + " — " + p.note }))],
+    primitive,
+    setPrimitive,
+  );
+  bindChoice(node.id + ":interact.primitive", pickerOf(picker), () =>
+    String(held()?.primitive ?? ""));
+
   return section("part-interact", "Interact", null, () => [
-    el("div", { class: "row" }, [
-      el("span", { class: "row-label", text: "PRIMITIVE" }),
-      el("span", { class: "kw", text: String(interact.primitive ?? "press") }),
-    ]),
-    ...params.map((param) => interactParamRow(editor, node.id, param, at)),
-    ...emits.map(([gesture, event]) =>
-      el("div", { class: "row" }, [
-        el("span", { class: "row-label", text: "EMITS" }),
-        el("span", { class: "kw", text: gesture + " → " + event }),
-      ]),
-    ),
+    box
+      ? el("div", { class: "row" }, [
+          el("span", { class: "row-label", text: "GESTURE" }),
+          picker,
+        ])
+      : el("div", { class: "row" }, [
+          el("span", { class: "row-label", text: "GESTURE" }),
+          el("span", { class: "kw", text: primitive }),
+        ]),
+    box && !interact
+      ? el("p", { class: "empty",
+                  text: "no gesture" + (subject ? " on " + subject : "") +
+                        " — pick one and this node becomes pressable" })
+      : null,
+    ...(interact ? Object.keys((interact.params ?? {}) as Record<string, string>)
+                     .map((param) => interactParamRow(editor, node.id, param, at)) : []),
+    ...(interact && def
+      ? [attrGroupHeading("POSTS"),
+         ...def.gestures.map((gesture) => emitRow(node.id, gesture, held, write))]
+      : []),
+    /* a primitive nothing in the table names (a hand-edited document): its map is still
+       shown, read-only, rather than silently dropped by a render that knows no gestures */
+    ...(interact && !def
+      ? Object.entries((interact.emits ?? {}) as Record<string, string>).map(([g, e]) =>
+          el("div", { class: "row" }, [
+            el("span", { class: "row-label", text: "POSTS" }),
+            el("span", { class: "kw", text: g + " → " + e }),
+          ]))
+      : []),
+  ]);
+}
+
+/* one gesture the chosen primitive posts, and the event name it goes out as. The picker
+   is the closed event vocabulary plus "not posted", because an event name nothing can
+   trigger on is a typo the author would only find at run time. */
+function emitRow(
+  nodeId: number,
+  gesture: string,
+  held: () => Json,
+  write: (value: Json) => void,
+): HTMLElement {
+  const emitsOf = () => ((held()?.emits ?? {}) as Record<string, string>);
+  const picker = selectField(
+    [{ value: "", label: "not posted" },
+     ...EVENT_KINDS.filter((k) => !k.derived).map((k) => ({ value: k.name }))],
+    emitsOf()[gesture] ?? "",
+    (name) => {
+      const next = { ...emitsOf() };
+      if (name) next[gesture] = name;
+      else delete next[gesture];
+      write({ ...(held() ?? {}), emits: next });
+    },
+  );
+  bindChoice(nodeId + ":interact.emits." + gesture, pickerOf(picker), () =>
+    emitsOf()[gesture] ?? "");
+  return el("div", { class: "attr-row" }, [
+    el("span", { class: "field attr-name static", text: gesture,
+                 title: "what the view posts when this node is " + gesture }),
+    picker,
   ]);
 }
 

@@ -304,6 +304,100 @@ export interface Interact {
   emits: Record<string, string>;
 }
 
+/* ---- the interaction vocabulary, closed on both sides ----
+ *
+ * TWO PLACES RAISE AN EVENT and no third one can: the view's four gesture primitives
+ * (gestures.ts, which posts exactly the names its `emits` map holds) and the scheduler,
+ * which synthesizes `held` and `pressrelease` from a press it was already told about.
+ * Both tables below mirror that pair, which is why they are here with the rest of the
+ * wire vocabulary rather than in whichever inspector happened to need them first — the
+ * events editor, the flow trigger picker and the gesture picker all read these, so the
+ * three cannot drift apart. */
+
+/* One primitive: the GESTURES it posts, the params it reads, and what a fresh one starts
+ * them at. `gestures` is what the view actually posts (gestures.ts) — never `held` or
+ * `pressrelease`, which the scheduler derives from a press and which therefore ride the
+ * events table alone, with nothing in an emits map naming them. */
+export interface PrimitiveDef {
+  name: "press" | "drag1d" | "drag_radial" | "pick";
+  /* how it is described where it is picked */
+  note: string;
+  /* the gestures it posts, in the order they happen */
+  gestures: string[];
+  /* param -> the expression a fresh gesture starts it at */
+  params: Record<string, string>;
+  /* gesture -> the event a fresh gesture posts it as. Identity, because the two
+     vocabularies agree by default; it is a map at all because the view posts a GESTURE
+     and the type names an EVENT, and a component may want them named differently. */
+  emits: Record<string, string>;
+}
+
+/* EVERY SEEDED PARAM IS A LITERAL, not the slot name the built-ins point theirs at: a
+ * component that has not declared `min` yet would compile `min` to a finding on the node
+ * the moment its gesture was picked, and handing an author four errors for one choice is
+ * not a seed. These are the same numbers gestures.ts falls back to, written down — and
+ * pointing one at a slot is then the ordinary edit it always was. */
+export const PRIMITIVES: PrimitiveDef[] = [
+  { name: "press", note: "pressed, released, tapped or held",
+    gestures: ["press", "release", "tap"],
+    params: { hold_ms: "600" },
+    emits: { press: "press", release: "release", tap: "tap" } },
+  { name: "drag1d", note: "dragged along one axis, like a slider's track",
+    gestures: ["input", "commit"],
+    params: { axis: "'x'", min: "0", max: "100", step: "0" },
+    emits: { input: "input", commit: "commit" } },
+  /* a radial posts EITHER a number or a detent name: mapping `select` (and dropping
+     input/commit) is what turns a dial into a Selector, which is why all three are
+     offered rather than the two a fresh one starts with */
+  { name: "drag_radial", note: "turned, like a knob or a dial",
+    gestures: ["input", "commit", "select"],
+    params: { start: "-135", sweep: "270", mode: "'linear'", fraction: "0",
+              min: "0", max: "100", step: "0" },
+    emits: { input: "input", commit: "commit" } },
+  { name: "pick", note: "opens a tray and picks one option",
+    gestures: ["open", "select"],
+    params: { options: "[]" },
+    emits: { open: "open", select: "select" } },
+];
+
+export function primitiveDef(name: string): PrimitiveDef | null {
+  return PRIMITIVES.find((p) => p.name === name) ?? null;
+}
+
+/* Every event a gesture can raise. `from` is which primitives raise it — `held` and
+ * `pressrelease` are the two the BACKEND derives from a press, so no emits map names
+ * them and a component still declares them like any other. `x` is the shape a fresh
+ * declaration proposes, taken from what the built-ins that raise it already declare. */
+export interface EventKind {
+  name: string;
+  x: string;
+  from: string[];
+  /* the trigger read as a clause: "when <past>" */
+  past: string;
+  /* the backend makes this one out of a press that was already posted, so no emits map
+     ever names it: it can be DECLARED but never mapped */
+  derived?: boolean;
+}
+
+export const EVENT_KINDS: EventKind[] = [
+  /* tap leads: it is the commit gesture and what an author usually means by "when
+     clicked", so it is the first offer everywhere and a new flow's default trigger */
+  { name: "tap", x: "bool", from: ["press"], past: "tapped" },
+  { name: "release", x: "bool", from: ["press"], past: "released" },
+  { name: "press", x: "bool", from: ["press"], past: "pressed down" },
+  { name: "pressrelease", x: "bool", from: ["press"], past: "pressed down or released",
+    derived: true },
+  { name: "held", x: "bool", from: ["press"], past: "held", derived: true },
+  { name: "input", x: "num", from: ["drag1d", "drag_radial"], past: "changed" },
+  { name: "commit", x: "num", from: ["drag1d", "drag_radial"], past: "committed" },
+  { name: "select", x: "text", from: ["pick", "drag_radial"], past: "changed" },
+  { name: "open", x: "text", from: ["pick"], past: "opened" },
+];
+
+export function eventKind(name: string): EventKind | null {
+  return EVENT_KINDS.find((e) => e.name === name) ?? null;
+}
+
 /* one anchor, COMPILED: every coordinate is a program the view runs, which is what makes
    a plot's ink data and an arc's corner arithmetic */
 export interface CompiledAnchor {

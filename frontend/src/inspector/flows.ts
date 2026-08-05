@@ -24,7 +24,7 @@ import { diagIcon, Editor, liveText, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
-import { Flow, Json, Op, Node, WidgetType } from "../types.js";
+import { Flow, Json, Op, Node, WidgetType, eventKind } from "../types.js";
 import { attachAutocomplete, exprContext, flowNames, flowX } from "./autocomplete.js";
 import { localAt, scopeAt } from "./flowscope.js";
 import { openSourceTree, SourcePick, SourceTreeOptions } from "./sourcetree.js";
@@ -75,23 +75,18 @@ export function verbOf(step: Json): string {
 
 /* ---- collapsed card ---- */
 
+/* the trigger read as a clause. The vocabulary is closed and lives with the rest of the
+   wire vocabulary (types.ts EVENT_KINDS), so the picker here and the component's own
+   events editor cannot come to name the same event two different things. A name the table
+   does not hold — a hand-edited document — reads as itself rather than as nothing. */
 function pastTense(event: string): string {
-  if (event === "press") return "pressed down";
-  if (event === "release") return "released";
-  if (event === "pressrelease") return "pressed down or released";
-  if (event === "tap") return "tapped";
-  if (event === "held") return "held";
-  if (event === "input") return "changed";
-  if (event === "commit") return "committed";
-  if (event === "select") return "changed";
-  if (event === "open") return "opened";
-  return event;
+  return eventKind(event)?.past ?? event;
 }
 
 function triggerText(trigger: Json): string {
   if (!trigger) return "?";
   if (trigger.kind === "timer") return "timer " + (trigger.var || "?") + " ends";
-  return pastTense(String(trigger.name ?? "?"));
+  return pastTense(String(trigger.name || "?"));
 }
 
 /* What a flow leaves behind, de-duplicated in DO order: the destinations of
@@ -152,7 +147,11 @@ export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, 
   const set = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: flow.id, key, value }]);
   const when: Json[] = Array.isArray(flow.when) ? flow.when : [];
-  const first = when[0] ?? { kind: "event", name: (type?.events ?? [{ name: "press" }])[0].name };
+  /* A TYPE THAT DECLARES NO EVENT still takes flows (a Trend triggers on a timer), and
+     `+ Behavior` starts one with no trigger at all — so the head has to stand on an EMPTY
+     name and let the finding walk the user to picking one. Reaching into events[0] for a
+     default is what a type with an empty table has nothing to answer. */
+  const first = when[0] ?? { kind: "event", name: type?.events?.[0]?.name ?? "" };
   const timerEntry = when.find((t) => t.kind === "timer");
 
   const caret = el("span", {
@@ -289,8 +288,12 @@ function whenGrid(
     /* a finding addressed to the flow itself is about its trigger, so it sits here */
     row("trigger", picker, el("span", { class: "op", text: "ends" }), diagIcon(editor.diagAt(flow.id)));
   } else {
+    /* a flow with NO trigger yet (what `+ Behavior` makes on an event-less type) leads
+       with the empty offer, so the picker shows what the document actually says instead
+       of pointing at whichever event happened to be first */
     const picker = selectField(
-      events.concat([{ value: "@timer", label: "timer ends" }]),
+      (first.name ? [] : [{ value: "", label: "pick a trigger" }])
+        .concat(events, [{ value: "@timer", label: "timer ends" }]),
       first.name ?? "",
       (name) =>
         name === "@timer"

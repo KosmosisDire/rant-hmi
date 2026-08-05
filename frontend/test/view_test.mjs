@@ -2095,6 +2095,42 @@ check(stageNode("frame", 901) === heldAgain &&
           .some((b) => b.textContent === "+ Property"),
         "and the component's properties are declared right there");
 
+  /* ---- THE EVENTS A COMPONENT DECLARES ----
+     what an instance's flows can trigger on, edited where the component is. Bulb declares
+     none yet, so its instances can trigger nothing — which is the whole of what "a custom
+     widget takes no behavior" was. */
+  check(compPanel.host.textContent
+          .includes("an instance of this widget can trigger nothing"),
+        "a component with no events says what that costs");
+  check(compPanel.host.querySelectorAll(".dashed-btn")
+          .some((b) => b.textContent === "+ Event"),
+        "and the events are declared right there too");
+  check(compPanel.host.querySelectorAll(".eventdef").length === 0,
+        "no rows yet, and none of them counted as properties");
+
+  /* two events: one the `body` node's press gesture actually posts, one nothing does */
+  const evOps = [];
+  const evEditor = { ...insEditor, apply: (batch) => evOps.push(...batch) };
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9800, key: "events",
+      value: [{ name: "tap", x: "bool", value: "!widget.lit" }, { name: "input", x: "num" }] },
+  ]);
+  compPanel.render(inspectorShape(evEditor), (host) => renderInspector(host, evEditor));
+  const evRows = compPanel.host.querySelectorAll(".eventdef");
+  check(evRows.length === 2 && evRows[0].children[0].children[0].textContent === "tap",
+        "each declared event gets a row of its own");
+  check(evRows[0].querySelector(".badge.dead") === null &&
+          evRows[1].querySelector(".badge.dead") !== null,
+        "and a row nothing in the component RAISES is marked: tap is posted by the " +
+        "body's press gesture, input is posted by nothing");
+  check(evRows[0].querySelectorAll("input").some((i) => i.value === "!widget.lit"),
+        "the proposal is an ordinary expression field");
+  /* removing one writes the whole array back: `events` is a plain prop, not a child list */
+  fire(evRows[1].querySelector(".icon-btn"), "click");
+  check(evOps.length === 1 && evOps[0].key === "events" &&
+          evOps[0].value.length === 1 && evOps[0].value[0].name === "tap",
+        "and removing one rewrites the array, got " + JSON.stringify(evOps));
+
   sel[0] = 9810;
   const nodeShape = inspectorShape(insEditor);
   check(nodeShape.includes("glow_color") === false && nodeShape.includes("9812"),
@@ -2104,9 +2140,19 @@ check(stageNode("frame", 901) === heldAgain &&
           compPanel.host.querySelectorAll(".dashed-btn")
             .some((b) => b.textContent === "+ Property"),
         "a component's node declares and edits its properties from the content view");
-  check(compPanel.host.textContent.includes("PRIMITIVE") &&
-          compPanel.host.textContent.includes("tap → tap"),
-        "and the interact it carries shows with its params and emits");
+  check(compPanel.host.textContent.includes("GESTURE") &&
+          compPanel.host.textContent.includes("hold_ms") &&
+          compPanel.host.querySelectorAll(".attr-row")
+            .some((r) => r.children[0].textContent === "tap"),
+        "and the interact it carries shows with its params and what each gesture posts");
+  /* the gesture is EDITABLE here, which is what lets an authored node be given one at
+     all: the picker offers `none` plus the four primitives, standing on this one's */
+  const gesturePicker = compPanel.host.querySelectorAll(".select-wrap")
+    .find((w) => w.children[0].value === "press");
+  check(gesturePicker !== undefined &&
+          gesturePicker.children[0].children.map((o) => o.value)
+            .join(",") === ",press,drag1d,drag_radial,pick",
+        "the primitive is picked, not read: none plus the four");
 
   /* the built-in context: the shipped definition, read-only, Override one click away */
   const roIns = { ...roEditor, selectedNode: () => null, selectedWidget: () => null };
