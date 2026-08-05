@@ -844,7 +844,7 @@ export class App implements Editor {
     /* edit shortcuts only over the artboard: a Delete in another workspace must not
        silently remove the selection it cannot show */
     if (this.view.mode !== "edit" || this.workspace !== "content") return;
-    if (ev.key === "Delete" || ev.key === "Backspace") {
+    if (ev.key === "Delete") {
       this.removeSelection();
       ev.preventDefault();
     }
