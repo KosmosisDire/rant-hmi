@@ -407,6 +407,13 @@ function alsoMenu(
 ): void {
   const add = (name: string) => set("when", entries().concat([{ kind: "timer", var: name }]));
   const items = timers.map((t) => ({ label: "timer " + t.name + " ends", run: () => add(t.name) }));
+  /* the fresh-timer offer needs somewhere to declare it: a COMPONENT record holds no
+     locals (its behavior compiles per instance, and a timer there would resolve against
+     each instance's own), so the shortcut only stands where the host has the list */
+  if (!Array.isArray((widget as unknown as Json).locals)) {
+    openMenu(ev.clientX, ev.clientY, "Also run when", items);
+    return;
+  }
   const taken = new Set(variablesInScope(editor, widget).map((v) => v.name));
   let n = 1;
   while (taken.has("t" + n)) n++;
@@ -884,10 +891,13 @@ function stepMenu(
   openMenu(ev.clientX, ev.clientY, "Add step", items);
 }
 
-export function addFlowButton(editor: Editor, widget: Node, type: WidgetType | null): HTMLElement {
+export function addFlowButton(editor: Editor, widget: Node, type: WidgetType | null,
+                              list: string = "flows"): HTMLElement {
   /* an event-less type (a Trend) still takes behavior: a flow can trigger on a
-     timer, so the new flow starts with NO trigger and the finding walks the user
-     to picking one */
+     timer or a beat, so the new flow starts with NO trigger and the finding walks
+     the user to picking one. `list` is "flows" on an instance and "behavior" on a
+     COMPONENT record — the same card edits both, which is what keeps a type's
+     default behavior exactly as authorable as an instance's own. */
   const event = type?.events?.[0]?.name;
   return el("button", {
     class: "dashed-btn",
@@ -897,7 +907,7 @@ export function addFlowButton(editor: Editor, widget: Node, type: WidgetType | n
         {
           op: "insert",
           parent: widget.id,
-          list: "flows",
+          list,
           node: {
             when: event ? [{ kind: "event", name: event }] : [],
             when_mode: "first",

@@ -1435,19 +1435,27 @@ const std::vector<LangRow>& language_reference() {
 bool compile_expression(const std::string& text, ExprTier tier,
                         const ExpressionScope& scope, EmitSink& sink,
                         std::vector<Instruction>& code, ExpressionResult& result,
-                        std::string& error) {
+                        std::string& error, Shape wanted) {
     const size_t start = code.size();
     Parser parser(text, tier, scope, sink, code, error);
     if (!parser.parse(result)) {
         code.resize(start);
         return false;
     }
-    /* a wire value is always one scalar (spec 6): aggregates may appear mid-expression
-     * (max over a list), never as what goes to the machine */
+    /* a MACHINE write is always one scalar (spec 6): aggregates may appear
+     * mid-expression (max over a list), never as what goes to the mesh. But a wire
+     * expression whose DESTINATION declares the aggregate shape — a list variable, a
+     * list slot — is building state, not a machine value, so it passes exactly there
+     * (the entity paths never pass an aggregate `wanted`). */
     if (tier == ExprTier::Wire &&
-        (result.shape == Shape::List || result.shape == Shape::Map)) {
+        (result.shape == Shape::List || result.shape == Shape::Map) &&
+        result.shape != wanted) {
         error = "a wire value is one scalar; this expression yields a " +
-                std::string(shape_name(result.shape));
+                std::string(shape_name(result.shape)) +
+                (wanted == Shape::Unknown
+                     ? ". A list or map result may only be written whole into a "
+                       "variable or slot declared with that shape"
+                     : "");
         code.resize(start);
         return false;
     }

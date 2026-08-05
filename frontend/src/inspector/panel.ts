@@ -995,7 +995,7 @@ function slotCells(
     ? iconButton("unlink", "unbind " + spec.name, () => {
         if (feed) editor.apply([{ op: "remove", node: feed.id }]);
       })
-    : iconButton("link", "feed " + spec.name + " from the mesh", () =>
+    : iconButton("link", "feed " + spec.name + " from the mesh, a variable or an expression", () =>
         editor.apply([
           {
             op: "insert",

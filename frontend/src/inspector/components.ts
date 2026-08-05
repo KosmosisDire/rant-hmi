@@ -2,9 +2,9 @@
  *
  * A COMPONENT selection edits the type's own record — its name (a plain set_prop:
  * nothing references a component by id, and instances typed by the old name simply lose
- * their type, which the missing-type marker already says), a read-only events summary,
- * the PROPERTIES table (one PropDef row each, the slot editors reused for the default),
- * and a read-only behavior summary.
+ * their type, which the missing-type marker already says), its events, the PROPERTIES
+ * table (one PropDef row each, the slot editors reused for the default), and its
+ * BEHAVIOR — the default flows, edited with the very card an instance's flows use.
  *
  * A NODE selection edits one node of its tree: its name, a frame's layout, the ATTRS
  * table (every attr its kind declares, expression text with the highlight underlay,
@@ -16,6 +16,7 @@
 
 import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
+import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { highlighted } from "../highlight.js";
 import { MenuItem, openMenu } from "../menu.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
@@ -381,7 +382,9 @@ export function componentViewShape(editor: Editor, comp: ComponentDef): string {
     /* the component record IS the root node, so its gesture rides this view too: the
        primitive decides which param and posts rows exist */
     interact: ownedShape(comp as unknown as Json).interact,
-    behavior: (comp.behavior ?? []).map(flowSummary),
+    /* behavior rows are EDITED here now, so their structure rides the shape the same
+       way an instance's flow list does */
+    behavior: (comp.behavior ?? []).map(flowShape),
     diag: diagShape(editor, comp.id)
       .concat((comp.props ?? []).flatMap((p) => diagShape(editor, p.id))),
   });
@@ -479,13 +482,22 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
                     "no properties yet"),
   );
 
-  /* 4. Behavior: the type's default flows, summarized. Full flow editing stays on
-   *    instances (and the shared flow editor) for now. */
+  /* 4. Behavior: the type's DEFAULT flows, edited with the same card an instance's
+   *    flows get — a component's behavior is not special, it just compiles per
+   *    instance. The card needs a widget-shaped host for scope (globals only: a
+   *    component holds no locals) and the component's own served type for its slots
+   *    and events; the Trend's sampler — one beat, one append — is authored with
+   *    exactly these controls. */
   const flows = comp.behavior ?? [];
+  const asWidget = {
+    id: comp.id, kind: "frame", name: comp.name, type: comp.name,
+    attrs: {},
+  } as unknown as Node;
+  const ownType = editor.registry?.types.find((t) => t.name === comp.name) ?? null;
   body.append(
     ...section("comp-behavior", "Behavior", String(flows.length), () => [
-      ...flows.map((flow) => el("div", { class: "flow-line", text: flowSummary(flow) })),
-      flows.length ? null : el("p", { class: "empty", text: "no default behavior" }),
+      ...flows.map((flow) => flowCard(editor, asWidget, ownType, flow)),
+      addFlowButton(editor, asWidget, ownType, "behavior"),
     ]),
   );
 

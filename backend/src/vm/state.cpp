@@ -481,6 +481,25 @@ bool RuntimeState::store_key(const Program& program, uint32_t cell_index, const 
     return true;
 }
 
+/* wire-visible equality between two aggregate elements, each resolved through the same
+   run: what the aggs lane would serialize identically is what counts as unchanged */
+static bool same_element(const Program& program, const RuntimeState& state,
+                         const Value& a, const Value& b) noexcept {
+    if (a.tag != b.tag) return false;
+    switch (a.tag) {
+        case ValueTag::Nil: return true;
+        case ValueTag::Num:
+            return a.data.num == b.data.num ||
+                   (std::isnan(a.data.num) && std::isnan(b.data.num));
+        case ValueTag::Bool: return a.data.boolean == b.data.boolean;
+        case ValueTag::Enum:
+            return a.data.integer == b.data.integer && a.type_id == b.type_id;
+        case ValueTag::Color: return a.data.rgba == b.data.rgba;
+        case ValueTag::Text: return state.text(program, a) == state.text(program, b);
+        default: return false;
+    }
+}
+
 bool RuntimeState::store(const Program& program, uint32_t cell_index,
                          const Value& value) noexcept {
     if (cell_index >= values.size()) return false;
@@ -496,6 +515,9 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
     if (cell.shape == Shape::List || cell.shape == Shape::Map) {
         const bool pairs = cell.shape == Shape::Map;
         if (value.tag == ValueTag::Nil) {
+            /* already UNKNOWN: re-storing Nil every tick (a computed binding whose
+               expression keeps failing) is not a change the wire should see */
+            if (values[cell_index].tag == ValueTag::Nil) return true;
             /* CLEARED is a discontinuity like any other whole store, and the wire has to
                see it as one: the cell reads UNKNOWN and its generation moves */
             if (cell.list_slot < lists.size()) {
@@ -514,6 +536,23 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
             return true;
         }
         const AggView view = aggregate(value);
+        /* AN UNCHANGED STORE IS NOT A CHANGE. A feed or computed binding re-evaluates
+           every tick and stores what it built; copying an identical picture would move
+           the generation, and the wire would resend the whole aggregate thirty times a
+           second for nothing. The compare is bounded by the window and costs less than
+           the copy it skips. Only a cell already HOLDING this shape can be unchanged —
+           an empty list stored over UNKNOWN is a real change. */
+        if (cell.list_slot < lists.size() &&
+            value_shape(values[cell_index]) == cell.shape) {
+            const ListState& held = lists[cell.list_slot];
+            if (held.count == view.count) {
+                const uint32_t entries = pairs ? view.count * 2 : view.count;
+                bool same = view.data != nullptr || entries == 0;
+                for (uint32_t i = 0; same && i < entries; ++i)
+                    same = same_element(program, *this, view.data[i], held.elems[i]);
+                if (same) return true;
+            }
+        }
         return hold_list(program, *this, cell_index, cell.list_slot, view.data,
                          view.count, pairs);
     }

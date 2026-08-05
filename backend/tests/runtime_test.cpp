@@ -2199,6 +2199,141 @@ void test_aggregate_variables() {
     CHECK_EQ(map_dump(restated, edited, table), "a=1,aa=6,zz=tail");
 }
 
+/* WHOLE AGGREGATES FROM EXPRESSIONS. A declared list or map variable — or a list slot —
+ * takes a whole aggregate the wire tier builds: copy a variable, rebuild one with map or
+ * filter. The one-scalar rule steps aside exactly there and nowhere else: a scalar
+ * destination still refuses an aggregate result, and a mesh field does too (the encode
+ * side never builds aggregates, so a value pushed at one would vanish without a trace).
+ * And an UNCHANGED whole store is not a change: the generation holds still, which is
+ * what keeps a per-tick computed binding off the wire. */
+void test_aggregate_expressions() {
+    EntityDef plant;
+    plant.kind = EntityKind::Variable;
+    plant.name = "plant";
+    plant.writable = true;
+    FieldDef temps;
+    temps.path = "temps";
+    temps.shape = Shape::List;
+    temps.elem = Shape::Num;
+    temps.bound = 8;
+    plant.fields = {temps};
+    FakeMesh mesh(std::vector<EntityDef>{plant});
+
+    Json dropdown = {
+        {"kind", "frame"}, {"type", "Dropdown"}, {"name", "D"}, {"slots", Json::object()},
+        {"flows",
+         Json::array({
+             flow_on("open", {steps::set_slot("options", "src.map((v) => str(v))")}),
+             flow_on("select", {steps::set_var("dst", "src.filter((v) => v > 1)"),
+                                steps::set_var("copy", "src")}),
+         })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({
+                      Json{{"name", "src"}, {"type", "list"},
+                           {"init", Json::array({1, 2, 3})}},
+                      Json{{"name", "dst"}, {"type", "list"}},
+                      Json{{"name", "copy"}, {"type", "list"}},
+                  })},
+                 {"pages",
+                  Json::array({Json{{"name", "P"},
+                                    {"children", Json::array({dropdown})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("aggregate expr compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+    const int src = named_cell(program, "src");
+    const int dst = named_cell(program, "dst");
+    const int copy = named_cell(program, "copy");
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    int options = -1;
+    for (uint32_t i = 0; i < program.cells.size(); ++i)
+        if (program.cells[i].kind == CellKind::Slot &&
+            program.cells[i].owner_widget == widget &&
+            program.cells[i].name == "options")
+            options = static_cast<int>(i);
+    if (!CHECK(src >= 0 && dst >= 0 && copy >= 0 && options >= 0)) return;
+
+    RuntimeState state(program);
+    auto raise = [&](const char* event) {
+        state.reset_scratch();
+        run_event(program, state, widget, event, Value::nil());
+    };
+
+    raise("select");
+    CHECK_EQ(list_dump(program, state, dst), "2,3");
+    CHECK_EQ(list_dump(program, state, copy), "1,2,3");
+    raise("open");
+    CHECK_EQ(list_dump(program, state, options), "1,2,3");
+
+    /* THE GENERATION HOLDS STILL under an identical re-store: the same flow re-running
+       over the same source rebuilds the same picture, and the wire must not be told
+       anything moved */
+    const uint32_t dst_slot = program.cells[dst].list_slot;
+    const uint32_t gen_after_first = state.lists[dst_slot].gen;
+    const uint64_t total_after_first = state.lists[dst_slot].total;
+    raise("select");
+    CHECK(state.lists[dst_slot].gen == gen_after_first);
+    CHECK(state.lists[dst_slot].total == total_after_first);
+    /* while a source that MOVED is a real change, and the generation says so */
+    const Value grown[4] = {Value::number(1), Value::number(2), Value::number(3),
+                            Value::number(9)};
+    CHECK(state.hold_list(program, state, src, program.cells[src].list_slot, grown, 4));
+    raise("select");
+    CHECK_EQ(list_dump(program, state, dst), "2,3,9");
+    CHECK(state.lists[dst_slot].gen == gen_after_first + 1);
+
+    /* Nil onto an already-UNKNOWN cell is not a change either */
+    CHECK(state.store(program, static_cast<uint32_t>(dst), Value::nil()));
+    const uint32_t gen_cleared = state.lists[dst_slot].gen;
+    CHECK(state.values[dst].tag == ValueTag::Nil);
+    CHECK(state.store(program, static_cast<uint32_t>(dst), Value::nil()));
+    CHECK(state.lists[dst_slot].gen == gen_cleared);
+
+    /* THE REFUSALS: a scalar variable, the pipeline register and a mesh field all still
+       take one scalar — the door opens for declared aggregate destinations alone */
+    auto refuses = [&](const Json& step, const char* code_hint) {
+        Json bad_dropdown = {
+            {"kind", "frame"}, {"type", "Dropdown"}, {"name", "D"},
+            {"slots", Json::object()},
+            {"flows", Json::array({flow_on("open", {step})})},
+        };
+        Json bad_root = {{"version", 1},
+                         {"next_id", 1},
+                         {"globals",
+                          Json::array({
+                              Json{{"name", "src"}, {"type", "list"},
+                                   {"init", Json::array({1, 2, 3})}},
+                              Json{{"name", "n"}, {"type", "f64"}, {"init", 0}},
+                          })},
+                         {"pages",
+                          Json::array({Json{{"name", "P"},
+                                            {"children", Json::array({bad_dropdown})}}})}};
+        Document bad;
+        std::string bad_err;
+        CHECK(bad.adopt(std::move(bad_root), bad_err));
+        CompileResult refused = compile_document(bad, builtin_registry(), mesh);
+        bool found = false;
+        for (const Diag& diag : refused.program.diagnostics)
+            if (diag.grade == DiagGrade::Error &&
+                diag.message.find(code_hint) != std::string::npos)
+                found = true;
+        CHECK(found);
+    };
+    refuses(steps::set_var("n", "src"), "one scalar");
+    refuses(steps::set_x("src"), "one scalar");
+    refuses(steps::write_field("V", "plant", "temps", "src"), "aggregate field");
+}
+
 /* THE CEILINGS, and what happens at them. An unbounded append refuses at the retained
  * ceiling with a fault that names the variable; a bounded one just trims. Iteration is
  * bounded separately and MUCH lower (it runs in the scratch pool), so a long retained
@@ -2749,6 +2884,7 @@ int main() {
     test_reduce();
     test_list_cells();
     test_aggregate_variables();
+    test_aggregate_expressions();
     test_aggregate_ceilings();
     test_map_reduce();
     test_map_replay();

@@ -763,7 +763,10 @@ class Compiler {
                            std::vector<Value>& out) {
         const AggSite site{widget_id, "slot '" + slot + "' is a list", slot,
                            "Write the options as a list ([\"Off\", \"Low\", \"High\"]) "
-                           "or as variants(Type.field), naming an enum in the mesh"};
+                           "or as variants(Type.field), naming an enum in the mesh. To "
+                           "FOLLOW a variable or an expression instead, bind the slot "
+                           "with its link (a feed from hmi → the variable, or a "
+                           "written expression)"};
         if (value.is_null()) return false;
         if (value.is_string()) {
             const std::string text = trimmed(value.get<std::string>());
@@ -1038,15 +1041,19 @@ class Compiler {
         return scope;
     }
 
+    /* `agg_ok` says the DESTINATION is a declared HMI aggregate (a list/map variable or
+     * slot), so a wire expression may yield that whole shape. It is never set for a
+     * mesh destination — the machine still takes one scalar per field. */
     bool expression(uint64_t node, const std::string& text, ExprTier tier,
                     const ExpressionScope& scope, Shape expected,
                     std::vector<Instruction>& code, uint32_t& max_stack,
                     Shape* actual = nullptr, const std::string& where = "",
-                    uint16_t* enum_out = nullptr) {
+                    uint16_t* enum_out = nullptr, bool agg_ok = false) {
         ExpressionResult result;
         std::string error;
         ProgramEmit emit(program_);
-        if (!compile_expression(text, tier, scope, emit, code, result, error)) {
+        if (!compile_expression(text, tier, scope, emit, code, result, error,
+                                agg_ok ? expected : Shape::Unknown)) {
             diag(node, "expression", error, DiagGrade::Error, where);
             return false;
         }
@@ -1495,8 +1502,11 @@ class Compiler {
             if (appends || !key.empty())
                 return aggregate_move(widget, step, flow, scope, found->second, appends,
                                       keep, key);
+            /* a LIST or MAP slot takes a whole aggregate here: this is an HMI cell,
+               not a machine, so the one-scalar rule steps aside for exactly its shape */
             return push_typed(widget, step, flow, scope, from,
-                              program_.cells[found->second].shape, 0) &&
+                              program_.cells[found->second].shape, 0,
+                              /*agg_ok=*/true) &&
                    emit_store(flow, step_id, found->second);
         }
 
@@ -1640,20 +1650,24 @@ class Compiler {
     }
 
     /* Put ONE value on the stack from a move's source. A struct source is not a scalar
-     * and is handled by its own paths; everything here yields a single value. */
+     * and is handled by its own paths; everything here yields a single value — except
+     * where `agg_ok` says the destination is a declared HMI aggregate, which may take a
+     * whole list or map (copy a variable, rebuild one with a map/filter). */
     bool push_scalar(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                      ExpressionScope& scope, const Json& from, Shape expected,
-                     Shape* actual = nullptr) {
+                     Shape* actual = nullptr, bool agg_ok = false) {
         (void)widget;
         const uint64_t step_id = id_of(step);
         if (from.contains("expr"))
             return expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
-                              expected, flow.code, flow.max_stack, actual, "from");
+                              expected, flow.code, flow.max_stack, actual, "from",
+                              nullptr, agg_ok);
         if (from.contains("local")) {
             const std::string text = str_or(from, "local", "");
             const std::string path = str_or(from, "path", "");
             return expression(step_id, path.empty() ? text : text + "." + path, ExprTier::Wire,
-                              scope, expected, flow.code, flow.max_stack, actual, "from");
+                              scope, expected, flow.code, flow.max_stack, actual, "from",
+                              nullptr, agg_ok);
         }
         if (from.contains("kind")) {
             const int entity = resolve_entity(from, step_id, "from");
@@ -1689,7 +1703,7 @@ class Compiler {
      * transform), and an enum into a text destination renders as its variant name. */
     bool push_typed(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                     ExpressionScope& scope, const Json& from, Shape wanted,
-                    uint16_t type_id) {
+                    uint16_t type_id, bool agg_ok = false) {
         if (wanted == Shape::Text) {
             Shape produced = Shape::Unknown;
             if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
@@ -1714,7 +1728,7 @@ class Compiler {
             return true;
         }
         if (wanted != Shape::Enum || type_id == 0)
-            return push_scalar(widget, step, flow, scope, from, wanted);
+            return push_scalar(widget, step, flow, scope, from, wanted, nullptr, agg_ok);
         Shape produced = Shape::Unknown;
         if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
             return false;
@@ -1943,10 +1957,11 @@ class Compiler {
         }
         /* a DECLARED destination goes through the typed path, so an enum variable
            takes text (the Dropdown's selected name) and a text variable takes an enum
-           (rendered as its name), exactly like the same-shaped fields do */
+           (rendered as its name), exactly like the same-shaped fields do. A declared
+           LIST or MAP variable takes a whole aggregate — an HMI cell, not a machine. */
         if (cell != UINT32_MAX) {
             if (!push_typed(widget, step, flow, scope, from, wanted,
-                            program_.cells[cell].type_id))
+                            program_.cells[cell].type_id, /*agg_ok=*/true))
                 return false;
             return emit_store(flow, step_id, cell);
         }
@@ -2045,6 +2060,18 @@ class Compiler {
                              " has " + std::to_string(target.fields.size()) +
                              " fields; pick one, or move a whole value of its type",
                          DiagGrade::Error, "to");
+                return false;
+            }
+            /* an aggregate-shaped mesh field cannot be a write target: the encode side
+               never builds aggregates (a machine write is one scalar per field), so a
+               value pushed here would be dropped without a trace — refused instead */
+            if (target.fields[field].shape == Shape::List ||
+                target.fields[field].shape == Shape::Map) {
+                diag(step_id, "move_dest",
+                     std::string(entity_kind_name(target.kind)) + ":" + target.name + "." +
+                         target.fields[field].path +
+                         " is an aggregate field; a mesh write is one scalar per field",
+                     DiagGrade::Error, "to");
                 return false;
             }
             if (!push_typed(widget, step, flow, scope, from, target.fields[field].shape,

@@ -43,10 +43,14 @@ struct ExpressionResult {
     uint32_t max_stack = 0;
 };
 
+/* `wanted` is the destination's declared shape, when the caller knows one. The wire
+ * tier's one-scalar rule reads it: an aggregate RESULT is legal exactly where the
+ * destination declares that aggregate shape (a list variable, a list slot), and
+ * refused everywhere else — a machine write is still one scalar. */
 bool compile_expression(const std::string& text, ExprTier tier,
                         const ExpressionScope& scope, EmitSink& sink,
                         std::vector<Instruction>& code, ExpressionResult& result,
-                        std::string& error);
+                        std::string& error, Shape wanted = Shape::Unknown);
 
 /* The language, as data (spec 3.7 / "everything is data"): one row per builtin and
  * method, straight from the tables the parser compiles with, so autocomplete can
