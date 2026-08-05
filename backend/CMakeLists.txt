@@ -29,7 +29,12 @@ set(USE_ZLIB OFF CACHE BOOL "" FORCE)
 set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(ixwebsocket
   URL https://github.com/machinezone/IXWebSocket/archive/refs/tags/v12.0.1.tar.gz
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  # server sends must be NON-blocking (patches/ixwebsocket-nonblocking-send.cmake):
+  # the stock blocking mode flushes on the sender's thread, which on Windows
+  # cancels the connection thread's read registration and permanently deafens the
+  # server to any remote client once a frame outgrows the kernel send buffer
+  PATCH_COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/patches/ixwebsocket-nonblocking-send.cmake")
 
 # nlohmann/json, header-only: the document and the control plane (never the tick).
 set(JSON_BuildTests OFF CACHE INTERNAL "")
