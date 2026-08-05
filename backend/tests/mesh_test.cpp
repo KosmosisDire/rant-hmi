@@ -183,6 +183,24 @@ int main() {
                                ++cmds_seen;
                            });
     CHECK(cmd.valid());
+
+    /* BARE-TYPED topics (the whole schema is one anonymous type, no struct): a bool
+     * the HMI publishes to, and an f64 it feeds from; both address the value by "" */
+    auto flag_schema = dart::Schema::compile("bool");
+    auto pressure_schema = dart::Schema::compile("f64");
+    CHECK(flag_schema.has_value() && pressure_schema.has_value());
+    if (!flag_schema || !pressure_schema) return check::summary("mesh_test");
+    std::atomic<int> flags_seen{0};
+    std::atomic<bool> flag_value{false};
+    dart::Subscriber<> flag(peer, "flag", &*flag_schema,
+                            [&](const dart::MessageView& msg) {
+                                flag_value = msg.get_uint("") != 0;
+                                ++flags_seen;
+                            });
+    CHECK(flag.valid());
+    dart::Publisher<> pressure(peer, "pressure", &*pressure_schema,
+                               dart::Qos{dart::Reliability::Reliable});
+    CHECK(pressure.valid());
     CHECK(peer.start());
 
     /* ---- the adapter ---- */
@@ -200,7 +218,7 @@ int main() {
 
     /* reflection settles once discovery + detail fetches land */
     const char* wanted[] = {"tank_level", "history", "belt", "status",
-                            "alarm",      "cmd",     "suction"};
+                            "alarm",      "cmd",     "suction", "flag", "pressure"};
     constexpr size_t kWanted = sizeof(wanted) / sizeof(wanted[0]);
     bool reflected = false;
     for (int i = 0; i < 100 && !reflected; ++i) {
@@ -226,10 +244,12 @@ int main() {
     const EntityDef* tank_def = nullptr;
     const EntityDef* status_def = nullptr;
     const EntityDef* hist_def = nullptr;
+    const EntityDef* flag_def = nullptr;
     for (const EntityDef& entity : mesh.reflection()) {
         if (entity.name == "tank_level") tank_def = &entity;
         if (entity.name == "status") status_def = &entity;
         if (entity.name == "history") hist_def = &entity;
+        if (entity.name == "flag") flag_def = &entity;
     }
     CHECK(hist_def && hist_def->fields.size() == 3);
     if (hist_def && hist_def->fields.size() == 3) {
@@ -253,6 +273,13 @@ int main() {
         CHECK(status_def->rsp_fields.size() == 1 && status_def->rsp_fields[0].path == "temp" &&
               status_def->rsp_fields[0].shape == Shape::Num);
     }
+    /* a bare-typed topic reflects as ONE anonymous field (path "") and no root name */
+    CHECK(flag_def && flag_def->kind == EntityKind::Topic);
+    if (flag_def) {
+        CHECK(flag_def->type_name.empty());
+        CHECK(flag_def->fields.size() == 1 && flag_def->fields[0].path.empty() &&
+              flag_def->fields[0].shape == Shape::Bool);
+    }
 
     /* ---- the document: feeds from every kind, flows back out ---- */
     Json level_widget = {
@@ -272,12 +299,14 @@ int main() {
                      steps::set_field("msg", "level", "x"),
                      steps::write_value("msg", "V", "tank_level"),
                  })}},
-            /* press: a bare publish and a bare emit */
+            /* press: a bare publish and a bare emit, plus a publish to a BARE-TYPED
+             * topic (the anonymous value addressed by the empty path) */
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
                  {"when_mode", "any"},
                  {"do", Json::array({
                      steps::write_field("T", "cmd", "", "5.5"),
                      steps::write_field("S", "alarm", "", "7"),
+                     steps::write_field("T", "flag", "", "true"),
                  })}},
         })},
     };
@@ -334,6 +363,16 @@ int main() {
         })},
     };
 
+    /* a feed from a BARE-TYPED topic: no path, the anonymous value IS the source */
+    Json pressure_widget = {
+        {"kind", "frame"},
+        {"type", "Readout"},
+        {"name", "Pressure"},
+        {"feeds", Json::array({Json{{"slot", "value"},
+                                    {"src", entity_ref("T", "pressure")},
+                                    {"path", ""}}})},
+    };
+
     /* the toggle-off-the-plant idiom: read the value, gate on it, force / unforce.
      * Deliberately NO feed references `suction` anywhere in this document. */
     Json suction_widget = {
@@ -374,7 +413,8 @@ int main() {
                                     {"children", Json::array({level_widget, label_widget,
                                                               speed_widget, temp_widget,
                                                               alarm_widget, hist_widget,
-                                                              suction_widget})}}})},
+                                                              suction_widget,
+                                                              pressure_widget})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -394,6 +434,7 @@ int main() {
     const uint64_t temp_id = page["children"][3].value("id", 0);
     const uint64_t alarm_id = page["children"][4].value("id", 0);
     const uint64_t hist_id = page["children"][5].value("id", 0);
+    const uint64_t pressure_id = page["children"][7].value("id", 0);
 
     Scheduler sched(std::move(compiled.program), mesh);
     mesh.apply(sched.program());
@@ -438,6 +479,21 @@ int main() {
             seen = run_until(sched, [&] { return num_at(sched, speed_cell) == 3.5; }, 100);
         }
         CHECK_MSG(seen, "belt speed never arrived");
+    }
+
+    /* a BARE topic feed: the anonymous value decodes by the empty path */
+    {
+        const int pressure_cell = cell_of(sched.program(), pressure_id, "value");
+        CHECK(pressure_cell >= 0);
+        dart::MessageBuilder msg(*pressure_schema);
+        msg.set_f64("", 3.25);
+        CHECK(msg.ok());
+        bool seen = false;
+        for (int i = 0; i < 80 && !seen; ++i) {
+            pressure.send(msg.bytes());
+            seen = run_until(sched, [&] { return num_at(sched, pressure_cell) == 3.25; }, 100);
+        }
+        CHECK_MSG(seen, "bare pressure never arrived");
     }
 
     /* a paced function feed (20 Hz, page visible) */
@@ -503,6 +559,18 @@ int main() {
         CHECK_MSG(run_until(sched, [&] { return alarms_seen.load() > 0; }, 2000),
                   "the emit never reached the peer");
         CHECK_EQ(alarm_code.load(), 7);
+    }
+
+    /* the publish to the BARE-TYPED topic: the codec rebuilt from reflection must
+     * spell the bare form, or the topic is refused as untyped */
+    {
+        bool seen = false;
+        for (int i = 0; i < 40 && !seen; ++i) {
+            sched.post(InputEvent{1, level_id, "press", Value::boolean(true), seq++});
+            seen = run_until(sched, [&] { return flags_seen.load() > 0; }, 200);
+        }
+        CHECK_MSG(seen, "the bare publish never reached the peer");
+        CHECK(flag_value.load());
     }
 
     /* the flow-read toggle: the gates only ever pass once the flow_reads subscription
