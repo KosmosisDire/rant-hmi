@@ -27,13 +27,16 @@
 
 .hl-under {
   position: absolute;
-  inset: 1px 0 0 0;
+  top: 1px;
+  left: 0;
+  /* sized by its OWN text, never the box: `pre` makes the full expression the
+     element's width, so text past the right edge is painted and the scroll transform
+     slides it into view — the WRAPPER is the clip */
   padding: 0 7px;   /* the field's 1px border + 6px padding: the text must sit EXACTLY
                        under the caret's text */
   /* centered by line-height, NEVER flex: flex layout drops whitespace-only text nodes
      between the token spans, and the underlay must keep every space the input has */
   white-space: pre;
-  overflow: hidden;
   pointer-events: none;
   font: 600 12px/22px var(--mono);
   color: var(--ink-2);
@@ -42,7 +45,7 @@
 
 /* inside the fused expression box the input is borderless, so the origin shifts 1px */
 .expr-pick .hl-under {
-  inset: 0;
+  top: 0;
   padding: 0 6px;
 }
 
