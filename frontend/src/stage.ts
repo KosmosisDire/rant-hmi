@@ -522,7 +522,12 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   const h = num(attrOf(node, "h", cells));
   const ox = num(attrOf(node, "origin_x", cells)) ?? 0;
   const oy = num(attrOf(node, "origin_y", cells)) ?? 0;
-  if (w === null && x === null) {
+  /* A STRETCHED AXIS HAS NO PLACEMENT POINT: both edges are pinned, so there is no `x` for
+     the origin to be the reference OF, and the offset below must not apply to it. Only the
+     rotation half of `origin_x`/`origin_y` survives on such an axis. */
+  const spanX = w === null && x === null;
+  const spanY = h === null && y === null;
+  if (spanX) {
     el.style.left = "0";
     el.style.right = "0";
     el.style.width = "";
@@ -531,7 +536,7 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
     el.style.right = "";
     el.style.width = w !== null ? unit(w) : "";
   }
-  if (h === null && y === null) {
+  if (spanY) {
     el.style.top = "0";
     el.style.bottom = "0";
     el.style.height = "";
@@ -545,13 +550,33 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   /* ONE REFERENCE POINT serves both jobs: the point `x`/`y` places, and the pivot
      `rotate` turns about — a fraction of the node's OWN box in either unit system, so a
      needle authored with its origin at its hub rotates about the dial's centre with
-     nothing else said. */
+     nothing else said. The two jobs SEPARATE on a stretched axis, which is exactly what a
+     needle is: it fills its dial and only turns, so it takes the pivot and not the shift.
+     (It took the shift too until 2026-08-05, which put every needle half a dial up and to
+     the left of where it belonged — invisible only because the box above it clipped.) */
   const rotate = num(attrOf(node, "rotate", cells));
+  const shiftX = spanX ? 0 : ox;
+  const shiftY = spanY ? 0 : oy;
   const parts: string[] = [];
-  if (ox || oy) parts.push("translate(" + pct(-ox) + ", " + pct(-oy) + ")");
+  if (shiftX || shiftY)
+    parts.push("translate(" + pct(-shiftX) + ", " + pct(-shiftY) + ")");
   if (rotate !== null) parts.push("rotate(" + rotate + "deg)");
   el.style.transform = parts.length ? parts.join(" ") : "";
   el.style.transformOrigin = parts.length ? pct(ox) + " " + pct(oy) : "";
+}
+
+/* WHAT `clip` SAYS, read once for every kind that honours it. Absent (or Nil, which is
+ * "unknown" and must not invent a picture) leaves the kind's own default standing; any
+ * other value decides, `true` clipping to the box and a number also rounding it. The
+ * `authored` half is what lets an explicit `clip: false` turn OFF a clip the kind applies
+ * by itself — a text's ellipsis is the only one there is. */
+function clipOf(node: ViewNode, cells: Cells): {
+  authored: boolean; on: boolean; radius: number | null;
+} {
+  const value = attrOf(node, "clip", cells);
+  if (value === undefined || value === null) return { authored: false, on: false, radius: null };
+  const on = truthy(value);
+  return { authored: true, on, radius: on ? num(value) : null };
 }
 
 /* the dressing every box wears, whatever holds it */
@@ -563,11 +588,13 @@ function dress(el: HTMLElement, node: ViewNode, cells: Cells): void {
     ? (num(attrOf(node, "border_w", cells)) ?? 1) + "px solid " + cssColor(border)
     : "";
   const radius = num(attrOf(node, "radius", cells));
-  const clip = attrOf(node, "clip", cells);
-  const clipped = clip !== undefined && clip !== null && truthy(clip);
-  const rounded = clipped ? num(clip) : null;
-  el.style.overflow = clipped ? "hidden" : "";
-  el.style.borderRadius = rounded !== null && rounded > 0 ? rounded + "px"
+  const clip = clipOf(node, cells);
+  /* WRITTEN, never cleared: "" would hand the answer back to the stylesheet, and a
+     stylesheet that clipped boxes is exactly what made this attr do nothing. A box that
+     does not clip lets its children paint outside it and is otherwise untouched — nothing
+     here is layout, so nothing moves. */
+  el.style.overflow = clip.on ? "hidden" : "visible";
+  el.style.borderRadius = clip.radius !== null && clip.radius > 0 ? clip.radius + "px"
                         : radius !== null ? radius + "px" : "";
 }
 
@@ -588,9 +615,15 @@ function applyText(el: HTMLElement, node: ViewNode, cells: Cells): void {
   el.style.textAlign = TEXT_ALIGN[align] ?? "left";
   el.style.fontWeight = truthy(attrOf(node, "bold", cells)) ? "600" : "";
   const wrap = truthy(attrOf(node, "wrap", cells));
+  /* THE ELLIPSIS IS A CLIP, and `clip` is the one word that turns a clip off: a one-line
+     text fits itself by default (ellipsis needs overflow hidden to show at all), and an
+     explicit `clip: false` lets the line run past its box instead. Absent leaves the
+     kind's own default — the ellipsis — exactly where it was. */
+  const clip = clipOf(node, cells);
+  const clipped = clip.authored ? clip.on : !wrap;
   el.style.whiteSpace = wrap ? "" : "nowrap";
-  el.style.overflow = wrap ? "" : "hidden";
-  el.style.textOverflow = wrap ? "" : "ellipsis";
+  el.style.overflow = clipped ? "hidden" : "visible";
+  el.style.textOverflow = clipped && !wrap ? "ellipsis" : "";
 }
 
 function applyIcon(bind: Bind, node: ViewNode, cells: Cells): void {

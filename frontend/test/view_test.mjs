@@ -1483,6 +1483,70 @@ check(stageNode("leaf", 905).style.position === "absolute" &&
         stageNode("leaf", 905).style.right === "0",
       "an unplaced child stretches over its parent");
 check(row.style.borderRadius === "3px", "radius reaches the style");
+
+/* ---- CLIPPING IS THE `clip` ATTR'S, and nobody else's ----
+   Both of these boxes carried `overflow: hidden` from the STYLESHEET once, which made the
+   attr unable to say the one thing only it can say: a box whose children draw outside it.
+   The applier is written, never cleared, for exactly that reason — "" hands the answer
+   back to the cascade. Nothing here is layout: an unclipped box is placed identically. */
+check(row.style.overflow === "visible" && stageNode("leaf", 903).style.overflow === "visible",
+      "absent = the box does not clip: a frame AND a widget both let children overflow");
+const boxBefore = [row.style.left, row.style.top, row.style.width, row.style.height];
+stageAttrs["901"].attrs.clip = prog(true);
+stageEditor.live = { epoch: 3, values: {} };
+drawStage();
+check(row.style.overflow === "hidden", "true clips to the box");
+check([row.style.left, row.style.top, row.style.width, row.style.height]
+        .join() === boxBefore.join(),
+      "and moves nothing doing it — clipping is not layout");
+stageAttrs["901"].attrs.clip = prog(8);
+stageEditor.live = { epoch: 4, values: {} };
+drawStage();
+check(row.style.overflow === "hidden" && row.style.borderRadius === "8px",
+      "a number clips to the box rounded by that radius, outranking `radius`");
+stageAttrs["901"].attrs.clip = prog(false);
+stageEditor.live = { epoch: 5, values: {} };
+drawStage();
+check(row.style.overflow === "visible" && row.style.borderRadius === "3px",
+      "false clips nothing and hands `radius` back its corners");
+delete stageAttrs["901"].attrs.clip;
+
+/* A TEXT CLIPS ITSELF: one line ellipsises what does not fit, which is a clip like any
+   other, so the same word turns it off — and `clip` says nothing about wrapping. */
+const inkOf = () => stageNode("leaf", 904).querySelector(".ink-text");
+stageEditor.live = { epoch: 6, values: {} };
+drawStage();
+check(inkOf().style.overflow === "hidden" && inkOf().style.textOverflow === "ellipsis",
+      "a one-line text ellipsises by default");
+stageAttrs["904"].attrs.clip = prog(false);
+stageEditor.live = { epoch: 7, values: {} };
+drawStage();
+check(stageNode("leaf", 904).style.overflow === "visible",
+      "clip:false on the instance stops its box clipping");
+delete stageAttrs["904"].attrs.clip;
+
+/* AN ORIGIN ON A STRETCHED AXIS IS A PIVOT AND NOTHING ELSE. Both edges are pinned, so
+   there is no placement point to shift back from — and shifting anyway put every built-in
+   needle half a dial up and to the left, which only the blanket clip above ever hid. */
+stageAttrs["905"].attrs = { origin_x: prog(0.5), origin_y: prog(0.5), rotate: prog(30) };
+stageEditor.live = { epoch: 8, values: {} };
+drawStage();
+const spanned = stageNode("leaf", 905);
+check(spanned.style.transform === "rotate(30deg)",
+      "a stretched node takes the pivot without the shift, got " + spanned.style.transform);
+check(spanned.style.transformOrigin === "50% 50%",
+      "and still turns about its own origin, got " + spanned.style.transformOrigin);
+/* the same origin on a PLACED axis still shifts: that is what `x` places */
+stageAttrs["905"].attrs = { x: prog(40), y: prog(40), w: prog(60), h: prog(60),
+                            origin_x: prog(0.5), origin_y: prog(0.5), rotate: prog(30) };
+stageEditor.live = { epoch: 9, values: {} };
+drawStage();
+check(stageNode("leaf", 905).style.transform === "translate(-50%, -50%) rotate(30deg)",
+      "a placed node's origin is the point `x` puts down, got " +
+        stageNode("leaf", 905).style.transform);
+stageAttrs["905"].attrs = {};
+stageEditor.live = { epoch: 10, values: {} };
+drawStage();
 check(stagePage.style["--t-accent"] === "#4e8ef7",
       "the document's tokens are emitted as custom properties on the page");
 check(row.style.background === "var(--t-accent)",

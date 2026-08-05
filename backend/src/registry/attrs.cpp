@@ -27,8 +27,12 @@ const std::vector<AttrDef>& common_attrs_table() {
                "512), each seeing its own repeat.index/count/fraction cells and placing "
                "itself, which is how a scale's ticks are authored"),
         no_def("clip", "any",
-               "absent = content may overflow; true clips to the node's own box, a number "
-               "clips to that box rounded by that radius (overflow: hidden + radius)"),
+               "absent = content may overflow the node's box and still draws; true clips "
+               "to that box, a number clips to it rounded by that radius. Clipping is "
+               "never layout — turning it on or off moves nothing, it only decides what "
+               "is visible outside the box. A FRAME clips its children (a rounded pane "
+               "whose child reaches the corner wants this); a TEXT clips itself, so "
+               "`false` runs a one-line label past its box instead of ellipsising it"),
         no_def("enabled", "bool",
                "absent = live; false or Nil dims the node and stops it taking gestures — "
                "UNKNOWN disables rather than enables, which is the fail-safe direction. It "
@@ -87,8 +91,8 @@ const std::vector<AttrDef>& text_attrs() {
            `grow` it replaced and mean something else entirely on the same node */
         def("bold", "bool", false, "heavier weight for a value or a caption"),
         def("wrap", "bool", false,
-            "false keeps the text on one line and ellipsises what does not fit; true "
-            "wraps it"),
+            "false keeps the text on one line and ellipsises what does not fit (`clip: "
+            "false` lets the line run past its box instead); true wraps it"),
     };
     return table;
 }

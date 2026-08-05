@@ -16,11 +16,15 @@
   box-shadow: 0 2px 24px rgba(0, 0, 0, 0.5);
 }
 
-/* overflow clips to the radius, so a surfaced pane's corners actually round the content
-   inside them rather than letting a square child paint over the curve */
+/* NOTHING HERE CLIPS. Both of these carried `overflow: hidden` once, to keep a square
+   child from painting over a rounded pane's curve — and that made the `clip` attr a dead
+   letter, because the applier's only way to say "do not clip" is to clear the inline style
+   and fall back to exactly this rule. The vocabulary already owns the decision (`clip`:
+   absent = content may overflow), so it makes it, per node, in stage.ts `dress`. A rounded
+   box whose child reaches its corner asks for `clip` — one word, in the picture's own
+   language, instead of a rule no author could see or reach. */
 .frame {
   box-sizing: border-box;
-  overflow: hidden;
 }
 
 .page .frame,
@@ -33,7 +37,6 @@
    into, and it wears `.leaf` rather than `.frame` to say so to every container search. */
 .leaf {
   box-sizing: border-box;
-  overflow: hidden;
 }
 
 /* ---------- the ink ----------
