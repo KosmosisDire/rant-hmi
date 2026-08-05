@@ -319,16 +319,17 @@ Document Document::make_default() {
     Json main_kids = Json::array();
     main_kids.push_back(instance("Toggle", "Pump", Json{{"value", true}},
                                  at(22, 22, 396, 66)));
-    /* the slider streams its input into `flow`, so dragging it in Test literally draws
-       the Trend below and moves the Readout — the demo's one live signal path */
+    /* the slider streams into `flow` WHILE CHANGING — the uniform control sentence —
+       so dragging it in Test literally draws the Trend below and moves the Readout:
+       the demo's one live signal path */
     Json slider = instance("Slider", "Setpoint",
                            Json{{"value", 62}, {"min", 0}, {"max", 100}},
                            at(22, 110, 836, 66));
     slider["flows"] = Json::array({Json{
-        {"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
+        {"when", Json::array({Json{{"kind", "event"}, {"name", "changing"}}})},
         {"when_mode", "any"},
         {"do", Json::array({Json{{"kind", "move"},
-                                 {"from", {{"expr", "x"}}},
+                                 {"from", {{"expr", "value"}}},
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
     main_kids.push_back(std::move(slider));
     main_kids.push_back(std::move(readout));

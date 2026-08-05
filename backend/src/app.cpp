@@ -368,7 +368,13 @@ void App::on_input(uint64_t session, const Json& frame) {
         reject(session, "input needs widget_id and event");
         return;
     }
-    InputEvent input{session, widget, event, input_value(field(frame, "value")), sequence};
+    InputEvent input;
+    input.session = session;
+    input.widget = widget;
+    input.event = event;
+    input.part = str_or(field(frame, "part"), "");
+    input.value = input_value(field(frame, "value"));
+    input.sequence = sequence;
     /* a string that is not a color is TEXT (a Dropdown's selected option); it rides
        beside the Value and the scheduler homes it into the run's input slot */
     const Json raw = field(frame, "value");

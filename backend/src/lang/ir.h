@@ -113,6 +113,15 @@ enum class OpCode : uint8_t {
      * verb, and "this key holds UNKNOWN" and "this key is absent" would otherwise be two
      * spellings of one thing. Keys stay sorted, so iteration is replay-deterministic. */
     StoreKey,
+    /* push EVENT PARAMETER `a` (state.args): what the triggering event passed in, bound
+     * by the parameter's declared name at compile. State-resident rather than a run_code
+     * register so a lambda body can read it without colliding with its own x2/x3. */
+    LoadArg,
+    /* RAISE the event in Program.raises[`a`] (`b`: 1 = pop one argument value off the
+     * stack, 0 = nullary; `c`: the fault site for a full raise buffer). The record is
+     * queued on the state and the scheduler dispatches it AFTER this run halts — a raise
+     * never re-enters the VM under the raising flow. */
+    Raise,
 };
 
 /* what Iterate does with each element's body result (rides Instruction::small) */

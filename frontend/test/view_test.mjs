@@ -128,7 +128,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 10, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 11, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -663,23 +663,35 @@ check(
   "the Toggle ships one default flow, got " + (toggleType.behavior ?? []).length,
 );
 check(
-  toggleType.behavior[0].do[0].to?.slot === "value",
+  toggleType.behavior[0].do[1].to?.slot === "value",
   "and it writes the widget's own slot, not a variable",
 );
-/* the type-specific part is WHERE x COMES FROM, declared on the event, so the default
-   itself is the same one step on every value-owning type */
+/* the toggle's LOGIC is visible behavior now: propose the inverse, echo it, SPEAK it —
+   no derivation machinery, no x smuggling */
 check(
-  toggleType.events.find((e) => e.name === "tap")?.value === "!widget.value",
-  "the Toggle's tap declares what it proposes",
+  toggleType.behavior[0].do[0].from?.expr === "!widget.value",
+  "the Toggle's inverse is stated in its behavior, got " +
+    toggleType.behavior[0].do[0].from?.expr,
 );
 check(
-  toggleType.behavior[0].do[0].from?.expr === "x",
-  "so its default just takes x, got " + toggleType.behavior[0].do[0].from?.expr,
+  toggleType.behavior[0].do[2].kind === "raise" &&
+    toggleType.behavior[0].do[2].event === "changed",
+  "and the tap RAISES changed, got " + JSON.stringify(toggleType.behavior[0].do[2]),
 );
 check(
-  !snapshot.registry.types.find((t) => t.name === "Slider").events.find((e) => e.name === "input")
-    ?.value,
-  "a slider's drag already carries its own value, so it declares none",
+  toggleType.events.length === 1 &&
+    toggleType.events[0].name === "changed" &&
+    toggleType.events[0].params?.[0]?.name === "value" &&
+    toggleType.events[0].params?.[0]?.shape === "bool",
+  "a discrete control declares exactly changed(value) — gesture events are never rows",
+);
+const sliderEvents = snapshot.registry.types.find((t) => t.name === "Slider").events;
+check(
+  sliderEvents.map((e) => e.name).join(",") === "changing,changed" &&
+    sliderEvents.every((e) => e.params?.[0]?.name === "value" &&
+                              e.params?.[0]?.shape === "num"),
+  "a continuous control declares the PAIR, got " +
+    sliderEvents.map((e) => e.name).join(","),
 );
 check(
   (snapshot.registry.types.find((t) => t.name === "Button").behavior ?? []).length === 0,
@@ -2279,11 +2291,10 @@ check(stageNode("frame", 901) === heldAgain &&
         "and the component's properties are declared right there");
 
   /* ---- THE EVENTS A COMPONENT DECLARES ----
-     what an instance's flows can trigger on, edited where the component is. Bulb declares
-     none yet, so its instances can trigger nothing — which is the whole of what "a custom
-     widget takes no behavior" was. */
-  check(compPanel.host.textContent
-          .includes("an instance of this widget can trigger nothing"),
+     function SIGNATURES its behavior raises with the `raise` step; the gesture family
+     (tap, press, ...) never appears here — the primitive on a part brings it. Bulb
+     declares none yet, which costs nothing: its press gesture already speaks. */
+  check(compPanel.host.textContent.includes("no declared events"),
         "a component with no events says what that costs");
   check(compPanel.host.querySelectorAll(".dashed-btn")
           .some((b) => b.textContent === "+ Event"),
@@ -2291,27 +2302,28 @@ check(stageNode("frame", 901) === heldAgain &&
   check(compPanel.host.querySelectorAll(".eventdef").length === 0,
         "no rows yet, and none of them counted as properties");
 
-  /* two events: one the `body` node's press gesture actually posts, one nothing does */
+  /* two declared signatures: one carrying a value, one a bare moment */
   const evOps = [];
   const evEditor = { ...insEditor, apply: (batch) => evOps.push(...batch) };
   store.apply(store.version() + 1, [
     { op: "set_prop", node: 9800, key: "events",
-      value: [{ name: "tap", x: "bool", value: "!widget.lit" }, { name: "input", x: "num" }] },
+      value: [{ name: "changed", params: [{ name: "value", shape: "bool" }] },
+              { name: "confirmed", params: [] }] },
   ]);
   compPanel.render(inspectorShape(evEditor), (host) => renderInspector(host, evEditor));
   const evRows = compPanel.host.querySelectorAll(".eventdef");
-  check(evRows.length === 2 && evRows[0].children[0].children[0].textContent === "tap",
+  check(evRows.length === 2 &&
+          evRows[0].querySelectorAll("input").some((i) => i.value === "changed"),
         "each declared event gets a row of its own");
-  check(evRows[0].querySelector(".badge.dead") === null &&
-          evRows[1].querySelector(".badge.dead") !== null,
-        "and a row nothing in the component RAISES is marked: tap is posted by the " +
-        "body's press gesture, input is posted by nothing");
-  check(evRows[0].querySelectorAll("input").some((i) => i.value === "!widget.lit"),
-        "the proposal is an ordinary expression field");
+  check(evRows[0].querySelectorAll("input").some((i) => i.value === "value") &&
+          evRows[0].querySelectorAll("select").length === 1,
+        "the signature edits in place: the parameter's name and its shape");
+  check(evRows[1].querySelectorAll("select").length === 0,
+        "a nullary event offers no shape - a moment carries nothing");
   /* removing one writes the whole array back: `events` is a plain prop, not a child list */
   fire(evRows[1].querySelector(".icon-btn"), "click");
   check(evOps.length === 1 && evOps[0].key === "events" &&
-          evOps[0].value.length === 1 && evOps[0].value[0].name === "tap",
+          evOps[0].value.length === 1 && evOps[0].value[0].name === "changed",
         "and removing one rewrites the array, got " + JSON.stringify(evOps));
 
   sel[0] = 9810;
@@ -2325,9 +2337,8 @@ check(stageNode("frame", 901) === heldAgain &&
         "a component's node declares and edits its properties from the content view");
   check(compPanel.host.textContent.includes("GESTURE") &&
           compPanel.host.textContent.includes("hold_ms") &&
-          compPanel.host.querySelectorAll(".attr-row")
-            .some((r) => r.children[0].textContent === "tap"),
-        "and the interact it carries shows with its params and what each gesture posts");
+          compPanel.host.textContent.includes("pressrelease (down)"),
+        "and the interact it carries shows its params and the family it BRINGS");
   /* the gesture is EDITABLE here, which is what lets an authored node be given one at
      all: the picker offers `none` plus the four primitives, standing on this one's */
   const gesturePicker = compPanel.host.querySelectorAll(".select-wrap")

@@ -30,6 +30,9 @@ export interface GestureSeat {
   editor: Editor;
   /* the instance these gestures post as — inside an entered widget, the entered one */
   owner: number;
+  /* WHICH ARMED PART this is: the template node's dotted name ("" = the root). Rides
+     every post; the backend's compiled bubbling topology decides who hears it. */
+  part: string;
   type: WidgetType | null;
   interact: Interact;
   /* the same cell reader the node's attrs ran over: params are compiled programs, so a
@@ -84,12 +87,11 @@ export function optionNames(value: Json): string[] {
   return names;
 }
 
-/* the payload rule, applied at the one place events leave */
-function post(seat: GestureSeat, gesture: string, value: Json): void {
-  const event = seat.interact.emits?.[gesture];
-  if (!event) return;
-  const declares = seat.type?.events?.some((e) => e.name === event && e.value);
-  seat.editor.input(seat.owner, event, declares ? undefined : value);
+/* the one place events leave: gestures post their CANONICAL names with their fixed
+ * signatures — no rename table, no payload rule. A moment (press, release, tap, open)
+ * carries nothing; the drags carry the value, the picks the option. */
+function post(seat: GestureSeat, gesture: string, value?: Json): void {
+  seat.editor.input(seat.owner, gesture, value, seat.part);
 }
 
 /* ---- the shared arithmetic, exported pure so the suite pins the numbers ---- */
@@ -192,7 +194,7 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
     const down = { x: ev.clientX, y: ev.clientY, at: performance.now() };
     let moved = false;
     seat.setState(seat.owner, "pressed", true);
-    post(seat, "press", true);
+    post(seat, "press");
     during(
       (mv) => {
         if (Math.abs(mv.clientX - down.x) > TAP_SLOP ||
@@ -201,12 +203,12 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
       },
       (cancelled) => {
         seat.setState(seat.owner, "pressed", false);
-        post(seat, "release", false);
+        post(seat, "release");
         /* the tap arrives AFTER the release, from the view: a short, still press that
            ended on its own. Past hold_ms it was a hold — the backend already fired
            held — and reporting a tap too would commit twice. */
         if (!cancelled && !moved && performance.now() - down.at < holdMs)
-          post(seat, "tap", true);
+          post(seat, "tap");
       },
     );
   });
@@ -264,10 +266,10 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
         ? sweepFraction(bearingDeg(x - centre.x, y - centre.y), start, sweep)
         : clamp01(f0 + (down.y - y) / LINEAR_TRAVEL);
 
-    /* a radial with a `select` emit picks an OPTION by detent rather than a number:
+    /* a radial with `select: true` picks an OPTION by detent rather than a number:
        nothing resolvable to select = nothing armed, the same honest state as the
        detents it would land on */
-    const selects = Boolean(seat.interact.emits?.select);
+    const selects = param(seat, "select") === true;
     const options = selects ? optionNames(param(seat, "options")) : [];
     if (selects && !options.length) return;
 
@@ -322,7 +324,7 @@ function armPick(node: HTMLElement, seat: GestureSeat): void {
       standing();
       return;
     }
-    post(seat, "open", true);
+    post(seat, "open");
     seat.setState(seat.owner, "open", true);
     const names = optionNames(param(seat, "options"));
     const at = node.getBoundingClientRect();

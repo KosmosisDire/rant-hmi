@@ -157,6 +157,14 @@ std::string trimmed(const std::string& text) {
  * naming it lowers to StoreX and nothing else changes. */
 using FlowLocals = std::unordered_map<std::string, uint32_t>;
 
+/* one armed part of a widget's template: where a gesture rides, compiled once so
+ * trigger validation and the dispatch topology read the same facts */
+struct ArmedInfo {
+    std::string part;        /* dotted node names under the root; "" = the root itself */
+    std::string primitive;
+    bool bubbles = true;
+};
+
 struct WidgetInfo {
     uint64_t id = 0;
     uint64_t page = 0;
@@ -165,7 +173,45 @@ struct WidgetInfo {
     std::unordered_map<std::string, uint32_t> locals;
     std::unordered_map<std::string, uint32_t> slots;
     std::unordered_map<std::string, uint32_t> timers;
+    std::vector<ArmedInfo> armed;
 };
+
+/* ---- the GESTURE VOCABULARY, closed on both sides (mirrors frontend types.ts) ----
+ *
+ * A gesture event is never DECLARED: picking a primitive for a part IS the declaration,
+ * and the whole family arrives with fixed signatures. tap/press/release/held/open are
+ * MOMENTS and carry nothing — which event fired is the information; pressrelease alone
+ * carries the edge, the drags carry the value in motion, the picks carry the option. */
+struct EventParam {
+    std::string name;
+    Shape shape = Shape::Unknown;
+};
+
+bool gesture_event(const std::string& name) {
+    return name == "tap" || name == "press" || name == "release" || name == "held" ||
+           name == "pressrelease" || name == "input" || name == "commit" ||
+           name == "select" || name == "open";
+}
+
+/* the fixed signature; false = nullary */
+bool gesture_param(const std::string& name, EventParam& out) {
+    if (name == "pressrelease") { out = {"down", Shape::Bool}; return true; }
+    if (name == "input" || name == "commit") { out = {"value", Shape::Num}; return true; }
+    if (name == "select") { out = {"option", Shape::Text}; return true; }
+    return false;
+}
+
+/* which primitives raise it (the availability check reads the armed parts) */
+bool gesture_from(const std::string& event, const std::string& primitive) {
+    if (event == "tap" || event == "press" || event == "release" || event == "held" ||
+        event == "pressrelease")
+        return primitive == "press";
+    if (event == "input" || event == "commit")
+        return primitive == "drag1d" || primitive == "drag_radial";
+    if (event == "select") return primitive == "drag_radial" || primitive == "pick";
+    if (event == "open") return primitive == "pick";
+    return false;
+}
 
 class Compiler {
   public:
@@ -187,12 +233,11 @@ class Compiler {
     CompileResult run() {
         copy_entities();
         build_cells();
+        build_armed_parts();
         build_feeds();
-        build_event_values();
         /* The type's defaults are compiled FIRST, so they run first: by the time an
          * authored flow on the same event runs, the widget's own state already reflects
-         * the gesture and `widget.<slot>` agrees with `x`. Two readings of the same
-         * event would be worse than either one. */
+         * the gesture and `widget.<slot>` agrees with what the event passed. */
         build_type_behavior();
         build_flows();
         program_.layout.stack_values = std::max<uint32_t>(program_.layout.stack_values, 1);
@@ -704,7 +749,6 @@ class Compiler {
         }
         period = std::min(3600000.0, std::max(10.0, period));
         flow.event = "every:" + std::to_string(flow_id);
-        flow.event_shape = Shape::Unknown;
         flow.cadence_ticks = static_cast<uint32_t>(std::lround(period));
         return true;
     }
@@ -1079,13 +1123,95 @@ class Compiler {
         return true;
     }
 
-    Shape event_shape(const WidgetInfo& widget, const std::string& event, uint64_t flow) {
-        if (!widget.type) return Shape::Unknown;
-        for (const Json& row : widget.type->value("events", Json::array()))
-            if (row.value("name", "") == event)
-                return shape_from_name(row.value("x", ""));
+    /* the ARMED PARTS of every widget, off the served template: trigger validation and
+     * the runtime's bubbling topology read one compiled truth */
+    void build_armed_parts() {
+        for (WidgetInfo& widget : widgets_) {
+            if (!widget.type) continue;
+            auto tmpl = widget.type->find("template");
+            if (tmpl == widget.type->end() || !tmpl->is_object()) continue;
+            collect_armed(*tmpl, "", widget, /*root=*/true);
+        }
+    }
+
+    void collect_armed(const Json& node, const std::string& path, WidgetInfo& widget,
+                       bool root) {
+        auto interact = node.find("interact");
+        if (interact != node.end() && interact->is_object() &&
+            !str_or(*interact, "primitive", "").empty()) {
+            ArmedInfo info;
+            info.part = path;
+            info.primitive = str_or(*interact, "primitive", "");
+            info.bubbles = interact->value("bubbles", true);
+            widget.armed.push_back(info);
+            /* the root's own channel IS the widget-level one; only named parts enter
+               the bubbling table */
+            if (!path.empty())
+                program_.armed_parts.push_back(ArmedPart{widget.id, path, info.bubbles});
+        }
+        (void)root;
+        auto children = node.find("children");
+        if (children == node.end() || !children->is_array()) return;
+        for (const Json& child : *children) {
+            const std::string name = str_or(child, "name", "");
+            collect_armed(child, path.empty() ? name : path + "." + name, widget,
+                          /*root=*/false);
+        }
+    }
+
+    /* Resolve a trigger's SIGNATURE: a gesture event checks that some armed part (or
+     * the named one) raises it and takes its fixed parameter; a custom event reads the
+     * type's declaration. False = the trigger is invalid (diagnosed here). */
+    bool event_signature(const WidgetInfo& widget, const std::string& event,
+                         const std::string& part, uint64_t flow, bool in_behavior,
+                         EventParam& param, bool& has_param) {
+        has_param = false;
+        if (gesture_event(event)) {
+            bool available = false;
+            for (const ArmedInfo& armed : widget.armed) {
+                if (!part.empty() && armed.part != part) continue;
+                if (gesture_from(event, armed.primitive)) { available = true; break; }
+            }
+            if (!available) {
+                diag(flow, "event",
+                     part.empty()
+                         ? "no part of this widget raises '" + event +
+                               "'; give a part the gesture that raises it"
+                         : "part '" + part + "' does not raise '" + event + "'",
+                     DiagGrade::Error);
+                return false;
+            }
+            has_param = gesture_param(event, param);
+            return true;
+        }
+        if (!part.empty()) {
+            diag(flow, "event",
+                 "a part channel carries gestures; '" + event + "' is raised by the "
+                 "component itself and arrives on the widget's own channel",
+                 DiagGrade::Error);
+            return false;
+        }
+        (void)in_behavior;
+        if (widget.type)
+            for (const Json& row : widget.type->value("events", Json::array())) {
+                if (row.value("name", "") != event) continue;
+                const Json params = row.value("params", Json::array());
+                if (params.is_array() && params.size() > 1) {
+                    diag(flow, "event", "'" + event + "' declares " +
+                             std::to_string(params.size()) +
+                             " parameters; an event carries one for now",
+                         DiagGrade::Error);
+                    return false;
+                }
+                if (params.is_array() && params.size() == 1) {
+                    param.name = str_or(params[0], "name", "value");
+                    param.shape = shape_from_name(str_or(params[0], "shape", ""));
+                    has_param = true;
+                }
+                return true;
+            }
         diag(flow, "event", "widget type has no event '" + event + "'");
-        return Shape::Unknown;
+        return false;
     }
 
     void build_feeds() {
@@ -2164,14 +2290,106 @@ class Compiler {
         return def.name.empty() ? std::string("this type") : def.name;
     }
 
-    bool compile_steps(const WidgetInfo& widget, const Json& flow_node, FlowProgram& flow) {
-        ExpressionScope scope = scope_for(widget, flow.event_shape);
+    /* `raise <event>(args)`: the one step that SPEAKS as the widget. The event must be
+     * one the type declares — a gesture is the pointer's to raise — and the argument
+     * expression compiles against the declared parameter's shape. The record queues on
+     * the state; the scheduler dispatches it after this run halts. */
+    bool compile_raise(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                       ExpressionScope& scope) {
+        const uint64_t step_id = id_of(step);
+        const std::string name = trimmed(str_or(step, "event", ""));
+        if (name.empty()) {
+            diag(step_id, "raise_event", "raise names no event", DiagGrade::Error, "event");
+            return false;
+        }
+        if (gesture_event(name)) {
+            diag(step_id, "raise_event",
+                 "'" + name + "' is a gesture; a gesture is the pointer's to raise. "
+                 "Declare an event of your own in the events section",
+                 DiagGrade::Error, "event");
+            return false;
+        }
+        /* COPY the row: the events list above is a temporary, and a pointer into it
+           would dangle the moment the loop ends */
+        Json row;
+        bool declared = false;
+        if (widget.type)
+            for (const Json& r : widget.type->value("events", Json::array()))
+                if (r.value("name", "") == name) { row = r; declared = true; break; }
+        if (!declared) {
+            diag(step_id, "raise_event",
+                 "this type declares no event '" + name +
+                     "'; declare it in the events section first",
+                 DiagGrade::Error, "event");
+            return false;
+        }
+        const Json params = row.value("params", Json::array());
+        if (params.is_array() && params.size() > 1) {
+            diag(step_id, "raise_event",
+                 "'" + name + "' declares " + std::to_string(params.size()) +
+                     " parameters; an event carries one for now",
+                 DiagGrade::Error, "event");
+            return false;
+        }
+        bool has_arg = false;
+        if (params.is_array() && params.size() == 1) {
+            const std::string pname = str_or(params[0], "name", "value");
+            const Shape shape = shape_from_name(str_or(params[0], "shape", ""));
+            const Json args = step.value("args", Json::object());
+            const std::string text =
+                args.is_object() ? trimmed(str_or(args, pname.c_str(), "")) : "";
+            if (text.empty()) {
+                diag(step_id, "raise_args",
+                     "raise " + name + " needs " + pname, DiagGrade::Error, "args");
+                return false;
+            }
+            if (!expression(step_id, text, ExprTier::Wire, scope, shape, flow.code,
+                            flow.max_stack, nullptr, "args"))
+                return false;
+            has_arg = true;
+        }
+        uint32_t at = UINT32_MAX;
+        for (uint32_t i = 0; i < program_.raises.size(); ++i)
+            if (program_.raises[i].widget_id == widget.id &&
+                program_.raises[i].event == name)
+                at = i;
+        if (at == UINT32_MAX) {
+            program_.raises.push_back(RaiseDef{widget.id, name});
+            at = static_cast<uint32_t>(program_.raises.size() - 1);
+        }
+        Instruction ins;
+        ins.op = OpCode::Raise;
+        ins.a = at;
+        ins.b = has_arg ? 1 : 0;
+        ins.c = fault_site(step_id, "raise",
+                           "the raise queue is full (events kept raising each other)");
+        flow.code.push_back(ins);
+        ++program_.layout.raise_capacity;
+        return true;
+    }
+
+    /* `param` is the trigger's signature (null = a nullary event); `claimed` is set for
+     * TYPE BEHAVIOR: a slot-writing step whose slot is already claimed (a feed, an
+     * authored flow) is DROPPED — per step, so the raise beside it still runs and a fed
+     * control still speaks `changed` while standing down its local echo. */
+    bool compile_steps(const WidgetInfo& widget, const Json& flow_node, FlowProgram& flow,
+                       const EventParam* param = nullptr,
+                       const std::unordered_map<std::string, std::string>* claimed = nullptr) {
+        ExpressionScope scope = scope_for(widget, Shape::Unknown);
+        if (param)
+            scope.names[param->name] = Binding{param->shape, OpCode::LoadArg, 0, 0};
         FlowLocals locals;
         for (const Json& step : flow_node.value("do", Json::array())) {
             const uint64_t step_id = id_of(step);
             const std::string kind = step.value("kind", "");
             if (kind == "move") {
+                if (claimed) {
+                    const std::string slot = slot_of(step.value("to", Json::object()));
+                    if (!slot.empty() && claimed->find(slot) != claimed->end()) continue;
+                }
                 if (!compile_move(widget, step, flow, scope, locals)) return false;
+            } else if (kind == "raise") {
+                if (!compile_raise(widget, step, flow, scope)) return false;
             } else if (kind == "gate") {
                 if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
                                 Shape::Bool, flow.code, flow.max_stack))
@@ -2237,18 +2455,32 @@ class Compiler {
                     flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
                     flow.first_only =
                         triggers.size() > 1 && node.value("when_mode", "first") == "first";
+                    EventParam param;
+                    bool has_param = false;
                     if (trigger.value("kind", "") == "timer") {
                         const std::string name = trigger.value("var", "");
                         const int timer = resolve_timer(widget, name, flow_id);
                         if (timer < 0) continue;
                         flow.event = program_.timers[timer].event;
-                        flow.event_shape = Shape::Timer;
                         program_.timers[timer].rearm_groups.push_back(group);
                     } else if (trigger.value("kind", "") == "every") {
                         if (!cadence_trigger(widget, trigger, flow_id, flow)) continue;
                     } else {
                         flow.event = trigger.value("name", "");
-                        flow.event_shape = event_shape(widget, flow.event, flow_id);
+                        /* PARTS ARE PRIVATE ANATOMY: an instance flow's trigger never
+                           names one — the widget-level channel and the component's own
+                           events are its whole vocabulary */
+                        const std::string part = trigger.value("part", "");
+                        if (!part.empty()) {
+                            diag(flow_id, "event",
+                                 "'" + part + "' is a part of this widget's component; "
+                                 "part channels live in the component's behavior",
+                                 DiagGrade::Error);
+                            continue;
+                        }
+                        if (!event_signature(widget, flow.event, "", flow_id,
+                                             /*in_behavior=*/false, param, has_param))
+                            continue;
                         flow.hold_ticks =
                             static_cast<uint32_t>(std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
                         const Json every = trigger.value("every_ms", Json());
@@ -2257,7 +2489,7 @@ class Compiler {
                                 ? static_cast<uint32_t>(std::max(0.0, every.get<double>()))
                                 : 0;
                     }
-                    if (!compile_steps(widget, node, flow)) {
+                    if (!compile_steps(widget, node, flow, has_param ? &param : nullptr)) {
                         const std::string message = "flow could not be compiled";
                         flow.code.clear();
                         Instruction fault;
@@ -2272,37 +2504,6 @@ class Compiler {
                         std::max(program_.layout.stack_values, flow.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
-            }
-        }
-    }
-
-    /* WHAT `x` IS, per (widget, event). A gesture reports what the pointer did; the value
-     * the widget PROPOSES is a property of the type, so the events table declares it:
-     * a Toggle's tap proposes `!widget.value`, a Readout's press proposes the value it is
-     * showing. A Slider's drag already carries its own proposal, so it declares nothing.
-     *
-     * Without this, `x` on a tap is the pointer's `true` and every flow that wants the
-     * value has to restate the widget's own logic, which is both boilerplate and a second
-     * place for it to be wrong. */
-    void build_event_values() {
-        for (WidgetInfo& widget : widgets_) {
-            if (!widget.type) continue;
-            for (const Json& row : widget.type->value("events", Json::array())) {
-                const std::string expression_text = row.value("value", "");
-                if (expression_text.empty()) continue;
-                EventValueProgram source;
-                source.widget_id = widget.id;
-                source.event = row.value("name", "");
-                const Shape shape = shape_from_name(row.value("x", ""));
-                ExpressionScope scope = scope_for(widget, shape);
-                if (!expression(widget.id, expression_text, ExprTier::Wire, scope, shape,
-                                source.code, source.max_stack))
-                    continue;
-                source.code.push_back(Instruction{OpCode::StoreX});
-                source.code.push_back(Instruction{OpCode::Halt});
-                program_.layout.stack_values =
-                    std::max(program_.layout.stack_values, source.max_stack);
-                program_.event_values.push_back(std::move(source));
             }
         }
     }
@@ -2357,15 +2558,10 @@ class Compiler {
             if (!widget.type) continue;
             const Json& behavior = widget.type->value("behavior", Json::array());
             if (!behavior.is_array() || behavior.empty()) continue;
+            /* stand-down is PER STEP now (compile_steps drops the claimed slot writes),
+               so a fed control still raises `changed` while its local echo yields */
             const std::unordered_map<std::string, std::string> claimed = claimed_slots(widget);
             for (const Json& node : behavior) {
-                bool suppressed = false;
-                for (const std::string& slot : written_slots(node)) {
-                    if (claimed.find(slot) == claimed.end()) continue;
-                    suppressed = true;
-                    break;
-                }
-                if (suppressed) continue;
                 for (const Json& trigger : node.value("when", Json::array())) {
                     FlowProgram flow;
                     flow.widget_id = widget.id;
@@ -2374,13 +2570,23 @@ class Compiler {
                     flow.flow_id = widget.id;
                     flow.group = program_.layout.fired_groups++;
                     flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
+                    EventParam param;
+                    bool has_param = false;
                     if (trigger.value("kind", "") == "every") {
                         if (!cadence_trigger(widget, trigger, widget.id, flow)) continue;
                     } else {
                         flow.event = trigger.value("name", "");
-                        flow.event_shape = event_shape(widget, flow.event, widget.id);
+                        /* behavior is the ONE place a trigger may name a part channel */
+                        flow.part = trigger.value("part", "");
+                        if (!event_signature(widget, flow.event, flow.part, widget.id,
+                                             /*in_behavior=*/true, param, has_param))
+                            continue;
+                        flow.hold_ticks = static_cast<uint32_t>(
+                            std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
                     }
-                    if (!compile_steps(widget, node, flow)) continue;
+                    if (!compile_steps(widget, node, flow, has_param ? &param : nullptr,
+                                       &claimed))
+                        continue;
                     program_.layout.stack_values =
                         std::max(program_.layout.stack_values, flow.max_stack);
                     program_.flows.push_back(std::move(flow));

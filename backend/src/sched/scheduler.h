@@ -19,6 +19,10 @@ struct InputEvent {
        across the queue, so it rides beside and is homed into the run's input text slot
        at dispatch */
     std::string text;
+    /* which ARMED PART of the widget raised it: the template node's dotted name, empty
+       for the root's own gesture. Dispatch consults the compiled bubbling topology.
+       (Last on purpose: the positional prefix above predates it.) */
+    std::string part;
 };
 
 class Scheduler final : private MeshSink {
@@ -38,6 +42,7 @@ class Scheduler final : private MeshSink {
     struct Pressed {
         uint64_t session = 0;
         uint64_t widget = 0;
+        std::string part;
     };
 
     struct Hold {
@@ -52,19 +57,13 @@ class Scheduler final : private MeshSink {
         uint64_t sequence = 0;
     };
 
-    /* A gesture's proposal, evaluated ONCE at pointer-down and reused by every event
-     * of that gesture (press, release, tap, held). Spec 2.3 promises x never changes
-     * meaning between a press and a tap on the same control; re-deriving it per event
-     * breaks that whenever the machine's echo moves the shown value mid-gesture. */
-    struct GesturePin {
-        uint64_t widget = 0;
-        Value x = Value::nil();
-    };
-
     bool accept_sequence(uint64_t session, uint64_t sequence);
-    Value proposed(uint64_t widget, const std::string& event, Value raw);
-    void dispatch(uint64_t widget, const std::string& event, Value raw);
+    void dispatch(uint64_t widget, const std::string& part, const std::string& event,
+                  Value arg);
     void run_one(uint32_t flow, Value value);
+    /* dispatch every event the runs so far RAISED, in order; a raise during the drain
+       joins the same queue, bounded by the raise buffer's own capacity */
+    void drain_raised();
     void on_press(const InputEvent& event);
     void on_release(const InputEvent& event);
     void apply_local_feeds();
@@ -80,8 +79,8 @@ class Scheduler final : private MeshSink {
     std::vector<Pressed> pressed_;
     std::vector<Hold> holds_;
     std::vector<SessionSequence> sequences_;
-    std::vector<GesturePin> pins_;
     std::vector<uint32_t> ended_;
+    bool draining_ = false;
     /* when each CADENCE flow next runs, one entry per flow (0 = seed at the current
      * tick). Sized at construction, so the pass allocates nothing; it does not survive a
      * recompile, which restarts the phase — the RING migrates, being a cell, and that is

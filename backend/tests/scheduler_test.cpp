@@ -291,12 +291,11 @@ void test_first_of_rearm() {
     CHECK(scheduler.state().values[cell].data.num == 3);
 }
 
-/* THE GESTURE PIN: x is evaluated once at pointer-down and reused by the whole
- * gesture. Without it, a press-authored flow commits `!value` to the plant, the
- * machine's echo lands before the finger lifts, and a release- or tap-authored flow
- * re-derives against the moved value and commits the OPPOSITE: one click, two
- * contradicting writes. Every event of the gesture must agree with the press. */
-void test_gesture_pin() {
+/* THE SCHEDULER SPEAKS: a fed control's tap raises changed(value) from its behavior
+ * (the local echo stands down per step — the feed owns the slot), and the scheduler
+ * drains the raise into the authored write-back within the same tick. The write-back
+ * is the same sentence on every control: on changed, send value. */
+void test_scheduler_speaks() {
     EntityDef sw;
     sw.kind = EntityKind::Variable;
     sw.name = "switch";
@@ -313,9 +312,10 @@ void test_gesture_pin() {
                                                {"xf", ""}}})},
                    {"flows",
                     Json::array({Json{
-                        {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+                        {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
                         {"when_mode", "first"},
-                        {"do", Json::array({steps::write_field("V", "switch", "on", "x")})}}})}};
+                        {"do", Json::array({steps::write_field("V", "switch", "on",
+                                                               "value")})}}})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
@@ -336,35 +336,34 @@ void test_gesture_pin() {
     tick(scheduler, 1);
     CHECK(scheduler.state().values[slot].data.boolean == false);
 
-    /* pointer down: the press flow sends the proposal (true) to the machine */
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    /* the tap: the behavior's local echo stands down (the feed owns `value`) but the
+       raise beside it still speaks — the SCHEDULER drains changed(true) into the
+       authored write-back, all inside one tick */
+    scheduler.post(InputEvent{1, widget, "press", Value::nil(), 1});
+    scheduler.post(InputEvent{1, widget, "release", Value::nil(), 2});
+    scheduler.post(InputEvent{1, widget, "tap", Value::nil(), 3});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 1);
     CHECK(mesh.transcript()[0] == "write V:switch.on=true");
 
-    /* the machine's echo lands MID-GESTURE: the toggle already shows true */
+    /* the machine's echo lands and the toggle shows true */
     mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(true)});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[slot].data.boolean == true);
 
-    /* pointer up: release then tap reuse the PINNED proposal (true), not a
-       re-derivation against the moved value, so the shown value stands */
-    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 2});
-    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 3});
-    tick(scheduler, 1);
-    CHECK(scheduler.state().values[slot].data.boolean == true);
-
-    /* the NEXT click re-derives at its own pointer-down: the proposal flips */
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 4});
+    /* the next tap proposes against the SHOWN value: changed(false) goes out */
+    scheduler.post(InputEvent{1, widget, "press", Value::nil(), 4});
+    scheduler.post(InputEvent{1, widget, "release", Value::nil(), 5});
+    scheduler.post(InputEvent{1, widget, "tap", Value::nil(), 6});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 2);
     CHECK(mesh.transcript()[1] == "write V:switch.on=false");
 }
 
-/* HOLD-TO-COMMIT: a Toggle whose only flow is on `held` (assign state = x), value fed
- * back from that variable. The held firing must carry the gesture's proposal, pinned
- * at pointer-down, never a bare `true`: the second hold has to write FALSE. */
-void test_held_proposal() {
+/* HOLD-TO-TOGGLE: held() is a MOMENT — it carries nothing, and the flow reads the
+ * state it flips. A press shorter than hold_ms commits nothing; the second hold reads
+ * the state the first one left and flips it back. */
+void test_held_nullary() {
     Json toggle = {{"kind", "frame"}, {"type", "Toggle"},
                    {"slots", Json::object()},
                    {"feeds", Json::array({Json{{"slot", "value"},
@@ -377,7 +376,7 @@ void test_held_proposal() {
                                                    {"name", "held"},
                                                    {"hold_ms", 5}}})},
                         {"when_mode", "first"},
-                        {"do", Json::array({steps::set_var("state", "x")})}}})}};
+                        {"do", Json::array({steps::set_var("state", "!state")})}}})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals",
@@ -781,8 +780,8 @@ int main() {
     test_timing();
     test_filters();
     test_first_of_rearm();
-    test_gesture_pin();
-    test_held_proposal();
+    test_scheduler_speaks();
+    test_held_nullary();
     test_timer_reads();
     test_flow_entity_read();
     test_cadence_flows();

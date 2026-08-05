@@ -81,6 +81,14 @@ struct EffectRecord {
     std::vector<FixedText> field_text;
 };
 
+/* one queued raise: the RaiseDef it speaks as, its argument, and owned text storage so
+ * a text argument survives until the scheduler dispatches it (mirrors EffectRecord) */
+struct RaisedRecord {
+    uint32_t def = 0;
+    Value value = Value::nil();
+    FixedText text;
+};
+
 struct RuntimeFault {
     uint32_t site = 0;
     uint64_t tick = 0;
@@ -98,6 +106,8 @@ struct PendingState {
     uint32_t flow = 0;
     uint32_t resume_pc = 0;
     Value x = Value::nil();
+    /* the event parameter the parked run arrived with, restored at resume */
+    Value arg = Value::nil();
     /* every struct slot, by value, so a run that parks mid-message re-enters with its
      * own storage and nothing dangles when the scratch resets (spec 5.6) */
     std::vector<StructState> structs;
@@ -143,6 +153,14 @@ class RuntimeState {
     std::vector<Value> stack;
     std::vector<EffectRecord> effects;
     uint32_t effect_count = 0;
+    /* THE EVENT PARAMETER: what the triggering event passed in, seeded at dispatch,
+     * read by LoadArg wherever the parameter's name is spoken — including inside a
+     * lambda body, which is why this is state rather than a run_code register. One
+     * slot: the vocabulary is one parameter per event (enforced at compile). */
+    Value args[1] = {Value::nil()};
+    /* raised events queued during a run, dispatched by the scheduler AFTER it halts */
+    std::vector<RaisedRecord> raised;
+    uint32_t raised_count = 0;
     std::vector<RuntimeFault> faults;
     uint32_t fault_count = 0;
 

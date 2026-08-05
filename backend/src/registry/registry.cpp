@@ -78,9 +78,14 @@ Json owns(Json node, Json props) {
     return node;
 }
 
-Json interact(const char* primitive, Json params, Json emits) {
-    return Json{{"primitive", primitive}, {"params", std::move(params)},
-                {"emits", std::move(emits)}};
+/* the gesture riding a node. No emits map: gestures post their canonical names and the
+ * component's BEHAVIOR maps them to state and raised events — visible flow code where a
+ * rename table used to be. `bubbles: false` keeps a part's gestures off the widget-level
+ * channel (a close button whose tap must not read as "the card was tapped"). */
+Json interact(const char* primitive, Json params, bool bubbles = true) {
+    Json row = Json{{"primitive", primitive}, {"params", std::move(params)}};
+    if (!bubbles) row["bubbles"] = false;
+    return row;
 }
 
 /* ---- radial geometry, as ordinary arithmetic ----
@@ -160,32 +165,38 @@ Json align_slot(const char* def) {
     return slot_enum("align", {"start", "center", "end"}, def, "appearance");
 }
 
-/* An event row: its name, the SHAPE of `x`, and optionally where `x` comes FROM.
+/* A DECLARED EVENT: the component's own vocabulary, spoken with the `raise` step in its
+ * behavior. An event is a FUNCTION CALL — a name plus typed parameters the instance's
+ * flows bind by name — and gesture events are never declared here: the primitive a part
+ * carries brings its whole family with fixed signatures (tap(), pressrelease(down), ...).
  *
- * A gesture reports what the pointer did. What the widget PROPOSES is the type's own
- * logic, so it is declared here once, as an expression over the widget's slots, and the
- * backend evaluates it before any flow on that event runs. A Toggle's tap proposes the
- * inverse of its value; a Readout's press proposes the value it is displaying. Where the
- * gesture already carries the proposal (a Slider's drag, a Dropdown's selection) there is
- * nothing to declare and the raw event value stands.
- *
- * This is what makes `x` mean the same thing everywhere: the value this widget is trying
- * to set. A flow that sends `x` to the plant needs no copy of the widget's logic. */
-Json event(const char* name, const char* x, const char* from = nullptr) {
-    Json row = Json{{"name", name}, {"x", x}};
-    if (from) row["value"] = from;
-    return row;
+ * Every CONTROL declares the pair: `changing(value)` while the value is in motion under
+ * the finger (continuous controls only — a toggle is never mid-change), and
+ * `changed(value)` when the adjustment lands (every control, once per adjustment). The
+ * author's write-back is the same sentence on all of them. */
+Json event(const char* name) {
+    return Json{{"name", name}, {"params", Json::array()}};
+}
+Json event(const char* name, const char* param, const char* shape) {
+    return Json{{"name", name},
+                {"params", Json::array({Json{{"name", param}, {"shape", shape}}})}};
 }
 
 /* DEFAULT BEHAVIOR. Ordinary flows, in the document's own flow shape, shipped with the
  * component instead of authored per instance: a Toggle toggles and a Slider slides the
  * moment it is placed, with no per-type code anywhere. The compiler treats them exactly
- * as authored flows and drops one whose slot something else already writes (a feed, or an
- * authored flow), so a slot never has two writers. */
+ * as authored flows; a step writing a slot something else already writes (a feed, an
+ * authored flow) is dropped PER STEP, so the raise beside it still speaks. */
 Json sets_slot(const char* slot, const char* expression) {
     return Json{{"kind", "move"},
                 {"from", {{"expr", expression}}},
                 {"to", {{"slot", slot}}}};
+}
+
+/* raise <event>(<param>: <expression>): how a control speaks its declared events */
+Json raises(const char* event, const char* param, const char* expression) {
+    return Json{{"kind", "raise"}, {"event", event},
+                {"args", Json{{param, expression}}}};
 }
 
 Json on_event(const char* name, std::initializer_list<Json> steps) {
@@ -321,9 +332,15 @@ const char* kFraction = "clamp01((value - min) / (max - min))";
 /* ---- the built-in components ---- */
 
 Json press_interact() {
-    return interact("press", Json{{"hold_ms", "600"}},
-                    Json{{"press", "press"}, {"release", "release"}, {"tap", "tap"},
-                         {"held", "held"}});
+    return interact("press", Json{{"hold_ms", "600"}});
+}
+
+/* <local> = <expression>: the staging step a suppressible slot write and its raise
+ * share, so a FED control still raises the value it proposed */
+Json sets_local(const char* name, const char* expression) {
+    return Json{{"kind", "move"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"local", name}, {"path", ""}}}};
 }
 
 Json button_component() {
@@ -335,12 +352,9 @@ Json button_component() {
                     slot("radius", "num", 6, "frame"),
                     align_slot("center"),
                 }),
-                /* tap leads: it is the commit gesture and what an author usually means by
-                   "when clicked", so it is the dropdown's first offer and the new flow's
-                   default; press (the down edge) is the deliberate choice */
-                Json::array({event("tap", "bool"), event("release", "bool"),
-                             event("press", "bool"), event("pressrelease", "bool"),
-                             event("held", "bool")}),
+                /* no declared events: the press primitive on its face brings the whole
+                   family — tap(), press(), release(), held(), pressrelease(down) */
+                Json::array(),
                 box_attrs(),
                 Json::array({
                     /* the caption is the LABEL's, not the button's: it is the one node
@@ -367,13 +381,9 @@ Json toggle_component() {
                 compose_slots(tile_base(), {
                     slot("value", "bool", false, "value"),
                 }),
-                /* what a Toggle proposes is the opposite of its value, for EVERY gesture
-                   on it, not just the tap that commits: an author who gates a press on `x`
-                   must see the value the control is trying to set */
-                Json::array({event("tap", "bool", "!widget.value"),
-                             event("release", "bool", "!widget.value"),
-                             event("press", "bool", "!widget.value"),
-                             event("held", "bool", "!widget.value")}),
+                /* a discrete control: no changing phase, one declared event — the tap
+                   IS the change and the settlement at once */
+                Json::array({event("changed", "value", "bool")}),
                 box_attrs(),
                 Json::array({
                     /* the interact rides the PILL, not the root: the pill is what the
@@ -413,9 +423,12 @@ Json toggle_component() {
                              slot("track_color", "color", "$track", "appearance", "color"),
                          })),
                 }),
-                /* every value-owning type's default is the same one step: take what the
-                   event proposes. The type-specific part lives in its events table */
-                Json::array({on_event("tap", {sets_slot("value", "x")})}));
+                /* the toggle's own logic, stated where it can be read: propose the
+                   inverse, echo it locally (a claimed slot drops this step alone), and
+                   SPEAK it — a fed toggle still raises what it proposed */
+                Json::array({on_event("tap", {sets_local("t", "!widget.value"),
+                                              sets_slot("value", "t"),
+                                              raises("changed", "value", "t")})}));
 }
 
 /* A LINEAR SCALE: one repeated mark, and one repeated label, each placing itself along the
@@ -472,7 +485,10 @@ Json slider_component() {
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
                 }),
-                Json::array({event("input", "num"), event("commit", "num")}),
+                /* a continuous control declares the PAIR: changing while the finger
+                   moves the value, changed where the adjustment lands */
+                Json::array({event("changing", "value", "num"),
+                             event("changed", "value", "num")}),
                 box_attrs(),
                 Json::array({
                     /* the control IS the track: it carries the drag, wears the track
@@ -513,8 +529,7 @@ Json slider_component() {
                                }),
                                interact("drag1d",
                                         Json{{"axis", "'x'"}, {"min", "min"},
-                                             {"max", "max"}, {"step", "step"}},
-                                        Json{{"input", "input"}, {"commit", "commit"}})),
+                                             {"max", "max"}, {"step", "step"}})),
                          /* empty (the default) draws nothing, and a binding fills it: a
                             computed feed over widget.value is the old readout */
                          Json::array({
@@ -527,9 +542,12 @@ Json slider_component() {
                          })),
                     linear_scale(),
                 }),
-                /* the drag primitive already mapped the pointer into min..max by step, so
-                   the default is the identity: the fill follows the finger */
-                Json::array({on_event("input", {sets_slot("value", "x")})}));
+                /* the drag primitive already mapped the pointer into min..max by step:
+                   the fill follows the finger and the pair is spoken from here */
+                Json::array({on_event("input", {sets_slot("value", "value"),
+                                                raises("changing", "value", "value")}),
+                             on_event("commit", {sets_slot("value", "value"),
+                                                 raises("changed", "value", "value")})}));
 }
 
 Json readout_component() {
@@ -537,12 +555,9 @@ Json readout_component() {
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                 }),
-                /* a press on a Readout is about the value it is SHOWING, and the backend
-                   knows that value: the view never has to supply its own copy */
-                Json::array({event("tap", "num", "widget.value"),
-                             event("release", "num", "widget.value"),
-                             event("press", "num", "widget.value"),
-                             event("held", "num", "widget.value")}),
+                /* a display declares nothing: the press family arrives with the gesture,
+                   and a flow reads `widget.value` for the value it is showing */
+                Json::array(),
                 box_attrs(),
                 Json::array({
                     /* named `reading`, not `value`: a node's name and a component-level
@@ -636,8 +651,8 @@ Json dropdown_component() {
                     slot("surface", "color", "$surface-2", "frame", "color"),
                     slot("border", "color", "$line", "frame", "color"),
                 }),
-                /* the selection is the gesture's own payload; opening proposes nothing new */
-                Json::array({event("select", "text"), event("open", "text", "widget.value")}),
+                /* discrete: the pick IS the change and the settlement at once */
+                Json::array({event("changed", "value", "text")}),
                 box_attrs(),
                 Json::array({
                     /* the label keeps the field, less a margin and the chevron's corner */
@@ -656,9 +671,9 @@ Json dropdown_component() {
                                          {"x", "0.95"}, {"y", "0.5"},
                                          {"origin_x", "1"}, {"origin_y", "0.5"}}),
                 }),
-                Json::array({on_event("select", {sets_slot("value", "x")})}),
-                interact("pick", Json{{"options", "options"}},
-                         Json{{"open", "open"}, {"select", "select"}}));
+                Json::array({on_event("select", {sets_slot("value", "option"),
+                                                 raises("changed", "value", "option")})}),
+                interact("pick", Json{{"options", "options"}}));
 }
 
 /* ---- the radial controls ----
@@ -692,10 +707,10 @@ Json radial_label_props() {
     });
 }
 
-Json radial_interact(Json extra_params, Json emits) {
+Json radial_interact(Json extra_params) {
     Json params = Json{{"start", "start_angle"}, {"sweep", "sweep_angle"}};
     for (auto& item : extra_params.items()) params[item.key()] = item.value();
-    return interact("drag_radial", std::move(params), std::move(emits));
+    return interact("drag_radial", std::move(params));
 }
 
 /* the two arcs every radial control wears: the track over the whole sweep, and the fill
@@ -787,7 +802,8 @@ Json knob_component() {
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
-                Json::array({event("input", "num"), event("commit", "num")}),
+                Json::array({event("changing", "value", "num"),
+                             event("changed", "value", "num")}),
                 box_attrs(),
                 Json::array({
                     /* the dial IS the circle: square by its aspect lock, centred, and it
@@ -835,8 +851,7 @@ Json knob_component() {
                                                {"max", "max"},
                                                {"step", "step"},
                                                {"mode", "drag"},
-                                               {"fraction", kFraction}},
-                                          Json{{"input", "input"}, {"commit", "commit"}})),
+                                               {"fraction", kFraction}})),
                     owns(text("label", Json{{"text", "text"},
                                             {"color", "text_color"},
                                             {"size", "text_size"},
@@ -848,7 +863,10 @@ Json knob_component() {
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
-                Json::array({on_event("input", {sets_slot("value", "x")})}));
+                Json::array({on_event("input", {sets_slot("value", "value"),
+                                                raises("changing", "value", "value")}),
+                             on_event("commit", {sets_slot("value", "value"),
+                                                 raises("changed", "value", "value")})}));
 }
 
 Json radial_slider_component() {
@@ -862,7 +880,8 @@ Json radial_slider_component() {
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
-                Json::array({event("input", "num"), event("commit", "num")}),
+                Json::array({event("changing", "value", "num"),
+                             event("changed", "value", "num")}),
                 box_attrs(),
                 Json::array({
                     /* no handle: the fill's leading edge IS the value, exactly as on the
@@ -881,8 +900,7 @@ Json radial_slider_component() {
                                                {"max", "max"},
                                                {"step", "step"},
                                                {"mode", "drag"},
-                                               {"fraction", kFraction}},
-                                          Json{{"input", "input"}, {"commit", "commit"}})),
+                                               {"fraction", kFraction}})),
                     owns(text("label", Json{{"text", "text"},
                                             {"color", "text_color"},
                                             {"size", "text_size"},
@@ -894,7 +912,10 @@ Json radial_slider_component() {
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
-                Json::array({on_event("input", {sets_slot("value", "x")})}));
+                Json::array({on_event("input", {sets_slot("value", "value"),
+                                                raises("changing", "value", "value")}),
+                             on_event("commit", {sets_slot("value", "value"),
+                                                 raises("changed", "value", "value")})}));
 }
 
 Json gauge_component() {
@@ -907,11 +928,8 @@ Json gauge_component() {
                     range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                 }),
-                /* a press on a Gauge is about the value it is showing, like a Readout */
-                Json::array({event("tap", "num", "widget.value"),
-                             event("release", "num", "widget.value"),
-                             event("press", "num", "widget.value"),
-                             event("held", "num", "widget.value")}),
+                /* a display declares nothing: the press family rides the whole box */
+                Json::array(),
                 box_attrs(),
                 Json::array({
                     /* read-only, so no interact on the dial: the tap-to-read press rides
@@ -968,7 +986,7 @@ Json selector_component() {
                     range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
-                Json::array({event("select", "text")}),
+                Json::array({event("changed", "value", "text")}),
                 box_attrs(),
                 Json::array({
                     frame("dial", Json{{"aspect", "1"},
@@ -1021,13 +1039,17 @@ Json selector_component() {
                                         {"origin_y", "0.5"}}),
                               radial_needle("0.78", "0.09", angle),
                           }),
+                          /* `select: true` turns the drag into a detent PICKER: it
+                             posts select(option) instead of input/commit — what the
+                             emits rename table used to spell */
                           radial_interact(
                               Json{{"options", "options"},
                                    {"mode", "drag"},
-                                   {"fraction", frac}},
-                              Json{{"select", "select"}})),
+                                   {"select", "true"},
+                                   {"fraction", frac}})),
                 }),
-                Json::array({on_event("select", {sets_slot("value", "x")})}));
+                Json::array({on_event("select", {sets_slot("value", "option"),
+                                                 raises("changed", "value", "option")})}));
 }
 
 Json label_component() {
@@ -1039,10 +1061,7 @@ Json label_component() {
                     /* a label reads like a line of text, so it starts left, not centre */
                     align_slot("start"),
                 }),
-                Json::array({event("tap", "text", "widget.text"),
-                             event("release", "text", "widget.text"),
-                             event("press", "text", "widget.text"),
-                             event("held", "text", "widget.text")}),
+                Json::array(),
                 box_attrs(),
                 Json::array({
                     /* the line fills the box and places its own text by the align slot */
@@ -1064,9 +1083,7 @@ Json panel_component() {
                     slot("surface", "color", "$surface", "frame", "color"),
                     slot("border", "color", "$line", "frame", "color"),
                 }),
-                Json::array({event("tap", "bool"), event("release", "bool"),
-                             event("press", "bool"), event("pressrelease", "bool"),
-                             event("held", "bool")}),
+                Json::array(),
                 box_attrs(), Json::array(), Json::array(), press_interact());
 }
 

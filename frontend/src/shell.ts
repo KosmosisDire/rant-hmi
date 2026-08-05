@@ -23,7 +23,7 @@ import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { previewArrangement, renderStage, stageScale } from "./stage.js";
-import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, EVENT_KINDS, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry, primitiveDef } from "./types.js";
+import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry, primitiveDef } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
 import { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } from "./workspaces/design.js";
@@ -264,8 +264,8 @@ export class App implements Editor {
   /* one gesture event out. The sequence is per-session monotonic — the backend drops
      what arrives out of order, which is also what lets its fail-safe synthesize a
      release for a session that vanished mid-press. */
-  input(widget: number, event: string, value?: Json): void {
-    this.conn.input(widget, event, value ?? null, this.inputSeq++);
+  input(widget: number, event: string, value?: Json, part?: string): void {
+    this.conn.input(widget, event, value ?? null, this.inputSeq++, part ?? "");
   }
 
   setPage(id: number): void {
@@ -402,12 +402,10 @@ export class App implements Editor {
      IT IS OPERABLE FROM BIRTH. A component with no gesture and no events is a picture: an
      instance of it offers nothing to trigger a flow on, which reads as the editor refusing
      to let a custom widget do anything at all. So it starts with the press gesture on its
-     root and the whole press family of events declared — everything a press can raise,
-     including the two the scheduler derives — and the author REMOVES what the widget is
-     not, rather than hunting for a way to add the first one. Which events these are, and
-     what `x` each carries, is the closed vocabulary in types.ts. The press family is what
-     a plain box can raise; a drag or a pick is one change of the root's gesture away, and
-     the events editor follows it. */
+     root — which brings the whole press family with it, fixed signatures and all (the
+     closed vocabulary in types.ts; nothing is declared). A drag or a pick is one change
+     of the root's gesture away; the events section holds only what the component
+     INVENTS and raises itself. */
   addComponent(): void {
     const taken = new Set<string>(this.store.components().map((c) => c.name));
     for (const type of this.registry?.types ?? []) taken.add(type.name);
@@ -423,11 +421,12 @@ export class App implements Editor {
         node: {
           name,
           props: [{ name: "text", shape: "text", default: "new", group: "appearance" }],
-          events: EVENT_KINDS.filter((k) => k.from.indexOf("press") >= 0)
-            .map((k) => ({ name: k.name, x: k.x })),
+          /* no declared events: the press gesture on the root brings the whole family
+             (tap, press, release, pressrelease, held) — events here are only what the
+             component INVENTS and raises itself */
+          events: [],
           attrs: {},
-          interact: { primitive: "press", params: { ...press?.params },
-                      emits: { ...press?.emits } },
+          interact: { primitive: "press", params: { ...press?.params } },
           children: [{ kind: "text", name: "label",
                        attrs: { text: "text", align: "'center'" } }],
         },

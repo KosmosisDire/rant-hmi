@@ -24,7 +24,8 @@ import { cellText, diagIcon, Editor, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
-import { Flow, Json, Op, Node, WidgetType, eventKind } from "../types.js";
+import { EVENT_KINDS, Flow, Json, Op, Node, WidgetType, eventKind,
+         signatureText } from "../types.js";
 import { attachAutocomplete, exprContext, flowNames, flowX } from "./autocomplete.js";
 import { localAt, scopeAt } from "./flowscope.js";
 import { openSourceTree, SourcePick, SourceTreeOptions } from "./sourcetree.js";
@@ -89,7 +90,33 @@ function triggerText(trigger: Json): string {
   if (!trigger) return "?";
   if (trigger.kind === "timer") return "timer " + (trigger.var || "?") + " ends";
   if (trigger.kind === "every") return "every " + (trigger.ms ?? "?") + " ms";
-  return pastTense(String(trigger.name || "?"));
+  const part = typeof trigger.part === "string" && trigger.part ? trigger.part + " " : "";
+  return part + pastTense(String(trigger.name || "?"));
+}
+
+/* the armed parts of a served type's template: where its gestures ride, walked once per
+ * render — the trigger picker's offer list is exactly what can actually fire */
+function armedParts(type: WidgetType | null): { part: string; primitive: string }[] {
+  const out: { part: string; primitive: string }[] = [];
+  const walk = (node: Json, path: string) => {
+    const primitive = node?.interact?.primitive;
+    if (typeof primitive === "string" && primitive) out.push({ part: path, primitive });
+    for (const child of node?.children ?? [])
+      walk(child, path ? path + "." + String(child.name ?? "") : String(child.name ?? ""));
+  };
+  if (type?.template) walk(type.template, "");
+  return out;
+}
+
+/* the widget-level gesture vocabulary: the union of every armed part's family, in the
+ * table's own order (tap leads) */
+function gestureEvents(type: WidgetType | null): string[] {
+  const primitives = new Set(armedParts(type).map((a) => a.primitive));
+  const out: string[] = [];
+  for (const kind of EVENT_KINDS)
+    if (kind.from.some((p) => primitives.has(p)) && !out.includes(kind.name))
+      out.push(kind.name);
+  return out;
 }
 
 /* What a flow leaves behind, de-duplicated in DO order: the destinations of
@@ -266,7 +293,23 @@ function whenGrid(
   const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
   const entries = (): Json[] => (Array.isArray(at().when) ? at().when : []);
   const head = (): Json => entries()[0] ?? first;
-  const events = (type?.events ?? []).map((e) => ({ value: e.name, label: pastTense(e.name) }));
+  /* THE OFFER LIST: the type's own declared events lead (the control pair, shown as
+     signatures), then the gesture families its armed parts bring, then — inside a
+     component's behavior, where parts are OURS to name — each part's own channel */
+  const inBehavior = editor.store.components().some((c) => c.id === widget.id);
+  const events: { value: string; label: string }[] = [
+    ...(type?.events ?? []).map((e) => ({ value: e.name,
+                                          label: signatureText(e.name, e.params) })),
+    ...gestureEvents(type).map((name) => ({ value: name, label: pastTense(name) })),
+  ];
+  if (inBehavior)
+    for (const armed of armedParts(type)) {
+      if (!armed.part) continue;
+      for (const kind of EVENT_KINDS)
+        if (kind.from.includes(armed.primitive))
+          events.push({ value: "@part:" + armed.part + ":" + kind.name,
+                        label: armed.part + " " + pastTense(kind.name) });
+    }
   const timers = variablesInScope(editor, widget).filter((v) => v.type === "timer");
   const setFirst = (patch: Json) => {
     const next = entries().slice();
@@ -301,17 +344,29 @@ function whenGrid(
       (first.name || cadence ? [] : [{ value: "", label: "pick a trigger" }])
         .concat(events, [{ value: "@timer", label: "timer ends" },
                          { value: "@every", label: "on a beat" }]),
-      cadence ? "@every" : first.name ?? "",
-      (name) =>
-        name === "@timer"
-          ? setFirst({ kind: "timer", var: timers[0]?.name ?? "", name: undefined, ms: undefined })
-          : name === "@every"
-            ? setFirst({ kind: "every", ms: 100, name: undefined, var: undefined })
-            : setFirst({ kind: undefined, name, ms: undefined }),
+      cadence ? "@every"
+              : head().part ? "@part:" + head().part + ":" + (head().name ?? "")
+                            : first.name ?? "",
+      (name) => {
+        if (name === "@timer")
+          setFirst({ kind: "timer", var: timers[0]?.name ?? "", name: undefined, ms: undefined });
+        else if (name === "@every")
+          setFirst({ kind: "every", ms: 100, name: undefined, var: undefined });
+        else if (name.startsWith("@part:")) {
+          const rest = name.slice(6);
+          const sep = rest.lastIndexOf(":");
+          setFirst({ kind: "event", name: rest.slice(sep + 1),
+                     part: rest.slice(0, sep), ms: undefined, var: undefined });
+        } else setFirst({ kind: "event", name, part: undefined, ms: undefined,
+                          var: undefined });
+      },
       "trigger",
     );
     bindChoice(flow.id + ":when.name", pickerOf(picker), () =>
-      (entries()[0] ?? first).kind === "every" ? "@every" : head().name ?? "");
+      (entries()[0] ?? first).kind === "every"
+        ? "@every"
+        : head().part ? "@part:" + head().part + ":" + (head().name ?? "")
+                      : head().name ?? "");
     row("trigger", picker, diagIcon(editor.diagAt(flow.id)));
 
     /* the beat: milliseconds, a number or a constant expression over the widget's own
@@ -690,6 +745,31 @@ function stepCell(
     return cell;
   }
 
+  /* raise <event>(<param>: <expression>): the step that SPEAKS as the widget. The
+     picker offers the type's declared events; each parameter gets its own expression
+     field, named, so the call reads as the signature it fills. */
+  if (step.kind === "raise") {
+    const declared = type?.events ?? [];
+    const picker = selectField(
+      declared.length ? declared.map((e) => ({ value: e.name }))
+                      : [{ value: "", label: "declare an event first" }],
+      String(at().event ?? ""),
+      (choice) => set("event", choice),
+      "event",
+    );
+    bindChoice(step.id + ":event", pickerOf(picker), () => String(at().event ?? ""));
+    cell.appendChild(picker);
+    const spec = declared.find((e) => e.name === String(at().event ?? ""));
+    for (const p of spec?.params ?? []) {
+      cell.appendChild(el("span", { class: "op", text: p.name + ":" }));
+      cell.appendChild(highlighted(expr(
+        () => String((at().args ?? {})[p.name] ?? ""),
+        (text) => set("args", { ...(at().args ?? {}), [p.name]: text }),
+        "args." + p.name)));
+    }
+    return cell;
+  }
+
   if (GUARD_KINDS.some((g) => g.value === step.kind)) {
     const amount = numberInput(Number(step.a ?? 0), (a) => set("a", a), { class: "field num" });
     bindField(step.id + ":a", amount, () => String(Number(at().a ?? 0)));
@@ -858,7 +938,13 @@ function stepMenu(
   const at = here.do ?? [];
   const insert = (node: Json) =>
     editor.apply([{ op: "insert", parent: flow.id, list: "do", index: at.length, node } as Op]);
-  const continuous = (type?.events ?? []).some((e) => e.x === "num");
+  /* deadband earns its offer when the trigger carries a number */
+  const trigger = (here.when ?? []).find((w: Json) => w?.kind === "event");
+  const triggerParams = trigger
+    ? eventKind(String(trigger.name ?? ""))?.params ??
+      (type?.events ?? []).find((e) => e.name === trigger.name)?.params ?? []
+    : [];
+  const continuous = triggerParams.some((p) => p.shape === "num");
   void widget;
 
   const items = [
@@ -871,8 +957,18 @@ function stepMenu(
     {
       label: "write",
       icon: "arrow-right",
-      run: () => insert({ kind: "move", from: { expr: "x" }, to: { local: "", path: "" } }),
+      run: () => insert({ kind: "move",
+                          from: { expr: triggerParams[0]?.name ?? "" },
+                          to: { local: "", path: "" } }),
     },
+    ...((type?.events ?? []).length
+      ? [{
+          label: "raise",
+          run: () => insert({ kind: "raise",
+                              event: (type?.events ?? [])[0]?.name ?? "",
+                              args: {} }),
+        }]
+      : []),
     {
       label: "reset",
       icon: "reset",

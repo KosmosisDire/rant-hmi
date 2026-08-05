@@ -18,10 +18,10 @@ import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { highlighted } from "../highlight.js";
-import { MenuItem, openMenu } from "../menu.js";
+import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
-import { AttrDef, ComponentDef, EVENT_KINDS, EventSpec, Json, Node, PRIMITIVES, PropDef,
-         SlotSpec, eventKind, primitiveDef } from "../types.js";
+import { AttrDef, ComponentDef, EventSpec, Json, Node, PRIMITIVES, PropDef,
+         SlotSpec, eventKind, primitiveDef, signatureText } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "list", "map"];
@@ -374,11 +374,10 @@ export function componentViewShape(editor: Editor, comp: ComponentDef): string {
     comp: comp.id,
     props: (comp.props ?? []).map((p) => [p.id, p.shape, p.group,
                                           (p.variants ?? []).join("|"), p.editor ?? ""]),
-    /* an event's NAME is its row's identity (there is no id to bind by), and whether some
-       gesture raises it decides whether the row wears the mark — everything else on the
-       row is a value the bindings push in */
-    events: (comp.events ?? []).map((e) => e.name),
-    raised: Array.from(raisedEvents(comp)).sort(),
+    /* an event's NAME is its row's identity (there is no id to bind by); the signature
+       rides the shape so a parameter added or dropped rebuilds its row */
+    events: (comp.events ?? []).map((e) =>
+      [e.name, ...(e.params ?? []).map((p) => p.name + ":" + p.shape)]),
     /* the component record IS the root node, so its gesture rides this view too: the
        primitive decides which param and posts rows exist */
     interact: ownedShape(comp as unknown as Json).interact,
@@ -525,131 +524,86 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
 
 /* ---- the events a component declares ----
  *
- * AN EVENT IS WHAT AN INSTANCE'S FLOW TRIGGERS ON. The row set is the component's own
- * `events` array, edited as a whole (it is a plain array prop, not a child list, so there
- * are no ids to address a row by — the NAME is the identity, which is why it is picked
- * rather than typed). What each row carries is the two things a trigger needs: the SHAPE
- * of `x`, and optionally the expression that derives `x` from the widget's own slots — a
- * Toggle's tap proposes `!widget.value`, so no flow has to restate the widget's logic.
- *
- * WHAT IS OFFERED IS WHAT CAN FIRE: the vocabulary is closed (types.ts EVENT_KINDS), and
- * the add menu separates the events some gesture in this component actually raises from
- * the ones nothing does. A declared event nothing raises is still shown, marked — it is
- * the trigger that would never fire, and hiding it would only make it harder to find. */
-function raisedEvents(comp: Json): Set<string> {
-  const out = new Set<string>();
-  const walk = (node: Json) => {
-    const interact = node?.interact;
-    if (interact && typeof interact === "object")
-      for (const event of Object.values((interact.emits ?? {}) as Record<string, string>))
-        if (event) out.add(String(event));
-    for (const kid of (node?.children ?? []) as Json[]) walk(kid);
-  };
-  walk(comp);
-  /* the pair the SCHEDULER derives: a press on the wire fires held (past its hold_ms) and
-     the down half of pressrelease, with nothing in any emits map naming them */
-  if (out.has("press")) { out.add("held"); out.add("pressrelease"); }
-  if (out.has("release")) out.add("pressrelease");
-  return out;
-}
-
+ * AN EVENT IS A FUNCTION SIGNATURE this component declares and its behavior raises with
+ * the `raise` step; an instance's flows are the bodies, parameters bound by name.
+ * GESTURE events never appear here — a part carrying a primitive brings that family
+ * with fixed signatures — so this section holds only what the component INVENTS:
+ * `changed(value)` on a control, `confirmed()` on a two-tap interlock. The row set is
+ * the component's own `events` array, edited as a whole (a plain array prop; the NAME
+ * is the identity). One parameter per event for now, which is the runtime's rule too. */
 function eventsSection(editor: Editor, comp: ComponentDef): HTMLElement[] {
   const at = () => (editor.store.node(comp.id) as ComponentDef | null) ?? comp;
   const eventsAt = (): EventSpec[] => at().events ?? [];
   const commit = (next: EventSpec[]) =>
     editor.apply([{ op: "set_prop", node: comp.id, key: "events", value: next }]);
-  const raised = raisedEvents(at());
   const events = eventsAt();
 
-  const add = (name: string) => {
-    const kind = eventKind(name);
-    commit([...eventsAt(), { name, x: kind?.x ?? "bool" }]);
-  };
-  const openAdd = (host: HTMLElement) => {
-    const rect = host.getBoundingClientRect();
+  const add = () => {
     const taken = new Set(eventsAt().map((e) => e.name));
-    const free = EVENT_KINDS.filter((k) => !taken.has(k.name));
-    const item = (name: string, past: string): MenuItem =>
-      ({ label: name + " — " + past, run: () => add(name) });
-    const live = free.filter((k) => raised.has(k.name));
-    const dead = free.filter((k) => !raised.has(k.name));
-    const items: MenuItem[] = [
-      ...live.map((k) => item(k.name, k.past)),
-      ...(live.length && dead.length ? [{ separator: true }] : []),
-      ...(dead.length
-        ? [{ node: el("div", { class: "menu-note",
-                               text: "nothing in this component raises these yet" }) },
-           ...dead.map((k) => item(k.name, k.past))]
-        : []),
-      ...(free.length ? [] : [{ node: el("div", { class: "menu-note",
-                                                  text: "every event is already declared" }) }]),
-    ];
-    openMenu(rect.left, rect.bottom + 4, "Add event", items);
+    let name = "changed";
+    for (let n = 2; taken.has(name) || eventKind(name); ++n) name = "event" + n;
+    commit([...eventsAt(), { name, params: [{ name: "value", shape: "num" }] }]);
   };
 
   return section("comp-events", "Events", String(events.length), () => [
-    ...events.map((evt) => eventRow(comp.id, evt.name, raised, eventsAt, commit)),
+    ...events.map((evt) => eventRow(comp.id, evt.name, eventsAt, commit)),
     events.length
       ? null
       : el("p", { class: "empty",
-                  text: "no events — an instance of this widget can trigger nothing" }),
-    el("button", {
-      class: "dashed-btn",
-      text: "+ Event",
-      onclick: (ev: MouseEvent) => openAdd(ev.currentTarget as HTMLElement),
-    }),
+                  text: "no declared events — the gesture family (tap, press, ...) comes "
+                        + "with each part's primitive; declare one to raise it from "
+                        + "behavior" }),
+    el("button", { class: "dashed-btn", text: "+ Event", onclick: add }),
   ]);
 }
 
-/* NO FINDING RIDES THIS ROW, deliberately: an events array is a plain prop, so the
-   compiler pins a bad proposal to the INSTANCE that failed to compile it (build_event_values
-   has no id for the row), and a diag icon here would have nothing to show. */
+/* one declared signature, edited in place: name ( parameter : shape ). An empty
+   parameter name makes the event nullary — a moment, like tap. Gesture names are
+   reserved; a rename into one is refused silently and the field snaps back. */
 function eventRow(
   compId: number,
   name: string,
-  raised: Set<string>,
   eventsAt: () => EventSpec[],
   commit: (next: EventSpec[]) => void,
 ): HTMLElement {
-  const kind = eventKind(name);
-  const rowAt = (): EventSpec => eventsAt().find((e) => e.name === name) ?? { name, x: "bool" };
+  const rowAt = (): EventSpec =>
+    eventsAt().find((e) => e.name === name) ?? { name, params: [] };
   const patch = (next: Partial<EventSpec>) =>
     commit(eventsAt().map((e) => (e.name === name ? { ...e, ...next } : e)));
-  const fires = raised.has(name);
+  const param = () => (rowAt().params ?? [])[0] ?? null;
 
-  const shape = selectField(EVENT_SHAPES.map((v) => ({ value: v })), rowAt().x || "bool", (v) =>
-    patch({ x: v }),
-  );
-  bindChoice(compId + ":events." + name + ".x", pickerOf(shape), () => rowAt().x || "bool");
+  const rename = commitInput(name, (text) => {
+    const clean = text.trim();
+    if (!clean || clean === name) return;
+    if (eventKind(clean) || eventsAt().some((e) => e.name === clean)) return;
+    patch({ name: clean });
+  }, { class: "field", spellcheck: "false", title: "the event's name" });
+  bindField(compId + ":events." + name + ".name", rename, () => rowAt().name);
 
-  /* the PROPOSAL: a wire-tier expression over this widget's slots, evaluated once and
-     pinned per gesture. Empty means the gesture's own value stands (a drag already carries
-     its number), and clearing the field removes the key rather than storing "" — the same
-     rule every attr row follows. */
-  const value = commitInput(
-    rowAt().value ?? "",
-    (text) => patch({ value: text || undefined }),
-    { class: "field grow", spellcheck: "false",
-      placeholder: "the gesture's own value",
-      title: "what this widget PROPOSES on " + name + ", as an expression over its slots" },
+  const pname = commitInput(param()?.name ?? "", (text) => {
+    const clean = text.trim();
+    patch({ params: clean ? [{ name: clean, shape: param()?.shape ?? "num" }] : [] });
+  }, { class: "field", spellcheck: "false", placeholder: "no parameter",
+       title: "the value this event carries, bound by this name in a handler flow" });
+  bindField(compId + ":events." + name + ".param", pname, () => param()?.name ?? "");
+
+  const shape = selectField(EVENT_SHAPES.map((v) => ({ value: v })),
+    param()?.shape ?? "num",
+    (v) => { const held = param(); if (held) patch({ params: [{ name: held.name, shape: v }] }); },
   );
-  bindField(compId + ":events." + name + ".value", value, () => rowAt().value ?? "");
+  bindChoice(compId + ":events." + name + ".shape", pickerOf(shape),
+             () => param()?.shape ?? "num");
 
   return el("div", { class: "eventdef" }, [
     el("div", { class: "row" }, [
-      el("span", { class: "kw grow", text: name,
-                   title: fires
-                     ? "an instance triggers on this when it is " + (kind?.past ?? name)
-                     : "declared, but no gesture in this component raises it" }),
-      fires ? null : el("span", { class: "badge dead", text: "not raised" }),
-      shape,
+      rename,
+      el("span", { class: "op", text: "(" }),
+      pname,
+      param() ? shape : null,
+      el("span", { class: "op", text: ")" }),
       iconButton("trash", "remove this event", () =>
         commit(eventsAt().filter((e) => e.name !== name)),
       ),
-    ]),
-    el("div", { class: "row" }, [
-      el("span", { class: "row-label", text: "x IS" }),
-      highlighted(value),
     ]),
   ]);
 }
@@ -974,18 +928,20 @@ function unknownAttrRow(
 /* THE INTERACT SECTION, for any node that can carry one.
  *
  * A GESTURE IS A PROPERTY OF A NODE, and which of the four primitives it is decides
- * everything else: the params that mean anything, and the gestures there are to post. So
- * the PRIMITIVE picker is the whole section's spine, and changing it rewrites the params
- * and emits to that primitive's — keeping every param the new primitive also reads, so
- * switching a dial's mode does not throw away its range.
+ * everything else: the params that mean anything, and the EVENT FAMILY the part brings
+ * (fixed signatures, types.ts — nothing is declared or mapped). So the PRIMITIVE picker
+ * is the whole section's spine, and changing it rewrites the params to that primitive's
+ * — keeping every param the new primitive also reads, so switching a dial's mode does
+ * not throw away its range.
  *
  * `none` is a real choice and the one an authored node starts at: without it a node that
  * never had a gesture could not be given one, which is exactly the hole that left a custom
  * widget unable to be pressed at all.
  *
- * EMITS is gesture → event NAME: the view posts a gesture and the type names the event a
- * flow triggers on, and mapping a radial's `select` (instead of its input/commit) is what
- * turns a dial into a detent selector. Empty means the gesture is not posted at all.
+ * BUBBLES is the propagation topology, declared: on, this part's gestures also ring the
+ * widget-level channel (a tap on the zone IS a tap on the widget); off, they stay the
+ * part's own — the close button whose tap must not read as "the card was tapped". The
+ * component's behavior hears the part channel either way.
  *
  * ONLY A BOX TAKES ONE: `interact` is a frame's prop (doc/schema.cpp) because text, icon
  * and path are ink — anything that wants to be pressed sits in a frame. The component
@@ -1009,18 +965,20 @@ export function interactSection(editor: Editor, node: Node, subject = ""): HTMLE
   const primitive = interact ? String(interact.primitive ?? "press") : "";
   const def = primitiveDef(primitive);
 
-  /* SWITCHING PRIMITIVE: the new one's params, with anything the author already wrote for
-     a param it also reads carried across; its emits fresh, because the gestures they map
-     are the ones that just changed. "none" removes the gesture outright. */
+  /* SWITCHING PRIMITIVE: the new one's params, with anything the author already wrote
+     for a param it also reads carried across. "none" removes the gesture outright. */
   const setPrimitive = (name: string) => {
     if (!name) return write(null);
     const next = primitiveDef(name);
     if (!next) return;
-    const kept = (held()?.params ?? {}) as Record<string, string>;
+    const current = held() ?? {};
+    const kept = (current.params ?? {}) as Record<string, string>;
     const params: Record<string, string> = {};
     for (const [param, seed] of Object.entries(next.params))
       params[param] = kept[param] ?? seed;
-    write({ primitive: name, params, emits: { ...next.emits } });
+    const fresh: Json = { primitive: name, params };
+    if (current.bubbles === false) fresh.bubbles = false;
+    write(fresh);
   };
 
   const picker = selectField(
@@ -1049,48 +1007,39 @@ export function interactSection(editor: Editor, node: Node, subject = ""): HTMLE
       : null,
     ...(interact ? Object.keys((interact.params ?? {}) as Record<string, string>)
                      .map((param) => interactParamRow(editor, node.id, param, at)) : []),
+    /* what the primitive BRINGS: the family with its signatures, read-only — picking
+       the primitive IS the declaration */
     ...(interact && def
-      ? [attrGroupHeading("POSTS"),
-         ...def.gestures.map((gesture) => emitRow(node.id, gesture, held, write))]
+      ? [el("div", { class: "row" }, [
+          el("span", { class: "row-label", text: "BRINGS" }),
+          el("span", { class: "kw", text: def.events
+            .map((name) => signatureText(name, eventKind(name)?.params ?? []))
+            .join("  ") }),
+        ])]
       : []),
-    /* a primitive nothing in the table names (a hand-edited document): its map is still
-       shown, read-only, rather than silently dropped by a render that knows no gestures */
-    ...(interact && !def
-      ? Object.entries((interact.emits ?? {}) as Record<string, string>).map(([g, e]) =>
-          el("div", { class: "row" }, [
-            el("span", { class: "row-label", text: "POSTS" }),
-            el("span", { class: "kw", text: g + " → " + e }),
-          ]))
-      : []),
+    /* the bubbling toggle, on NAMED parts only: the root's channel IS the widget-level
+       one, so it has nothing to opt out of */
+    ...(interact && subject ? [bubblesRow(node.id, held, write)] : []),
   ]);
 }
 
-/* one gesture the chosen primitive posts, and the event name it goes out as. The picker
-   is the closed event vocabulary plus "not posted", because an event name nothing can
-   trigger on is a typo the author would only find at run time. */
-function emitRow(
-  nodeId: number,
-  gesture: string,
-  held: () => Json,
-  write: (value: Json) => void,
-): HTMLElement {
-  const emitsOf = () => ((held()?.emits ?? {}) as Record<string, string>);
+function bubblesRow(nodeId: number, held: () => Json,
+                    write: (value: Json) => void): HTMLElement {
   const picker = selectField(
-    [{ value: "", label: "not posted" },
-     ...EVENT_KINDS.filter((k) => !k.derived).map((k) => ({ value: k.name }))],
-    emitsOf()[gesture] ?? "",
-    (name) => {
-      const next = { ...emitsOf() };
-      if (name) next[gesture] = name;
-      else delete next[gesture];
-      write({ ...(held() ?? {}), emits: next });
+    [{ value: "on", label: "ring the widget too" },
+     { value: "off", label: "this part only" }],
+    held()?.bubbles === false ? "off" : "on",
+    (choice) => {
+      const next = { ...(held() ?? {}) };
+      if (choice === "off") next.bubbles = false;
+      else delete next.bubbles;
+      write(next);
     },
   );
-  bindChoice(nodeId + ":interact.emits." + gesture, pickerOf(picker), () =>
-    emitsOf()[gesture] ?? "");
-  return el("div", { class: "attr-row" }, [
-    el("span", { class: "field attr-name static", text: gesture,
-                 title: "what the view posts when this node is " + gesture }),
+  bindChoice(nodeId + ":interact.bubbles", pickerOf(picker), () =>
+    held()?.bubbles === false ? "off" : "on");
+  return el("div", { class: "row" }, [
+    el("span", { class: "row-label", text: "REACH" }),
     picker,
   ]);
 }

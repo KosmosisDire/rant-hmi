@@ -32,7 +32,7 @@ namespace hmi {
  * 10: list and map cells LEAVE `values` for the `aggs` delta lane — per-cell generation
  * and append cursor, appends only in a live frame, whole on a gen change, absent when
  * nothing moved — and `hist` is gone with the sampling ring it carried) */
-constexpr int kProto = 10;
+constexpr int kProto = 11;
 
 struct AppOptions {
     ServerOptions server;

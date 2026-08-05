@@ -96,6 +96,8 @@ const char* op_name(OpCode op) {
         case OpCode::Iterate: return "ITERATE";
         case OpCode::Append: return "APPEND";
         case OpCode::StoreKey: return "STORE_KEY";
+        case OpCode::LoadArg: return "LOAD_ARG";
+        case OpCode::Raise: return "RAISE";
     }
     return "?";
 }

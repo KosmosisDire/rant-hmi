@@ -196,10 +196,10 @@ export interface Editor {
   selectedWidget(): Node | null;
   apply(ops: Op[]): void;
   /* post one gesture event (sequenced per session): the view reports what the pointer
-     did, the backend derives what the widget proposes and runs every flow — identically
-     for every view, which is the product's own rule. Omit `value` where the type
-     declares a derivation; the backend evaluates and pins it. */
-  input(widget: number, event: string, value?: Json): void;
+     did — the canonical gesture name, its fixed payload (nothing for a moment like
+     tap), and WHICH PART raised it — and the backend runs every flow it reaches,
+     identically for every view, which is the product's own rule. */
+  input(widget: number, event: string, value?: Json, part?: string): void;
   setPage(id: number): void;
   /* insert a fresh page and switch to it once the echo issues its id (the topbar page
      selector's "+ New page") */

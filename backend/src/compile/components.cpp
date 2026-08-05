@@ -366,8 +366,12 @@ Json compile_node(const Json& node, const std::string& path, const Walk& walk, S
     if (interact.is_object()) {
         Json wired{{"primitive", str_or(interact, "primitive", "press")},
                    {"params", compile_attrs(interact.value("params", Json::object()), scope,
-                                            node_id, "interact.", sink)},
-                   {"emits", interact.value("emits", Json::object())}};
+                                            node_id, "interact.", sink)}};
+        /* the propagation topology is declared structure: a part whose gestures must
+           not ring the widget-level channel says so here, once */
+        if (interact.contains("bubbles") && interact["bubbles"].is_boolean() &&
+            !interact["bubbles"].get<bool>())
+            wired["bubbles"] = false;
         out["interact"] = std::move(wired);
     }
     return out;
@@ -449,7 +453,8 @@ Json compile_component(const Json& component, Sink& sink) {
        addresses a document already names stay bare */
     collect_tree(component, "", true, root, walk, sink);
 
-    /* events and behavior are already wire-shaped: rows of {name, x, value?} and
+    /* events and behavior are already wire-shaped: DECLARED events as {name, params}
+     * signatures (gesture events are never rows here — the primitive brings them) and
      * ordinary flow nodes the document compiler reads as data */
     Json events = component.contains("events") && component["events"].is_array()
                       ? component["events"] : Json::array();

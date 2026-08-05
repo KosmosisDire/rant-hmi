@@ -1011,6 +1011,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::LoadX:
                 if (ins.a > 2 || !push(ins.a == 0 ? x : ins.a == 1 ? x2 : x3)) fail(ins.c);
                 break;
+            /* the EVENT PARAMETER: state-resident so a lambda body reads it without
+               colliding with its own x2/x3 registers */
+            case OpCode::LoadArg:
+                if (ins.a >= 1 || !push(state.args[ins.a])) fail(ins.c);
+                break;
             case OpCode::Load:
                 if (ins.a >= state.values.size() || !push(state.values[ins.a])) fail(ins.c);
                 break;
@@ -1114,13 +1119,36 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::StoreX:
                 x = pop();
                 break;
+            /* queue one raised event: the scheduler dispatches it AFTER this run halts,
+               so a raise never re-enters the VM under the raising flow. Text arguments
+               copy into the record's own storage — the scratch they came from resets
+               before the dispatch happens. */
+            case OpCode::Raise: {
+                const Value argument = ins.b ? pop() : Value::nil();
+                if (ins.a >= program.raises.size() ||
+                    state.raised_count >= state.raised.size()) {
+                    fail(ins.c);
+                    break;
+                }
+                RaisedRecord& record = state.raised[state.raised_count++];
+                record.def = ins.a;
+                record.value = argument;
+                if (argument.tag == ValueTag::Text) {
+                    record.text.set(state.text(program, argument));
+                    record.value = Value::text(UINT32_MAX);   /* resolved from record.text */
+                }
+                break;
+            }
             case OpCode::Gate: {
                 const Value value = pop();
                 if (value.tag != ValueTag::Bool || !value.data.boolean) result.halted = true;
                 break;
             }
             case OpCode::Deadband: {
-                if (ins.a >= state.deadband.size() || x.tag != ValueTag::Num) {
+                /* the value a deadband watches is what the EVENT passed in (the
+                   parameter register) — x is the pipeline's and starts Nil */
+                const Value& watched = state.args[0];
+                if (ins.a >= state.deadband.size() || watched.tag != ValueTag::Num) {
                     fail(ins.c);
                     break;
                 }
@@ -1132,10 +1160,10 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 Value& previous = state.deadband[ins.a];
                 if (previous.tag == ValueTag::Num &&
-                    std::fabs(x.data.num - previous.data.num) < threshold.data.num) {
+                    std::fabs(watched.data.num - previous.data.num) < threshold.data.num) {
                     result.halted = true;
                 } else {
-                    previous = x;
+                    previous = watched;
                 }
                 break;
             }
@@ -1175,6 +1203,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     return Value::text(slot);
                 };
                 pending.x = hold_text(x);
+                pending.arg = hold_text(state.args[0]);
                 /* only TEMPORARIES snapshot: a declared struct variable is stable
                  * storage, and restoring it at resume would roll back writes that
                  * landed while this run was parked */
@@ -1663,31 +1692,31 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
 }
 
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
-                   Value event_value) noexcept {
-    return run_code(program, flow.code, &flow, state, event_value);
+                   Value arg) noexcept {
+    state.args[0] = arg;
+    return run_code(program, flow.code, &flow, state, Value::nil());
 }
 
-Value event_x(const Program& program, RuntimeState& state, uint64_t widget_id,
-              const std::string& event, Value raw) noexcept {
-    for (const EventValueProgram& source : program.event_values) {
-        if (source.widget_id != widget_id || source.event != event) continue;
-        Value out = raw;
-        run_code(program, source.code, nullptr, state, raw, 0, &out);
-        return out;
-    }
-    return raw;
+bool part_reaches(const Program& program, uint64_t widget, const std::string& flow_part,
+                  const std::string& part) noexcept {
+    if (!flow_part.empty()) return flow_part == part;
+    if (part.empty()) return true;
+    for (const ArmedPart& armed : program.armed_parts)
+        if (armed.widget_id == widget && armed.part == part) return armed.bubbles;
+    return true;   /* an unlisted part bubbles: robust to a view naming a stale one */
 }
 
 RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget_id,
-                    const std::string& event, Value raw) noexcept {
+                    const std::string& event, Value arg,
+                    const std::string& part) noexcept {
     RunResult total;
-    const Value event_value = event_x(program, state, widget_id, event, raw);
     for (const FlowProgram& flow : program.flows) {
         if (flow.widget_id != widget_id || flow.event != event) continue;
+        if (!part_reaches(program, widget_id, flow.part, part)) continue;
         if (flow.first_only && flow.group < state.fired.size() && state.fired[flow.group])
             continue;
         if (flow.first_only && flow.group < state.fired.size()) state.fired[flow.group] = 1;
-        RunResult one = run_flow(program, flow, state, event_value);
+        RunResult one = run_flow(program, flow, state, arg);
         total.halted = true;
         total.faulted = total.faulted || one.faulted;
         total.steps += one.steps;
@@ -1715,6 +1744,7 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     const uint32_t flow_index = pending.flow;
     const uint32_t pc = pending.resume_pc;
     const Value x = pending.x;
+    state.args[0] = pending.arg;
     pending.active = false;
     const FlowProgram& flow = program.flows[flow_index];
     return run_code(program, flow.code, &flow, state, x, pc);

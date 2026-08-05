@@ -186,7 +186,7 @@ const std::vector<NodeSpec>& table() {
         step.variant_key = "kind";
         step.props = {enumer("kind",
                              {"move", "gate", "deadband", "throttle", "debounce", "delay",
-                              "tmr_start", "tmr_cancel"},
+                              "tmr_start", "tmr_cancel", "raise"},
                              "move")};
         step.variants = {
             /* ONE transfer step (spec 2.6). `from` and `to` are free-form objects
@@ -211,6 +211,10 @@ const std::vector<NodeSpec>& table() {
             {"delay", {num("a", 0)}},
             {"tmr_start", {text("timer", "", Role::VarName)}},
             {"tmr_cancel", {text("timer", "", Role::VarName)}},
+            /* raise <event>(args): the step that SPEAKS as the widget — the event must
+               be one the type DECLARES, and `args` maps each declared parameter's name
+               to the expression that fills it */
+            {"raise", {text("event"), object("args", Json::object())}},
         };
         t.push_back(step);
 

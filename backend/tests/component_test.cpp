@@ -412,6 +412,15 @@ void test_builtins_compile_clean() {
                       name + ": a slot row is missing its core keys");
         }
         CHECK_MSG(type["events"].is_array(), name + " has no events table");
+        /* NO GESTURE EVENT IS EVER DECLARED: the primitive brings the family, so the
+           only rows here are the control pair — the hole class the Gauge bug lived in
+           is unrepresentable now */
+        for (const Json& ev : type["events"]) {
+            const std::string ename = ev.value("name", "");
+            CHECK_MSG(ename == "changed" || ename == "changing",
+                      name + " declares '" + ename + "', which is not a declared-event name");
+            CHECK_MSG(ev["params"].is_array(), name + "." + ename + " has no params");
+        }
         CHECK_MSG(type["behavior"].is_array(), name + " has no behavior list");
         CHECK_MSG(type["template"].is_object(), name + " has no template");
         check_template(name, type["template"]);
@@ -436,8 +445,13 @@ void test_builtins_compile_clean() {
              "LOAD(slot:value) LOAD(slot:pill.fill_color) "
              "LOAD(slot:pill.track_color) PICK");
     CHECK(pill["interact"]["primitive"] == "press");
-    CHECK(toggle["events"][0]["value"] == "!widget.value");
-    CHECK(toggle["behavior"][0]["do"][0]["to"]["slot"] == "value");
+    /* the control pair is DECLARED; gesture events never are (the primitive brings
+       them), and the toggle's logic lives in visible behavior, not a derivation */
+    CHECK(toggle["events"][0]["name"] == "changed");
+    CHECK(toggle["events"][0]["params"][0]["name"] == "value");
+    CHECK(toggle["events"][0]["params"][0]["shape"] == "bool");
+    CHECK(toggle["behavior"][0]["do"][1]["to"]["slot"] == "value");
+    CHECK(toggle["behavior"][0]["do"][2]["kind"] == "raise");
 
     /* A BAR IS A FRAME WHOSE WIDTH IS AN EXPRESSION: no draw kind, no renderer case */
     const Json& slider = registry["types"][2];
@@ -530,8 +544,11 @@ Document component_document() {
     Json meter = {
         {"id", 100},
         {"name", "Meter"},
-        {"events", Json::array({Json{{"name", "tap"}, {"x", "num"},
-                                     {"value", "widget.value"}}})},
+        /* a DECLARED event: a signature the component may raise; gesture events are
+           never rows here */
+        {"events", Json::array({Json{{"name", "reading"},
+                                     {"params", Json::array({Json{{"name", "level"},
+                                                                  {"shape", "num"}}})}}})},
         {"props", Json::array({
             Json{{"id", 101}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
                  {"group", "value"}},
@@ -555,8 +572,11 @@ Document component_document() {
             Json{{"id", 201}, {"name", "value"}, {"shape", "bool"}, {"default", false},
                  {"group", "value"}},
         })},
-        {"events", Json::array({Json{{"name", "tap"}, {"x", "bool"},
-                                     {"value", "!widget.value"}}})},
+        {"events", Json::array({Json{{"name", "changed"},
+                                     {"params", Json::array({Json{{"name", "value"},
+                                                                  {"shape", "bool"}}})}}})},
+        /* the root carries the press: tap is valid in behavior because a part raises it */
+        {"interact", Json{{"primitive", "press"}, {"params", Json{{"hold_ms", "600"}}}}},
         {"children", Json::array({
             Json{{"id", 211}, {"kind", "frame"}, {"name", "lamp"},
                  {"attrs", Json{{"surface", "#ff0000"}}}},
@@ -565,8 +585,13 @@ Document component_document() {
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                  {"when_mode", "first"},
                  {"do", Json::array({Json{{"kind", "move"},
-                                          {"from", {{"expr", "x"}}},
-                                          {"to", {{"slot", "value"}}}}})}},
+                                          {"from", {{"expr", "!widget.value"}}},
+                                          {"to", {{"local", "t"}, {"path", ""}}}},
+                                     Json{{"kind", "move"},
+                                          {"from", {{"expr", "t"}}},
+                                          {"to", {{"slot", "value"}}}},
+                                     Json{{"kind", "raise"}, {"event", "changed"},
+                                          {"args", Json{{"value", "t"}}}}})}},
         })},
     };
 
@@ -636,7 +661,7 @@ void test_doc_components() {
             meter_cell = true;
     CHECK(meter_cell);
     CHECK(compiled.program.flows.size() == 1);   /* the shadow Toggle's default echo */
-    CHECK(compiled.program.event_values.size() == 2);   /* both taps propose */
+    CHECK(compiled.program.raises.size() == 1);  /* and it SPEAKS changed(value) */
 }
 
 /* NODES OWN PROPERTIES: a property declared on a node is addressed under that node's

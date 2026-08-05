@@ -243,6 +243,9 @@ interface ViewNode {
      instance box wearing its component root — carry one. An entered component's doc
      nodes hold interact as authored text and stay unarmed here. */
   interact: Interact | null;
+  /* the PART CHANNEL this node's gestures post on: its own dotted name chain from the
+     template root ("" = the root, i.e. the widget-level channel) */
+  part: string;
 }
 
 /* One document node, with its compiled attrs found by id — a page's, or an entered
@@ -274,6 +277,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
       owner: node.id,
       type: instType,
       path: "",
+      part: "",
       frac,
       interact: root?.interact ?? null,
     };
@@ -290,14 +294,17 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     owner,
     type,
     path: "",
+    part: "",
     frac,
     interact: null,
   };
 }
 
-/* one node of a component's served template, under the instance whose cells it reads */
+/* one node of a component's served template, under the instance whose cells it reads.
+ * `path` is the SCOPE chain (ancestors, addressing); `part` is the node's OWN dotted
+ * name from the root — the CHANNEL identity a gesture posts, "" for the root itself. */
 function templateNode(node: TemplateNode, owner: number, type: WidgetType | null,
-                      path: string): ViewNode {
+                      path: string, part = ""): ViewNode {
   const name = node.name ?? "";
   return {
     id: 0,
@@ -308,10 +315,12 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
     anchors: node.anchors ?? [],
     closed: node.closed ?? false,
     children: (node.children ?? []).map((c) =>
-      templateNode(c, owner, type, path ? path + "." + name : name)),
+      templateNode(c, owner, type, path ? path + "." + name : name,
+                   part ? part + "." + String(c.name ?? "") : String(c.name ?? ""))),
     owner,
     type,
     path,
+    part,
     frac: true,
     interact: node.interact ?? null,
   };
@@ -342,7 +351,8 @@ function rootView(editor: Editor, page: Page | null): ViewNode {
         pageNode(editor, c, owner, type, true));
       rootAttrs = editor.nodeAttrs?.[String(ctx.component)]?.attrs ?? null;
     } else if (type) {
-      kids = (type.template.children ?? []).map((c) => templateNode(c, owner, type, ""));
+      kids = (type.template.children ?? []).map((c) =>
+        templateNode(c, owner, type, "", String(c.name ?? "")));
       rootAttrs = type.template.attrs ?? null;
     }
   }
@@ -350,8 +360,8 @@ function rootView(editor: Editor, page: Page | null): ViewNode {
      node — over the artboard surface the page style gives it. No context: an empty attr
      map, which the (total) dress applier reads as "nothing authored" and clears. */
   return { id: 0, instance: false, kind: "frame", name: "", attrs: rootAttrs ?? {},
-           anchors: [], closed: false, children: kids, owner, type, path: "", frac: true,
-           interact: null };
+           anchors: [], closed: false, children: kids, owner, type, path: "", part: "",
+           frac: true, interact: null };
 }
 
 /* ---- the pure core: a value -> style ---- */
@@ -1024,6 +1034,8 @@ function armSeat(state: StageState, editor: Editor, bind: Bind): void {
   armInteract(bind.el, {
     editor,
     get owner() { return bind.node.owner; },
+    /* the node's OWN dotted name chain is the part identity the backend's channels use */
+    get part() { return bind.node.part; },
     get type() { return bind.node.type; },
     get interact() { return bind.node.interact ?? armed; },
     cells: (cell: string) => cellsFor(state, editor, bind.node, bind.repeat)(cell),

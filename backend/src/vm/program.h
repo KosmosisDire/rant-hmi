@@ -143,7 +143,11 @@ struct FlowProgram {
     uint64_t widget_id = 0;
     uint64_t flow_id = 0;
     std::string event;
-    Shape event_shape = Shape::Unknown;
+    /* the PART CHANNEL this trigger listens on: empty = the widget-level channel (the
+     * root's own gestures plus every bubbling part's), a template node's dotted name =
+     * that part alone. Only a component's behavior may qualify — parts are private
+     * anatomy, so an instance flow's trigger never names one. */
+    std::string part;
     uint32_t group = 0;
     uint32_t runtime_index = 0;
     uint32_t hold_ticks = 0;
@@ -177,17 +181,22 @@ struct StateSite {
     uint32_t slot = 0;
 };
 
-/* What `x` IS for one (widget, event). A gesture reports what the pointer did; the
- * widget's logic decides what value that gesture proposes, and every flow on the event
- * wants the second, not the first. A Toggle's tap proposes `!widget.value`; a Slider's
- * drag already carries the value it proposes, so it declares nothing and the raw event
- * value stands. Evaluated ONCE per event, before any flow runs, so every flow on that
- * event sees the same x. */
-struct EventValueProgram {
+/* One RAISED event's identity: which widget speaks and what it says. A Raise
+ * instruction indexes this table; the scheduler dispatches the queued record after the
+ * raising run halts, on the widget-level channel. */
+struct RaiseDef {
     uint64_t widget_id = 0;
     std::string event;
-    std::vector<Instruction> code;
-    uint32_t max_stack = 0;
+};
+
+/* One ARMED PART of one widget: a template node carrying a gesture, and whether its
+ * events also ring the widget-level channel. The propagation topology is STATIC data —
+ * declared bubbles on the interact, compiled here, consulted at dispatch — never a
+ * runtime stopPropagation. */
+struct ArmedPart {
+    uint64_t widget_id = 0;
+    std::string part;
+    bool bubbles = true;
 };
 
 struct FeedProgram {
@@ -207,6 +216,9 @@ struct ProgramLayout {
     uint32_t text_slots = 0;
     uint32_t stack_values = 1;
     uint32_t effect_capacity = 1;
+    /* raised-event buffer: one slot per Raise instruction — a cascade past this
+     * faults rather than growing */
+    uint32_t raise_capacity = 0;
     uint32_t max_entity_fields = 1;
     uint32_t deadband_slots = 0;
     uint32_t throttle_slots = 0;
@@ -243,7 +255,8 @@ struct Program {
     std::vector<SubProgram> subs;
     std::vector<FlowProgram> flows;
     std::vector<FeedProgram> feeds;
-    std::vector<EventValueProgram> event_values;
+    std::vector<RaiseDef> raises;
+    std::vector<ArmedPart> armed_parts;
     std::vector<TimerDef> timers;
     std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;

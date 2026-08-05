@@ -87,12 +87,14 @@ Document runtime_document() {
         {"flows", Json::array()},
     };
 
+    /* input(value): the drag's parameter binds by name; x stays the pipeline register
+       a step chain fills for itself */
     slider["flows"].push_back(
         Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  steps::set_x("clamp(x * 2, 0, 100)"),
+                  steps::set_x("clamp(value * 2, 0, 100)"),
                   steps::set_var("setpoint", "x"),
                   steps::write_field("T", "command", "", "x"),
               })}});
@@ -104,7 +106,7 @@ Document runtime_document() {
               Json::array({
                   steps::gate("true || (1 / 0 > 0)"),
                   steps::gate("false"),
-                  steps::write_field("T", "command", "", "x"),
+                  steps::write_field("T", "command", "", "value"),
               })}});
 
     slider["flows"].push_back(
@@ -112,8 +114,8 @@ Document runtime_document() {
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  steps::gate("x >= 0 && x <= 100"),
-                  steps::set_field("msg", "speed", "x + setpoint"),
+                  steps::gate("value >= 0 && value <= 100"),
+                  steps::set_field("msg", "speed", "value + setpoint"),
                   steps::set_field("msg", "enabled", "true"),
                   steps::write_value("msg", "V", "motor"),
               })}});
@@ -124,7 +126,7 @@ Document runtime_document() {
              {"do",
               Json::array({
                   steps::gate("false && (1 / 0 > 0)"),
-                  steps::write_field("T", "command", "", "x"),
+                  steps::write_field("T", "command", "", "value"),
               })}});
 
     /* a negative commit RESETS the staged message back to its declared start */
@@ -133,7 +135,7 @@ Document runtime_document() {
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  steps::gate("x < 0"),
+                  steps::gate("value < 0"),
                   Json{{"kind", "move"},
                        {"from", {{"init", true}}},
                        {"to", {{"local", "msg"}, {"path", ""}}}},
@@ -219,7 +221,8 @@ void test_compile_and_run() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    CHECK(compiled.program.flows.size() == 5);
+    /* 5 authored + the Slider behavior pair (input speaks changing, commit changed) */
+    CHECK(compiled.program.flows.size() == 7);
     CHECK(compiled.program.feeds.size() == 2);
     CHECK(sizeof(Value) == 16);
     CHECK(compiled.program.disassembly().find("worst ") != std::string::npos);
@@ -532,7 +535,7 @@ void test_typed_temporaries() {
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
                   {"when_mode", "first"},
                   {"do", Json::array({
-                       steps::new_field("fresh", "Motor", "speed", "x"),
+                       steps::new_field("fresh", "Motor", "speed", "value"),
                        steps::write_value("fresh", "V", "motor"),
                    })}},
          })},
@@ -1021,10 +1024,27 @@ void test_default_behavior() {
     CHECK(has_diag(compile_document(reaching, builtin_registry(), mesh), "move_dest"));
 }
 
-/* `x` IS WHAT THE WIDGET PROPOSES. A flow that sends x has to send the value the control
- * is trying to set, without restating the control's own logic and without waiting for a
- * round trip to bring the value back. */
-void test_event_value() {
+/* the scheduler's drain, in miniature, for tests that run events directly: dispatch
+ * every raised record on its widget's own channel, in order */
+void drain_raised(const Program& program, RuntimeState& state) {
+    for (uint32_t at = 0; at < state.raised_count; ++at) {
+        const RaisedRecord& record = state.raised[at];
+        if (record.def >= program.raises.size()) continue;
+        const RaiseDef& def = program.raises[record.def];
+        Value value = record.value;
+        if (value.tag == ValueTag::Text && state.input_scratch < state.texts.size()) {
+            state.texts[state.input_scratch].set(record.text.view());
+            value = Value::text(state.input_scratch);
+        }
+        run_event(program, state, def.widget_id, def.event, value);
+    }
+    state.raised_count = 0;
+}
+
+/* AN EVENT IS A FUNCTION CALL. The control's behavior maintains its state and RAISES
+ * its declared pair; the author's flow handles `changed(value)` with the parameter
+ * bound by name — the same sentence on a Toggle, a Slider, a Dropdown. */
+void test_events_are_calls() {
     EntityDef bit;
     bit.kind = EntityKind::Variable;
     bit.name = "bit";
@@ -1032,13 +1052,13 @@ void test_event_value() {
     bit.fields = {FieldDef{"on", Shape::Bool}};
     FakeMesh mesh(std::vector<EntityDef>{bit});
 
-    /* the canonical case: a toggle whose tap writes the plant, authored with x alone */
+    /* the canonical write-back: on changed, send the value the control landed on */
     Document document = widget_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
-                  {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
                   {"when_mode", "first"},
-                  {"do", Json::array({steps::write_field("V", "bit", "on", "x")})}}})}});
+                  {"do", Json::array({steps::write_field("V", "bit", "on", "value")})}}})}});
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
@@ -1046,19 +1066,18 @@ void test_event_value() {
     RuntimeState state(compiled.program);
     const uint64_t id = only_widget(document);
 
-    /* the gesture reports true both times; what x means is the widget's business */
-    run_event(compiled.program, state, id, "tap", Value::boolean(true));
+    /* tap() carries nothing; the toggle's behavior flips its value and SPEAKS it */
+    run_event(compiled.program, state, id, "tap", Value::nil());
+    drain_raised(compiled.program, state);
     CHECK(state.effect_count == 1);
     CHECK(state.effects[0].value.tag == ValueTag::Bool);
     CHECK(state.effects[0].value.data.boolean == true);
 
     state.clear_outputs();
-    run_event(compiled.program, state, id, "tap", Value::boolean(true));
+    run_event(compiled.program, state, id, "tap", Value::nil());
+    drain_raised(compiled.program, state);
     CHECK(state.effect_count == 1);
     CHECK(state.effects[0].value.data.boolean == false);
-
-    /* and the widget's own state agrees with x by the time the authored flow reads it:
-       the type's default is compiled first, so it runs first */
     const uint32_t slot = [&] {
         for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
             if (compiled.program.cells[i].kind == CellKind::Slot &&
@@ -1068,8 +1087,43 @@ void test_event_value() {
     }();
     CHECK(state.values[slot].data.boolean == false);
 
-    /* a type that declares no derivation keeps the gesture's own value: a slider's drag
-       already carries what it proposes */
+    /* THE FED CONTROL STILL SPEAKS: a feed claims `value`, so the behavior's local echo
+       stands down PER STEP — and the raise beside it still runs, carrying the value the
+       toggle proposed. This is what makes feed-in + write-back the two-sentence story. */
+    Document fed = widget_document(
+        "Toggle", Json{{"value", true}},
+        Json{{"feeds", Json::array({Json{{"slot", "value"},
+                                         {"src", steps::entity_ref("V", "bit")},
+                                         {"path", "on"}}})},
+             {"flows", Json::array({Json{
+                 {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
+                 {"when_mode", "first"},
+                 {"do", Json::array({steps::write_field("V", "bit", "on", "value")})}}})}});
+    CompileResult fed_compiled = compile_document(fed, builtin_registry(), mesh);
+    CHECK_MSG(fed_compiled.ok, fed_compiled.program.diagnostics.empty()
+                                   ? "compile failed without a diagnostic"
+                                   : fed_compiled.program.diagnostics[0].message);
+    RuntimeState fed_state(fed_compiled.program);
+    const uint64_t fed_id = only_widget(fed);
+    const uint32_t fed_slot = [&] {
+        for (uint32_t i = 0; i < fed_compiled.program.cells.size(); ++i)
+            if (fed_compiled.program.cells[i].kind == CellKind::Slot &&
+                fed_compiled.program.cells[i].name == "value")
+                return i;
+        return UINT32_MAX;
+    }();
+    fed_state.store(fed_compiled.program, fed_slot, Value::boolean(true));
+    run_event(fed_compiled.program, fed_state, fed_id, "tap", Value::nil());
+    drain_raised(fed_compiled.program, fed_state);
+    /* the local echo stood down (the feed owns the slot)... */
+    CHECK(fed_state.values[fed_slot].data.boolean == true);
+    /* ...but changed(false) still went out with the proposal */
+    CHECK(fed_state.effect_count == 1);
+    CHECK(fed_state.effects[0].value.tag == ValueTag::Bool);
+    CHECK(fed_state.effects[0].value.data.boolean == false);
+
+    /* a drag's parameter IS the value in motion: input(value) fills the slot and the
+       pair speaks it */
     Document slider = widget_document("Slider", Json{{"value", 0}, {"min", 0}, {"max", 100}});
     CompileResult slider_compiled = compile_document(slider, builtin_registry(), mesh);
     RuntimeState slider_state(slider_compiled.program);
@@ -1079,29 +1133,31 @@ void test_event_value() {
         if (slider_compiled.program.cells[i].name == "value")
             CHECK(slider_state.values[i].data.num == 62.5);
 
-    /* EVERY gesture on a control proposes the same thing. A toggle gated on `x` in a
-       press flow (force here, unforce there) has to see the value it is trying to set,
-       not the pointer's own true on the way down and false on the way up. */
-    Document edges = widget_document("Toggle", Json{{"value", true}});
-    CompileResult edges_compiled = compile_document(edges, builtin_registry(), mesh);
-    CHECK(edges_compiled.ok);
-    RuntimeState edges_state(edges_compiled.program);
-    const uint64_t edges_id = only_widget(edges);
-    for (const char* gesture : {"press", "release", "tap", "held"}) {
-        const Value proposed = event_x(edges_compiled.program, edges_state, edges_id,
-                                       gesture, Value::boolean(true));
-        CHECK(proposed.tag == ValueTag::Bool);
-        CHECK_MSG(proposed.data.boolean == false, gesture);   /* value is true: propose false */
-    }
+    /* pressrelease(down): the edge event, bound by its declared name */
+    Document jog = widget_document(
+        "Button", Json::object(),
+        Json{{"flows", Json::array({Json{
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "pressrelease"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({steps::write_field("V", "bit", "on", "down")})}}})}});
+    CompileResult jog_compiled = compile_document(jog, builtin_registry(), mesh);
+    CHECK_MSG(jog_compiled.ok, jog_compiled.program.diagnostics.empty()
+                                   ? "compile failed without a diagnostic"
+                                   : jog_compiled.program.diagnostics[0].message);
+    RuntimeState jog_state(jog_compiled.program);
+    run_event(jog_compiled.program, jog_state, only_widget(jog), "pressrelease",
+              Value::boolean(true));
+    CHECK(jog_state.effect_count == 1);
+    CHECK(jog_state.effects[0].value.data.boolean == true);
 
-    /* a read-only control proposes what it is SHOWING, so the view never supplies it */
-    Document readout = widget_document("Readout", Json{{"value", 7.5}});
-    CompileResult readout_compiled = compile_document(readout, builtin_registry(), mesh);
-    RuntimeState readout_state(readout_compiled.program);
-    const Value shown = event_x(readout_compiled.program, readout_state, only_widget(readout),
-                                "tap", Value::nil());
-    CHECK(shown.tag == ValueTag::Num);
-    CHECK(shown.data.num == 7.5);
+    /* a gesture no part of the widget raises is a finding, not a dead flow */
+    Document deaf = widget_document(
+        "Toggle", Json{{"value", false}},
+        Json{{"flows", Json::array({Json{
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({steps::set_var("x", "1")})}}})}});
+    CHECK(has_diag(compile_document(deaf, builtin_registry(), mesh), "event"));
 }
 
 /* A value that cannot be its declared shape used to become Nil in silence, which reads on
@@ -2951,37 +3007,41 @@ void test_theme_tokens() {
 
 } // namespace
 
+/* stderr is unbuffered, so the LAST name printed before a native crash is the test
+ * that died — the cheap bisect a smeared Release stack cannot give */
+#define RUN(test) do { std::fprintf(stderr, "%s\n", #test); test(); } while (0)
+
 int main() {
-    test_compile_and_run();
-    test_replay();
-    test_migration();
-    test_typed_variables();
-    test_typed_temporaries();
-    test_enum_names();
-    test_feed_cases();
-    test_whole_source();
-    test_compile_fault();
-    test_expression_rejection();
-    test_tiers();
-    test_default_behavior();
-    test_event_value();
-    test_bare_topic_scalars();
-    test_value_shape_diagnostics();
-    test_colors();
-    test_tonemaps();
-    test_text_and_enums();
-    test_lists_and_maps();
-    test_reduce();
-    test_list_cells();
-    test_aggregate_variables();
-    test_aggregate_expressions();
-    test_aggregate_ceilings();
-    test_map_reduce();
-    test_map_replay();
-    test_aggregate_refusals();
-    test_variant_options();
-    test_suspend_holds_text();
-    test_document_tolerance();
-    test_theme_tokens();
+    RUN(test_compile_and_run);
+    RUN(test_replay);
+    RUN(test_migration);
+    RUN(test_typed_variables);
+    RUN(test_typed_temporaries);
+    RUN(test_enum_names);
+    RUN(test_feed_cases);
+    RUN(test_whole_source);
+    RUN(test_compile_fault);
+    RUN(test_expression_rejection);
+    RUN(test_tiers);
+    RUN(test_default_behavior);
+    RUN(test_events_are_calls);
+    RUN(test_bare_topic_scalars);
+    RUN(test_value_shape_diagnostics);
+    RUN(test_colors);
+    RUN(test_tonemaps);
+    RUN(test_text_and_enums);
+    RUN(test_lists_and_maps);
+    RUN(test_reduce);
+    RUN(test_list_cells);
+    RUN(test_aggregate_variables);
+    RUN(test_aggregate_expressions);
+    RUN(test_aggregate_ceilings);
+    RUN(test_map_reduce);
+    RUN(test_map_replay);
+    RUN(test_aggregate_refusals);
+    RUN(test_variant_options);
+    RUN(test_suspend_holds_text);
+    RUN(test_document_tolerance);
+    RUN(test_theme_tokens);
     return check::summary("runtime_test");
 }

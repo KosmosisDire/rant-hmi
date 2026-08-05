@@ -148,7 +148,7 @@ RuntimeState::RuntimeState(const Program& program) {
     /* suspension deep-copy slots: a fixed run per pending site (x first, then every
      * text-shaped field of every struct slot, in table order; the Suspend op walks the
      * same order) */
-    uint32_t per_pending = 1;
+    uint32_t per_pending = 2;   /* one for x, one for the event parameter */
     for (const StructDef& item : program.structs)
         for (const FieldDef& field : struct_fields(program, item.type_id))
             if (field.shape == Shape::Text) ++per_pending;
@@ -249,6 +249,8 @@ RuntimeState::RuntimeState(const Program& program) {
         for (uint32_t i = 0; i < max_fields; ++i)
             effect.field_text.emplace_back(kDefaultTextCap);
     }
+    raised.resize(std::max<uint32_t>(program.layout.raise_capacity, 1));
+    for (RaisedRecord& record : raised) record.text = FixedText(kDefaultTextCap);
     faults.resize(std::max<size_t>(program.runtime_faults.size(), 1));
     for (uint32_t i = 0; i < program.runtime_faults.size(); ++i)
         faults[i].site = i;
@@ -568,6 +570,7 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
 
 void RuntimeState::clear_outputs() noexcept {
     effect_count = 0;
+    raised_count = 0;
     fault_count = 0;
 }
 

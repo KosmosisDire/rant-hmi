@@ -311,8 +311,10 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
         for (const local of opts.scope.locals) {
           const row = { name: local.name, shape: local.shape, type: local.type,
                         fields: local.fields ?? [] };
-          if (local.note === "temporary")
-            name_rows(row.name, row.shape, row.type, row.fields, "temporary", depth0, "l");
+          /* the trigger's parameter and the flow's temporaries both belong to THIS
+             flow's own vocabulary, listed at the top beside x */
+          if (local.note === "temporary" || local.note === "event parameter")
+            name_rows(row.name, row.shape, row.type, row.fields, local.note, depth0, "l");
           else buckets[local.note].push(row);
         }
       } else if (wanted("L")) {

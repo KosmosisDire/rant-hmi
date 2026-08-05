@@ -105,8 +105,8 @@ export class Connection {
     this.send({ type: "view", page_id, visible });
   }
 
-  input(widget_id: number, event: string, value: Json, seq: number): void {
-    this.send({ type: "input", widget_id, event, value, seq });
+  input(widget_id: number, event: string, value: Json, seq: number, part = ""): void {
+    this.send({ type: "input", widget_id, event, value, seq, part });
   }
 
   private send(frame: Json): void {

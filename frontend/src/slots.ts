@@ -91,8 +91,11 @@ export function runtimeSlots(widget: Node, type: WidgetType | null): Set<string>
  * swallow the press aimed at what it overlays. */
 export function operable(widget: Node | null, type: WidgetType | null): boolean {
   if (!widget) return false;
+  /* a trigger with a name and no kind IS an event — the backend reads it the same
+     tolerant way, and the two must agree or a widget goes inert while its flow runs */
   const onEvent = (flow: Json) =>
-    ((flow?.when ?? []) as Json[]).some((t: Json) => t?.kind === "event");
+    ((flow?.when ?? []) as Json[]).some((t: Json) =>
+      t?.kind === "event" || (!t?.kind && typeof t?.name === "string" && t.name));
   if ((widget.flows ?? []).some(onEvent)) return true;
   const fed = fedSlots(widget);
   for (const flow of (type?.behavior ?? []) as Json[]) {

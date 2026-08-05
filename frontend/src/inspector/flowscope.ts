@@ -11,7 +11,7 @@
  * vocabulary and be believed. */
 
 import { Editor, variablesInScope } from "../editor.js";
-import { Flow, Json, MeshEntity, MeshField, Node } from "../types.js";
+import { eventKind, Flow, Json, MeshEntity, MeshField, Node } from "../types.js";
 
 export interface LocalInfo {
   name: string;
@@ -22,7 +22,7 @@ export interface LocalInfo {
   type?: string;
   fields?: MeshField[];
   /* where it came from, for the picker's right-hand note */
-  note: "temporary" | "local" | "global";
+  note: "temporary" | "local" | "global" | "event parameter";
 }
 
 const VAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
@@ -128,11 +128,18 @@ export function scopeAt(
   const scope = new Map<string, LocalInfo>();
   for (const variable of declared(editor, widget)) scope.set(variable.name, variable);
 
-  /* x starts as the value the widget proposes for the trigger event */
+  /* the trigger's PARAMETER binds by name (an event is a function call and this flow is
+     its body); x is the pipeline register and starts Nil until a step sets it */
   const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
   const trigger = (flow?.when ?? []).find((w: Json) => w?.kind === "event");
-  const event = trigger ? type?.events.find((e) => e.name === trigger.name) : null;
-  let x: FlowScope["x"] = event?.x ? { shape: event.x } : null;
+  if (trigger) {
+    const name = String(trigger.name ?? "");
+    const params = eventKind(name)?.params ??
+      type?.events.find((e) => e.name === name)?.params ?? [];
+    for (const p of params)
+      scope.set(p.name, { name: p.name, shape: p.shape, note: "event parameter" });
+  }
+  let x: FlowScope["x"] = null;
 
   for (const step of (flow?.do ?? []) as Json[]) {
     if (step?.id === stepId) break;
