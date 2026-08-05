@@ -315,7 +315,15 @@ class Compiler {
             program_.layout.max_entity_fields =
                 std::max<uint32_t>(program_.layout.max_entity_fields,
                                    static_cast<uint32_t>(entity.fields.size()));
-            if (!entity.fields.empty()) entity.type_id = intern_struct(entity, e);
+            /* a BARE-schema entity (`bool`, `f64`, `string`: one anonymous field) IS
+               its scalar — no struct type, so a whole-entity move meets the variable
+               as the same primitive rather than a one-field struct */
+            const bool bare_scalar =
+                entity.fields.size() == 1 && entity.fields[0].path.empty() &&
+                entity.fields[0].shape != Shape::List &&
+                entity.fields[0].shape != Shape::Map;
+            if (!entity.fields.empty() && !bare_scalar)
+                entity.type_id = intern_struct(entity, e);
         }
         program_.layout.elem_values += intake_values;
         program_.layout.elem_texts += intake_texts;

@@ -2206,6 +2206,95 @@ void test_aggregate_variables() {
  * side never builds aggregates, so a value pushed at one would vanish without a trace).
  * And an UNCHANGED whole store is not a change: the generation holds still, which is
  * what keeps a per-tick computed binding off the wire. */
+/* A BARE-schema topic (`bool`, `f64`, `string`: one anonymous field) IS its scalar.
+ * The dart bool and the hmi bool meet as ONE primitive: reading the topic fills a bool
+ * variable (or types a fresh temporary bool), writing the variable back out fills the
+ * anonymous value, and no one-field struct type is interned in between. Mismatched
+ * scalars still refuse. */
+void test_bare_topic_scalars() {
+    EntityDef flag;
+    flag.kind = EntityKind::Topic;
+    flag.name = "flag";
+    flag.readable = true;
+    flag.writable = true;
+    flag.fields = {FieldDef{"", Shape::Bool}};
+    FakeMesh mesh(std::vector<EntityDef>{flag});
+
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"}, {"slots", Json::object()},
+        {"flows",
+         Json::array({
+             flow_on("tap", {steps::read_into("lit", "T", "flag")}),
+             flow_on("press", {steps::read_into("t", "T", "flag"),
+                               steps::set_var("lit", "t.not()")}),
+             flow_on("release", {steps::write_field("T", "flag", "", "lit")}),
+         })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array({Json{{"name", "lit"}, {"type", "bool"},
+                                               {"init", false}}})},
+                 {"pages", Json::array({Json{{"name", "P"},
+                                             {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("bare topic compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+    for (const TypeDef& def : program.types)
+        CHECK(def.kind != TypeKind::Struct);   /* the topic interned NO phantom type */
+
+    const int lit = named_cell(program, "lit");
+    int flag_at = -1;
+    for (uint32_t i = 0; i < program.entities.size(); ++i)
+        if (program.entities[i].name == "flag") flag_at = static_cast<int>(i);
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    if (!CHECK(lit >= 0 && flag_at >= 0 && widget)) return;
+
+    RuntimeState state(program);
+    state.last[flag_at].known = true;
+    state.last[flag_at].fields[0] = Value::boolean(true);
+
+    run_event(program, state, widget, "tap", Value::nil());
+    CHECK(state.values[lit].tag == ValueTag::Bool);
+    CHECK(state.values[lit].data.boolean == true);
+
+    /* a fresh temporary takes the topic's scalar shape, and reads like any bool */
+    run_event(program, state, widget, "press", Value::nil());
+    CHECK(state.values[lit].tag == ValueTag::Bool);
+    CHECK(state.values[lit].data.boolean == false);
+
+    /* and the variable goes back out as the anonymous value */
+    state.clear_outputs();
+    run_event(program, state, widget, "release", Value::nil());
+    std::string fault;
+    CHECK_MSG(flush_effects(program, state, mesh, fault), fault);
+    CHECK(mesh.transcript().size() == 1);
+    if (!mesh.transcript().empty()) CHECK_EQ(mesh.transcript()[0], "publish T:flag=false");
+
+    /* mismatched scalars still refuse: bool meets bool, not anything-goes */
+    Json bad_button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"}, {"slots", Json::object()},
+        {"flows", Json::array({flow_on("tap", {steps::read_into("n", "T", "flag")})})},
+    };
+    Json bad_root = {{"version", 1},
+                     {"next_id", 1},
+                     {"globals", Json::array({Json{{"name", "n"}, {"type", "f64"},
+                                                   {"init", 0}}})},
+                     {"pages", Json::array({Json{{"name", "P"},
+                                                 {"children", Json::array({bad_button})}}})}};
+    Document bad;
+    std::string bad_err;
+    CHECK(bad.adopt(std::move(bad_root), bad_err));
+    CHECK(has_diag(compile_document(bad, builtin_registry(), mesh), "shape"));
+}
+
 void test_aggregate_expressions() {
     EntityDef plant;
     plant.kind = EntityKind::Variable;
@@ -2876,6 +2965,7 @@ int main() {
     test_tiers();
     test_default_behavior();
     test_event_value();
+    test_bare_topic_scalars();
     test_value_shape_diagnostics();
     test_colors();
     test_tonemaps();

@@ -41,7 +41,8 @@ bool FakeMesh::execute(const EffectView& effect, std::string& fault) noexcept {
         return true;
     }
     if (effect.bare) {
-        if (effect.field < effect.entity->fields.size())
+        if (effect.field < effect.entity->fields.size() &&
+            !effect.entity->fields[effect.field].path.empty())
             out << "." << effect.entity->fields[effect.field].path;
         out << "=" << print_value(effect.value, effect.bare_text);
     } else {
