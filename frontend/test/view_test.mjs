@@ -196,8 +196,8 @@ check(
 
 const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
 
-/* the Layers tree shows the frame nesting: a frame row, its own children indented
-   beneath it exactly like a widget's part tree */
+/* the Layers tree shows the frame nesting: a frame row which STARTS SHUT, and its own
+   children indented beneath it once its caret is clicked */
 {
   const treeHost = new Element("aside");
   const treePanel = new Panel(treeHost);
@@ -208,17 +208,44 @@ const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
     enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     diagFor: () => [], diagAt: () => [], diagNode: () => [],
     select: () => undefined, selectPart: () => undefined,
+    refresh: () => draw(),
   };
-  treePanel.render(leftShape(treeEditor), (host) => renderLeftSidebar(host, treeEditor));
-  const rows = treeHost.querySelectorAll(".layer-row");
-  check(
-    rows.some((r) => r.getAttribute("data-key") === "n" + statusFrame.id),
-    "the Layers tree lists a row for the frame",
-  );
-  check(
-    rows.some((r) => r.getAttribute("data-key") === "n" + toggleChild.id),
-    "and a row for the instance inside it: ONE kind of row, for one kind of node",
-  );
+  const draw = () =>
+    treePanel.render(leftShape(treeEditor), (host) => renderLeftSidebar(host, treeEditor));
+  const keys = () =>
+    treeHost.querySelectorAll(".layer-row").map((r) => r.getAttribute("data-key"));
+  const row = () => treeHost.querySelectorAll(".layer-row")
+    .find((r) => r.getAttribute("data-key") === "n" + statusFrame.id);
+  draw();
+  check(keys().includes("n" + statusFrame.id),
+        "the Layers tree lists a row for the frame");
+  check(!keys().includes("n" + toggleChild.id),
+        "and NOT what is inside it: a row starts shut");
+  check(row().className.includes("collapsed"), "the caret says so");
+
+  /* an untouched row HOLDING THE SELECTION starts open instead: picking a nested node
+     off the stage has to show it here, or the tree lies about where you are */
+  view.selection = [toggleChild.id];
+  draw();
+  check(keys().includes("n" + toggleChild.id),
+        "a row holding the selection starts open, and lists the instance inside: ONE " +
+        "kind of row, for one kind of node");
+  view.selection = [];
+  draw();
+  check(!keys().includes("n" + toggleChild.id), "and shuts again when it does not");
+
+  /* the caret is the row's first child and owns its own click, so folding never selects */
+  fire(row().children[0], "click");
+  check(keys().includes("n" + toggleChild.id), "the caret opens it by hand");
+  fire(row().children[0], "click");
+  check(!keys().includes("n" + toggleChild.id), "and shuts it again");
+  /* and that hand-made fold now WINS over the selection default: it was closed on purpose */
+  view.selection = [toggleChild.id];
+  draw();
+  check(!keys().includes("n" + toggleChild.id),
+        "a row closed by hand stays closed even when the selection moves inside it");
+  view.selection = [];
+  draw();
 }
 
 /* an edit round trip: insert an unfed Readout and watch TO_FIXED format it */
@@ -808,6 +835,12 @@ const drawDesign = () =>
 const designRow = (key) =>
   designHost.querySelectorAll(".layer-row").find((r) => r.getAttribute("data-key") === key) ?? null;
 
+drawLeft();
+check(rowByKey("n" + toggle.id) === null,
+      "the tree starts shut, so a nested widget has no row of its own yet");
+/* SELECTING one is how it is reached: an untouched row holding the selection starts open,
+   all the way down, which is what makes clicking a node on the stage show it here */
+view.selection = [toggle.id];
 drawLeft();
 const toggleRow = rowByKey("n" + toggle.id);
 check(toggleRow !== null, "the Layers tree lists the current page's widgets");
@@ -2015,10 +2048,16 @@ check(stageNode("frame", 901) === heldAgain &&
   check(!!ctxPanel.host.querySelector(".crumb-note")?.textContent
           ?.includes("every instance follows"),
         "and the strip says out loud what an edit here reaches");
-  const keys = ctxPanel.host.querySelectorAll(".layer-row")
+  const keys = () => ctxPanel.host.querySelectorAll(".layer-row")
     .map((r) => r.getAttribute("data-key"));
-  check(keys.includes("n9810") && keys.includes("n9811"),
-        "the tree lists the component's own nodes as real rows, got " + keys.join(","));
+  check(keys().includes("n9810") && !keys().includes("n9811"),
+        "the tree lists the component's own nodes as real rows — shut, like every other " +
+        "row, got " + keys().join(","));
+  /* the same caret, on the same kind of row: a context's tree is the Layers tree */
+  fire(ctxPanel.host.querySelectorAll(".layer-row")
+    .find((r) => r.getAttribute("data-key") === "n9810").children[0], "click");
+  ctxPanel.render(leftShape(ctxEditor), (host) => renderLeftSidebar(host, ctxEditor));
+  check(keys().includes("n9811"), "and what is nested inside them once opened");
   check(ctxPanel.host.querySelectorAll(".layer-row.tpl").length === 0,
         "nothing here is fenced: these rows are the component's to edit");
 

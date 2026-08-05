@@ -40,15 +40,37 @@ import { newVariable, varCard, varShape } from "./vars.js";
  * in the Design workspace (workspaces/design.ts). Unfolding it here would offer to edit
  * every placement at once while looking at one. ---- */
 
-/* the Layers tree's own expansion state, independent of the Design tree's */
+/* the Layers tree's own expansion state, independent of the Design tree's.
+ *
+ * A ROW STARTS SHUT. This tree is page COMPOSITION, and a page unfolded to every leaf is a
+ * wall of rows nobody asked to read; opening one is one click on its caret. The single
+ * exception is a row HOLDING THE SELECTION — picking a nested node off the stage has to
+ * show it here, or the tree is lying about where you are — so "contains what is selected"
+ * is what an untouched caret means, and an explicit fold (which records a state) still
+ * wins over it afterwards. Both the render and the drag helpers ask through `layerOpen`
+ * and `toggleLayer` so the two can never disagree about what a caret is currently saying. */
 const fold = makeFold();
 
-function layerOpen(key: string, dflt: boolean): boolean {
-  return fold.open(key, dflt);
+/* is anything selected inside this node? — never the node itself: a row's caret is about
+   what is UNDER it. An instance is a leaf here (its subtree belongs to its component), so
+   this walks the document's children alone and an instance's fenced rows never open one. */
+function holdsSelection(editor: Editor, node: Node | null): boolean {
+  const selection = editor.view.selection;
+  const walk = (kids: Node[]): boolean =>
+    kids.some((kid) => selection.indexOf(kid.id) >= 0 || walk(kid.children ?? []));
+  return node ? walk(node.children ?? []) : false;
 }
 
-function toggleLayer(editor: Editor, key: string, dflt: boolean): void {
-  fold.toggle(key, dflt, () => editor.refresh());
+function layerDefault(editor: Editor, id: number): boolean {
+  return holdsSelection(editor, editor.store.nodeAt(id));
+}
+
+function layerOpen(editor: Editor, id: number): boolean {
+  return fold.open("n" + id, layerDefault(editor, id));
+}
+
+function toggleLayer(editor: Editor, id: number): void {
+  fold.toggle("n" + id, layerDefault(editor, id), () => editor.refresh());
 }
 
 /* every node on the page, wherever it nests, pre-order — which is document order, which
@@ -204,7 +226,7 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
   const template = instance
     ? (typeOf(editor.registry, node.type ?? "")?.template?.children ?? [])
     : [];
-  const open = layerOpen(key, true);
+  const open = layerOpen(editor, node.id);
   const current =
     editor.view.selection.indexOf(node.id) >= 0 && (!editor.view.part || !instance);
   const label = el("span", { class: "layer-label" });
@@ -217,7 +239,7 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
     depth,
     (instance ? "widget" : node.kind) + (current ? " current" : ""),
     kids.length || template.length
-      ? { open, toggle: () => toggleLayer(editor, key, true) }
+      ? { open, toggle: () => toggleLayer(editor, node.id) }
       : null,
     [
       el("span", { class: "layer-glyph", html: iconMarkup(glyphOf(node), 16, 1.5) }),
@@ -461,7 +483,7 @@ function autoExpand(id: number, frame: boolean, open: boolean): void {
   const editor = drag.editor;
   drag.timer = window.setTimeout(() => {
     if (drag) drag.timer = 0;
-    toggleLayer(editor, "n" + id, true);
+    toggleLayer(editor, id);
   }, EXPAND_MS);
 }
 
@@ -493,7 +515,7 @@ function onMove(ev: PointerEvent): void {
     /* only a node that can HOLD one has an inside to drop into (arrange.ts): an instance
        and a leaf both split at the halfway mark, and every position names a gap */
     const frame = holds(node);
-    const open = frame && layerOpen("n" + id, true);
+    const open = frame && layerOpen(drag.editor, id);
     const zone = dropZone(frame, rect.height ? (ev.clientY - rect.top) / rect.height : 0);
     drag.plan = dropPlan(page, drag.id, id, zone, open);
     if (drag.plan && zone === "into") {
@@ -537,8 +559,8 @@ function onUp(): void {
   held.editor.select([held.id]);
   /* dropped into a frame that was folded shut: open it, or it lands out of sight */
   const page = held.editor.root();
-  if (page && plan.parent !== page.id && !layerOpen("n" + plan.parent, true))
-    toggleLayer(held.editor, "n" + plan.parent, true);
+  if (page && plan.parent !== page.id && !layerOpen(held.editor, plan.parent))
+    toggleLayer(held.editor, plan.parent);
 }
 
 function onKey(ev: KeyboardEvent): void {
