@@ -159,7 +159,10 @@ export function bindField(
        the way its blur would have. An Escape already cleared its pending, so a
        deliberate revert never comes back through here. */
     queueMicrotask(() => {
-      if (input.isConnected && document.activeElement !== input)
+      /* the dispatch is optional-checked for the test shim's sake: dom_shim elements
+         carry no event machinery, and a held value simply stays held there */
+      if (input.isConnected && document.activeElement !== input &&
+          typeof input.dispatchEvent === "function")
         input.dispatchEvent(new Event("change"));
     });
   }
