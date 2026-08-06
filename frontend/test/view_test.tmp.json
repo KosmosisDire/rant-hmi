@@ -1,0 +1,616 @@
+{
+  "components": [
+    {
+      "attrs": {
+        "surface": "'#222222'"
+      },
+      "behavior": [],
+      "children": [
+        {
+          "attrs": {
+            "h": "0.8",
+            "w": "0.8",
+            "x": "0.1",
+            "y": "0.1"
+          },
+          "children": [
+            {
+              "attrs": {
+                "text": "text"
+              },
+              "id": 43,
+              "kind": "text",
+              "name": "label",
+              "props": []
+            }
+          ],
+          "feeds": [],
+          "flows": [],
+          "id": 42,
+          "interact": null,
+          "kind": "frame",
+          "locals": [],
+          "name": "body",
+          "props": [],
+          "slots": {},
+          "type": ""
+        }
+      ],
+      "design_h": 120,
+      "design_w": 240,
+      "events": [],
+      "id": 40,
+      "interact": null,
+      "name": "Pill",
+      "props": [
+        {
+          "default": "go",
+          "editor": "",
+          "group": "appearance",
+          "id": 41,
+          "max": null,
+          "min": null,
+          "name": "text",
+          "shape": "text",
+          "step": null,
+          "variants": []
+        }
+      ]
+    }
+  ],
+  "globals": [
+    {
+      "id": 1,
+      "init": false,
+      "name": "pumpOn",
+      "persist": false,
+      "type": "bool"
+    },
+    {
+      "id": 2,
+      "init": 42.0,
+      "name": "setpoint",
+      "persist": true,
+      "type": "f64"
+    },
+    {
+      "id": 3,
+      "init": 0.0,
+      "name": "flow",
+      "persist": false,
+      "type": "f64"
+    },
+    {
+      "id": 4,
+      "init": 1.0,
+      "name": "blink",
+      "persist": false,
+      "type": "timer"
+    }
+  ],
+  "next_id": 44,
+  "pages": [
+    {
+      "children": [
+        {
+          "attrs": {
+            "h": "66",
+            "surface": "$surface-2",
+            "w": "1408",
+            "x": "0",
+            "y": "0"
+          },
+          "children": [
+            {
+              "attrs": {
+                "h": "44",
+                "w": "308",
+                "x": "22",
+                "y": "11"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [],
+              "id": 19,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Title",
+              "props": [],
+              "slots": {
+                "text": "Line 1 Overview"
+              },
+              "type": "Label"
+            }
+          ],
+          "feeds": [],
+          "flows": [],
+          "id": 18,
+          "interact": null,
+          "kind": "frame",
+          "locals": [],
+          "name": "Header",
+          "props": [],
+          "slots": {},
+          "type": ""
+        },
+        {
+          "attrs": {
+            "h": "682",
+            "radius": "6",
+            "surface": "$surface",
+            "w": "880",
+            "x": "22",
+            "y": "88"
+          },
+          "children": [
+            {
+              "attrs": {
+                "h": "66",
+                "w": "396",
+                "x": "22",
+                "y": "22"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [],
+              "id": 21,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Pump",
+              "props": [],
+              "slots": {
+                "value": true
+              },
+              "type": "Toggle"
+            },
+            {
+              "attrs": {
+                "h": "66",
+                "w": "836",
+                "x": "22",
+                "y": "110"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [
+                {
+                  "do": [
+                    {
+                      "from": {
+                        "expr": "value"
+                      },
+                      "id": 24,
+                      "keep": "",
+                      "key": "",
+                      "kind": "move",
+                      "mode": "write",
+                      "to": {
+                        "local": "flow",
+                        "path": ""
+                      }
+                    }
+                  ],
+                  "id": 23,
+                  "when": [
+                    {
+                      "kind": "event",
+                      "name": "changing"
+                    }
+                  ],
+                  "when_mode": "any"
+                }
+              ],
+              "id": 22,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Setpoint",
+              "props": [],
+              "slots": {
+                "max": 100,
+                "min": 0,
+                "value": 62
+              },
+              "type": "Slider"
+            },
+            {
+              "attrs": {
+                "h": "176",
+                "w": "836",
+                "x": "22",
+                "y": "198"
+              },
+              "children": [],
+              "feeds": [
+                {
+                  "cases": [],
+                  "id": 26,
+                  "path": "",
+                  "poll_hz": null,
+                  "slot": "value",
+                  "src": {
+                    "kind": "L",
+                    "name": "flow"
+                  },
+                  "stale_ms": null,
+                  "xf": "x.round(1)"
+                }
+              ],
+              "flows": [],
+              "id": 25,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Flow",
+              "props": [],
+              "slots": {
+                "units": {
+                  "text": "l/min"
+                },
+                "value": 42.5
+              },
+              "type": "Readout"
+            },
+            {
+              "attrs": {
+                "h": "66",
+                "w": "176",
+                "x": "22",
+                "y": "396"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [
+                {
+                  "do": [
+                    {
+                      "from": {
+                        "expr": "0"
+                      },
+                      "id": 29,
+                      "keep": "",
+                      "key": "",
+                      "kind": "move",
+                      "mode": "write",
+                      "to": {
+                        "local": "flow",
+                        "path": ""
+                      }
+                    }
+                  ],
+                  "id": 28,
+                  "when": [
+                    {
+                      "kind": "event",
+                      "name": "press"
+                    }
+                  ],
+                  "when_mode": "first"
+                }
+              ],
+              "id": 27,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Reset",
+              "props": [],
+              "slots": {
+                "label": {
+                  "text": "Reset"
+                }
+              },
+              "type": "Button"
+            },
+            {
+              "attrs": {
+                "h": "176",
+                "w": "418",
+                "x": "22",
+                "y": "484"
+              },
+              "children": [],
+              "feeds": [
+                {
+                  "cases": [],
+                  "id": 31,
+                  "path": "",
+                  "poll_hz": null,
+                  "slot": "value",
+                  "src": {
+                    "kind": "L",
+                    "name": "flow"
+                  },
+                  "stale_ms": null,
+                  "xf": ""
+                }
+              ],
+              "flows": [],
+              "id": 30,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "History",
+              "props": [],
+              "slots": {
+                "window": 30
+              },
+              "type": "Trend"
+            },
+            {
+              "attrs": {
+                "h": "176",
+                "w": "176",
+                "x": "462",
+                "y": "396"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [],
+              "id": 32,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Mode",
+              "props": [],
+              "slots": {
+                "options": [
+                  "Off",
+                  "Low",
+                  "High"
+                ],
+                "value": "Off"
+              },
+              "type": "Selector"
+            }
+          ],
+          "feeds": [],
+          "flows": [],
+          "id": 20,
+          "interact": null,
+          "kind": "frame",
+          "locals": [],
+          "name": "Main",
+          "props": [],
+          "slots": {},
+          "type": ""
+        },
+        {
+          "attrs": {
+            "h": "88",
+            "radius": "6",
+            "surface": "$surface",
+            "w": "462",
+            "x": "924",
+            "y": "88"
+          },
+          "children": [
+            {
+              "attrs": {
+                "h": "44",
+                "w": "176",
+                "x": "22",
+                "y": "22"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [],
+              "id": 34,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Status",
+              "props": [],
+              "slots": {
+                "text": "Status"
+              },
+              "type": "Label"
+            },
+            {
+              "attrs": {
+                "h": "44",
+                "w": "154",
+                "x": "286",
+                "y": "22"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [],
+              "id": 35,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Enabled",
+              "props": [],
+              "slots": {
+                "value": false
+              },
+              "type": "Toggle"
+            }
+          ],
+          "feeds": [],
+          "flows": [],
+          "id": 33,
+          "interact": null,
+          "kind": "frame",
+          "locals": [],
+          "name": "Status group",
+          "props": [],
+          "slots": {},
+          "type": ""
+        },
+        {
+          "attrs": {
+            "h": "572",
+            "radius": "6",
+            "surface": "$surface",
+            "w": "462",
+            "x": "924",
+            "y": "198"
+          },
+          "children": [
+            {
+              "attrs": {
+                "h": "242",
+                "w": "418",
+                "x": "22",
+                "y": "22"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [],
+              "id": 37,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Pump group",
+              "props": [],
+              "slots": {},
+              "type": "Panel"
+            },
+            {
+              "attrs": {
+                "h": "242",
+                "w": "418",
+                "x": "22",
+                "y": "286"
+              },
+              "children": [],
+              "feeds": [],
+              "flows": [],
+              "id": 38,
+              "interact": null,
+              "kind": "frame",
+              "locals": [],
+              "name": "Fault",
+              "props": [],
+              "slots": {
+                "surface": "#2a2a2a"
+              },
+              "type": "Panel"
+            }
+          ],
+          "feeds": [],
+          "flows": [],
+          "id": 36,
+          "interact": null,
+          "kind": "frame",
+          "locals": [],
+          "name": "Lamps",
+          "props": [],
+          "slots": {},
+          "type": ""
+        },
+        {
+          "attrs": {},
+          "children": [],
+          "feeds": [],
+          "flows": [],
+          "id": 39,
+          "interact": null,
+          "kind": "frame",
+          "locals": [],
+          "name": "Unfed",
+          "props": [],
+          "slots": {
+            "reading": {
+              "decimals": 0
+            },
+            "value": 12.345
+          },
+          "type": "Readout"
+        }
+      ],
+      "id": 17,
+      "name": "Overview"
+    }
+  ],
+  "tokens": [
+    {
+      "dark": "#4e8ef7",
+      "group": "core",
+      "id": 5,
+      "light": "#2f6bd8",
+      "name": "accent"
+    },
+    {
+      "dark": "#1d1d1d",
+      "group": "core",
+      "id": 6,
+      "light": "#f2f2f2",
+      "name": "surface"
+    },
+    {
+      "dark": "#141414",
+      "group": "core",
+      "id": 7,
+      "light": "#e9e9e9",
+      "name": "surface-2"
+    },
+    {
+      "dark": "#242424",
+      "group": "core",
+      "id": 8,
+      "light": "#d9d9d9",
+      "name": "track"
+    },
+    {
+      "dark": "#ececec",
+      "group": "core",
+      "id": 9,
+      "light": "#333333",
+      "name": "handle"
+    },
+    {
+      "dark": "#ececec",
+      "group": "core",
+      "id": 10,
+      "light": "#1a1a1a",
+      "name": "ink"
+    },
+    {
+      "dark": "#8a8a8a",
+      "group": "core",
+      "id": 11,
+      "light": "#6a6a6a",
+      "name": "ink-muted"
+    },
+    {
+      "dark": "#5a5a5a",
+      "group": "core",
+      "id": 12,
+      "light": "#9a9a9a",
+      "name": "scale"
+    },
+    {
+      "dark": "#2a2a2a",
+      "group": "core",
+      "id": 13,
+      "light": "#cfcfcf",
+      "name": "line"
+    },
+    {
+      "dark": "#7fc4a0",
+      "group": "status",
+      "id": 14,
+      "light": "#2f7d55",
+      "name": "ok"
+    },
+    {
+      "dark": "#d7b562",
+      "group": "status",
+      "id": 15,
+      "light": "#8f6f1c",
+      "name": "warn"
+    },
+    {
+      "dark": "#e0857c",
+      "group": "status",
+      "id": 16,
+      "light": "#b2443b",
+      "name": "bad"
+    }
+  ],
+  "version": 4
+}

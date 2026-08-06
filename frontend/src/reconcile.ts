@@ -150,7 +150,19 @@ export function bindField(
     if ((ev as KeyboardEvent).key === "Escape") pending.delete(key);
   });
   const held = pending.get(key);
-  if (held !== undefined) input.value = held;
+  if (held !== undefined) {
+    input.value = held;
+    /* A HELD EDIT WHOSE FIELD LOST FOCUS IN A REBUILD would otherwise sit here forever
+       — restored into every fresh input, LOOKING committed, while the document still
+       holds the old value and the compiler honestly refuses it. Once the render
+       settles (focus resume included), anything the user is no longer editing commits
+       the way its blur would have. An Escape already cleared its pending, so a
+       deliberate revert never comes back through here. */
+    queueMicrotask(() => {
+      if (input.isConnected && document.activeElement !== input)
+        input.dispatchEvent(new Event("change"));
+    });
+  }
   bind(key, input, () => {
     const text = read();
     shown.set(input, text);
