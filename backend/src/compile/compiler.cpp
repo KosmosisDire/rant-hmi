@@ -2290,6 +2290,34 @@ class Compiler {
         return def.name.empty() ? std::string("this type") : def.name;
     }
 
+    /* A CLAIMED slot's write, redirected into a run-local shadow so program order holds
+     * within the flow (see the call site). Scalar shapes only: the write compiles
+     * exactly as it would have — same coercions, same refusals — into a temp cell, and
+     * `widget.<slot>` rebinds to that cell for the steps below. An aggregate-shaped
+     * slot (or an append/key write) still stands down whole: a shadow list is storage
+     * this run has no business allocating. */
+    bool shadow_slot_write(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                           ExpressionScope& scope, const std::string& slot) {
+        const uint64_t step_id = id_of(step);
+        auto found = widget.slots.find(slot);
+        if (found == widget.slots.end()) return true;   /* claimed name, no cell: drop */
+        const CellDef& def = program_.cells[found->second];
+        const std::string mode = str_or(step, "mode", "write");
+        if (def.shape == Shape::List || def.shape == Shape::Map || mode == "append" ||
+            !trimmed(str_or(step, "key", "")).empty())
+            return true;                                /* aggregate: plain stand-down */
+        if (!push_typed(widget, step, flow, scope, step.value("from", Json::object()),
+                        def.shape, def.type_id))
+            return false;
+        const uint32_t shadow =
+            add_temp_cell(flow.flow_id, widget.id, "widget." + slot + "'", def.shape);
+        program_.cells[shadow].type_id = def.type_id;
+        if (!emit_store(flow, step_id, shadow)) return false;
+        scope.qualified["widget." + slot] =
+            Binding{def.shape, OpCode::Load, shadow, 0, def.type_id};
+        return true;
+    }
+
     /* `raise <event>(args)`: the one step that SPEAKS as the widget. The event must be
      * one the type declares — a gesture is the pointer's to raise — and the argument
      * expression compiles against the declared parameter's shape. The record queues on
@@ -2385,7 +2413,18 @@ class Compiler {
             if (kind == "move") {
                 if (claimed) {
                     const std::string slot = slot_of(step.value("to", Json::object()));
-                    if (!slot.empty() && claimed->find(slot) != claimed->end()) continue;
+                    if (!slot.empty() && claimed->find(slot) != claimed->end()) {
+                        /* THE WRITE STILL HOLDS WITHIN THIS RUN. The claimed cell stays
+                           the feed's, but program order must not lie: a later step
+                           reading widget.<slot> reads what this flow just wrote — the
+                           store lands in a run-local SHADOW and the name follows it,
+                           so `value = false; raise changed(widget.value)` speaks false
+                           on a fed instance instead of the fed value. An aggregate
+                           write (append, key, list/map slot) still just stands down. */
+                        if (!shadow_slot_write(widget, step, flow, scope, slot))
+                            return false;
+                        continue;
+                    }
                 }
                 if (!compile_move(widget, step, flow, scope, locals)) return false;
             } else if (kind == "raise") {

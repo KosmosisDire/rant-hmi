@@ -1150,6 +1150,73 @@ void test_events_are_calls() {
     CHECK(jog_state.effect_count == 1);
     CHECK(jog_state.effects[0].value.data.boolean == true);
 
+    /* THE SHADOW: a component's behavior writes its fed slot and then reads it — and
+       must see ITS OWN write within the run. Program order does not lie on a fed
+       instance: `value = false; raise changed(widget.value)` speaks false, while the
+       cell itself stays the feed's. */
+    Json onoff = {
+        {"id", 700}, {"name", "OnOff"},
+        {"props", Json::array({Json{{"id", 701}, {"name", "value"}, {"shape", "bool"},
+                                    {"default", false}, {"group", "value"}}})},
+        {"events", Json::array({Json{{"name", "changed"},
+                                     {"params", Json::array({Json{{"name", "value"},
+                                                                  {"shape", "bool"}}})}}})},
+        {"interact", Json{{"primitive", "press"}, {"params", Json{{"hold_ms", "600"}}}}},
+        {"children", Json::array()},
+        {"behavior", Json::array({Json{
+            {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+            {"when_mode", "first"},
+            {"do", Json::array({
+                Json{{"kind", "move"}, {"from", {{"expr", "false"}}},
+                     {"to", {{"slot", "value"}}}},
+                Json{{"kind", "raise"}, {"event", "changed"},
+                     {"args", Json{{"value", "widget.value"}}}}})}}})},
+    };
+    Json shadow_root = {
+        {"version", 1}, {"next_id", 1000},
+        {"components", Json::array({std::move(onoff)})},
+        {"globals", Json::array()},
+        {"pages", Json::array({Json{{"name", "P"}, {"children", Json::array({Json{
+            {"kind", "frame"}, {"type", "OnOff"}, {"name", "S"}, {"slots", Json::object()},
+            {"feeds", Json::array({Json{{"slot", "value"},
+                                        {"src", steps::entity_ref("V", "bit")},
+                                        {"path", "on"}}})},
+            {"flows", Json::array({Json{
+                {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
+                {"when_mode", "first"},
+                {"do", Json::array({steps::write_field("V", "bit", "on",
+                                                       "value")})}}})}}})}}})},
+    };
+    Document shadow_doc;
+    std::string shadow_err;
+    CHECK(shadow_doc.adopt(std::move(shadow_root), shadow_err));
+    std::vector<Diag> derive_diags;
+    Json derived = derive_registry(shadow_doc, derive_diags);
+    CompileResult shadow_compiled = compile_document(shadow_doc, derived, mesh);
+    CHECK_MSG(shadow_compiled.ok, shadow_compiled.program.diagnostics.empty()
+                                      ? "compile failed without a diagnostic"
+                                      : shadow_compiled.program.diagnostics[0].message);
+    RuntimeState shadow_state(shadow_compiled.program);
+    const uint64_t shadow_id = only_widget(shadow_doc);
+    const uint32_t shadow_slot = [&] {
+        for (uint32_t i = 0; i < shadow_compiled.program.cells.size(); ++i)
+            if (shadow_compiled.program.cells[i].kind == CellKind::Slot &&
+                shadow_compiled.program.cells[i].name == "value" &&
+                shadow_compiled.program.cells[i].owner_widget == shadow_id)
+                return i;
+        return UINT32_MAX;
+    }();
+    shadow_state.store(shadow_compiled.program, shadow_slot, Value::boolean(true));
+    shadow_state.clear_outputs();
+    run_event(shadow_compiled.program, shadow_state, shadow_id, "tap", Value::nil());
+    drain_raised(shadow_compiled.program, shadow_state);
+    /* the raise read the SHADOW (false), not the fed cell... */
+    CHECK(shadow_state.effect_count == 1);
+    CHECK(shadow_state.effects[0].value.tag == ValueTag::Bool);
+    CHECK(shadow_state.effects[0].value.data.boolean == false);
+    /* ...and the fed cell itself never moved */
+    CHECK(shadow_state.values[shadow_slot].data.boolean == true);
+
     /* a gesture no part of the widget raises is a finding, not a dead flow */
     Document deaf = widget_document(
         "Toggle", Json{{"value", false}},
