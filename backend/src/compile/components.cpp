@@ -90,11 +90,26 @@ void check_attr_names(const Json& attrs, const std::string& kind, uint64_t node,
     }
 }
 
+/* does this compiled program end in the parser's SMOOTH marker? (the parser already
+ * guarantees it can stand nowhere else) */
+bool trailing_smooth(const Json& program) {
+    auto code = program.find("code");
+    return code != program.end() && code->is_array() && !code->empty() &&
+           code->back().value("op", "") == "SMOOTH";
+}
+
 /* every attr entry: expression text -> a compiled view program; a bad one is a finding on
  * THIS node, named by the attr, and the attr is simply not served (an absent attr renders
- * its default, so the node degrades instead of vanishing) */
+ * its default, so the node degrades instead of vanishing).
+ *
+ * `kind` is the SMOOTH GATE: the node kind whose attr table says what each attr's value
+ * is shaped like, or nullptr at a site where nothing can sweep at all (an arc's radii, a
+ * gesture's params). A trailing smooth() HOISTS out of the code into program metadata
+ * {"smooth": {ms, profile}} — the view interpreter stays stateless; the RENDERER eases a
+ * number in its own loop and hands a colour to a CSS transition, so only those two
+ * shapes may carry one. */
 Json compile_attrs(const Json& attrs, const TemplateScope& scope, uint64_t node,
-                   const std::string& prefix, Sink& sink) {
+                   const std::string& prefix, Sink& sink, const char* kind = nullptr) {
     Json out = Json::object();
     if (!attrs.is_object()) return out;
     for (auto it = attrs.begin(); it != attrs.end(); ++it) {
@@ -107,6 +122,30 @@ Json compile_attrs(const Json& attrs, const TemplateScope& scope, uint64_t node,
         if (!compiled.ok) {
             sink.report(node, "template_expr", compiled.error, prefix + it.key());
             continue;
+        }
+        if (trailing_smooth(compiled.program)) {
+            if (!kind) {
+                sink.report(node, "template_expr",
+                            "smooth cannot ease '" + it.key() + "' here: it rides a "
+                            "node's attribute or a property's declaration",
+                            prefix + it.key());
+                continue;
+            }
+            const std::string shape = attr_shape(kind, it.key());
+            if (shape != "num" && shape != "color") {
+                sink.report(node, "template_expr",
+                            "'" + it.key() + "' cannot sweep: smooth eases numbers (the "
+                            "view tweens them) and colours (the browser cross-fades "
+                            "them); to sweep a value every reader follows, declare the "
+                            "transition on the property instead",
+                            prefix + it.key());
+                continue;
+            }
+            Json& code = compiled.program["code"];
+            Json marker = code.back();
+            code.erase(code.size() - 1);
+            compiled.program["smooth"] = Json{{"ms", marker.value("ms", 0.0)},
+                                              {"profile", marker.value("profile", "ease")}};
         }
         out[it.key()] = std::move(compiled.program);
     }
@@ -150,6 +189,16 @@ Json compile_anchors(const Json& anchors, const TemplateScope& scope, uint64_t n
             TemplateExprResult compiled = compile_template_expr(it->get<std::string>(), scope);
             if (!compiled.ok) {
                 sink.report(node, "anchor", compiled.error, where + "." + it.key());
+                continue;
+            }
+            /* an anchor is one coordinate of many making one outline: easing them one by
+               one warps the shape mid-flight. The honest sweep is on the VALUE the
+               anchors read, where every coordinate follows the same eased number. */
+            if (trailing_smooth(compiled.program)) {
+                sink.report(node, "anchor",
+                            "an anchor cannot sweep; declare the transition on the "
+                            "property the anchors read, and the whole shape follows it",
+                            where + "." + it.key());
                 continue;
             }
             row[it.key()] = std::move(compiled.program);
@@ -212,6 +261,33 @@ std::vector<std::string> collect_props(const Json& rows, const std::string& path
                         "'" + name + "' is already in scope here as '" + *above +
                             "'; the node's own wins below this point",
                         "name");
+        /* THE TRANSITION ON A PROPERTY: every rendered read of this slot eases toward
+         * the true value — one declaration, and the needle, the arc and the readout all
+         * sweep together. The VALUE never eases: behavior, the wire and gestures read
+         * truth, so this is checked here and served as slot metadata, never compiled.
+         * NUMBERS ONLY: the view tweens a number; a colour cross-fades on the attribute
+         * that draws it, where the browser owns the blend. */
+        auto smooth = prop.find("smooth");
+        if (smooth != prop.end() && smooth->is_number() && smooth->get<double>() != 0) {
+            const double ms = smooth->get<double>();
+            if (!(ms > 0 && ms <= 600000))
+                sink.report(id_of(prop), "prop_smooth",
+                            "a property's transition is a time between 1 and 600000 "
+                            "milliseconds (0 or absent = none)",
+                            "smooth");
+            else if (str_or(prop, "shape", "num") != std::string("num"))
+                sink.report(id_of(prop), "prop_smooth",
+                            "only a number property sweeps; a colour cross-fades on "
+                            "the attribute that draws it (surface: "
+                            "fill_color.smooth(250))",
+                            "smooth");
+        }
+        const std::string profile = str_or(prop, "profile", "");
+        if (!profile.empty() && !easing_profile(profile))
+            sink.report(id_of(prop), "prop_smooth",
+                        "'" + profile + "' is not an easing profile: linear, ease, "
+                        "ease-in, ease-out or ease-in-out",
+                        "profile");
         names.push_back(name);
         slots.push_back(slot_row(prop, path.empty() ? name : path + "." + name));
     }
@@ -321,7 +397,7 @@ Json compile_common(const Json& node, const std::string& kind, const Json& attrs
                     const TemplateScope& scope, uint64_t node_id, Sink& sink) {
     Json out{{"kind", kind},
              {"name", str_or(node, "name", "")},
-             {"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
+             {"attrs", compile_attrs(attrs, scope, node_id, "", sink, kind.c_str())}};
     if (kind == "path") {
         out["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
                                          node_id, sink);
@@ -391,7 +467,7 @@ void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
     const Json attrs = shown_attrs(node.value("attrs", Json::object()), path, walk);
-    Json row{{"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
+    Json row{{"attrs", compile_attrs(attrs, scope, node_id, "", sink, kind.c_str())}};
     if (kind == "path")
         row["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
                                          node_id, sink);
@@ -425,6 +501,19 @@ Json slot_row(const Json& prop, const std::string& address) {
     for (const char* key : {"step", "min", "max"}) {
         auto it = prop.find(key);
         if (it != prop.end() && it->is_number()) out[key] = *it;
+    }
+    /* the declared transition, served only where it is well-formed (a number property,
+       a legal time): the view treats an absent key as "no sweep", so a refused
+       declaration degrades to honesty */
+    auto smooth = prop.find("smooth");
+    if (smooth != prop.end() && smooth->is_number() &&
+        str_or(prop, "shape", "num") == std::string("num")) {
+        const double ms = smooth->get<double>();
+        if (ms > 0 && ms <= 600000) {
+            out["smooth"] = ms;
+            const std::string profile = str_or(prop, "profile", "");
+            if (easing_profile(profile)) out["profile"] = profile;
+        }
     }
     return out;
 }
@@ -563,7 +652,7 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
         const std::string kind = str_or(node, "kind", "frame");
         check_attr_names(node.value("attrs", Json::object()), kind, id, sink);
         Json row{{"attrs", compile_attrs(node.value("attrs", Json::object()), scope, id, "",
-                                         sink)}};
+                                         sink, kind.c_str())}};
         if (kind == "path")
             row["anchors"] =
                 compile_anchors(node.value("anchors", Json::array()), scope, id, sink);

@@ -5,11 +5,13 @@
 #include "check.h"
 #include "compile/compiler.h"
 #include "compile/components.h"
+#include "lang/expression.h"
 #include "lang/template_expr.h"
 #include "doc/doc.h"
 #include "mesh/fake.h"
 #include "registry/attrs.h"
 #include "registry/registry.h"
+#include "vm/program.h"
 
 #include <set>
 #include <string>
@@ -919,6 +921,168 @@ void test_attr_vocabulary() {
     }
 }
 
+/* TRANSITIONS ARE RENDERING (smooth): the parser's marker and its refusals, the hoist
+ * into program metadata at the attr sites with the num/color gate, the refusals at the
+ * sites where nothing can sweep, and the property declaration served as slot metadata.
+ * Nothing here touches the VM: the true value is never eased anywhere the backend runs. */
+void test_smooth() {
+    const TemplateScope scope = scope_of({"value", "fill_color", "options"});
+
+    /* the parser: a trailing marker, literals only, the closed profile vocabulary */
+    CHECK_EQ(lower("value.smooth(300)", scope), "LOAD(slot:value) SMOOTH");
+    CHECK_EQ(lower("(value * 2).smooth(150, 'ease-out')", scope),
+             "LOAD(slot:value) CONST(2.0) MUL SMOOTH");
+    {
+        TemplateExprResult result = compile_template_expr("value.smooth(250)", scope);
+        CHECK(result.ok);
+        CHECK_EQ(result.program["code"].back().value("ms", 0.0), 250.0);
+        CHECK_EQ(result.program["code"].back().value("profile", ""),
+                 std::string("ease"));   /* the default profile */
+    }
+    CHECK(refuses("value.smooth(300, 'bouncy')", scope, "not an easing profile"));
+    CHECK(refuses("value.smooth(0)", scope, "between 1 and 600000"));
+    CHECK(refuses("value.smooth(-5)", scope, "number literal"));
+    CHECK(refuses("value.smooth(value)", scope, "number literal"));
+    /* it wraps the WHOLE value, once, at the end */
+    CHECK(refuses("value.smooth(300) + 1", scope, "wraps the whole expression"));
+    CHECK(refuses("value.smooth(100).smooth(200)", scope, "wraps the whole expression"));
+    CHECK(refuses("options.map(v => v.smooth(100))", scope, "inside a lambda"));
+    CHECK(refuses("smooth(value, 300)", scope, "written after the value"));
+
+    /* the attr sites: the marker hoists OUT of the code into program metadata on a num
+     * or color attr, and everything else refuses with the pointer at the property */
+    Json comp = {
+        {"id", 800}, {"name", "Sweep"},
+        {"props", Json::array({
+            Json{{"id", 801}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
+                 {"group", "value"}, {"smooth", 400.0}, {"profile", "ease-out"}},
+            Json{{"id", 802}, {"name", "fill_color"}, {"shape", "color"},
+                 {"default", "$accent"}, {"group", "appearance"}},
+            Json{{"id", 804}, {"name", "rate"}, {"shape", "num"}, {"default", 1.0},
+                 {"group", "config"}, {"smooth", 250.0}},
+            Json{{"id", 803}, {"name", "label"}, {"shape", "text"}, {"default", "hi"},
+                 {"group", "config"}},
+        })},
+        {"children", Json::array({
+            Json{{"id", 811}, {"kind", "frame"}, {"name", "bar"},
+                 {"attrs", Json{{"w", "value.smooth(300)"},
+                                {"rotate", "value.smooth(250, 'ease-out')"},
+                                {"surface", "fill_color.smooth(400)"},
+                                {"show", "value.smooth(100)"}}},
+                 {"interact", Json{{"primitive", "drag1d"},
+                                   {"params", Json{{"min", "value.smooth(100)"}}}}}},
+            Json{{"id", 812}, {"kind", "text"}, {"name", "cap"},
+                 {"attrs", Json{{"text", "label.smooth(300)"}}}},
+            Json{{"id", 813}, {"kind", "path"}, {"name", "line"},
+                 {"anchors", Json::array({Json{{"x", "value.smooth(100)"}, {"y", "0"}}})}},
+        })},
+    };
+    Json root = {
+        {"version", 1}, {"next_id", 900},
+        {"components", Json::array({std::move(comp)})},
+        {"pages", Json::array()},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    std::vector<Diag> diags;
+    Json registry = derive_registry(document, diags);
+
+    const Json& sweep = registry["types"][12];
+    const Json& bar = sweep["template"]["children"][0];
+    /* hoisted: the code is the plain program, the transition rides beside it */
+    CHECK_EQ(ops_of(bar["attrs"]["w"]), "LOAD(slot:value)");
+    CHECK_EQ(bar["attrs"]["w"]["smooth"].value("ms", 0.0), 300.0);
+    CHECK_EQ(bar["attrs"]["w"]["smooth"].value("profile", ""), std::string("ease"));
+    CHECK_EQ(bar["attrs"]["rotate"]["smooth"].value("profile", ""),
+             std::string("ease-out"));
+    CHECK_EQ(ops_of(bar["attrs"]["surface"]), "LOAD(slot:fill_color)");
+    CHECK_EQ(bar["attrs"]["surface"]["smooth"].value("ms", 0.0), 400.0);
+
+    /* the refusals: a bool attr, a text attr, a gesture param, an anchor — each named,
+     * each degrading to an unserved field rather than a wrong sweep */
+    CHECK(!bar["attrs"].contains("show"));
+    CHECK(!bar["interact"]["params"].contains("min"));
+    CHECK(!sweep["template"]["children"][1]["attrs"].contains("text"));
+    CHECK(sweep["template"]["children"][2]["anchors"][0].contains("y"));
+    CHECK(!sweep["template"]["children"][2]["anchors"][0].contains("x"));
+    std::set<std::string> wheres;
+    for (const Diag& d : diags) wheres.insert(d.where);
+    CHECK_EQ(diags.size(), size_t(4));
+    CHECK(wheres.count("show") == 1);
+    CHECK(wheres.count("text") == 1);
+    CHECK(wheres.count("interact.min") == 1);
+    CHECK(wheres.count("anchors[0].x") == 1);
+
+    /* the property declaration serves as slot metadata, exactly as authored */
+    auto slot_named = [&](const char* name) -> const Json* {
+        for (const Json& slot : sweep["slots"])
+            if (slot.value("name", "") == name) return &slot;
+        return nullptr;
+    };
+    const Json* value = slot_named("value");
+    CHECK(value && value->value("smooth", 0.0) == 400.0 &&
+          value->value("profile", "") == "ease-out");
+    const Json* rate = slot_named("rate");
+    /* no profile authored: the key is absent and the view defaults it */
+    CHECK(rate && rate->value("smooth", 0.0) == 250.0 && !rate->contains("profile"));
+    const Json* label = slot_named("label");
+    CHECK(label && !label->contains("smooth"));
+
+    /* a malformed declaration is a finding and is not served — and ONLY a number
+     * property sweeps: a colour's transition belongs on the attribute that draws it */
+    {
+        Json bad = {
+            {"version", 1}, {"next_id", 900},
+            {"components", Json::array({Json{
+                {"id", 820}, {"name", "BadSweep"},
+                {"props", Json::array({
+                    Json{{"id", 821}, {"name", "a"}, {"shape", "num"}, {"default", 0.0},
+                         {"group", "value"}, {"smooth", -20.0}},
+                    Json{{"id", 822}, {"name", "b"}, {"shape", "num"}, {"default", 0.0},
+                         {"group", "value"}, {"smooth", 100.0}, {"profile", "bounce"}},
+                    Json{{"id", 823}, {"name", "c"}, {"shape", "color"},
+                         {"default", "#fff"}, {"group", "appearance"},
+                         {"smooth", 100.0}},
+                })}}})},
+            {"pages", Json::array()},
+        };
+        Document document2;
+        std::string error2;
+        CHECK_MSG(document2.adopt(std::move(bad), error2), error2);
+        std::vector<Diag> diags2;
+        Json registry2 = derive_registry(document2, diags2);
+        CHECK_EQ(diags2.size(), size_t(3));
+        for (const Diag& d : diags2) CHECK_EQ(d.code, std::string("prop_smooth"));
+        const Json& slots = registry2["types"][12]["slots"];
+        CHECK(!slots[0].contains("smooth"));
+        /* the ms was legal, the profile was not: the sweep serves, the profile does not */
+        CHECK(slots[1].value("smooth", 0.0) == 100.0 && !slots[1].contains("profile"));
+        CHECK(!slots[2].contains("smooth"));   /* a colour never sweeps at the slot */
+    }
+
+    /* THE SCALAR TIER REFUSES BY NAME, teaching where a transition lives: a flow, a
+     * feed and the wire all read the true value, so smooth has no meaning there */
+    {
+        ExpressionScope escope;
+        Binding value_binding;
+        value_binding.shape = Shape::Num;
+        escope.names["value"] = value_binding;
+        Program program;
+        ProgramEmit emit(program);
+        std::vector<Instruction> code;
+        ExpressionResult eresult;
+        std::string eerror;
+        CHECK(!compile_expression("value.smooth(300)", ExprTier::Display, escope, emit,
+                                  code, eresult, eerror));
+        CHECK(eerror.find("eases what a view draws") != std::string::npos);
+        eerror.clear();
+        CHECK(!compile_expression("value.smooth(300)", ExprTier::Wire, escope, emit,
+                                  code, eresult, eerror));
+        CHECK(eerror.find("declare the transition on the property") != std::string::npos);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -931,5 +1095,6 @@ int main() {
     test_part_property_rules();
     test_empty_component();
     test_attr_vocabulary();
+    test_smooth();
     return check::summary("component_test");
 }

@@ -202,6 +202,14 @@ bool attr_known(const std::string& kind, const std::string& attr_name) {
     return false;
 }
 
+const char* attr_shape(const std::string& kind, const std::string& attr_name) {
+    for (const AttrDef& a : common_attrs())
+        if (attr_name == a.name) return a.shape;
+    for (const AttrDef& a : kind_attrs(kind))
+        if (attr_name == a.name) return a.shape;
+    return "";
+}
+
 const Json& attr_table_json() {
     static const Json table = [] {
         Json kinds = Json::array();

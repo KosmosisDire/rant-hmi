@@ -56,6 +56,10 @@ const std::vector<AttrDef>& kind_attrs(const std::string& kind);
 /* is `attr_name` in the common set or `kind`'s own set? */
 bool attr_known(const std::string& kind, const std::string& attr_name);
 
+/* the declared shape of one attr on one kind, "" where the table has no such row —
+ * what the smooth() gate reads: numbers tween, colours cross-fade, nothing else sweeps */
+const char* attr_shape(const std::string& kind, const std::string& attr_name);
+
 /* the served wire shape, carried in the snapshot next to `lang` (app.cpp) exactly like
  * `builtins`: {"kinds": [...], "common": [AttrDef...], "perKind": {kind: [AttrDef...]}}.
  * Never changes at runtime, so served once and cached like builtin_registry(). */

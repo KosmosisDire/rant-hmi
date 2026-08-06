@@ -288,6 +288,11 @@ const std::vector<NodeSpec>& table() {
             num("step", nullptr),
             num("min", nullptr),
             num("max", nullptr),
+            /* THE DECLARED TRANSITION: every rendered read of this slot eases over
+               `smooth` milliseconds along `profile` (a CSS easing name). Rendering only:
+               behavior, feeds, the wire and gestures always read the true value. */
+            num("smooth", nullptr),
+            text("profile", ""),
         };
         t.push_back(prop);
 

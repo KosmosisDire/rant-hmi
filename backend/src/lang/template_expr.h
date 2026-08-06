@@ -100,4 +100,8 @@ struct TemplateExprResult {
 TemplateExprResult compile_template_expr(const std::string& text,
                                          const TemplateScope& scope);
 
+/* is `name` an easing profile smooth() (and a property's `profile` field) accepts?
+ * One vocabulary — the CSS names — shared by the parser and the property validation. */
+bool easing_profile(const std::string& name);
+
 } // namespace hmi
