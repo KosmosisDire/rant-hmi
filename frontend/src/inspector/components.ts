@@ -677,6 +677,29 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
     editor,
   );
 
+  /* THE DECLARED TRANSITION, number properties only: rendered reads of this slot sweep
+     toward the true value over this many ms — the needle, the arc and the readout all
+     together — while behavior, gestures and the wire keep reading truth. 0 = none. */
+  const sweep = commitInput(
+    typeof prop.smooth === "number" && prop.smooth > 0 ? String(prop.smooth) : "",
+    (text) => {
+      const ms = Number(text);
+      editor.apply([{ op: "set_prop", node: prop.id, key: "smooth",
+                      value: Number.isFinite(ms) && ms > 0 ? ms : 0 }]);
+    },
+    { class: "field", placeholder: "none" },
+  );
+  bindField(prop.id + ":smooth", sweep, () => {
+    const ms = (at() as PropDef).smooth;
+    return typeof ms === "number" && ms > 0 ? String(ms) : "";
+  });
+  const profile = selectField(
+    ["ease", "linear", "ease-in", "ease-out", "ease-in-out"].map((v) => ({ value: v })),
+    prop.profile || "ease",
+    (v) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile", value: v }]),
+  );
+  bindChoice(prop.id + ":profile", pickerOf(profile), () => at().profile || "ease");
+
   return el("div", { class: "propdef" }, [
     el("div", { class: "row" }, [
       name,
@@ -692,6 +715,14 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
       el("span", { class: "row-label", text: "GROUP" }),
       group,
     ]),
+    prop.shape === "num"
+      ? el("div", { class: "row" }, [
+          el("span", { class: "row-label", text: "SWEEP MS" }),
+          sweep,
+          profile,
+          diagIcon(editor.diagAt(prop.id, "smooth") ?? editor.diagAt(prop.id, "profile")),
+        ])
+      : null,
   ]);
 }
 
