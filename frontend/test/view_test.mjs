@@ -39,7 +39,7 @@ const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.
 const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
 const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
-const { renderStage } = await import(mod("stage.js"));
+const { renderStage, setTransitionClock, stepTransitions } = await import(mod("stage.js"));
 const { dropAtPageEnd, dropPlan, dropZone, fmtFraction, fmtPx, freeAllowed, freeBoxOf,
         freePlan, settle, snapPx } =
   await import(mod("arrange.js"));
@@ -1917,6 +1917,181 @@ check(stageNode("frame", 901) === heldAgain &&
   draw();
   check(rNode(511) === rig && !rNode(510).style.pointerEvents,
         "flipping back is a patch too: same elements, the regime taken off");
+}
+
+/* ---- TRANSITIONS: the view eases what it draws ----
+   The true value is never eased anywhere — behavior, the wire and gestures read truth —
+   so what these pin is the RENDERING contract: a smoothed number approaches its target
+   over the authored time (stepped here on a hand clock), a retarget starts from what is
+   shown, structure reads truth, a colour hands its blend to a native CSS transition, and
+   the SMOOTH marker is inert if it ever reaches the interpreter unhoisted. */
+{
+  /* the interpreter: an unhoisted marker passes the true value through untouched */
+  check(run({ code: [{ op: "CONST", v: 5 }, { op: "SMOOTH", ms: 100, profile: "ease" }] },
+            () => null) === 5,
+        "an unhoisted SMOOTH op is a no-op: the true value, never a wrong number");
+
+  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  /* a type whose `value` PROPERTY declares the transition: the bar's position and the
+     gate's visibility both read the same slot, and only the PICTURE of it may sweep */
+  const sweepType = {
+    name: "Sweeper", design_w: 220, design_h: 110, events: [],
+    slots: [{ name: "value", shape: "num", default: 0.2, group: "value",
+              smooth: 200, profile: "linear" }],
+    template: { kind: "frame", name: "", attrs: {}, children: [
+      { kind: "frame", name: "bar", attrs: { x: cell("slot:value"), w: prog(0.1),
+                                             h: prog(0.5) } },
+      { kind: "frame", name: "gate",
+        attrs: { show: { code: [{ op: "LOAD", cell: "slot:value" },
+                                { op: "CONST", v: 0.9 }, { op: "GT" }] },
+                 surface: prog("#111111"), w: prog(0.1), h: prog(0.1) } },
+    ] },
+  };
+  const tStore = new DocStore();
+  tStore.load({
+    version: 1, next_id: 999, globals: [], tokens: [], components: [],
+    pages: [{ id: 700, name: "Sweep", children: [
+      { id: 710, kind: "frame", name: "box", attrs: {}, children: [] },
+      { id: 711, kind: "frame", type: "Sweeper", name: "sw", attrs: {},
+        slots: {}, locals: [], feeds: [], flows: [] },
+    ] }],
+  });
+  const tAttrs = {
+    "710": { attrs: { x: prog(11), y: prog(11), w: prog(220), h: prog(110),
+                      surface: prog("#333333") } },
+    "711": { attrs: { x: prog(11), y: prog(200), w: prog(220), h: prog(110) } },
+  };
+  const tView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const tHost = new Element("section");
+  const tEditor = {
+    store: tStore, registry: { version: 1, types: [sweepType] }, nodeAttrs: tAttrs,
+    live: { epoch: 1, values: {} }, view: tView,
+    page: () => tStore.pages()[0],
+    contexts: [],
+    root() { return this.page(); },
+    artboard: () => ({ w: 1408, h: 792 }),
+    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    select: () => undefined, input: () => undefined,
+  };
+  let tnow = 1000;
+  setTransitionClock(() => tnow);
+  const tDraw = () => renderStage(tHost, tEditor);
+  const tNode = (id) => tHost.querySelectorAll("[data-id]")
+    .find((n) => n.getAttribute("data-id") === String(id)) ?? null;
+
+  tDraw();
+  const sw = tNode(711);
+  const bar = () => sw.children[0];
+  check(bar().style.left === "20%",
+        "first sight SNAPS: there is no sweep from nothing, got " + bar().style.left);
+  check(sw.children.length === 1, "the gate is honestly absent at 0.2");
+
+  /* the slot moves: the true value lands whole (structure, marks) while the picture
+     starts walking. Same epoch — this is a live frame, not a compile. */
+  tEditor.live = { epoch: 1, values: { "711.value": 1 } };
+  tDraw();
+  check(sw.children.length === 2,
+        "STRUCTURE READS TRUTH: the gate exists the moment the value passes 0.9, "
+        + "not 180ms later");
+  check(bar().style.left === "20%",
+        "while the eased picture has not moved yet, got " + bar().style.left);
+  tnow = 1100;
+  stepTransitions(tHost, tEditor, tnow);
+  check(Math.abs(parseFloat(bar().style.left) - 60) < 1e-9,
+        "half the time, half the way (linear), got " + bar().style.left);
+  tnow = 1250;
+  stepTransitions(tHost, tEditor, tnow);
+  check(bar().style.left === "100%", "and it settles exactly, got " + bar().style.left);
+
+  /* a retarget mid-flight starts FROM WHAT IS SHOWN, never a jump */
+  tEditor.live = { epoch: 1, values: { "711.value": 0 } };
+  tDraw();
+  tnow = 1350;
+  stepTransitions(tHost, tEditor, tnow);
+  tEditor.live = { epoch: 1, values: { "711.value": 1 } };
+  tDraw();
+  tnow = 1450;
+  stepTransitions(tHost, tEditor, tnow);
+  const mid = parseFloat(bar().style.left);
+  check(mid > 50 && mid < 100,
+        "a mid-flight retarget eases from the shown value toward the new one, got "
+        + bar().style.left);
+  tnow = 2000;
+  stepTransitions(tHost, tEditor, tnow);
+  check(bar().style.left === "100%", "and still settles exactly");
+
+  /* an ATTRIBUTE's own .smooth(): the hoisted metadata rides the program, numbers tween
+     under the bind, and a compile-epoch reconcile retargets on the same element */
+  tAttrs["710"].attrs.x = { code: [{ op: "CONST", v: 11 }],
+                            smooth: { ms: 100, profile: "linear" } };
+  tEditor.live = { epoch: 2, values: { "711.value": 1 } };
+  tnow = 3000;
+  tDraw();
+  const box = tNode(710);
+  check(box.style.left === "11px", "an attr's first sight snaps too");
+  tAttrs["710"].attrs.x = { code: [{ op: "CONST", v: 211 }],
+                            smooth: { ms: 100, profile: "linear" } };
+  tEditor.live = { epoch: 3, values: { "711.value": 1 } };
+  tDraw();
+  check(tNode(710) === box && box.style.left === "11px",
+        "a recompiled attr keeps its element and starts its sweep at the old number");
+  tnow = 3050;
+  stepTransitions(tHost, tEditor, tnow);
+  check(box.style.left === "111px", "an attr tween walks the same clock, got " + box.style.left);
+  tnow = 3200;
+  stepTransitions(tHost, tEditor, tnow);
+  check(box.style.left === "211px", "and settles on the authored number");
+
+  /* a COLOUR cross-fades in CSS: the smoothed colour attr writes a native transition
+     (the browser owns the blend — a var() token could not be tweened here), and a
+     numeric sweep never does */
+  tAttrs["710"].attrs.surface = { code: [{ op: "CONST", v: "#ff0000" }],
+                                  smooth: { ms: 300, profile: "ease-out" } };
+  tEditor.live = { epoch: 4, values: { "711.value": 1 } };
+  tDraw();
+  check(box.style.transition === "background-color 300ms ease-out",
+        "a smoothed colour is a native CSS transition, got " + box.style.transition);
+  tAttrs["710"].attrs.surface = prog("#ff0000");
+  tEditor.live = { epoch: 5, values: { "711.value": 1 } };
+  tDraw();
+  check(box.style.transition === "",
+        "and it clears with the smooth — the applier is total");
+
+  /* a live cell going away RESOLVES to the authored fallback — a renderable number —
+     and the picture eases toward it like any other move */
+  tnow = 4000;
+  tEditor.live = { epoch: 5, values: { "711.value": null } };
+  tDraw();
+  check(bar().style.left === "100%",
+        "a fallback is a retarget, not a jump, got " + bar().style.left);
+  tnow = 4200;
+  stepTransitions(tHost, tEditor, tnow);
+  check(bar().style.left === "20%", "easing home to the authored value");
+
+  /* TRUE NIL SNAPS: a slot with no value anywhere renders UNKNOWN at once — nothing
+     invents frames toward (or from) a value nobody produced. A NEW type row, because
+     the sweep table is cached per served type object (as a snapshot would deliver). */
+  tEditor.registry = { version: 2, types: [{
+    ...sweepType,
+    slots: [...sweepType.slots,
+            { name: "raw", shape: "num", group: "value", smooth: 200, profile: "linear" }],
+    template: { ...sweepType.template, children: [
+      ...sweepType.template.children,
+      { kind: "frame", name: "rawbar", attrs: { x: cell("slot:raw"), w: prog(0.1),
+                                                h: prog(0.2) } },
+    ] },
+  }] };
+  tEditor.live = { epoch: 6, values: { "711.raw": 0.5 } };
+  tDraw();
+  const rawbar = () => sw.children[sw.children.length - 1];
+  check(rawbar().style.left === "50%", "a fresh slot's first sight snaps");
+  tEditor.live = { epoch: 6, values: {} };
+  tDraw();
+  check(rawbar().style.left === "0%",
+        "and Nil ends the sweep at once: the unknown treatment, never an eased lie, got "
+        + rawbar().style.left);
+
+  setTransitionClock(null);
 }
 
 /* ---- the node inspector ----

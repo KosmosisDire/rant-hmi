@@ -130,9 +130,23 @@ interface StageState {
      diff, and the reason a frame that moved nothing this picture reads costs nothing */
   marks: Map<string, string>;
   /* the set a read is being recorded into, or null OUTSIDE an engine pass — a gesture
-     reading its params through a captured seat must never mask a pending live diff */
-  recording: { deps: Set<string> } | null;
+     reading its params through a captured seat must never mask a pending live diff.
+     `structural` marks a CHILD-LIST pass: show/repeat decisions read TRUE values, never
+     an eased one (a picture may sweep; which elements exist may not). */
+  recording: { deps: Set<string>; structural?: boolean } | null;
   pass: number;
+  /* ---- transitions (the sweep engine below) ---- */
+  /* every standing sweep, keyed "c:<cell>" for a slot's declared transition and
+     "a:<bind key>:<attr>" for an attribute's own .smooth() */
+  tweens: Map<string, Tween>;
+  /* THE PASS'S CLOCK, stamped once per pass: every sweep in one pass reads one instant,
+     so two attrs eased by one value can never disagree within a frame */
+  now: number;
+  /* a frame is already scheduled to advance the live sweeps */
+  ticking: boolean;
+  /* advance the sweeps and patch exactly their readers (set by renderStage, which
+     knows the editor — the flushState pattern) */
+  tick: () => void;
   /* what a RECONCILE is keyed on: mode, artboard size, document version, compile epoch */
   docSig: string;
   /* the theme vars last emitted on the page, so a token that left is removed */
@@ -171,6 +185,7 @@ function stateOf(host: HTMLElement): StageState {
   if (!state) {
     state = { host, page: null, root: null, binds: new Map(), byDep: new Map(),
               byKid: new Map(), marks: new Map(), recording: null, pass: 0,
+              tweens: new Map(), now: 0, ticking: false, tick: () => undefined,
               docSig: "", tokenNames: [], tokens: [], flushState: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
@@ -401,6 +416,231 @@ function pct(value: number): string {
   return value * 100 + "%";
 }
 
+/* ---- transitions: THE VIEW EASES WHAT IT DRAWS ----
+ *
+ * A TRANSITION IS RENDERING. The true value — what behavior reads, what the wire
+ * carries, what a gesture proposes — is never eased anywhere; what sweeps is this view's
+ * own picture of it, approaching the truth over an authored time. Two surfaces, one
+ * mechanism per value shape:
+ *
+ *   A NUMBER TWEENS HERE, in the view's own loop: an attribute whose program carries the
+ *   hoisted .smooth() metadata, and every applier-pass read of a slot whose PROPERTY
+ *   declares a transition. Derived pictures stay coherent — the needle, the arc and the
+ *   readout all follow the same eased number, and a shadow un-turned by an easing rotate
+ *   re-runs with it.
+ *
+ *   A COLOUR CROSS-FADES IN CSS: a colour is text here (often a var() the view never
+ *   resolves), so a smoothed colour attr writes a native `transition` on the element and
+ *   the browser owns the blend (the cssSweep table in runAppliers).
+ *
+ * WHAT NEVER SWEEPS: structural decisions (`show`, `repeat` — which elements exist),
+ * gesture-time reads (a proposal over an eased value would send a value that never
+ * existed), and anything that is not a number — Nil ENDS a sweep and snaps, because
+ * inventing frames between a value and UNKNOWN would draw values nobody produced.
+ * A first sight also snaps: there is no sweep from nothing. */
+interface Tween {
+  /* what the picture currently shows */
+  value: number;
+  from: number;
+  to: number;
+  start: number;
+  ms: number;
+  profile: string;
+  done: boolean;
+  /* a slot's declared transition: advance re-runs whatever binds read this cell */
+  cell: string | null;
+  /* an attribute's own .smooth(): the bind whose attr this is (dies with it) ... */
+  bind: string | null;
+  /* ... and every bind that READ it this picture (a child's shadow reading an
+     ancestor's easing rotate through turnOf must re-run with it) */
+  readers: Set<string>;
+}
+
+/* the CSS named curves, reproduced exactly so the numeric mechanism and the browser's
+   cross-fade agree on what "ease-out" means; linear (and any name this view does not
+   know) is the identity */
+const EASING: Record<string, [number, number, number, number]> = {
+  ease: [0.25, 0.1, 0.25, 1],
+  "ease-in": [0.42, 0, 1, 1],
+  "ease-out": [0, 0, 0.58, 1],
+  "ease-in-out": [0.42, 0, 0.58, 1],
+};
+
+/* cubic-bezier(x1, y1, x2, y2) sampled at time-fraction x: Newton first, bisection where
+   the derivative gives out — the standard solve, small and total */
+function bezierY(x1: number, y1: number, x2: number, y2: number, x: number): number {
+  const cx = 3 * x1;
+  const bx = 3 * (x2 - x1) - cx;
+  const ax = 1 - cx - bx;
+  const cy = 3 * y1;
+  const by = 3 * (y2 - y1) - cy;
+  const ay = 1 - cy - by;
+  const sampleX = (u: number) => ((ax * u + bx) * u + cx) * u;
+  const sampleY = (u: number) => ((ay * u + by) * u + cy) * u;
+  let u = x;
+  for (let i = 0; i < 8; i++) {
+    const err = sampleX(u) - x;
+    if (Math.abs(err) < 1e-6) return sampleY(u);
+    const d = (3 * ax * u + 2 * bx) * u + cx;
+    if (Math.abs(d) < 1e-6) break;
+    u -= err / d;
+  }
+  let lo = 0;
+  let hi = 1;
+  u = x;
+  while (hi - lo > 1e-6) {
+    u = (lo + hi) / 2;
+    if (sampleX(u) < x) lo = u;
+    else hi = u;
+  }
+  return sampleY(u);
+}
+
+function easeAt(profile: string, t: number): number {
+  const curve = EASING[profile];
+  return curve ? bezierY(curve[0], curve[1], curve[2], curve[3], t) : t;
+}
+
+/* the sweep clock; REPLACEABLE so a test can drive time by hand (a replaced clock also
+   stops the frame loop — the test steps explicitly instead) */
+let manualClock = false;
+let clock = (): number =>
+  typeof performance !== "undefined" ? performance.now() : Date.now();
+
+export function setTransitionClock(fn: (() => number) | null): void {
+  manualClock = fn !== null;
+  clock = fn ?? (() =>
+    typeof performance !== "undefined" ? performance.now() : Date.now());
+}
+
+function advanceTween(t: Tween, now: number): void {
+  if (t.done) return;
+  const at = t.ms > 0 ? (now - t.start) / t.ms : 1;
+  if (at >= 1) {
+    t.value = t.to;
+    t.done = true;
+    return;
+  }
+  t.value = t.from + (t.to - t.from) * easeAt(t.profile, at < 0 ? 0 : at);
+}
+
+/* ONE EASED READ. The target moving retunes the sweep FROM WHAT IS CURRENTLY SHOWN — a
+ * mid-flight retarget never jumps — and a non-number target (Nil included) ends the
+ * sweep and passes through untouched. */
+function tweenTo(state: StageState, key: string, target: Json, ms: number,
+                 profile: string, cell: string | null, bindKey: string | null,
+                 readerKey: string | null): Json {
+  if (typeof target !== "number" || !Number.isFinite(target)) {
+    state.tweens.delete(key);
+    return target;
+  }
+  let t = state.tweens.get(key);
+  if (!t) {
+    /* first sight: the picture starts AT the value — no sweep from nothing */
+    t = { value: target, from: target, to: target, start: 0, ms, profile, done: true,
+          cell, bind: bindKey, readers: new Set() };
+    state.tweens.set(key, t);
+  } else if (target !== t.to) {
+    t.from = t.value;
+    t.to = target;
+    t.start = state.now;
+    t.ms = ms;
+    t.profile = profile;
+    t.done = false;
+  }
+  if (readerKey) t.readers.add(readerKey);
+  advanceTween(t, state.now);
+  return t.value;
+}
+
+function tweensLive(state: StageState): boolean {
+  for (const t of state.tweens.values()) if (!t.done) return true;
+  return false;
+}
+
+/* one frame at a time, and only while something is actually in flight */
+function scheduleTweens(state: StageState): void {
+  if (state.ticking || manualClock || !tweensLive(state)) return;
+  state.ticking = true;
+  const frame = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (fn: () => void) => setTimeout(fn, 16);
+  frame(() => {
+    state.ticking = false;
+    state.tick();
+  });
+}
+
+/* the sweep pass: advance every live tween, then re-run EXACTLY its readers — the binds
+ * indexed under a slot tween's cell, an attr tween's own bind plus whoever read it.
+ * Exported for tests, which replace the clock and step this by hand. */
+export function stepTransitions(host: HTMLElement, editor: Editor, now?: number): void {
+  const state = stateOf(host);
+  state.now = now ?? clock();
+  const binds = new Set<Bind>();
+  for (const [key, t] of Array.from(state.tweens)) {
+    if (t.done) continue;
+    advanceTween(t, state.now);
+    if (t.cell) for (const bind of state.byDep.get(t.cell) ?? []) binds.add(bind);
+    if (t.bind) {
+      const own = state.binds.get(t.bind);
+      if (!own) {
+        /* its element left the tree: nothing to sweep on */
+        state.tweens.delete(key);
+        continue;
+      }
+      binds.add(own);
+      for (const reader of t.readers) {
+        const bind = state.binds.get(reader);
+        if (bind) binds.add(bind);
+      }
+    }
+  }
+  if (binds.size) {
+    state.pass++;
+    for (const bind of binds)
+      if (state.binds.get(bind.key) === bind && bind.pass !== state.pass)
+        runAppliers(state, editor, bind);
+    repaintFree();
+    positionRings(host, editor);
+  }
+  scheduleTweens(state);
+}
+
+/* the DECLARED transition of one slot, off the served type — cached per type row,
+   because this is asked on every slot read of every applier pass */
+const sweepSpecs = new WeakMap<WidgetType, Map<string, { ms: number; profile: string }>>();
+
+function slotSweep(type: WidgetType | null,
+                   name: string): { ms: number; profile: string } | null {
+  if (!type) return null;
+  let map = sweepSpecs.get(type);
+  if (!map) {
+    map = new Map();
+    for (const slot of type.slots)
+      if (typeof slot.smooth === "number" && slot.smooth > 0)
+        map.set(slot.name, { ms: slot.smooth, profile: slot.profile ?? "ease" });
+    sweepSpecs.set(type, map);
+  }
+  return map.get(name) ?? null;
+}
+
+/* WHOSE READ THIS IS, for the attr tweens: `runner` is the bind whose appliers are
+ * running (the reader), `owner` the bind whose attr is being read — they differ exactly
+ * in turnOf, where a child reads its ancestors' rotate. The css lists collect the colour
+ * transitions this bind's smoothed colour attrs want (written once, at the end of the
+ * pass). Null outside an applier pass, so a gesture's seat reads are never eased. */
+let easing: { state: StageState; runner: Bind; owner: Bind;
+              css: string[]; pathCss: string[] } | null = null;
+
+/* one smoothed COLOUR attr -> its native CSS transition entry: the browser owns the
+   blend, which is what lets a $token colour cross-fade without the view resolving it */
+function cssSweep(node: ViewNode, attr: string, cssProp: string, into: string[]): void {
+  const spec = (node.attrs?.[attr] as Program | undefined)?.smooth;
+  if (spec && spec.ms > 0)
+    into.push(cssProp + " " + spec.ms + "ms " + (spec.profile ?? "ease"));
+}
+
 /* ---- reading a node's fields ---- */
 
 /* ONE RECORDED READ. What a cell was worth is remembered against its key, so the live
@@ -435,23 +675,37 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
            of elements per frame to learn whether a plot moved is the cost that
            counter exists to remove. A Nil copy falls through to the authored value,
            exactly as a Nil scalar's omitted key does. */
-        const held = editor.agg?.(key) ?? null;
-        if (held) {
-          sawCell(state, key, "a" + held.version);
-          if (held.values !== null) return held.values;
-        } else {
-          const live = editor.live?.values?.[key];
-          sawCell(state, key, JSON.stringify(live ?? null));
-          if (live !== undefined && live !== null) return live;
+        const resolve = (): Json => {
+          const held = editor.agg?.(key) ?? null;
+          if (held) {
+            sawCell(state, key, "a" + held.version);
+            if (held.values !== null) return held.values;
+          } else {
+            const live = editor.live?.values?.[key];
+            sawCell(state, key, JSON.stringify(live ?? null));
+            if (live !== undefined && live !== null) return live;
+          }
+          const widget = editor.store.nodeAt(node.owner);
+          let at: Json = widget?.slots;
+          for (const segment of name.split(".")) {
+            if (!at || typeof at !== "object" || Array.isArray(at)) { at = undefined; break; }
+            at = at[segment];
+          }
+          if (at !== undefined) return at;
+          return node.type?.slots.find((s) => s.name === name)?.default ?? null;
+        };
+        const out = resolve();
+        /* THE PROPERTY'S DECLARED TRANSITION, applied to what an APPLIER pass reads —
+           and only there: a structural pass (which elements exist) and a gesture's seat
+           (recording null) always see the true value. The mark above records TRUTH, so
+           a live frame still retunes the sweep the moment the real value moves. */
+        if (state.recording && !state.recording.structural) {
+          const spec = slotSweep(node.type, name);
+          if (spec)
+            return tweenTo(state, "c:" + key, out, spec.ms, spec.profile, key,
+                           null, null);
         }
-        const widget = editor.store.nodeAt(node.owner);
-        let at: Json = widget?.slots;
-        for (const segment of name.split(".")) {
-          if (!at || typeof at !== "object" || Array.isArray(at)) { at = undefined; break; }
-          at = at[segment];
-        }
-        if (at !== undefined) return at;
-        return node.type?.slots.find((s) => s.name === name)?.default ?? null;
+        return out;
       }
       /* a token is a CSS custom property, not a colour this view resolves: the page root
          carries the values and the browser swaps them with the theme */
@@ -494,7 +748,16 @@ function markNow(editor: Editor, key: string): string {
 
 function attrOf(node: ViewNode, name: string, cells: Cells): Json {
   const program = node.attrs?.[name] as Program | undefined;
-  return program ? run(program, cells) : undefined;
+  if (!program) return undefined;
+  const out = run(program, cells);
+  /* the program's own transition (a trailing .smooth() the compiler hoisted): a NUMBER
+     eases here, keyed by the bind whose attr this is; a colour result falls through to
+     the cssSweep table in runAppliers, where the browser owns the blend */
+  const spec = program.smooth;
+  if (spec && spec.ms > 0 && easing && typeof out === "number")
+    return tweenTo(easing.state, "a:" + easing.owner.key + ":" + name, out, spec.ms,
+                   spec.profile ?? "ease", null, easing.owner.key, easing.runner.key);
+  return out;
 }
 
 /* A gesture's view-local look (state.pressed / dragging / open) lands here. The write is
@@ -620,10 +883,16 @@ interface Shadow {
  * dependency of this node's shadow and a frame that moves it re-runs exactly this bind. */
 function turnOf(state: StageState, editor: Editor, bind: Bind | null): number {
   let sum = 0;
+  const held = easing;
   for (let at = bind; at; at = at.parent) {
+    /* an ancestor's rotate is ITS attr: an easing one tweens under the ancestor's own
+       key (one sweep, every reader agreeing), and this bind registers as a reader so
+       the sweep's advance re-runs the shadow that depends on it */
+    if (held) easing = { ...held, owner: at };
     const turn = num(attrOf(at.node, "rotate", cellsFor(state, editor, at.node, at.repeat)));
     if (turn !== null) sum += turn;
   }
+  easing = held;
   return sum;
 }
 
@@ -991,6 +1260,10 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
   const deps = new Set<string>();
   const outer = state.recording;
   state.recording = { deps };
+  const heldEasing = easing;
+  const css: string[] = [];
+  const pathCss: string[] = [];
+  easing = { state, runner: bind, owner: bind, css, pathCss };
   try {
     const node = bind.node;
     const cells = cellsFor(state, editor, node, bind.repeat);
@@ -1012,9 +1285,29 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
       }
       regime(bind.el, node, editor, cells);
     }
+    /* THE COLOUR MECHANISM'S TABLE: which CSS property each smoothed colour attr lands
+       on, per what this kind casts it as. Numbers were already eased at attrOf; these
+       are exactly the attrs whose values are colour text, handed to the browser. An
+       INSET ink shadow is a url(#filter) and cannot blend, so it takes no entry. */
+    if (bind.key === ROOT_KEY || node.kind === "frame") {
+      cssSweep(node, "surface", "background-color", css);
+      cssSweep(node, "border", "border-color", css);
+      cssSweep(node, "shadow", "box-shadow", css);
+    } else if (node.kind === "text" || node.kind === "icon") {
+      cssSweep(node, "color", "color", css);
+      if (!shadow?.inset) cssSweep(node, "shadow", "filter", css);
+    } else if (node.kind === "path") {
+      cssSweep(node, "fill", "fill", pathCss);
+      cssSweep(node, "stroke", "stroke", pathCss);
+      if (!shadow?.inset) cssSweep(node, "shadow", "filter", css);
+    }
   } finally {
     state.recording = outer;
+    easing = heldEasing;
   }
+  /* TOTAL, like every applier: an element whose smoothed colours left carries none */
+  bind.el.style.transition = css.join(", ");
+  if (bind.path) bind.path.style.transition = pathCss.join(", ");
   bind.deps = deps;
   indexInto(state.byDep, deps, bind);
 }
@@ -1070,6 +1363,10 @@ function dropBind(state: StageState, key: string): void {
   dropFilter(state, bind);
   unindex(state.byDep, bind.deps, bind);
   unindex(state.byKid, bind.kidDeps, bind);
+  /* its attr sweeps die with it (a slot's sweep outlives any one reader) */
+  if (state.tweens.size)
+    for (const [tkey, t] of Array.from(state.tweens))
+      if (t.bind === key) state.tweens.delete(tkey);
 }
 
 /* a key its parent no longer wants. It stays only if ANOTHER parent claimed it this pass
@@ -1102,10 +1399,11 @@ function reconcileChildren(state: StageState, editor: Editor, parent: Bind,
                            outer: { index: number; count: number } | null): void {
   /* WHAT THE CHILD LIST READS is recorded against the parent: a `repeat` count or a
      `show` fed by a live cell reconciles this one parent when it moves, and nothing else
-     on the page hears about it. */
+     on the page hears about it. STRUCTURAL: which elements exist is decided over TRUE
+     values — a sweeping value must never flicker a node in and out mid-flight. */
   const deps = new Set<string>();
   const held = state.recording;
-  state.recording = { deps };
+  state.recording = { deps, structural: true };
   const want: Desired[] = [];
   try {
     children.forEach((child, at) => {
@@ -1219,6 +1517,8 @@ function forget(state: StageState): void {
   state.byDep.clear();
   state.byKid.clear();
   state.marks.clear();
+  /* a fresh picture starts AT its values: no sweep bridges a page switch */
+  state.tweens.clear();
   state.root = null;
   state.tokenNames = [];
   /* every bind is gone, so every filter one of them referenced is too */
@@ -1303,6 +1603,7 @@ function flushCell(host: HTMLElement, editor: Editor, key: string): void {
   const parents = Array.from(state.byKid.get(key) ?? []);
   const binds = Array.from(state.byDep.get(key) ?? []);
   if (!parents.length && !binds.length) return;
+  state.now = clock();
   state.pass++;
   for (const parent of parents)
     if (state.binds.get(parent.key) === parent)
@@ -1312,6 +1613,7 @@ function flushCell(host: HTMLElement, editor: Editor, key: string): void {
       runAppliers(state, editor, bind);
   repaintFree();
   positionRings(host, editor);
+  scheduleTweens(state);
 }
 
 /* ---- the rings ---- */
@@ -1541,6 +1843,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     fresh = true;
   }
   state.flushState = (key: string) => flushCell(host, editor, key);
+  state.tick = () => stepTransitions(host, editor);
 
   /* WHAT A RECONCILE IS OF: the MODE (edit and test wear different pointer regimes), the
      artboard's size, the document version — and the COMPILE EPOCH, which catches an edit
@@ -1551,6 +1854,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
      in or out is a FRESH build, above.) */
   const docSig = editor.view.mode + ":" + state.art.w + "x" + state.art.h + ":" +
     editor.store.version() + ":" + (editor.live?.epoch ?? 0);
+  state.now = clock();
   state.pass++;
 
   if (fresh || docSig !== state.docSig) {
@@ -1568,6 +1872,8 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     repaintFree();
   }
   positionRings(host, editor);
+  /* a pass may have set sweeps in flight: keep them advancing until they settle */
+  scheduleTweens(state);
 }
 
 /* the node the browser's own hit test named: the deepest one under the pointer, 0 where

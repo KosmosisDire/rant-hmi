@@ -220,6 +220,11 @@ export interface PropDef {
   step: number | null;
   min: number | null;
   max: number | null;
+  /* THE DECLARED TRANSITION, num-shaped properties only: every rendered read of this
+     slot eases over `smooth` ms along `profile` (a CSS easing name). Rendering only —
+     behavior, feeds, the wire and gestures always read the true value. 0 = none. */
+  smooth: number | null;
+  profile: string;
 }
 
 export interface ComponentDef {
@@ -257,11 +262,16 @@ export interface Doc {
 
 /* ---- registry ---- */
 
-export type Program = { code: Instr[] };
+/* A program, and — where the authored expression ended in .smooth(ms, profile) — the
+   TRANSITION the renderer applies to its result. The compiler hoists the trailing marker
+   out of the code, so the interpreter stays stateless: `code` computes the true value,
+   `smooth` says how the picture approaches it (stage.ts owns the easing). */
+export type Program = { code: Instr[]; smooth?: { ms: number; profile?: string } };
 /* One instruction. Most ops carry nothing; the fields below belong to exactly one family
    each and are absent everywhere else: `v` a CONST's literal, `cell` a LOAD's cell name,
    `n` how many values MAKE_LIST takes, `i` which binding an ARG reads, `mode` and `body`
-   the loop ITERATE runs per element (program.ts holds the contract). */
+   the loop ITERATE runs per element (program.ts holds the contract); `ms` and `profile`
+   ride the SMOOTH marker (pass-through if it ever reaches the interpreter unhoisted). */
 export type Instr = {
   op: string;
   v?: Json;
@@ -270,6 +280,8 @@ export type Instr = {
   i?: number;
   mode?: string;
   body?: Instr[];
+  ms?: number;
+  profile?: string;
 };
 
 export interface SlotSpec {
@@ -285,6 +297,11 @@ export interface SlotSpec {
   step?: number;       /* num slots: the caret step (fractions step fine, not by 1) */
   min?: number;        /* num slots: a BOUNDED slot edits as a slider beside the */
   max?: number;        /* field (the Unity treatment) and clamps typed values */
+  /* the DECLARED TRANSITION (num slots only): rendered reads of this slot ease over
+     `smooth` ms along `profile` (a CSS easing name, default ease). Rendering only —
+     structural reads, gestures and behavior always see the true value (stage.ts). */
+  smooth?: number;
+  profile?: string;
 }
 
 /* a component's DECLARED event: a function signature its behavior raises with the
