@@ -20,7 +20,7 @@
  * list around it. */
 
 import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
-import { cellText, diagIcon, Editor, variablesInScope } from "../editor.js";
+import { diagIcon, Editor, variablesInScope } from "../editor.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
@@ -152,6 +152,7 @@ export function flowShape(flow: Flow): Json {
     when.map((t: Json) => t?.kind ?? "event").join("|"),
     first.kind ?? "event",
     first.name ?? "",
+    first.part ?? "",
     Boolean(first.every_ms),
     targets(flow).map((t) => t.kind + ":" + t.name).join(","),
     (flow.do ?? []).map((step: Json) => [
@@ -166,6 +167,8 @@ export function flowShape(flow: Flow): Json {
       step.from?.local ?? "",
       step.to?.local ?? "",
       step.to?.name ?? "",
+      /* a raise's param fields are structure keyed by WHICH event it raises */
+      step.event ?? "",
       verbOf(step),
     ]),
   ];
@@ -503,23 +506,35 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
   const list = el("div", { class: "do-list" }, []);
   const steps = flow.do ?? [];
 
-  /* row 1 is the seed, and not editable: x starts as the value the widget proposes */
-  list.appendChild(
-    el("div", { class: "do-row" }, [
-      el("span", { class: "do-grip" }),
-      el("span", { class: "row-num", text: "1" }),
-      el("span", { class: "do-verb", text: "seed" }),
-      el("span", { class: "do-cell" }, [
-        el("span", { class: "do-say", title: "x starts as the widget's own value" }, [
-          el("span", { text: "x = widget value" }),
+  /* row 1 is the event's PARAMETER, given, not editable: what the call passed in,
+     bound under its declared name. A nullary trigger (tap, a timer, a beat) has no
+     given row — a moment carries nothing and the steps start at 1. */
+  const trigger = (flow.when ?? []).find(
+    (t: Json) => t?.kind === "event" || (!t?.kind && typeof t?.name === "string" && t.name));
+  const params = trigger
+    ? eventKind(String(trigger.name ?? ""))?.params ??
+      (type?.events ?? []).find((e) => e.name === trigger.name)?.params ?? []
+    : [];
+  for (const p of params)
+    list.appendChild(
+      el("div", { class: "do-row" }, [
+        el("span", { class: "do-grip" }),
+        el("span", { class: "row-num", text: "1" }),
+        el("span", { class: "do-verb", text: "given" }),
+        el("span", { class: "do-cell" }, [
+          el("span", { class: "do-say",
+                       title: "what " + String(trigger?.name ?? "the event") +
+                              " passed in, readable by this name in every step" }, [
+            el("span", { text: p.name + " (" + p.shape + ")" }),
+          ]),
         ]),
+        el("span", { class: "do-tail" }),
       ]),
-      el("span", { class: "do-tail" }, [liveChip(editor, flow.id + ":seed", widget.id + ".value")]),
-    ]),
-  );
+    );
 
   steps.forEach((step: Json, index: number) =>
-    list.appendChild(stepRow(editor, widget, type, flow, step, index, String(index + 2))),
+    list.appendChild(stepRow(editor, widget, type, flow, step, index,
+                             String(index + (params.length ? 2 : 1)))),
   );
 
   list.appendChild(
@@ -537,12 +552,6 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
     ]),
   );
   return list;
-}
-
-function liveChip(editor: Editor, key: string, cell: string): HTMLElement {
-  const node = chip("", "live");
-  bindText(key, node, () => cellText(editor, cell));
-  return node;
 }
 
 /* the declared shape of a move destination, where the document can say: a bare local's

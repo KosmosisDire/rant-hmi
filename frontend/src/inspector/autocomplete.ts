@@ -504,8 +504,9 @@ export function feedX(editor: Editor, widget: Node | null, feed: () => Feed) {
   };
 }
 
-/* what x IS at one row of a flow: the trigger's proposal, retyped by every `set x = ...`
- * above this row. An earlier row can change it, so the row matters. */
+/* what x IS at one row of a flow: the pipeline register — Nil until a `set x = ...`
+ * above this row fills it, retyped by each one. The event's own value arrives as a
+ * named PARAMETER (flowNames lists it), never as x. */
 export function flowX(editor: Editor, widget: Node | null, flow: () => Flow, stepId = 0) {
   return (): { shape: string; elem?: string; fields?: MeshField[] } | null =>
     scopeAt(editor, widget, flow(), stepId).x;

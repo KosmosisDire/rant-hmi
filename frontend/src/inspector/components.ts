@@ -26,9 +26,9 @@ import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "list", "map"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
-/* what an event's `x` may be: the shapes a PROPOSAL can have. A list or a map is not
-   one (a gesture never carries a history) and `enum` needs a type to name its variants,
-   which an event row has nowhere to put — the enum's own text name is what travels. */
+/* the shapes an event's PARAMETER may carry. A list or a map is not one (an event
+   passes a value, never a history) and `enum` needs a type to name its variants, which
+   a signature has nowhere to put — the enum's own text name is what travels. */
 const EVENT_SHAPES = ["bool", "num", "text", "color"];
 
 /* the closed attr vocabulary: `editor.attrTable` is snapshot-only data, so these read

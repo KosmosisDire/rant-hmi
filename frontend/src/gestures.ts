@@ -1,19 +1,18 @@
 /* THE GESTURE PRIMITIVES: what a pointer does to a rendered widget outside edit mode.
  *
  * A view is a view and an input device. These handlers REPORT gestures — press, drag1d,
- * drag_radial, pick — and never decide behavior: what the widget PROPOSES (`x`) is the
- * type's own declaration, evaluated and PINNED by the backend at pointer-down, and every
- * flow runs there, once, identically for every view. Four primitives, written once,
- * parameterized by the served `interact` row riding the node that carries the gesture —
- * the pill, the track, the dial — so the pressable area is the painted control and the
- * browser's own hit test names it.
+ * drag_radial, pick — and never decide behavior: every flow runs on the backend, once,
+ * identically for every view. Four primitives, written once, parameterized by the
+ * served `interact` row riding the node that carries the gesture — the pill, the track,
+ * the dial — so the pressable area is the painted control and the browser's own hit
+ * test names it.
  *
- * WHAT GOES ON THE WIRE, and nothing else: the emits table's own events. press sends
- * press / release / tap (held is the backend's — it schedules the hold itself); the
- * drags send input while moving and commit at the end; pick sends open and select. An
- * event whose type declares a `value` derivation goes WITHOUT a payload: the backend
- * evaluates the proposal, and a view-supplied copy would be the exact second authority
- * the rule exists to prevent.
+ * WHAT GOES ON THE WIRE: the CANONICAL gesture names with their fixed signatures, plus
+ * WHICH PART raised them. press sends press / release / tap as bare moments (held and
+ * pressrelease are the backend's — it schedules the hold and derives the edge); the
+ * drags send input(value) while moving and commit(value) at the end; pick sends open
+ * and select(option). No rename table and no payload rule: a component maps gestures to
+ * meaning in its own BEHAVIOR, where it can be read.
  *
  * FAIL-SAFE BY CONSTRUCTION: every gesture's listeners live on the window (a live
  * rebuild replaces the element mid-gesture and must not take the pointer with it), and
