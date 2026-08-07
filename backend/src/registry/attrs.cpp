@@ -69,8 +69,9 @@ const std::vector<AttrDef>& common_attrs_table() {
         no_def("h", "num", "height in canvas px; as `w`", "height"),
         no_def("min_w", "num",
                "the least width the box may render at; absent = none. Clamps whatever the "
-               "axis derives — an authored `w`, pinned edges, an aspect ratio — which is "
-               "what keeps an aspect-constrained box from collapsing", "min-width"),
+               "axis derives — an authored `w`, pinned edges, an aspect ratio — and on an "
+               "aspect-derived axis the clamp TRANSFERS through the ratio (see `aspect`), "
+               "which is what keeps an aspect-constrained box in shape", "min-width"),
         no_def("max_w", "num", "the most width the box may render at; absent = none; as "
                "`min_w`", "max-width"),
         no_def("min_h", "num", "the least height the box may render at; as `min_w`",
@@ -79,7 +80,11 @@ const std::vector<AttrDef>& common_attrs_table() {
                "max-height"),
         def("aspect", "num", 0.0,
             "0 = free; > 0 derives the UNAUTHORED one of w/h from the authored one at "
-            "that ratio (aspect-ratio). With both authored it is inert"),
+            "that ratio (aspect-ratio). With both authored it is inert. THE RATIO HOLDS "
+            "THROUGH THE CLAMPS: a min/max on the derived axis transfers back through "
+            "the ratio and shrinks or grows the authored axis with it, the way a "
+            "replaced element keeps its shape — so h + aspect + max_w is a box that "
+            "rides its height until the width bound bites, then scales down whole"),
         def("origin_x", "num", 0.0,
             "the node's OWN reference point on x, a fraction of its own width: the point "
             "`left` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle",

@@ -1541,6 +1541,23 @@ check(label.style.minWidth === "88px" && label.style.maxWidth === "352px" &&
         label.style.maxHeight === "132px" && label.style.minHeight === "",
       "the clamps land as their own properties, absent ones cleared, got min '" +
         label.style.minWidth + "'");
+/* CLAMPS TRANSFER THROUGH THE RATIO: where aspect derives an axis, that axis's clamps
+   fold into the AUTHORED axis's emitted size — converted through the ratio — so the
+   ratio holds through them (CSS alone clips the derived axis and breaks the shape) */
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), h: prog(110),
+                            aspect: prog(2), max_w: prog(330), min_w: prog(44) };
+stageEditor.live = { epoch: 25, values: {} };
+drawStage();
+check(label.style.height === "max(min(110px, 165px), 22px)" &&
+        label.style.width === "" && label.style.aspectRatio === "2",
+      "a derived axis's clamps fold into the authored height through the ratio, got '" +
+        label.style.height + "'");
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), w: prog(440),
+                            aspect: prog(4), max_h: prog(66) };
+stageEditor.live = { epoch: 26, values: {} };
+drawStage();
+check(label.style.width === "min(440px, 264px)" && label.style.height === "",
+      "and symmetrically into an authored width, got '" + label.style.width + "'");
 stageAttrs["904"].attrs = { left: prog(242), top: prog(22), w: prog(176), h: prog(110) };
 stageEditor.live = { epoch: 24, values: {} };
 drawStage();
@@ -2749,6 +2766,20 @@ check(stageNode("frame", 901) === heldAgain &&
   renderStage(ctxHost, ctxStage);
   check(ctxHost.querySelector(".page").style.width === "880px",
         "resizing the preview resizes the artboard: the fractions re-solve");
+
+  /* CLAMPS TRANSFER THROUGH THE RATIO in FRACTION space: the derived axis's bound
+     converts into the parent's cross-axis units — cqw, every box being a size container
+     (stage.css) — so a narrowing instance shrinks the height and the shape holds */
+  ctxAttrs["951"].attrs = { left: prog2(0), top: prog2(0.1), h: prog2(0.8),
+                            aspect: prog2(2), max_w: prog2(1) };
+  ctxStage.live = { epoch: 2, values: {} };
+  renderStage(ctxHost, ctxStage);
+  const fit = ctxHost.querySelectorAll(".frame")
+    .find((n) => n.getAttribute("data-id") === "951") ?? null;
+  check(fit !== null && fit.style.height === "min(80%, 50cqw)" &&
+          fit.style.width === "" && fit.style.aspectRatio === "2",
+        "a max_w on a height-authored aspect box folds in as its parent-width bound, "
+        + "got '" + fit?.style.height + "'");
 }
 
 /* ---- THE STANDING AGGREGATES: what the wire delivers vs. what the view holds ----

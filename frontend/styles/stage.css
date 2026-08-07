@@ -27,6 +27,18 @@
   box-sizing: border-box;
 }
 
+/* EVERY BOX IS A SIZE CONTAINER (2026-08-07). A box's size never depends on its content
+   — every child is absolutely positioned, out of flow — so size containment changes no
+   picture, and it gives children the cqw/cqh units: the cross-axis measure place() needs
+   to TRANSFER a clamp through an aspect ratio (a `max_w` on a height-authored aspect box
+   folds into the height as min(h, max_w/aspect), the way a replaced element keeps its
+   ratio under min/max). The ink kinds are leaves with real content and stay out of it. */
+.page,
+.frame,
+.leaf {
+  container-type: size;
+}
+
 .page .frame,
 .page .leaf {
   /* box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.45); */

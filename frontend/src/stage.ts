@@ -1012,6 +1012,43 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
      edges, and the width is theirs to decide. */
   const spanX = w === null && left === null && right === null;
   const spanY = h === null && top === null && bottom === null;
+  const minW = num(attrOf(node, "min_w", cells));
+  const maxW = num(attrOf(node, "max_w", cells));
+  const minH = num(attrOf(node, "min_h", cells));
+  const maxH = num(attrOf(node, "max_h", cells));
+
+  /* CLAMPS TRANSFER THROUGH THE RATIO. CSS derives an aspect axis one way only: a clamp
+     on the DERIVED axis clips it in place and lets the ratio break (only a replaced
+     element re-resolves the other axis). So where `aspect` is deriving one axis, the
+     derived axis's clamps fold into the AUTHORED axis's emitted size as min()/max()
+     terms — converted through the ratio — and the ratio holds through every clamp. The
+     cross-axis measure is cqw/cqh (every box is a size container, stage.css): a height
+     bounded by the parent's width is exactly what those units say. On a page the terms
+     are plain px and no container is consulted. */
+  const ratioed = aspect !== null && aspect > 0;
+  const derivesW = ratioed && h !== null && w === null && !spanX &&
+    !(left !== null && right !== null);
+  const derivesH = ratioed && w !== null && h === null && !spanY &&
+    !(top !== null && bottom !== null);
+  const fold = (base: string, upper: string | null, lower: string | null) => {
+    let out = base;
+    if (upper !== null) out = "min(" + out + ", " + upper + ")";
+    if (lower !== null) out = "max(" + out + ", " + lower + ")";
+    return out;
+  };
+  const crossW = (value: number) =>
+    px ? value / (aspect as number) + "px" : (100 * value) / (aspect as number) + "cqw";
+  const crossH = (value: number) =>
+    px ? value * (aspect as number) + "px" : 100 * value * (aspect as number) + "cqh";
+  const hText = h === null ? "" : derivesW
+    ? fold(unit(h), maxW !== null ? crossW(maxW) : null,
+                    minW !== null ? crossW(minW) : null)
+    : unit(h);
+  const wText = w === null ? "" : derivesH
+    ? fold(unit(w), maxH !== null ? crossH(maxH) : null,
+                    minH !== null ? crossH(minH) : null)
+    : unit(w);
+
   if (spanX) {
     el.style.left = "0";
     el.style.right = "0";
@@ -1022,7 +1059,7 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
     el.style.left = left !== null ? unit(left) : right !== null ? "" : unit(0);
     el.style.right = right !== null ? unit(right) : "";
     el.style.width =
-      w !== null && !(left !== null && right !== null) ? unit(w) : "";
+      w !== null && !(left !== null && right !== null) ? wText : "";
   }
   if (spanY) {
     el.style.top = "0";
@@ -1032,17 +1069,13 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
     el.style.top = top !== null ? unit(top) : bottom !== null ? "" : unit(0);
     el.style.bottom = bottom !== null ? unit(bottom) : "";
     el.style.height =
-      h !== null && !(top !== null && bottom !== null) ? unit(h) : "";
+      h !== null && !(top !== null && bottom !== null) ? hText : "";
   }
-  const minW = num(attrOf(node, "min_w", cells));
-  const maxW = num(attrOf(node, "max_w", cells));
-  const minH = num(attrOf(node, "min_h", cells));
-  const maxH = num(attrOf(node, "max_h", cells));
   el.style.minWidth = minW !== null ? unit(minW) : "";
   el.style.maxWidth = maxW !== null ? unit(maxW) : "";
   el.style.minHeight = minH !== null ? unit(minH) : "";
   el.style.maxHeight = maxH !== null ? unit(maxH) : "";
-  el.style.aspectRatio = aspect !== null && aspect > 0 ? String(aspect) : "";
+  el.style.aspectRatio = ratioed ? String(aspect) : "";
 
   /* ONE REFERENCE POINT serves both jobs: the point `left`/`top` places, and the pivot
      `rotate` turns about — a fraction of the node's OWN box in either unit system, so a
