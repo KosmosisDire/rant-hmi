@@ -97,12 +97,23 @@ export interface AttrDef {
  *
  * {attr: {ms, profile?}} on a node — the view merges the rows into the element's native
  * CSS `transition`, so the browser owns every blend. RENDERING ONLY: the value the attr
- * computes is never eased; profiles are the CSS easing names, absent = ease. */
+ * computes is never eased.
+ *
+ * The VALUES are expressions like every other field: authored as a number / a bare
+ * easing name (the degenerate literals the button writes) or expression text over the
+ * node's own scope ("1000 / rate"); served COMPILED as view programs the renderer
+ * evaluates over TRUE values — a duration computed from an eased value would retune
+ * itself mid-flight. */
 export interface TransitionSpec {
-  ms: number;
+  ms: number | string;
   profile?: string;
 }
 export type TransitionMap = Record<string, TransitionSpec>;
+export interface CompiledTransition {
+  ms: Program;
+  profile?: Program;
+}
+export type CompiledTransitionMap = Record<string, CompiledTransition>;
 
 export interface AttrTable {
   /* the four node kinds: frame, text, icon, path */
@@ -238,9 +249,11 @@ export interface PropDef {
   min: number | null;
   max: number | null;
   /* THE DECLARED TRANSITION, num-shaped properties only: every rendered read of this
-     slot eases over `smooth` ms along `profile` (a CSS easing name). Rendering only —
-     behavior, feeds, the wire and gestures always read the true value. 0 = none. */
-  smooth: number | null;
+     slot eases over `smooth` ms along `profile`. Both are EXPRESSIONS over the
+     declaring node's scope (a number / bare easing name is the degenerate literal).
+     Rendering only — behavior, feeds, the wire and gestures always read the true
+     value. 0 / "" = none. */
+  smooth: number | string | null;
   profile: string;
 }
 
@@ -308,10 +321,11 @@ export interface SlotSpec {
   min?: number;        /* num slots: a BOUNDED slot edits as a slider beside the */
   max?: number;        /* field (the Unity treatment) and clamps typed values */
   /* the DECLARED TRANSITION (num slots only): rendered reads of this slot ease over
-     `smooth` ms along `profile` (a CSS easing name, default ease). Rendering only —
-     structural reads, gestures and behavior always see the true value (stage.ts). */
-  smooth?: number;
-  profile?: string;
+     `smooth` ms along `profile`. Served as compiled view PROGRAMS (a plain number /
+     name is tolerated for old fixtures); evaluated over TRUE values per sweep start.
+     Rendering only — structural reads, gestures and behavior see truth (stage.ts). */
+  smooth?: Program | number;
+  profile?: Program | string;
 }
 
 /* a component's DECLARED event: a function signature its behavior raises with the
@@ -444,8 +458,8 @@ export interface TemplateNode {
   kind: NodeKind;
   name?: string;
   attrs: Attrs;
-  /* the node's validated per-attr transitions, passed through beside the compiled attrs */
-  transitions?: TransitionMap;
+  /* the node's compiled per-attr transitions, served beside the compiled attrs */
+  transitions?: CompiledTransitionMap;
   children?: TemplateNode[];
   interact?: Interact;
   anchors?: CompiledAnchor[];
@@ -459,8 +473,8 @@ export interface TemplateNode {
 export interface NodeAttrs {
   attrs: Attrs;
   anchors?: CompiledAnchor[];
-  /* the node's validated transitions, passed through beside its compiled attrs */
-  transitions?: TransitionMap;
+  /* the node's compiled transitions, served beside its compiled attrs */
+  transitions?: CompiledTransitionMap;
 }
 
 export interface WidgetType {

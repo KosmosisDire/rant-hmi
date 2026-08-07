@@ -1938,9 +1938,13 @@ check(stageNode("frame", 901) === heldAgain &&
     slots: [{ name: "value", shape: "num", default: 0.2, group: "value",
               smooth: 200, profile: "linear" }],
     template: { kind: "frame", name: "", attrs: {}, children: [
+      /* the width transition's DURATION is an expression over the smoothed slot: what
+         it must read is the TRUE value, never the eased picture of it */
       { kind: "frame", name: "bar", attrs: { x: cell("slot:value"), w: prog(0.1),
                                              h: prog(0.5) },
-        transitions: { w: { ms: 150 } } },
+        transitions: { w: { ms: { code: [{ op: "LOAD", cell: "slot:value" },
+                                         { op: "CONST", v: 1000 },
+                                         { op: "MUL" }] } } } },
       { kind: "frame", name: "gate",
         attrs: { show: { code: [{ op: "LOAD", cell: "slot:value" },
                                 { op: "CONST", v: 0.9 }, { op: "GT" }] },
@@ -1987,10 +1991,11 @@ check(stageNode("frame", 901) === heldAgain &&
   check(sw.children.length === 1, "the gate is honestly absent at 0.2");
 
   /* THE ATTR MECHANISM IS METADATA -> the native `transition` property, per entry, per
-     rate -- and TOTAL: rows that leave take their entries with them */
-  check(bar().style.transition === "width 150ms ease",
-        "a template node's transition metadata reaches its element, got '" +
-          bar().style.transition + "'");
+     rate -- and TOTAL: rows that leave take their entries with them. The DURATION here
+     is an expression (value * 1000) evaluated over the true value 0.2. */
+  check(bar().style.transition === "width 200ms ease",
+        "a template node's transition metadata reaches its element, its duration an "
+        + "expression over the node's own scope, got '" + bar().style.transition + "'");
   tAttrs["710"].transitions = { x: { ms: 400, profile: "linear" },
                                 surface: { ms: 300, profile: "ease-out" } };
   tEditor.live = { epoch: 2, values: {} };
@@ -2016,6 +2021,9 @@ check(stageNode("frame", 901) === heldAgain &&
         + "not 180ms later");
   check(bar().style.left === "20%",
         "while the eased picture has not moved yet, got " + bar().style.left);
+  check(bar().style.transition === "width 1000ms ease",
+        "AND A DURATION READS TRUTH: the expression sees 1 at once, not the eased "
+        + "0.2-and-climbing, got '" + bar().style.transition + "'");
   tnow = 1100;
   stepTransitions(tHost, tEditor, tnow);
   check(Math.abs(parseFloat(bar().style.left) - 60) < 1e-9,

@@ -55,8 +55,8 @@ import { armStage, repaintFree, stageBusy } from "./manipulate.js";
 import { attrText, Cells, run } from "./program.js";
 import { operable, typeOf } from "./slots.js";
 import {
-  Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, Interact, isInstance, Json, Node, Page,
-  Program, TemplateNode, Token, TransitionMap, WidgetType,
+  Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, CompiledTransitionMap, Interact, isInstance,
+  Json, Node, Page, Program, TemplateNode, Token, WidgetType,
 } from "./types.js";
 
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
@@ -268,9 +268,9 @@ interface ViewNode {
   /* the PART CHANNEL this node's gestures post on: its own dotted name chain from the
      template root ("" = the root, i.e. the widget-level channel) */
   part: string;
-  /* the node's validated per-attr transitions ({attr: {ms, profile?}}), merged into the
-     element's native CSS `transition` by runAppliers; null = none */
-  transitions: TransitionMap | null;
+  /* the node's compiled per-attr transitions ({attr: {ms, profile?}} as programs),
+     merged into the element's native CSS `transition` by runAppliers; null = none */
+  transitions: CompiledTransitionMap | null;
 }
 
 /* One document node, with its compiled attrs found by id — a page's, or an entered
@@ -610,19 +610,61 @@ export function stepTransitions(host: HTMLElement, editor: Editor, now?: number)
   scheduleTweens(state);
 }
 
+/* ---- evaluating a transition's OWN values ----
+ *
+ * A transition's ms and profile are served as view programs (a literal is the
+ * degenerate CONST), evaluated here over TRUE values: the guard flips the recording
+ * structural for the duration of the run, so a slot's declared sweep can never ease —
+ * or recurse into — the duration that times it. Deps still record, so a duration over
+ * `rate` re-runs its bind when rate moves (the NEXT sweep uses the new time; a sweep
+ * in flight keeps the duration it started with). Plain numbers/names pass through for
+ * leniency (old fixtures, hand-built rows). */
+function specValue(state: StageState, program: Program | number | string | undefined,
+                  cells: Cells): Json {
+  if (program === undefined || program === null) return null;
+  if (typeof program === "number" || typeof program === "string") return program;
+  const rec = state.recording;
+  const held = rec?.structural;
+  if (rec) rec.structural = true;
+  try {
+    return run(program, cells);
+  } finally {
+    if (rec) rec.structural = held;
+  }
+}
+
+/* the evaluated time: a finite number of ms in (0, 600000], else null = no transition */
+function specMs(state: StageState, program: Program | number | string | undefined,
+                cells: Cells): number | null {
+  const value = specValue(state, program, cells);
+  const ms = typeof value === "number" && Number.isFinite(value) ? value : null;
+  return ms !== null && ms > 0 ? Math.min(ms, 600000) : null;
+}
+
+const EASING_NAMES = new Set(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]);
+
+/* the evaluated profile: a known easing name, else the default — a wrong profile is a
+   cosmetic miss and falls back rather than killing the sweep (the align precedent) */
+function specProfile(state: StageState, program: Program | string | undefined,
+                     cells: Cells): string {
+  const value = specValue(state, program, cells);
+  return typeof value === "string" && EASING_NAMES.has(value) ? value : "ease";
+}
+
 /* the DECLARED transition of one slot, off the served type — cached per type row,
    because this is asked on every slot read of every applier pass */
-const sweepSpecs = new WeakMap<WidgetType, Map<string, { ms: number; profile: string }>>();
+const sweepSpecs = new WeakMap<WidgetType,
+  Map<string, { ms: Program | number; profile?: Program | string }>>();
 
 function slotSweep(type: WidgetType | null,
-                   name: string): { ms: number; profile: string } | null {
+                   name: string): { ms: Program | number; profile?: Program | string } | null {
   if (!type) return null;
   let map = sweepSpecs.get(type);
   if (!map) {
     map = new Map();
     for (const slot of type.slots)
-      if (typeof slot.smooth === "number" && slot.smooth > 0)
-        map.set(slot.name, { ms: slot.smooth, profile: slot.profile ?? "ease" });
+      if (slot.smooth !== undefined && slot.smooth !== null)
+        map.set(slot.name, { ms: slot.smooth, profile: slot.profile });
     sweepSpecs.set(type, map);
   }
   return map.get(name) ?? null;
@@ -653,10 +695,13 @@ const TRANSITION_KIND: Record<string, Record<string, string>> = {
 const TRANSITION_ON_PATH = new Set(["fill", "stroke", "stroke_w", "points"]);
 
 /* the node's transition metadata as two CSS `transition` values: the element's own and
- * its <path>'s. Deduped per CSS property (first declared wins — shadow_x and shadow_y
- * both land on box-shadow); ink turns a box-shadow entry into a filter one, except the
+ * its <path>'s. The ms and profile are PROGRAMS evaluated over true values (specMs /
+ * specProfile above — a duration that comes out wrong renders NO entry, the honest
+ * snap). Deduped per CSS property (first declared wins — shadow_x and shadow_y both
+ * land on box-shadow); ink turns a box-shadow entry into a filter one, except the
  * INSET ink shadow, whose url(#) filter has nothing the browser can blend. */
-function transitionCss(node: ViewNode, inkInset: boolean): { el: string; path: string } {
+function transitionCss(state: StageState, node: ViewNode, inkInset: boolean,
+                       cells: Cells): { el: string; path: string } {
   const rows = node.transitions;
   if (!rows) return { el: "", path: "" };
   const ink = node.kind !== "frame" && !node.instance;
@@ -666,7 +711,7 @@ function transitionCss(node: ViewNode, inkInset: boolean): { el: string; path: s
   const path: string[] = [];
   for (const attr of Object.keys(rows)) {
     const spec = rows[attr];
-    if (!spec || !(spec.ms > 0)) continue;
+    if (!spec) continue;
     let css = TRANSITION_KIND[node.kind]?.[attr] ?? TRANSITION_COMMON[attr] ?? "";
     if (!css) continue;
     if (css === "box-shadow" && ink) {
@@ -676,8 +721,11 @@ function transitionCss(node: ViewNode, inkInset: boolean): { el: string; path: s
     const onPath = node.kind === "path" && TRANSITION_ON_PATH.has(attr);
     const seen = onPath ? pathSeen : elSeen;
     if (seen.has(css)) continue;
+    const ms = specMs(state, spec.ms, cells);
+    if (ms === null) continue;
     seen.add(css);
-    (onPath ? path : el).push(css + " " + spec.ms + "ms " + (spec.profile ?? "ease"));
+    (onPath ? path : el).push(css + " " + ms + "ms " +
+                              specProfile(state, spec.profile, cells));
   }
   return { el: el.join(", "), path: path.join(", ") };
 }
@@ -754,7 +802,10 @@ function sawCell(state: StageState, key: string, mark: string): void {
  * default, which is the whole of what makes a bound surface a working lamp. */
 function cellsFor(state: StageState, editor: Editor, node: ViewNode,
                   repeat: { index: number; count: number } | null): Cells {
-  return (cell: string): Json => {
+  /* NAMED, because it reads through itself: a slot's declared sweep evaluates its ms
+     and profile programs over these same cells (specValue's guard keeps those reads
+     un-eased, which is also what makes the recursion bottom out) */
+  const read = (cell: string): Json => {
     const colon = cell.indexOf(":");
     const kind = colon < 0 ? "" : cell.slice(0, colon);
     const name = colon < 0 ? cell : cell.slice(colon + 1);
@@ -791,10 +842,20 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         /* THE PROPERTY'S DECLARED TRANSITION, applied to what an APPLIER pass reads —
            and only there: a structural pass (which elements exist) and a gesture's seat
            (recording null) always see the true value. The mark above records TRUTH, so
-           a live frame still retunes the sweep the moment the real value moves. */
+           a live frame still retunes the sweep the moment the real value moves. The ms
+           and profile are programs over these same cells, read un-eased. */
         if (state.recording && !state.recording.structural) {
           const spec = slotSweep(node.type, name);
-          if (spec) return tweenTo(state, "c:" + key, out, spec.ms, spec.profile, key);
+          if (spec) {
+            const ms = specMs(state, spec.ms, read);
+            if (ms === null) {
+              /* the duration came out wrong: no sweep, and none left standing */
+              state.tweens.delete("c:" + key);
+              return out;
+            }
+            return tweenTo(state, "c:" + key, out, ms,
+                           specProfile(state, spec.profile, read), key);
+          }
         }
         return out;
       }
@@ -828,6 +889,7 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         return null;
     }
   };
+  return read;
 }
 
 /* what one cell is worth NOW, in the same spelling a recorded read wrote */
@@ -1383,7 +1445,7 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
     }
     /* THE ATTR TRANSITIONS, metadata -> the element's native `transition`. TOTAL like
        every applier: a node whose transitions left carries none. */
-    const trans = transitionCss(node, !!shadow?.inset);
+    const trans = transitionCss(state, node, !!shadow?.inset, cells);
     bind.el.style.transition = trans.el;
     if (bind.path) bind.path.style.transition = trans.path;
   } finally {
