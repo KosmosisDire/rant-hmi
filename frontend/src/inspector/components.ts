@@ -906,9 +906,13 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
 
 /* ---- the placement vocabulary: one, because there is one space ----
  *
- * Everything sits at its own x/y in canvas px (a component's internals in fractions of
- * their parent, same fields), so the box group is the same eight rows on every node. */
-const MEASURED = ["x", "y", "w", "h", "aspect", "origin_x", "origin_y", "rotate"];
+ * Everything sits at its own left/top in canvas px (a component's internals in fractions
+ * of their parent, same fields); `right`/`bottom` pin the far edges — set, they size the
+ * box and `w`/`h` step back — and the min/max rows clamp whatever the axis derives. One
+ * box group, the same rows on every node. */
+const MEASURED = ["left", "top", "right", "bottom", "w", "h",
+                  "min_w", "max_w", "min_h", "max_h",
+                  "aspect", "origin_x", "origin_y", "rotate"];
 const PLACEMENT = new Set(MEASURED);
 
 function placementAttrs(editor: Editor): AttrDef[] {
