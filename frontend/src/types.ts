@@ -105,12 +105,16 @@ export interface AttrDef {
  * evaluates over TRUE values — a duration computed from an eased value would retune
  * itself mid-flight. */
 export interface TransitionSpec {
-  ms: number | string;
+  /* ONE timing: a fixed duration in ms, or a SPEED in units per second — the duration
+     then follows the distance the value travels (numeric attrs only) */
+  ms?: number | string;
+  speed?: number | string;
   profile?: string;
 }
 export type TransitionMap = Record<string, TransitionSpec>;
 export interface CompiledTransition {
-  ms: Program;
+  ms?: Program;
+  speed?: Program;
   profile?: Program;
 }
 export type CompiledTransitionMap = Record<string, CompiledTransition>;
@@ -252,8 +256,10 @@ export interface PropDef {
      slot eases over `smooth` ms along `profile`. Both are EXPRESSIONS over the
      declaring node's scope (a number / bare easing name is the degenerate literal).
      Rendering only — behavior, feeds, the wire and gestures always read the true
-     value. 0 / "" = none. */
+     value. 0 / "" = none. `speed` is the rate-timed alternative (units per second,
+     duration follows the distance) — one of the two, never both. */
   smooth: number | string | null;
+  speed: number | string | null;
   profile: string;
 }
 
@@ -321,10 +327,13 @@ export interface SlotSpec {
   min?: number;        /* num slots: a BOUNDED slot edits as a slider beside the */
   max?: number;        /* field (the Unity treatment) and clamps typed values */
   /* the DECLARED TRANSITION (num slots only): rendered reads of this slot ease over
-     `smooth` ms along `profile`. Served as compiled view PROGRAMS (a plain number /
-     name is tolerated for old fixtures); evaluated over TRUE values per sweep start.
-     Rendering only — structural reads, gestures and behavior see truth (stage.ts). */
+     `smooth` ms — OR at `speed` units per second, the duration then following the
+     distance (one of the two) — along `profile`. Served as compiled view PROGRAMS (a
+     plain number / name is tolerated for old fixtures); evaluated over TRUE values per
+     sweep start. Rendering only — structural reads, gestures and behavior see truth
+     (stage.ts). */
   smooth?: Program | number;
+  speed?: Program | number;
   profile?: Program | string;
 }
 

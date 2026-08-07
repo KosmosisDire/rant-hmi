@@ -111,6 +111,10 @@ interface Bind {
   /* the pass that last ran these appliers: what keeps one live frame from running a
      bind twice when both its own cell and its parent's child list moved */
   pass: number;
+  /* per SPEED-timed attr: the value last written and the duration derived for its last
+     move — what turns a rate into this move's own ms (transitionCss), and what keeps
+     the transition list stable on passes where the value did not move */
+  speedLast: Record<string, { value: number; ms: number }>;
 }
 
 interface StageState {
@@ -543,9 +547,12 @@ function advanceTween(t: Tween, now: number): void {
 
 /* ONE EASED READ. The target moving retunes the sweep FROM WHAT IS CURRENTLY SHOWN — a
  * mid-flight retarget never jumps — and a non-number target (Nil included) ends the
- * sweep and passes through untouched. */
-function tweenTo(state: StageState, key: string, target: Json, ms: number,
-                 profile: string, cell: string): Json {
+ * sweep and passes through untouched. The timing is a fixed duration OR a speed; a
+ * speed derives the duration from the distance of THIS retune, shown-to-target, which
+ * is the exact distance the sweep will actually cover. */
+function tweenTo(state: StageState, key: string, target: Json,
+                 timing: { ms?: number; speed?: number }, profile: string,
+                 cell: string): Json {
   if (typeof target !== "number" || !Number.isFinite(target)) {
     state.tweens.delete(key);
     return target;
@@ -553,14 +560,14 @@ function tweenTo(state: StageState, key: string, target: Json, ms: number,
   let t = state.tweens.get(key);
   if (!t) {
     /* first sight: the picture starts AT the value — no sweep from nothing */
-    t = { value: target, from: target, to: target, start: 0, ms, profile, done: true,
-          cell };
+    t = { value: target, from: target, to: target, start: 0, ms: 0, profile,
+          done: true, cell };
     state.tweens.set(key, t);
   } else if (target !== t.to) {
     t.from = t.value;
     t.to = target;
     t.start = state.now;
-    t.ms = ms;
+    t.ms = timing.ms ?? rateMs(Math.abs(target - t.value), timing.speed as number);
     t.profile = profile;
     t.done = false;
   }
@@ -641,6 +648,19 @@ function specMs(state: StageState, program: Program | number | string | undefine
   return ms !== null && ms > 0 ? Math.min(ms, 600000) : null;
 }
 
+/* the evaluated SPEED: units per second, positive and finite, else null. The duration
+   derives from it per move — |distance| / speed — so a short step arrives sooner than
+   a long one (capped at the same 600000ms ceiling a fixed duration takes). */
+function specRate(state: StageState, program: Program | number | string | undefined,
+                  cells: Cells): number | null {
+  const value = specValue(state, program, cells);
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function rateMs(distance: number, rate: number): number {
+  return Math.min(600000, (distance / rate) * 1000);
+}
+
 const EASING_NAMES = new Set(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]);
 
 /* the evaluated profile: a known easing name, else the default — a wrong profile is a
@@ -654,17 +674,22 @@ function specProfile(state: StageState, program: Program | string | undefined,
 /* the DECLARED transition of one slot, off the served type — cached per type row,
    because this is asked on every slot read of every applier pass */
 const sweepSpecs = new WeakMap<WidgetType,
-  Map<string, { ms: Program | number; profile?: Program | string }>>();
+  Map<string, { ms?: Program | number; speed?: Program | number;
+                profile?: Program | string }>>();
 
-function slotSweep(type: WidgetType | null,
-                   name: string): { ms: Program | number; profile?: Program | string } | null {
+function slotSweep(type: WidgetType | null, name: string):
+    { ms?: Program | number; speed?: Program | number;
+      profile?: Program | string } | null {
   if (!type) return null;
   let map = sweepSpecs.get(type);
   if (!map) {
     map = new Map();
-    for (const slot of type.slots)
+    for (const slot of type.slots) {
       if (slot.smooth !== undefined && slot.smooth !== null)
         map.set(slot.name, { ms: slot.smooth, profile: slot.profile });
+      else if (slot.speed !== undefined && slot.speed !== null)
+        map.set(slot.name, { speed: slot.speed, profile: slot.profile });
+    }
     sweepSpecs.set(type, map);
   }
   return map.get(name) ?? null;
@@ -701,7 +726,7 @@ const TRANSITION_ON_PATH = new Set(["fill", "stroke", "stroke_w", "points"]);
  * land on box-shadow); ink turns a box-shadow entry into a filter one, except the
  * INSET ink shadow, whose url(#) filter has nothing the browser can blend. */
 function transitionCss(state: StageState, node: ViewNode, inkInset: boolean,
-                       cells: Cells): { el: string; path: string } {
+                       cells: Cells, bind: Bind): { el: string; path: string } {
   const rows = node.transitions;
   if (!rows) return { el: "", path: "" };
   const ink = node.kind !== "frame" && !node.instance;
@@ -721,8 +746,32 @@ function transitionCss(state: StageState, node: ViewNode, inkInset: boolean,
     const onPath = node.kind === "path" && TRANSITION_ON_PATH.has(attr);
     const seen = onPath ? pathSeen : elSeen;
     if (seen.has(css)) continue;
-    const ms = specMs(state, spec.ms, cells);
-    if (ms === null) continue;
+    let ms: number | null;
+    if (spec.speed !== undefined) {
+      /* A SPEED-TIMED ATTR: this pass's value against the last written one turns the
+         rate into THIS MOVE's own duration — a short step arrives sooner than a long
+         one. First sight seeds the memory (nothing has moved, nothing to time); a pass
+         where the value stands still keeps the last duration, so a running blend's
+         transition list never changes under it. */
+      const rate = specRate(state, spec.speed, cells);
+      const cur = num(attrOf(node, attr, cells));
+      if (rate === null || cur === null) {
+        delete bind.speedLast[attr];
+        continue;
+      }
+      const held = bind.speedLast[attr];
+      if (!held) {
+        bind.speedLast[attr] = { value: cur, ms: 0 };
+        continue;
+      }
+      const distance = Math.abs(cur - held.value);
+      ms = distance > 0 ? rateMs(distance, rate) : held.ms;
+      bind.speedLast[attr] = { value: cur, ms };
+      if (!(ms > 0)) continue;
+    } else {
+      ms = specMs(state, spec.ms, cells);
+      if (ms === null) continue;
+    }
     seen.add(css);
     (onPath ? path : el).push(css + " " + ms + "ms " +
                               specProfile(state, spec.profile, cells));
@@ -847,13 +896,20 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         if (state.recording && !state.recording.structural) {
           const spec = slotSweep(node.type, name);
           if (spec) {
-            const ms = specMs(state, spec.ms, read);
-            if (ms === null) {
-              /* the duration came out wrong: no sweep, and none left standing */
+            let timing: { ms?: number; speed?: number } | null = null;
+            if (spec.speed !== undefined) {
+              const rate = specRate(state, spec.speed, read);
+              if (rate !== null) timing = { speed: rate };
+            } else {
+              const ms = specMs(state, spec.ms, read);
+              if (ms !== null) timing = { ms };
+            }
+            if (!timing) {
+              /* the timing came out wrong: no sweep, and none left standing */
               state.tweens.delete("c:" + key);
               return out;
             }
-            return tweenTo(state, "c:" + key, out, ms,
+            return tweenTo(state, "c:" + key, out, timing,
                            specProfile(state, spec.profile, read), key);
           }
         }
@@ -1445,7 +1501,7 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
     }
     /* THE ATTR TRANSITIONS, metadata -> the element's native `transition`. TOTAL like
        every applier: a node whose transitions left carries none. */
-    const trans = transitionCss(state, node, !!shadow?.inset, cells);
+    const trans = transitionCss(state, node, !!shadow?.inset, cells, bind);
     bind.el.style.transition = trans.el;
     if (bind.path) bind.path.style.transition = trans.path;
   } finally {
@@ -1613,7 +1669,7 @@ function createBind(state: StageState, entry: Desired, parent: Bind | null): Bin
   const bind: Bind = {
     key: entry.key, el: made.el, node: entry.node, parent, repeat: entry.repeat,
     deps: new Set(), kidDeps: new Set(), kidKeys: [], path: made.path, iconSig: "",
-    shadowId: "", shape: shapeOf(entry.node), pass: 0,
+    shadowId: "", shape: shapeOf(entry.node), pass: 0, speedLast: {},
   };
   state.binds.set(entry.key, bind);
   return bind;
@@ -1680,7 +1736,7 @@ function buildFresh(host: HTMLElement, editor: Editor, page: Page | null): void 
   const root: Bind = {
     key: ROOT_KEY, el, node: rootView(editor, page), parent: null, repeat: null,
     deps: new Set(), kidDeps: new Set(), kidKeys: [], path: null, iconSig: "",
-    shadowId: "", shape: "root", pass: 0,
+    shadowId: "", shape: "root", pass: 0, speedLast: {},
   };
   state.binds.set(ROOT_KEY, root);
   state.root = root;
