@@ -249,6 +249,16 @@ export function installDom() {
     body: new Element("body"),
   };
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  /* a window big enough for the popover placement math (placeBox) and the fail-safe
+     listeners: every field wears autocomplete now, so typing anywhere may place its
+     dropdown — the shim needs a viewport from the first keystroke, not from the first
+     test block that thought to install one */
+  globalThis.window ??= {
+    innerWidth: 1280,
+    innerHeight: 800,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  };
   return globalThis.document;
 }
 

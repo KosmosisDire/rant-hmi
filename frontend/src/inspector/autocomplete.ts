@@ -43,14 +43,22 @@ function close(): void {
 /* accepting must LOOK LIKE TYPING to everyone else: the reconciler holds a field's
  * uncommitted text back from the document sync only when an input event told it the
  * user is editing, so a silent .value assignment would be overwritten by the next
- * live frame. The dispatch is muted so it does not re-trigger our own refresh. */
+ * live frame. The dispatch is muted so it does not re-trigger our own refresh.
+ * Exported: the value box's scrub and browse-insert write text the same way, so the
+ * reconciler treats those too as typing. (InputEvent is guarded for the test shim,
+ * whose elements carry no event machinery at all.) */
 let muted = false;
 
-function announce(input: HTMLInputElement): void {
+export function announceInput(input: HTMLInputElement): void {
   muted = true;
-  input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  if (typeof input.dispatchEvent === "function")
+    input.dispatchEvent(typeof InputEvent !== "undefined"
+      ? new InputEvent("input", { bubbles: true })
+      : new Event("input", { bubbles: true }));
   muted = false;
 }
+
+const announce = announceInput;
 
 function accept(input: HTMLInputElement, row: Row): void {
   if (wholeValue) {

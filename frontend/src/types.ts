@@ -82,7 +82,9 @@ export interface Lang {
  * at runtime. */
 export interface AttrDef {
   name: string;
-  shape: "num" | "bool" | "text" | "color" | "series" | "any";
+  /* mirrors registry/attrs.cpp: `list` is the computed-anchors shape (a path's
+     `points`), `any` the shapeless escape (clip's bool-or-number) */
+  shape: "num" | "bool" | "text" | "color" | "list" | "any";
   /* absent = no computed default: the attr is structural (show, repeat, clip, the box
      fields, rotate, a colour that is simply not painted) and `note` explains what absence
      means */

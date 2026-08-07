@@ -58,6 +58,7 @@ const STYLES = [
   "steps",
   "highlight",
   "fields",
+  "value-box",
   "layers",
   "components",
   "inspector",

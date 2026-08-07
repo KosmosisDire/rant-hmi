@@ -23,6 +23,8 @@ import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
 import { AttrDef, ComponentDef, EventSpec, Json, Node, PRIMITIVES, PropDef,
          SlotSpec, TransitionMap, eventKind, primitiveDef, signatureText } from "../types.js";
 import { valueEditor } from "./editors.js";
+import { attrScope, Scope } from "./scope.js";
+import { BoxType, valueBox } from "./valuebox.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "list", "map"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
@@ -866,7 +868,9 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
   const attrsOf = () => (at().attrs ?? {}) as Record<string, string>;
   const commitAttrs = (next: Record<string, string>) =>
     editor.apply([{ op: "set_prop", node: node.id, key: "attrs", value: next }]);
-  const row = (d: AttrDef) => attrDefRow(editor, node.id, d, attrsOf, commitAttrs);
+  /* ONE scope for the whole section: every attr on a node references the same universe */
+  const scope = attrScope(editor, node);
+  const row = (d: AttrDef) => attrDefRow(editor, node, d, scope, attrsOf, commitAttrs);
   const ownDefs = ownAttrsOf(editor, node.kind);
   const place = placementAttrs(editor);
   const commonDefs = commonAttrs(editor).filter((d) => !PLACEMENT.has(d.name));
@@ -883,7 +887,7 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
     ...commonDefs.map(row),
     ...(strays.length
       ? [attrGroupHeading("NOT READ BY THIS KIND"),
-         ...strays.map((key) => unknownAttrRow(editor, node.id, key, attrsOf, commitAttrs))]
+         ...strays.map((key) => unknownAttrRow(editor, node, key, scope, attrsOf, commitAttrs))]
       : []),
   ]);
 }
@@ -918,8 +922,9 @@ export function attrsShape(editor: Editor, node: Node): string {
  * view into the element's native CSS `transition`. Never part of the expression, so it
  * survives every edit to the field beside it — the first of the per-field settings
  * buttons (bindings and colour tokens being the pattern), to be unified later. */
-function transitionChip(editor: Editor, partId: number, def: AttrDef): HTMLElement | null {
+function transitionChip(editor: Editor, node: Node, def: AttrDef): HTMLElement | null {
   if (!def.css) return null;
+  const partId = node.id;
   const rowsOf = () =>
     ((editor.store.node(partId) as Node | null)?.transitions ?? {}) as TransitionMap;
   const commit = (next: TransitionMap) =>
@@ -930,30 +935,52 @@ function transitionChip(editor: Editor, partId: number, def: AttrDef): HTMLEleme
     const held = rowsOf()[def.name] ?? null;
     /* BOTH VALUES ARE EXPRESSIONS over the node's own scope — "1000 / rate" is a
        duration — with a plain number and a bare easing name as the literals. A plain
-       number is stored as one, so the common case stays a clean document. */
-    const ms = commitInput(held ? String(held.ms) : "", (text) => {
-      const trimmed = text.trim();
-      const next = { ...rowsOf() };
-      if (!trimmed) delete next[def.name];
-      else {
-        const folded = Number(trimmed);
-        next[def.name] = { ...(next[def.name] ?? {}),
-                           ms: Number.isFinite(folded) ? folded : trimmed };
-      }
-      commit(next);
-    }, { class: "field", placeholder: "none",
-         title: "milliseconds — a number or an expression; empty = none" });
-    const profile = commitInput(held?.profile ?? "", (text) => {
-      const at = rowsOf()[def.name];
-      /* a profile means nothing without a time; the ms field is what turns it on */
-      if (!at) return;
-      const trimmed = text.trim();
-      const row: Json = { ms: at.ms };
-      if (trimmed) row.profile = trimmed;
-      commit({ ...rowsOf(), [def.name]: row as { ms: number | string } });
-    }, { class: "field", placeholder: "ease",
-         title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
-                + "yielding one" });
+       number is stored as one, so the common case stays a clean document. The fields
+       are value boxes like the attr row's own: same scope, same autocomplete, and the
+       ms icon scrubs a literal duration. */
+    const scope = attrScope(editor, node);
+    const ms = valueBox({
+      key: partId + ":transitions." + def.name + ".ms",
+      read: () => {
+        const at = rowsOf()[def.name];
+        return at ? String(at.ms) : "";
+      },
+      commit: (text) => {
+        const trimmed = text.trim();
+        const next = { ...rowsOf() };
+        if (!trimmed) delete next[def.name];
+        else {
+          const folded = Number(trimmed);
+          next[def.name] = { ...(next[def.name] ?? {}),
+                             ms: Number.isFinite(folded) ? folded : trimmed };
+        }
+        commit(next);
+      },
+      emptyMeans: "unset",
+      placeholder: "none",
+      title: "milliseconds — a number or an expression; empty = none",
+      type: { shape: "num" },
+      scope,
+    });
+    const profile = valueBox({
+      key: partId + ":transitions." + def.name + ".profile",
+      read: () => rowsOf()[def.name]?.profile ?? "",
+      commit: (text) => {
+        const at = rowsOf()[def.name];
+        /* a profile means nothing without a time; the ms field is what turns it on */
+        if (!at) return;
+        const trimmed = text.trim();
+        const row: Json = { ms: at.ms };
+        if (trimmed) row.profile = trimmed;
+        commit({ ...rowsOf(), [def.name]: row as { ms: number | string } });
+      },
+      emptyMeans: "unset",
+      placeholder: "ease",
+      title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
+             + "yielding one",
+      type: { shape: "text" },
+      scope,
+    });
     openMenu(rect.left, rect.bottom + 4, "transition " + def.name, [
       { node: el("div", { class: "menu-field" },
                  [el("span", { class: "row-label", text: "MS" }), ms]) },
@@ -974,34 +1001,89 @@ function transitionChip(editor: Editor, partId: number, def: AttrDef): HTMLEleme
   return chip;
 }
 
+/* ---- THE ROW CHASSIS, minimal form: label | value box | trailing cells ----
+ *
+ * One builder where three stood (the declared attr row, the stray row, the interact
+ * param row): the label cell is a static name with the note as its tooltip and the
+ * warning ink on a stray, the box carries the value, and everything after it is the
+ * caller's trail — a transition chip on declared animatable attrs, the remove on a
+ * stray, the diag dot always. The box never carries row concerns. */
+function chassisRow(opts: {
+  name: string;
+  note?: string;
+  unknown?: boolean;
+  box: HTMLElement;
+  trail?: (HTMLElement | null)[];
+}): HTMLElement {
+  return el("div", { class: "attr-row" }, [
+    el("span", {
+      class: "field attr-name static" + (opts.unknown ? " unknown" : ""),
+      text: opts.name,
+      title: opts.unknown
+        ? "no part of this kind reads '" + opts.name + "'"
+        : opts.note,
+    }),
+    opts.box,
+    ...(opts.trail ?? []),
+  ]);
+}
+
+/* Which literal picker an attr's box gets, from the served table. The table declares
+ * no variants column yet: the two variant-listing attrs (a text's `align`, a path's
+ * `cap`) spell their vocabulary at the head of the NOTE — "start | center | end
+ * (text-align)" — so that leading pattern is read as the declaration until the table
+ * grows a real column. Strictly anchored: a prose note never matches. */
+function noteVariants(note: string): string[] | null {
+  const hit = /(?:^|:\s)([a-z][a-z-]*(?:\s\|\s[a-z][a-z-]*)+)(?=\s*\(|\s*$|\s[a-z])/
+    .exec(note ?? "");
+  return hit ? hit[1].split("|").map((s) => s.trim()) : null;
+}
+
+function attrBoxType(def: AttrDef): BoxType {
+  if (def.shape === "text") {
+    const variants = noteVariants(def.note);
+    if (variants) return { shape: "enum", variants: () => variants };
+  }
+  if (def.shape === "num" || def.shape === "bool" || def.shape === "color" ||
+      def.shape === "text" || def.shape === "list")
+    return { shape: def.shape };
+  return { shape: "text" };   /* `any` and anything unforeseen: the glyph alone */
+}
+
 function attrDefRow(
   editor: Editor,
-  partId: number,
+  node: Node,
   def: AttrDef,
+  scope: Scope,
   attrsOf: () => Record<string, string>,
   commitAttrs: (next: Record<string, string>) => void,
 ): HTMLElement {
-  const expr = commitInput(
-    String(attrsOf()[def.name] ?? ""),
-    (text) => {
+  const box = valueBox({
+    key: node.id + ":attrs." + def.name,
+    read: () => String(attrsOf()[def.name] ?? ""),
+    commit: (text) => {
       const next = { ...attrsOf() };
       if (text === "") delete next[def.name];
       else next[def.name] = text;
       commitAttrs(next);
     },
-    { class: "field grow", spellcheck: "false", placeholder: attrPlaceholder(def), title: def.note },
-  );
-  bindField(partId + ":attrs." + def.name, expr, () => String(attrsOf()[def.name] ?? ""));
+    emptyMeans: "default",
+    placeholder: attrPlaceholder(def),
+    title: def.note,
+    type: attrBoxType(def),
+    scope,
+  });
   /* one icon serves both findings a row can carry: the expression's, and — where the
      expression is fine — its transition metadata's */
-  const exprDiag = editor.diagAt(partId, def.name);
-  const transDiag = editor.diagAt(partId, "transitions." + def.name);
-  return el("div", { class: "attr-row" }, [
-    el("span", { class: "field attr-name static", text: def.name, title: def.note }),
-    highlighted(expr),
-    transitionChip(editor, partId, def),
-    diagIcon(exprDiag.length ? exprDiag : transDiag),
-  ]);
+  const exprDiag = editor.diagAt(node.id, def.name);
+  const transDiag = editor.diagAt(node.id, "transitions." + def.name);
+  return chassisRow({
+    name: def.name,
+    note: def.note,
+    box,
+    trail: [transitionChip(editor, node, def),
+            diagIcon(exprDiag.length ? exprDiag : transDiag)],
+  });
 }
 
 /* A key the document carries that this kind's vocabulary does NOT declare — a hand-edited
@@ -1012,28 +1094,31 @@ function attrDefRow(
  * rule that nothing in the document is invisible in the editor that owns it. */
 function unknownAttrRow(
   editor: Editor,
-  partId: number,
+  node: Node,
   key: string,
+  scope: Scope,
   attrsOf: () => Record<string, string>,
   commitAttrs: (next: Record<string, string>) => void,
 ): HTMLElement {
-  const expr = commitInput(
-    String(attrsOf()[key] ?? ""),
-    (text) => commitAttrs({ ...attrsOf(), [key]: text }),
-    { class: "field grow", spellcheck: "false" },
-  );
-  bindField(partId + ":attrs." + key, expr, () => String(attrsOf()[key] ?? ""));
-  return el("div", { class: "attr-row" }, [
-    el("span", { class: "field attr-name static unknown", text: key,
-                 title: "no part of this kind reads '" + key + "'" }),
-    highlighted(expr),
-    diagIcon(editor.diagAt(partId, key)),
-    iconButton("x", "remove " + key, () => {
-      const next = { ...attrsOf() };
-      delete next[key];
-      commitAttrs(next);
-    }),
-  ]);
+  const box = valueBox({
+    key: node.id + ":attrs." + key,
+    read: () => String(attrsOf()[key] ?? ""),
+    commit: (text) => commitAttrs({ ...attrsOf(), [key]: text }),
+    emptyMeans: "unset",
+    type: { shape: "text" },   /* undeclared: no shape info, so the glyph alone */
+    scope,
+  });
+  return chassisRow({
+    name: key,
+    unknown: true,
+    box,
+    trail: [diagIcon(editor.diagAt(node.id, key)),
+            iconButton("x", "remove " + key, () => {
+              const next = { ...attrsOf() };
+              delete next[key];
+              commitAttrs(next);
+            })],
+  });
 }
 
 /* THE INTERACT SECTION, for any node that can carry one.
@@ -1117,7 +1202,7 @@ export function interactSection(editor: Editor, node: Node, subject = ""): HTMLE
                         " — pick one and this node becomes pressable" })
       : null,
     ...(interact ? Object.keys((interact.params ?? {}) as Record<string, string>)
-                     .map((param) => interactParamRow(editor, node.id, param, at)) : []),
+                     .map((param) => interactParamRow(editor, node, param, at)) : []),
     /* what the primitive BRINGS: the family with its signatures, read-only — picking
        the primitive IS the declaration */
     ...(interact && def
@@ -1168,26 +1253,30 @@ export function renderBuiltinComponent(host: HTMLElement, editor: Editor,
 
 function interactParamRow(
   editor: Editor,
-  partId: number,
+  node: Node,
   param: string,
   at: () => Json,
 ): HTMLElement {
   const paramsOf = () => ((at().interact ?? {}).params ?? {}) as Record<string, string>;
-  const expr = commitInput(
-    String(paramsOf()[param] ?? ""),
-    (text) => {
+  const box = valueBox({
+    key: node.id + ":interact." + param,
+    read: () => String(paramsOf()[param] ?? ""),
+    commit: (text) => {
       const held = (at().interact ?? {}) as Json;
       editor.apply([
-        { op: "set_prop", node: partId, key: "interact",
+        { op: "set_prop", node: node.id, key: "interact",
           value: { ...held, params: { ...paramsOf(), [param]: text } } },
       ]);
     },
-    { class: "field grow", spellcheck: "false" },
-  );
-  bindField(partId + ":interact." + param, expr, () => String(paramsOf()[param] ?? ""));
-  return el("div", { class: "attr-row" }, [
-    el("span", { class: "field attr-name static", text: param }),
-    highlighted(expr),
-    diagIcon(editor.diagAt(partId, "interact." + param)),
-  ]);
+    emptyMeans: "unset",
+    /* a gesture's params are untyped expression slots (their seeds are literals of any
+       shape), so the box shows the glyph alone */
+    type: { shape: "text" },
+    scope: attrScope(editor, node),
+  });
+  return chassisRow({
+    name: param,
+    box,
+    trail: [diagIcon(editor.diagAt(node.id, "interact." + param))],
+  });
 }

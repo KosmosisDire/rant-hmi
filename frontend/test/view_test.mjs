@@ -1160,7 +1160,10 @@ check(labelPanel.host.querySelectorAll(".dashed-btn")
         "an undeclared key the document carries still gets a row");
   check(strayRow.querySelector(".attr-name.unknown") !== null,
         "marked as one this kind does not read");
-  check(strayRow.querySelectorAll("button").length === 1,
+  /* the row's buttons grew with the value box (icon, browse) — what this pins is the
+     DELETE, not a count */
+  check([...strayRow.querySelectorAll("button")]
+          .some((b) => (b.getAttribute("title") ?? "").startsWith("remove")),
         "and carrying a delete, so the finding is actionable");
   /* it is STRUCTURE: adding or removing a stray changes which rows exist, so the shape
      string has to move with it or the panel would never rebuild */
@@ -3036,6 +3039,129 @@ check(stageNode("frame", 901) === heldAgain &&
   drawOptions();
   check(optionsField.value === "variants(Valve.mode)",
         "which the field then shows, like anything else the slot holds");
+  document.activeElement = null;
+}
+
+/* ---- THE VALUE BOX on the attr rows (inspector redesign, phase 2) ----
+   The unified input landed on the safest surface first: every attr row is now
+   [icon | expression | browse] with the commit semantics UNCHANGED (text as typed,
+   empty deletes the key), the icon obeying the handle's law (gestures only on a
+   literal), and the transition popover's MS / EASE fields the same box. These are
+   NEW checks; nothing above was touched. */
+{
+  globalThis.window = { innerWidth: 1280, innerHeight: 800,
+                        addEventListener: () => undefined,
+                        removeEventListener: () => undefined };
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: 0, list: "components", node: {
+      id: 9700, name: "VbComp", events: [], props: [], attrs: {},
+      children: [
+        { id: 9711, kind: "text", name: "cap",
+          attrs: { text: "'go'", size: "14", color: "#ff0000", align: "'center'",
+                   bold: "state.pressed" } },
+      ],
+      behavior: [] } },
+  ]);
+  const vbOps = [];
+  const vbEditor = {
+    ...editor,
+    componentSel: { component: 9700, node: 9711 },
+    selectedNode: () => null,
+    selectedWidget: () => null,
+    /* commits land in the mirror too, so a later field reads what an earlier one wrote */
+    apply: (ops) => {
+      vbOps.push(...ops);
+      store.apply(store.version() + 1, ops);
+    },
+  };
+  const vbPanel = new Panel(new Element("aside"));
+  vbPanel.render(designInspectorShape(vbEditor),
+                 (host) => renderDesignInspector(host, vbEditor));
+  const vbRow = (name) =>
+    vbPanel.host.querySelectorAll(".attr-row")
+      .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
+  const lastAttrs = () => vbOps.findLast((o) => o.key === "attrs");
+
+  /* the anatomy: one box per declared row — icon, input, browse (the attr scope always
+     names at least the view's own inputs, so browse stands) */
+  const sizeRow = vbRow("size");
+  const sizeBox = sizeRow?.querySelector(".value-box") ?? null;
+  check(sizeBox !== null, "a declared attr row carries a value box");
+  check(sizeBox.querySelector(".vb-icon") !== null &&
+        sizeBox.querySelector("input") !== null &&
+        sizeBox.querySelector(".vb-browse") !== null,
+        "with the literal icon, the expression input and the browse button");
+
+  /* typing an expression commits it as the attr's text, as ever */
+  const sizeInput = sizeBox.querySelector("input");
+  typeInto(sizeInput, "10 + 4");
+  fire(sizeInput, "change");
+  check(lastAttrs()?.value?.size === "10 + 4",
+        "typing into the box commits the attr as typed, got " +
+          JSON.stringify(lastAttrs()?.value?.size));
+
+  /* and clearing it back to empty still DELETES the key */
+  typeInto(sizeInput, "");
+  fire(sizeInput, "change");
+  check(lastAttrs() && !("size" in lastAttrs().value),
+        "an empty commit still deletes the key");
+
+  /* the literal gate (the handle's law): an expression dims the scrub handle, a plain
+     number arms it */
+  typeInto(sizeInput, "value * 2");
+  check(sizeRow.querySelector(".vb-icon").classList.contains("vb-dim"),
+        "a num box holding an expression dims the scrub icon");
+  typeInto(sizeInput, "14");
+  check(!sizeRow.querySelector(".vb-icon").classList.contains("vb-dim") &&
+        sizeRow.querySelector(".vb-icon").classList.contains("vb-scrub"),
+        "and a plain number arms it again");
+
+  /* the color icon is a swatch: a literal hex paints it, an expression paints the
+     unknown treatment — never a stale color */
+  const colorRow = vbRow("color");
+  const swatch = colorRow?.querySelector(".vb-swatch") ?? null;
+  check(swatch !== null &&
+        String(swatch.style.background).includes("rgba(255, 0, 0"),
+        "a literal hex paints the color box's swatch");
+  const colorInput = colorRow.querySelector("input");
+  typeInto(colorInput, "state.pressed.pick('#ffffff', '#000000')");
+  check(swatch.classList.contains("vb-unknown"),
+        "an expression paints the unknown treatment instead");
+
+  /* the enum picker: align's variants ride the served note ("start | center | end"),
+     the current one is checked, and a pick writes the QUOTED spelling the template
+     compiler actually accepts (every built-in authors align: 'center') */
+  const alignRow = vbRow("align");
+  fire(alignRow.querySelector(".vb-icon"), "click");
+  const ctxOverlay = document.body.children.find((n) => n.id === "ctx");
+  const menuBox = ctxOverlay.children[0];
+  const variantBtn = (name) =>
+    menuBox.querySelectorAll("button")
+      .find((b) => (b.innerHTML ?? "").includes(">" + name + "</span>")) ?? null;
+  check(["start", "center", "end"].every((v) => variantBtn(v) !== null),
+        "the enum picker lists the attr's variants");
+  fire(variantBtn("start"), "click");
+  check(lastAttrs()?.value?.align === "'start'",
+        "picking writes the quoted variant spelling, got " +
+          JSON.stringify(lastAttrs()?.value?.align));
+
+  /* the transition popover's MS and EASE are value boxes now, writing the same
+     whole-map set_prop as before */
+  fire(sizeRow.querySelector(".transition-chip"), "click");
+  check(menuBox.querySelectorAll(".value-box").length === 2,
+        "the transition popover hosts two value boxes");
+  const [msInput, easeInput] = menuBox.querySelectorAll(".value-box")
+    .map((b) => b.querySelector("input"));
+  typeInto(msInput, "250");
+  fire(msInput, "change");
+  const msOp = vbOps.findLast((o) => o.key === "transitions");
+  check(msOp && msOp.value?.size?.ms === 250,
+        "MS folds a plain number and writes the map, got " + JSON.stringify(msOp?.value));
+  typeInto(easeInput, "linear");
+  fire(easeInput, "change");
+  const easeOp = vbOps.findLast((o) => o.key === "transitions");
+  check(easeOp && easeOp.value?.size?.ms === 250 && easeOp.value?.size?.profile === "linear",
+        "EASE joins it in the same row, got " + JSON.stringify(easeOp?.value));
   document.activeElement = null;
 }
 

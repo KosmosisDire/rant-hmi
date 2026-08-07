@@ -26,7 +26,7 @@ export interface TokenAccess {
   list: () => TokenOffer[];
 }
 
-interface Rgba {
+export interface Rgba {
   r: number; /* 0..255 */
   g: number;
   b: number;
@@ -42,7 +42,9 @@ interface Hsva {
 
 /* ---- color math ---- */
 
-function parseHex(text: string): Rgba | null {
+/* exported for the value box: "is this text a color literal, and what does it paint" —
+ * one parser, so the box's swatch and the picker can never disagree */
+export function parseHex(text: string): Rgba | null {
   if (typeof text !== "string" || !text.startsWith("#")) return null;
   const hex = text.slice(1);
   if (!/^[0-9a-fA-F]+$/.test(hex)) return null;
@@ -174,7 +176,7 @@ function cssRgba(c: Rgba): string {
   return `rgba(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)}, ${(c.a / 255).toFixed(3)})`;
 }
 
-function paintSwatch(node: HTMLElement, c: Rgba): void {
+export function paintSwatch(node: HTMLElement, c: Rgba): void {
   const fill = cssRgba(c);
   node.style.background = `linear-gradient(${fill}, ${fill}), ${CHECKER}`;
 }
@@ -225,10 +227,17 @@ function dragArea(
   });
 }
 
-function openColorPicker(
+/* Exported for the value box, whose color icon opens this directly. A caller that
+ * hands in a TokenAccess gets the TABBED form — Custom | Tokens — with the token
+ * menu's grouped list living inline as the Tokens tab (there is no `custom…` row:
+ * the Custom tab IS it). A token pick calls onPick with the honest "$name"; the
+ * legacy colorField path passes no tokens here and keeps its separate token menu. */
+export function openColorPicker(
   anchor: HTMLElement,
   value: string,
-  onPick: (hex: string) => void,
+  onPick: (raw: string) => void,
+  tokens?: TokenAccess | null,
+  current?: () => string,
 ): void {
   const sh = ensure();
   const box = sh.box;
@@ -277,14 +286,55 @@ function openColorPicker(
     commit();
   }, { class: "field grow cpick-hex" });
 
-  box.append(
+  /* the custom controls live in a pane of their own, so the tabbed form can swap it
+     against the token list without either knowing about the other */
+  const customPane = el("div", { class: "cpick-custom" }, [
     sv,
     hue,
     alpha,
     el("div", { class: "cpick-row" }, [preview, hex]),
     el("div", { class: "cpick-row" }, [el("span", { class: "cpick-kw", text: "rgba" }), rgbaField]),
     el("div", { class: "cpick-row" }, [el("span", { class: "cpick-kw", text: "hsla" }), hslaField]),
-  );
+  ]);
+
+  if (tokens) {
+    const tokenPane = el("div", { class: "cpick-tokpane" });
+    const held = current?.() ?? "";
+    let group = "";
+    for (const offer of tokens.list()) {
+      if (offer.group !== group) {
+        group = offer.group;
+        tokenPane.appendChild(el("div", { class: "tok-group", text: group }));
+      }
+      const swatch = el("span", { class: "swatch" });
+      paintSwatch(swatch, parseHex(offer.hex) ?? { r: 0, g: 0, b: 0, a: 0 });
+      tokenPane.appendChild(
+        el("button", {
+          class: "tok-row" + (held === "$" + offer.name ? " on" : ""),
+          onclick: () => {
+            closeColorPicker();
+            onPick("$" + offer.name);
+          },
+        }, [swatch, el("span", { class: "tok-name", text: "$" + offer.name })]),
+      );
+    }
+    const customBtn = el("button", { text: "Custom" });
+    const tokensBtn = el("button", { text: "Tokens" });
+    const show = (which: "custom" | "tokens") => {
+      customPane.style.display = which === "custom" ? "" : "none";
+      tokenPane.style.display = which === "tokens" ? "" : "none";
+      customBtn.classList.toggle("on", which === "custom");
+      tokensBtn.classList.toggle("on", which === "tokens");
+    };
+    customBtn.addEventListener("click", () => show("custom"));
+    tokensBtn.addEventListener("click", () => show("tokens"));
+    box.append(el("div", { class: "seg cpick-tabs" }, [customBtn, tokensBtn]),
+               customPane, tokenPane);
+    /* a tokenized value opens standing on its own tab */
+    show(held.startsWith("$") ? "tokens" : "custom");
+  } else {
+    box.append(customPane);
+  }
 
   const paint = () => {
     const rgba = hsvToRgb(color);

@@ -12,7 +12,7 @@
 import { TokenAccess } from "../colorpicker.js";
 import { Editor } from "../editor.js";
 import { resolveColor } from "../slots.js";
-import { Feed, Flow, Lang, MeshField, Node, Var } from "../types.js";
+import { ComponentDef, Feed, Flow, Json, Lang, MeshField, Node, Var } from "../types.js";
 import { scopeAt } from "./flowscope.js";
 
 export interface NameRow {
@@ -202,6 +202,76 @@ export function constScope(editor: Editor): Scope {
     tier: "const",
     lang: () => editor.lang,
     names: () => [],
+  };
+}
+
+/* ---- THE ATTR TIER: what a node's attr expressions may reference ----
+ *
+ * Grounded in the compiler that reads them (lang/template_expr.cpp): a bare name is a
+ * property this part declares or inherits, a dotted one is another part's property by
+ * ADDRESS from the template root — and the served type's slot table IS that address
+ * list, so it is what names() offers. `state` and `repeat` are the view's own inputs,
+ * read by field, legal on every node. Theme tokens are legal too ($name lexes to a
+ * theme load), which is why tokens() is served here and the color picker grows its
+ * Tokens tab on this surface.
+ *
+ * A PAGE node's scope is EMPTY on the backend (compile_page_attrs: nothing declares a
+ * property there yet), so a node outside any component offers only the view's inputs. */
+
+const STATE_FIELDS: MeshField[] = [
+  { path: "pressed", shape: "bool" },
+  { path: "dragging", shape: "bool" },
+  { path: "open", shape: "bool" },
+  { path: "hover", shape: "bool" },
+];
+
+const REPEAT_FIELDS: MeshField[] = [
+  { path: "index", shape: "num" },
+  { path: "count", shape: "num" },
+  { path: "fraction", shape: "num" },
+];
+
+/* the component whose tree holds this node, or null for a page's node */
+function owningComponent(editor: Editor, id: number): ComponentDef | null {
+  const comps = editor.store.components();
+  let at: Json | null = editor.store.node(id);
+  while (at && typeof at.id === "number") {
+    const comp = comps.find((c) => c.id === at.id);
+    if (comp) return comp;
+    at = editor.store.parentOf(at.id);
+  }
+  return null;
+}
+
+function attrNames(editor: Editor, node: Node): NameRow[] {
+  const rows: NameRow[] = [
+    { label: "state", shape: "struct", note: "this view", fields: STATE_FIELDS },
+    { label: "repeat", shape: "struct", note: "this copy", fields: REPEAT_FIELDS },
+  ];
+  const comp = owningComponent(editor, node.id);
+  if (!comp) return rows;
+  /* the served slot table carries every property address in the component — bare for
+     the component's own, dotted for a part's — which is exactly the reference universe
+     the template compiler resolves */
+  const type = editor.registry?.types.find((t) => t.name === comp.name) ?? null;
+  for (const slot of type?.slots ?? [])
+    rows.push({
+      label: slot.name,
+      shape: slot.shape === "enum" ? "text" : slot.shape,
+      note: "prop",
+    });
+  return rows;
+}
+
+/* a node's attr expression (and its transition ms/profile, compiled over the same
+ * scope): tier "attr" engages the served lang tables' `view` column in autocomplete,
+ * so only rows the view can encode are ever offered */
+export function attrScope(editor: Editor, node: Node): Scope {
+  return {
+    tier: "attr",
+    lang: () => editor.lang,
+    names: () => attrNames(editor, node),
+    tokens: () => tokenAccess(editor),
   };
 }
 
