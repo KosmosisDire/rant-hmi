@@ -113,16 +113,95 @@ Json compile_attrs(const Json& attrs, const TemplateScope& scope, uint64_t node,
     return out;
 }
 
-/* THE TRANSITIONS METADATA, checked and passed through: {attr: {ms, profile?}} rows the
- * view merges into the element's native CSS `transition`. Never compiled — a transition
- * is not part of any expression; it is a fact about the FIELD, which is what lets it
- * survive every edit to the expression beside it. What is checked: the attr must exist
- * on this kind AND land on a CSS property the browser can animate (the attr table's
- * `css` column — text content, structure and a rebuilt glyph have nothing to blend),
- * the time must be sane, the profile a known easing name. A refused row is a finding
- * and is not served: the picture snaps rather than promising a sweep nothing draws. */
-Json compile_transitions(const Json& node, const std::string& kind, uint64_t node_id,
-                         Sink& sink) {
+/* ---- transition VALUES are expressions like every other field ----
+ *
+ * A transition's time and profile are ordinary display-tier expressions over the same
+ * scope the node's attrs read — "1000 / rate" is a legal duration — with the plain
+ * number and the bare easing name accepted as the degenerate literals the button
+ * writes. Compiled here, served as view programs, and evaluated by the renderer over
+ * TRUE values (a duration computed from an eased value would retune itself mid-flight).
+ * Where a value FOLDS to a constant it is range/vocabulary-checked at compile, so the
+ * literal typo still teaches; a runtime value that comes out wrong renders NO
+ * transition (the picture snaps) rather than a wrong sweep. */
+
+Json const_program(Json v) {
+    return Json{{"code", Json::array({Json{{"op", "CONST"}, {"v", std::move(v)}}})}};
+}
+
+/* the single-CONST fold of a compiled program, or null where it computes */
+const Json* const_of(const Json& program) {
+    auto code = program.find("code");
+    if (code == program.end() || !code->is_array() || code->size() != 1) return nullptr;
+    const Json& ins = code->front();
+    if (ins.value("op", "") != "CONST") return nullptr;
+    auto v = ins.find("v");
+    return v == ins.end() ? nullptr : &*v;
+}
+
+/* one TIME: a number, or expression text over `scope`. False = `error` says why. */
+bool compile_transition_time(const Json& raw, const TemplateScope& scope,
+                             Json& program, std::string& error) {
+    if (raw.is_number()) {
+        program = const_program(raw);
+    } else if (raw.is_string()) {
+        TemplateExprResult compiled = compile_template_expr(raw.get<std::string>(), scope);
+        if (!compiled.ok) {
+            error = compiled.error;
+            return false;
+        }
+        program = std::move(compiled.program);
+    } else {
+        error = "a transition's time is milliseconds: a number, or an expression over "
+                "what this node can read";
+        return false;
+    }
+    if (const Json* folded = const_of(program)) {
+        if (!folded->is_number() ||
+            !(folded->get<double>() > 0 && folded->get<double>() <= 600000)) {
+            error = "a transition's time is between 1 and 600000 milliseconds";
+            return false;
+        }
+    }
+    return true;
+}
+
+/* one PROFILE: a bare easing name, or expression text. Empty = none (the view's ease). */
+bool compile_transition_profile(const std::string& raw, const TemplateScope& scope,
+                                Json& program, bool& has, std::string& error) {
+    has = false;
+    if (raw.empty()) return true;
+    if (easing_profile(raw)) {
+        program = const_program(raw);
+        has = true;
+        return true;
+    }
+    TemplateExprResult compiled = compile_template_expr(raw, scope);
+    if (!compiled.ok) {
+        error = compiled.error + " (a profile is linear, ease, ease-in, ease-out or "
+                "ease-in-out, or an expression yielding one)";
+        return false;
+    }
+    if (const Json* folded = const_of(compiled.program)) {
+        if (!folded->is_string() || !easing_profile(folded->get<std::string>())) {
+            error = "'" + raw + "' is not an easing profile: linear, ease, ease-in, "
+                    "ease-out or ease-in-out";
+            return false;
+        }
+    }
+    program = std::move(compiled.program);
+    has = true;
+    return true;
+}
+
+/* THE TRANSITIONS METADATA, compiled and passed through: {attr: {ms, profile?}} rows
+ * the view merges into the element's native CSS `transition`. It rides BESIDE the attr
+ * (never inside its expression), which is what lets it survive every edit to the field.
+ * The attr must exist on this kind AND land on a CSS property the browser can animate
+ * (the attr table's `css` column — text content, structure and a rebuilt glyph have
+ * nothing to blend). A refused time drops the row; a refused profile drops only the
+ * profile — the sweep still runs at the view's default ease. */
+Json compile_transitions(const Json& node, const std::string& kind,
+                         const TemplateScope& scope, uint64_t node_id, Sink& sink) {
     Json out = Json::object();
     const Json& rows = node.value("transitions", Json());
     if (!rows.is_object()) return out;
@@ -142,30 +221,27 @@ Json compile_transitions(const Json& node, const std::string& kind, uint64_t nod
                         where);
             continue;
         }
-        if (!it->is_object() || !it->contains("ms") || !(*it)["ms"].is_number()) {
+        if (!it->is_object() || !it->contains("ms")) {
             sink.report(node_id, "transition",
                         "a transition is {ms, profile?}: a time in milliseconds and an "
-                        "optional easing name",
+                        "optional easing profile",
                         where);
             continue;
         }
-        const double ms = (*it)["ms"].get<double>();
-        if (!(ms > 0 && ms <= 600000)) {
-            sink.report(node_id, "transition",
-                        "a transition's time is between 1 and 600000 milliseconds",
-                        where);
+        Json ms_program;
+        std::string error;
+        if (!compile_transition_time((*it)["ms"], scope, ms_program, error)) {
+            sink.report(node_id, "transition", error, where);
             continue;
         }
-        const std::string profile = it->value("profile", "");
-        if (!profile.empty() && !easing_profile(profile)) {
-            sink.report(node_id, "transition",
-                        "'" + profile + "' is not an easing profile: linear, ease, "
-                        "ease-in, ease-out or ease-in-out",
-                        where);
-            continue;
-        }
-        Json row{{"ms", ms}};
-        if (!profile.empty()) row["profile"] = profile;
+        Json row{{"ms", std::move(ms_program)}};
+        Json prof_program;
+        bool has_profile = false;
+        if (!compile_transition_profile(it->value("profile", ""), scope, prof_program,
+                                        has_profile, error))
+            sink.report(node_id, "transition", error, where);
+        else if (has_profile)
+            row["profile"] = std::move(prof_program);
         out[it.key()] = std::move(row);
     }
     return out;
@@ -219,6 +295,17 @@ Json compile_anchors(const Json& anchors, const TemplateScope& scope, uint64_t n
 
 Json slot_row(const Json& prop, const std::string& address);
 
+/* a property's DECLARED SWEEP, stashed in pass one and compiled in pass two — its ms
+ * and profile are expressions over the declaring node's scope, which is not complete
+ * until every property in the component is known */
+struct SweepRow {
+    std::string address;
+    std::string path;
+    Json ms;
+    std::string profile;
+    uint64_t prop_id = 0;
+};
+
 /* The properties one node declares: each becomes a served slot addressed under this
  * node's path, and each enters the scope its attrs and its children's attrs read. Returns
  * the names, in declaration order, for the caller to extend the scope with; the slot rows
@@ -228,7 +315,8 @@ Json slot_row(const Json& prop, const std::string& address);
  * is refused rather than quietly folded into the parent's namespace. */
 std::vector<std::string> collect_props(const Json& rows, const std::string& path,
                                        bool addressable, const TemplateScope& outer,
-                                       Json& slots, Sink& sink, bool quiet = false) {
+                                       Json& slots, std::vector<SweepRow>& sweeps,
+                                       Sink& sink, bool quiet = false) {
     std::vector<std::string> names;
     if (!rows.is_array()) return names;
     std::set<std::string> here;
@@ -273,30 +361,25 @@ std::vector<std::string> collect_props(const Json& rows, const std::string& path
         /* THE TRANSITION ON A PROPERTY: every rendered read of this slot eases toward
          * the true value — one declaration, and the needle, the arc and the readout all
          * sweep together. The VALUE never eases: behavior, the wire and gestures read
-         * truth, so this is checked here and served as slot metadata, never compiled.
-         * NUMBERS ONLY: the view tweens a number; a colour cross-fades on the attribute
-         * that draws it, where the browser owns the blend. */
+         * truth. NUMBERS ONLY (the view tweens a number; a colour cross-fades on the
+         * attribute that draws it); the ms/profile are EXPRESSIONS over the declaring
+         * node's scope, so they are stashed here and compiled in pass two, once every
+         * property is known. */
         auto smooth = prop.find("smooth");
-        if (smooth != prop.end() && smooth->is_number() && smooth->get<double>() != 0) {
-            const double ms = smooth->get<double>();
-            if (!(ms > 0 && ms <= 600000))
-                sink.report(id_of(prop), "prop_smooth",
-                            "a property's transition is a time between 1 and 600000 "
-                            "milliseconds (0 or absent = none)",
-                            "smooth");
-            else if (str_or(prop, "shape", "num") != std::string("num"))
+        const bool sweeps_at_all = smooth != prop.end() &&
+            ((smooth->is_number() && smooth->get<double>() != 0) ||
+             (smooth->is_string() && !smooth->get<std::string>().empty()));
+        if (sweeps_at_all) {
+            if (str_or(prop, "shape", "num") != std::string("num"))
                 sink.report(id_of(prop), "prop_smooth",
                             "only a number property sweeps; a colour cross-fades on "
-                            "the attribute that draws it (surface: "
-                            "fill_color.smooth(250))",
+                            "the attribute that draws it (its transition button)",
                             "smooth");
+            else
+                sweeps.push_back(SweepRow{path.empty() ? name : path + "." + name, path,
+                                          *smooth, str_or(prop, "profile", ""),
+                                          id_of(prop)});
         }
-        const std::string profile = str_or(prop, "profile", "");
-        if (!profile.empty() && !easing_profile(profile))
-            sink.report(id_of(prop), "prop_smooth",
-                        "'" + profile + "' is not an easing profile: linear, ease, "
-                        "ease-in, ease-out or ease-in-out",
-                        "profile");
         names.push_back(name);
         slots.push_back(slot_row(prop, path.empty() ? name : path + "." + name));
     }
@@ -311,6 +394,8 @@ struct Walk {
     std::shared_ptr<std::set<std::string>> addresses =
         std::make_shared<std::set<std::string>>();
     std::map<std::string, TemplateScope> scopes;
+    /* declared property sweeps, compiled after the scopes exist (pass two) */
+    std::vector<SweepRow> sweeps;
 };
 
 /* EVERY addressed node can be switched off: the property is synthesized where the node
@@ -329,7 +414,8 @@ void collect_tree(const Json& node, const std::string& path, bool addressable,
                   const TemplateScope& outer, Walk& walk, Sink& sink, bool quiet = false) {
     const Json& rows = node.value("props", Json::array());
     std::vector<std::string> names =
-        collect_props(rows, path, addressable, outer, walk.slots, sink, quiet);
+        collect_props(rows, path, addressable, outer, walk.slots, walk.sweeps, sink,
+                      quiet);
     if (addressable && !path.empty() && !declares_shown(rows)) {
         names.push_back("shown");
         walk.slots.push_back(Json{{"name", path + ".shown"},
@@ -407,7 +493,7 @@ Json compile_common(const Json& node, const std::string& kind, const Json& attrs
     Json out{{"kind", kind},
              {"name", str_or(node, "name", "")},
              {"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
-    Json transitions = compile_transitions(node, kind, node_id, sink);
+    Json transitions = compile_transitions(node, kind, scope, node_id, sink);
     if (!transitions.empty()) out["transitions"] = std::move(transitions);
     if (kind == "path") {
         out["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
@@ -479,7 +565,7 @@ void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
     const Json attrs = shown_attrs(node.value("attrs", Json::object()), path, walk);
     Json row{{"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
-    Json transitions = compile_transitions(node, kind, node_id, sink);
+    Json transitions = compile_transitions(node, kind, scope, node_id, sink);
     if (!transitions.empty()) row["transitions"] = std::move(transitions);
     if (kind == "path")
         row["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
@@ -515,19 +601,9 @@ Json slot_row(const Json& prop, const std::string& address) {
         auto it = prop.find(key);
         if (it != prop.end() && it->is_number()) out[key] = *it;
     }
-    /* the declared transition, served only where it is well-formed (a number property,
-       a legal time): the view treats an absent key as "no sweep", so a refused
-       declaration degrades to honesty */
-    auto smooth = prop.find("smooth");
-    if (smooth != prop.end() && smooth->is_number() &&
-        str_or(prop, "shape", "num") == std::string("num")) {
-        const double ms = smooth->get<double>();
-        if (ms > 0 && ms <= 600000) {
-            out["smooth"] = ms;
-            const std::string profile = str_or(prop, "profile", "");
-            if (easing_profile(profile)) out["profile"] = profile;
-        }
-    }
+    /* the declared transition is NOT served here: its ms/profile are expressions over
+       the declaring node's scope, compiled in pass two (compile_component) and attached
+       to this row there */
     return out;
 }
 
@@ -554,6 +630,32 @@ Json compile_component(const Json& component, Sink& sink) {
     /* the root carries no path segment: its properties are the instance's own, so the
        addresses a document already names stay bare */
     collect_tree(component, "", true, root, walk, sink);
+
+    /* PASS TWO FOR THE DECLARED SWEEPS: every scope exists now, so a property's ms and
+     * profile compile like any other field of its node — "1000 / rate" is a duration.
+     * A refused time drops the sweep; a refused profile drops only the profile. */
+    for (const SweepRow& sweep : walk.sweeps) {
+        auto found = walk.scopes.find(sweep.path);
+        const TemplateScope& scope =
+            found != walk.scopes.end() ? found->second : walk.scopes.at("");
+        Json ms_program;
+        std::string error;
+        if (!compile_transition_time(sweep.ms, scope, ms_program, error)) {
+            sink.report(sweep.prop_id, "prop_smooth", error, "smooth");
+            continue;
+        }
+        Json prof_program;
+        bool has_profile = false;
+        const bool prof_ok = compile_transition_profile(sweep.profile, scope,
+                                                        prof_program, has_profile, error);
+        if (!prof_ok) sink.report(sweep.prop_id, "prop_smooth", error, "profile");
+        for (Json& slot : walk.slots) {
+            if (slot.value("name", "") != sweep.address) continue;
+            slot["smooth"] = std::move(ms_program);
+            if (prof_ok && has_profile) slot["profile"] = std::move(prof_program);
+            break;
+        }
+    }
 
     /* events and behavior are already wire-shaped: DECLARED events as {name, params}
      * signatures (gesture events are never rows here — the primitive brings them) and
@@ -666,7 +768,7 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
         check_attr_names(node.value("attrs", Json::object()), kind, id, sink);
         Json row{{"attrs", compile_attrs(node.value("attrs", Json::object()), scope, id, "",
                                          sink)}};
-        Json transitions = compile_transitions(node, kind, id, sink);
+        Json transitions = compile_transitions(node, kind, scope, id, sink);
         if (!transitions.empty()) row["transitions"] = std::move(transitions);
         if (kind == "path")
             row["anchors"] =

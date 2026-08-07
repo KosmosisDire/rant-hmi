@@ -945,6 +945,9 @@ void test_transitions() {
                  {"group", "value"}, {"smooth", 400.0}, {"profile", "ease-out"}},
             Json{{"id", 804}, {"name", "rate"}, {"shape", "num"}, {"default", 1.0},
                  {"group", "config"}, {"smooth", 250.0}},
+            /* the sweep's time is an EXPRESSION over the component's own scope */
+            Json{{"id", 805}, {"name", "speed"}, {"shape", "num"}, {"default", 0.0},
+                 {"group", "value"}, {"smooth", "1000 / rate"}},
             Json{{"id", 803}, {"name", "label"}, {"shape", "text"}, {"default", "hi"},
                  {"group", "config"}},
         })},
@@ -953,6 +956,7 @@ void test_transitions() {
             Json{{"id", 811}, {"kind", "frame"}, {"name", "bar"},
                  {"attrs", Json{{"w", "value"}}},
                  {"transitions", Json{{"w", Json{{"ms", 300.0}}},
+                                      {"h", Json{{"ms", "value * 10"}}},
                                       {"rotate", Json{{"ms", 250.0},
                                                       {"profile", "ease-out"}}},
                                       {"show", Json{{"ms", 100.0}}},
@@ -986,24 +990,29 @@ void test_transitions() {
     Json registry = derive_registry(document, diags);
 
     const Json& sweep = registry["types"][12];
-    /* the component record is its ROOT node: its transitions ride the template root */
-    CHECK_EQ(sweep["template"]["transitions"]["surface"].value("ms", 0.0), 300.0);
+    /* the component record is its ROOT node: its transitions ride the template root.
+       EVERY VALUE IS A PROGRAM now — a literal is the degenerate CONST. */
+    CHECK_EQ(ops_of(sweep["template"]["transitions"]["surface"]["ms"]), "CONST(300.0)");
     const Json& bar = sweep["template"]["children"][0];
-    CHECK_EQ(bar["transitions"]["w"].value("ms", 0.0), 300.0);
+    CHECK_EQ(ops_of(bar["transitions"]["w"]["ms"]), "CONST(300.0)");
     CHECK(!bar["transitions"]["w"].contains("profile"));   /* absent = the view's ease */
-    CHECK_EQ(bar["transitions"]["rotate"].value("profile", ""), std::string("ease-out"));
-    /* the refused rows are absent AND named: show has no animatable property, nope is
-       no attr at all, x carries a bad time, y a bad profile */
+    /* the duration is an EXPRESSION over the node's own scope, like any other field */
+    CHECK_EQ(ops_of(bar["transitions"]["h"]["ms"]), "LOAD(slot:value) CONST(10.0) MUL");
+    CHECK_EQ(ops_of(bar["transitions"]["rotate"]["profile"]), "CONST(\"ease-out\")");
+    /* the refused rows: show has no animatable property, nope is no attr at all, x
+       carries a bad constant time; y's bad PROFILE drops only the profile — the sweep
+       still runs at the view's default ease */
     CHECK(!bar["transitions"].contains("show"));
     CHECK(!bar["transitions"].contains("nope"));
     CHECK(!bar["transitions"].contains("x"));
-    CHECK(!bar["transitions"].contains("y"));
+    CHECK_EQ(ops_of(bar["transitions"]["y"]["ms"]), "CONST(100.0)");
+    CHECK(!bar["transitions"]["y"].contains("profile"));
     const Json& cap = sweep["template"]["children"][1];
     CHECK(!cap["transitions"].contains("text"));   /* content has nothing to blend */
-    CHECK_EQ(cap["transitions"]["color"].value("ms", 0.0), 200.0);
+    CHECK_EQ(ops_of(cap["transitions"]["color"]["ms"]), "CONST(200.0)");
     /* a computed path CAN transition: d interpolates when the point count holds */
-    CHECK_EQ(sweep["template"]["children"][2]["transitions"]["points"].value("ms", 0.0),
-             150.0);
+    CHECK_EQ(ops_of(sweep["template"]["children"][2]["transitions"]["points"]["ms"]),
+             "CONST(150.0)");
     std::set<std::string> wheres;
     for (const Diag& d : diags) {
         CHECK_EQ(d.code, std::string("transition"));
@@ -1020,20 +1029,27 @@ void test_transitions() {
     std::vector<Diag> page_diags;
     Json rows = compile_page_attrs(document, page_diags);
     const uint64_t box_id = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
-    CHECK_EQ(rows[std::to_string(box_id)]["transitions"]["x"].value("ms", 0.0), 500.0);
+    CHECK_EQ(ops_of(rows[std::to_string(box_id)]["transitions"]["x"]["ms"]),
+             "CONST(500.0)");
 
-    /* the property declaration serves as slot metadata, exactly as authored */
+    /* the property declaration serves COMPILED sweeps on the slot rows */
     auto slot_named = [&](const char* name) -> const Json* {
         for (const Json& slot : sweep["slots"])
             if (slot.value("name", "") == name) return &slot;
         return nullptr;
     };
     const Json* value = slot_named("value");
-    CHECK(value && value->value("smooth", 0.0) == 400.0 &&
-          value->value("profile", "") == "ease-out");
+    CHECK(value != nullptr);
+    CHECK_EQ(ops_of((*value)["smooth"]), "CONST(400.0)");
+    CHECK_EQ(ops_of((*value)["profile"]), "CONST(\"ease-out\")");
     const Json* rate = slot_named("rate");
     /* no profile authored: the key is absent and the view defaults it */
-    CHECK(rate && rate->value("smooth", 0.0) == 250.0 && !rate->contains("profile"));
+    CHECK(rate && !rate->contains("profile"));
+    CHECK_EQ(ops_of((*rate)["smooth"]), "CONST(250.0)");
+    /* a sweep timed by the component's own properties */
+    const Json* speed = slot_named("speed");
+    CHECK(speed != nullptr);
+    CHECK_EQ(ops_of((*speed)["smooth"]), "CONST(1000.0) LOAD(slot:rate) DIV");
     const Json* label = slot_named("label");
     CHECK(label && !label->contains("smooth"));
 
@@ -1065,7 +1081,7 @@ void test_transitions() {
         const Json& slots = registry2["types"][12]["slots"];
         CHECK(!slots[0].contains("smooth"));
         /* the ms was legal, the profile was not: the sweep serves, the profile does not */
-        CHECK(slots[1].value("smooth", 0.0) == 100.0 && !slots[1].contains("profile"));
+        CHECK(slots[1].contains("smooth") && !slots[1].contains("profile"));
         CHECK(!slots[2].contains("smooth"));   /* a colour never sweeps at the slot */
     }
 
