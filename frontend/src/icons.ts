@@ -2,6 +2,8 @@
  * wrapper serves them all and nothing is fetched at run time. The entity-kind marks and
  * their colours are the Build Sheet's: a kind is legible without reading text. */
 
+import {LUCIDE} from "./lucide.js";
+
 export const ICONS: Record<string, string> = {
   alert: '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
   "chevron-down": '<path d="m6 9 6 6 6-6"/>',
@@ -80,7 +82,7 @@ export function kindColor(kind: string): string {
 }
 
 export function iconMarkup(name: string, size = 11, width = 1.7): string {
-  const inner = ICONS[name];
+  const inner = ICONS[name] ?? LUCIDE[name];
   if (!inner) return "";
   return (
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
