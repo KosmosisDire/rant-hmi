@@ -16,19 +16,24 @@
 import { DropPlan, dropAtPageEnd, dropPlan, dropZone, holds } from "../arrange.js";
 import { clear, commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
+import { makeFolds } from "../fold.js";
 import { ICONS, iconMarkup } from "../icons.js";
+import { openMenu } from "../menu.js";
 import { ownedSlots, partIndex, slotLeaf } from "../parts.js";
-import { bindField, bindText } from "../reconcile.js";
-import { highlighted } from "../highlight.js";
-import { authoredSlot, boundSlots, editedSlot, runtimeSlots, slotCell, spellSlotLiteral, typeOf, unspellSlotLiteral, withSlot } from "../slots.js";
+import { bindField, bindFlag, bindText } from "../reconcile.js";
+import { authoredSlot, boundSlots, eachAuthoredSlot, ownSlot, slotCell, slotExpression,
+         slotText, spellSlotText, typeOf, withSlot, withoutSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
 import { ComponentDef, isInstance, Json, Node, PropDef, SlotSpec, TemplateNode,
          WidgetType } from "../types.js";
 
-import { attrsSection, attrsShape, componentViewShape, interactSection, ownedShape,
-         propsSection, renderBuiltinComponent, renderComponentView } from "./components.js";
-import { valueEditor } from "./editors.js";
+import { ChainCase, chainClean, printChain, scanChain } from "./cases.js";
+import { attrsSection, attrsShape, chassisRow, componentViewShape, interactSection,
+         ownedShape, propsSection, renderBuiltinComponent,
+         renderComponentView } from "./components.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
+import { constScope, optionsSlotScope, Scope, slotScope } from "./scope.js";
+import { BoxType, valueBox } from "./valuebox.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 
 /* ---- left sidebar: the Layers tree, which is PAGE COMPOSITION — every node of the
@@ -644,8 +649,9 @@ export function inspectorShape(editor: Editor): string {
       s.name, s.shape, s.group, s.editor ?? "", (s.variants ?? []).join("|"),
     ]),
     fed: Array.from(fed).sort(),
-    /* which slots read live decides what each field IS, so it is structure */
-    runtime: Array.from(runtimeSlots(widget, type)).sort(),
+    /* which affordances a slot row carries (the cases disclosure, its open rows, the
+       poll button) follows the authored text, so it is structure */
+    slotsig: slotRowSig(editor, widget),
     align: template.includes("slot:align"),
     textScale: template.includes("slot:text_scale"),
     /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
@@ -704,6 +710,12 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const own = ownedSlots(type, "");
   const valueSlots = own.filter((s) => s.group === "value");
   const otherSlots = own.filter((s) => s.group !== "value");
+  /* ONE scope for every slot row: a slot expression's universe is the widget's, not
+     the row's; the options slot alone adds the schema's enum types to its browse */
+  const scope = slotScope(editor, widget);
+  const rowsFor = (spec: SlotSpec) =>
+    slotRows(editor, widget, spec,
+             spec.editor === "enum-type" ? optionsSlotScope(editor, widget) : scope);
 
   const label = commitInput(
     widget.name,
@@ -725,12 +737,12 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
 
   /* 1. Data in, and ONLY where the type takes values: what a widget consumes is its
    *    value-group slots, so a Button (which consumes nothing) shows no such section.
-   *    A bound slot's value IS its expression; a literal one edits natively. */
+   *    Every value is an expression box; a literal is just a short expression. */
   if (valueSlots.length)
     body.append(
       ...section("data-in", "Data in",
         String(valueSlots.filter((s) => fed.has(s.name)).length), () =>
-        valueSlots.map((spec) => slotRow(editor, widget, type, fed, spec)),
+        valueSlots.flatMap(rowsFor),
       ),
     );
 
@@ -765,14 +777,12 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
    *    scale, options, sampling, then state. A name outside the table keeps its
    *    declaration order at the end. */
   body.append(
-    ...section("appearance", "Appearance", String(fed.size), () => [
-      el("div", { class: "prop-grid" }, [
-        ...otherSlots
-          .filter((s) => s.group === "appearance" || s.group === "config")
-          .sort((a, b) => slotRank(a.name) - slotRank(b.name))
-          .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
-      ]),
-    ]),
+    ...section("appearance", "Appearance", String(fed.size), () =>
+      otherSlots
+        .filter((s) => s.group === "appearance" || s.group === "config")
+        .sort((a, b) => slotRank(a.name) - slotRank(b.name))
+        .flatMap(rowsFor),
+    ),
   );
 
   /* 5. Panel: the box around the content — the frame-group SLOTS the component declares
@@ -783,13 +793,9 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
    *    expression text, so these are the very same rows a plain frame gets and they go
    *    through the very same commit. There is no instance-shaped copy of them. */
   body.append(
-    ...section("panel", "Panel", null, () => [
-      el("div", { class: "prop-grid" }, [
-        ...otherSlots
-          .filter((s) => s.group === "frame")
-          .flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
-      ]),
-    ]),
+    ...section("panel", "Panel", null, () =>
+      otherSlots.filter((s) => s.group === "frame").flatMap(rowsFor),
+    ),
   );
   body.append(...attrsSection(editor, widget));
 }
@@ -868,26 +874,24 @@ function renderPartInspector(
   });
   host.appendChild(el("div", { class: "inspector-head" }, crumbs));
 
-  const fed = boundSlots(widget);
   const specs = ownedSlots(type, path)
     .sort((a, b) => slotRank(a.name) - slotRank(b.name));
+  const scope = slotScope(editor, widget);
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
   body.append(
-    ...section("part", node.name, String(specs.length), () => [
+    ...section("part", node.name, String(specs.length), () =>
       specs.length
-        ? el(
-            "div",
-            { class: "prop-grid" },
-            specs.flatMap((spec) => slotCells(editor, widget, type, fed, spec)),
-          )
-        : el("p", {
+        ? specs.flatMap((spec) =>
+            slotRows(editor, widget, spec,
+                     spec.editor === "enum-type" ? optionsSlotScope(editor, widget) : scope))
+        : [el("p", {
             class: "empty",
             text: node.children.length
               ? "this part lays its children out; their properties are on them"
               : "this part has no properties of its own",
-          }),
-    ]),
+          })],
+    ),
   );
 }
 
@@ -931,82 +935,258 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
   if (editor.contexts.length) body.append(...interactSection(editor, node));
 }
 
-/* one Data-in row for a value slot, bound or not */
-function slotRow(
-  editor: Editor,
-  widget: Node,
-  type: ReturnType<typeof typeOf>,
-  fed: Set<string>,
-  spec: SlotSpec,
-): HTMLElement {
-  return el("div", { class: "prop-grid" }, slotCells(editor, widget, type, fed, spec));
+/* ---- SLOT ROWS: chassis + value box (phase 4a) ----
+ *
+ * Every slot row is the attr row's own anatomy — label | value box | trail — through
+ * the one chassis. The box's text IS the document encoding (slots.ts: raw number/bool
+ * literals, strings as expressions), so a slot holding a non-literal expression shows
+ * exactly like an attr holding one: the icon dims for gestures, the preview goes
+ * unknown, and there is no bound or driven cell state any more. Empty means unset —
+ * the key is removed and the type default stands as the placeholder. */
+
+/* the cases disclosures' fold state: which conditional rows are open. Structure — the
+ * open editor's rows exist per branch — so it rides the shape through slotRowSig. */
+const caseFolds = makeFolds();
+
+function caseKey(widgetId: number, slot: string): string {
+  return widgetId + ":" + slot;
 }
 
-/* label + editor: which property you are editing is answered by where you are
- * standing. A LITERAL slot edits through its native picker; a BOUND slot's value IS
- * an expression, so the field edits that text directly (the value box takes this row
- * over wholesale in phase 4) while the bound class keeps the state legible.
- *
- * Whether the slot is bound is STRUCTURE (it decides which field exists); what it
- * currently reads is VALUE, and goes into the editor built here. */
-function slotCells(
+/* Does this expression read a mesh FUNCTION — is a poll cadence worth offering? A
+ * lexical scan over the '@' spellings against the mesh's F entities; the compiler's
+ * dep scan stays the authority on what actually polls. */
+function referencesFunction(editor: Editor, text: string): boolean {
+  let fns: Set<string> | null = null;
+  for (const hit of text.matchAll(/@([A-Za-z0-9_/]+)/g)) {
+    fns ??= new Set(
+      editor.mesh.entities.filter((e) => e.kind === "F").map((e) => e.name));
+    if (fns.has(hit[1])) return true;
+  }
+  return false;
+}
+
+/* Which disclosure a slot's authored value earns. "chain" arms the structured editor —
+ * ONLY on a clean top-level ?: chain (parse→print reproduces the text; cases.ts).
+ * "wrap" offers the else-only editor on a plain real expression, whose one act is
+ * adding a case around it. Literal spellings, empty values and anything the scanner
+ * calls dirty get no disclosure: the box alone is the editor there. */
+function casesArm(value: Json): "chain" | "wrap" | "" {
+  if (typeof value !== "string" || !value.trim()) return "";
+  if (chainClean(value)) return "chain";
+  return scanChain(value).kind === "plain" && slotExpression(value) ? "wrap" : "";
+}
+
+/* the slot affordances as SHAPE data: the disclosure kind, its branch count, its open
+ * bit, and whether the poll button stands — all of it decides which rows exist */
+function slotRowSig(editor: Editor, widget: Node): string {
+  const rows: string[] = [];
+  eachAuthoredSlot(widget, (address, value) => {
+    if (typeof value !== "string" || !value.trim()) return;
+    const arm = casesArm(value);
+    const chain = arm === "chain" ? chainClean(value) : null;
+    rows.push(address + ":" + arm + ":" + (chain ? chain.cases.length : 0) + ":" +
+              (referencesFunction(editor, value) ? "p" : "") + ":" +
+              (caseFolds.open(caseKey(widget.id, address)) ? "o" : ""));
+  });
+  return rows.join("|");
+}
+
+/* which literal picker a slot's box gets, from the served spec: variants feed the enum
+ * picker, min/max/step become the scrub grain hints */
+function slotBoxType(spec: SlotSpec): BoxType {
+  if (spec.editor === "align") return { shape: "align" };
+  if (spec.shape === "enum") {
+    const variants = spec.variants ?? [];
+    return { shape: "enum", variants: () => variants };
+  }
+  if (spec.shape === "num") {
+    const bounded = typeof spec.min === "number" && typeof spec.max === "number" &&
+                    spec.max > spec.min;
+    const step = spec.step ?? (bounded ? (spec.max! - spec.min!) / 100 : 0);
+    return step ? { shape: "num", step } : { shape: "num" };
+  }
+  if (spec.shape === "bool" || spec.shape === "text" || spec.shape === "color" ||
+      spec.shape === "list" || spec.shape === "map")
+    return { shape: spec.shape };
+  return { shape: "text" };   /* anything unforeseen: the glyph alone */
+}
+
+/* one slot's row (and its open cases editor, when one stands) */
+function slotRows(
   editor: Editor,
   widget: Node,
-  type: ReturnType<typeof typeOf>,
-  fed: Set<string>,
   spec: SlotSpec,
+  scope: Scope,
 ): HTMLElement[] {
-  const bound = fed.has(spec.name);
-  const runtime = runtimeSlots(widget, type);
-  /* a slot the runtime writes but no expression owns: the field is live, and editable
-     as the value the runtime starts from */
-  const driven = !bound && runtime.has(spec.name);
   const at = () => editor.store.widget(widget.id) ?? widget;
-  const read = () =>
-    unspellSlotLiteral(editedSlot(at(), type, editor.live, runtime, spec.name));
-  const commit = (next: Json) => {
+  const text = () => slotText(ownSlot(at(), spec.name));
+  const commitText = (raw: string) => {
     /* the address is the path into the instance's own nesting: a part's value is
-       written under the part, beside nothing else the widget holds; a native picker's
-       literal is spelled into the expression encoding on the way through */
-    const slots = withSlot(at().slots, spec.name, spellSlotLiteral(spec.shape, next));
+       written under the part, beside nothing else the widget holds. Empty unsets. */
+    const slots = raw.trim() === ""
+      ? withoutSlot(at().slots, spec.name)
+      : withSlot(at().slots, spec.name, spellSlotText(spec.shape, raw));
     editor.apply([{ op: "set_prop", node: widget.id, key: "slots", value: slots }]);
   };
+  const boxType = slotBoxType(spec);
+  const box = valueBox({
+    key: slotCell(widget, spec.name),
+    read: text,
+    commit: commitText,
+    emptyMeans: "default",
+    placeholder: slotText(spec.default),
+    title: spec.name + ": " + spec.shape,
+    type: boxType,
+    scope,
+  });
 
-  let control: HTMLElement;
-  if (bound) {
-    /* the document truth is the expression: edit the text as typed, stored as typed
-       (the compiler teaches through the row's finding when it cannot compile) */
-    const expr = () => String(authoredSlot(at(), type, spec.name) ?? "");
-    const input = commitInput(expr(), (text) =>
-      editor.apply([{ op: "set_prop", node: widget.id, key: "slots",
-                      value: withSlot(at().slots, spec.name, text) }]),
-      { class: "field grow", title: spec.name + " is bound to this expression" });
-    bindField(slotCell(widget, spec.name) + ".expr", input, expr);
-    control = el("span", { class: "value-cell bound" }, [highlighted(input)]);
-  } else {
-    control = el(
-      "span",
-      {
-        class: "value-cell" + (driven ? " driven" : ""),
-        title: driven
-          ? spec.name + " is written at runtime; this is the value it starts from"
-          : undefined,
-      },
-      [valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, false,
-                   editor)],
-    );
+  const arm = casesArm(ownSlot(at(), spec.name));
+  const folded = caseKey(widget.id, spec.name);
+  const open = arm !== "" && caseFolds.open(folded);
+  let casesChip: HTMLElement | null = null;
+  if (arm !== "") {
+    casesChip = iconButton("git-branch",
+      "cases: edit this value as when/then branches", () => {
+        caseFolds.toggle(folded);
+        editor.refresh();
+      });
+    casesChip.classList.add("cases-chip");
+    if (open) casesChip.classList.add("on");
   }
 
-  /* the shape is what the editor and the compiler enforce, so the row does not spell it
-     out; it is on the label's tooltip for when the user wants to know, beside the
-     property's full address (where you are standing already says which part owns it).
-     A finding about this slot's value sits right here on its label. */
-  return [
-    el("label", { text: slotLeaf(spec.name), title: spec.name + ": " + spec.shape }, [
-      diagIcon(editor.diagAt(widget.id, spec.name)),
-    ]),
-    control,
-    el("span"),
-  ];
+  const row = chassisRow({
+    name: slotLeaf(spec.name),
+    note: spec.name + ": " + spec.shape,
+    box,
+    trail: [casesChip, pollChip(editor, widget, spec),
+            diagIcon(editor.diagAt(widget.id, spec.name))],
+  });
+  /* a slot row and an attr row may wear the same name (radius, surface — the deferred
+     props-vs-attrs question); the class keeps them tellable apart */
+  row.classList.add("slot-row");
+  const rows = [row];
+  if (open) rows.push(casesEditor(widget, spec, scope, boxType, text, commitText));
+  return rows;
+}
+
+/* THE POLL SETTINGS, on exactly the rows whose expression reads a mesh function: the
+ * menu-field popover with one HZ value box writing widget.poll[slot] — metadata beside
+ * the slot, as transitions ride attrs. Empty deletes the key; 2 Hz is the standing
+ * default the placeholder shows. */
+function pollChip(editor: Editor, widget: Node, spec: SlotSpec): HTMLElement | null {
+  const authored = ownSlot(widget, spec.name);
+  if (typeof authored !== "string" || !referencesFunction(editor, authored)) return null;
+  const at = () => editor.store.widget(widget.id) ?? widget;
+  const hzOf = () => ((at().poll ?? {}) as Record<string, number>)[spec.name];
+  const chip = iconButton("timer",
+    "poll: how often the function this slot reads is called, in Hz (empty = 2)", () => {
+      const rect = chip.getBoundingClientRect();
+      const box = valueBox({
+        key: widget.id + ":poll." + spec.name,
+        read: () => (hzOf() === undefined ? "" : String(hzOf())),
+        commit: (raw) => {
+          const next = { ...((at().poll ?? {}) as Record<string, number>) };
+          const hz = Number(raw.trim());
+          if (!raw.trim() || !Number.isFinite(hz) || hz <= 0) delete next[spec.name];
+          else next[spec.name] = hz;
+          editor.apply([{ op: "set_prop", node: widget.id, key: "poll", value: next }]);
+        },
+        emptyMeans: "default",
+        placeholder: "2",
+        title: "calls per second — a plain rate; empty falls back to 2 Hz",
+        type: { shape: "num" },
+        scope: constScope(editor),
+      });
+      openMenu(rect.left, rect.bottom + 4, "poll " + slotLeaf(spec.name), [
+        { node: el("div", { class: "menu-field" },
+                   [el("span", { class: "row-label", text: "HZ" }), box]) },
+      ]);
+    });
+  chip.classList.add("poll-chip");
+  if (hzOf() !== undefined) chip.classList.add("on");
+  bindFlag(widget.id + ":poll." + spec.name + ".on", chip, "on",
+           () => hzOf() !== undefined);
+  return chip;
+}
+
+/* THE CASES DISCLOSURE (design D3): the structured editor below a conditional row —
+ * one WHEN/THEN row pair per branch and an ELSE row, each side a value box over the
+ * slot's own scope (the condition a bool, the result the slot's own type). Every edit
+ * re-parses the authored text and writes back the exact chain shape; a plain
+ * expression shows its ELSE row alone, and + Case wraps it as the chain's else. */
+function casesEditor(
+  widget: Node,
+  spec: SlotSpec,
+  scope: Scope,
+  boxType: BoxType,
+  text: () => string,
+  commitText: (raw: string) => void,
+): HTMLElement {
+  const chainNow = () => chainClean(text());
+  const rewrite = (mutate: (chain: { cases: ChainCase[]; last: string }) => void) => {
+    const held = chainNow();
+    const chain: { cases: ChainCase[]; last: string } = held
+      ? { cases: held.cases.map((c) => ({ ...c })), last: held.last }
+      : { cases: [], last: text() };
+    mutate(chain);
+    commitText(chain.cases.length ? printChain(chain) : chain.last.trim());
+  };
+  const key = slotCell(widget, spec.name);
+  const count = chainNow()?.cases.length ?? 0;
+
+  const caseBox = (i: number, side: "when" | "then") =>
+    valueBox({
+      key: key + ".case" + i + "." + side,
+      read: () => {
+        const chain = chainNow();
+        const piece = side === "when" ? chain?.cases[i]?.when : chain?.cases[i]?.then;
+        return piece?.trim() ?? "";
+      },
+      commit: (raw) => rewrite((chain) => {
+        if (chain.cases[i]) chain.cases[i][side] = raw;
+      }),
+      emptyMeans: "unset",
+      title: side === "when" ? "the condition" : "the value while the condition holds",
+      type: side === "when" ? { shape: "bool" } : boxType,
+      scope,
+    });
+
+  const rows: (HTMLElement | null)[] = [];
+  for (let i = 0; i < count; i++) {
+    rows.push(el("div", { class: "case-row" }, [
+      el("span", { class: "row-label", text: "WHEN" }),
+      caseBox(i, "when"),
+      iconButton("x", "remove this case", () =>
+        rewrite((chain) => { chain.cases.splice(i, 1); })),
+    ]));
+    rows.push(el("div", { class: "case-row then" }, [
+      el("span", { class: "row-label", text: "THEN" }),
+      caseBox(i, "then"),
+    ]));
+  }
+  rows.push(el("div", { class: "case-row else" }, [
+    el("span", { class: "row-label", text: "ELSE" }),
+    valueBox({
+      key: key + ".else",
+      read: () => {
+        const chain = chainNow();
+        return (chain ? chain.last : text()).trim();
+      },
+      commit: (raw) => rewrite((chain) => { chain.last = raw; }),
+      emptyMeans: "unset",
+      title: "the value when no case holds",
+      type: boxType,
+      scope,
+    }),
+  ]));
+  rows.push(el("button", {
+    class: "dashed-btn",
+    text: "+ Case",
+    title: "add a when/then branch; a plain expression becomes the chain's else",
+    onclick: () => rewrite((chain) => {
+      chain.cases.push({ when: "true", then: chain.last });
+    }),
+  }));
+  return el("div", { class: "cases-editor" }, rows);
 }
 

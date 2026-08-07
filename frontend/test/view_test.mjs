@@ -388,20 +388,17 @@ const echo = (ops) => {
    every type carries). Nothing about what is being proved depends on which two: these are
    reconciliation rules — same node, new value, no rebuild; focus found by document
    address rather than tree position — and they need any two standing numeric controls.
-   Each echo spreads the CURRENT slots so an earlier check's write survives. */
-const slotInput = (name) => slotControl(name).children[0];
+   Each echo spreads the CURRENT slots so an earlier check's write survives.
+   PHASE 4a: a slot row is chassis + value box now (`.attr-row.slot-row`, the box's one
+   text input inside), so these helpers address that anatomy — the rules are unchanged. */
+const slotRowIn = (host, name) =>
+  host.querySelectorAll(".attr-row.slot-row")
+    .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
+const slotInput = (name) => slotRowIn(sidebar, name)?.querySelector("input") ?? null;
 const slotsNow = () => store.widget(readout.id).slots ?? {};
 const echoSlot = (name, value) =>
   echo([{ op: "set_prop", node: readout.id, key: "slots",
           value: { ...slotsNow(), [name]: value } }]);
-const slotControl = (name) => {
-  for (const grid of sidebar.querySelectorAll(".prop-grid")) {
-    const kids = grid.children;
-    for (let i = 0; i + 1 < kids.length; i++)
-      if (kids[i].tagName === "LABEL" && kids[i].textContent === name) return kids[i + 1];
-  }
-  return null;
-};
 
 draw();
 check(sidebar.querySelectorAll("input").length > 0, "the inspector built controls");
@@ -426,11 +423,11 @@ check(document.activeElement === widthField, "and the field keeps focus");
 /* 3. An UNFED slot's field edits the document, so it shows the document. The runtime keeps
       its own compiled copy of that slot, and a field that read it back would fight whatever
       the user just typed: this is the "changing a value does nothing" bug. */
-const valueInput = slotControl("value").children[0];
+const valueInput = slotInput("value");
 const authored = valueInput.value;
 editor.live = { epoch: 2, values: { [readout.id + ".value"]: 99.5 } };
 draw();
-check(slotControl("value").children[0] === valueInput, "a live frame does not rebuild the slot editor");
+check(slotInput("value") === valueInput, "a live frame does not rebuild the slot editor");
 check(
   valueInput.value === authored,
   "an unfed slot's field ignores the runtime cell, got " + valueInput.value,
@@ -438,10 +435,12 @@ check(
 echo([{ op: "set_prop", node: readout.id, key: "slots", value: { value: 5.5, decimals: 0 } }]);
 check(valueInput.value === "5.5", "an unfed slot's field follows the document, got " + valueInput.value);
 
-/* 4. a BOUND slot's authored value IS an expression (spec D1): the field edits that
-      text, the cell wears the bound class, and a live frame never rebuilds it — the
-      expression is document truth, the cell's value is the backend's. The seeded
-      Readout "Flow" binds `value` to flow.round(1). */
+/* 4. a BOUND slot's authored value IS an expression (spec D1): the box edits that
+      text, and a live frame never rebuilds it — the expression is document truth, the
+      cell's value is the backend's. The bound/driven cell states died with the old
+      slot cells (phase 4a): a slot holding a non-literal expression shows exactly like
+      an attr holding one — the icon dims for gestures. The seeded Readout "Flow"
+      binds `value` to flow.round(1). */
 const fedWidget = store.widgetsOn(store.pages()[0]).find(
   (w) => typeof (w.slots ?? {}).value === "string" && w.type === "Readout");
 const fedPanel = new Panel(new Element("aside"));
@@ -450,22 +449,18 @@ const drawFed = () =>
   fedPanel.render(inspectorShape(fedEditor), (host) => renderInspector(host, fedEditor));
 fedEditor.live = { epoch: 3, values: {} };
 drawFed();
-const fedCell = (() => {
-  for (const grid of fedPanel.host.querySelectorAll(".prop-grid")) {
-    const kids = grid.children;
-    for (let i = 0; i + 1 < kids.length; i++)
-      if (kids[i].tagName === "LABEL" && kids[i].textContent === "value") return kids[i + 1];
-  }
-  return null;
-})();
-check(fedCell.className.includes("bound"), "a bound slot's cell wears the bound class");
-const fedInput = fedCell.querySelector("input");
+const fedRow = slotRowIn(fedPanel.host, "value");
+check(fedRow !== null && fedRow.querySelector(".value-box") !== null,
+      "a bound slot's row is an ordinary value box");
+check(fedRow.querySelector(".vb-icon").classList.contains("vb-dim"),
+      "a slot holding a non-literal expression dims the icon, exactly like an attr");
+const fedInput = fedRow.querySelector("input");
 check(fedInput.value === "flow.round(1)",
-      "a bound slot's field shows the authored expression, got " + fedInput.value);
+      "a bound slot's box shows the authored expression, got " + fedInput.value);
 fedEditor.live = { epoch: 4, values: { [fedWidget.id + ".value"]: 4.25 } };
 drawFed();
-check(fedCell.querySelector("input") === fedInput,
-      "a live frame does not rebuild a bound slot editor");
+check(fedRow.querySelector("input") === fedInput,
+      "a live frame does not rebuild a bound slot's box");
 check(fedInput.value === "flow.round(1)",
       "a live frame never overwrites the authored expression, got " + fedInput.value);
 
@@ -503,7 +498,7 @@ check(slotInput("border_w") !== heightField, "the second insert rebuilt the insp
 check(document.activeElement === slotInput("border_w"),
       "focus follows the key past inserted controls");
 check(
-  document.activeElement.getAttribute("type") === "number",
+  document.activeElement.closest(".value-box") !== null,
   "and lands on the same kind of control",
 );
 
@@ -716,17 +711,11 @@ check(
   "the inspector does not list the type's default flow",
 );
 
-/* A slot the RUNTIME writes reads live in the inspector too, not just on the artboard.
-   The document's value is only where that cell started, so a field showing it would sit
-   there saying `false` while the toggle on screen is plainly on. */
-const toggleValue = (host) => {
-  for (const grid of host.querySelectorAll(".prop-grid")) {
-    const kids = grid.children;
-    for (let i = 0; i + 1 < kids.length; i++)
-      if (kids[i].tagName === "LABEL" && kids[i].textContent === "value") return kids[i + 1];
-  }
-  return null;
-};
+/* PHASE 4a: the driven display state is gone with the old slot cells. The value box
+   shows the DOCUMENT truth always — the authored text is what you edit; what the
+   runtime currently holds is the preview/provenance story, not the field's. So a
+   runtime-written slot's box keeps showing where the cell STARTED, and no bound or
+   driven cell class exists anywhere in the inspector. */
 const liveToggleEditor = {
   ...toggleEditor,
   /* the document seeds this toggle ON; the runtime has since been toggled OFF */
@@ -736,17 +725,14 @@ const livePanel = new Panel(new Element("aside"));
 livePanel.render(inspectorShape(liveToggleEditor), (host) =>
   renderInspector(host, liveToggleEditor),
 );
-const valueCell = toggleValue(livePanel.host);
-check(valueCell !== null, "the toggle's value row exists");
-check(
-  valueCell.className.includes("driven"),
-  "a runtime-written slot is marked as such, got " + valueCell?.className,
-);
-const [offButton, onButton] = valueCell.querySelectorAll("button");
-check(
-  offButton.className.includes("on") && !onButton.className.includes("on"),
-  "and its field follows the live cell, not the document",
-);
+const valueRow = slotRowIn(livePanel.host, "value");
+check(valueRow !== null, "the toggle's value row exists");
+check(valueRow.querySelector("input").value === "true",
+      "the box shows the authored start, the document truth, got " +
+        valueRow.querySelector("input").value);
+check(livePanel.host.querySelectorAll(".value-cell.driven").length === 0 &&
+        livePanel.host.querySelectorAll(".value-cell.bound").length === 0,
+      "the bound/driven cell states are gone — the box's own states replace them");
 check(
   store.widget(toggle.id).slots.value === true,
   "while the document still holds the value the runtime started from",
@@ -779,15 +765,11 @@ check(
   findingHead !== null && findingHead.querySelectorAll(".diag-dot.error").length === 1,
   "a widget-level error marks the inspector head",
 );
-const valueLabel = (() => {
-  for (const grid of findingPanel.host.querySelectorAll(".prop-grid"))
-    for (const kid of grid.children)
-      if (kid.tagName === "LABEL" && kid.textContent === "value") return kid;
-  return null;
-})();
+const findingValueRow = slotRowIn(findingPanel.host, "value");
 check(
-  valueLabel !== null && valueLabel.querySelectorAll(".diag-dot.error").length === 1,
-  "a slot-level error marks the slot's own label",
+  findingValueRow !== null &&
+    findingValueRow.querySelectorAll(".diag-dot.error").length === 1,
+  "a slot-level error marks the slot's own row",
 );
 
 /* a finding inside a flow is addressed to the STEP, so it traces to the exact line; a
@@ -828,17 +810,10 @@ const feedEditor = {
 };
 const feedPanel2 = new Panel(new Element("aside"));
 feedPanel2.render(inspectorShape(feedEditor), (host) => renderInspector(host, feedEditor));
-const slotFindingLabel = (() => {
-  for (const grid of feedPanel2.host.querySelectorAll(".prop-grid")) {
-    const kids = grid.children;
-    for (let i = 0; i < kids.length; i++)
-      if (kids[i].tagName === "LABEL" && kids[i].textContent.includes("value")) return kids[i];
-  }
-  return null;
-})();
+const exprFindingRow = slotRowIn(feedPanel2.host, "value");
 check(
-  slotFindingLabel !== null &&
-    slotFindingLabel.querySelectorAll(".diag-dot.error").length === 1,
+  exprFindingRow !== null &&
+    exprFindingRow.querySelectorAll(".diag-dot.error").length === 1,
   "a slot expression finding marks the slot's own row",
 );
 
@@ -899,9 +874,8 @@ const widgetShape = (() => { view.part = ""; const s = inspectorShape(toggleEdit
 check(inspectorShape(toggleEditor2) !== widgetShape, "the selected part moves the inspector's shape");
 const partPanel = new Panel(new Element("aside"));
 partPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
-const partLabels = [];
-for (const grid of partPanel.host.querySelectorAll(".prop-grid"))
-  for (const kid of grid.children) if (kid.tagName === "LABEL") partLabels.push(kid.textContent);
+const partLabels = partPanel.host.querySelectorAll(".attr-row.slot-row")
+  .map((row) => row.querySelector(".attr-name")?.textContent);
 check(partLabels.includes("handle_color"),
       "the part view lists the property that part owns");
 check(!partLabels.includes("fill_color") && !partLabels.includes("track_color"),
@@ -917,30 +891,33 @@ check(partPanel.host.querySelector(".part-name")?.textContent === "knob",
 view.part = "";
 const widgetPanel = new Panel(new Element("aside"));
 widgetPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
-const widgetLabels = [];
-for (const grid of widgetPanel.host.querySelectorAll(".prop-grid"))
-  for (const kid of grid.children) if (kid.tagName === "LABEL") widgetLabels.push(kid.textContent);
+const widgetLabels = widgetPanel.host.querySelectorAll(".attr-row.slot-row")
+  .map((row) => row.querySelector(".attr-name")?.textContent);
 check(!widgetLabels.includes("handle_color") && !widgetLabels.includes("fill_color"),
       "the widget view shows no property a part owns, got " + widgetLabels.join(","));
 check(widgetLabels.includes("surface"), "and keeps the widget's own frame slots");
 /* PLACE IS NOT A SLOT and not a prop: an instance is a node, so its box on the artboard
    is the same attr row a plain box gets, through the same commit */
 const widgetAttrNames = widgetPanel.host.querySelectorAll(".attr-row")
+  .filter((row) => !row.classList.contains("slot-row"))
   .map((row) => row.querySelector(".attr-name")?.textContent);
 check(widgetAttrNames.includes("left") && widgetAttrNames.includes("w"),
       "the widget view places the instance, got " + widgetAttrNames.join(","));
 {
   /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
-     — and the edit writes NESTED, under the part that owns it */
+     — and the edit writes NESTED, under the part that owns it. The switch is the bool
+     box now: committing `false` stores the raw bool at the part's address. */
   check(partLabels.includes("shown"), "a part can be switched off from its own view");
   const applied = [];
   const nested = { ...toggleEditor2, apply: (ops) => applied.push(...ops) };
   view.part = "pill.knob";
   const editPanel = new Panel(new Element("aside"));
   editPanel.render(inspectorShape(nested), (host) => renderInspector(host, nested));
-  const pairs = [...editPanel.host.querySelectorAll(".bool-pair")];
-  check(pairs.length === 1, "the knob's own view has exactly one switch");
-  fire(pairs[0].children[0], "click");   /* the "off" half */
+  const shownRow = slotRowIn(editPanel.host, "shown");
+  check(shownRow !== null, "the knob's own view carries its shown switch");
+  const shownInput = shownRow.querySelector("input");
+  typeInto(shownInput, "false");
+  fire(shownInput, "change");
   const slotOp = applied.find((op) => op.key === "slots");
   check(slotOp && slotOp.value?.pill?.knob?.shown === false,
         "a part's edit writes nested under its part, got " + JSON.stringify(slotOp?.value));
@@ -3171,6 +3148,207 @@ check(stageNode("frame", 901) === heldAgain &&
   const easeOp = vbOps.findLast((o) => o.key === "transitions");
   check(easeOp && easeOp.value?.size?.ms === 250 && easeOp.value?.size?.profile === "linear",
         "EASE joins it in the same row, got " + JSON.stringify(easeOp?.value));
+  document.activeElement = null;
+}
+
+/* ---- SLOT ROWS ARE VALUE BOXES (inspector redesign, phase 4a) ----
+   Every slot row is chassis + box now: label | [icon|expression|browse] | trail. The
+   box speaks the document encoding directly (raw number/bool literals, strings as
+   expressions), enum picks write the QUOTED variant spelling, a top-level ?: chain
+   grows the cases disclosure below its row, and a slot reading a mesh FUNCTION gets
+   the poll settings writing widget.poll[slot]. */
+{
+  const meshFor4a = {
+    entities: [
+      { kind: "F", name: "sim/calc", type: "", writable: false, forceable: false,
+        fields: [], returns: [{ path: "value", shape: "num" }] },
+      { kind: "V", name: "cage/plc/IO", type: "IOBlock", writable: true, forceable: false,
+        fields: [{ path: "temp", shape: "num" }, { path: "level", shape: "num" }] },
+    ],
+    types: [{
+      name: "Valve", entities: [],
+      fields: [{ path: "mode", shape: "enum",
+                 variants: [{ name: "Off", value: 0 }, { name: "On", value: 1 }] }],
+    }],
+  };
+  /* a Selector: an enum slot (drag), an options slot (enum-type) and a value slot */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: store.pages()[0].id, list: "children", node: {
+      id: 9800, kind: "frame", type: "Selector", name: "sel4a", attrs: {},
+      slots: {}, locals: [], flows: [] } },
+  ]);
+  const ops4a = [];
+  const editor4a = {
+    ...editor,
+    mesh: meshFor4a,
+    selectedNode: () => store.nodeAt(9800),
+    selectedWidget: () => store.widget(9800),
+    apply: (ops) => {
+      ops4a.push(...ops);
+      store.apply(store.version() + 1, ops);
+    },
+  };
+  const panel4a = new Panel(new Element("aside"));
+  const draw4a = () =>
+    panel4a.render(inspectorShape(editor4a), (host) => renderInspector(host, editor4a));
+  const row4a = (name) =>
+    panel4a.host.querySelectorAll(".attr-row.slot-row")
+      .find((r) => r.querySelector(".attr-name")?.textContent === name) ?? null;
+  const echo4a = (name, value) =>
+    store.apply(store.version() + 1, [{
+      op: "set_prop", node: 9800, key: "slots",
+      value: { ...(store.widget(9800).slots ?? {}), [name]: value } }]);
+  const lastSlots = () => ops4a.findLast((o) => o.key === "slots");
+  draw4a();
+
+  /* the anatomy: a slot row is a chassis carrying one value box */
+  const valueRow4a = row4a("value");
+  const valueBox4a = valueRow4a?.querySelector(".value-box") ?? null;
+  check(valueBox4a !== null, "a slot row carries a value box");
+  check(valueBox4a.querySelector(".vb-icon") !== null &&
+        valueBox4a.querySelector("input") !== null &&
+        valueBox4a.querySelector(".vb-browse") !== null,
+        "with the literal icon, the expression input and the browse button");
+
+  /* a num slot's box commits expression TEXT as typed — the string is the encoding */
+  const startInput = row4a("start_angle").querySelector("input");
+  typeInto(startInput, "@x + @y");
+  fire(startInput, "change");
+  check(lastSlots()?.value?.start_angle === "@x + @y",
+        "typing an expression into a num slot commits the string, got " +
+          JSON.stringify(lastSlots()?.value?.start_angle));
+  typeInto(startInput, "-120");
+  fire(startInput, "change");
+  check(lastSlots()?.value?.start_angle === -120,
+        "while a plain number rides RAW, got " +
+          JSON.stringify(lastSlots()?.value?.start_angle));
+
+  /* the enum slot's picker writes the QUOTED variant spelling — one rule, every tier */
+  draw4a();
+  fire(row4a("drag").querySelector(".vb-icon"), "click");
+  const ctx4a = document.body.children.find((n) => n.id === "ctx");
+  const menu4a = ctx4a.children[0];
+  const variant4a = (name) =>
+    menu4a.querySelectorAll("button")
+      .find((b) => (b.innerHTML ?? "").includes(">" + name + "</span>")) ?? null;
+  check(variant4a("radial") !== null && variant4a("linear") !== null,
+        "the enum slot's picker lists the served variants");
+  fire(variant4a("radial"), "click");
+  check(lastSlots()?.value?.drag === "'radial'",
+        "picking writes the quoted variant spelling, got " +
+          JSON.stringify(lastSlots()?.value?.drag));
+
+  /* THE CASES DISCLOSURE arms on a clean top-level ?: chain and round-trips edits */
+  echo4a("value", "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'");
+  draw4a();
+  const chainRow = row4a("value");
+  const chip4a = chainRow.querySelector(".cases-chip");
+  check(chip4a !== null, "a ?: chain grows the cases affordance on its row");
+  fire(chip4a, "click");
+  draw4a();
+  const casesHost = panel4a.host.querySelector(".cases-editor");
+  check(casesHost !== null, "opening it builds the structured editor below the row");
+  const caseInputs = casesHost.querySelectorAll("input");
+  check(caseInputs.length === 3 &&
+        caseInputs[0].value === "@cage/plc/IO.temp > 5" &&
+        caseInputs[1].value === "'hot'" &&
+        caseInputs[2].value === "'cold'",
+        "one when/then pair and the else, parsed from the authored text, got " +
+          caseInputs.map((i) => i.value).join(" | "));
+  typeInto(caseInputs[1], "'warm'");
+  fire(caseInputs[1], "change");
+  check(lastSlots()?.value?.value === "@cage/plc/IO.temp > 5 ? 'warm' : 'cold'",
+        "editing a branch writes back the exact chain shape, got " +
+          JSON.stringify(lastSlots()?.value?.value));
+
+  /* a PLAIN expression gets the wrap editor: + Case makes it the chain's else */
+  echo4a("value", "@cage/plc/IO.temp");
+  draw4a();
+  const wrapHost = panel4a.host.querySelector(".cases-editor");
+  check(wrapHost !== null && wrapHost.querySelectorAll("input").length === 1,
+        "a plain expression shows its else row alone");
+  fire(wrapHost.querySelectorAll(".dashed-btn")[0], "click");
+  check(lastSlots()?.value?.value === "true ? @cage/plc/IO.temp : @cage/plc/IO.temp",
+        "+ Case wraps it as the else branch, got " +
+          JSON.stringify(lastSlots()?.value?.value));
+  /* ...while a literal spelling and a dirty ?: text get no disclosure at all */
+  echo4a("value", "'plain caption'");
+  draw4a();
+  check(row4a("value").querySelector(".cases-chip") === null,
+        "a literal spelling gets no disclosure");
+  echo4a("value", "a ? b");
+  draw4a();
+  check(row4a("value").querySelector(".cases-chip") === null,
+        "an unpairable ?: never arms the editor — the box alone edits it");
+
+  /* THE POLL SETTINGS, on exactly the rows whose expression reads a mesh function */
+  check(row4a("value").querySelector(".poll-chip") === null,
+        "no poll button while nothing reads a function");
+  echo4a("value", "@sim/calc.value * 10");
+  draw4a();
+  const pollBtn = row4a("value").querySelector(".poll-chip");
+  check(pollBtn !== null, "a slot reading a mesh FUNCTION grows the poll settings");
+  fire(pollBtn, "click");
+  const pollField = ctx4a.children[0].querySelector(".menu-field")
+    ?.querySelector("input") ?? null;
+  check(pollField !== null, "the settings popover hosts one HZ value box");
+  typeInto(pollField, "5");
+  fire(pollField, "change");
+  const pollOp = ops4a.findLast((o) => o.key === "poll");
+  check(pollOp && pollOp.value?.value === 5,
+        "the rate lands in widget.poll under the slot, got " +
+          JSON.stringify(pollOp?.value));
+  typeInto(pollField, "");
+  fire(pollField, "change");
+  const pollClear = ops4a.findLast((o) => o.key === "poll");
+  check(pollClear && pollClear.value?.value === undefined,
+        "and an empty rate deletes the key, got " + JSON.stringify(pollClear?.value));
+
+  /* THE BROWSE TREE grows hierarchy for slot scope: folders over the path-spelled
+     entity names, entity rows opening into field rows, a pick INSERTING the canonical
+     reference spelling. The options slot's browse adds the schema's enum types. */
+  echo4a("value", "");
+  draw4a();
+  document.activeElement = null;
+  const boxInput4a = row4a("value").querySelector("input");
+  fire(row4a("value").querySelector(".vb-browse"), "click");
+  const vbrowse = document.body.children.find((n) => n.id === "vbrowse");
+  check(vbrowse !== null && vbrowse.className.includes("on"),
+        "the browse button opens the browse popover");
+  const streeRow4a = (label) =>
+    vbrowse.querySelectorAll(".stree-row")
+      .find((r) => r.textContent.startsWith(label)) ?? null;
+  check(streeRow4a("hmi") !== null && streeRow4a("dart") !== null,
+        "the slot scope browses as the two-root source tree");
+  check(streeRow4a("widget.value") !== null,
+        "the widget's own slots stand under hmi");
+  check(streeRow4a("cage") !== null,
+        "a path-spelled entity folders by its / segments");
+  check(streeRow4a("IO") === null, "a shut folder hides what is under it");
+  fire(streeRow4a("cage"), "click", { detail: 0 });
+  fire(streeRow4a("plc"), "click", { detail: 0 });
+  const ioRow = streeRow4a("IO");
+  check(ioRow !== null, "opening the folders walks down to the entity");
+  fire(ioRow, "click", { detail: 0 });   /* two fields: the entity row is a folder */
+  check(streeRow4a("temp") !== null && streeRow4a("level") !== null,
+        "an entity row opens into its field rows");
+  fire(streeRow4a("temp"), "click", { detail: 0 });
+  check(boxInput4a.value === "@cage/plc/IO.temp",
+        "picking a field INSERTS the canonical reference spelling, got " +
+          boxInput4a.value);
+  check(!vbrowse.className.includes("on"), "and the pick closes the popover");
+
+  /* the options-shaped box: the enum types ride its browse tree (the old chip's job) */
+  document.activeElement = null;
+  const optionsInput4a = row4a("options").querySelector("input");
+  fire(row4a("options").querySelector(".vb-browse"), "click");
+  check(streeRow4a("enum types") !== null,
+        "an options box's browse carries the enum types section");
+  const valveRow = streeRow4a("Valve.mode");
+  check(valveRow !== null, "listing the schema's enums");
+  fire(valveRow, "click", { detail: 0 });
+  check(optionsInput4a.value === "variants(Valve.mode)",
+        "picking one inserts the variants(...) call, got " + optionsInput4a.value);
   document.activeElement = null;
 }
 

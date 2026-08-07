@@ -1004,11 +1004,12 @@ function transitionChip(editor: Editor, node: Node, def: AttrDef): HTMLElement |
 /* ---- THE ROW CHASSIS, minimal form: label | value box | trailing cells ----
  *
  * One builder where three stood (the declared attr row, the stray row, the interact
- * param row): the label cell is a static name with the note as its tooltip and the
- * warning ink on a stray, the box carries the value, and everything after it is the
- * caller's trail — a transition chip on declared animatable attrs, the remove on a
- * stray, the diag dot always. The box never carries row concerns. */
-function chassisRow(opts: {
+ * param row) — and the slot rows ride it too (panel.ts): the label cell is a static
+ * name with the note as its tooltip and the warning ink on a stray, the box carries
+ * the value, and everything after it is the caller's trail — a transition chip on
+ * declared animatable attrs, the cases/poll chips on a slot, the remove on a stray,
+ * the diag dot always. The box never carries row concerns. */
+export function chassisRow(opts: {
   name: string;
   note?: string;
   unknown?: boolean;

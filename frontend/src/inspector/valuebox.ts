@@ -27,9 +27,9 @@ import { iconMarkup } from "../icons.js";
 import { closeMenu, openMenu } from "../menu.js";
 import { makeShell, Shell } from "../popover.js";
 import { bind, bindField } from "../reconcile.js";
-import { streeTree } from "../streerows.js";
+import { streeTree, StreeTreeRow } from "../streerows.js";
 import { announceInput, attachAutocomplete } from "./autocomplete.js";
-import { Scope } from "./scope.js";
+import { BrowseRow, Scope } from "./scope.js";
 
 export interface BoxType {
   shape: "num" | "bool" | "text" | "color" | "enum" | "align" | "list" | "map";
@@ -70,11 +70,13 @@ function stripQuotes(text: string): string {
   return t;
 }
 
-/* The ATTR tier spells an enum variant as a quoted string literal — that is what the
- * template compiler accepts (a bare word is an unknown name there; every built-in
- * authors align: 'center'). Everywhere else the bare string is the value itself. */
-function spellVariant(scope: Scope, variant: string): string {
-  return scope.tier === "attr" ? "'" + variant + "'" : variant;
+/* ONE RULE, every tier: the value box's text is EXPRESSION TEXT, and an enum variant's
+ * expression spelling is the quoted string literal — a bare word is an unknown name to
+ * both compilers that read these surfaces (template_expr for attrs, the scalar compiler
+ * for slots; every built-in authors align: 'center'). The old attr-only special case
+ * generalized rather than accreting per tier. */
+function spellVariant(variant: string): string {
+  return "'" + variant + "'";
 }
 
 /* the change event that runs commitInput's own commit; the test shim's elements carry
@@ -85,10 +87,16 @@ function fireChange(input: HTMLInputElement, commit: (text: string) => void): vo
   else commit(input.value);
 }
 
-/* ---- the browse popover: the Scope's names, searchable, inserting at the caret ---- */
+/* ---- the browse popover: the Scope's names, searchable, inserting at the caret ----
+ *
+ * A scope serving roots() gets the source-tree experience — folders over path-spelled
+ * entity names, entities opening into field rows, variables under their own root —
+ * searching flattens to the leaves. A flat-name scope keeps the flat list. Either way
+ * a pick INSERTS the canonical spelling at the caret; it is never a mode switch. */
 
 let browseShell: Shell | null = null;
-const browseExpanded = new Set<string>();  /* flat rows: streeTree wants one anyway */
+/* expansion state, shared across boxes and openings; the roots start open */
+const browseExpanded = new Set<string>(["hmi", "hmi/local", "hmi/global", "dart", "enums"]);
 
 function ensureBrowse(): Shell {
   return (browseShell ??= makeShell({
@@ -122,28 +130,66 @@ function openBrowse(anchor: HTMLElement, input: HTMLInputElement, scope: Scope):
 
   const sh = ensureBrowse();
   sh.box.innerHTML = "";
+
+  const trail = (note?: string, shape?: string) => [
+    note ? el("span", { class: "stree-local", text: note }) : null,
+    shape ? el("span", { class: "stree-shape", text: shape }) : null,
+  ];
+  const pick = (text: string) => () => {
+    sh.close();
+    insert(text);
+  };
+
+  /* the hierarchy, flattened per the expansion state; searching flattens to matching
+     LEAVES under their canonical spelling, the source tree's own idiom */
+  const treeRows = (filter: string): StreeTreeRow[] => {
+    const out: StreeTreeRow[] = [];
+    const walk = (rows: BrowseRow[], depth: number) => {
+      for (const row of rows) {
+        const kids = row.children ?? [];
+        if (filter) {
+          if (row.insert !== undefined && row.insert.toLowerCase().includes(filter))
+            out.push({
+              depth: 0, key: row.key, label: row.insert, kind: row.kind,
+              icon: row.icon ?? (row.kind ? undefined : "variable"),
+              expandable: false, onPick: pick(row.insert),
+              trail: trail(row.note, row.shape),
+            });
+          walk(kids, 0);
+          continue;
+        }
+        out.push({
+          depth, key: row.key, label: row.label, kind: row.kind,
+          icon: row.icon ?? (kids.length ? "folder" : "variable"),
+          expandable: kids.length > 0,
+          onPick: row.insert !== undefined ? pick(row.insert) : undefined,
+          trail: trail(row.note, row.shape),
+        });
+        if (kids.length && browseExpanded.has(row.key)) walk(kids, depth + 1);
+      }
+    };
+    walk(scope.roots?.() ?? [], 0);
+    return out;
+  };
+
+  const flatRows = (filter: string): StreeTreeRow[] =>
+    scope
+      .names()
+      .filter((row) => !filter || row.label.toLowerCase().includes(filter))
+      .map((row) => ({
+        depth: 0,
+        key: row.label,
+        label: row.label,
+        expandable: false,
+        onPick: pick(row.label),
+        trail: trail(row.note, row.shape),
+      }));
+
   const tree = streeTree({
     placeholder: "search",
     expanded: browseExpanded,
     defaultIcon: "variable",
-    rows: (filter) =>
-      scope
-        .names()
-        .filter((row) => !filter || row.label.toLowerCase().includes(filter))
-        .map((row) => ({
-          depth: 0,
-          key: row.label,
-          label: row.label,
-          expandable: false,
-          onPick: () => {
-            sh.close();
-            insert(row.label);
-          },
-          trail: [
-            row.note ? el("span", { class: "stree-local", text: row.note }) : null,
-            row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
-          ],
-        })),
+    rows: (filter) => (scope.roots ? treeRows(filter) : flatRows(filter)),
   });
   sh.box.appendChild(tree.search);
   sh.box.appendChild(tree.list);
@@ -315,14 +361,14 @@ export function valueBox(spec: BoxSpec): HTMLElement {
     openMenu(rect.left, rect.bottom + 4, "", rows.map((v) => ({
       label: v,
       icon: v === current ? "check" : undefined,
-      run: () => write(spellVariant(spec.scope, v)),
+      run: () => write(spellVariant(v)),
     })));
   };
 
   const openAlign = () => {
     const rect = icon.getBoundingClientRect();
     const grid = alignGrid(stripQuotes(shownText()) || "center", (pos) => {
-      write(spellVariant(spec.scope, pos));
+      write(spellVariant(pos));
       closeMenu();
     });
     openMenu(rect.left, rect.bottom + 4, "", [
@@ -430,7 +476,7 @@ export function valueBox(spec: BoxSpec): HTMLElement {
     });
 
   /* the browse button hides by absence: a scope with no names has nothing to insert */
-  const browse = spec.scope.names().length
+  const browse = (spec.scope.roots ? spec.scope.roots().length : spec.scope.names().length)
     ? el("button", {
         class: "vb-browse",
         title: "insert a reference",

@@ -12,7 +12,7 @@
 import { TokenAccess } from "../colorpicker.js";
 import { Editor } from "../editor.js";
 import { resolveColor } from "../slots.js";
-import { ComponentDef, Flow, Json, Lang, MeshField, Node, Var } from "../types.js";
+import { ComponentDef, Flow, Json, Lang, MeshEntity, MeshField, Node, Var } from "../types.js";
 import { scopeAt } from "./flowscope.js";
 
 export interface NameRow {
@@ -21,6 +21,21 @@ export interface NameRow {
   note?: string;   /* a short origin tag: "local", "global", "slot" */
   elem?: string;   /* aggregate names: the element shape */
   fields?: MeshField[];   /* struct names: the field table behind the dot */
+}
+
+/* One row of a Scope's BROWSE hierarchy — the folder-listing view of the same universe
+ * names() serves flat. A row with `insert` is a leaf the picker can place at the caret
+ * (the canonical reference spelling: `@cage/plc/IO.field`, a bare variable name); one
+ * without is a pure folder. Searching flattens to the leaves, matched on `insert`. */
+export interface BrowseRow {
+  key: string;             /* expansion identity, stable across openings */
+  label: string;
+  kind?: string;           /* entity/variable rows: the kind mark */
+  icon?: string;           /* folders and the rest: the fold icon */
+  shape?: string;          /* trailing shape chip */
+  note?: string;           /* trailing origin tag */
+  insert?: string;         /* what picking places; absent = not pickable */
+  children?: BrowseRow[];
 }
 
 /* One value surface's whole reference universe. Affordances hide by ABSENCE: a surface
@@ -42,6 +57,10 @@ export interface Scope {
   x?(): { shape: string; elem?: string; fields?: MeshField[] } | null;
   /* color tokens, only where they are legal */
   tokens?(): TokenAccess | null;
+  /* the browse tree's HIERARCHICAL view of the same universe names() serves flat: a
+     scope carrying path-spelled mesh entities folders them explorer-style. Absent on
+     flat-name scopes, whose browse popover keeps the flat list. */
+  roots?(): BrowseRow[];
 }
 
 /* every variable a widget's flows can name: its own locals shadow the globals */
@@ -166,6 +185,175 @@ export function constScope(editor: Editor): Scope {
     tier: "const",
     lang: () => editor.lang,
     names: () => [],
+  };
+}
+
+/* ---- THE SLOT TIER: what a widget's slot expression may reference ----
+ *
+ * Grounded in the compiler that reads them (compile_slot_program): the scope is the
+ * widget's own — every variable in scope (struct fields dotted), every timer by field,
+ * the widget's own slots as `widget.<name>` — PLUS every readable mesh entity bound
+ * under its '@' spelling (bind_entities): `@name` where the entity reads as one field,
+ * `@name.field` per field otherwise (a function binds its RESPONSE fields). `x` is
+ * refused there (scope.no_x), so no x row exists. The tier is "display": that is the
+ * ExprTier the backend compiles a slot program at.
+ *
+ * Color tokens are served with ONE caveat the compiler enforces: `$name` stands as a
+ * color slot's WHOLE value (the authored-literal special case); inside a larger
+ * expression the scalar parser refuses it. The picker writes whole values, so the
+ * Tokens tab is honest here. */
+
+/* the fields a slot expression reads OFF an entity: a function's response, anything
+ * else's own table (the backend's feed_fields, mirrored) */
+function entityReadFields(entity: MeshEntity): MeshField[] {
+  return entity.kind === "F" ? entity.returns ?? [] : entity.fields;
+}
+
+/* the flat rows for the '@' spellings — the same universe the browse tree folders */
+function entityNames(editor: Editor): NameRow[] {
+  const rows: NameRow[] = [];
+  for (const entity of editor.mesh.entities) {
+    const fields = entityReadFields(entity);
+    if (!fields.length) continue;
+    if (fields.length === 1)
+      rows.push({ label: "@" + entity.name, shape: fields[0].shape,
+                  elem: fields[0].elem, note: "mesh" });
+    else
+      for (const field of fields)
+        rows.push({ label: "@" + entity.name + "." + field.path, shape: field.shape,
+                    elem: field.elem, note: "mesh" });
+  }
+  return rows;
+}
+
+/* nested folders from the / segments of entity names — the fold_entities idiom the
+ * source tree draws (sourcetree.ts); duplicated here because that module is the
+ * structural lvalue picker and stays untouched */
+function foldEntityRows(editor: Editor): BrowseRow[] {
+  interface Folder { folders: Map<string, Folder>; entities: MeshEntity[]; }
+  const root: Folder = { folders: new Map(), entities: [] };
+  for (const entity of editor.mesh.entities) {
+    if (!entityReadFields(entity).length) continue;
+    const segments = entity.name.split("/");
+    let at = root;
+    for (let i = 0; i + 1 < segments.length; ++i) {
+      let next = at.folders.get(segments[i]);
+      if (!next) {
+        next = { folders: new Map(), entities: [] };
+        at.folders.set(segments[i], next);
+      }
+      at = next;
+    }
+    at.entities.push(entity);
+  }
+  const entityRow = (entity: MeshEntity): BrowseRow => {
+    const fields = entityReadFields(entity);
+    const key = "e:" + entity.kind + ":" + entity.name;
+    const leaf = entity.name.slice(entity.name.lastIndexOf("/") + 1);
+    /* one field reads whole as `@name`; several read by `@name.field`, so the row is
+       a folder over its field leaves */
+    if (fields.length === 1)
+      return { key, label: leaf, kind: entity.kind, shape: fields[0].shape,
+               insert: "@" + entity.name };
+    return {
+      key, label: leaf, kind: entity.kind, shape: entity.type || undefined,
+      children: fields.map((field) => ({
+        key: key + "." + field.path,
+        label: field.path,
+        shape: field.shape,
+        insert: "@" + entity.name + "." + field.path,
+      })),
+    };
+  };
+  const folderRows = (folder: Folder, prefix: string): BrowseRow[] => {
+    const rows: BrowseRow[] = [];
+    for (const [name, child] of [...folder.folders.entries()].sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    ))
+      rows.push({ key: "d:" + prefix + name, label: name, icon: "folder",
+                  children: folderRows(child, prefix + name + "/") });
+    for (const entity of [...folder.entities].sort((a, b) => a.name.localeCompare(b.name)))
+      rows.push(entityRow(entity));
+    return rows;
+  };
+  return folderRows(root, "");
+}
+
+/* the hierarchy over slotScope's universe: hmi (the widget's slots, then the variables
+ * bucketed local/global, struct and timer fields as sub-rows) and dart (the mesh,
+ * foldered by the / segments of entity names) */
+function slotRoots(editor: Editor, widget: Node | null): BrowseRow[] {
+  const hmiKids: BrowseRow[] = [];
+  const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
+  for (const slot of type?.slots ?? [])
+    hmiKids.push({ key: "s:" + slot.name, label: "widget." + slot.name, icon: "layers",
+                   shape: slot.shape === "enum" ? "text" : slot.shape,
+                   insert: "widget." + slot.name });
+  const buckets: Record<"local" | "global", BrowseRow[]> = { local: [], global: [] };
+  for (const row of scopeNames(editor, widget)) {
+    if (row.note !== "local" && row.note !== "global") continue;
+    buckets[row.note].push({
+      key: "v:" + row.label,
+      label: row.label,
+      kind: row.note === "local" ? "l" : "g",
+      shape: row.shape,
+      insert: row.label,
+      children: (row.fields ?? []).map((field) => ({
+        key: "v:" + row.label + "." + field.path,
+        label: field.path,
+        shape: field.variants?.length ? "enum" : field.shape,
+        insert: row.label + "." + field.path,
+      })),
+    });
+  }
+  for (const scope of ["local", "global"] as const)
+    if (buckets[scope].length)
+      hmiKids.push({ key: "hmi/" + scope, label: scope, icon: "folder",
+                     children: buckets[scope] });
+  const roots: BrowseRow[] = [];
+  if (hmiKids.length) roots.push({ key: "hmi", label: "hmi", icon: "folder", children: hmiKids });
+  const dart = foldEntityRows(editor);
+  if (dart.length) roots.push({ key: "dart", label: "dart", icon: "folder", children: dart });
+  return roots;
+}
+
+/* a widget's slot expression: the standing vocabulary plus the mesh, no x */
+export function slotScope(editor: Editor, widget: Node | null): Scope {
+  return {
+    tier: "display",
+    lang: () => editor.lang,
+    names: () => scopeNames(editor, widget).concat(entityNames(editor)),
+    roots: () => slotRoots(editor, widget),
+    tokens: () => tokenAccess(editor),
+  };
+}
+
+/* an OPTIONS slot's scope: the same universe plus the schema's enum types, offered as
+ * `variants(Type.field)` — the list named through the schema so it can never drift
+ * from it. This absorbs the old enum chip into the browse tree. */
+export function optionsSlotScope(editor: Editor, widget: Node | null): Scope {
+  const base = slotScope(editor, widget);
+  return {
+    ...base,
+    roots: () => {
+      const enums: BrowseRow[] = [];
+      for (const type of editor.mesh.types) {
+        if (!type.name) continue;
+        for (const field of type.fields)
+          if (field.variants?.length)
+            enums.push({
+              key: "en:" + type.name + "." + field.path,
+              label: type.name + "." + field.path,
+              icon: "layers",
+              shape: "enum",
+              insert: "variants(" + type.name + "." + field.path + ")",
+            });
+      }
+      const roots = base.roots?.() ?? [];
+      return enums.length
+        ? [{ key: "enums", label: "enum types", icon: "folder", children: enums }, ...roots]
+        : roots;
+    },
   };
 }
 

@@ -1,20 +1,15 @@
-/* Slot resolution: what a slot IS, read from the document and the runtime.
+/* Slot resolution: what a slot IS, read from the document.
  *
  * There used to be two readers here, because the canvas and the inspector wanted different
  * things from a slot. The CANVAS's half — `resolveSlot`, plus the theme-aware, option-
  * expanding and cell-space readers layered on it — went with the renderer that was its only
- * caller; the rebuild re-adds its own consumers against real DOM rather than inheriting a
- * shape drawn for SVG. What is left is the INSPECTOR's, and what it shows depends on who
- * OWNS the slot:
- *
- *   nobody writes it   the document IS the value, so the field shows the document. Reading
- *                      the runtime's compiled copy back would fight what the user typed.
- *   something writes it (a feed, an authored flow, or the type's own default behavior)
- *                      the document is only where the runtime STARTED. The field shows the
- *                      live value, because that is the thing the user is reasoning about
- *                     , and editing it restates where the runtime starts. */
+ * caller. The live-view-of-a-driven-slot reader (`editedSlot`) went with the old slot
+ * cells (phase 4a): the value box shows the DOCUMENT truth always — the authored text is
+ * what you edit, and what the runtime currently holds is the preview/provenance's story,
+ * not the field's. What is left is the pure document half: the value encoding, the
+ * address walk, and the ownership sets. */
 
-import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Node } from "./types.js";
+import { Json, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Node } from "./types.js";
 
 /* ---- the slot value ENCODING (spec D1) ----
  *
@@ -39,23 +34,29 @@ function literalKind(text: string): "text" | "color" | "token" | "num" | "bool" 
   return null;
 }
 
-/* the expression a native editor's literal commits as: text-ish shapes quote, the
- * rest already ARE literal spellings (hex colors, $tokens, JSON aggregates) */
-export function spellSlotLiteral(shape: string, value: Json): Json {
-  if (typeof value !== "string") return value;   /* number | bool ride raw */
-  if (shape === "text" || shape === "enum" || shape === "align")
-    return "'" + value.replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
-  return value;
+/* THE BOX ENCODING (phase 4a): a slot's value box shows the document truth as TEXT and
+ * commits text back into the document encoding directly — a plain number or bool rides
+ * RAW (the degenerate literals), everything else is a string the backend compiles
+ * (quoted text, hex/$token colors, JSON aggregates, real expressions alike). */
+
+/* the document value as the box's text: raw scalars spell themselves, a string IS the
+ * text, an aggregate authored as real JSON reads as its JSON */
+export function slotText(value: Json): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
 }
 
-/* the literal a stored value displays as: quoted text unquotes, every other literal
- * spelling (and every live/raw value) passes through as itself */
-export function unspellSlotLiteral(value: Json): Json {
-  if (typeof value !== "string") return value;
-  const at = value.trim();
-  if (/^'(?:\\.|[^'\\])*'$/.test(at) || /^"(?:\\.|[^"\\])*"$/.test(at))
-    return at.slice(1, -1).replace(/\\(.)/g, "$1");
-  return value;
+/* the committed text as the document value: shape-aware rawness — only a num slot
+ * stores a raw number, only a bool slot a raw bool; anywhere else the text stands as
+ * typed and the compiler's finding teaches */
+export function spellSlotText(shape: string, text: string): Json {
+  const at = text.trim();
+  if (shape === "num" && /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(at))
+    return Number(at);
+  if (shape === "bool" && (at === "true" || at === "false")) return at === "true";
+  return text;
 }
 
 /* is this authored slot value a real EXPRESSION (a bound slot), rather than one of
@@ -136,23 +137,6 @@ export function boundSlots(widget: Node): Set<string> {
   return out;
 }
 
-/* Which slots the RUNTIME owns: a feed, an authored flow whose move writes the slot, or
- * the type's default behavior. This is a union, not a decision: WHICH of them wins is the
- * backend's precedence rule and is not restated here. Whether the slot is
- * written at all does not depend on that, and it is all a view needs to know. */
-export function runtimeSlots(widget: Node, type: WidgetType | null): Set<string> {
-  const out = boundSlots(widget);
-  const written = (flows: Json[]) => {
-    for (const flow of flows ?? [])
-      for (const step of flow?.do ?? [])
-        if (step?.kind === "move" && typeof step.to?.slot === "string" && step.to.slot)
-          out.add(step.to.slot);
-  };
-  written(widget.flows ?? []);
-  written((type?.behavior ?? []) as Json[]);
-  return out;
-}
-
 /* Would a gesture on this widget DO anything? An authored flow on an event answers yes.
  * So does the type's default behavior — but only where a slot that default writes is
  * NOT fed: a fed control is a pure view of the machine and the compiler drops its
@@ -225,18 +209,28 @@ export function authoredSlot(widget: Node, type: WidgetType | null, name: string
   return spec ? spec.default : null;
 }
 
-/* What an INSPECTOR field shows. `runtime` is the set of slots something writes
- * (runtimeSlots): for those the field is a live view of the cell, and its authored value is
- * only where that cell started. For the rest the document IS the value and the field shows
- * it, so typing is never fought by a compiled copy of the old one. */
-export function editedSlot(
-  widget: Node,
-  type: WidgetType | null,
-  live: Live | null,
-  runtime: Set<string>,
-  name: string,
-): Json {
-  if (!runtime.has(name)) return authoredSlot(widget, type, name);
-  const value = live?.values?.[slotCell(widget, name)];
-  return value === undefined ? null : value;
+/* the instance's OWN authored value alone, undefined where it authors nothing — what a
+ * slot's value box shows, with the type default standing as the placeholder */
+export function ownSlot(widget: Node, address: string): Json {
+  return slotValue(widget.slots, address);
+}
+
+/* the same object with one address REMOVED, part objects emptied along the way pruned:
+ * an empty box unsets the slot, and the document keeps only what was authored */
+export function withoutSlot(slots: Json, address: string): Json {
+  const segments = address.split(".");
+  const root: Json = { ...((slots ?? {}) as Record<string, Json>) };
+  const spine: Json[] = [root];
+  let at = root;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const held = at[segments[i]];
+    if (!held || typeof held !== "object" || Array.isArray(held)) return root;
+    at[segments[i]] = { ...held };
+    at = at[segments[i]];
+    spine.push(at);
+  }
+  delete at[segments[segments.length - 1]];
+  for (let i = spine.length - 1; i > 0; i--)
+    if (Object.keys(spine[i]).length === 0) delete spine[i - 1][segments[i - 1]];
+  return root;
 }

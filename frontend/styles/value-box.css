@@ -155,6 +155,51 @@
   padding: 6px 10px;
 }
 
+/* ---- the slot row's trailing chips: cases (a conditional's branches) and poll ---- */
+
+.attr-row .cases-chip,
+.attr-row .poll-chip {
+  flex: none;
+  color: var(--dim-2);
+}
+
+.attr-row .cases-chip.on,
+.attr-row .poll-chip.on {
+  color: var(--acc);
+}
+
+/* ---- the cases disclosure: the structured when/then editor below its row ---- */
+
+.cases-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 8px 10px;
+  padding: 6px 0 6px 8px;
+  border-left: 2px solid var(--line-2);
+  min-width: 0;
+}
+
+.cases-editor .case-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.cases-editor .row-label {
+  flex: 0 0 34px;
+}
+
+/* a branch's THEN half reads as the WHEN's consequence: nudged in under it */
+.cases-editor .case-row.then {
+  margin-bottom: 4px;
+}
+
+.cases-editor .dashed-btn {
+  margin-top: 2px;
+}
+
 /* ---- the color picker's Custom | Tokens tabs ---- */
 
 .cpick-tabs {

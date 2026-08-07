@@ -4,13 +4,6 @@
   flex: 1;
 }
 
-/* a slot the runtime writes: the field reads live, so its frame says it is not just what
-   the document holds. Still editable: what it edits is where the runtime starts. */
-.value-cell.driven > input,
-.value-cell.driven > .seg {
-  border-color: var(--acc-deep-line);
-}
-
 button.swatch {
   display: inline-block;
 }

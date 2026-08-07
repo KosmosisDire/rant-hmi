@@ -1,33 +1,6 @@
-/* ---------- bound slots ---------- */
-
-/* a bound slot keeps its value editor as a live read-only view; the feed editor rides
-   a full-width row underneath */
-.prop-grid .feed-below {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
-.value-cell.bound input:disabled,
-.value-cell.bound select:disabled {
-  color: var(--acc-ink-2);
-  border-color: var(--line-2);
-  opacity: 1;
-  cursor: default;
-}
-
-.value-cell.bound .swatch:disabled,
-.value-cell.bound button:disabled {
-  cursor: default;
-}
-
-.value-cell.bound .bool-pair button:disabled.on {
-  background: var(--acc-deep);
-  color: var(--acc-ink-2);
-}
-
-.value-cell.bound .align-grid button:disabled.on {
-  background: var(--acc-deep);
-}
+/* ---------- the operating pointer regimes ----------
+   (the bound/driven slot-cell states this file was named for died with the old slot
+   cells — the value box's own preview/dim states carry that story now) */
 
 [data-mode="test"] .widget,
 [data-mode="operate"] .widget {
