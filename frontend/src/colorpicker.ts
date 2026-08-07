@@ -11,6 +11,7 @@
  * grouped swatch+name rows plus "custom…", which falls back to the ordinary picker. */
 
 import { commitInput, el } from "./dom.js";
+import { makeShell, Shell } from "./popover.js";
 import { bind, bindField } from "./reconcile.js";
 
 /* what the token features need from the caller; resolution stays the caller's (slots.ts) */
@@ -180,40 +181,21 @@ function paintSwatch(node: HTMLElement, c: Rgba): void {
 
 /* ---- the popup (one per document, like the context menu) ---- */
 
-let overlay: HTMLElement | null = null;
-let popover: HTMLElement | null = null;
+let shell: Shell | null = null;
 
-function ensure(): void {
-  if (overlay) return;
-  popover = el("div", { class: "cpick-pop" });
-  overlay = el("div", { id: "cpick" }, [popover]);
-  overlay.addEventListener("pointerdown", (ev) => {
-    if (ev.target === overlay) closeColorPicker();
-  });
-  overlay.addEventListener("contextmenu", (ev) => {
-    ev.preventDefault();
-    closeColorPicker();
-  });
-  /* the overlay must not trap the wheel: zooming the canvas mid-pick is normal, so
-     wheel events are re-dispatched to whatever sits under the overlay */
-  overlay.addEventListener(
-    "wheel",
-    (ev) => {
-      if (ev.target !== overlay) return;
-      ev.preventDefault();
-      const node = overlay as HTMLElement;
-      node.style.pointerEvents = "none";
-      const under = document.elementFromPoint(ev.clientX, ev.clientY);
-      node.style.pointerEvents = "";
-      under?.dispatchEvent(new WheelEvent("wheel", ev));
-    },
-    { passive: false },
-  );
-  document.body.appendChild(overlay);
+function ensure(): Shell {
+  /* wheel "block": the overlay must not trap the wheel — zooming the canvas mid-pick
+     is normal, so wheel events are re-dispatched to whatever sits under it */
+  return (shell ??= makeShell({
+    id: "cpick",
+    boxClass: "cpick-pop",
+    dismiss: "backdrop",
+    wheel: "block",
+  }));
 }
 
 function closeColorPicker(): void {
-  overlay?.classList.remove("on");
+  shell?.close();
 }
 
 /* a strip or square that maps pointer drags to 0..1 coordinates, committing on release */
@@ -248,8 +230,8 @@ function openColorPicker(
   value: string,
   onPick: (hex: string) => void,
 ): void {
-  ensure();
-  const box = popover as HTMLElement;
+  const sh = ensure();
+  const box = sh.box;
   box.classList.remove("tokens");
   box.innerHTML = "";
 
@@ -365,15 +347,8 @@ function openColorPicker(
   }, commit);
 
   paint();
-  (overlay as HTMLElement).classList.add("on");
-
   /* below the anchor, kept on screen */
-  const at = anchor.getBoundingClientRect();
-  const width = box.offsetWidth || 200;
-  const height = box.offsetHeight || 200;
-  box.style.left = Math.max(8, Math.min(at.left, window.innerWidth - width - 8)) + "px";
-  box.style.top =
-    (at.bottom + height + 8 > window.innerHeight ? at.top - height - 4 : at.bottom + 4) + "px";
+  sh.openUnder(anchor, { fallbackW: 200, fallbackH: 200 });
 }
 
 /* the token menu: the same dismiss overlay as the picker, listing tokens by group */
@@ -384,8 +359,8 @@ function openTokenMenu(
   onToken: (ref: string) => void,
   onCustom: () => void,
 ): void {
-  ensure();
-  const box = popover as HTMLElement;
+  const sh = ensure();
+  const box = sh.box;
   box.classList.add("tokens");
   box.innerHTML = "";
 
@@ -414,13 +389,7 @@ function openTokenMenu(
     }),
   );
 
-  (overlay as HTMLElement).classList.add("on");
-  const at = anchor.getBoundingClientRect();
-  const width = box.offsetWidth || 180;
-  const height = box.offsetHeight || 200;
-  box.style.left = Math.max(8, Math.min(at.left, window.innerWidth - width - 8)) + "px";
-  box.style.top =
-    (at.bottom + height + 8 > window.innerHeight ? Math.max(8, at.top - height - 4) : at.bottom + 4) + "px";
+  sh.openUnder(anchor, { fallbackW: 180, fallbackH: 200, clampFlip: true });
 }
 
 /* ---- the field control ---- */

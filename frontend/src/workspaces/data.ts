@@ -18,6 +18,7 @@ import { iconMarkup, kindMark } from "../icons.js";
 import { sideOf, verbOf } from "../inspector/flows.js";
 import { newVariable, varCard, varShape } from "../inspector/vars.js";
 import { bindField, bindText } from "../reconcile.js";
+import { streeCaret, streeRow } from "../streerows.js";
 import { Feed, Json, MeshEntity, MeshField, MeshType, Node, SCALAR_LABEL } from "../types.js";
 
 /* ---- module view state: per view, never synced ---- */
@@ -305,13 +306,7 @@ export function renderDataTree(host: HTMLElement, editor: Editor): void {
       list.appendChild(add);
       continue;
     }
-    const caret = row.expandable && !searching
-      ? el("span", {
-          class: "stree-caret",
-          html: iconMarkup("chevron-down", 9, 2),
-          style: expanded.has(row.key) ? "" : "transform:rotate(-90deg)",
-        })
-      : el("span", { class: "stree-caret" });
+    const caret = streeCaret(row.expandable && !searching, expanded.has(row.key));
     if (row.expandable)
       caret.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -322,26 +317,21 @@ export function renderDataTree(host: HTMLElement, editor: Editor): void {
       const cell = row.live;
       bindText("data:live:" + cell, live, () => cellText(editor, cell));
     }
-    const node = el(
-      "button",
-      {
-        class: "stree-row data-row" + (row.select ? "" : " stree-folder") +
-               (row.select && row.select === selection ? " current" : ""),
-        style: "padding-left:" + (8 + row.depth * 14) + "px",
-        "data-key": row.key,
-        title: row.title,
-      },
-      [
-        caret,
-        row.kind ? kindMark(row.kind) : el("span", {
-          class: "stree-foldicon",
-          html: iconMarkup(row.icon ?? "folder", 11, 1.6),
-        }),
-        el("span", { class: "stree-label", text: row.label }),
+    const node = streeRow({
+      depth: row.depth,
+      caret,
+      kind: row.kind,
+      icon: row.icon ?? "folder",
+      label: row.label,
+      folder: !row.select,
+      current: Boolean(row.select && row.select === selection),
+      rowClass: "data-row",
+      attrs: { "data-key": row.key, title: row.title },
+      trail: [
         live,
         row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
       ],
-    );
+    });
     node.addEventListener("click", () => {
       if (row.select) select(editor, row.select);
       else if (row.expandable && !searching) toggle(editor, row.key);

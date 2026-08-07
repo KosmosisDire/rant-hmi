@@ -11,6 +11,7 @@
 
 import { el } from "../dom.js";
 import { Editor, variablesInScope } from "../editor.js";
+import { placeBox } from "../popover.js";
 import { Feed, Flow, Lang, LangEntry, MeshField, Node } from "../types.js";
 import { localAt, scopeAt } from "./flowscope.js";
 
@@ -143,13 +144,7 @@ function render(input: HTMLInputElement): void {
     });
   });
   document.body.appendChild(pop);
-  const at = input.getBoundingClientRect();
-  const box = pop.getBoundingClientRect();
-  const left = Math.max(8, Math.min(at.left, window.innerWidth - box.width - 8));
-  const top =
-    at.bottom + box.height + 8 > window.innerHeight ? at.top - box.height - 4 : at.bottom + 4;
-  pop.style.left = left + "px";
-  pop.style.top = top + "px";
+  placeBox(pop, input.getBoundingClientRect(), { exact: true });
 }
 
 /* ---- receiver shape resolution over the served tables ---- */

@@ -9,6 +9,7 @@ import { DropPlan } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
+import { placeBox } from "./popover.js";
 import { AggFrame, AttrTable, BuiltinDef, Diag, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry, Var } from "./types.js";
 
 export type Mode = "edit" | "test" | "operate";
@@ -275,12 +276,7 @@ function showPop(anchor: HTMLElement, diags: Diag[]): void {
     ),
   );
   document.body.appendChild(pop);
-  const at = anchor.getBoundingClientRect();
-  const box = pop.getBoundingClientRect();
-  const left = Math.max(8, Math.min(at.left, window.innerWidth - box.width - 8));
-  const top = at.bottom + box.height + 8 > window.innerHeight ? at.top - box.height - 6 : at.bottom + 6;
-  pop.style.left = left + "px";
-  pop.style.top = top + "px";
+  placeBox(pop, anchor.getBoundingClientRect(), { exact: true, gap: 6 });
 }
 
 function hidePop(): void {

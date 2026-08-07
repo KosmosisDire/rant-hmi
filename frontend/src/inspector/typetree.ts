@@ -16,7 +16,8 @@
 
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
-import { iconMarkup } from "../icons.js";
+import { makeShell, placeBox, Shell } from "../popover.js";
+import { scrollToCurrent, streeTree } from "../streerows.js";
 import { resolveTypeRef, variantNames } from "../slots.js";
 
 /* resolution moved to slots.ts (the canvas needs it too); re-exported so pickers and
@@ -57,36 +58,21 @@ interface Row {
 
 const expanded = new Set<string>(["hmi", "dart"]);
 
-let overlay: HTMLElement | null = null;
-let popover: HTMLElement | null = null;
+/* its own shell instance: #ttree stacks ABOVE #stree, because it opens on top of it */
+let shell: Shell | null = null;
 
-function ensure(): void {
-  if (overlay) return;
-  popover = el("div", { class: "stree-pop" });
-  overlay = el("div", { id: "ttree" }, [popover]);
-  overlay.addEventListener("pointerdown", (ev) => {
-    if (ev.target === overlay) closeTypeTree();
-  });
-  overlay.addEventListener("contextmenu", (ev) => {
-    ev.preventDefault();
-    if (ev.target === overlay) closeTypeTree();
-  });
-  overlay.addEventListener(
-    "wheel",
-    (ev) => {
-      if (ev.target !== overlay) return;
-      overlay!.style.pointerEvents = "none";
-      const under = document.elementFromPoint(ev.clientX, ev.clientY);
-      overlay!.style.pointerEvents = "";
-      under?.dispatchEvent(new WheelEvent("wheel", ev));
-    },
-    { passive: true },
-  );
-  document.body.appendChild(overlay);
+function ensure(): Shell {
+  return (shell ??= makeShell({
+    id: "ttree",
+    boxClass: "stree-pop",
+    dismiss: "backdrop",
+    contextDismiss: "backdrop",
+    wheel: "passive",
+  }));
 }
 
 export function closeTypeTree(): void {
-  overlay?.classList.remove("on");
+  shell?.close();
 }
 
 function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[] {
@@ -177,8 +163,8 @@ export function openTypeTree(
   onPick: (pick: TypePick) => void,
   current?: string,
 ): void {
-  ensure();
-  const box = popover as HTMLElement;
+  const sh = ensure();
+  const box = sh.box;
   box.innerHTML = "";
   /* every open starts COLLAPSED to the two roots; the one exception is the path to
      what the row already holds, revealed and landed on */
@@ -190,82 +176,38 @@ export function openTypeTree(
     if (dot > 0) expanded.add("t:" + current.slice(0, dot));
   }
 
-  const search = el("input", {
-    class: "stree-search",
+  const tree = streeTree({
     placeholder: "search types",
-    spellcheck: "false",
-  }) as HTMLInputElement;
-  const list = el("div", { class: "stree-list" });
-  box.appendChild(search);
-  box.appendChild(list);
+    expanded,
+    defaultIcon: "layers",
+    rows: (filter) =>
+      build_rows(editor, opts, filter).map((row) => {
+        const pick = row.pick;
+        return {
+          depth: row.depth,
+          key: row.key,
+          label: row.label,
+          icon: row.icon,
+          current: Boolean(current && pick?.ref === current),
+          expandable: row.expandable,
+          onPick: pick && (() => {
+            closeTypeTree();
+            onPick(pick);
+          }),
+          trail: [
+            row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
+            row.note ? el("span", { class: "stree-local", text: row.note }) : null,
+          ],
+        };
+      }),
+  });
+  box.appendChild(tree.search);
+  box.appendChild(tree.list);
+  tree.render();
 
-  const render = () => {
-    const filter = search.value.trim().toLowerCase();
-    list.innerHTML = "";
-    for (const row of build_rows(editor, opts, filter)) {
-      const caret = row.expandable && !filter
-        ? el("span", {
-            class: "stree-caret",
-            html: iconMarkup("chevron-down", 9, 2),
-            style: expanded.has(row.key) ? "" : "transform:rotate(-90deg)",
-          })
-        : el("span", { class: "stree-caret" });
-      const node = el(
-        "button",
-        {
-          class: "stree-row" + (row.pick ? "" : " stree-folder") +
-                 (current && row.pick?.ref === current ? " current" : ""),
-          style: "padding-left:" + (8 + row.depth * 14) + "px",
-        },
-        [
-          caret,
-          el("span", { class: "stree-foldicon", html: iconMarkup(row.icon ?? "layers", 11, 1.6) }),
-          el("span", { class: "stree-label", text: row.label }),
-          row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
-          row.note ? el("span", { class: "stree-local", text: row.note }) : null,
-        ],
-      );
-      const toggle = () => {
-        if (expanded.has(row.key)) expanded.delete(row.key);
-        else expanded.add(row.key);
-        render();
-      };
-      node.addEventListener("click", (ev) => {
-        /* a row that both expands and picks splits at its ICON: everything left of it
-           (the indent and the caret) folds, the name and what follows picks. A click
-           with no coordinates (keyboard, scripted) always picks. */
-        if (row.expandable && row.pick && !filter && ev.detail !== 0) {
-          const icon = node.children[1] as HTMLElement;
-          if (ev.clientX < icon.getBoundingClientRect().left) {
-            toggle();
-            return;
-          }
-        }
-        if (row.pick) {
-          closeTypeTree();
-          onPick(row.pick);
-          return;
-        }
-        if (row.expandable) toggle();
-      });
-      list.appendChild(node);
-    }
-    if (!list.childElementCount)
-      list.appendChild(el("div", { class: "stree-empty", text: "nothing matches" }));
-  };
-  search.addEventListener("input", render);
-  render();
-
-  (overlay as HTMLElement).classList.add("on");
-  list.querySelector(".stree-row.current")?.scrollIntoView({ block: "center" });
-  const at = anchor.getBoundingClientRect();
-  const width = Math.max(box.offsetWidth || 240, 240);
-  const height = box.offsetHeight || 200;
-  const left = Math.max(8, Math.min(at.left, window.innerWidth - width - 8));
-  const top = at.bottom + height + 8 > window.innerHeight
-    ? Math.max(8, at.top - height - 4)
-    : at.bottom + 4;
-  box.style.left = left + "px";
-  box.style.top = top + "px";
-  search.focus();
+  sh.show(anchor);
+  scrollToCurrent(tree.list);
+  placeBox(box, anchor.getBoundingClientRect(),
+           { fallbackW: 240, minW: 240, fallbackH: 200, clampFlip: true });
+  tree.search.focus();
 }

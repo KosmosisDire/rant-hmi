@@ -13,7 +13,9 @@
 
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
-import { iconMarkup, kindMark } from "../icons.js";
+import { iconMarkup } from "../icons.js";
+import { makeShell, placeBox, Shell } from "../popover.js";
+import { scrollToCurrent, streeTree } from "../streerows.js";
 import { Json, MeshEntity, MeshField, SlotSpec, Var, Node } from "../types.js";
 import { FlowScope } from "./flowscope.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
@@ -114,38 +116,24 @@ function revealCurrent(side: Json | undefined): void {
 
 const expanded = new Set<string>(["dart", "hmi", "hmi/local", "hmi/global"]);
 
-let overlay: HTMLElement | null = null;
-let popover: HTMLElement | null = null;
+let shell: Shell | null = null;
 let active: (() => void) | null = null;
 
-function ensure(): void {
-  if (overlay) return;
-  popover = el("div", { class: "stree-pop" });
-  overlay = el("div", { id: "stree" }, [popover]);
-  overlay.addEventListener("pointerdown", (ev) => {
-    if (ev.target === overlay) closeSourceTree();
-  });
-  overlay.addEventListener("contextmenu", (ev) => {
-    ev.preventDefault();
-    if (ev.target === overlay) closeSourceTree();
-  });
-  overlay.addEventListener(
-    "wheel",
-    (ev) => {
-      if (ev.target !== overlay) return;
-      overlay!.style.pointerEvents = "none";
-      const under = document.elementFromPoint(ev.clientX, ev.clientY);
-      overlay!.style.pointerEvents = "";
-      under?.dispatchEvent(new WheelEvent("wheel", ev));
+function ensure(): Shell {
+  return (shell ??= makeShell({
+    id: "stree",
+    boxClass: "stree-pop",
+    dismiss: "backdrop",
+    contextDismiss: "backdrop",
+    wheel: "passive",
+    onDismiss: () => {
+      active = null;
     },
-    { passive: true },
-  );
-  document.body.appendChild(overlay);
+  }));
 }
 
 export function closeSourceTree(): void {
-  overlay?.classList.remove("on");
-  active = null;
+  shell?.close();
 }
 
 /* ---- the model ---- */
@@ -449,8 +437,8 @@ export function openSourceTree(
   onPick: (pick: SourcePick) => void,
   current?: Json,
 ): void {
-  ensure();
-  const box = popover as HTMLElement;
+  const sh = ensure();
+  const box = sh.box;
   box.innerHTML = "";
   /* every open starts COLLAPSED to the two worlds' top level; the one exception is
      the path to what the chip already holds, revealed and landed on */
@@ -462,77 +450,39 @@ export function openSourceTree(
   revealCurrent(current);
   const wanted = sideKey(current);
 
-  const search = el("input", {
-    class: "stree-search",
+  const tree = streeTree({
     placeholder: "search",
-    spellcheck: "false",
-  }) as HTMLInputElement;
-  const list = el("div", { class: "stree-list" });
-  box.appendChild(search);
-  box.appendChild(list);
-
-  const render = () => {
-    const filter = search.value.trim().toLowerCase();
-    list.innerHTML = "";
-    const rows = build_rows(editor, widget, opts, filter);
-    for (const row of rows) {
-      const caret = row.expandable && !filter
-        ? el("span", {
-            class: "stree-caret",
-            html: iconMarkup("chevron-down", 9, 2),
-            style: expanded.has(row.key) ? "" : "transform:rotate(-90deg)",
-          })
-        : el("span", { class: "stree-caret" });
-      const node = el(
-        "button",
-        {
-          class: "stree-row" + (row.pick ? "" : " stree-folder") +
-                 (wanted && row.pick && pickKey(row.pick) === wanted ? " current" : ""),
-          style: "padding-left:" + (8 + row.depth * 14) + "px",
-        },
-        [
-          caret,
-          row.kind ? kindMark(row.kind) : el("span", {
-            class: "stree-foldicon",
-            html: iconMarkup(row.icon ?? "folder", 11, 1.6),
+    expanded,
+    defaultIcon: "folder",
+    rows: (filter) =>
+      build_rows(editor, widget, opts, filter).map((row) => {
+        const pick = row.pick;
+        return {
+          depth: row.depth,
+          key: row.key,
+          label: row.label,
+          kind: row.kind,
+          icon: row.icon,
+          current: Boolean(wanted && pick && pickKey(pick) === wanted),
+          expandable: row.expandable,
+          onPick: pick && (() => {
+            closeSourceTree();
+            onPick(pick);
           }),
-          el("span", { class: "stree-label", text: row.label }),
-          row.note ? el("span", { class: "stree-local", text: row.note }) : null,
-          row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
-        ],
-      );
-      const toggle = () => {
-        if (expanded.has(row.key)) expanded.delete(row.key);
-        else expanded.add(row.key);
-        render();
-      };
-      node.addEventListener("click", (ev) => {
-        /* a row that both expands and picks splits at its ICON: everything left of it
-           (the indent and the caret) folds, the name and what follows picks. A click
-           with no coordinates (keyboard, scripted) always picks. */
-        if (row.expandable && row.pick && !filter && ev.detail !== 0) {
-          const icon = node.children[1] as HTMLElement;
-          if (ev.clientX < icon.getBoundingClientRect().left) {
-            toggle();
-            return;
-          }
-        }
-        if (row.pick) {
-          closeSourceTree();
-          onPick(row.pick);
-          return;
-        }
-        toggle();
-      });
-      list.appendChild(node);
-    }
+          trail: [
+            row.note ? el("span", { class: "stree-local", text: row.note }) : null,
+            row.shape ? el("span", { class: "stree-shape", text: row.shape }) : null,
+          ],
+        };
+      }),
 
     /* A fresh temporary needs only a name: a text row, Enter commits it,
        typed by what the move puts into it. The button beside it declares the name WITH
        a type instead: a per-run zeroed value of that type, which is where a clean
        message comes from. A struct pick aims the row at the type's first field, so the
        declaring row is immediately a useful one. */
-    if (opts.newName && !filter) {
+    footer: (list, filter) => {
+      if (!opts.newName || filter) return;
       const name = el("input", {
         class: "stree-new",
         placeholder: "+ new name",
@@ -568,28 +518,20 @@ export function openSourceTree(
         });
       });
       list.appendChild(el("div", { class: "stree-newrow" }, [name, typed]));
-    }
+    },
+    noEmpty: Boolean(opts.newName),
+  });
+  box.appendChild(tree.search);
+  box.appendChild(tree.list);
+  tree.render();
 
-    if (!rows.length && !opts.newName)
-      list.appendChild(el("div", { class: "stree-empty", text: "nothing matches" }));
-  };
-  search.addEventListener("input", render);
-  render();
-
-  (overlay as HTMLElement).classList.add("on");
-  active = render;
+  sh.show(anchor);
+  active = tree.render;
   /* land on what the chip already holds */
-  list.querySelector(".stree-row.current")?.scrollIntoView({ block: "center" });
-  const at = anchor.getBoundingClientRect();
-  const width = Math.max(box.offsetWidth || 240, 240);
-  const height = box.offsetHeight || 200;
-  const left = Math.max(8, Math.min(at.left, window.innerWidth - width - 8));
-  const top = at.bottom + height + 8 > window.innerHeight
-    ? Math.max(8, at.top - height - 4)
-    : at.bottom + 4;
-  box.style.left = left + "px";
-  box.style.top = top + "px";
-  search.focus();
+  scrollToCurrent(tree.list);
+  placeBox(box, anchor.getBoundingClientRect(),
+           { fallbackW: 240, minW: 240, fallbackH: 200, clampFlip: true });
+  tree.search.focus();
 }
 
 /* the mesh moved while the tree is open: re-render in place */

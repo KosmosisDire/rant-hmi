@@ -1,9 +1,11 @@
-/* The context menu, ported from the old designer: a full-screen dismiss overlay with one
- * popover on it, so any click (or right-click) anywhere closes it and nothing else has to
- * track "is a menu open". Right-click on the desktop, long-press on touch. */
+/* The context menu, ported from the old designer: the popover shell's full-screen
+ * dismiss overlay with one menu box on it. Right-click on the desktop, long-press on
+ * touch. It dismisses on any bubbled click (rows close themselves or stop
+ * propagation), which is what lets the swallow flag reopen a submenu from a run(). */
 
 import { el } from "./dom.js";
 import { iconMarkup } from "./icons.js";
+import { makeShell, Shell } from "./popover.js";
 
 export interface MenuItem {
   label?: string;
@@ -15,36 +17,19 @@ export interface MenuItem {
   node?: HTMLElement;
 }
 
-let overlay: HTMLElement | null = null;
-let popover: HTMLElement | null = null;
-/* the pointerup that ends a long-press must not immediately close the menu it opened */
-let swallow = false;
+let shell: Shell | null = null;
 
-function ensure(): void {
-  if (overlay) return;
-  popover = el("div", { class: "popover" });
-  overlay = el("div", { id: "ctx" }, [popover]);
-  overlay.addEventListener("click", () => {
-    if (swallow) {
-      swallow = false;
-      return;
-    }
-    closeMenu();
-  });
-  overlay.addEventListener("contextmenu", (ev) => {
-    ev.preventDefault();
-    closeMenu();
-  });
-  document.body.appendChild(overlay);
+function ensure(): Shell {
+  return (shell ??= makeShell({ id: "ctx", boxClass: "popover", dismiss: "click" }));
 }
 
 export function armSwallow(): void {
-  swallow = true;
+  ensure().armSwallow();
 }
 
 export function openMenu(x: number, y: number, head: string, items: MenuItem[]): void {
-  ensure();
-  const box = popover as HTMLElement;
+  const sh = ensure();
+  const box = sh.box;
   box.innerHTML = "";
   if (head) box.appendChild(el("div", { class: "menu-head", text: head }));
   for (const item of items) {
@@ -69,14 +54,9 @@ export function openMenu(x: number, y: number, head: string, items: MenuItem[]):
       }),
     );
   }
-  (overlay as HTMLElement).classList.add("on");
-  /* measure, then keep it on screen */
-  const width = box.offsetWidth || 180;
-  const height = box.offsetHeight || 120;
-  box.style.left = Math.min(x, window.innerWidth - width - 8) + "px";
-  box.style.top = Math.min(y, window.innerHeight - height - 8) + "px";
+  sh.openAt(x, y, { fallbackW: 180, fallbackH: 120 });
 }
 
 export function closeMenu(): void {
-  overlay?.classList.remove("on");
+  shell?.close();
 }
