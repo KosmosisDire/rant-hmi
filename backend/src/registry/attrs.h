@@ -68,6 +68,11 @@ bool attr_known(const std::string& kind, const std::string& attr_name);
  * property, nothing to transition */
 const char* attr_css(const std::string& kind, const std::string& attr_name);
 
+/* the declared shape of one attr on one kind, "" where the table has no such row —
+ * what the SPEED mode's gate reads: distance is a number's idea, so a rate-timed
+ * transition rides numeric attrs only */
+const char* attr_shape(const std::string& kind, const std::string& attr_name);
+
 /* the served wire shape, carried in the snapshot next to `lang` (app.cpp) exactly like
  * `builtins`: {"kinds": [...], "common": [AttrDef...], "perKind": {kind: [AttrDef...]}}.
  * Never changes at runtime, so served once and cached like builtin_registry(). */

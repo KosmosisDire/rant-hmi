@@ -948,6 +948,9 @@ void test_transitions() {
             /* the sweep's time is an EXPRESSION over the component's own scope */
             Json{{"id", 805}, {"name", "speed"}, {"shape", "num"}, {"default", 0.0},
                  {"group", "value"}, {"smooth", "1000 / rate"}},
+            /* a RATE-timed sweep: units per second, duration follows the distance */
+            Json{{"id", 806}, {"name", "gain"}, {"shape", "num"}, {"default", 0.0},
+                 {"group", "value"}, {"speed", 2.0}},
             Json{{"id", 803}, {"name", "label"}, {"shape", "text"}, {"default", "hi"},
                  {"group", "config"}},
         })},
@@ -959,6 +962,11 @@ void test_transitions() {
                                       {"h", Json{{"ms", "value * 10"}}},
                                       {"rotate", Json{{"ms", 250.0},
                                                       {"profile", "ease-out"}}},
+                                      /* a RATE-timed attr: px per second */
+                                      {"shadow_x", Json{{"speed", 40.0}}},
+                                      /* one timing, never both */
+                                      {"shadow_y", Json{{"ms", 100.0},
+                                                        {"speed", 10.0}}},
                                       {"show", Json{{"ms", 100.0}}},
                                       {"nope", Json{{"ms", 100.0}}},
                                       {"x", Json{{"ms", -5.0}}},
@@ -970,7 +978,9 @@ void test_transitions() {
                                       {"color", Json{{"ms", 200.0}}}}}},
             Json{{"id", 813}, {"kind", "path"}, {"name", "line"},
                  {"anchors", Json::array({Json{{"x", "value"}, {"y", "0"}}})},
-                 {"transitions", Json{{"points", Json{{"ms", 150.0}}}}}},
+                 /* a colour has no distance: speed refuses where ms would serve */
+                 {"transitions", Json{{"points", Json{{"ms", 150.0}}},
+                                      {"stroke", Json{{"speed", 5.0}}}}}},
         })},
     };
     Json root = {
@@ -999,6 +1009,10 @@ void test_transitions() {
     /* the duration is an EXPRESSION over the node's own scope, like any other field */
     CHECK_EQ(ops_of(bar["transitions"]["h"]["ms"]), "LOAD(slot:value) CONST(10.0) MUL");
     CHECK_EQ(ops_of(bar["transitions"]["rotate"]["profile"]), "CONST(\"ease-out\")");
+    /* a RATE-timed attr serves `speed` in place of `ms`; both at once refuses */
+    CHECK_EQ(ops_of(bar["transitions"]["shadow_x"]["speed"]), "CONST(40.0)");
+    CHECK(!bar["transitions"]["shadow_x"].contains("ms"));
+    CHECK(!bar["transitions"].contains("shadow_y"));
     /* the refused rows: show has no animatable property, nope is no attr at all, x
        carries a bad constant time; y's bad PROFILE drops only the profile — the sweep
        still runs at the view's default ease */
@@ -1013,17 +1027,21 @@ void test_transitions() {
     /* a computed path CAN transition: d interpolates when the point count holds */
     CHECK_EQ(ops_of(sweep["template"]["children"][2]["transitions"]["points"]["ms"]),
              "CONST(150.0)");
+    /* but its COLOUR has no distance for a speed to divide */
+    CHECK(!sweep["template"]["children"][2]["transitions"].contains("stroke"));
     std::set<std::string> wheres;
     for (const Diag& d : diags) {
         CHECK_EQ(d.code, std::string("transition"));
         wheres.insert(d.where);
     }
-    CHECK_EQ(diags.size(), size_t(5));
+    CHECK_EQ(diags.size(), size_t(7));
     CHECK(wheres.count("transitions.show") == 1);
     CHECK(wheres.count("transitions.nope") == 1);
     CHECK(wheres.count("transitions.x") == 1);
     CHECK(wheres.count("transitions.y") == 1);
     CHECK(wheres.count("transitions.text") == 1);
+    CHECK(wheres.count("transitions.shadow_y") == 1);
+    CHECK(wheres.count("transitions.stroke") == 1);
 
     /* a PAGE node's transitions ride its node_attrs row the same way */
     std::vector<Diag> page_diags;
@@ -1050,6 +1068,10 @@ void test_transitions() {
     const Json* speed = slot_named("speed");
     CHECK(speed != nullptr);
     CHECK_EQ(ops_of((*speed)["smooth"]), "CONST(1000.0) LOAD(slot:rate) DIV");
+    /* a RATE-timed sweep serves `speed`: the duration follows the distance */
+    const Json* gain = slot_named("gain");
+    CHECK(gain != nullptr && !gain->contains("smooth"));
+    CHECK_EQ(ops_of((*gain)["speed"]), "CONST(2.0)");
     const Json* label = slot_named("label");
     CHECK(label && !label->contains("smooth"));
 
@@ -1068,6 +1090,9 @@ void test_transitions() {
                     Json{{"id", 823}, {"name", "c"}, {"shape", "color"},
                          {"default", "#fff"}, {"group", "appearance"},
                          {"smooth", 100.0}},
+                    /* one timing, never both */
+                    Json{{"id", 824}, {"name", "d"}, {"shape", "num"}, {"default", 0.0},
+                         {"group", "value"}, {"smooth", 100.0}, {"speed", 5.0}},
                 })}}})},
             {"pages", Json::array()},
         };
@@ -1076,7 +1101,7 @@ void test_transitions() {
         CHECK_MSG(document2.adopt(std::move(bad), error2), error2);
         std::vector<Diag> diags2;
         Json registry2 = derive_registry(document2, diags2);
-        CHECK_EQ(diags2.size(), size_t(3));
+        CHECK_EQ(diags2.size(), size_t(4));
         for (const Diag& d : diags2) CHECK_EQ(d.code, std::string("prop_smooth"));
         const Json& slots = registry2["types"][12]["slots"];
         CHECK(!slots[0].contains("smooth"));

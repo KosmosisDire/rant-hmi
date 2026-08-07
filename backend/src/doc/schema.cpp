@@ -296,12 +296,15 @@ const std::vector<NodeSpec>& table() {
             num("step", nullptr),
             num("min", nullptr),
             num("max", nullptr),
-            /* THE DECLARED TRANSITION: every rendered read of this slot eases over
-               `smooth` milliseconds along `profile`. Both are EXPRESSIONS over the
-               declaring node's scope (a number and a bare easing name are the
-               degenerate literals), so `smooth` takes either shape. Rendering only:
-               behavior, feeds, the wire and gestures always read the true value. */
+            /* THE DECLARED TRANSITION: every rendered read of this slot eases — over
+               `smooth` milliseconds, OR at `speed` units per second (the duration then
+               follows the distance: a short step arrives sooner than a long one). One
+               of the two, never both. All three are EXPRESSIONS over the declaring
+               node's scope (a number and a bare easing name are the degenerate
+               literals). Rendering only: behavior, feeds, the wire and gestures always
+               read the true value. */
             any("smooth", nullptr),
+            any("speed", nullptr),
             text("profile", ""),
         };
         t.push_back(prop);
