@@ -87,7 +87,22 @@ export interface AttrDef {
      rotate, a colour that is simply not painted) and `note` explains what absence means */
   default?: Json;
   note: string;
+  /* the CSS property this attr lands on, absent where it has none the browser can
+     animate — exactly the rows a TRANSITION may ride (the inspector's button, the
+     compiler's check). Nominal: stage.ts owns the real per-mechanism mapping. */
+  css?: string;
 }
+
+/* ---- transitions: metadata on a field, never part of its expression ----
+ *
+ * {attr: {ms, profile?}} on a node — the view merges the rows into the element's native
+ * CSS `transition`, so the browser owns every blend. RENDERING ONLY: the value the attr
+ * computes is never eased; profiles are the CSS easing names, absent = ease. */
+export interface TransitionSpec {
+  ms: number;
+  profile?: string;
+}
+export type TransitionMap = Record<string, TransitionSpec>;
 
 export interface AttrTable {
   /* the four node kinds: frame, text, icon, path */
@@ -171,6 +186,8 @@ export interface Node {
      segment that property's address is built from */
   name: string;
   attrs: Record<string, string>;   /* attr -> expression text */
+  /* per-attr transitions, metadata beside the attrs (see TransitionMap) */
+  transitions?: TransitionMap;
   props?: PropDef[];
   /* frame only */
   type?: string;                   /* "" = a plain frame; a component name = an instance */
@@ -262,16 +279,11 @@ export interface Doc {
 
 /* ---- registry ---- */
 
-/* A program, and — where the authored expression ended in .smooth(ms, profile) — the
-   TRANSITION the renderer applies to its result. The compiler hoists the trailing marker
-   out of the code, so the interpreter stays stateless: `code` computes the true value,
-   `smooth` says how the picture approaches it (stage.ts owns the easing). */
-export type Program = { code: Instr[]; smooth?: { ms: number; profile?: string } };
+export type Program = { code: Instr[] };
 /* One instruction. Most ops carry nothing; the fields below belong to exactly one family
    each and are absent everywhere else: `v` a CONST's literal, `cell` a LOAD's cell name,
    `n` how many values MAKE_LIST takes, `i` which binding an ARG reads, `mode` and `body`
-   the loop ITERATE runs per element (program.ts holds the contract); `ms` and `profile`
-   ride the SMOOTH marker (pass-through if it ever reaches the interpreter unhoisted). */
+   the loop ITERATE runs per element (program.ts holds the contract). */
 export type Instr = {
   op: string;
   v?: Json;
@@ -280,8 +292,6 @@ export type Instr = {
   i?: number;
   mode?: string;
   body?: Instr[];
-  ms?: number;
-  profile?: string;
 };
 
 export interface SlotSpec {
@@ -434,6 +444,8 @@ export interface TemplateNode {
   kind: NodeKind;
   name?: string;
   attrs: Attrs;
+  /* the node's validated per-attr transitions, passed through beside the compiled attrs */
+  transitions?: TransitionMap;
   children?: TemplateNode[];
   interact?: Interact;
   anchors?: CompiledAnchor[];
@@ -447,6 +459,8 @@ export interface TemplateNode {
 export interface NodeAttrs {
   attrs: Attrs;
   anchors?: CompiledAnchor[];
+  /* the node's validated transitions, passed through beside its compiled attrs */
+  transitions?: TransitionMap;
 }
 
 export interface WidgetType {

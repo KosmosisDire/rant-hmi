@@ -1920,27 +1920,27 @@ check(stageNode("frame", 901) === heldAgain &&
 }
 
 /* ---- TRANSITIONS: the view eases what it draws ----
-   The true value is never eased anywhere — behavior, the wire and gestures read truth —
-   so what these pin is the RENDERING contract: a smoothed number approaches its target
-   over the authored time (stepped here on a hand clock), a retarget starts from what is
-   shown, structure reads truth, a colour hands its blend to a native CSS transition, and
-   the SMOOTH marker is inert if it ever reaches the interpreter unhoisted. */
+   The true value is never eased anywhere -- behavior, the wire and gestures read truth --
+   so what these pin is the RENDERING contract, in its two halves: an ATTRIBUTE transition
+   is metadata merged into the element's native CSS `transition` (the browser owns the
+   blend; this process has no CSS engine, so what is pinned is the property string and its
+   totality), and a PROPERTY transition tweens the slot's rendered value in the view's own
+   loop (stepped here on a hand clock): retargets start from what is shown, structure
+   reads truth, Nil snaps. */
 {
-  /* the interpreter: an unhoisted marker passes the true value through untouched */
-  check(run({ code: [{ op: "CONST", v: 5 }, { op: "SMOOTH", ms: 100, profile: "ease" }] },
-            () => null) === 5,
-        "an unhoisted SMOOTH op is a no-op: the true value, never a wrong number");
-
   const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
   /* a type whose `value` PROPERTY declares the transition: the bar's position and the
-     gate's visibility both read the same slot, and only the PICTURE of it may sweep */
+     gate's visibility both read the same slot, and only the PICTURE of it may sweep.
+     The bar ALSO carries attr-transition metadata of its own (width), pinning that a
+     template node's rows reach its element. */
   const sweepType = {
     name: "Sweeper", design_w: 220, design_h: 110, events: [],
     slots: [{ name: "value", shape: "num", default: 0.2, group: "value",
               smooth: 200, profile: "linear" }],
     template: { kind: "frame", name: "", attrs: {}, children: [
       { kind: "frame", name: "bar", attrs: { x: cell("slot:value"), w: prog(0.1),
-                                             h: prog(0.5) } },
+                                             h: prog(0.5) },
+        transitions: { w: { ms: 150 } } },
       { kind: "frame", name: "gate",
         attrs: { show: { code: [{ op: "LOAD", cell: "slot:value" },
                                 { op: "CONST", v: 0.9 }, { op: "GT" }] },
@@ -1986,9 +1986,30 @@ check(stageNode("frame", 901) === heldAgain &&
         "first sight SNAPS: there is no sweep from nothing, got " + bar().style.left);
   check(sw.children.length === 1, "the gate is honestly absent at 0.2");
 
-  /* the slot moves: the true value lands whole (structure, marks) while the picture
-     starts walking. Same epoch — this is a live frame, not a compile. */
-  tEditor.live = { epoch: 1, values: { "711.value": 1 } };
+  /* THE ATTR MECHANISM IS METADATA -> the native `transition` property, per entry, per
+     rate -- and TOTAL: rows that leave take their entries with them */
+  check(bar().style.transition === "width 150ms ease",
+        "a template node's transition metadata reaches its element, got '" +
+          bar().style.transition + "'");
+  tAttrs["710"].transitions = { x: { ms: 400, profile: "linear" },
+                                surface: { ms: 300, profile: "ease-out" } };
+  tEditor.live = { epoch: 2, values: {} };
+  tDraw();
+  const box = tNode(710);
+  check(box.style.transition === "left 400ms linear, background-color 300ms ease-out",
+        "a page node's rows merge into one per-property list, got '" +
+          box.style.transition + "'");
+  delete tAttrs["710"].transitions;
+  tEditor.live = { epoch: 3, values: {} };
+  tDraw();
+  check(box.style.transition === "",
+        "and it clears whole when the metadata goes -- the applier is total");
+
+  /* THE PROPERTY MECHANISM: the slot's rendered value tweens here. The slot moves: the
+     true value lands whole (structure, marks) while the picture starts walking. Same
+     epoch -- this is a live frame, not a compile. */
+  tnow = 1000;
+  tEditor.live = { epoch: 3, values: { "711.value": 1 } };
   tDraw();
   check(sw.children.length === 2,
         "STRUCTURE READS TRUTH: the gate exists the moment the value passes 0.9, "
@@ -2004,11 +2025,11 @@ check(stageNode("frame", 901) === heldAgain &&
   check(bar().style.left === "100%", "and it settles exactly, got " + bar().style.left);
 
   /* a retarget mid-flight starts FROM WHAT IS SHOWN, never a jump */
-  tEditor.live = { epoch: 1, values: { "711.value": 0 } };
+  tEditor.live = { epoch: 3, values: { "711.value": 0 } };
   tDraw();
   tnow = 1350;
   stepTransitions(tHost, tEditor, tnow);
-  tEditor.live = { epoch: 1, values: { "711.value": 1 } };
+  tEditor.live = { epoch: 3, values: { "711.value": 1 } };
   tDraw();
   tnow = 1450;
   stepTransitions(tHost, tEditor, tnow);
@@ -2020,47 +2041,10 @@ check(stageNode("frame", 901) === heldAgain &&
   stepTransitions(tHost, tEditor, tnow);
   check(bar().style.left === "100%", "and still settles exactly");
 
-  /* an ATTRIBUTE's own .smooth(): the hoisted metadata rides the program, numbers tween
-     under the bind, and a compile-epoch reconcile retargets on the same element */
-  tAttrs["710"].attrs.x = { code: [{ op: "CONST", v: 11 }],
-                            smooth: { ms: 100, profile: "linear" } };
-  tEditor.live = { epoch: 2, values: { "711.value": 1 } };
-  tnow = 3000;
-  tDraw();
-  const box = tNode(710);
-  check(box.style.left === "11px", "an attr's first sight snaps too");
-  tAttrs["710"].attrs.x = { code: [{ op: "CONST", v: 211 }],
-                            smooth: { ms: 100, profile: "linear" } };
-  tEditor.live = { epoch: 3, values: { "711.value": 1 } };
-  tDraw();
-  check(tNode(710) === box && box.style.left === "11px",
-        "a recompiled attr keeps its element and starts its sweep at the old number");
-  tnow = 3050;
-  stepTransitions(tHost, tEditor, tnow);
-  check(box.style.left === "111px", "an attr tween walks the same clock, got " + box.style.left);
-  tnow = 3200;
-  stepTransitions(tHost, tEditor, tnow);
-  check(box.style.left === "211px", "and settles on the authored number");
-
-  /* a COLOUR cross-fades in CSS: the smoothed colour attr writes a native transition
-     (the browser owns the blend — a var() token could not be tweened here), and a
-     numeric sweep never does */
-  tAttrs["710"].attrs.surface = { code: [{ op: "CONST", v: "#ff0000" }],
-                                  smooth: { ms: 300, profile: "ease-out" } };
-  tEditor.live = { epoch: 4, values: { "711.value": 1 } };
-  tDraw();
-  check(box.style.transition === "background-color 300ms ease-out",
-        "a smoothed colour is a native CSS transition, got " + box.style.transition);
-  tAttrs["710"].attrs.surface = prog("#ff0000");
-  tEditor.live = { epoch: 5, values: { "711.value": 1 } };
-  tDraw();
-  check(box.style.transition === "",
-        "and it clears with the smooth — the applier is total");
-
-  /* a live cell going away RESOLVES to the authored fallback — a renderable number —
+  /* a live cell going away RESOLVES to the authored fallback -- a renderable number --
      and the picture eases toward it like any other move */
   tnow = 4000;
-  tEditor.live = { epoch: 5, values: { "711.value": null } };
+  tEditor.live = { epoch: 3, values: { "711.value": null } };
   tDraw();
   check(bar().style.left === "100%",
         "a fallback is a retarget, not a jump, got " + bar().style.left);
@@ -2068,7 +2052,7 @@ check(stageNode("frame", 901) === heldAgain &&
   stepTransitions(tHost, tEditor, tnow);
   check(bar().style.left === "20%", "easing home to the authored value");
 
-  /* TRUE NIL SNAPS: a slot with no value anywhere renders UNKNOWN at once — nothing
+  /* TRUE NIL SNAPS: a slot with no value anywhere renders UNKNOWN at once -- nothing
      invents frames toward (or from) a value nobody produced. A NEW type row, because
      the sweep table is cached per served type object (as a snapshot would deliver). */
   tEditor.registry = { version: 2, types: [{

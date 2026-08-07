@@ -465,12 +465,6 @@ function exec(code: Instr[], cells: Cells, args: Json[]): Json {
       case "ARG":
         stack.push(typeof instr.i === "number" ? args[instr.i] ?? NIL : NIL);
         break;
-      /* the transition marker (value.smooth(ms, profile)). The compiler HOISTS it out of
-         the code into program metadata before serving — the renderer owns easing, this
-         interpreter owns values — so meeting one here means an unhoisted program, and the
-         honest answer is the true value untouched: a missing sweep, never a wrong number */
-      case "SMOOTH":
-        break;
       /* THE ONE LOOP, over one list, running `body` per element. REDUCE takes its seed on
          top of the list (the emitter pushes the list, then the init); every other mode
          takes the list alone. What the body sees is `args`: [element, index], and for

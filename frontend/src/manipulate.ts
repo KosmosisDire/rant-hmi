@@ -275,6 +275,10 @@ function standingCheck(): void {
   const el = nodeIn(held.host, held.id);
   if (!el) return;
   const to = held.styles;
+  /* the held numbers land INSTANTLY: a declared transition easing them would rubber-band
+     what the pointer already placed. Re-asserted with the px (an applier pass rewrites
+     `transition` from the metadata); the pass after the settle restores it. */
+  el.style.transition = "none";
   if (to.x !== undefined) el.style.left = to.x + "px";
   if (to.y !== undefined) el.style.top = to.y + "px";
   if (to.w !== undefined) el.style.width = to.w + "px";
@@ -288,6 +292,8 @@ export function repaintFree(): void {
   if (free) {
     const el = nodeIn(free.host, free.id);
     if (el) {
+      /* a drag writes where the pointer IS: a declared transition must not ease it */
+      el.style.transition = "none";
       const to = free.plan.apply(free.dx, free.dy, free.snap);
       if (to.x !== undefined) el.style.left = to.x + "px";
       if (to.y !== undefined) el.style.top = to.y + "px";

@@ -56,7 +56,7 @@ import { attrText, Cells, run } from "./program.js";
 import { operable, typeOf } from "./slots.js";
 import {
   Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, Interact, isInstance, Json, Node, Page,
-  Program, TemplateNode, Token, WidgetType,
+  Program, TemplateNode, Token, TransitionMap, WidgetType,
 } from "./types.js";
 
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
@@ -147,6 +147,12 @@ interface StageState {
   /* advance the sweeps and patch exactly their readers (set by renderStage, which
      knows the editor — the flushState pattern) */
   tick: () => void;
+  /* the elements with a `transform` TRANSITION in flight (transitionstart/end): while
+     any exist, the turn ticker re-runs the shadow-bearing binds off sampled matrices */
+  turning: Set<Element>;
+  /* every bind currently casting a shadow — what the turn ticker re-runs */
+  shadowed: Set<Bind>;
+  turnTicking: boolean;
   /* what a RECONCILE is keyed on: mode, artboard size, document version, compile epoch */
   docSig: string;
   /* the theme vars last emitted on the page, so a token that left is removed */
@@ -186,6 +192,7 @@ function stateOf(host: HTMLElement): StageState {
     state = { host, page: null, root: null, binds: new Map(), byDep: new Map(),
               byKid: new Map(), marks: new Map(), recording: null, pass: 0,
               tweens: new Map(), now: 0, ticking: false, tick: () => undefined,
+              turning: new Set(), shadowed: new Set(), turnTicking: false,
               docSig: "", tokenNames: [], tokens: [], flushState: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
@@ -261,6 +268,9 @@ interface ViewNode {
   /* the PART CHANNEL this node's gestures post on: its own dotted name chain from the
      template root ("" = the root, i.e. the widget-level channel) */
   part: string;
+  /* the node's validated per-attr transitions ({attr: {ms, profile?}}), merged into the
+     element's native CSS `transition` by runAppliers; null = none */
+  transitions: TransitionMap | null;
 }
 
 /* One document node, with its compiled attrs found by id — a page's, or an entered
@@ -280,6 +290,9 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     const root = instType?.template
       ? templateNode(instType.template, node.id, instType, "")
       : null;
+    /* the instance's own transitions override the component root's per attr, exactly
+       as its attrs do */
+    const transitions = { ...(root?.transitions ?? {}), ...(compiled?.transitions ?? {}) };
     return {
       id: node.id,
       instance: true,
@@ -295,6 +308,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
       part: "",
       frac,
       interact: root?.interact ?? null,
+      transitions: Object.keys(transitions).length ? transitions : null,
     };
   }
   return {
@@ -312,6 +326,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     part: "",
     frac,
     interact: null,
+    transitions: compiled?.transitions ?? null,
   };
 }
 
@@ -338,6 +353,7 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
     part,
     frac: true,
     interact: node.interact ?? null,
+    transitions: node.transitions ?? null,
   };
 }
 
@@ -374,9 +390,14 @@ function rootView(editor: Editor, page: Page | null): ViewNode {
   /* the design frame wears the component ROOT's own dressing — an instance's box IS this
      node — over the artboard surface the page style gives it. No context: an empty attr
      map, which the (total) dress applier reads as "nothing authored" and clears. */
+  const rootTransitions = ctx
+    ? (ctx.component
+        ? editor.nodeAttrs?.[String(ctx.component)]?.transitions ?? null
+        : type?.template.transitions ?? null)
+    : null;
   return { id: 0, instance: false, kind: "frame", name: "", attrs: rootAttrs ?? {},
            anchors: [], closed: false, children: kids, owner, type, path: "", part: "",
-           frac: true, interact: null };
+           frac: true, interact: null, transitions: rootTransitions };
 }
 
 /* ---- the pure core: a value -> style ---- */
@@ -421,17 +442,18 @@ function pct(value: number): string {
  * A TRANSITION IS RENDERING. The true value — what behavior reads, what the wire
  * carries, what a gesture proposes — is never eased anywhere; what sweeps is this view's
  * own picture of it, approaching the truth over an authored time. Two surfaces, one
- * mechanism per value shape:
+ * mechanism each:
  *
- *   A NUMBER TWEENS HERE, in the view's own loop: an attribute whose program carries the
- *   hoisted .smooth() metadata, and every applier-pass read of a slot whose PROPERTY
- *   declares a transition. Derived pictures stay coherent — the needle, the arc and the
- *   readout all follow the same eased number, and a shadow un-turned by an easing rotate
- *   re-runs with it.
+ *   AN ATTRIBUTE'S TRANSITION IS METADATA, never part of its expression: the node's
+ *   `transitions` map ({attr: {ms, profile?}}, validated by the compiler against the
+ *   attr table's css column) merges into the element's native CSS `transition`
+ *   (transitionCss below), and the BROWSER owns every blend — colours through var()
+ *   tokens, geometry, transforms, even a path's `d` where its structure holds. Per
+ *   property, per rate, one comma-joined list.
  *
- *   A COLOUR CROSS-FADES IN CSS: a colour is text here (often a var() the view never
- *   resolves), so a smoothed colour attr writes a native `transition` on the element and
- *   the browser owns the blend (the cssSweep table in runAppliers).
+ *   A PROPERTY'S DECLARED TRANSITION TWEENS THE VALUE, here, in the view's own loop:
+ *   every applier-pass read of that slot eases, so the needle, the arc and the readout
+ *   all follow one eased number — including readers CSS can never animate (text).
  *
  * WHAT NEVER SWEEPS: structural decisions (`show`, `repeat` — which elements exist),
  * gesture-time reads (a proposal over an eased value would send a value that never
@@ -447,13 +469,8 @@ interface Tween {
   ms: number;
   profile: string;
   done: boolean;
-  /* a slot's declared transition: advance re-runs whatever binds read this cell */
-  cell: string | null;
-  /* an attribute's own .smooth(): the bind whose attr this is (dies with it) ... */
-  bind: string | null;
-  /* ... and every bind that READ it this picture (a child's shadow reading an
-     ancestor's easing rotate through turnOf must re-run with it) */
-  readers: Set<string>;
+  /* the slot cell this sweep is of: advance re-runs whatever binds read it */
+  cell: string;
 }
 
 /* the CSS named curves, reproduced exactly so the numeric mechanism and the browser's
@@ -528,8 +545,7 @@ function advanceTween(t: Tween, now: number): void {
  * mid-flight retarget never jumps — and a non-number target (Nil included) ends the
  * sweep and passes through untouched. */
 function tweenTo(state: StageState, key: string, target: Json, ms: number,
-                 profile: string, cell: string | null, bindKey: string | null,
-                 readerKey: string | null): Json {
+                 profile: string, cell: string): Json {
   if (typeof target !== "number" || !Number.isFinite(target)) {
     state.tweens.delete(key);
     return target;
@@ -538,7 +554,7 @@ function tweenTo(state: StageState, key: string, target: Json, ms: number,
   if (!t) {
     /* first sight: the picture starts AT the value — no sweep from nothing */
     t = { value: target, from: target, to: target, start: 0, ms, profile, done: true,
-          cell, bind: bindKey, readers: new Set() };
+          cell };
     state.tweens.set(key, t);
   } else if (target !== t.to) {
     t.from = t.value;
@@ -548,7 +564,6 @@ function tweenTo(state: StageState, key: string, target: Json, ms: number,
     t.profile = profile;
     t.done = false;
   }
-  if (readerKey) t.readers.add(readerKey);
   advanceTween(t, state.now);
   return t.value;
 }
@@ -571,32 +586,20 @@ function scheduleTweens(state: StageState): void {
   });
 }
 
-/* the sweep pass: advance every live tween, then re-run EXACTLY its readers — the binds
- * indexed under a slot tween's cell, an attr tween's own bind plus whoever read it.
- * Exported for tests, which replace the clock and step this by hand. */
+/* the sweep pass: advance every live tween, then re-run EXACTLY the binds indexed under
+ * its cell. Exported for tests, which replace the clock and step this by hand. */
 export function stepTransitions(host: HTMLElement, editor: Editor, now?: number): void {
   const state = stateOf(host);
   state.now = now ?? clock();
   const binds = new Set<Bind>();
-  for (const [key, t] of Array.from(state.tweens)) {
+  let moved = false;
+  for (const t of state.tweens.values()) {
     if (t.done) continue;
     advanceTween(t, state.now);
-    if (t.cell) for (const bind of state.byDep.get(t.cell) ?? []) binds.add(bind);
-    if (t.bind) {
-      const own = state.binds.get(t.bind);
-      if (!own) {
-        /* its element left the tree: nothing to sweep on */
-        state.tweens.delete(key);
-        continue;
-      }
-      binds.add(own);
-      for (const reader of t.readers) {
-        const bind = state.binds.get(reader);
-        if (bind) binds.add(bind);
-      }
-    }
+    moved = true;
+    for (const bind of state.byDep.get(t.cell) ?? []) binds.add(bind);
   }
-  if (binds.size) {
+  if (moved && binds.size) {
     state.pass++;
     for (const bind of binds)
       if (state.binds.get(bind.key) === bind && bind.pass !== state.pass)
@@ -625,20 +628,110 @@ function slotSweep(type: WidgetType | null,
   return map.get(name) ?? null;
 }
 
-/* WHOSE READ THIS IS, for the attr tweens: `runner` is the bind whose appliers are
- * running (the reader), `owner` the bind whose attr is being read — they differ exactly
- * in turnOf, where a child reads its ancestors' rotate. The css lists collect the colour
- * transitions this bind's smoothed colour attrs want (written once, at the end of the
- * pass). Null outside an applier pass, so a gesture's seat reads are never eased. */
-let easing: { state: StageState; runner: Bind; owner: Bind;
-              css: string[]; pathCss: string[] } | null = null;
+/* ---- the attr mechanism: metadata -> the element's native `transition` ----
+ *
+ * THE MAPPING TABLE, hand-paired with the appliers below exactly as the attr vocabulary
+ * itself is (attrs.h's rule: every row must have a reader here). The backend's css
+ * column decides WHAT may transition; this decides WHERE each entry lands — which CSS
+ * property, and on which element (a path's paint rides the <path>, not the box). An ink
+ * shadow lands on `filter`, not box-shadow, which is why the served name is nominal. */
+const TRANSITION_COMMON: Record<string, string> = {
+  x: "left", y: "top", w: "width", h: "height",
+  rotate: "transform", origin_x: "transform-origin", origin_y: "transform-origin",
+  shadow: "box-shadow", shadow_x: "box-shadow", shadow_y: "box-shadow",
+  shadow_blur: "box-shadow",
+};
+const TRANSITION_KIND: Record<string, Record<string, string>> = {
+  frame: { surface: "background-color", border: "border-color",
+           border_w: "border-width", radius: "border-radius",
+           shadow_spread: "box-shadow" },
+  text: { color: "color", size: "font-size" },
+  icon: { color: "color" },
+  path: { fill: "fill", stroke: "stroke", stroke_w: "stroke-width", points: "d" },
+};
+/* the entries that ride the inner <path> element rather than the node's own box */
+const TRANSITION_ON_PATH = new Set(["fill", "stroke", "stroke_w", "points"]);
 
-/* one smoothed COLOUR attr -> its native CSS transition entry: the browser owns the
-   blend, which is what lets a $token colour cross-fade without the view resolving it */
-function cssSweep(node: ViewNode, attr: string, cssProp: string, into: string[]): void {
-  const spec = (node.attrs?.[attr] as Program | undefined)?.smooth;
-  if (spec && spec.ms > 0)
-    into.push(cssProp + " " + spec.ms + "ms " + (spec.profile ?? "ease"));
+/* the node's transition metadata as two CSS `transition` values: the element's own and
+ * its <path>'s. Deduped per CSS property (first declared wins — shadow_x and shadow_y
+ * both land on box-shadow); ink turns a box-shadow entry into a filter one, except the
+ * INSET ink shadow, whose url(#) filter has nothing the browser can blend. */
+function transitionCss(node: ViewNode, inkInset: boolean): { el: string; path: string } {
+  const rows = node.transitions;
+  if (!rows) return { el: "", path: "" };
+  const ink = node.kind !== "frame" && !node.instance;
+  const elSeen = new Set<string>();
+  const pathSeen = new Set<string>();
+  const el: string[] = [];
+  const path: string[] = [];
+  for (const attr of Object.keys(rows)) {
+    const spec = rows[attr];
+    if (!spec || !(spec.ms > 0)) continue;
+    let css = TRANSITION_KIND[node.kind]?.[attr] ?? TRANSITION_COMMON[attr] ?? "";
+    if (!css) continue;
+    if (css === "box-shadow" && ink) {
+      if (inkInset) continue;
+      css = "filter";
+    }
+    const onPath = node.kind === "path" && TRANSITION_ON_PATH.has(attr);
+    const seen = onPath ? pathSeen : elSeen;
+    if (seen.has(css)) continue;
+    seen.add(css);
+    (onPath ? path : el).push(css + " " + spec.ms + "ms " + (spec.profile ?? "ease"));
+  }
+  return { el: el.join(", "), path: path.join(", ") };
+}
+
+/* ---- the sampled turn: what the shadow un-turn reads while a rotation ANIMATES ----
+ *
+ * At rest the authored rotate chain is the truth and stays the source (read through the
+ * cells, so a live rotation is a recorded dependency). But while a `transform`
+ * TRANSITION is running, the browser owns the intermediate rotations — so the elements
+ * with one in flight are tracked (transitionstart/end/cancel, wired per host) and the
+ * turn is read off the COMPUTED matrix instead: atan2 of the linear part, which
+ * translation and the camera's pure scale never disturb. A ticker re-runs the
+ * shadow-bearing binds each frame while anything is turning, so the shadow lands
+ * correctly at every angle the browser paints, not just the endpoints. */
+function styleTurn(el: HTMLElement): number | null {
+  if (typeof getComputedStyle !== "function") return null;
+  const text = getComputedStyle(el).transform;
+  if (!text || text === "none") return 0;
+  const matrix = /^matrix\(([^)]+)\)$/.exec(text);
+  if (!matrix) return null;
+  const parts = matrix[1].split(",").map(Number);
+  if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1]))
+    return null;
+  return (Math.atan2(parts[1], parts[0]) * 180) / Math.PI;
+}
+
+/* one pass over exactly the shadow-bearing binds: what a turning frame re-runs, and
+   what a finished turn runs once more so the shadow lands on the exact endpoint */
+function repaintShadows(host: HTMLElement, editor: Editor): void {
+  const state = stateOf(host);
+  if (!state.shadowed.size) return;
+  state.pass++;
+  for (const bind of Array.from(state.shadowed))
+    if (state.binds.get(bind.key) === bind && bind.pass !== state.pass)
+      runAppliers(state, editor, bind);
+  repaintFree();
+}
+
+function scheduleTurn(host: HTMLElement, editor: Editor): void {
+  const state = stateOf(host);
+  if (state.turnTicking || !state.turning.size || !state.shadowed.size) return;
+  state.turnTicking = true;
+  const frame = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (fn: () => void) => setTimeout(fn, 16);
+  frame(() => {
+    state.turnTicking = false;
+    /* an element that left without its transitionend firing must not spin this forever */
+    for (const el of Array.from(state.turning))
+      if (!(el as HTMLElement).isConnected) state.turning.delete(el);
+    if (!state.turning.size) return;
+    repaintShadows(host, editor);
+    scheduleTurn(host, editor);
+  });
 }
 
 /* ---- reading a node's fields ---- */
@@ -701,9 +794,7 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
            a live frame still retunes the sweep the moment the real value moves. */
         if (state.recording && !state.recording.structural) {
           const spec = slotSweep(node.type, name);
-          if (spec)
-            return tweenTo(state, "c:" + key, out, spec.ms, spec.profile, key,
-                           null, null);
+          if (spec) return tweenTo(state, "c:" + key, out, spec.ms, spec.profile, key);
         }
         return out;
       }
@@ -748,16 +839,7 @@ function markNow(editor: Editor, key: string): string {
 
 function attrOf(node: ViewNode, name: string, cells: Cells): Json {
   const program = node.attrs?.[name] as Program | undefined;
-  if (!program) return undefined;
-  const out = run(program, cells);
-  /* the program's own transition (a trailing .smooth() the compiler hoisted): a NUMBER
-     eases here, keyed by the bind whose attr this is; a colour result falls through to
-     the cssSweep table in runAppliers, where the browser owns the blend */
-  const spec = program.smooth;
-  if (spec && spec.ms > 0 && easing && typeof out === "number")
-    return tweenTo(easing.state, "a:" + easing.owner.key + ":" + name, out, spec.ms,
-                   spec.profile ?? "ease", null, easing.owner.key, easing.runner.key);
-  return out;
+  return program ? run(program, cells) : undefined;
 }
 
 /* A gesture's view-local look (state.pressed / dragging / open) lands here. The write is
@@ -883,16 +965,22 @@ interface Shadow {
  * dependency of this node's shadow and a frame that moves it re-runs exactly this bind. */
 function turnOf(state: StageState, editor: Editor, bind: Bind | null): number {
   let sum = 0;
-  const held = easing;
   for (let at = bind; at; at = at.parent) {
-    /* an ancestor's rotate is ITS attr: an easing one tweens under the ancestor's own
-       key (one sweep, every reader agreeing), and this bind registers as a reader so
-       the sweep's advance re-runs the shadow that depends on it */
-    if (held) easing = { ...held, owner: at };
+    /* the authored value is read THROUGH the cells even where the sample wins below:
+       the read is what records the dependency that re-runs this shadow when a live
+       rotation moves */
     const turn = num(attrOf(at.node, "rotate", cellsFor(state, editor, at.node, at.repeat)));
+    /* while this ancestor's transform TRANSITION is in flight, the browser owns the
+       angle: read it off the painted matrix so the shadow lands right mid-sweep too */
+    if (state.turning.size && state.turning.has(at.el)) {
+      const sampled = styleTurn(at.el);
+      if (sampled !== null) {
+        sum += sampled;
+        continue;
+      }
+    }
     if (turn !== null) sum += turn;
   }
-  easing = held;
   return sum;
 }
 
@@ -1146,7 +1234,14 @@ function pathData(node: ViewNode, cells: Cells): string {
  * like any other program, and a live frame re-runs exactly this — one `d` rewritten, no
  * element touched. There is no plot list and no hist-only branch any more. */
 function applyPath(path: SVGPathElement, node: ViewNode, cells: Cells): void {
-  path.setAttribute("d", pathData(node, cells));
+  const d = pathData(node, cells);
+  path.setAttribute("d", d);
+  /* a TRANSITIONED outline rides the CSS `d` property (a style, so the browser sees a
+     property change to blend; the attribute alone does not reliably trigger one). The
+     browser interpolates it only while the segment structure holds — a changed point
+     count or a new gap snaps, which is the honest degradation. */
+  if (node.transitions?.points && d) path.style.setProperty("d", 'path("' + d + '")');
+  else path.style.removeProperty("d");
   const fill = attrOf(node, "fill", cells);
   path.setAttribute("fill", paints(fill) ? cssColor(fill) : "none");
   const stroke = attrOf(node, "stroke", cells);
@@ -1260,22 +1355,23 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
   const deps = new Set<string>();
   const outer = state.recording;
   state.recording = { deps };
-  const heldEasing = easing;
-  const css: string[] = [];
-  const pathCss: string[] = [];
-  easing = { state, runner: bind, owner: bind, css, pathCss };
   try {
     const node = bind.node;
     const cells = cellsFor(state, editor, node, bind.repeat);
+    /* the artboard is placed by the camera and takes the pointer for the whole pane:
+       what it wears of a node is the dressing, and nothing else. PLACE FIRST: the
+       shadow's un-turn may sample this very pass's transform (turnOf), so the transform
+       is written before anything reads it. */
+    if (bind.key !== ROOT_KEY) place(bind.el, node, cells);
     /* read ONCE per pass and handed to whichever mechanism draws it: the reading is the
        same on every kind (that is the point), only the casting differs */
     const shadow = shadowOf(state, editor, bind, node, cells);
-    /* the artboard is placed by the camera and takes the pointer for the whole pane:
-       what it wears of a node is the dressing, and nothing else */
+    /* what the turn ticker re-runs while a rotation animates: exactly the shadowed */
+    if (shadow) state.shadowed.add(bind);
+    else state.shadowed.delete(bind);
     if (bind.key === ROOT_KEY) {
       dress(bind.el, node, cells, shadow);
     } else {
-      place(bind.el, node, cells);
       if (node.kind === "frame") dress(bind.el, node, cells, shadow);
       else {
         if (node.kind === "text") applyText(bind.el, node, cells);
@@ -1285,29 +1381,14 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
       }
       regime(bind.el, node, editor, cells);
     }
-    /* THE COLOUR MECHANISM'S TABLE: which CSS property each smoothed colour attr lands
-       on, per what this kind casts it as. Numbers were already eased at attrOf; these
-       are exactly the attrs whose values are colour text, handed to the browser. An
-       INSET ink shadow is a url(#filter) and cannot blend, so it takes no entry. */
-    if (bind.key === ROOT_KEY || node.kind === "frame") {
-      cssSweep(node, "surface", "background-color", css);
-      cssSweep(node, "border", "border-color", css);
-      cssSweep(node, "shadow", "box-shadow", css);
-    } else if (node.kind === "text" || node.kind === "icon") {
-      cssSweep(node, "color", "color", css);
-      if (!shadow?.inset) cssSweep(node, "shadow", "filter", css);
-    } else if (node.kind === "path") {
-      cssSweep(node, "fill", "fill", pathCss);
-      cssSweep(node, "stroke", "stroke", pathCss);
-      if (!shadow?.inset) cssSweep(node, "shadow", "filter", css);
-    }
+    /* THE ATTR TRANSITIONS, metadata -> the element's native `transition`. TOTAL like
+       every applier: a node whose transitions left carries none. */
+    const trans = transitionCss(node, !!shadow?.inset);
+    bind.el.style.transition = trans.el;
+    if (bind.path) bind.path.style.transition = trans.path;
   } finally {
     state.recording = outer;
-    easing = heldEasing;
   }
-  /* TOTAL, like every applier: an element whose smoothed colours left carries none */
-  bind.el.style.transition = css.join(", ");
-  if (bind.path) bind.path.style.transition = pathCss.join(", ");
   bind.deps = deps;
   indexInto(state.byDep, deps, bind);
 }
@@ -1363,10 +1444,7 @@ function dropBind(state: StageState, key: string): void {
   dropFilter(state, bind);
   unindex(state.byDep, bind.deps, bind);
   unindex(state.byKid, bind.kidDeps, bind);
-  /* its attr sweeps die with it (a slot's sweep outlives any one reader) */
-  if (state.tweens.size)
-    for (const [tkey, t] of Array.from(state.tweens))
-      if (t.bind === key) state.tweens.delete(tkey);
+  state.shadowed.delete(bind);
 }
 
 /* a key its parent no longer wants. It stays only if ANOTHER parent claimed it this pass
@@ -1519,6 +1597,8 @@ function forget(state: StageState): void {
   state.marks.clear();
   /* a fresh picture starts AT its values: no sweep bridges a page switch */
   state.tweens.clear();
+  state.shadowed.clear();
+  state.turning.clear();
   state.root = null;
   state.tokenNames = [];
   /* every bind is gone, so every filter one of them referenced is too */
@@ -1938,6 +2018,28 @@ function wire(host: HTMLElement, editor: Editor): void {
   host.addEventListener("mouseout", () => {
     if (editor.view.mode === "edit") editor.setHover(0);
   });
+  /* THE TURNING WATCH: while any element's `transform` transition is in flight the
+     browser owns the intermediate rotations, so the shadow un-turn samples matrices
+     per frame (turnOf) — these delegated listeners are what tell it when. The END of a
+     turn runs the shadows once more over the authored values, so they land on the
+     exact endpoint rather than the last sampled frame. */
+  const onTurn = (ev: Event) => {
+    const turn = ev as TransitionEvent;
+    if (turn.propertyName !== "transform") return;
+    const target = ev.target as Element | null;
+    if (!target) return;
+    const state2 = stateOf(host);
+    if (ev.type === "transitionstart") {
+      state2.turning.add(target);
+      scheduleTurn(host, editor);
+    } else if (state2.turning.delete(target) && !state2.turning.size) {
+      repaintShadows(host, editor);
+    }
+  };
+  host.addEventListener("transitionstart", onTurn);
+  host.addEventListener("transitionend", onTurn);
+  host.addEventListener("transitioncancel", onTurn);
+
   /* the press gestures: moving a box, resizing it by a handle (manipulate.ts, which owns
      their precedence) — handed the overlay so a gesture can keep it on the box it rings,
      and the document repaint a cancelled gesture puts back */

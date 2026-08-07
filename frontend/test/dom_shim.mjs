@@ -83,7 +83,8 @@ class Element {
     this.childNodes = [];
     this.parentElement = null;
     this.attributes = new Map();
-    this.style = { setProperty(key, value) { this[key] = value; } };
+    this.style = { setProperty(key, value) { this[key] = value; },
+                   removeProperty(key) { delete this[key]; } };
     this.listeners = new Map();
     this.classList = new ClassList(this);
     this.value = "";
