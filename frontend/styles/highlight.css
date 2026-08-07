@@ -43,12 +43,6 @@
   z-index: 1;
 }
 
-/* inside the fused expression box the input is borderless, so the origin shifts 1px */
-.expr-pick .hl-under {
-  top: 0;
-  padding: 0 6px;
-}
-
 .hl-under .tk-str { color: #7fc4a0; }
 .hl-under .tk-color { color: #d7a5e8; }
 .hl-under .tk-num { color: #d7b562; }
@@ -58,76 +52,9 @@
 .hl-under .tk-id { color: var(--ink); }
 .hl-under .tk-op { color: #8a8a8a; }
 
-/* the flexible sizing the raw field carried moves onto the wrapper */
-.do-cell > .hl-wrap,
-.feed-line > .hl-wrap,
-.feed-case > .hl-wrap {
-  flex: 1 1 40px;
-  min-width: 34px;
-}
-
 .hl-wrap > .field.grow {
   min-width: 0;
   flex: 1 1 auto;
-}
-
-/* a feed with cases: the line, then one row per arm, then the else */
-.feed-block {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.feed-case {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  margin-left: 18px;
-}
-
-.feed-case > .field.num,
-.feed-case > .select-wrap {
-  flex: 0 0 92px;
-  min-width: 0;
-}
-
-.feed-case > .field.grow {
-  flex: 1 1 40px;
-  min-width: 34px;
-  width: 40px;
-  text-overflow: ellipsis;
-}
-
-.feed-case > .arrow,
-.feed-case > .icon-btn,
-.feed-case > .chip {
-  flex: none;
-}
-
-/* a case's RESULT: the slot's own picker or the expression editor, one at a time */
-.feed-case > .case-result {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  flex: 1 1 40px;
-  min-width: 34px;
-}
-
-.case-result > .hl-wrap {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.case-result > .field,
-.case-result > .select-wrap {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.case-result > .icon-btn {
-  flex: none;
 }
 
 /* the WHEN block's label + editor grid (spec 3.5) */
@@ -162,12 +89,6 @@
 
 .sub-grid > .cell > .select-wrap {
   min-width: 0;
-}
-
-.sub-grid > .cell > .source-chip {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
 }
 
 .source-chip > span {

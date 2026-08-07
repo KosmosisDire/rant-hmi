@@ -12,6 +12,7 @@
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
 import { placeBox } from "../popover.js";
+import { shownValue } from "../reconcile.js";
 import { Flow, LangEntry, MeshField, Node } from "../types.js";
 import { localAt } from "./flowscope.js";
 import { Scope } from "./scope.js";
@@ -49,6 +50,15 @@ function close(): void {
  * whose elements carry no event machinery at all.) */
 let muted = false;
 
+/* A PROGRAMMATIC EDIT SETS NO BROWSER DIRTY FLAG: without a real keystroke after it,
+ * blur fires no native `change`, and a browse-inserted pick followed by a bare Enter
+ * would be silently lost (the closing drive caught exactly this). So every announced
+ * edit that leaves the field differing from the document arms a ONE-SHOT commit on
+ * blur — disarmed by the native change real typing brings, and by Escape, whose
+ * revert must stay a revert. */
+const armed = new WeakSet<HTMLInputElement>();
+const guarded = new WeakSet<HTMLInputElement>();
+
 export function announceInput(input: HTMLInputElement): void {
   muted = true;
   if (typeof input.dispatchEvent === "function")
@@ -56,6 +66,26 @@ export function announceInput(input: HTMLInputElement): void {
       ? new InputEvent("input", { bubbles: true })
       : new Event("input", { bubbles: true }));
   muted = false;
+  if (typeof input.dispatchEvent !== "function") return;   /* the test shim's fields */
+  /* back at the document's own text (a cancelled scrub): nothing to commit */
+  if (shownValue(input) === input.value) {
+    armed.delete(input);
+    return;
+  }
+  armed.add(input);
+  if (guarded.has(input)) return;
+  guarded.add(input);
+  input.addEventListener("change", () => armed.delete(input));
+  input.addEventListener("keydown", (ev: KeyboardEvent) => {
+    if (ev.key === "Escape") armed.delete(input);
+  });
+  input.addEventListener("blur", () => {
+    /* a rebuild's teardown blurs the field it is removing: that text is pending, kept
+       by key, and must NOT commit over whatever the rebuild is delivering */
+    if (!input.isConnected) return;
+    if (!armed.delete(input)) return;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 const announce = announceInput;

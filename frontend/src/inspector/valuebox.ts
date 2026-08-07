@@ -172,18 +172,28 @@ function openBrowse(anchor: HTMLElement, input: HTMLInputElement, scope: Scope):
     return out;
   };
 
-  const flatRows = (filter: string): StreeTreeRow[] =>
-    scope
-      .names()
-      .filter((row) => !filter || row.label.toLowerCase().includes(filter))
-      .map((row) => ({
+  const flatRows = (filter: string): StreeTreeRow[] => {
+    const rows: StreeTreeRow[] = [];
+    /* x leads where the surface has a pipeline register — the same special row the
+       autocomplete dropdown serves, so the two can never disagree */
+    if (scope.x && (!filter || "x".includes(filter)))
+      rows.push({
+        depth: 0, key: "x", label: "x", expandable: false,
+        onPick: pick("x"), trail: trail(undefined, scope.x()?.shape ?? ""),
+      });
+    for (const row of scope.names()) {
+      if (filter && !row.label.toLowerCase().includes(filter)) continue;
+      rows.push({
         depth: 0,
         key: row.label,
         label: row.label,
         expandable: false,
         onPick: pick(row.label),
         trail: trail(row.note, row.shape),
-      }));
+      });
+    }
+    return rows;
+  };
 
   const tree = streeTree({
     placeholder: "search",

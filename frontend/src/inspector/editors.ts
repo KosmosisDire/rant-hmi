@@ -1,4 +1,4 @@
-/* Value editors, chosen by SHAPE, and the entity reference editor. Nothing here switches
+/* Value editors, chosen by SHAPE. Nothing here switches
  * on a widget type or a slot name: the registry says what shape a slot is and this maps a
  * shape to a control.
  *
@@ -13,13 +13,11 @@
  * row that changes height moves everything under it. */
 
 import { colorField } from "../colorpicker.js";
-import { alignGrid, boolPair, chip, commitTextInput, el, numberInput, pickerOf, selectField } from "../dom.js";
+import { alignGrid, boolPair, commitTextInput, el, numberInput, pickerOf, selectField } from "../dom.js";
 import { Editor, UNKNOWN_TEXT } from "../editor.js";
-import { kindMark } from "../icons.js";
-import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
-import { Json, SlotSpec, Node } from "../types.js";
+import { bindChoice, bindField, bindGroup, bindText } from "../reconcile.js";
+import { Json, SlotSpec } from "../types.js";
 import { tokenAccess } from "./scope.js";
-import { openSourceTree, resolveShape, SourcePick, SourceTreeOptions } from "./sourcetree.js";
 import { openTypeTree } from "./typetree.js";
 
 /* the spelling the enum picker writes: an enum's variants AS A LIST, named through the
@@ -151,82 +149,3 @@ export function valueEditor(
   }
 }
 
-/* An entity reference is PICKED, never typed: a button carrying the current reference
- * that opens the hierarchical source tree (dart + hmi roots). The pick brings kind,
- * name, path and value type along in one act, so no kind or type dropdown exists. The
- * structure key of the row containing this must include the reference's kind, so a
- * cross-kind repick rebuilds the kind mark. */
-/* the scope mark for an HMI variable reference: blue local, violet global */
-function scopeMark(widget: Node | null, name: string | undefined): string {
-  return (widget?.locals ?? []).some((v) => v.name === name) ? "l" : "g";
-}
-
-export function sourceField(
-  key: string,
-  editor: Editor,
-  widget: Node | null,
-  opts: SourceTreeOptions,
-  read: () => { ref?: { kind: string; name: string }; path?: string },
-  onPick: (pick: SourcePick) => void,
-): HTMLElement {
-  const raw = read().ref?.kind ?? "?";
-  const kind = raw === "L" ? scopeMark(widget, read().ref?.name) : raw;
-  const node = el("button", { class: "chip pad-mark source-chip", title: "pick from the network" });
-  bindFlag(key + ".ghost", node, "ghost-chip", () => !read().ref?.name);
-  node.appendChild(kindMark(kind));
-  const name = el("span", { class: "name" });
-  bindText(key + ".name", name, () => read().ref?.name || "pick source");
-  node.appendChild(name);
-  const sep = el("span", { class: "sep" });
-  bindText(key + ".sep", sep, () => (read().path ? " > " : ""));
-  node.appendChild(sep);
-  const path = el("span", { class: "path" });
-  bindText(key + ".path", path, () => read().path ?? "");
-  node.appendChild(path);
-  const shape = el("span", { class: "shape" });
-  bindText(key + ".shape", shape, () => {
-    const at = read();
-    const resolved = resolveShape(editor, widget, at.ref, at.path);
-    return resolved ? resolved : "";
-  });
-  node.appendChild(shape);
-  node.addEventListener("click", () => {
-    const at = read();
-    openSourceTree(node, editor, widget, opts, onPick,
-                   at.ref ? { ...at.ref, path: at.path ?? "" } : undefined);
-  });
-  return node;
-}
-
-/* the read-only form of the same thing, for a collapsed sentence. The kind mark is a glyph
- * chosen by the shape; only the words move, so only the words are bound. */
-export function entityChip(
-  key: string,
-  read: () => { ref?: { kind: string; name: string }; path?: string },
-  editor?: Editor,
-  widget?: Node | null,
-): HTMLElement {
-  const raw = read().ref?.kind ?? "?";
-  const kind = raw === "L" ? scopeMark(widget ?? null, read().ref?.name) : raw;
-  const node = chip("", "pad-mark");
-  bindFlag(key + ".ghost", node, "ghost-chip", () => !read().ref?.name);
-  node.appendChild(kindMark(kind));
-  const name = el("span");
-  bindText(key + ".name", name, () => read().ref?.name || "pick source");
-  node.appendChild(name);
-  const sep = el("span", { class: "sep" });
-  bindText(key + ".sep", sep, () => (read().path ? " > " : ""));
-  node.appendChild(sep);
-  const path = el("span", { class: "path" });
-  bindText(key + ".path", path, () => read().path ?? "");
-  node.appendChild(path);
-  if (editor) {
-    const shape = el("span", { class: "shape" });
-    bindText(key + ".shape", shape, () => {
-      const at = read();
-      return resolveShape(editor, widget ?? null, at.ref, at.path);
-    });
-    node.appendChild(shape);
-  }
-  return node;
-}

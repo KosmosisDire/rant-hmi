@@ -218,6 +218,7 @@ class Element {
   getBoundingClientRect() {
     return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
   }
+  scrollIntoView() {}
 }
 
 /* deliver an event to one node's own listeners; no capture, no bubbling */

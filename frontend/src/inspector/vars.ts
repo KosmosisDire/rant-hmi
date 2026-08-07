@@ -12,10 +12,11 @@
 import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { cellText, diagIcon, Editor, liveIsOn } from "../editor.js";
 import { makeFolds } from "../fold.js";
-import { bind, bindChoice, bindField, bindText } from "../reconcile.js";
+import { bind, bindChoice, bindField } from "../reconcile.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { Json, MeshField, SCALAR_LABEL, Var } from "../types.js";
 import { valueEditor } from "./editors.js";
+import { refChip } from "./refchip.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
 /* which cards stand open, keyed by variable id: the open bit rides varShape, so a
@@ -83,15 +84,16 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   if (!open) return card;
 
   /* the TYPE is picked from the type tree: the four scalars, then every struct root the
-     mesh serves. What the document stores is the TypeRef itself. */
-  const type = el("button", { class: "chip pad-mark source-chip", title: "pick a type" });
-  const typeText = el("span", { class: "name" });
-  bindText(variable.id + ":type", typeText, () => SCALAR_LABEL[at().type] ?? at().type);
-  type.appendChild(typeText);
-  type.addEventListener("click", () =>
-    openTypeTree(type, editor, { scalars: true, structs: true, enums: true },
-                 (pick) => setProp("type", pick.ref), at().type),
-  );
+     mesh serves. What the document stores is the TypeRef itself. The one reference
+     chip, opening the TYPE tree rather than the source tree. */
+  const type = refChip({
+    key: variable.id + ":type",
+    name: () => SCALAR_LABEL[at().type] ?? at().type,
+    title: "pick a type",
+    onPick: (chip) =>
+      openTypeTree(chip, editor, { scalars: true, structs: true, enums: true },
+                   (pick) => setProp("type", pick.ref), at().type),
+  });
 
   const initShape =
     variable.type === "bool" ? "bool" : variable.type === "str" ? "text" : "num";

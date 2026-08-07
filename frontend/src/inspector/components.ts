@@ -624,7 +624,7 @@ export function propsSection(
 ): HTMLElement[] {
   const props = propsAt();
   return section(key, "Properties", String(props.length), () => [
-    ...props.map((prop) => propRow(editor, prop)),
+    ...props.map((prop) => propRow(editor, ownerId, prop)),
     props.length ? null : el("p", { class: "empty", text: empty }),
     el("button", {
       class: "dashed-btn",
@@ -639,7 +639,7 @@ export function propsSection(
   ]);
 }
 
-function propRow(editor: Editor, prop: PropDef): HTMLElement {
+function propRow(editor: Editor, ownerId: number, prop: PropDef): HTMLElement {
   const at = () => (editor.store.node(prop.id) as PropDef | null) ?? prop;
   const name = commitInput(
     prop.name,
@@ -681,34 +681,66 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
 
   /* THE DECLARED TRANSITION, number properties only: rendered reads of this slot sweep
      toward the true value over this time — the needle, the arc and the readout all
-     together — while behavior, gestures and the wire keep reading truth. The time and
-     the profile are EXPRESSIONS over the declaring node's scope ("1000 / rate"); a
-     plain number / bare easing name is the literal. Empty = none. */
+     together — while behavior, gestures and the wire keep reading truth. `smooth` and
+     `profile` are EXPRESSIONS over the DECLARING node's scope (the SweepRow pass
+     compiles them at that node's own TemplateScope, exactly the universe attrScope
+     serves); a plain number / bare easing name is the literal. Edited in the same
+     motion popover the attr rows wear: the timer button, MS and EASE value boxes, lit
+     while a sweep stands. */
   const shownSweep = (v: number | string | null | undefined) =>
     typeof v === "number" ? (v > 0 ? String(v) : "") : (v ?? "");
-  const sweep = commitInput(
-    shownSweep(prop.smooth),
-    (text) => {
-      const trimmed = text.trim();
-      const folded = Number(trimmed);
-      editor.apply([{ op: "set_prop", node: prop.id, key: "smooth",
-                      value: !trimmed ? 0
-                           : Number.isFinite(folded) ? folded : trimmed }]);
-    },
-    { class: "field", placeholder: "none",
+  const sweeping = () => {
+    const held = (at() as PropDef).smooth;
+    return typeof held === "number" ? held > 0 : Boolean(held);
+  };
+  const sweep = iconButton("timer", "sweep: rendered reads of this property ease toward "
+                                    + "a new value (the value itself is never eased)", () => {
+    const rect = sweep.getBoundingClientRect();
+    const held = sweeping();
+    const scope = attrScope(editor, (editor.store.node(ownerId) ?? { id: ownerId }) as Node);
+    const ms = valueBox({
+      key: prop.id + ":smooth",
+      read: () => shownSweep((at() as PropDef).smooth),
+      commit: (text) => {
+        const trimmed = text.trim();
+        const folded = Number(trimmed);
+        editor.apply([{ op: "set_prop", node: prop.id, key: "smooth",
+                        value: !trimmed ? 0
+                             : Number.isFinite(folded) ? folded : trimmed }]);
+      },
+      emptyMeans: "unset",
+      placeholder: "none",
       title: "milliseconds — a number or an expression over this component; "
-             + "empty = none" },
-  );
-  bindField(prop.id + ":smooth", sweep, () => shownSweep((at() as PropDef).smooth));
-  const profile = commitInput(
-    prop.profile || "",
-    (text) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile",
-                              value: text.trim() }]),
-    { class: "field", placeholder: "ease",
+             + "empty = none",
+      type: { shape: "num" },
+      scope,
+    });
+    const profile = valueBox({
+      key: prop.id + ":profile",
+      read: () => at().profile || "",
+      commit: (text) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile",
+                                        value: text.trim() }]),
+      emptyMeans: "unset",
+      placeholder: "ease",
       title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
-             + "yielding one" },
-  );
-  bindField(prop.id + ":profile", profile, () => at().profile || "");
+             + "yielding one",
+      type: { shape: "text" },
+      scope,
+    });
+    openMenu(rect.left, rect.bottom + 4, "sweep " + at().name, [
+      { node: el("div", { class: "menu-field" },
+                 [el("span", { class: "row-label", text: "MS" }), ms]) },
+      { node: el("div", { class: "menu-field" },
+                 [el("span", { class: "row-label", text: "EASE" }), profile]) },
+      ...(held ? [{ label: "remove the sweep", icon: "trash", run: () =>
+          editor.apply([{ op: "set_prop", node: prop.id, key: "smooth", value: 0 },
+                        { op: "set_prop", node: prop.id, key: "profile", value: "" }]) }]
+               : []),
+    ]);
+  });
+  sweep.classList.add("transition-chip");
+  if (sweeping()) sweep.classList.add("on");
+  bindFlag(prop.id + ":sweep.on", sweep, "on", sweeping);
   const sweepDiag = editor.diagAt(prop.id, "smooth");
 
   return el("div", { class: "propdef" }, [
@@ -725,15 +757,11 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
       dflt,
       el("span", { class: "row-label", text: "GROUP" }),
       group,
+      /* the sweep is a NUMBER property's affordance; its findings land here either
+         way (an authored smooth on a non-num shape is exactly such a finding) */
+      prop.shape === "num" ? sweep : null,
+      diagIcon(sweepDiag.length ? sweepDiag : editor.diagAt(prop.id, "profile")),
     ]),
-    prop.shape === "num"
-      ? el("div", { class: "row" }, [
-          el("span", { class: "row-label", text: "SWEEP MS" }),
-          sweep,
-          profile,
-          diagIcon(sweepDiag.length ? sweepDiag : editor.diagAt(prop.id, "profile")),
-        ])
-      : null,
   ]);
 }
 

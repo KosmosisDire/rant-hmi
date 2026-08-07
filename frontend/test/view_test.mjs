@@ -3352,6 +3352,241 @@ check(stageNode("frame", 901) === heldAgain &&
   document.activeElement = null;
 }
 
+/* ---- FLOW FIELDS ARE VALUE BOXES + THE SWEEP POPOVER + THE ONE CHIP (phase 4b) ----
+   Every expression a flow row holds — a gate's condition, a move's expression source,
+   a raise's arguments, the beat's ms — is the same box the attr and slot rows wear,
+   over flowScope (wire tier, where x IS legal). The prop SWEEP row dissolved into the
+   attr rows' motion popover. Every picked reference is ONE chip builder now. */
+{
+  const { closeSourceTree } = await import(mod("inspector/sourcetree.js"));
+  const { closeTypeTree } = await import(mod("inspector/typetree.js"));
+  const { closeMenu } = await import(mod("menu.js"));
+  document.activeElement = null;
+
+  /* a Slider with a flow: gate, move-from-expression, raise — every expression
+     surface a step can hold */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: store.pages()[0].id, list: "children", node: {
+      id: 9900, kind: "frame", type: "Slider", name: "sl4b", attrs: {},
+      slots: {}, locals: [],
+      flows: [{ id: 9901, when: [{ kind: "event", name: "changed" }], when_mode: "first",
+                do: [
+                  { id: 9902, kind: "gate", a: "value > 5" },
+                  { id: 9903, kind: "move", from: { expr: "" }, to: { local: "", path: "" } },
+                  { id: 9904, kind: "raise", event: "changed", args: {} },
+                ] }] } },
+  ]);
+  const ops4b = [];
+  const editor4b = {
+    ...editor,
+    selectedNode: () => store.nodeAt(9900),
+    selectedWidget: () => store.widget(9900),
+    apply: (ops) => {
+      ops4b.push(...ops);
+      store.apply(store.version() + 1, ops);
+    },
+  };
+  const panel4b = new Panel(new Element("aside"));
+  const draw4b = () =>
+    panel4b.render(inspectorShape(editor4b), (host) => renderInspector(host, editor4b));
+  draw4b();
+
+  /* open the flow card: the DO rows are structure keyed on the fold */
+  fire(panel4b.host.querySelector(".card-head"), "click");
+  draw4b();
+  const rowByVerb = (verb) =>
+    panel4b.host.querySelectorAll(".do-row")
+      .find((r) => r.querySelector(".do-verb")?.textContent === verb) ?? null;
+
+  /* the gate's condition: a value box, committing as typed */
+  const gateRow = rowByVerb("gate");
+  const gateBox = gateRow?.querySelector(".value-box") ?? null;
+  check(gateBox !== null, "a gate's condition is a value box on its row");
+  check(gateBox.querySelector(".vb-icon") !== null &&
+        gateBox.querySelector(".vb-browse") !== null,
+        "wearing the box's own icon and browse anatomy");
+  const gateInput = gateBox.querySelector("input");
+  check(gateInput.value === "value > 5",
+        "showing the authored condition, got " + gateInput.value);
+  typeInto(gateInput, "value > 10");
+  fire(gateInput, "change");
+  const gateOp = ops4b.findLast((o) => o.node === 9902 && o.key === "a");
+  check(gateOp?.value === "value > 10",
+        "committing writes the step's own field as typed, got " +
+          JSON.stringify(gateOp?.value));
+
+  /* x IS legal on a flow box: the wire tier serves the pipeline register */
+  typeInto(gateInput, "");
+  const acPop = document.body.querySelector(".ac-pop");
+  check(acPop !== null, "an emptied flow box offers its vocabulary");
+  const acNames = acPop.querySelectorAll(".ac-name").map((n) => n.textContent);
+  check(acNames[0] === "x",
+        "and x leads it — the register is legal here, unlike a slot's box, got " +
+          acNames.slice(0, 3).join(","));
+  /* the dropdown caps at 14 rows, so ask for the parameter by prefix (the caret is
+     placed by hand: the shim's typeInto leaves selectionStart at 0) */
+  gateInput.value = "va";
+  gateInput.setSelectionRange(2, 2);
+  fire(gateInput, "input");
+  const acFiltered = document.body.querySelector(".ac-pop")
+    ?.querySelectorAll(".ac-name").map((n) => n.textContent) ?? [];
+  check(acFiltered.includes("value"),
+        "the trigger's parameter is offered by its declared name too, got " +
+          acFiltered.join(","));
+  typeInto(gateInput, "value > 10");
+  fire(gateInput, "change");
+  fire(gateInput, "blur");
+
+  /* the move's expression source: the box replaced the fused expr-pick control, and
+     browse-insert is the box's own affordance now */
+  const writeRow = rowByVerb("write");
+  const fromBox = writeRow?.querySelector(".value-box") ?? null;
+  check(fromBox !== null && writeRow.querySelector(".expr-pick") === null,
+        "a move's expression source is the same box — the fused expr-pick is gone");
+  document.activeElement = null;
+  const fromInput = fromBox.querySelector("input");
+  fire(fromBox.querySelector(".vb-browse"), "click");
+  const vb4b = document.body.children.find((n) => n.id === "vbrowse");
+  check(vb4b !== null && vb4b.className.includes("on"),
+        "the box's browse opens the popover");
+  const flat4b = (label) =>
+    vb4b.querySelectorAll(".stree-row")
+      .find((r) => r.textContent.startsWith(label)) ?? null;
+  check(flat4b("x") !== null,
+        "a flow scope browses flat, and x leads there too — one universe with the dropdown");
+  fire(flat4b("widget.value"), "click", { detail: 0 });
+  check(fromInput.value === "widget.value",
+        "picking inserts the canonical spelling into the box, got " + fromInput.value);
+  check(!vb4b.className.includes("on"), "and the pick closes the popover");
+  fire(fromInput, "change");
+  const fromOp = ops4b.findLast((o) => o.node === 9903 && o.key === "from");
+  check(fromOp?.value?.expr === "widget.value",
+        "committing writes the expression side form, got " + JSON.stringify(fromOp?.value));
+
+  /* the raise's argument: one box per declared parameter, bound by NAME */
+  const raiseRow = rowByVerb("raise");
+  const raiseBox = raiseRow?.querySelector(".value-box") ?? null;
+  check(raiseBox !== null && raiseRow.textContent.includes("value:"),
+        "a raise parameter is a value box named by the signature");
+  const raiseInput = raiseBox.querySelector("input");
+  typeInto(raiseInput, "value * 2");
+  fire(raiseInput, "change");
+  fire(raiseInput, "blur");
+  const argOp = ops4b.findLast((o) => o.node === 9904 && o.key === "args");
+  check(argOp && argOp.value?.value === "value * 2",
+        "committing binds the argument by name, got " + JSON.stringify(argOp?.value));
+
+  /* the move target is the ONE reference chip: ghost while nothing is picked,
+     click opens the source tree */
+  const toChip = writeRow.querySelector(".source-chip");
+  check(toChip !== null && toChip.className.includes("ghost-chip") &&
+        toChip.querySelector(".name")?.textContent === "pick target",
+        "an unpicked move target wears the ghost reference chip");
+  fire(toChip, "click");
+  const stree4b = document.body.children.find((n) => n.id === "stree");
+  check(stree4b !== null && stree4b.className.includes("on"),
+        "clicking the chip opens the source tree");
+  closeSourceTree();
+
+  /* the vars TYPE chip is the same builder, opening the TYPE tree */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: 9900, list: "locals",
+      node: { id: 9940, name: "t1", type: "f64", init: 0, persist: false } },
+  ]);
+  draw4b();
+  const varHead = panel4b.host.querySelectorAll(".card-head")
+    .find((h) => h.querySelector(".now-value") !== null);
+  fire(varHead, "click");
+  draw4b();
+  const typeChip = panel4b.host.querySelectorAll(".card")
+    .find((c) => c.querySelector(".now-value") !== null)
+    ?.querySelector(".source-chip") ?? null;
+  check(typeChip !== null && typeChip.querySelector(".name")?.textContent === "number",
+        "a variable's TYPE wears the same chip, reading its scalar label");
+  fire(typeChip, "click");
+  const ttree4b = document.body.children.find((n) => n.id === "ttree");
+  check(ttree4b !== null && ttree4b.className.includes("on"),
+        "and clicking it opens the type tree");
+  closeTypeTree();
+  document.activeElement = null;
+
+  /* ---- the SWEEP popover: a num PropDef's smooth/profile behind the same motion
+     button the attr rows wear — the inline SWEEP row is gone, and so is speed ---- */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: 0, list: "components", node: {
+      id: 9930, name: "Sweep4b", events: [],
+      props: [
+        { id: 9931, name: "rate", shape: "num", default: 1, group: "value" },
+        { id: 9932, name: "tint", shape: "color", default: "#123456", group: "appearance" },
+      ],
+      attrs: {}, children: [], behavior: [] } },
+  ]);
+  const swOps = [];
+  const swEditor = {
+    ...editor,
+    componentSel: { component: 9930, node: 9930 },
+    selectedNode: () => null,
+    selectedWidget: () => null,
+    apply: (ops) => {
+      swOps.push(...ops);
+      store.apply(store.version() + 1, ops);
+    },
+  };
+  const swPanel = new Panel(new Element("aside"));
+  const drawSw = () =>
+    swPanel.render(designInspectorShape(swEditor),
+                   (host) => renderDesignInspector(host, swEditor));
+  drawSw();
+  const propRowNamed = (name) =>
+    swPanel.host.querySelectorAll(".propdef")
+      .find((r) => r.querySelectorAll("input").some((i) => i.value === name)) ?? null;
+  check(!swPanel.host.textContent.includes("SWEEP MS"),
+        "the inline SWEEP row is gone from the propdef");
+  const sweepBtn = propRowNamed("rate")?.querySelector(".transition-chip") ?? null;
+  check(sweepBtn !== null, "a num property wears the motion button instead");
+  check(propRowNamed("tint")?.querySelector(".transition-chip") === null,
+        "a colour one does not — it cross-fades on the attr that draws it");
+  check(!sweepBtn.classList.contains("on"), "unlit while no sweep stands");
+
+  fire(sweepBtn, "click");
+  const ctx4b = document.body.children.find((n) => n.id === "ctx");
+  const menu4b = ctx4b.children[0];
+  const sweepBoxes = menu4b.querySelectorAll(".value-box");
+  check(sweepBoxes.length === 2,
+        "the popover hosts MS and EASE value boxes and nothing else — speed is gone");
+  const [msIn4b, easeIn4b] = sweepBoxes.map((b) => b.querySelector("input"));
+  typeInto(msIn4b, "800");
+  fire(msIn4b, "change");
+  const msOp4b = swOps.findLast((o) => o.key === "smooth");
+  check(msOp4b && msOp4b.node === 9931 && msOp4b.value === 800,
+        "MS folds a plain number into smooth, got " + JSON.stringify(msOp4b?.value));
+  typeInto(easeIn4b, "linear");
+  fire(easeIn4b, "change");
+  const easeOp4b = swOps.findLast((o) => o.key === "profile");
+  check(easeOp4b && easeOp4b.node === 9931 && easeOp4b.value === "linear",
+        "EASE writes profile beside it, got " + JSON.stringify(easeOp4b?.value));
+  typeInto(msIn4b, "1000 / rate");
+  fire(msIn4b, "change");
+  check(swOps.findLast((o) => o.key === "smooth")?.value === "1000 / rate",
+        "an expression rides as text — the compiler is the teacher");
+  closeMenu();
+  drawSw();
+  check(sweepBtn.classList.contains("on"), "the button lights while a sweep stands");
+
+  fire(sweepBtn, "click");
+  const removeRow = menu4b.querySelectorAll("button")
+    .find((b) => (b.innerHTML ?? "").includes("remove the sweep"));
+  check(removeRow !== undefined, "a standing sweep offers its removal");
+  fire(removeRow, "click");
+  const cleared = swOps.slice(-2);
+  check(cleared[0]?.key === "smooth" && cleared[0].value === 0 &&
+        cleared[1]?.key === "profile" && cleared[1].value === "",
+        "removing clears smooth and profile in one act, got " + JSON.stringify(cleared));
+  drawSw();
+  check(!sweepBtn.classList.contains("on"), "and the light goes out");
+  document.activeElement = null;
+}
+
 /* What used to close this file -- the repeat/path round trip and the code-part escape
    hatch, both proved by rendering a backend-compiled component to SVG, plus trend
    smoothing out of template.ts -- went with the SVG renderer. Those are real behaviours

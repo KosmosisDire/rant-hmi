@@ -19,19 +19,19 @@
  * names and rates written into them are values, so typing in one step never rebuilds the
  * list around it. */
 
-import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
+import { chip, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
 import { diagIcon, Editor } from "../editor.js";
 import { makeFolds } from "../fold.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
-import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
+import { bindChoice, bindField, bindText } from "../reconcile.js";
 import { EVENT_KINDS, Flow, Json, Op, Node, WidgetType, eventKind,
          signatureText } from "../types.js";
-import { attachAutocomplete } from "./autocomplete.js";
 import { localAt, scopeAt } from "./flowscope.js";
+import { refChip } from "./refchip.js";
 import { flowScope, variablesInScope } from "./scope.js";
 import { openSourceTree, SourcePick, SourceTreeOptions } from "./sourcetree.js";
-import { highlighted } from "../highlight.js";
+import { BoxType, valueBox } from "./valuebox.js";
 
 /* which cards stand open, keyed by flow id: the open bit rides flowShape, so a toggle
  * rebuilds exactly that card */
@@ -230,7 +230,7 @@ export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, 
     ...(written.length
       ? written.flatMap((t) => [
           el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
-          targetChip(t),
+          targetChip(flow, t),
         ])
       : [
           el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
@@ -278,11 +278,14 @@ function timerChip(editor: Editor, flow: Flow, name: string): HTMLElement {
   return node;
 }
 
-function targetChip(target: { kind: string; name: string }): HTMLElement {
-  const node = chip("", "pad-mark");
-  if (target.kind) node.appendChild(kindMark(target.kind));
-  node.appendChild(el("span", { text: target.name }));
-  return node;
+/* the head's "what this flow writes" summary: the static form of the one chip. The
+ * target list is structure (flowShape carries it), so the words never move under it. */
+function targetChip(flow: Flow, target: { kind: string; name: string }): HTMLElement {
+  return refChip({
+    key: flow.id + ":target." + target.kind + ":" + target.name,
+    mark: target.kind ? kindMark(target.kind) : null,
+    name: () => target.name,
+  });
 }
 
 /* ---- the WHEN block: a labelled grid, never a wrapping line ---- */
@@ -376,14 +379,23 @@ function whenGrid(
     row("trigger", picker, diagIcon(editor.diagAt(flow.id)));
 
     /* the beat: milliseconds, a number or a constant expression over the widget's own
-       slots ("1000 / rate" is how the Trend samples at its authored rate) */
+       slots ("1000 / rate" is how the Trend samples at its authored rate). The same box
+       every expression field wears now — a plain number still rides RAW. */
     if (cadence) {
-      const ms = commitInput(String(first.ms ?? ""), (text) => {
-        const trimmed = text.trim();
-        const numeric = Number(trimmed);
-        setFirst({ ms: trimmed !== "" && Number.isFinite(numeric) ? numeric : trimmed });
-      }, { class: "field num" });
-      bindField(flow.id + ":when.ms", ms, () => String(head().ms ?? ""));
+      const ms = valueBox({
+        key: flow.id + ":when.ms",
+        read: () => String(head().ms ?? ""),
+        commit: (text) => {
+          const trimmed = text.trim();
+          const numeric = Number(trimmed);
+          setFirst({ ms: trimmed !== "" && Number.isFinite(numeric) ? numeric : trimmed });
+        },
+        emptyMeans: "unset",
+        placeholder: "expression",
+        type: { shape: "num" },
+        /* the WHEN row stands before any step, so its scope stops at the first one */
+        scope: flowScope(editor, widget, flow, (at().do ?? [])[0]?.id ?? 0),
+      });
       row("every", ms, el("span", { class: "op", text: "ms" }));
     }
   }
@@ -622,14 +634,20 @@ function stepCell(
   const here = () => (editor.store.node(flow.id) as Flow) ?? flow;
   const cell = el("span", { class: "do-cell" }, []);
 
-  /* an expression field, wire tier, seeing this row's own scope: x as the rows above
-     leave it, and the locals declared above this one */
-  const expr = (read: () => string, commit: (text: string) => void, key: string) => {
-    const field = commitInput(read(), commit, { class: "field grow", placeholder: "expression" });
-    bindField(step.id + ":" + key, field, read);
-    attachAutocomplete(field, flowScope(editor, widget, flow, step.id));
-    return field;
-  };
+  /* an expression box, wire tier, seeing this row's own scope: x as the rows above
+     leave it, and the locals declared above this one. The scope has no roots(), so the
+     box's browse offers the flat name list — same universe autocomplete serves. */
+  const box = (key: string, shape: BoxType["shape"], read: () => string,
+               commit: (text: string) => void) =>
+    valueBox({
+      key: step.id + ":" + key,
+      read,
+      commit,
+      emptyMeans: "unset",
+      placeholder: "expression",
+      type: { shape },
+      scope: flowScope(editor, widget, flow, step.id),
+    });
 
   if (step.kind === "move") {
     const from = sideOf(step.from);
@@ -676,25 +694,19 @@ function stepCell(
       /* nothing before the target: just the verb's arrow into it */
       cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     } else if (from === "init") {
-      const word = el("button", {
-        class: "chip pad-mark source-chip",
+      cell.appendChild(refChip({
+        key: step.id + ":from",
+        name: () => "default",
         title: "the target's own declared start; pick something else to change the source",
-      }, [el("span", { class: "name", text: "default" })]);
-      word.addEventListener("click", () =>
-        openSourceTree(word, editor, widget, fromOpts, setFrom));
-      cell.appendChild(word);
+        onPick: (word) => openSourceTree(word, editor, widget, fromOpts, setFrom),
+      }));
       cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     } else if (verbOf(step) !== "unforce") {
       if (from === "expr") {
-        /* the browse button lives INSIDE the expression box: they are one control, and
-           what the button browses for is exactly what the box would compute */
-        const field = expr(() => String(at().from?.expr ?? ""),
-                           (text) => set("from", { expr: text }), "from.expr");
-        const tree = iconButton("folder", "pick this value from the tree instead", () =>
-          openSourceTree(fused, editor, widget, fromOpts, setFrom),
-        );
-        const fused = el("span", { class: "expr-pick" }, [highlighted(field), tree]);
-        cell.appendChild(fused);
+        /* the value box IS the fused control now: browse is its own affordance, and a
+           source-tree pick of a plain side is one "expression" row away (sideChip) */
+        cell.appendChild(box("from.expr", "text", () => String(at().from?.expr ?? ""),
+                             (text) => set("from", { expr: text })));
       } else {
         cell.appendChild(sideChip(editor, widget, step.id + ":from", () => at().from ?? {},
                                   flow, step.id, fromOpts, setFrom));
@@ -734,21 +746,22 @@ function stepCell(
       cell.appendChild(picker);
       if (String(step.mode ?? "write") === "append") {
         cell.appendChild(el("span", { class: "op", text: "keep last" }));
-        cell.appendChild(highlighted(expr(() => String(at().keep ?? ""),
-                                          (text) => set("keep", text), "keep")));
+        cell.appendChild(box("keep", "num", () => String(at().keep ?? ""),
+                             (text) => set("keep", text)));
       }
     } else if (shape === "map") {
       cell.appendChild(el("span", { class: "op", text: "at key" }));
-      cell.appendChild(highlighted(expr(() => String(at().key ?? ""),
-                                        (text) => set("key", text), "key")));
+      cell.appendChild(box("key", "text", () => String(at().key ?? ""),
+                           (text) => set("key", text)));
     }
     return cell;
   }
 
   if (step.kind === "gate") {
     cell.appendChild(el("span", { class: "op", text: "only if" }));
-    cell.appendChild(highlighted(expr(() => String(at().a ?? ""),
-                                      (text) => set("a", text), "a")));
+    /* a condition's literal form IS true/false, so the bool icon is honest here */
+    cell.appendChild(box("a", "bool", () => String(at().a ?? ""),
+                         (text) => set("a", text)));
     return cell;
   }
 
@@ -769,10 +782,10 @@ function stepCell(
     const spec = declared.find((e) => e.name === String(at().event ?? ""));
     for (const p of spec?.params ?? []) {
       cell.appendChild(el("span", { class: "op", text: p.name + ":" }));
-      cell.appendChild(highlighted(expr(
+      /* the argument's box wears the parameter's DECLARED shape */
+      cell.appendChild(box("args." + p.name, p.shape as BoxType["shape"],
         () => String((at().args ?? {})[p.name] ?? ""),
-        (text) => set("args", { ...(at().args ?? {}), [p.name]: text }),
-        "args." + p.name)));
+        (text) => set("args", { ...(at().args ?? {}), [p.name]: text })));
     }
     return cell;
   }
@@ -810,9 +823,9 @@ function stepCell(
   return cell;
 }
 
-/* One side of a move as a chip: its kind mark, its dotted name, its resolved type.
- * Clicking re-opens the tree. The chip covers the local, entity and slot forms; the
- * expression form renders as an input instead (stepCell). */
+/* One side of a move as the reference chip: its kind mark, its dotted name, its
+ * resolved type. Clicking re-opens the tree. The chip covers the local, entity and slot
+ * forms; the expression form renders as a value box instead (stepCell). */
 function sideChip(
   editor: Editor,
   widget: Node,
@@ -824,11 +837,6 @@ function sideChip(
   onPick: (pick: SourcePick) => void,
   placeholder = "pick source",
 ): HTMLElement {
-  const node = el("button", { class: "chip pad-mark source-chip" });
-  bindFlag(key + ".ghost", node, "ghost-chip", () => {
-    const side = read();
-    return !(side?.name || side?.local || side?.slot);
-  });
   const markOf = (side: Json): string => {
     const form = sideOf(side);
     if (form === "entity") return side.kind || "?";
@@ -844,53 +852,54 @@ function sideChip(
   /* the kind mark is structure (flowShape keys on the side form and entity kind), so it
      is built once for this row's life */
   const mark = markOf(read());
-  node.appendChild(mark ? kindMark(mark) : el("span", {
-    class: "stree-foldicon",
-    html: sideOf(read()) === "slot" ? iconMarkup("layers", 11, 1.6) : "",
-  }));
-  const name = el("span", { class: "name" });
-  bindText(key + ".name", name, () => {
-    const side = read();
-    switch (sideOf(side)) {
-      case "slot": return "widget." + (side.slot || "?");
-      case "local": return (side.local || placeholder) +
-                           (side.local && side.path ? "." + side.path : "");
-      case "entity": return (side.name || placeholder) + (side.path ? " > " + side.path : "");
-      default: return placeholder;
-    }
-  });
-  node.appendChild(name);
-  const shape = el("span", { class: "shape" });
-  bindText(key + ".shape", shape, () => {
-    const side = read();
-    switch (sideOf(side)) {
-      case "entity": {
-        const entity = editor.mesh.entities.find(
-          (e) => e.kind === side.kind && e.name === side.name);
-        if (!entity) return "";
-        /* a move side touches the entity's VALUE table (a function's arguments),
-           never the response: that is a feed's business */
-        const fields = entity.fields;
-        if (!side.path) return fields.length === 1 ? fields[0].shape : entity.type ?? "";
-        return fields.find((f) => f.path === side.path)?.shape ?? "";
+  return refChip({
+    key,
+    mark: mark ? kindMark(mark) : el("span", {
+      class: "stree-foldicon",
+      html: sideOf(read()) === "slot" ? iconMarkup("layers", 11, 1.6) : "",
+    }),
+    ghost: () => {
+      const side = read();
+      return !(side?.name || side?.local || side?.slot);
+    },
+    name: () => {
+      const side = read();
+      switch (sideOf(side)) {
+        case "slot": return "widget." + (side.slot || "?");
+        case "local": return (side.local || placeholder) +
+                             (side.local && side.path ? "." + side.path : "");
+        case "entity": return (side.name || placeholder) + (side.path ? " > " + side.path : "");
+        default: return placeholder;
       }
-      case "local": {
-        const held = localAt(editor, widget, (editor.store.node(flow.id) as Flow) ?? flow,
-                             stepId, String(side.local ?? ""));
-        if (!held) return "";
-        if (!side.path) return held.type || held.shape;
-        return (held.fields ?? []).find((f) => f.path === side.path)?.shape ?? "";
+    },
+    shape: () => {
+      const side = read();
+      switch (sideOf(side)) {
+        case "entity": {
+          const entity = editor.mesh.entities.find(
+            (e) => e.kind === side.kind && e.name === side.name);
+          if (!entity) return "";
+          /* a move side touches the entity's VALUE table (a function's arguments),
+             never the response: that is a feed's business */
+          const fields = entity.fields;
+          if (!side.path) return fields.length === 1 ? fields[0].shape : entity.type ?? "";
+          return fields.find((f) => f.path === side.path)?.shape ?? "";
+        }
+        case "local": {
+          const held = localAt(editor, widget, (editor.store.node(flow.id) as Flow) ?? flow,
+                               stepId, String(side.local ?? ""));
+          if (!held) return "";
+          if (!side.path) return held.type || held.shape;
+          return (held.fields ?? []).find((f) => f.path === side.path)?.shape ?? "";
+        }
+        case "slot":
+          return "";
+        default:
+          return "";
       }
-      case "slot":
-        return "";
-      default:
-        return "";
-    }
+    },
+    onPick: (node) => openSourceTree(node, editor, widget, opts, onPick, read()),
   });
-  node.appendChild(shape);
-  node.addEventListener("click", () =>
-    openSourceTree(node, editor, widget, opts, onPick, read()));
-  return node;
 }
 
 /* Drag to reorder, from the grip only: an armed drag, so a normal click never starts one

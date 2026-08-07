@@ -53,13 +53,6 @@
   min-width: 0;
 }
 
-.do-cell > .field.grow {
-  flex: 1 1 40px;
-  min-width: 34px;
-  width: 40px;
-  text-overflow: ellipsis;
-}
-
 .do-cell > .field.num {
   width: 56px;
   flex: none;
@@ -83,48 +76,11 @@
   white-space: nowrap;
 }
 
-/* the expression box and its browse button are ONE control: the button sits inside the
-   box's border, so what it browses for is visibly the value this box computes */
-.expr-pick {
-  display: flex;
-  align-items: center;
+/* a step's expression boxes squish like the old grow field did: a long expression
+   ellipsises inside its box rather than reflowing the list */
+.do-cell > .value-box {
   flex: 1 1 40px;
   min-width: 34px;
-  height: 24px;
-  border: 1px solid var(--line-in);
-  border-radius: 2px;
-  background: var(--input);
-  overflow: hidden;
-}
-
-.expr-pick:hover {
-  border-color: #3d3d3d;
-}
-
-.expr-pick:focus-within {
-  border-color: var(--acc);
-}
-
-.expr-pick > .hl-wrap {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.expr-pick .field {
-  flex: 1 1 auto;
-  min-width: 0;
-  width: 100%;
-  height: 22px;
-  border: 0;
-  background: none;
-  text-overflow: ellipsis;
-}
-
-.expr-pick > .icon-btn {
-  height: 22px;
-  border: 0;
-  border-left: 1px solid var(--line-in);
-  border-radius: 0;
 }
 
 /* the statement is TEXT, not controls: one line, ellipsised, never a source of width */
@@ -158,35 +114,3 @@
   color: var(--ink-3);
 }
 
-/* a feed is one line under the slot it fills (spec 3.3): arrow, source, transform, rate */
-.feed-line {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.feed-line > .source-chip {
-  flex: 0 1 auto;
-  min-width: 44px;
-  overflow: hidden;
-}
-
-.feed-line > .field.grow {
-  flex: 1 1 40px;
-  min-width: 34px;
-  width: 40px;
-  text-overflow: ellipsis;
-}
-
-.feed-line > .field.num {
-  width: 44px;
-  flex: none;
-}
-
-.feed-line > .arrow,
-.feed-line > .op,
-.feed-line > .icon-btn {
-  flex: none;
-  white-space: nowrap;
-}
