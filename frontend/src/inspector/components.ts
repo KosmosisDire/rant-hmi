@@ -684,20 +684,35 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
      plain number / bare easing name is the literal. Empty = none. */
   const shownSweep = (v: number | string | null | undefined) =>
     typeof v === "number" ? (v > 0 ? String(v) : "") : (v ?? "");
+  /* ONE TIMING: committing a duration clears the speed and vice versa */
+  const commitSweep = (key: "smooth" | "speed", text: string) => {
+    const trimmed = text.trim();
+    const folded = Number(trimmed);
+    const value = !trimmed ? 0 : Number.isFinite(folded) ? folded : trimmed;
+    const other = key === "smooth" ? "speed" : "smooth";
+    editor.apply([
+      { op: "set_prop", node: prop.id, key, value },
+      ...(trimmed
+        ? [{ op: "set_prop" as const, node: prop.id, key: other, value: 0 }]
+        : []),
+    ]);
+  };
   const sweep = commitInput(
     shownSweep(prop.smooth),
-    (text) => {
-      const trimmed = text.trim();
-      const folded = Number(trimmed);
-      editor.apply([{ op: "set_prop", node: prop.id, key: "smooth",
-                      value: !trimmed ? 0
-                           : Number.isFinite(folded) ? folded : trimmed }]);
-    },
-    { class: "field", placeholder: "none",
-      title: "milliseconds — a number or an expression over this component; "
-             + "empty = none" },
+    (text) => commitSweep("smooth", text),
+    { class: "field", placeholder: "ms",
+      title: "a fixed duration in milliseconds — a number or an expression over this "
+             + "component; empty = none; setting it clears the speed" },
   );
   bindField(prop.id + ":smooth", sweep, () => shownSweep((at() as PropDef).smooth));
+  const rate = commitInput(
+    shownSweep(prop.speed),
+    (text) => commitSweep("speed", text),
+    { class: "field", placeholder: "per s",
+      title: "units per second — the duration then follows the distance, so a short "
+             + "step arrives sooner than a long one; setting it clears the ms" },
+  );
+  bindField(prop.id + ":speed", rate, () => shownSweep((at() as PropDef).speed));
   const profile = commitInput(
     prop.profile || "",
     (text) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile",
@@ -726,8 +741,9 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
     ]),
     prop.shape === "num"
       ? el("div", { class: "row" }, [
-          el("span", { class: "row-label", text: "SWEEP MS" }),
+          el("span", { class: "row-label", text: "SWEEP" }),
           sweep,
+          rate,
           profile,
           diagIcon(sweepDiag.length ? sweepDiag : editor.diagAt(prop.id, "profile")),
         ])
@@ -924,35 +940,51 @@ function transitionChip(editor: Editor, partId: number, def: AttrDef): HTMLEleme
                                    + "new value (the value itself is never eased)", () => {
     const rect = chip.getBoundingClientRect();
     const held = rowsOf()[def.name] ?? null;
-    /* BOTH VALUES ARE EXPRESSIONS over the node's own scope — "1000 / rate" is a
-       duration — with a plain number and a bare easing name as the literals. A plain
-       number is stored as one, so the common case stays a clean document. */
-    const ms = commitInput(held ? String(held.ms) : "", (text) => {
+    /* EVERY VALUE IS AN EXPRESSION over the node's own scope — "1000 / rate" is a
+       duration — with a plain number and a bare easing name as the literals (a plain
+       number is stored as one, so the common case stays a clean document). ONE TIMING:
+       a fixed MS, or a SPEED in the attr's own units per second — the duration then
+       follows the distance the value travels. Committing either clears the other. */
+    const fold = (text: string): number | string => {
+      const folded = Number(text);
+      return Number.isFinite(folded) ? folded : text;
+    };
+    const commitTiming = (key: "ms" | "speed", text: string) => {
       const trimmed = text.trim();
       const next = { ...rowsOf() };
+      const other = next[def.name]?.profile;
       if (!trimmed) delete next[def.name];
-      else {
-        const folded = Number(trimmed);
-        next[def.name] = { ...(next[def.name] ?? {}),
-                           ms: Number.isFinite(folded) ? folded : trimmed };
-      }
+      else next[def.name] = { [key]: fold(trimmed),
+                              ...(other ? { profile: other } : {}) };
       commit(next);
-    }, { class: "field", placeholder: "none",
-         title: "milliseconds — a number or an expression; empty = none" });
+    };
+    const ms = commitInput(held?.ms !== undefined ? String(held.ms) : "",
+      (text) => commitTiming("ms", text),
+      { class: "field", placeholder: held?.speed !== undefined ? "(speed set)" : "none",
+        title: "a fixed duration in milliseconds — a number or an expression; "
+               + "empty = none; setting it clears speed" });
+    const speed = commitInput(held?.speed !== undefined ? String(held.speed) : "",
+      (text) => commitTiming("speed", text),
+      { class: "field", placeholder: held?.ms !== undefined ? "(ms set)" : "none",
+        title: "units per second — the duration then follows the distance, so a short "
+               + "step arrives sooner than a long one; numeric attrs only; setting it "
+               + "clears ms" });
     const profile = commitInput(held?.profile ?? "", (text) => {
       const at = rowsOf()[def.name];
-      /* a profile means nothing without a time; the ms field is what turns it on */
+      /* a profile means nothing without a timing; ms or speed is what turns it on */
       if (!at) return;
       const trimmed = text.trim();
-      const row: Json = { ms: at.ms };
+      const row: Json = at.speed !== undefined ? { speed: at.speed } : { ms: at.ms };
       if (trimmed) row.profile = trimmed;
-      commit({ ...rowsOf(), [def.name]: row as { ms: number | string } });
+      commit({ ...rowsOf(), [def.name]: row as { ms?: number | string } });
     }, { class: "field", placeholder: "ease",
          title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
                 + "yielding one" });
     openMenu(rect.left, rect.bottom + 4, "transition " + def.name, [
       { node: el("div", { class: "menu-field" },
                  [el("span", { class: "row-label", text: "MS" }), ms]) },
+      { node: el("div", { class: "menu-field" },
+                 [el("span", { class: "row-label", text: "SPEED" }), speed]) },
       { node: el("div", { class: "menu-field" },
                  [el("span", { class: "row-label", text: "EASE" }), profile]) },
       ...(held ? [{ label: "remove the transition", icon: "trash", run: () => {
