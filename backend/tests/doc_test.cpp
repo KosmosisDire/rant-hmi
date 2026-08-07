@@ -111,7 +111,7 @@ void test_defaults() {
     CHECK(header.find("layout") == header.end());
     CHECK(header["type"] == "");     /* a plain frame names no component */
     CHECK(header["attrs"]["surface"] == "$surface-2");
-    CHECK(header["attrs"]["x"] == "0");
+    CHECK(header["attrs"]["left"] == "0");
     CHECK(header["attrs"]["w"] == "1408");
     CHECK(header["attrs"]["h"] == "66");
     const NodeEntry* fe = d.find(id_of(header));
@@ -122,9 +122,9 @@ void test_defaults() {
 
     /* the main pane and the side panes each carry their own box, every value on the
        22px grid; every field is expression text in one map, a literal the degenerate case */
-    CHECK(named_frame(d, "Main")["attrs"]["x"] == "22");
+    CHECK(named_frame(d, "Main")["attrs"]["left"] == "22");
     CHECK(named_frame(d, "Main")["attrs"]["w"] == "880");
-    CHECK(named_frame(d, "Lamps")["attrs"]["x"] == "924");
+    CHECK(named_frame(d, "Lamps")["attrs"]["left"] == "924");
     CHECK(named_frame(d, "Status group")["children"].size() == 2);
     /* a name is a LABEL until something under it needs an address, so a page's frames
        are free to be called what they are */
@@ -840,7 +840,7 @@ void test_group() {
     ApplyResult r;
     Json batch = ops_of({Json{{"op", "group"},
                               {"nodes", Json::array({flow, setpoint})},
-                              {"attrs", Json{{"x", "22"}, {"y", "110"},
+                              {"attrs", Json{{"left", "22"}, {"top", "110"},
                                              {"w", "836"}, {"h", "264"}}}}});
     CHECK_MSG(apply_ops(d, batch, r, err), err);
     const Json& main_kids = (*d.node(main_col))["children"];
@@ -852,7 +852,7 @@ void test_group() {
     CHECK(id_of(inside[0]) == setpoint && id_of(inside[1]) == flow);
     CHECK((*d.node(frame_id))["name"] == "Group");
     /* the geometry the client sent is the box's own attrs, expression text like any */
-    CHECK((*d.node(frame_id))["attrs"]["x"] == "22");
+    CHECK((*d.node(frame_id))["attrs"]["left"] == "22");
     CHECK((*d.node(frame_id))["attrs"]["h"] == "264");
 
     /* the echo is an insert of a childless box and then one addressed move per node, so a

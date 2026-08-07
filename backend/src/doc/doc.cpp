@@ -26,12 +26,12 @@ Json instance(const char* type, const char* name, Json slots,
                 {"attrs", std::move(attrs)}};
 }
 
-/* A BOX at its place on the artboard: x/y/w/h in canvas px, relative to the parent's
+/* A BOX at its place on the artboard: left/top/w/h in canvas px, relative to the parent's
    origin, written as the expression text every attr is. The demo keeps everything on the
    grid (11px cells; these values sit on every other line, the firmer 22s), which is what
    makes it read as designed rather than merely placed. */
 Json at(int x, int y, int w, int h) {
-    return Json{{"x", std::to_string(x)}, {"y", std::to_string(y)},
+    return Json{{"left", std::to_string(x)}, {"top", std::to_string(y)},
                 {"w", std::to_string(w)}, {"h", std::to_string(h)}};
 }
 

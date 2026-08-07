@@ -43,23 +43,46 @@ const std::vector<AttrDef>& common_attrs_table() {
 
         /* THE BOX, in canvas px: one static space, relative to the parent's origin. On a
            page that space is the 1408 x 792 artboard; inside a component it is the
-           component's own design frame, which an instance's box scales per axis. */
-        no_def("x", "num",
+           component's own design frame, which an instance's box scales per axis. An axis
+           is authored EITHER from its near edge (`left` + `w`) or by BOTH edges (`right`
+           joins in and the width follows them) — the far edge, once set, owns the size. */
+        no_def("left", "num",
                "the ORIGIN POINT's position in canvas px from the parent's origin (with "
-               "origin_x 0 that is the left edge). Absent with `w` absent stretches the "
-               "axis to the parent; absent with `w` set pins to 0", "left"),
-        no_def("y", "num", "the origin point's vertical position in canvas px; as `x`",
+               "origin_x 0 that is the left edge). With `right` also set the two edges pin "
+               "and the width follows them (`w` goes inert). Absent with `right` set the "
+               "box anchors to the right edge instead; absent with `right` and `w` both "
+               "absent the axis stretches to the parent; absent with `w` set pins to 0",
+               "left"),
+        no_def("top", "num", "the origin point's vertical position in canvas px; as `left`",
                "top"),
+        no_def("right", "num",
+               "the RIGHT EDGE's inset from the parent's right edge, in canvas px. Setting "
+               "it sizes the axis by its edges: with `left` too the width FOLLOWS them; "
+               "alone, the box anchors right at `w`. No origin point rides an axis whose "
+               "far edge is pinned — `left` and `right` are then both plain edges", "right"),
+        no_def("bottom", "num", "the BOTTOM EDGE's inset from the parent's bottom edge, in "
+               "canvas px; as `right`", "bottom"),
         no_def("w", "num",
                "width in canvas px; absent = the axis stretches to the parent (both edges "
-               "pinned) or, where `x` is set, the content's own width", "width"),
+               "pinned) or, where `left` is set, the content's own width. Inert where "
+               "`left` and `right` pin both edges", "width"),
         no_def("h", "num", "height in canvas px; as `w`", "height"),
+        no_def("min_w", "num",
+               "the least width the box may render at; absent = none. Clamps whatever the "
+               "axis derives — an authored `w`, pinned edges, an aspect ratio — which is "
+               "what keeps an aspect-constrained box from collapsing", "min-width"),
+        no_def("max_w", "num", "the most width the box may render at; absent = none; as "
+               "`min_w`", "max-width"),
+        no_def("min_h", "num", "the least height the box may render at; as `min_w`",
+               "min-height"),
+        no_def("max_h", "num", "the most height the box may render at; as `min_w`",
+               "max-height"),
         def("aspect", "num", 0.0,
             "0 = free; > 0 derives the UNAUTHORED one of w/h from the authored one at "
             "that ratio (aspect-ratio). With both authored it is inert"),
         def("origin_x", "num", 0.0,
             "the node's OWN reference point on x, a fraction of its own width: the point "
-            "`x` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle",
+            "`left` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle",
             "transform-origin"),
         def("origin_y", "num", 0.0, "the node's own reference point on y; as `origin_x`",
             "transform-origin"),

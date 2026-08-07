@@ -466,7 +466,7 @@ void test_builtins_compile_clean() {
     const Json& mark = slider["template"]["children"][1]["children"][0];
     CHECK_EQ(ops_of(mark["attrs"]["surface"]), "LOAD(theme:scale)");
     CHECK_EQ(ops_of(mark["attrs"]["repeat"]), "LOAD(slot:scale.divisions)");
-    CHECK_EQ(ops_of(mark["attrs"]["x"]), "LOAD(repeat:fraction)");
+    CHECK_EQ(ops_of(mark["attrs"]["left"]), "LOAD(repeat:fraction)");
 
     /* A PLOT IS A PATH whose anchors are data: the widget's own history LIST maps to
        anchor records in the template's own text, and no renderer knows what a plot is */
@@ -969,9 +969,13 @@ void test_transitions() {
                                                         {"speed", 10.0}}},
                                       {"show", Json{{"ms", 100.0}}},
                                       {"nope", Json{{"ms", 100.0}}},
-                                      {"x", Json{{"ms", -5.0}}},
-                                      {"y", Json{{"ms", 100.0},
-                                                 {"profile", "bounce"}}}}}},
+                                      {"left", Json{{"ms", -5.0}}},
+                                      {"top", Json{{"ms", 100.0},
+                                                   {"profile", "bounce"}}},
+                                      /* the far edges and the clamps are attrs like any:
+                                         a speed rides an inset the same as a position */
+                                      {"right", Json{{"speed", 80.0}}},
+                                      {"min_w", Json{{"ms", 120.0}}}}}},
             Json{{"id", 812}, {"kind", "text"}, {"name", "cap"},
                  {"attrs", Json{{"text", "label"}}},
                  {"transitions", Json{{"text", Json{{"ms", 300.0}}},
@@ -990,8 +994,8 @@ void test_transitions() {
             {"name", "Main"},
             {"children", Json::array({Json{
                 {"kind", "frame"}, {"name", "Box"},
-                {"attrs", Json{{"x", "22"}}},
-                {"transitions", Json{{"x", Json{{"ms", 500.0}}}}}}})}}})},
+                {"attrs", Json{{"left", "22"}}},
+                {"transitions", Json{{"left", Json{{"ms", 500.0}}}}}}})}}})},
     };
     Document document;
     std::string error;
@@ -1013,14 +1017,17 @@ void test_transitions() {
     CHECK_EQ(ops_of(bar["transitions"]["shadow_x"]["speed"]), "CONST(40.0)");
     CHECK(!bar["transitions"]["shadow_x"].contains("ms"));
     CHECK(!bar["transitions"].contains("shadow_y"));
-    /* the refused rows: show has no animatable property, nope is no attr at all, x
-       carries a bad constant time; y's bad PROFILE drops only the profile — the sweep
+    /* the refused rows: show has no animatable property, nope is no attr at all, left
+       carries a bad constant time; top's bad PROFILE drops only the profile — the sweep
        still runs at the view's default ease */
     CHECK(!bar["transitions"].contains("show"));
     CHECK(!bar["transitions"].contains("nope"));
-    CHECK(!bar["transitions"].contains("x"));
-    CHECK_EQ(ops_of(bar["transitions"]["y"]["ms"]), "CONST(100.0)");
-    CHECK(!bar["transitions"]["y"].contains("profile"));
+    CHECK(!bar["transitions"].contains("left"));
+    CHECK_EQ(ops_of(bar["transitions"]["top"]["ms"]), "CONST(100.0)");
+    CHECK(!bar["transitions"]["top"].contains("profile"));
+    /* the edge insets and clamps are animatable rows of their own */
+    CHECK_EQ(ops_of(bar["transitions"]["right"]["speed"]), "CONST(80.0)");
+    CHECK_EQ(ops_of(bar["transitions"]["min_w"]["ms"]), "CONST(120.0)");
     const Json& cap = sweep["template"]["children"][1];
     CHECK(!cap["transitions"].contains("text"));   /* content has nothing to blend */
     CHECK_EQ(ops_of(cap["transitions"]["color"]["ms"]), "CONST(200.0)");
@@ -1037,8 +1044,8 @@ void test_transitions() {
     CHECK_EQ(diags.size(), size_t(7));
     CHECK(wheres.count("transitions.show") == 1);
     CHECK(wheres.count("transitions.nope") == 1);
-    CHECK(wheres.count("transitions.x") == 1);
-    CHECK(wheres.count("transitions.y") == 1);
+    CHECK(wheres.count("transitions.left") == 1);
+    CHECK(wheres.count("transitions.top") == 1);
     CHECK(wheres.count("transitions.text") == 1);
     CHECK(wheres.count("transitions.shadow_y") == 1);
     CHECK(wheres.count("transitions.stroke") == 1);
@@ -1047,7 +1054,7 @@ void test_transitions() {
     std::vector<Diag> page_diags;
     Json rows = compile_page_attrs(document, page_diags);
     const uint64_t box_id = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
-    CHECK_EQ(ops_of(rows[std::to_string(box_id)]["transitions"]["x"]["ms"]),
+    CHECK_EQ(ops_of(rows[std::to_string(box_id)]["transitions"]["left"]["ms"]),
              "CONST(500.0)");
 
     /* the property declaration serves COMPILED sweeps on the slot rows */
