@@ -2063,35 +2063,6 @@ check(stageNode("frame", 901) === heldAgain &&
   check(box.style.transition === "",
         "and it clears whole when the metadata goes -- the applier is total");
 
-  /* A SPEED-TIMED ATTR: the rate turns into each move's OWN duration -- distance over
-     speed -- so a short step gets a short blend. First sight only seeds the memory. */
-  tAttrs["710"].transitions = { left: { speed: prog(500), profile: prog("linear") } };
-  tEditor.live = { epoch: 30, values: {} };
-  tDraw();
-  check(box.style.transition === "",
-        "a speed row's first sight seeds and times nothing, got '" +
-          box.style.transition + "'");
-  tAttrs["710"].attrs.left = prog(211);
-  tEditor.live = { epoch: 31, values: {} };
-  tDraw();
-  check(box.style.transition === "left 400ms linear",
-        "a 200px move at 500px per second is this move's own 400ms, got '" +
-          box.style.transition + "'");
-  tAttrs["710"].attrs.left = prog(261);
-  tEditor.live = { epoch: 32, values: {} };
-  tDraw();
-  check(box.style.transition === "left 100ms linear",
-        "and a 50px step gets its shorter 100ms, got '" + box.style.transition + "'");
-  tEditor.live = { epoch: 33, values: {} };
-  tDraw();
-  check(box.style.transition === "left 100ms linear",
-        "a pass where the value stands still keeps the last duration -- the list never "
-        + "changes under a running blend");
-  delete tAttrs["710"].transitions;
-  tAttrs["710"].attrs.left = prog(11);
-  tEditor.live = { epoch: 34, values: {} };
-  tDraw();
-
   /* THE PROPERTY MECHANISM: the slot's rendered value tweens here. The slot moves: the
      true value lands whole (structure, marks) while the picture starts walking. Same
      epoch -- this is a live frame, not a compile. */
@@ -2148,53 +2119,22 @@ check(stageNode("frame", 901) === heldAgain &&
   tEditor.registry = { version: 2, types: [{
     ...sweepType,
     slots: [...sweepType.slots,
-            { name: "raw", shape: "num", group: "value", smooth: 200, profile: "linear" },
-            /* a RATE-timed sweep: 4 units per second, duration follows the distance */
-            { name: "pace", shape: "num", group: "value", speed: 4,
-              profile: "linear" }],
+            { name: "raw", shape: "num", group: "value", smooth: 200, profile: "linear" }],
     template: { ...sweepType.template, children: [
       ...sweepType.template.children,
       { kind: "frame", name: "rawbar", attrs: { left: cell("slot:raw"), w: prog(0.1),
                                                 h: prog(0.2) } },
-      { kind: "frame", name: "pacebar", attrs: { left: cell("slot:pace"), w: prog(0.1),
-                                                 h: prog(0.1) } },
     ] },
   }] };
   tEditor.live = { epoch: 6, values: { "711.raw": 0.5 } };
   tDraw();
-  const rawbar = () => sw.children[sw.children.length - 2];
+  const rawbar = () => sw.children[sw.children.length - 1];
   check(rawbar().style.left === "50%", "a fresh slot's first sight snaps");
   tEditor.live = { epoch: 6, values: {} };
   tDraw();
   check(rawbar().style.left === "0%",
         "and Nil ends the sweep at once: the unknown treatment, never an eased lie, got "
         + rawbar().style.left);
-
-  /* A SPEED-TIMED SWEEP derives each retune's duration from the SHOWN-to-target
-     distance -- exact, because the tween knows what is on screen */
-  const pacebar = () => sw.children[sw.children.length - 1];
-  tnow = 5000;
-  tEditor.live = { epoch: 6, values: { "711.pace": 0.2 } };
-  tDraw();
-  check(pacebar().style.left === "20%", "a rate-timed sweep's first sight snaps too");
-  tEditor.live = { epoch: 6, values: { "711.pace": 1 } };
-  tDraw();
-  tnow = 5100;
-  stepTransitions(tHost, tEditor, tnow);
-  check(Math.abs(parseFloat(pacebar().style.left) - 60) < 1e-9,
-        "0.8 units at 4 per second is a 200ms sweep: halfway at 100ms, got " +
-          pacebar().style.left);
-  tnow = 5200;
-  stepTransitions(tHost, tEditor, tnow);
-  check(pacebar().style.left === "100%", "and it lands on time");
-  /* the SHORT hop is proportionally quick: 0.1 units is 25ms at the same speed */
-  tEditor.live = { epoch: 6, values: { "711.pace": 0.9 } };
-  tDraw();
-  tnow = 5225;
-  stepTransitions(tHost, tEditor, tnow);
-  check(pacebar().style.left === "90%",
-        "a shorter distance takes proportionally less time, done in 25ms, got " +
-          pacebar().style.left);
 
   setTransitionClock(null);
 }

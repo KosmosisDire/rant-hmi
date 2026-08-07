@@ -165,35 +165,6 @@ bool compile_transition_time(const Json& raw, const TemplateScope& scope,
     return true;
 }
 
-/* one SPEED: units per second — the duration then follows the DISTANCE the value
- * travels, so a short step arrives sooner than a long one. A number, or expression
- * text over `scope`; a constant must be greater than 0 (the view derives and caps the
- * duration itself). */
-bool compile_transition_rate(const Json& raw, const TemplateScope& scope,
-                             Json& program, std::string& error) {
-    if (raw.is_number()) {
-        program = const_program(raw);
-    } else if (raw.is_string()) {
-        TemplateExprResult compiled = compile_template_expr(raw.get<std::string>(), scope);
-        if (!compiled.ok) {
-            error = compiled.error;
-            return false;
-        }
-        program = std::move(compiled.program);
-    } else {
-        error = "a transition's speed is units per second: a number, or an expression "
-                "over what this node can read";
-        return false;
-    }
-    if (const Json* folded = const_of(program)) {
-        if (!folded->is_number() || !(folded->get<double>() > 0)) {
-            error = "a transition's speed is units per second, greater than 0";
-            return false;
-        }
-    }
-    return true;
-}
-
 /* one PROFILE: a bare easing name, or expression text. Empty = none (the view's ease). */
 bool compile_transition_profile(const std::string& raw, const TemplateScope& scope,
                                 Json& program, bool& has, std::string& error) {
@@ -250,43 +221,20 @@ Json compile_transitions(const Json& node, const std::string& kind,
                         where);
             continue;
         }
-        const bool has_ms = it->is_object() && it->contains("ms");
-        const bool has_speed = it->is_object() && it->contains("speed");
-        if (has_ms == has_speed) {
+        if (!it->is_object() || !it->contains("ms")) {
             sink.report(node_id, "transition",
-                        "a transition takes ONE timing: ms (a fixed duration) or speed "
-                        "(units per second — the duration then follows the distance), "
-                        "plus an optional easing profile",
+                        "a transition is {ms, profile?}: a time in milliseconds and an "
+                        "optional easing profile",
                         where);
             continue;
         }
-        Json row;
+        Json ms_program;
         std::string error;
-        if (has_speed) {
-            /* DISTANCE IS A NUMBER'S IDEA: a colour or an outline has no honest metric
-               for "how far", so a rate-timed transition rides numeric attrs only */
-            if (std::string(attr_shape(kind, it.key())) != "num") {
-                sink.report(node_id, "transition",
-                            "'" + it.key() + "' cannot take a speed: the duration "
-                            "follows the DISTANCE a value travels, and only a number "
-                            "has one — give it ms instead",
-                            where);
-                continue;
-            }
-            Json rate_program;
-            if (!compile_transition_rate((*it)["speed"], scope, rate_program, error)) {
-                sink.report(node_id, "transition", error, where);
-                continue;
-            }
-            row["speed"] = std::move(rate_program);
-        } else {
-            Json ms_program;
-            if (!compile_transition_time((*it)["ms"], scope, ms_program, error)) {
-                sink.report(node_id, "transition", error, where);
-                continue;
-            }
-            row["ms"] = std::move(ms_program);
+        if (!compile_transition_time((*it)["ms"], scope, ms_program, error)) {
+            sink.report(node_id, "transition", error, where);
+            continue;
         }
+        Json row{{"ms", std::move(ms_program)}};
         Json prof_program;
         bool has_profile = false;
         if (!compile_transition_profile(it->value("profile", ""), scope, prof_program,
@@ -353,8 +301,7 @@ Json slot_row(const Json& prop, const std::string& address);
 struct SweepRow {
     std::string address;
     std::string path;
-    Json ms;      /* null where the sweep is rate-timed */
-    Json speed;   /* null where it is duration-timed */
+    Json ms;
     std::string profile;
     uint64_t prop_id = 0;
 };
@@ -418,22 +365,11 @@ std::vector<std::string> collect_props(const Json& rows, const std::string& path
          * attribute that draws it); the ms/profile are EXPRESSIONS over the declaring
          * node's scope, so they are stashed here and compiled in pass two, once every
          * property is known. */
-        auto authored = [&](const char* key) -> Json {
-            auto it = prop.find(key);
-            const bool set = it != prop.end() &&
-                ((it->is_number() && it->get<double>() != 0) ||
-                 (it->is_string() && !it->get<std::string>().empty()));
-            return set ? *it : Json();
-        };
-        const Json smooth = authored("smooth");
-        const Json speed = authored("speed");
-        if (!smooth.is_null() && !speed.is_null())
-            sink.report(id_of(prop), "prop_smooth",
-                        "a sweep takes ONE timing: smooth (a fixed duration in ms) or "
-                        "speed (units per second — the duration then follows the "
-                        "distance)",
-                        "smooth");
-        else if (!smooth.is_null() || !speed.is_null()) {
+        auto smooth = prop.find("smooth");
+        const bool sweeps_at_all = smooth != prop.end() &&
+            ((smooth->is_number() && smooth->get<double>() != 0) ||
+             (smooth->is_string() && !smooth->get<std::string>().empty()));
+        if (sweeps_at_all) {
             if (str_or(prop, "shape", "num") != std::string("num"))
                 sink.report(id_of(prop), "prop_smooth",
                             "only a number property sweeps; a colour cross-fades on "
@@ -441,7 +377,7 @@ std::vector<std::string> collect_props(const Json& rows, const std::string& path
                             "smooth");
             else
                 sweeps.push_back(SweepRow{path.empty() ? name : path + "." + name, path,
-                                          smooth, speed, str_or(prop, "profile", ""),
+                                          *smooth, str_or(prop, "profile", ""),
                                           id_of(prop)});
         }
         names.push_back(name);
@@ -702,15 +638,10 @@ Json compile_component(const Json& component, Sink& sink) {
         auto found = walk.scopes.find(sweep.path);
         const TemplateScope& scope =
             found != walk.scopes.end() ? found->second : walk.scopes.at("");
-        const bool rated = !sweep.speed.is_null();
-        Json timing_program;
+        Json ms_program;
         std::string error;
-        const bool timing_ok = rated
-            ? compile_transition_rate(sweep.speed, scope, timing_program, error)
-            : compile_transition_time(sweep.ms, scope, timing_program, error);
-        if (!timing_ok) {
-            sink.report(sweep.prop_id, "prop_smooth", error,
-                        rated ? "speed" : "smooth");
+        if (!compile_transition_time(sweep.ms, scope, ms_program, error)) {
+            sink.report(sweep.prop_id, "prop_smooth", error, "smooth");
             continue;
         }
         Json prof_program;
@@ -720,7 +651,7 @@ Json compile_component(const Json& component, Sink& sink) {
         if (!prof_ok) sink.report(sweep.prop_id, "prop_smooth", error, "profile");
         for (Json& slot : walk.slots) {
             if (slot.value("name", "") != sweep.address) continue;
-            slot[rated ? "speed" : "smooth"] = std::move(timing_program);
+            slot["smooth"] = std::move(ms_program);
             if (prof_ok && has_profile) slot["profile"] = std::move(prof_program);
             break;
         }
