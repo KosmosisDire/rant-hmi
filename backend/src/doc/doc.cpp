@@ -291,17 +291,15 @@ Document Document::make_default() {
      * 22px grid. Nothing negotiates — what is written is what renders, at every window
      * size, because the whole artboard scales as one picture. */
 
-    /* one feed and one flow so the inspector and the rename fan-out have real work */
+    /* one bound slot and one flow so the inspector and the rename fan-out have real
+       work: the Readout's value IS an expression over the `flow` variable (spec D1) */
     Json readout = instance("Readout", "Flow",
                             /* a nested node's value nests under its name: the units are
                                the `units` node's */
-                            Json{{"value", 42.5}, {"units", Json{{"text", "l/min"}}}},
+                            Json{{"value", "flow.round(1)"},
+                                 {"units", Json{{"text", "'l/min'"}}}},
                             at(22, 198, 836, 176));
-    readout["feeds"] = Json::array({Json{{"slot", "value"},
-                                         {"src", {{"kind", "L"}, {"name", "flow"}}},
-                                         {"path", ""},
-                                         {"xf", "x.round(1)"}}});
-    Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "Reset"}}}},
+    Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "'Reset'"}}}},
                           at(22, 396, 176, 66));
     reset["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
@@ -311,7 +309,7 @@ Document Document::make_default() {
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
     Json header_kids = Json::array();
-    header_kids.push_back(instance("Label", "Title", Json{{"text", "Line 1 Overview"}},
+    header_kids.push_back(instance("Label", "Title", Json{{"text", "'Line 1 Overview'"}},
                                    at(22, 11, 308, 44)));
     Json header = frame("Header", std::move(header_kids),
                         with(at(0, 0, 1408, 66), Json{{"surface", "$surface-2"}}));
@@ -337,26 +335,21 @@ Document Document::make_default() {
     /* the Trend holds `flow`'s past: its own cadence flow appends the fed value into its
        `history` list whether or not anything draws it, and the plot is the template's own
        map over that list */
-    main_kids.push_back([] {
-        Json trend = instance("Trend", "History",
-                              Json{{"window", 30}}, at(22, 484, 418, 176));
-        trend["feeds"] = Json::array({Json{{"slot", "value"},
-                                           {"src", {{"kind", "L"}, {"name", "flow"}}},
-                                           {"path", ""}}});
-        return trend;
-    }());
+    main_kids.push_back(instance("Trend", "History",
+                                 Json{{"window", 30}, {"value", "flow"}},
+                                 at(22, 484, 418, 176)));
     /* the options a Selector offers are a LIST the instance authors; the value is one of
        its names, so the demo has a live list cell the moment it opens */
     main_kids.push_back(instance("Selector", "Mode",
                                  Json{{"options", Json::array({"Off", "Low", "High"})},
-                                      {"value", "Off"}},
+                                      {"value", "'Off'"}},
                                  at(462, 396, 176, 176)));
     Json main_pane = frame("Main", std::move(main_kids),
                            with(at(22, 88, 880, 682),
                                 Json{{"surface", "$surface"}, {"radius", "6"}}));
 
     Json status_kids = Json::array();
-    status_kids.push_back(instance("Label", "Status", Json{{"text", "Status"}},
+    status_kids.push_back(instance("Label", "Status", Json{{"text", "'Status'"}},
                                    at(22, 22, 176, 44)));
     status_kids.push_back(instance("Toggle", "Enabled", Json{{"value", false}},
                                    at(286, 22, 154, 44)));

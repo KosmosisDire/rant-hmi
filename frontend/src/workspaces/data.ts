@@ -19,7 +19,8 @@ import { sideOf, verbOf } from "../inspector/flows.js";
 import { newVariable, varCard, varShape } from "../inspector/vars.js";
 import { bindField, bindText } from "../reconcile.js";
 import { streeCaret, streeRow } from "../streerows.js";
-import { Feed, Json, MeshEntity, MeshField, MeshType, Node, SCALAR_LABEL } from "../types.js";
+import { Json, MeshEntity, MeshField, MeshType, Node, SCALAR_LABEL } from "../types.js";
+import { eachAuthoredSlot, slotExpression } from "../slots.js";
 
 /* ---- module view state: per view, never synced ---- */
 
@@ -53,9 +54,9 @@ function refShape(editor: Editor): Json[] {
   const out: Json[] = [];
   for (const page of editor.store.pages())
     for (const widget of editor.store.widgetsOn(page)) {
-      for (const feed of widget.feeds ?? [])
-        out.push(["f", widget.id, feed.slot, feed.src?.kind ?? "", feed.src?.name ?? "",
-                  feed.path ?? "", (feed.xf ?? "") !== ""]);
+      eachAuthoredSlot(widget, (address, value) => {
+        if (slotExpression(value)) out.push(["s", widget.id, address, value]);
+      });
       for (const flow of widget.flows ?? []) {
         for (const step of flow.do ?? [])
           if (step.kind === "move")
@@ -342,9 +343,10 @@ export function renderDataTree(host: HTMLElement, editor: Editor): void {
 
 /* ---- where-used: the document's structural references, never an expression scan ---- */
 
-interface FeedUse {
+interface SlotUse {
   widget: Node;
-  feed: Feed;
+  slot: string;
+  text: string;
 }
 
 interface FlowUse {
@@ -361,13 +363,44 @@ function eachWidget(editor: Editor, visit: (widget: Node) => void): void {
     for (const widget of editor.store.widgetsOn(page)) visit(widget);
 }
 
-function feedUses(editor: Editor, wants: (feed: Feed, widget: Node) => boolean): FeedUse[] {
-  const out: FeedUse[] = [];
+/* every bound slot whose EXPRESSION references the wanted name: with feeds gone the
+ * reference lives in the text, so this is an honest lexical scan (word-bounded, the
+ * scan refs.cpp's rename fan-out runs server-side) until phase 4's scope machinery */
+function slotUses(editor: Editor,
+                  wants: (text: string, widget: Node) => boolean): SlotUse[] {
+  const out: SlotUse[] = [];
   eachWidget(editor, (widget) => {
-    for (const feed of widget.feeds ?? [])
-      if (wants(feed, widget)) out.push({ widget, feed });
+    eachAuthoredSlot(widget, (address, value) => {
+      if (slotExpression(value) && wants(String(value), widget))
+        out.push({ widget, slot: address, text: String(value) });
+    });
   });
   return out;
+}
+
+/* does this expression read `@name` (a mesh entity reference)? */
+function referencesEntity(text: string, name: string): boolean {
+  let at = -1;
+  const ref = "@" + name;
+  while ((at = text.indexOf(ref, at + 1)) >= 0) {
+    const after = text[at + ref.length] ?? "";
+    if (!/[A-Za-z0-9_/]/.test(after)) return true;
+  }
+  return false;
+}
+
+/* does this expression read a bare identifier `name` (an HMI variable)? */
+function referencesName(text: string, name: string): boolean {
+  let at = -1;
+  while ((at = text.indexOf(name, at + 1)) >= 0) {
+    const before = at > 0 ? text[at - 1] : "";
+    const after = text[at + name.length] ?? "";
+    if (/[A-Za-z0-9_@./$]/.test(before)) continue;   /* a member, an entity path */
+    if (/[A-Za-z0-9_]/.test(after)) continue;        /* a longer name */
+    if (after === "(") continue;                     /* a call */
+    return true;
+  }
+  return false;
 }
 
 function flowUses(editor: Editor, wants: (step: Json, widget: Node) => boolean): FlowUse[] {
@@ -398,21 +431,18 @@ function usedRow(editor: Editor, widget: Node, cells: (HTMLElement | null)[]): H
   return row;
 }
 
-function feedUseRow(editor: Editor, use: FeedUse): HTMLElement {
-  const cell = use.widget.id + "." + use.feed.slot;
+function slotUseRow(editor: Editor, use: SlotUse): HTMLElement {
+  const cell = use.widget.id + "." + use.slot;
   const live = el("span", {
     class: "data-live",
-    title: "live value via " + widgetLabel(use.widget) + "." + use.feed.slot +
+    title: "live value via " + widgetLabel(use.widget) + "." + use.slot +
            " (the entity itself broadcasts no value)",
   });
-  bindText("data:used:" + use.feed.id, live, () => cellText(editor, cell));
+  bindText("data:used:" + cell, live, () => cellText(editor, cell));
   return usedRow(editor, use.widget, [
-    el("span", { class: "used-name", text: widgetLabel(use.widget) + "." + use.feed.slot }),
+    el("span", { class: "used-name", text: widgetLabel(use.widget) + "." + use.slot }),
     el("span", { class: "op", text: "←" }),
-    el("span", {
-      class: "used-path",
-      text: (use.feed.path || "whole") + (use.feed.xf ? "  f " + use.feed.xf : ""),
-    }),
+    el("span", { class: "used-path", text: use.text }),
     live,
   ]);
 }
@@ -470,13 +500,13 @@ function entityDetail(host: HTMLElement, editor: Editor, kind: string, name: str
     host.appendChild(fieldTable(entity.fields));
   }
 
-  const feeds = feedUses(editor, (feed) => feed.src?.kind === kind && feed.src?.name === name);
+  const slots = slotUses(editor, (text) => referencesEntity(text, name));
   const flows = flowUses(editor, (step) =>
     step.kind === "move" &&
     ((sideOf(step.from) === "entity" && step.from.kind === kind && step.from.name === name) ||
      (sideOf(step.to) === "entity" && step.to.kind === kind && step.to.name === name)));
   whereUsed(host, [
-    ...feeds.map((use) => feedUseRow(editor, use)),
+    ...slots.map((use) => slotUseRow(editor, use)),
     ...flows.map((use) => flowUseRow(editor, use)),
   ]);
 }
@@ -490,8 +520,8 @@ function varDetail(host: HTMLElement, editor: Editor, id: number): void {
   host.appendChild(varCard(editor, variable, "global"));
 
   const name = variable.name;
-  const feeds = feedUses(editor, (feed, widget) =>
-    feed.src?.kind === "L" && feed.src?.name === name && !shadows(widget, name));
+  const slots = slotUses(editor, (text, widget) =>
+    !shadows(widget, name) && referencesName(text, name));
   const flows = flowUses(editor, (step, widget) => {
     if (shadows(widget, name)) return false;
     if (step.kind === "move") return sideNames(step.from, name) || sideNames(step.to, name);
@@ -499,7 +529,7 @@ function varDetail(host: HTMLElement, editor: Editor, id: number): void {
     return false;
   });
   whereUsed(host, [
-    ...feeds.map((use) => feedUseRow(editor, use)),
+    ...slots.map((use) => slotUseRow(editor, use)),
     ...flows.map((use) => flowUseRow(editor, use)),
   ]);
 }

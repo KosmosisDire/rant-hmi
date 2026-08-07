@@ -3,7 +3,7 @@
 
 export type Json = any;
 
-export const PROTO = 11;
+export const PROTO = 12;
 
 /* THE ARTBOARD: one static px space, 16:9, with one static grid — a system constant,
  * not document data. Every page-node x/y/w/h is a px of this space; the stage scales the
@@ -94,6 +94,9 @@ export interface AttrDef {
      animate — exactly the rows a TRANSITION may ride (the inspector's button, the
      compiler's check). Nominal: stage.ts owns the real per-mechanism mapping. */
   css?: string;
+  /* the closed vocabulary of a constrained-text attr (text `align`, path `cap`): a
+     REAL served column now, so the enum picker reads data rather than note prose */
+  variants?: string[];
 }
 
 /* ---- transitions: metadata on a field, never part of its expression ----
@@ -154,19 +157,6 @@ export interface Token {
   dark: string;
 }
 
-export interface Feed {
-  id: number;
-  slot: string;
-  src: { kind: string; name: string };
-  path: string;
-  /* with `cases`, the ELSE arm; alone, the whole transform */
-  xf: string;
-  /* conditional arms over x: first match wins, any boolean condition */
-  cases?: { test?: string; xf: string }[];
-  poll_hz: number | null;
-  stale_ms: number | null;
-}
-
 export interface Flow {
   id: number;
   when: Json[];
@@ -187,8 +177,8 @@ export interface Flow {
  * arrangement vocabulary was deliberately removed; everything sits at its own x/y.
  *
  * A FRAME WITH A `type` IS AN INSTANCE: it names a component, that component's children
- * are its subtree (hidden here, entered to edit), and `slots`/`feeds`/`flows`/`locals`
- * are how this one placement is wired. */
+ * are its subtree (hidden here, entered to edit), and `slots`/`flows`/`locals` are how
+ * this one placement is wired. */
 export type NodeKind = "frame" | "text" | "icon" | "path";
 
 /* one anchor of a path, in the DOCUMENT form: every coordinate is expression text, and
@@ -213,12 +203,18 @@ export interface Node {
   type?: string;                   /* "" = a plain frame; a component name = an instance */
   /* per-instance slot values, NESTED like the component's own nodes: a top-level property
      is a key here, a nested node's property a key inside an object named for that node, so
-     {"bar": {"fill_color": "#fff"}} is the slot addressed "bar.fill_color" */
+     {"bar": {"fill_color": "#fff"}} is the slot addressed "bar.fill_color".
+     A VALUE IS number | bool | EXPRESSION TEXT (spec D1): a string is a wire-tier
+     expression the BACKEND compiles and evaluates standing — a quoted string is the
+     text literal, `@entity.field` a live mesh read, a bare name a variable. What the
+     `feeds` list used to spell rides in the value itself now. */
   slots?: Record<string, Json>;
+  /* per-slot poll cadence {slot: hz}, read where the slot's expression calls a mesh
+     FUNCTION; absent = 2 Hz (metadata beside the slot, as `transitions` rides attrs) */
+  poll?: Record<string, number>;
   interact?: Json;
   children?: Node[];
   locals?: Var[];
-  feeds?: Feed[];
   flows?: Flow[];
   /* path only */
   anchors?: Anchor[];

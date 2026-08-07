@@ -18,6 +18,13 @@ AttrDef no_def(const char* name, const char* shape, const char* note,
     return AttrDef{name, shape, nullptr, note, css};
 }
 
+/* constrained text: the value is one of `variants`, served as a real column so the
+ * enum picker and the note can never disagree */
+AttrDef def_variants(const char* name, Json value, const char* note,
+                     std::vector<std::string> variants, const char* css = "") {
+    return AttrDef{name, "text", std::move(value), note, css, std::move(variants)};
+}
+
 /* ---- the common set: honoured on any node, whatever it draws ---- */
 const std::vector<AttrDef>& common_attrs_table() {
     static const std::vector<AttrDef> table = {
@@ -151,7 +158,8 @@ const std::vector<AttrDef>& text_attrs() {
                "fabricated value"),
         def("color", "color", "$ink", "the text colour", "color"),
         def("size", "num", 13.0, "font size in CSS pixels", "font-size"),
-        def("align", "text", "start", "start | center | end (text-align)"),
+        def_variants("align", "start", "how the text sits in its box (text-align)",
+                     {"start", "center", "end"}),
         /* `bold`, not a numeric weight: `weight` would sit one letter from the common
            `grow` it replaced and mean something else entirely on the same node */
         def("bold", "bool", false, "heavier weight for a value or a caption"),
@@ -184,7 +192,8 @@ const std::vector<AttrDef>& path_attrs() {
         def("stroke_w", "num", 1.0,
             "stroke width in CSS pixels — the anchors scale with the box, the stroke does "
             "not (vector-effect: non-scaling-stroke)", "stroke-width"),
-        def("cap", "text", "butt", "line ends: butt | round | square (stroke-linecap)"),
+        def_variants("cap", "butt", "how the line's ends are drawn (stroke-linecap)",
+                     {"butt", "round", "square"}),
         no_def("points", "list",
             "COMPUTED ANCHORS: a list of anchor(x, y) records in fractions of the box, "
             "drawn in place of the authored anchors — a plot is a map over a list slot "
@@ -215,6 +224,11 @@ Json attr_def_json(const AttrDef& a) {
     /* served so the inspector offers the transition button on exactly the rows a
        transition can ride — the same column the compiler validates against */
     if (a.css[0]) row["css"] = a.css;
+    if (!a.variants.empty()) {
+        Json variants = Json::array();
+        for (const std::string& v : a.variants) variants.push_back(v);
+        row["variants"] = std::move(variants);
+    }
     return row;
 }
 

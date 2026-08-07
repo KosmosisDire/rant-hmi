@@ -65,7 +65,8 @@ class MeshPort {
     virtual void drain(MeshSink& sink) { (void)sink; }
 
     /* Reconcile subscriptions and function polls with a freshly compiled program:
-     * which entities its feeds consume, and at what rate a function feed polls.
+     * which entities its programs read (flow reads and slot expressions alike), and at
+     * what rate a function a slot expression calls is polled.
      * Called after every accepted compile, on the logic thread. */
     virtual void apply(const Program& program) { (void)program; }
 

@@ -141,8 +141,16 @@ class RuntimeState {
     uint32_t elem_text_base = 0;
     uint32_t elem_text_cursor = 0;
     uint32_t elem_text_count = 0;
-    /* one entry per LIST- or MAP-shaped cell, indexed by CellDef::list_slot */
+    /* one entry per LIST- or MAP-shaped cell, indexed by CellDef::list_slot — and,
+     * appended AFTER those, the MESH AGGREGATE MIRRORS (entity_aggs below) */
     std::vector<ListState> lists;
+    /* MESH AGGREGATE MIRRORS: one retained slot per aggregate-shaped readable entity
+     * field, indexed [entity][read-side field] -> `lists`, UINT32_MAX where the field
+     * is not an aggregate. A delivery copies the elements in (hold_entity_agg) and the
+     * last-value cache holds the retained Value, so LoadEnt hands a slot expression or
+     * a flow the entity's last list/map exactly as the cache hands it a scalar. Empty
+     * after a recompile until the mesh re-delivers — the scalar cache's own rule. */
+    std::vector<std::vector<uint32_t>> entity_aggs;
     std::vector<StructState> structs;
     std::vector<LastValueState> last;
     std::vector<Value> deadband;
@@ -194,6 +202,14 @@ class RuntimeState {
      * keep, so a runaway one is a bug by construction. */
     bool store_key(const Program& program, uint32_t cell, const Value& key,
                    Value value) noexcept;
+    /* One delivered aggregate field into its mirror slot: `data` is the delivery's
+     * element run (a map's pairs interleaved, arrival order), `elem_texts[k]` the text
+     * behind data[k] where that element is text. Bounds to the field's own bound and
+     * the retained ceiling, sorts a map's pairs by key, homes text per position, and
+     * returns the retained Value the last-value cache should hold (Nil on refusal). */
+    Value hold_entity_agg(uint32_t list_slot, const Value* data,
+                          const std::string_view* elem_texts, uint32_t delivered,
+                          bool pairs, ValueTag elem, uint32_t bound) noexcept;
     /* the text slot backing element `at` of a retained aggregate, allocated on first use */
     uint32_t list_text(ListState& held, uint32_t at) noexcept;
     /* move one entry within a retained slot, its text following it into the destination

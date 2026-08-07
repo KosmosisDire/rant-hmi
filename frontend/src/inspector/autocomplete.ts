@@ -12,7 +12,7 @@
 import { el } from "../dom.js";
 import { Editor } from "../editor.js";
 import { placeBox } from "../popover.js";
-import { Feed, Flow, LangEntry, MeshField, Node } from "../types.js";
+import { Flow, LangEntry, MeshField, Node } from "../types.js";
 import { localAt } from "./flowscope.js";
 import { Scope } from "./scope.js";
 
@@ -475,19 +475,6 @@ export function attachPathAutocomplete(
   input.addEventListener("keydown", menuKeydown(input), { capture: true });
 }
 
-/* what a FEED's path may name: the source entity's readable fields (the response
- * side for a function); an HMI variable has no paths */
-export function feedPaths(editor: Editor, feed: () => Feed) {
-  return (): PathOption[] => {
-    const at = feed();
-    if (!at.src || at.src.kind === "L") return [];
-    const entity = editor.mesh.entities.find(
-      (e) => e.kind === at.src.kind && e.name === at.src.name,
-    );
-    const fields = entity?.kind === "F" ? entity.returns ?? [] : entity?.fields ?? [];
-    return fields.map((f) => ({ path: f.path, shape: f.shape, elem: f.elem }));
-  };
-}
 
 /* What a move's `to.path` may name when the destination is a LOCAL: the fields of the
  * struct that local holds at this row. Aggregates stay out, because the write

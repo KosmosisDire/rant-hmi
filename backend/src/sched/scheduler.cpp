@@ -141,45 +141,24 @@ void Scheduler::release_session(uint64_t session) {
     }
 }
 
-void Scheduler::apply_local_feeds() {
-    for (const FeedProgram& feed : program_.feeds) {
-        if (feed.source_cell != UINT32_MAX && feed.source_cell < state_.values.size()) {
+void Scheduler::apply_slot_programs() {
+    for (const SlotProgram& slot : program_.slot_programs) {
+        if (!slots_seeded_ && !slot.every_tick) {
+            /* the SEED: one evaluation at start, whatever the deps — a dep-less
+               program (an array literal) lands its value here and never re-runs; a
+               mesh-only one stores UNKNOWN, exactly what its cell already holds */
             state_.reset_scratch();
-            run_feed(program_, feed, state_, state_.values[feed.source_cell]);
-        } else if (feed.source_cell == UINT32_MAX && feed.entity == UINT32_MAX) {
-            /* a COMPUTED binding (no source): the expression alone, every tick */
-            state_.reset_scratch();
-            run_feed(program_, feed, state_, Value::nil());
+            run_slot(program_, slot, state_);
+            continue;
         }
+        if (!slot.every_tick) continue;
+        /* a cell-reading expression re-evaluates every tick, as the computed feeds
+           always did: a cell can move any tick, and an unchanged store is free on the
+           wire (scalars broadcast whole; an identical aggregate keeps its gen) */
+        state_.reset_scratch();
+        run_slot(program_, slot, state_);
     }
-}
-
-Value Scheduler::intake_aggregate(const MeshUpdate& update, uint32_t field,
-                                  const FieldDef& def) {
-    if (!update.elems || !update.elems[field].data) return Value::nil();
-    const MeshElems& source = update.elems[field];
-    const Value& head = update.fields[field];
-    const bool is_map = head.tag == ValueTag::Map;
-    const uint32_t width = is_map ? 2 : 1;
-    const uint32_t limit = def.bound ? def.bound : kVarrCeiling;
-    uint32_t count = static_cast<uint32_t>(head.data.integer);
-    count = std::min(count, source.count / width);
-    count = std::min(count, limit);   /* the ceiling: truncate, never overrun */
-    const uint32_t need = count * width;
-    const uint32_t offset = state_.alloc_elems(need);
-    if (offset == UINT32_MAX) return Value::nil();
-    for (uint32_t k = 0; k < need; ++k) {
-        Value element = source.data[k];
-        if (element.tag == ValueTag::Text) {
-            const uint32_t slot = state_.alloc_elem_text();
-            if (slot == UINT32_MAX) return Value::nil();
-            state_.texts[slot].set(source.texts ? source.texts[k] : std::string_view{});
-            element = Value::text(slot);
-        }
-        state_.elems[offset + k] = element;
-    }
-    return is_map ? Value::map(offset, count)
-                  : Value::list(offset, count, list_elem_tag(head));
+    slots_seeded_ = true;
 }
 
 void Scheduler::on_update(const MeshUpdate& update) {
@@ -194,22 +173,40 @@ void Scheduler::on_update(const MeshUpdate& update) {
     const std::vector<FieldDef>& fields = feed_fields(def);
     const uint32_t count =
         std::min<uint32_t>(update.field_count, static_cast<uint32_t>(fields.size()));
-    /* refresh the last-value cache (the seed-from-last / RMW base) from what actually
-     * arrived. Delivered text lands in its retained per-field slot, so the cached value
-     * stays resolvable and re-sendable. Functions stay out: their `fields` are the
-     * request side, not what arrived. */
-    const bool cache = def.kind != EntityKind::Function;
-    if (cache) {
+    /* refresh the last-value cache (the seed-from-last / RMW base, and what LoadEnt
+     * reads) from what actually arrived. Delivered text lands in its retained per-field
+     * slot, so the cached value stays resolvable and re-sendable. A FUNCTION caches its
+     * RESPONSE fields — `fields` is already the response table for one — because a slot
+     * expression reads a polled response exactly as it reads a topic. */
+    {
         auto& last = state_.last[entity];
         bool any = false;
         for (uint32_t i = 0; i < count && i < last.fields.size(); ++i) {
             Value value = update.fields[i];
             if (value.tag == ValueTag::Nil) continue;
-            /* aggregates stay out of the last-value cache: their elements live in the
-             * per-run scratch pool, and the wire side never builds them anyway */
-            if (value.tag == ValueTag::List || value.tag == ValueTag::Map) continue;
+            /* an AGGREGATE lands in its entity mirror — the retained slot behind the
+             * cache's Value — so `@entity.<list field>` reads the last delivery the
+             * way a scalar field reads the last value */
+            if (value.tag == ValueTag::List || value.tag == ValueTag::Map) {
+                if (i >= state_.entity_aggs[entity].size()) continue;
+                const uint32_t mirror = state_.entity_aggs[entity][i];
+                if (mirror == UINT32_MAX || !update.elems) continue;
+                const MeshElems& source = update.elems[i];
+                const bool pairs = value.tag == ValueTag::Map;
+                uint32_t span = static_cast<uint32_t>(value.data.integer) *
+                                (pairs ? 2u : 1u);
+                span = std::min(span, source.count);
+                const Value held = state_.hold_entity_agg(
+                    mirror, source.data, source.texts, span, pairs,
+                    list_elem_tag(value), fields[i].bound);
+                if (held.tag == ValueTag::Nil) continue;
+                last.fields[i] = held;
+                any = true;
+                continue;
+            }
             if (value.tag == ValueTag::Enum) value.type_id = fields[i].type_id;
             if (value.tag == ValueTag::Text) {
+                if (i >= state_.entity_texts[entity].size()) continue;
                 const uint32_t slot = state_.entity_texts[entity][i];
                 if (slot >= state_.texts.size()) continue;
                 state_.texts[slot].set(update.texts[i]);
@@ -220,34 +217,12 @@ void Scheduler::on_update(const MeshUpdate& update) {
         }
         if (any) last.known = true;
     }
-    for (const FeedProgram& feed : program_.feeds) {
-        if (feed.source_cell != UINT32_MAX || feed.entity != static_cast<uint32_t>(entity))
-            continue;
-        /* a WHOLE-message feed: its transform reads the fields off the last-value
-           cache just refreshed above, so x carries nothing */
-        if (feed.field == UINT32_MAX) {
-            state_.reset_scratch();
-            run_feed(program_, feed, state_, Value::nil());
-            continue;
-        }
-        if (feed.field >= count) continue;
+    /* the mesh-only slot expressions re-evaluate on the deliveries they read; the
+       every-tick ones read the refreshed cache on this same tick's pass anyway */
+    for (const SlotProgram& slot : program_.slot_programs) {
+        if (slot.every_tick || !slot.depends_on(static_cast<uint32_t>(entity))) continue;
         state_.reset_scratch();
-        Value x = update.fields[feed.field];
-        if (x.tag == ValueTag::Enum) x.type_id = fields[feed.field].type_id;
-        if (x.tag == ValueTag::List || x.tag == ValueTag::Map)
-            x = intake_aggregate(update, feed.field, fields[feed.field]);
-        if (x.tag == ValueTag::Text) {
-            /* cached entities already hold the text in its retained slot; a function
-             * response rides the one scratch slot, consumed by this run alone */
-            uint32_t slot = cache && feed.field < state_.entity_texts[entity].size()
-                                ? state_.entity_texts[entity][feed.field]
-                                : state_.mesh_scratch;
-            if (slot >= state_.texts.size()) continue;
-            if (!cache || slot == state_.mesh_scratch)
-                state_.texts[slot].set(update.texts[feed.field]);
-            x = Value::text(slot);
-        }
-        run_feed(program_, feed, state_, x);
+        run_slot(program_, slot, state_);
     }
 }
 
@@ -311,12 +286,12 @@ bool Scheduler::tick(std::string& fault) {
         }
     }
 
-    apply_local_feeds();
+    apply_slot_programs();
 
     /* THE CADENCE PASS: every flow with an `every` trigger, on its own clock, viewed or
      * not — which is how a Trend has a past the moment a page opens now that its ring is
-     * an ordinary list a flow appends to. Runs after the feeds, so a sample lands the
-     * same tick the value it reads arrived. Document order, because the flows vector
+     * an ordinary list a flow appends to. Runs after the slot programs, so a sample lands
+     * the same tick the value it reads arrived. Document order, because the flows vector
      * already is document order and two rings on one widget must not race.
      *
      * The catch-up clamp is what keeps a stalled tick from firing a burst: a cursor that

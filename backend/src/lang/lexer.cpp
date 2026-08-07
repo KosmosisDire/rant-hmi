@@ -78,6 +78,8 @@ Token Lexer::next() {
             return color();
         case '$':
             return theme();
+        case '@':
+            return entity();
         default:
             if (std::isdigit(static_cast<unsigned char>(c))) {
                 --at_;
@@ -139,6 +141,28 @@ Token Lexer::theme() {
     if (token.text.empty()) {
         token.kind = TokenKind::Invalid;
         token.text = "$";
+    }
+    return token;
+}
+
+/* A mesh entity reference: `@` consumes identifier characters INCLUDING slashes
+ * (@cage/plc/IO/wDistanceSensorD), because DART entity names are path-spelled and a
+ * bare '/' is division. It stops at '.', which stays ordinary field access — an
+ * entity's name never contains a dot, its fields are reached through one. */
+Token Lexer::entity() {
+    Token token;
+    token.kind = TokenKind::Entity;
+    token.at = at_ - 1;
+    const size_t start = at_;
+    while (at_ < source_.size()) {
+        const char c = source_[at_];
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '/') break;
+        ++at_;
+    }
+    token.text = source_.substr(start, at_ - start);
+    if (token.text.empty()) {
+        token.kind = TokenKind::Invalid;
+        token.text = "@";
     }
     return token;
 }

@@ -35,7 +35,7 @@ uint64_t json_u64_or(const Json& value, uint64_t fallback);
  * and what earns it a record of its own is what it adds: declared properties, events and
  * behavior. So Page and Component are the two documents-of-nodes (a screen and a
  * template), neither a child of anything, and everything inside either one is a Node. */
-enum class Kind { Doc, Page, Node, Var, Feed, Flow, Step, Token, Component, PropDef };
+enum class Kind { Doc, Page, Node, Var, Flow, Step, Token, Component, PropDef };
 
 enum class PropType {
     Text,    /* string */
@@ -55,7 +55,9 @@ enum class Role {
     Expr,        /* expression text: identifiers may name variables */
     Triggers,    /* the flow's `when` array: timer entries name variables */
     MoveRef,     /* a move's `from` / `to`: an expression, a local name, or {kind, name} */
-    Cases,       /* a feed's `cases` array: each entry's `xf` is an expression */
+    SlotMap,     /* a widget's `slots` object: every STRING leaf is an expression (a
+                    number or bool is a degenerate literal), nested one object deep per
+                    part, so rename fan-out walks the leaves */
 };
 
 struct Prop {

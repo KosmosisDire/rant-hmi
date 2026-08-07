@@ -24,9 +24,15 @@ struct Binding {
     uint32_t a = 0;
     uint32_t b = 0;
     uint16_t enum_type = 0;   /* Enum-shaped bindings: the Program.enum_types id */
+    /* List/Map-shaped bindings: the ELEMENT shape, so `@plant.names.map(v =>
+       v.upper())` types its lambda parameter the way the old feed x did */
+    Shape elem = Shape::Unknown;
 };
 
 struct ExpressionScope {
+    /* true where the surface HAS no pipeline register (a slot expression): `x` is
+       refused by name instead of silently reading Nil */
+    bool no_x = false;
     Shape x_shape = Shape::Unknown;
     uint16_t x_enum = 0;      /* when x_shape is Enum: its Program.enum_types id */
     Shape x_elem = Shape::Unknown;   /* when x_shape is List/Map: the element shape */

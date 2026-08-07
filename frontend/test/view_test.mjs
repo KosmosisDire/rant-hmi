@@ -128,7 +128,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 11, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 12, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -438,9 +438,12 @@ check(
 echo([{ op: "set_prop", node: readout.id, key: "slots", value: { value: 5.5, decimals: 0 } }]);
 check(valueInput.value === "5.5", "an unfed slot's field follows the document, got " + valueInput.value);
 
-/* 4. a FED slot has no authored value to show, so it IS the runtime: live drives it, and
-      UNKNOWN until something arrives. Widget 10's `value` is fed in the seeded document. */
-const fedWidget = store.widgetsOn(store.pages()[0]).find((w) => (w.feeds ?? []).some((f) => f.slot === "value"));
+/* 4. a BOUND slot's authored value IS an expression (spec D1): the field edits that
+      text, the cell wears the bound class, and a live frame never rebuilds it — the
+      expression is document truth, the cell's value is the backend's. The seeded
+      Readout "Flow" binds `value` to flow.round(1). */
+const fedWidget = store.widgetsOn(store.pages()[0]).find(
+  (w) => typeof (w.slots ?? {}).value === "string" && w.type === "Readout");
 const fedPanel = new Panel(new Element("aside"));
 const fedEditor = { ...editor, selectedNode: () => store.nodeAt(fedWidget.id), selectedWidget: () => store.widget(fedWidget.id) };
 const drawFed = () =>
@@ -455,13 +458,16 @@ const fedCell = (() => {
   }
   return null;
 })();
-const fedInput = fedCell.children[0];
-check(fedInput.value === "", "a fed slot with nothing delivered reads UNKNOWN, got " + fedInput.value);
-check(fedInput.getAttribute("placeholder") === "--", "and says so with the UNKNOWN placeholder");
+check(fedCell.className.includes("bound"), "a bound slot's cell wears the bound class");
+const fedInput = fedCell.querySelector("input");
+check(fedInput.value === "flow.round(1)",
+      "a bound slot's field shows the authored expression, got " + fedInput.value);
 fedEditor.live = { epoch: 4, values: { [fedWidget.id + ".value"]: 4.25 } };
 drawFed();
-check(fedCell.children[0] === fedInput, "a live frame does not rebuild a fed slot editor");
-check(fedInput.value === "4.25", "a live frame drives a fed slot, got " + fedInput.value);
+check(fedCell.querySelector("input") === fedInput,
+      "a live frame does not rebuild a bound slot editor");
+check(fedInput.value === "flow.round(1)",
+      "a live frame never overwrites the authored expression, got " + fedInput.value);
 
 /* 4. uncommitted text is held under the document address, so a rebuild caused by an edit
       somewhere else gives it back, and focus follows the key rather than the tree position */
@@ -805,12 +811,12 @@ check(
   "a step-level error rolls up on the collapsed flow card",
 );
 
-/* a feed is ONE LINE under its slot, and a feed finding marks that line, whichever
-   field of the feed the compiler named */
+/* a slot expression's finding pins to the WIDGET's slot row: node = the widget,
+   `where` = the slot address, and the row's label wears the dot */
 const readoutW = store.widgetsOn(store.pages()[0]).find((w) => w.type === "Readout");
-const feedId = readoutW.feeds[0].id;
 const feedRows = [
-  { node: feedId, grade: "error", code: "feed_source", message: "HMI variable 'flow' is unresolved", where: "src" },
+  { node: readoutW.id, grade: "error", code: "expression",
+    message: "unknown name 'flow'", where: "value" },
 ];
 const feedEditor = {
   ...editor,
@@ -822,24 +828,28 @@ const feedEditor = {
 };
 const feedPanel2 = new Panel(new Element("aside"));
 feedPanel2.render(inspectorShape(feedEditor), (host) => renderInspector(host, feedEditor));
-const feedLine = feedPanel2.host.querySelector(".feed-line");
+const slotFindingLabel = (() => {
+  for (const grid of feedPanel2.host.querySelectorAll(".prop-grid")) {
+    const kids = grid.children;
+    for (let i = 0; i < kids.length; i++)
+      if (kids[i].tagName === "LABEL" && kids[i].textContent.includes("value")) return kids[i];
+  }
+  return null;
+})();
 check(
-  feedLine !== null && feedLine.querySelectorAll(".diag-dot.error").length === 1,
-  "a feed finding marks the feed's one line",
+  slotFindingLabel !== null &&
+    slotFindingLabel.querySelectorAll(".diag-dot.error").length === 1,
+  "a slot expression finding marks the slot's own row",
 );
 
-/* ...and the same finding ATTRIBUTES UP to the widget that owns the feed. The shell's
-   diagFor and the topbar findings chip both walk a finding's node to its widget through
-   store.owningWidget, and the Layers tree's per-widget badge is what that walk feeds. It
-   silently returned 0 for every node once already (it identified a widget by a `geom`
-   field that no node carries any more), so the walk is pinned here through the shape the
-   badge actually depends on rather than in isolation. */
+/* ...and the finding already NAMES the widget, so the Layers badge walk holds with no
+   feed node between them */
 check(
   leftShape({
     ...editor,
     diagFor: (w) => feedRows.filter((d) => store.owningWidget(d.node) === w),
-  }).includes(readoutW.id + ":feed_source:"),
-  "a feed's finding attributes to its widget, so the Layers row badge exists",
+  }).includes(readoutW.id + ":expression:"),
+  "a slot finding attributes to its widget, so the Layers row badge exists",
 );
 
 /* ---- the Layers tree, part selection and the part-scoped inspector ----
@@ -1348,12 +1358,11 @@ const meshEditor = {
     ],
   },
 };
-/* a feed consuming the mesh entity, injected as an echo would deliver it */
+/* a slot expression consuming the mesh entity, injected as an echo would deliver it */
 store.apply(store.version() + 1, [
   {
-    op: "insert", parent: toggle.id, list: "feeds",
-    node: { id: 9300, slot: "value", src: { kind: "V", name: "plant/temp" },
-            path: "value", xf: "", poll_hz: null, stale_ms: null },
+    op: "set_prop", node: toggle.id, key: "slots",
+    value: { value: "@plant/temp.value" },
   },
 ]);
 
@@ -1389,7 +1398,7 @@ drawDataDetail();
 check(dataDetailPanel.host.querySelector(".detail-name")?.textContent === "plant/temp",
       "the detail head names the selected entity");
 const entityUses = dataDetailPanel.host.querySelectorAll(".used-row");
-check(entityUses.length === 1, "where-used finds the one feed consumer, got " + entityUses.length);
+check(entityUses.length === 1, "where-used finds the one bound consumer, got " + entityUses.length);
 check(entityUses[0].textContent.includes("Pump.value"),
       "and names it by widget.slot, got " + entityUses[0].textContent);
 meshEditor.live = {
@@ -1409,7 +1418,7 @@ check(dataDetailPanel.host.querySelector(".now-value")?.textContent === "3.25",
       "with its live value");
 const globalUses = dataDetailPanel.host.querySelectorAll(".used-row");
 check(globalUses.some((r) => r.textContent.includes("Flow.value")),
-      "where-used lists the feed reading the global");
+      "where-used lists the slot expression reading the global");
 check(globalUses.some((r) => r.textContent.includes("Reset flow: write")),
       "and the flow step writing it");
 
@@ -2921,11 +2930,11 @@ check(stageNode("frame", 901) === heldAgain &&
   const toggleType = snapshot.registry.types.find((t) => t.name === "Toggle");
   const panelType = snapshot.registry.types.find((t) => t.name === "Panel");
   const inst = (type, extra) => ({ id: 1, kind: "frame", type, name: "w", attrs: {},
-                                   slots: {}, locals: [], feeds: [], flows: [], ...extra });
+                                   slots: {}, locals: [], flows: [], ...extra });
   check(operable(inst("Toggle"), toggleType) === true,
-        "a Toggle's default behavior writes its unfed value: operable");
-  check(operable(inst("Toggle", { feeds: [{ slot: "value", xf: "" }] }), toggleType) === false,
-        "the same Toggle FED is a pure view of the machine: inert");
+        "a Toggle's default behavior writes its unbound value: operable");
+  check(operable(inst("Toggle", { slots: { value: "@switch.on" } }), toggleType) === false,
+        "the same Toggle BOUND is a pure view of the machine: inert");
   check(operable(inst("Panel"), panelType) === false,
         "a Panel with no flows is a picture: inert");
   check(operable(inst("Panel", { flows: [{ when: [{ kind: "event", name: "tap" }],

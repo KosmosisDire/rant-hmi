@@ -663,22 +663,27 @@ void DartMesh::apply(const Program& program) {
         }
         return rec;
     };
-    for (const FeedProgram& feed : program.feeds) {
-        if (feed.source_cell != UINT32_MAX) continue;
-        if (feed.entity >= program.entities.size()) continue;
-        const EntityDef& def = program.entities[feed.entity];
-        Rec* rec = consume(def);
-        if (!rec) continue;
-        if (def.kind == EntityKind::Function && feed.poll_ms) {
-            rec->poll_ms = rec->poll_ms ? std::min(rec->poll_ms, feed.poll_ms) : feed.poll_ms;
-            if (std::find(rec->pages.begin(), rec->pages.end(), feed.page_id) ==
+    /* a FUNCTION a slot expression reads is POLLED: the widget's `poll` map set the
+     * cadence at compile, page-gated by the widget's page (the visibility rule) */
+    for (const SlotProgram& slot : program.slot_programs) {
+        if (!slot.poll_ms) continue;
+        for (uint32_t dep : slot.dep_entities) {
+            if (dep >= program.entities.size()) continue;
+            const EntityDef& def = program.entities[dep];
+            if (def.kind != EntityKind::Function) continue;
+            Rec* rec = consume(def);
+            if (!rec) continue;
+            rec->poll_ms = rec->poll_ms ? std::min(rec->poll_ms, slot.poll_ms)
+                                        : slot.poll_ms;
+            if (std::find(rec->pages.begin(), rec->pages.end(), slot.page_id) ==
                 rec->pages.end())
-                rec->pages.push_back(feed.page_id);
+                rec->pages.push_back(slot.page_id);
         }
     }
-    /* an entity a FLOW reads (`read <entity> -> local`, a single-field source) needs
-     * the same consumption as a fed one: without a live subscription its last-value
-     * mirror never fills and every read yields Nil, so a gate over it can never pass */
+    /* an entity ANY program reads — a flow's `read <entity>`, a single-field source,
+     * a slot expression's `@entity` (the dep scan stamps those too) — needs a live
+     * subscription: without one its last-value mirror never fills and every read
+     * yields Nil, so a gate over it can never pass */
     for (const EntityDef& def : program.entities)
         if (def.flow_reads) consume(def);
 }

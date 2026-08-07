@@ -43,8 +43,6 @@ Prop any(std::string key, Json def) {
     Prop p; p.key = std::move(key); p.type = PropType::Any; p.def = std::move(def); return p;
 }
 
-Json entity_ref() { return Json{{"kind", "V"}, {"name", ""}}; }
-
 /* built once, in kind order */
 const std::vector<NodeSpec>& table() {
     static const std::vector<NodeSpec> specs = [] {
@@ -85,8 +83,8 @@ const std::vector<NodeSpec>& table() {
          * without evaluating anything), `name`, and a path's anchors.
          *
          * A FRAME WITH A `type` IS AN INSTANCE: it names a component, that component's
-         * children are its subtree, and the instance's own `slots`, `feeds`, `flows` and
-         * `locals` are how this one placement is wired. Those four ride the frame variant
+         * children are its subtree, and the instance's own `slots`, `flows` and
+         * `locals` are how this one placement is wired. Those ride the frame variant
          * rather than a "widget" kind of their own, because a widget was never a different
          * kind of thing — only a frame someone had already made. */
         NodeSpec node;
@@ -121,12 +119,21 @@ const std::vector<NodeSpec>& table() {
               /* per-instance slot values, NESTED like the component's own nodes: a
                  top-level property is a key here, a nested node's property a key inside an
                  object named for that node ({"bar": {"fill_color": "#fff"}} is the slot
-                 addressed "bar.fill_color") */
-              object("slots", Json::object()),
+                 addressed "bar.fill_color").
+                 A VALUE IS number | bool | EXPRESSION TEXT: a string is a wire-tier
+                 expression the backend compiles and evaluates STANDING (a quoted
+                 string is the degenerate text literal, `@entity.field` a live mesh
+                 read, a bare name a variable) — what a separate `feeds` list used to
+                 spell rides in the value itself now. Empty text = unset. */
+              object("slots", Json::object(), Role::SlotMap),
+              /* PER-SLOT POLL CADENCE, {slot: hz}: metadata beside the slot, exactly
+                 as `transitions` rides beside attrs — read where the slot's expression
+                 calls a mesh FUNCTION, whose response arrives only as often as it is
+                 asked for. Absent = 2 Hz. */
+              object("poll", Json::object()),
               object("interact", nullptr)},
              {{"children", Kind::Node},
               {"locals", Kind::Var},
-              {"feeds", Kind::Feed},
               {"flows", Kind::Flow}}},
             {"text", {}, {}},
             {"icon", {}, {}},
@@ -156,23 +163,6 @@ const std::vector<NodeSpec>& table() {
             boolean("persist", false),
         };
         t.push_back(var);
-
-        NodeSpec feed;
-        feed.kind = Kind::Feed;
-        feed.name = "feed";
-        feed.props = {
-            text("slot"),
-            object("src", entity_ref(), Role::EntityRef),
-            text("path"),
-            /* with `cases`, xf is the ELSE arm; alone it is the whole transform */
-            text("xf", "", Role::Expr),
-            /* CONDITIONAL arms over x (spec 2.4): [{test: Expr, xf: Expr}], first
-               match wins; the feed's xf is the else */
-            array("cases", Role::Cases),
-            num("poll_hz", nullptr),
-            num("stale_ms", nullptr),
-        };
-        t.push_back(feed);
 
         NodeSpec flow;
         flow.kind = Kind::Flow;

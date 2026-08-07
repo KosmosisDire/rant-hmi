@@ -1724,9 +1724,9 @@ RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget
     return total;
 }
 
-RunResult run_feed(const Program& program, const FeedProgram& feed, RuntimeState& state,
-                   Value source_value) noexcept {
-    return run_code(program, feed.code, nullptr, state, source_value);
+RunResult run_slot(const Program& program, const SlotProgram& slot,
+                   RuntimeState& state) noexcept {
+    return run_code(program, slot.code, nullptr, state, Value::nil());
 }
 
 RunResult resume_pending(const Program& program, RuntimeState& state,

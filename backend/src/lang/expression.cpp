@@ -1049,6 +1049,9 @@ class Parser {
         emit(binding.load, binding.a, binding.b);
         pushed();
         enum_type_ = binding.shape == Shape::Enum ? binding.enum_type : 0;
+        elem_ = binding.shape == Shape::List || binding.shape == Shape::Map
+                    ? binding.elem
+                    : Shape::Unknown;
         return binding.shape;
     }
 
@@ -1120,6 +1123,48 @@ class Parser {
             elem_ = uniform ? elem : Shape::Unknown;
             return Shape::List;
         }
+        /* A MESH ENTITY REFERENCE, `@name` / `@name.field`: resolved through the same
+         * scope maps every other name uses — the caller decided which entities exist
+         * here by binding them under their '@'-prefixed spelling (a slot expression's
+         * scope does; a flow's does not, its moves name entities structurally). */
+        if (token_.kind == TokenKind::Entity) {
+            const std::string name = "@" + token_.text;
+            advance();
+            bool fielded = false;
+            {
+                const std::string prefix = name + ".";
+                for (const auto& item : scope_.qualified)
+                    if (item.first.compare(0, prefix.size(), prefix) == 0) {
+                        fielded = true;
+                        break;
+                    }
+            }
+            auto bare = scope_.names.find(name);
+            /* a bare-scalar entity followed by '.' reads a METHOD on its value
+               (@sensor.round(1)): only a fielded entity's dot walks the field map */
+            if (bare != scope_.names.end() && (!fielded || token_.kind != TokenKind::Dot))
+                return load_binding(bare->second);
+            std::string qualified = name;
+            while (token_.kind == TokenKind::Dot) {
+                advance();
+                if (token_.kind != TokenKind::Ident) {
+                    fail("expected a field after '.'");
+                    return Shape::Unknown;
+                }
+                qualified += "." + token_.text;
+                advance();
+                auto q = scope_.qualified.find(qualified);
+                if (q != scope_.qualified.end()) return load_binding(q->second);
+            }
+            if (qualified != name) {
+                fail("unknown field '" + qualified + "'");
+                return Shape::Unknown;
+            }
+            fail(fielded ? "'" + name + "' is a whole message; pick a field (" + name +
+                               ".<field>)"
+                         : "unknown entity '" + name + "'");
+            return Shape::Unknown;
+        }
         if (token_.kind != TokenKind::Ident) {
             fail("expected an expression");
             return Shape::Unknown;
@@ -1154,6 +1199,11 @@ class Parser {
                  (lambda_at_ < lambda_params_.size() ? lambda_params_[lambda_at_]
                                                      : std::string("v")) +
                  "' is the element being visited");
+            return Shape::Unknown;
+        }
+        if (name == "x" && scope_.no_x) {
+            fail("there is no x here: a slot expression names its sources directly "
+                 "(a variable, widget.<slot>, @entity.<field>)");
             return Shape::Unknown;
         }
         if (name == "x") {

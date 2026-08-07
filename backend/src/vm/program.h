@@ -199,17 +199,34 @@ struct ArmedPart {
     bool bubbles = true;
 };
 
-struct FeedProgram {
-    uint64_t widget_id = 0;
-    uint64_t feed_id = 0;
+/* ONE SLOT'S STANDING EXPRESSION (spec D1): the compiled form of a widget slot whose
+ * authored value is a non-constant expression. Its deps are whatever the code READS —
+ * recorded by scanning the instructions, so multi-source expressions (two topics in one
+ * value) carry every source. Scheduling follows the deps:
+ *   every_tick   the code reads a CELL or a TIMER (a variable, another slot, x never):
+ *                cells can move any tick, so the program re-evaluates each tick, exactly
+ *                as the old computed feeds did. Entity reads ride the last-value cache.
+ *   otherwise    entity deps only: the scheduler runs it when one of `dep_entities`
+ *                delivers, and the cell stays UNKNOWN until the first arrival (the old
+ *                fed-slot rule).
+ * `poll_ms` is set when a dep is a mesh FUNCTION: the widget's `poll` map (default
+ * 2 Hz) says how often the mesh asks; the response arrives like any delivery. */
+struct SlotProgram {
+    uint64_t widget_id = 0;    /* also the diag node: a slot finding pins to the widget */
     uint64_t page_id = 0;      /* the page the owning widget sits on (poll gating) */
-    uint32_t entity = 0;
-    uint32_t field = 0;
-    uint32_t source_cell = UINT32_MAX;
+    std::string slot;          /* the slot's address, the finding's `where` */
     uint32_t cell = 0;
-    uint32_t poll_ms = 0;      /* FUNCTION source: poll interval (authored poll_hz) */
+    uint32_t poll_ms = 0;
+    bool every_tick = false;
+    std::vector<uint32_t> dep_entities;
     std::vector<Instruction> code;
     uint32_t max_stack = 0;
+
+    bool depends_on(uint32_t entity) const {
+        for (uint32_t dep : dep_entities)
+            if (dep == entity) return true;
+        return false;
+    }
 };
 
 struct ProgramLayout {
@@ -254,7 +271,7 @@ struct Program {
     /* lambda bodies, indexed by Iterate's `a` operand */
     std::vector<SubProgram> subs;
     std::vector<FlowProgram> flows;
-    std::vector<FeedProgram> feeds;
+    std::vector<SlotProgram> slot_programs;
     std::vector<RaiseDef> raises;
     std::vector<ArmedPart> armed_parts;
     std::vector<TimerDef> timers;

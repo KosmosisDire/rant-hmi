@@ -12,7 +12,7 @@
 import { TokenAccess } from "../colorpicker.js";
 import { Editor } from "../editor.js";
 import { resolveColor } from "../slots.js";
-import { ComponentDef, Feed, Flow, Json, Lang, MeshField, Node, Var } from "../types.js";
+import { ComponentDef, Flow, Json, Lang, MeshField, Node, Var } from "../types.js";
 import { scopeAt } from "./flowscope.js";
 
 export interface NameRow {
@@ -100,31 +100,6 @@ function scopeNames(editor: Editor, widget: Node | null): NameRow[] {
   return rows;
 }
 
-/* what x IS in a feed's transform: the source field's shape, from reflection (mesh
- * sources) or the variable's declared type (HMI sources); a WHOLE-entity source makes
- * x the message, its field table riding along so the dot completes fields */
-function feedX(editor: Editor, widget: Node | null, feed: () => Feed) {
-  return (): { shape: string; elem?: string; fields?: MeshField[] } | null => {
-    const at = feed();
-    if (!at.src) return null;
-    if (at.src.kind === "L") {
-      const row = scopeNames(editor, widget).find((n) => n.label === at.src.name);
-      return row?.shape ? { shape: row.shape, fields: row.fields } : null;
-    }
-    const entity = editor.mesh.entities.find(
-      (e) => e.kind === at.src.kind && e.name === at.src.name,
-    );
-    if (!entity) return null;
-    const fields = entity.kind === "F" ? entity.returns ?? [] : entity.fields;
-    if (!(at.path ?? "") && fields.length > 1)
-      return { shape: "struct", fields };
-    const field =
-      fields.find((f) => f.path === (at.path ?? "")) ??
-      (fields.length === 1 ? fields[0] : null);
-    if (!field) return null;
-    return { shape: field.variants?.length ? "enum" : field.shape, elem: field.elem };
-  };
-}
 
 /* what x IS at one row of a flow: the pipeline register — Nil until a `set x = ...`
  * above this row fills it, retyped by each one. The event's own value arrives as a
@@ -173,17 +148,6 @@ export function pageScope(editor: Editor, widget: Node | null): Scope {
   };
 }
 
-/* a feed's transform or condition: display tier, x is what the source delivers. The
- * feed is re-read from the store per ask, so a repicked source retypes x in place. */
-export function feedScope(editor: Editor, widget: Node | null, feed: Feed): Scope {
-  const at = () => (editor.store.node(feed.id) as Feed | null) ?? feed;
-  return {
-    tier: "display",
-    lang: () => editor.lang,
-    names: () => scopeNames(editor, widget),
-    x: feedX(editor, widget, at),
-  };
-}
 
 /* one row of a flow: wire tier, x and the locals as the rows above this one leave them */
 export function flowScope(editor: Editor, widget: Node | null, flow: Flow, stepId: number): Scope {

@@ -112,15 +112,16 @@ void visit_site(Role role, Json& value, const std::string& from, const std::stri
             if (value.contains("kind")) visit_site(Role::EntityRef, value, from, to, hits);
             return;
         }
-        /* a feed's case arms: the expression and any predicate are ordinary Expr sites */
-        case Role::Cases: {
-            if (!value.is_array()) return;
-            for (Json& entry : value) {
-                if (!entry.is_object()) continue;
-                if (auto xf = entry.find("xf"); xf != entry.end())
-                    visit_site(Role::Expr, *xf, from, to, hits);
-                if (auto test = entry.find("test"); test != entry.end())
-                    visit_site(Role::Expr, *test, from, to, hits);
+        /* a widget's `slots` object: every STRING leaf is an expression (numbers and
+           bools are degenerate literals with nothing to rename); the nesting is a
+           part's own object, walked the same way */
+        case Role::SlotMap: {
+            if (!value.is_object()) return;
+            for (auto& item : value.items()) {
+                if (item.value().is_string())
+                    visit_site(Role::Expr, item.value(), from, to, hits);
+                else if (item.value().is_object())
+                    visit_site(Role::SlotMap, item.value(), from, to, hits);
             }
             return;
         }

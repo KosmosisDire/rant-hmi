@@ -281,14 +281,12 @@ int main() {
               flag_def->fields[0].shape == Shape::Bool);
     }
 
-    /* ---- the document: feeds from every kind, flows back out ---- */
+    /* ---- the document: slot expressions over every kind, flows back out ---- */
     Json level_widget = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Level"},
-        {"feeds", Json::array({Json{{"slot", "value"},
-                                    {"src", entity_ref("V", "tank_level")},
-                                    {"path", "level"}}})},
+        {"slots", Json{{"value", "@tank_level.level"}}},
         {"flows", Json::array({
             /* input: RMW write back to the tank; the label must survive untouched */
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -314,67 +312,51 @@ int main() {
         {"kind", "frame"},
         {"type", "Label"},
         {"name", "Tag"},
-        {"feeds", Json::array({Json{{"slot", "text"},
-                                    {"src", entity_ref("V", "tank_level")},
-                                    {"path", "label"}}})},
+        {"slots", Json{{"text", "@tank_level.label"}}},
     };
     Json speed_widget = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Speed"},
-        {"feeds", Json::array({Json{{"slot", "value"},
-                                    {"src", entity_ref("T", "belt")},
-                                    {"path", "speed"}}})},
+        {"slots", Json{{"value", "@belt.speed"}}},
     };
     Json temp_widget = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Temp"},
-        {"feeds", Json::array({Json{{"slot", "value"},
-                                    {"src", entity_ref("F", "status")},
-                                    {"path", "temp"},
-                                    {"poll_hz", 20}}})},
+        /* a FUNCTION source: the response field reads like any other, the cadence
+           rides the widget's poll map (spec D1) */
+        {"slots", Json{{"value", "@status.temp"}}},
+        {"poll", Json{{"value", 20}}},
     };
     Json alarm_widget = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Alarm"},
-        {"feeds", Json::array({Json{{"slot", "value"},
-                                    {"src", entity_ref("S", "alarm")},
-                                    {"path", "code"}}})},
+        {"slots", Json{{"value", "@alarm.code"}}},
     };
     Json hist_widget = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Hist"},
-        {"feeds", Json::array({
-            Json{{"slot", "value"},
-                 {"src", entity_ref("V", "history")},
-                 {"path", "temps"},
-                 {"xf", "x.max"}},
-            Json{{"slot", "reading.decimals"},
-                 {"src", entity_ref("V", "history")},
-                 {"path", "extras"},
-                 {"xf", "num(x.get(\"speed\"))"}},
-            Json{{"slot", "units.text"},
-                 {"src", entity_ref("V", "history")},
-                 {"path", "tags"},
-                 {"xf", "x.join(\"/\")"}},
-        })},
+        /* aggregate mesh fields read off the ENTITY MIRRORS: the delivery lands in a
+           retained slot and the expression reduces it like any list or map */
+        {"slots", Json{{"value", "@history.temps.max"},
+                       {"reading",
+                        Json{{"decimals", "num(@history.extras.get(\"speed\"))"}}},
+                       {"units", Json{{"text", "@history.tags.join(\"/\")"}}}}},
     };
 
-    /* a feed from a BARE-TYPED topic: no path, the anonymous value IS the source */
+    /* a BARE-TYPED topic: the anonymous value IS the entity, read bare */
     Json pressure_widget = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Pressure"},
-        {"feeds", Json::array({Json{{"slot", "value"},
-                                    {"src", entity_ref("T", "pressure")},
-                                    {"path", ""}}})},
+        {"slots", Json{{"value", "@pressure"}}},
     };
 
     /* the toggle-off-the-plant idiom: read the value, gate on it, force / unforce.
-     * Deliberately NO feed references `suction` anywhere in this document. */
+     * Deliberately NO slot expression references `suction` anywhere in this document. */
     Json suction_widget = {
         {"kind", "frame"},
         {"type", "Button"},
@@ -468,7 +450,7 @@ int main() {
                   "tags join never arrived");
     }
 
-    /* a topic feed: publish from the peer until the cell shows it */
+    /* a topic binding: publish from the peer until the cell shows it */
     {
         dart::MessageBuilder msg(*belt_schema);
         msg.set_f64("speed", 3.5).set_bool("running", true);
@@ -481,7 +463,7 @@ int main() {
         CHECK_MSG(seen, "belt speed never arrived");
     }
 
-    /* a BARE topic feed: the anonymous value decodes by the empty path */
+    /* a BARE topic binding: the anonymous value reads bare */
     {
         const int pressure_cell = cell_of(sched.program(), pressure_id, "value");
         CHECK(pressure_cell >= 0);
@@ -496,12 +478,12 @@ int main() {
         CHECK_MSG(seen, "bare pressure never arrived");
     }
 
-    /* a paced function feed (20 Hz, page visible) */
+    /* a paced function binding (20 Hz off the poll map, page visible) */
     CHECK_MSG(run_until(sched, [&] { return num_at(sched, temp_cell) == 21.25; }),
               "status.temp never arrived");
     CHECK_MSG(calls.load() > 0, "the peer's function was never called");
 
-    /* a signal feed */
+    /* a signal binding */
     {
         dart::MessageBuilder fire(*alarm_schema);
         fire.set_uint("code", 9);
@@ -544,7 +526,7 @@ int main() {
                 dart::detail::dart_get_string(data, tank_schema->raw(), "label");
             CHECK_EQ(std::string(label.data ? label.data : "", label.len), std::string("ok"));
         }
-        /* and the feed loops the write back into the cell */
+        /* and the binding loops the write back into the cell */
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, level_cell) == 77.75; }),
                   "the write never fed back");
     }

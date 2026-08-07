@@ -66,11 +66,12 @@ class Scheduler final : private MeshSink {
     void drain_raised();
     void on_press(const InputEvent& event);
     void on_release(const InputEvent& event);
-    void apply_local_feeds();
-    /* a decoded mesh arrival: refresh the RMW seed and run the feeds bound to it */
+    /* the STANDING slot expressions: every one once on the first pass (the seed), the
+       cell-reading ones every tick after; the mesh-only ones re-run from on_update */
+    void apply_slot_programs();
+    /* a decoded mesh arrival: refresh the last-value mirror and re-evaluate the slot
+       expressions that read this entity */
     void on_update(const MeshUpdate& update) override;
-    /* copy an aggregate field's elements into the run's scratch pool (bounded) */
-    Value intake_aggregate(const MeshUpdate& update, uint32_t field, const FieldDef& def);
 
     Program program_;
     RuntimeState state_;
@@ -81,6 +82,9 @@ class Scheduler final : private MeshSink {
     std::vector<SessionSequence> sequences_;
     std::vector<uint32_t> ended_;
     bool draining_ = false;
+    /* the slot programs' first pass has not run yet: every program runs once then,
+       whatever its deps, so a dep-less one (an array literal) still lands its value */
+    bool slots_seeded_ = false;
     /* when each CADENCE flow next runs, one entry per flow (0 = seed at the current
      * tick). Sized at construction, so the pass allocates nothing; it does not survive a
      * recompile, which restarts the phase — the RING migrates, being a cell, and that is

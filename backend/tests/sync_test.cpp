@@ -168,8 +168,10 @@ int main() {
     if (!welcome || !snapshot) return check::summary("sync_test");
     CHECK((*welcome)["proto"] == kProto);
     /* the number itself, pinned: the frontend bumps in lockstep, and a silent drift here
-       is a client that talks a frame shape this backend no longer sends */
-    CHECK(kProto == 11);
+       is a client that talks a frame shape this backend no longer sends
+       (12: feeds are gone — a slot value is number | bool | expression text, `poll`
+       rides the widget, the attr table serves `variants`) */
+    CHECK(kProto == 12);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */

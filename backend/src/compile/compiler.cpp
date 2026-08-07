@@ -234,7 +234,7 @@ class Compiler {
         copy_entities();
         build_cells();
         build_armed_parts();
-        build_feeds();
+        build_slot_programs();
         /* The type's defaults are compiled FIRST, so they run first: by the time an
          * authored flow on the same event runs, the widget's own state already reflects
          * the gesture and `widget.<slot>` agrees with what the event passed. */
@@ -249,6 +249,16 @@ class Compiler {
     }
 
   private:
+    /* an authored slot EXPRESSION, held from build_cells (where the cell is made) to
+     * build_slot_programs (when every cell the expression could read exists) */
+    struct PendingSlot {
+        uint64_t widget_id = 0;
+        std::string name;
+        std::string text;
+        uint32_t cell = 0;
+        Json spec;   /* the registry slot row: variants for the constrained-text check */
+    };
+
     void diag(uint64_t node, const std::string& code, const std::string& message,
               DiagGrade grade = DiagGrade::Error, const std::string& where = "") {
         program_.diagnostics.push_back(Diag{node, grade, code, message, where});
@@ -581,33 +591,70 @@ class Compiler {
                         for (const Json& slot : info.type->value("slots", Json::array())) {
                             const std::string name = slot.value("name", "");
                             const Shape shape = slot_shape(slot);
+                            const bool aggregate =
+                                shape == Shape::List || shape == Shape::Map;
+                            /* the type's DEFAULT is a raw literal (the registry's own
+                               spelling); only an AUTHORED value speaks the expression
+                               encoding (spec D1) */
                             Json initial = slot.value("default", Json());
+                            std::string expr_text;
                             /* the slot's NAME is its address: a part's property is stored
                                nested under the part, so the lookup walks the dots */
-                            if (const Json* override = authored_slot(authored, name))
-                                initial = *override;
-                            if (shape == Shape::Color) initial = resolve_token(info.id, name, initial);
-                            check_variants(info.id, name, slot, initial);
+                            if (const Json* override = authored_slot(authored, name)) {
+                                if (override->is_string()) {
+                                    const std::string text =
+                                        trimmed(override->get<std::string>());
+                                    if (text.empty()) {
+                                        /* empty = unset: the default stands */
+                                    } else if (shape == Shape::Color && text[0] == '$') {
+                                        /* a whole-value token reference stays the
+                                           authored literal spelling */
+                                        initial = Json(text);
+                                    } else if (shape == Shape::List &&
+                                               (text.compare(0, 9, "variants(") == 0 ||
+                                                text[0] == '[')) {
+                                        initial = *override;
+                                    } else if (shape == Shape::Map && text[0] == '{') {
+                                        initial = *override;
+                                    } else {
+                                        /* AN EXPRESSION: compiled after every cell of
+                                           this widget exists (build_slot_programs); a
+                                           constant folds back into the start, anything
+                                           live becomes a standing program and the cell
+                                           starts UNKNOWN */
+                                        expr_text = text;
+                                        initial = Json();
+                                    }
+                                } else {
+                                    initial = *override;
+                                }
+                            }
+                            if (shape == Shape::Color)
+                                initial = resolve_token(info.id, name, initial);
+                            if (expr_text.empty()) check_variants(info.id, name, slot, initial);
                             /* an AGGREGATE slot's authored value has its own accepted
                                spellings and lands in the cell's constant run, not in
                                the scalar initial, which stays Nil */
-                            const bool aggregate =
-                                shape == Shape::List || shape == Shape::Map;
                             std::vector<Value> list_init;
                             const bool has_list =
-                                shape == Shape::List
-                                    ? list_slot_initial(info.id, name, initial, list_init)
-                                    : shape == Shape::Map &&
-                                          map_slot_initial(info.id, name, initial,
-                                                           list_init);
+                                expr_text.empty() &&
+                                (shape == Shape::List
+                                     ? list_slot_initial(info.id, name, initial, list_init)
+                                     : shape == Shape::Map &&
+                                           map_slot_initial(info.id, name, initial,
+                                                            list_init));
                             info.slots[name] =
                                 add_cell(CellKind::Slot, info.id, info.id, name, shape,
-                                         aggregate ? Json() : initial, false);
+                                         aggregate || !expr_text.empty() ? Json() : initial,
+                                         false);
                             if (has_list) {
                                 program_.cells[info.slots[name]].has_list = true;
                                 program_.cells[info.slots[name]].list_init =
                                     std::move(list_init);
                             }
+                            if (!expr_text.empty())
+                                pending_slots_.push_back(PendingSlot{
+                                    info.id, name, expr_text, info.slots[name], slot});
                         }
                     }
                     widgets_.push_back(std::move(info));
@@ -816,9 +863,8 @@ class Compiler {
         const AggSite site{widget_id, "slot '" + slot + "' is a list", slot,
                            "Write the options as a list ([\"Off\", \"Low\", \"High\"]) "
                            "or as variants(Type.field), naming an enum in the mesh. To "
-                           "FOLLOW a variable or an expression instead, bind the slot "
-                           "with its link (a feed from hmi → the variable, or a "
-                           "written expression)"};
+                           "FOLLOW a variable instead, write its name as the value — "
+                           "the slot's expression is the binding"};
         if (value.is_null()) return false;
         if (value.is_string()) {
             const std::string text = trimmed(value.get<std::string>());
@@ -1214,300 +1260,145 @@ class Compiler {
         return false;
     }
 
-    void build_feeds() {
-        for (WidgetInfo& widget : widgets_) {
-            auto feeds = widget.node->find("feeds");
-            if (feeds == widget.node->end() || !feeds->is_array()) continue;
-            for (const Json& node : *feeds) {
-                FeedProgram feed;
-                feed.widget_id = widget.id;
-                feed.page_id = widget.page;
-                feed.feed_id = id_of(node);
-                const std::string slot = str_or(node, "slot", "");
-                auto destination = widget.slots.find(slot);
-                if (destination == widget.slots.end()) {
-                    diag(feed.feed_id, "feed_slot", "widget has no slot '" + slot + "'",
-                         DiagGrade::Error, "slot");
-                    continue;
-                }
-                feed.cell = destination->second;
-                /* A FED slot starts UNKNOWN: what the instance authored is not this
-                   cell's value, the source is, and showing the authored constant until
-                   the first update reads as live data that is not. A list slot's
-                   authored constant goes the same way. */
-                program_.cells[feed.cell].initial = Value::nil();
-                program_.cells[feed.cell].has_list = false;
-                program_.cells[feed.cell].list_init.clear();
-                const Json& ref = node["src"];
-                const std::string kind = ref.value("kind", "");
-
-                /* NO SOURCE: the transform stands alone as a COMPUTED binding, an
-                 * expression over the widget's scope (variables, widget.<slot>)
-                 * re-evaluated every tick; x is Nil, there is nothing for it to be */
-                if (!ref.is_object() || ref.value("name", "").empty()) {
-                    const std::string xf = str_or(node, "xf", "");
-                    if (xf.empty()) {
-                        diag(feed.feed_id, "feed_source",
-                             "pick a source, or write an expression",
-                             DiagGrade::Error, "src");
-                        continue;
-                    }
-                    feed.entity = UINT32_MAX;
-                    feed.source_cell = UINT32_MAX;
-                    ExpressionScope scope = scope_for(widget, Shape::Unknown);
-                    if (!expression(feed.feed_id, xf, ExprTier::Display, scope,
-                                    program_.cells[feed.cell].shape, feed.code,
-                                    feed.max_stack, nullptr, "xf"))
-                        continue;
-                    Instruction store;
-                    store.op = OpCode::Store;
-                    store.a = feed.cell;
-                    store.c = fault_site(feed.feed_id, "feed_store",
-                                         "feed value could not be stored");
-                    feed.code.push_back(store);
-                    feed.code.push_back(Instruction{OpCode::Halt});
-                    program_.layout.stack_values =
-                        std::max(program_.layout.stack_values, feed.max_stack);
-                    program_.feeds.push_back(std::move(feed));
-                    continue;
-                }
-
-                ExpressionScope scope =
-                    scope_for(widget, kind == "L" ? program_.cells[feed.cell].shape
-                                                  : Shape::Unknown);
-                if (kind == "L") {
-                    const std::string name = ref.value("name", "");
-                    auto local = widget.locals.find(name);
-                    auto global = globals_.find(name);
-                    uint32_t source = UINT32_MAX;
-                    if (local != widget.locals.end()) source = local->second;
-                    else if (global != globals_.end()) source = global->second;
-                    else {
-                        diag(feed.feed_id, "feed_source", "HMI variable '" + name + "' is unresolved",
-                             DiagGrade::Error, "src");
-                        continue;
-                    }
-                    feed.entity = UINT32_MAX;
-                    feed.source_cell = source;
-                    scope.x_shape = program_.cells[source].shape;
-                    scope.x_enum = program_.cells[source].type_id;
-                    /* a TIMER source: x reads the timer table by field, so the
-                       scope carries which timer this is */
-                    if (scope.x_shape == Shape::Timer) {
-                        const int timer = resolve_timer(widget, name, feed.feed_id);
-                        if (timer < 0) continue;
-                        scope.x_timer = static_cast<uint32_t>(timer);
-                    }
-                } else {
-                    const int entity = resolve_entity(ref, feed.feed_id, "src");
-                    if (entity < 0) continue;
-                    feed.entity = static_cast<uint32_t>(entity);
-                    const std::vector<FieldDef>& readable =
-                        feed_fields(program_.entities[feed.entity]);
-                    const std::string path = str_or(node, "path", "");
-                    if (path.empty() && readable.size() > 1) {
-                        /* the WHOLE message as the source: x is a struct, its fields
-                           qualified bindings reading the entity's last-value cache, so
-                           `rgb(x.r, x.g, x.b)` pulls a color struct in as a color. A
-                           function's response is not cached, so it stays per-field. */
-                        if (program_.entities[feed.entity].kind == EntityKind::Function) {
-                            diag(feed.feed_id, "feed_source",
-                                 "a function's response is read field by field; pick one",
-                                 DiagGrade::Error, "path");
-                            continue;
-                        }
-                        feed.field = UINT32_MAX;
-                        scope.x_shape = Shape::Struct;
-                        for (uint32_t i = 0; i < readable.size(); ++i)
-                            scope.qualified["x." + readable[i].path] =
-                                Binding{readable[i].shape, OpCode::LoadEnt, feed.entity,
-                                        i, readable[i].type_id};
-                        if (str_or(node, "xf", "").empty() &&
-                            node.value("cases", Json::array()).empty()) {
-                            diag(feed.feed_id, "feed_source",
-                                 "a whole message cannot fill a slot by itself; write a "
-                                 "transform over x.<field>",
-                                 DiagGrade::Error, "xf");
-                            continue;
-                        }
-                    } else {
-                        const int field = find_field(feed.entity, path, feed.feed_id,
-                                                     "path", /*response=*/true);
-                        if (field < 0) continue;
-                        feed.field = static_cast<uint32_t>(field);
-                        const FieldDef& source_field = readable[feed.field];
-                        scope.x_shape = source_field.shape;
-                        scope.x_enum = source_field.type_id;
-                        scope.x_elem = source_field.elem;
-                    }
-                    if (program_.entities[feed.entity].kind == EntityKind::Function) {
-                        const double hz = num_or(node, "poll_hz", 0.0);
-                        feed.poll_ms = hz > 0.0
-                            ? std::max(10u, static_cast<uint32_t>(std::lround(1000.0 / hz)))
-                            : 1000u;
-                    }
-                }
-                /* discrete PATTERN MATCHING (spec 2.4): with `cases`, each arm compares
-                 * x against a scalar and runs its own transform; the feed's xf is the
-                 * else. Coverage is checked, so a missed variant is a finding. */
-                const Json cases = node.value("cases", Json::array());
-                if (cases.is_array() && !cases.empty()) {
-                    if (!compile_feed_cases(node, feed, scope, cases)) continue;
-                    program_.layout.stack_values =
-                        std::max(program_.layout.stack_values, feed.max_stack);
-                    program_.feeds.push_back(std::move(feed));
-                    continue;
-                }
-
-                std::string xf = str_or(node, "xf", "");
-                /* the one automatic coercion (spec 6.2): an enum-shaped source feeding a
-                 * text slot reads as its variant name, so a Dropdown bound to an enum
-                 * field needs no authored transform */
-                if (xf.empty() && scope.x_shape == Shape::Enum &&
-                    program_.cells[feed.cell].shape == Shape::Text)
-                    xf = "x.name";
-                bool ok = true;
-                if (xf.empty()) {
-                    /* no transform: the source value stores as-is, so the shapes must
-                     * already agree; anything else was a silent runtime store fault */
-                    const Shape wanted = program_.cells[feed.cell].shape;
-                    if (scope.x_shape != Shape::Unknown && wanted != Shape::Unknown &&
-                        scope.x_shape != wanted) {
-                        diag(feed.feed_id, "shape",
-                             "the source is " + std::string(shape_name(scope.x_shape)) +
-                                 " but the slot wants " + shape_name(wanted) +
-                                 "; add a transform",
-                             DiagGrade::Error, "xf");
-                        continue;
-                    }
-                    feed.code.push_back(Instruction{OpCode::LoadX});
-                    feed.max_stack = 1;
-                } else {
-                    ok = expression(feed.feed_id, xf, ExprTier::Display, scope,
-                                    program_.cells[feed.cell].shape, feed.code, feed.max_stack,
-                                    nullptr, "xf");
-                }
-                if (!ok) continue;
-                Instruction store;
-                store.op = OpCode::Store;
-                store.a = feed.cell;
-                store.c = fault_site(feed.feed_id, "feed_store", "feed value could not be stored");
-                feed.code.push_back(store);
-                feed.code.push_back(Instruction{OpCode::Halt});
-                program_.layout.stack_values =
-                    std::max(program_.layout.stack_values, feed.max_stack);
-                program_.feeds.push_back(std::move(feed));
-            }
+    /* EVERY READABLE MESH ENTITY, bound under its '@'-prefixed spelling: a bare-scalar
+     * entity (or a one-field message) reads bare, a fielded one by `@name.field`. This
+     * is what makes a slot expression multi-source — its deps are whatever it reads.
+     * Function entities bind their RESPONSE fields; the poll cadence asks for them. */
+    void bind_entities(ExpressionScope& scope) {
+        for (uint32_t e = 0; e < program_.entities.size(); ++e) {
+            const EntityDef& def = program_.entities[e];
+            const std::vector<FieldDef>& fields = feed_fields(def);
+            if (fields.empty()) continue;
+            const std::string base = "@" + def.name;
+            if (fields.size() == 1)
+                scope.names[base] = Binding{fields[0].shape, OpCode::LoadEnt, e, 0,
+                                            fields[0].type_id, fields[0].elem};
+            if (fields.size() == 1 && fields[0].path.empty()) continue;
+            for (uint32_t i = 0; i < fields.size(); ++i)
+                scope.qualified[base + "." + fields[i].path] =
+                    Binding{fields[i].shape, OpCode::LoadEnt, e, i, fields[i].type_id,
+                            fields[i].elem};
         }
     }
 
-    /* A feed's case arms (spec 2.4): CONDITIONS only, first match wins, top to bottom.
-     *
-     *   LoadX; JmpNil -> NIL
-     *   arm i: <test_i>; JmpFalse -> arm i+1; <xf_i>; Jmp -> STORE
-     *   <else xf>; Jmp -> STORE
-     *   NIL: Const(nil)                  (the Nil bail-out)
-     *   STORE: Store; Halt
-     *
-     * Every arm is {test, xf}: a boolean expression over x (`x == ._None`,
-     * `x.running`, `x[8] == 4100`). The old value-matching arms ({when}) are gone,
-     * and with them the coverage analysis: conditions cannot be enumerated, so an
-     * empty else stands only where the value can PASS THROUGH unchanged. */
-    bool compile_feed_cases(const Json& node, FeedProgram& feed, ExpressionScope& scope,
-                            const Json& cases) {
-        const Shape wanted = program_.cells[feed.cell].shape;
-        const Shape source = scope.x_shape;
-        std::vector<uint32_t> ends;
-
-        /* the Nil bail guards a SCALAR x; a whole-message feed's x is Nil by design
-           (its fields ride qualified bindings), and a TIMER's state lives in the
-           timer table rather than the x value, so neither is gated on it */
-        uint32_t bail = UINT32_MAX;
-        if (source != Shape::Struct && source != Shape::Timer) {
-            feed.code.push_back(Instruction{OpCode::LoadX});
-            bail = static_cast<uint32_t>(feed.code.size());
-            feed.code.push_back(Instruction{OpCode::JmpNil});
-        }
-        feed.max_stack = std::max(feed.max_stack, 2u);
-
-        uint32_t index = 0;
-        for (const Json& entry : cases) {
-            const std::string where = "case" + std::to_string(index);
-            const std::string test = entry.is_object() ? str_or(entry, "test", "") : "";
-            if (test.empty()) {
-                diag(feed.feed_id, "case_when",
-                     entry.is_object() && entry.contains("when")
-                         ? "value matching is gone; write a condition over x"
-                         : "write this case's condition",
-                     DiagGrade::Error, where);
-                return false;
+    /* What a compiled slot expression READS, off its own instructions (lambda bodies
+     * included): entity reads become deps the scheduler re-evaluates on — scalar
+     * fields off the last-value cache, aggregate fields off the entity mirrors — and
+     * a cell or timer read makes the program an every-tick one (cells can move any
+     * tick). */
+    bool scan_slot_deps(const std::vector<Instruction>& code, SlotProgram& sp) {
+        for (const Instruction& ins : code) {
+            switch (ins.op) {
+                case OpCode::Load:
+                case OpCode::LoadField:
+                case OpCode::TmrRead:
+                    sp.every_tick = true;
+                    break;
+                case OpCode::LoadEnt: {
+                    if (!sp.depends_on(ins.a)) sp.dep_entities.push_back(ins.a);
+                    /* the mesh must consume a read entity or its mirror never fills,
+                       exactly as it does for one a flow reads */
+                    program_.entities[ins.a].flow_reads = true;
+                    break;
+                }
+                case OpCode::Iterate:
+                    if (ins.a < program_.subs.size() &&
+                        !scan_slot_deps(program_.subs[ins.a].code, sp))
+                        return false;
+                    break;
+                default:
+                    break;
             }
-            if (!expression(feed.feed_id, test, ExprTier::Display, scope, Shape::Bool,
-                            feed.code, feed.max_stack, nullptr, where))
-                return false;
-            const uint32_t skip = static_cast<uint32_t>(feed.code.size());
-            Instruction branch;
-            branch.op = OpCode::JmpFalse;
-            branch.c = fault_site(feed.feed_id, "case_when", "the case could not compare");
-            feed.code.push_back(branch);
-            const std::string xf = str_or(entry, "xf", "");
-            if (xf.empty()) {
-                diag(feed.feed_id, "expression", "this case needs an expression",
-                     DiagGrade::Error, where);
-                return false;
+        }
+        return true;
+    }
+
+    /* THE STANDING SLOT PROGRAMS (spec D1): every pending authored expression, compiled
+     * against the widget's scope PLUS the mesh. A constant folds into the cell's start
+     * and leaves no program; anything live stores into the cell whenever a dep moves —
+     * every tick where it reads cells, on delivery where it reads only the mesh. */
+    void build_slot_programs() {
+        for (const PendingSlot& pending : pending_slots_) {
+            WidgetInfo* widget = widget_info(pending.widget_id);
+            if (!widget) continue;
+            compile_slot_program(*widget, pending);
+        }
+    }
+
+    void compile_slot_program(WidgetInfo& widget, const PendingSlot& pending) {
+        const Shape wanted = program_.cells[pending.cell].shape;
+        const bool aggregate = wanted == Shape::List || wanted == Shape::Map;
+        ExpressionScope scope = scope_for(widget, Shape::Unknown);
+        scope.no_x = true;   /* a slot expression has no pipeline register */
+        bind_entities(scope);
+        SlotProgram sp;
+        sp.widget_id = widget.id;
+        sp.page_id = widget.page;
+        sp.slot = pending.name;
+        sp.cell = pending.cell;
+        Shape produced = Shape::Unknown;
+        if (!expression(widget.id, pending.text, ExprTier::Display, scope,
+                        aggregate ? wanted : Shape::Unknown, sp.code, sp.max_stack,
+                        &produced, pending.name, nullptr, aggregate))
+            return;   /* the finding is already pinned to the widget's slot row */
+        /* the one automatic coercion (spec 6.2): an enum-yielding expression filling a
+           text slot reads as its variant name, so a Dropdown bound to an enum field
+           needs no authored transform */
+        if (!aggregate && produced == Shape::Enum && wanted == Shape::Text) {
+            Instruction as_name;
+            as_name.op = OpCode::Method;
+            as_name.a = program_.layout.text_slots++;
+            as_name.b = 0;
+            as_name.small = static_cast<uint16_t>(MethodId::EnumName);
+            sp.code.push_back(as_name);
+            produced = Shape::Text;
+        }
+        if (!aggregate && wanted != Shape::Unknown && produced != Shape::Unknown &&
+            produced != Shape::Nil && produced != wanted) {
+            diag(widget.id, "shape",
+                 "the expression yields " + std::string(shape_name(produced)) +
+                     ", but slot '" + pending.name + "' wants " + shape_name(wanted),
+                 DiagGrade::Error, pending.name);
+            return;
+        }
+        /* A CONSTANT is the literal it spells: it folds into the cell's start and no
+           standing program exists — a quoted caption costs what the raw literal did. */
+        if (sp.code.size() == 1 && sp.code[0].op == OpCode::Const) {
+            const Value value = program_.constants[sp.code[0].a];
+            program_.cells[pending.cell].initial = value;
+            /* a constant text ref wears kConstantRef: strip it to read the pool */
+            const uint32_t pool = value.ref & ~kConstantRef;
+            if (value.tag == ValueTag::Text && pool < program_.texts.size())
+                check_variants(widget.id, pending.name, pending.spec,
+                               Json(program_.texts[pool]));
+            return;
+        }
+        if (!scan_slot_deps(sp.code, sp)) return;
+        /* a program that reads nothing live (an array literal, arithmetic over
+           constants) still has to run once; the seed pass at start covers it, and
+           there is nothing to re-run it for */
+        for (uint32_t dep : sp.dep_entities) {
+            if (program_.entities[dep].kind != EntityKind::Function) continue;
+            double hz = 2.0;
+            auto poll = widget.node->find("poll");
+            if (poll != widget.node->end() && poll->is_object()) {
+                auto rate = poll->find(pending.name);
+                if (rate != poll->end() && rate->is_number() &&
+                    rate->get<double>() > 0.0)
+                    hz = rate->get<double>();
             }
-            if (!expression(feed.feed_id, xf, ExprTier::Display, scope, wanted,
-                            feed.code, feed.max_stack, nullptr, where))
-                return false;
-            ends.push_back(static_cast<uint32_t>(feed.code.size()));
-            feed.code.push_back(Instruction{OpCode::Jmp});
-            feed.code[skip].a = static_cast<uint32_t>(feed.code.size());
-            ++index;
+            sp.poll_ms = std::max(10u, static_cast<uint32_t>(std::lround(1000.0 / hz)));
+            break;
         }
-
-        /* The ELSE arm. An EMPTY else means what an empty inline transform means: the
-           value PASSES THROUGH (an enum into a text slot as its name), so cases read
-           as "override these, show the rest as themselves". Where pass-through is
-           impossible (an enum into a color), the else must be written. */
-        const std::string otherwise = str_or(node, "xf", "");
-        const bool passes =
-            otherwise.empty() &&
-            (source == Shape::Unknown || wanted == Shape::Unknown || source == wanted ||
-             (source == Shape::Enum && wanted == Shape::Text));
-        if (!otherwise.empty() || passes) {
-            const std::string tail =
-                !otherwise.empty() ? otherwise
-                : source == Shape::Enum && wanted == Shape::Text ? "x.name"
-                                                                 : "x";
-            if (!expression(feed.feed_id, tail, ExprTier::Display, scope, wanted,
-                            feed.code, feed.max_stack, nullptr, "xf"))
-                return false;
-            ends.push_back(static_cast<uint32_t>(feed.code.size()));
-            feed.code.push_back(Instruction{OpCode::Jmp});
-        } else {
-            diag(feed.feed_id, "cases",
-                 "the value cannot pass through as-is; write the else",
-                 DiagGrade::Error, "xf");
-            return false;
-        }
-
-        /* the Nil bail-out, which full coverage also falls into if it is ever wrong */
-        if (bail != UINT32_MAX)
-            feed.code[bail].a = static_cast<uint32_t>(feed.code.size());
-        Instruction nil;
-        nil.op = OpCode::Const;
-        nil.a = program_.add_constant(Value::nil());
-        feed.code.push_back(nil);
-        feed.max_stack = std::max(feed.max_stack, 1u);
-
-        for (uint32_t at : ends) feed.code[at].a = static_cast<uint32_t>(feed.code.size());
         Instruction store;
         store.op = OpCode::Store;
-        store.a = feed.cell;
-        store.c = fault_site(feed.feed_id, "feed_store", "feed value could not be stored");
-        feed.code.push_back(store);
-        feed.code.push_back(Instruction{OpCode::Halt});
-        return true;
+        store.a = pending.cell;
+        store.c = fault_site(widget.id, "slot_store",
+                             "slot '" + pending.name + "' could not store its value");
+        sp.code.push_back(store);
+        sp.code.push_back(Instruction{OpCode::Halt});
+        program_.layout.stack_values = std::max(program_.layout.stack_values, sp.max_stack);
+        program_.slot_programs.push_back(std::move(sp));
     }
 
     void break_flow(FlowProgram& flow, uint64_t node, const std::string& code,
@@ -2552,15 +2443,11 @@ class Compiler {
      * where it is decided, once, at compile time. */
     std::unordered_map<std::string, std::string> claimed_slots(const WidgetInfo& widget) const {
         std::unordered_map<std::string, std::string> out;
-        auto feeds = widget.node->find("feeds");
-        if (feeds != widget.node->end() && feeds->is_array())
-            for (const Json& feed : *feeds) {
-                const std::string slot = feed.value("slot", "");
-                const Json& src = feed.value("src", Json::object());
-                if (!slot.empty())
-                    out[slot] = "it is fed from " + src.value("kind", "?") + ":" +
-                                src.value("name", "?");
-            }
+        /* a slot whose authored value became a STANDING program is spoken for: its
+           expression is the writer (a constant folded back into the start is not) */
+        for (const SlotProgram& sp : program_.slot_programs)
+            if (sp.widget_id == widget.id)
+                out[sp.slot] = "its value is a bound expression";
         auto flows = widget.node->find("flows");
         if (flows != widget.node->end() && flows->is_array())
             for (const Json& flow : *flows)
@@ -2586,9 +2473,9 @@ class Compiler {
      * compiled by this same compiler into the same programs, so there is no per-type code
      * and a custom component declares behavior the same way.
      *
-     * Precedence, resolved here so exactly one writer survives: a feed on the slot wins
-     * (the control is a view of the machine), then an authored flow that assigns the same
-     * slot (the author overrode the default), otherwise the default runs. Suppression is
+     * Precedence, resolved here so exactly one writer survives: a slot bound to an
+     * expression wins (the control is a view of the machine), then an authored flow that
+     * assigns the same slot (the author overrode the default), otherwise the default runs. Suppression is
      * per slot WRITTEN, not per event, so "on tap, send to the PLC" coexists with the
      * default local echo. Standing down is deterministic and silent: the author asked for
      * the writer that won, so there is nothing to report. */
@@ -2647,6 +2534,7 @@ class Compiler {
     std::set<std::string> ambiguous_;                         /* reported once each */
     std::unordered_map<std::string, uint32_t> global_timers_;
     std::vector<WidgetInfo> widgets_;
+    std::vector<PendingSlot> pending_slots_;
 };
 
 } // namespace

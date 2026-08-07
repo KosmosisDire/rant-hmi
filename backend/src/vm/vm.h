@@ -31,8 +31,9 @@ RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget
                     const std::string& event, Value arg,
                     const std::string& part = std::string()) noexcept;
 
-RunResult run_feed(const Program& program, const FeedProgram& feed, RuntimeState& state,
-                   Value source_value) noexcept;
+/* one standing slot expression, re-evaluated into its cell; x is always Nil here */
+RunResult run_slot(const Program& program, const SlotProgram& slot,
+                   RuntimeState& state) noexcept;
 
 RunResult resume_pending(const Program& program, RuntimeState& state,
                          uint32_t pending_slot) noexcept;

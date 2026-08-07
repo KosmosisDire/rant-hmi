@@ -18,6 +18,11 @@ enum class TokenKind {
     Ident,
     Theme,     /* $<name>: a theme token literal (template expressions only; the
                   scalar parser refuses it as an unexpected token) */
+    Entity,    /* @<path>: a MESH ENTITY reference (`@cage/plc/gSafety`). The `@`
+                  consumes identifier characters plus '/', because DART names are
+                  path-spelled and '/' is otherwise division; the dot that follows is
+                  ordinary field access. Only scopes that BIND entities (a slot
+                  expression's) resolve it; everywhere else it is an unknown name. */
     LParen,
     RParen,
     LBracket,
@@ -66,6 +71,7 @@ class Lexer {
     Token number();
     Token ident();
     Token theme();
+    Token entity();
     Token string(char quote);
     Token color();
 

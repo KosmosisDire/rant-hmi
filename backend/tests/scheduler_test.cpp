@@ -291,8 +291,8 @@ void test_first_of_rearm() {
     CHECK(scheduler.state().values[cell].data.num == 3);
 }
 
-/* THE SCHEDULER SPEAKS: a fed control's tap raises changed(value) from its behavior
- * (the local echo stands down per step — the feed owns the slot), and the scheduler
+/* THE SCHEDULER SPEAKS: a bound control's tap raises changed(value) from its behavior
+ * (the local echo stands down per step — the slot's expression owns it), and the scheduler
  * drains the raise into the authored write-back within the same tick. The write-back
  * is the same sentence on every control: on changed, send value. */
 void test_scheduler_speaks() {
@@ -305,11 +305,8 @@ void test_scheduler_speaks() {
     FakeMesh mesh({sw});
 
     Json toggle = {{"kind", "frame"}, {"type", "Toggle"},
-                   {"slots", Json::object()},
-                   {"feeds", Json::array({Json{{"slot", "value"},
-                                               {"src", Json{{"kind", "V"}, {"name", "switch"}}},
-                                               {"path", "on"},
-                                               {"xf", ""}}})},
+                   /* the binding IS the slot's expression: value follows the mesh */
+                   {"slots", Json{{"value", "@switch.on"}}},
                    {"flows",
                     Json::array({Json{
                         {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
@@ -330,13 +327,15 @@ void test_scheduler_speaks() {
                                : compiled.program.diagnostics[0].message);
     const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
-    const uint32_t slot = scheduler.program().feeds[0].cell;
+    const int slot_found = cell_of(scheduler.program(), widget, "value");
+    if (!CHECK(slot_found >= 0)) return;
+    const uint32_t slot = static_cast<uint32_t>(slot_found);
 
     mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(false)});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[slot].data.boolean == false);
 
-    /* the tap: the behavior's local echo stands down (the feed owns `value`) but the
+    /* the tap: the behavior's local echo stands down (the expression owns `value`) but the
        raise beside it still speaks — the SCHEDULER drains changed(true) into the
        authored write-back, all inside one tick */
     scheduler.post(InputEvent{1, widget, "press", Value::nil(), 1});
@@ -365,11 +364,7 @@ void test_scheduler_speaks() {
  * the state the first one left and flips it back. */
 void test_held_nullary() {
     Json toggle = {{"kind", "frame"}, {"type", "Toggle"},
-                   {"slots", Json::object()},
-                   {"feeds", Json::array({Json{{"slot", "value"},
-                                               {"src", Json{{"kind", "L"}, {"name", "state"}}},
-                                               {"path", ""},
-                                               {"xf", ""}}})},
+                   {"slots", Json{{"value", "state"}}},
                    {"flows",
                     Json::array({Json{
                         {"when", Json::array({Json{{"kind", "event"},
@@ -425,11 +420,7 @@ Json timer_read_root(const std::string& surface_xf) {
     Json button = {
         {"kind", "frame"},
         {"type", "Button"},
-        {"slots", Json{{"text", "Run"}}},
-        {"feeds", Json::array({Json{{"slot", "surface"},
-                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
-                                    {"path", ""},
-                                    {"xf", surface_xf}}})},
+        {"slots", Json{{"text", "'Run'"}, {"surface", surface_xf}}},
         {"flows", Json::array({Json{
             {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
             {"when_mode", "first"},
@@ -438,37 +429,21 @@ Json timer_read_root(const std::string& surface_xf) {
     Json readout = {
         {"kind", "frame"},
         {"type", "Readout"},
-        {"slots", Json::object()},
-        /* the value feed's SOURCE is the timer itself: x is the timer, read by field */
-        {"feeds", Json::array({Json{{"slot", "value"},
-                                    {"src", Json{{"kind", "L"}, {"name", "blink"}}},
-                                    {"path", ""},
-                                    {"xf", "x.remaining * 1000"}},
-                               Json{{"slot", "reading.decimals"},
-                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
-                                    {"path", ""},
-                                    {"xf", "blink.duration * 1000"}},
-                               /* the fraction finished, 0..1, with no knowledge of
-                                  the total time */
-                               Json{{"slot", "reading.text_size"},
-                                    {"src", Json{{"kind", "V"}, {"name", ""}}},
-                                    {"path", ""},
-                                    {"xf", "blink.progress"}}})},
+        /* the timer reads by field, named directly — a part's slot nests under it */
+        {"slots", Json{{"value", "blink.remaining * 1000"},
+                       {"reading", Json{{"decimals", "blink.duration * 1000"},
+                                        /* the fraction finished, 0..1, with no
+                                           knowledge of the total time */
+                                        {"text_size", "blink.progress"}}}}},
         {"flows", Json::array()},
     };
-    /* the pressed-recently treatment (a CASED feed over the timer): the arm is a
-       condition over x.running, the else the resting color; the Nil bail must not
-       eat it (a timer cell's stored value is always Nil) */
+    /* the pressed-recently treatment (the old cased feed, now a ?: chain): the
+       condition reads the timer's own field, the else is the resting color */
     Json toggle = {
         {"kind", "frame"},
         {"type", "Toggle"},
-        {"slots", Json::object()},
-        {"feeds", Json::array({Json{{"slot", "pill.track_color"},
-                                    {"src", Json{{"kind", "L"}, {"name", "blink"}}},
-                                    {"path", ""},
-                                    {"cases", Json::array({Json{{"test", "x.running"},
-                                                                {"xf", "#885a1f"}}})},
-                                    {"xf", "#2e2e2e"}}})},
+        {"slots", Json{{"pill",
+                        Json{{"track_color", "blink.running ? #885a1f : #2e2e2e"}}}}},
         {"flows", Json::array()},
     };
     return Json{{"version", 1},
@@ -492,11 +467,20 @@ void test_timer_reads() {
                                : compiled.program.diagnostics[0].message);
     const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
-    const uint32_t surface = scheduler.program().feeds[0].cell;
-    const uint32_t remaining = scheduler.program().feeds[1].cell;
-    const uint32_t duration = scheduler.program().feeds[2].cell;
-    const uint32_t progress = scheduler.program().feeds[3].cell;
-    const uint32_t track_color = scheduler.program().feeds[4].cell;
+    const uint64_t readout_id =
+        json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
+    const uint64_t toggle_id =
+        json_u64_or(document.root["pages"][0]["children"][2]["id"], 0);
+    const uint32_t surface =
+        static_cast<uint32_t>(cell_of(scheduler.program(), widget, "surface"));
+    const uint32_t remaining =
+        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "value"));
+    const uint32_t duration =
+        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "reading.decimals"));
+    const uint32_t progress =
+        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "reading.text_size"));
+    const uint32_t track_color =
+        static_cast<uint32_t>(cell_of(scheduler.program(), toggle_id, "pill.track_color"));
 
     tick(scheduler, 1);
     CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
@@ -526,10 +510,12 @@ void test_timer_reads() {
     CHECK(scheduler.state().values[progress].data.num == 1);
     CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
 
-    /* a BARE timer (named or as x) has no scalar to be, and an unknown field is named */
-    auto refuses = [&](uint32_t widget_index, const std::string& xf, const char* needle) {
+    /* a BARE timer has no scalar to be, an unknown field is named, and x means
+       nothing in a slot expression at all */
+    auto refuses = [&](uint32_t widget_index, const char* slot, const std::string& xf,
+                       const char* needle) {
         Json root = timer_read_root("blink.running.pick(#00ff00, #102030)");
-        root["pages"][0]["children"][widget_index]["feeds"][0]["xf"] = xf;
+        root["pages"][0]["children"][widget_index]["slots"][slot] = xf;
         Document bad;
         std::string adopt_error;
         CHECK_MSG(bad.adopt(std::move(root), adopt_error), adopt_error);
@@ -540,17 +526,17 @@ void test_timer_reads() {
             if (diagnostic.message.find(needle) != std::string::npos) found = true;
         CHECK_MSG(found, "no diagnostic mentions '" + std::string(needle) + "'");
     };
-    refuses(0, "blink.pick(#00ff00, #102030)", "unknown field");
-    refuses(0, "blink == true", "is a timer");
-    refuses(1, "x * 2", "x is a timer");
-    refuses(1, "x.expired * 2", "unknown field");
+    refuses(0, "surface", "blink.pick(#00ff00, #102030)", "unknown field");
+    refuses(0, "surface", "blink == true", "is a timer");
+    refuses(1, "value", "x * 2", "there is no x here");
+    refuses(1, "value", "blink.expired * 2", "unknown field");
 
 }
 
 /* A FLOW that reads an entity (the read -> gate -> force/unforce toggle-off-the-plant
  * idiom): the read takes the last-value mirror, so the mirror must fill from arrivals
- * even though NO feed names the entity. The compiler stamps `flow_reads` so the mesh
- * adapter subscribes it exactly like a fed one. */
+ * even though NO slot expression names the entity. The compiler stamps `flow_reads` so
+ * the mesh adapter subscribes it exactly like a bound one. */
 void test_flow_entity_read() {
     Json button = {
         {"kind", "frame"},
@@ -723,11 +709,7 @@ void test_trend_samples() {
     FakeMesh mesh({temp});
 
     Json trend = {{"kind", "frame"}, {"type", "Trend"},
-                  {"slots", Json{{"rate", 100}, {"window", 1}}},
-                  {"feeds", Json::array({Json{{"slot", "value"},
-                                              {"src", Json{{"kind", "V"}, {"name", "temp"}}},
-                                              {"path", ""},
-                                              {"xf", ""}}})},
+                  {"slots", Json{{"rate", 100}, {"window", 1}, {"value", "@temp.value"}}},
                   {"flows", Json::array()}};
     Json root = {{"version", 1},
                  {"next_id", 1},

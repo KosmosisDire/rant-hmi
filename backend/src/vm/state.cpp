@@ -137,7 +137,9 @@ RuntimeState::RuntimeState(const Program& program) {
     texts.emplace_back(kDefaultTextCap);
     entity_texts.resize(program.entities.size());
     for (uint32_t e = 0; e < program.entities.size(); ++e) {
-        const std::vector<FieldDef>& entity_fields = program.entities[e].fields;
+        /* the READ side's table: a function's response fields — what a delivery
+           carries, what the cache holds, and what a slot expression loads */
+        const std::vector<FieldDef>& entity_fields = feed_fields(program.entities[e]);
         entity_texts[e].assign(entity_fields.size(), UINT32_MAX);
         for (uint32_t f = 0; f < entity_fields.size(); ++f) {
             if (entity_fields[f].shape != Shape::Text) continue;
@@ -171,6 +173,20 @@ RuntimeState::RuntimeState(const Program& program) {
      * and only this one is stable. Element text slots are appended to `texts` on first
      * use (list_text), after the pool's own run, so nothing above is disturbed. */
     lists.resize(program.layout.list_slots);
+    /* the MESH AGGREGATE MIRRORS ride the same vector, after the cells' slots: one
+       empty retained slot per aggregate-shaped read-side entity field, filled by
+       deliveries (hold_entity_agg) and handed out through the last-value cache */
+    entity_aggs.resize(program.entities.size());
+    for (uint32_t e = 0; e < program.entities.size(); ++e) {
+        const std::vector<FieldDef>& read_fields = feed_fields(program.entities[e]);
+        entity_aggs[e].assign(read_fields.size(), UINT32_MAX);
+        for (uint32_t f = 0; f < read_fields.size(); ++f) {
+            if (read_fields[f].shape != Shape::List && read_fields[f].shape != Shape::Map)
+                continue;
+            entity_aggs[e][f] = static_cast<uint32_t>(lists.size());
+            lists.emplace_back();
+        }
+    }
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
         if (!cell.has_list) continue;
@@ -223,7 +239,12 @@ RuntimeState::RuntimeState(const Program& program) {
 
     last.resize(program.entities.size());
     for (uint32_t i = 0; i < program.entities.size(); ++i)
-        last[i].fields.resize(program.entities[i].fields.size(), Value::nil());
+        /* sized for BOTH tables: a function's mirror holds its response (what a slot
+           expression reads), while ReadEnt walks the value/request table — the wider
+           run keeps either read in bounds and the unused tail stays Nil */
+        last[i].fields.resize(std::max(program.entities[i].fields.size(),
+                                       feed_fields(program.entities[i]).size()),
+                              Value::nil());
 
     deadband.resize(program.layout.deadband_slots, Value::nil());
     throttle.resize(program.layout.throttle_slots, UINT64_MAX);
@@ -367,6 +388,62 @@ bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& 
     held.total = count;
     values[cell_index] = retained_value(held, list_slot, pairs);
     return true;
+}
+
+Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
+                                    const std::string_view* elem_texts,
+                                    uint32_t delivered, bool pairs, ValueTag elem,
+                                    uint32_t bound) noexcept {
+    if (list_slot >= lists.size()) return Value::nil();
+    if (!data && delivered) return Value::nil();
+    ListState& held = lists[list_slot];
+    const uint32_t width = pairs ? 2u : 1u;
+    uint32_t count = delivered / width;
+    const uint32_t limit = std::min(bound ? bound : kVarrCeiling, kRetainedCeiling);
+    if (count > limit) count = limit;   /* the ceiling: truncate, never overrun */
+    const uint32_t span = count * width;
+    if (held.elems.size() < span) held.elems.resize(span, Value::nil());
+
+    /* A MAP arrives in the owner's own order and a retained map is SORTED BY KEY: the
+       order is decided over the delivery's key views (still valid here), then the
+       entries land already in place — text is homed per POSITION, so deciding the
+       order first is what keeps each key's bytes from being copied twice. */
+    uint32_t order[kRetainedCeiling];
+    if (pairs) {
+        for (uint32_t i = 0; i < count; ++i) order[i] = i;
+        auto key_of = [&](uint32_t pair) {
+            const Value& key = data[pair * 2];
+            return key.tag == ValueTag::Text && elem_texts ? elem_texts[pair * 2]
+                                                           : std::string_view{};
+        };
+        for (uint32_t i = 1; i < count; ++i) {
+            const uint32_t held_index = order[i];
+            uint32_t j = i;
+            while (j > 0 && key_of(held_index) < key_of(order[j - 1])) {
+                order[j] = order[j - 1];
+                --j;
+            }
+            order[j] = held_index;
+        }
+    }
+
+    for (uint32_t at = 0; at < span; ++at) {
+        const uint32_t from = pairs ? order[at / 2] * 2 + (at & 1u) : at;
+        Value element = data[from];
+        if (element.tag == ValueTag::Text) {
+            const uint32_t slot = list_text(held, at);
+            if (slot == UINT32_MAX) return Value::nil();
+            texts[slot].set(elem_texts ? elem_texts[from] : std::string_view{});
+            element = Value::text(slot);
+        }
+        held.elems[at] = element;
+    }
+    held.count = count;
+    /* a mirror is not on the wire, so its generation only has to keep moving */
+    ++held.gen;
+    held.total = count;
+    return pairs ? Value::retained_map(list_slot, count)
+                 : Value::retained_list(list_slot, count, elem);
 }
 
 bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Value value,

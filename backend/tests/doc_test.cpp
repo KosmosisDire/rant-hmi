@@ -93,8 +93,10 @@ void test_defaults() {
     CHECK(d.find(kDocId) != nullptr);
 
     /* ONE KIND: an instance is a frame carrying a type, and the frame variant's lists are
-       filled even when the file omitted them */
-    CHECK(w["feeds"].is_array());
+       filled even when the file omitted them. `feeds` is GONE from the model (spec D1):
+       a binding is the slot's own expression value, and `poll` is its cadence metadata. */
+    CHECK(w.find("feeds") == w.end());
+    CHECK(w["poll"].is_object());
     CHECK(w["flows"].is_array());
     CHECK(w["locals"].is_array());
     CHECK(w["slots"].is_object());
@@ -164,13 +166,26 @@ void test_round_trip() {
     CHECK(fresh["slots"].is_object());
     CHECK(fresh["attrs"].is_object());
     CHECK(fresh.find("layout") == fresh.end());
-    CHECK(fresh["feeds"].is_array());
+    CHECK(fresh["poll"].is_object());
+    CHECK(fresh.find("feeds") == fresh.end());
 
     const char* path = "hmi_doc_test.tmp.json";
     CHECK_MSG(d.to_file(path, err), err);
     Document reloaded;
     CHECK_MSG(Document::from_file(path, reloaded, err), err);
     CHECK_MSG(reloaded.root == d.root, "reload differs from what was saved");
+
+    /* a document still carrying a `feeds` array is refused loudly: the model has no
+       such property any more (spec D1) — the one-time migration rewrites it, nothing
+       silently drops it */
+    {
+        Json stale = d.root;
+        stale["pages"][0]["children"][0]["children"][0]["feeds"] = Json::array();
+        Document refused;
+        std::string why;
+        CHECK(!refused.adopt(std::move(stale), why));
+        CHECK_MSG(why.find("feeds") != std::string::npos, why);
+    }
 
     /* and saving the reload is byte-identical: the file is a stable artifact */
     const char* path2 = "hmi_doc_test.tmp2.json";
@@ -235,11 +250,14 @@ void test_structure_ops() {
     /* remove takes the subtree with it */
     const uint64_t main_col = id_of(named_frame(d, "Main"));
     const uint64_t readout = id_of(labelled(d, "Flow"));
-    const uint64_t feed = id_of(labelled(d, "Flow")["feeds"][0]);
+    const uint64_t slider_flow = id_of(labelled(d, "Setpoint")["flows"][0]);
+    const uint64_t slider = id_of(labelled(d, "Setpoint"));
     CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", readout}}}, err), err);
     CHECK(d.find(readout) == nullptr);
-    CHECK(d.find(feed) == nullptr);
-    CHECK((*d.node(main_col))["children"].size() == 5);   /* 5 minus the removed readout */
+    CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", slider}}}, err), err);
+    CHECK(d.find(slider) == nullptr);
+    CHECK(d.find(slider_flow) == nullptr);   /* the flow went with its widget */
+    CHECK((*d.node(main_col))["children"].size() == 4);   /* 6 minus the two removed */
     CHECK(d.find(page_id) != nullptr);
 
     /* a DO step flipped to another kind gains that kind's fields */
@@ -289,8 +307,10 @@ void test_rename() {
 
     CHECK(global_named(d, "flowRate") != nullptr);
     CHECK(global_named(d, "flow") == nullptr);
-    /* the feed source, the move destination and the expression all followed */
-    CHECK(labelled(d, "Flow")["feeds"][0]["src"]["name"] == "flowRate");
+    /* the slot expression, the move destination and the step expression all followed
+       (the slots object is a SlotMap role: every string leaf is an expression) */
+    CHECK(labelled(d, "Flow")["slots"]["value"] == "flowRate.round(1)");
+    CHECK(labelled(d, "History")["slots"]["value"] == "flowRate");
     CHECK(labelled(d, "Reset")["flows"][0]["do"][1]["to"]["local"] == "flowRate");
     CHECK((*d.node(step))["from"]["expr"] == "flowRate * 2 + flowRate");
     /* and the fan-out is echoed as plain set_props, so a client needs no rename rule */
@@ -863,7 +883,7 @@ void test_group() {
     CHECK(r.ops[0]["node"]["children"].is_array() && r.ops[0]["node"]["children"].empty());
     /* and the box arrives PREPARED: every default the document holds is already on it */
     CHECK(r.ops[0]["node"]["attrs"]["w"] == "836");
-    CHECK(r.ops[0]["node"]["feeds"].is_array() && r.ops[0]["node"]["type"] == "");
+    CHECK(r.ops[0]["node"]["poll"].is_object() && r.ops[0]["node"]["type"] == "");
     CHECK(r.ops[1]["op"] == "move" && r.ops[1]["node"] == setpoint &&
           r.ops[1]["parent"] == frame_id && r.ops[1]["list"] == "children" &&
           r.ops[1]["index"] == 0);

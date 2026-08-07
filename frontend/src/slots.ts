@@ -16,6 +16,54 @@
 
 import { Json, Live, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Node } from "./types.js";
 
+/* ---- the slot value ENCODING (spec D1) ----
+ *
+ * A slot value is number | bool (degenerate literals) or a STRING, which is a
+ * wire-tier expression the backend compiles. The native editors keep speaking
+ * literals through the two helpers below: `spellSlotLiteral` writes the canonical
+ * spelling a picker's literal commits as, `unspellSlotLiteral` reads it back for
+ * display. A string neither recognises is a real expression — a BOUND slot. */
+
+/* is this string one of the literal spellings, and which kind */
+function literalKind(text: string): "text" | "color" | "token" | "num" | "bool" |
+                                     "agg" | "variants" | "empty" | null {
+  const at = text.trim();
+  if (at === "") return "empty";
+  if (/^'(?:\\.|[^'\\])*'$/.test(at) || /^"(?:\\.|[^"\\])*"$/.test(at)) return "text";
+  if (/^#[0-9a-fA-F]{3,8}$/.test(at)) return "color";
+  if (/^\$[A-Za-z0-9_-]+$/.test(at)) return "token";
+  if (/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(at)) return "num";
+  if (at === "true" || at === "false") return "bool";
+  if (at.startsWith("[") || at.startsWith("{")) return "agg";
+  if (at.startsWith("variants(") && at.endsWith(")")) return "variants";
+  return null;
+}
+
+/* the expression a native editor's literal commits as: text-ish shapes quote, the
+ * rest already ARE literal spellings (hex colors, $tokens, JSON aggregates) */
+export function spellSlotLiteral(shape: string, value: Json): Json {
+  if (typeof value !== "string") return value;   /* number | bool ride raw */
+  if (shape === "text" || shape === "enum" || shape === "align")
+    return "'" + value.replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+  return value;
+}
+
+/* the literal a stored value displays as: quoted text unquotes, every other literal
+ * spelling (and every live/raw value) passes through as itself */
+export function unspellSlotLiteral(value: Json): Json {
+  if (typeof value !== "string") return value;
+  const at = value.trim();
+  if (/^'(?:\\.|[^'\\])*'$/.test(at) || /^"(?:\\.|[^"\\])*"$/.test(at))
+    return at.slice(1, -1).replace(/\\(.)/g, "$1");
+  return value;
+}
+
+/* is this authored slot value a real EXPRESSION (a bound slot), rather than one of
+ * the literal spellings? */
+export function slotExpression(value: Json): boolean {
+  return typeof value === "string" && literalKind(value) === null;
+}
+
 /* ---- theme tokens ---- */
 
 type ThemeMode = "dark" | "light";
@@ -61,9 +109,31 @@ function slotSpec(type: WidgetType | null, name: string): SlotSpec | null {
   return type.slots.find((s) => s.name === name) ?? null;
 }
 
-/* which slots this widget instance feeds from the mesh (at most one feed per slot) */
-export function fedSlots(widget: Node): Set<string> {
-  return new Set((widget.feeds ?? []).map((feed) => feed.slot));
+/* every authored slot value on this widget, visited at its dotted address */
+export function eachAuthoredSlot(
+  widget: Node,
+  visit: (address: string, value: Json) => void,
+): void {
+  const walk = (level: Json, prefix: string) => {
+    if (!level || typeof level !== "object" || Array.isArray(level)) return;
+    for (const [key, held] of Object.entries(level)) {
+      const address = prefix ? prefix + "." + key : key;
+      if (held && typeof held === "object" && !Array.isArray(held)) walk(held, address);
+      else visit(address, held);
+    }
+  };
+  walk(widget.slots ?? {}, "");
+}
+
+/* which slots this instance BINDS: the authored value is an expression, so the
+ * backend evaluates it standing and the cell is the runtime's to write (what the
+ * `feeds` list used to say, spelled in the value itself) */
+export function boundSlots(widget: Node): Set<string> {
+  const out = new Set<string>();
+  eachAuthoredSlot(widget, (address, value) => {
+    if (slotExpression(value)) out.add(address);
+  });
+  return out;
 }
 
 /* Which slots the RUNTIME owns: a feed, an authored flow whose move writes the slot, or
@@ -71,7 +141,7 @@ export function fedSlots(widget: Node): Set<string> {
  * backend's precedence rule and is not restated here. Whether the slot is
  * written at all does not depend on that, and it is all a view needs to know. */
 export function runtimeSlots(widget: Node, type: WidgetType | null): Set<string> {
-  const out = fedSlots(widget);
+  const out = boundSlots(widget);
   const written = (flows: Json[]) => {
     for (const flow of flows ?? [])
       for (const step of flow?.do ?? [])
@@ -97,7 +167,7 @@ export function operable(widget: Node | null, type: WidgetType | null): boolean 
     ((flow?.when ?? []) as Json[]).some((t: Json) =>
       t?.kind === "event" || (!t?.kind && typeof t?.name === "string" && t.name));
   if ((widget.flows ?? []).some(onEvent)) return true;
-  const fed = fedSlots(widget);
+  const fed = boundSlots(widget);
   for (const flow of (type?.behavior ?? []) as Json[]) {
     if (!onEvent(flow)) continue;
     for (const step of (flow?.do ?? []) as Json[])

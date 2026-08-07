@@ -19,7 +19,8 @@ import { diagIcon, Editor, section } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
 import { ownedSlots, partIndex, slotLeaf } from "../parts.js";
 import { bindField, bindText } from "../reconcile.js";
-import { authoredSlot, editedSlot, fedSlots, runtimeSlots, slotCell, typeOf, withSlot } from "../slots.js";
+import { highlighted } from "../highlight.js";
+import { authoredSlot, boundSlots, editedSlot, runtimeSlots, slotCell, spellSlotLiteral, typeOf, unspellSlotLiteral, withSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
 import { ComponentDef, isInstance, Json, Node, PropDef, SlotSpec, TemplateNode,
          WidgetType } from "../types.js";
@@ -27,7 +28,6 @@ import { ComponentDef, isInstance, Json, Node, PropDef, SlotSpec, TemplateNode,
 import { attrsSection, attrsShape, componentViewShape, interactSection, ownedShape,
          propsSection, renderBuiltinComponent, renderComponentView } from "./components.js";
 import { valueEditor } from "./editors.js";
-import { feedCard, feedShape } from "./feeds.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 
@@ -634,7 +634,7 @@ export function inspectorShape(editor: Editor): string {
     });
   const widget = node;
   const type = typeOf(editor.registry, widget.type ?? "");
-  const fed = fedSlots(widget);
+  const fed = boundSlots(widget);
   const template = JSON.stringify(type?.template ?? null);
   return JSON.stringify({
     id: widget.id,
@@ -651,7 +651,6 @@ export function inspectorShape(editor: Editor): string {
     /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
        genuinely structural; it is a boolean, and it moves only when an aspect is authored */
     aspect: String(authoredSlot(widget, type, "aspect") ?? "") !== "",
-    feeds: (widget.feeds ?? []).map(feedShape),
     flows: (widget.flows ?? []).map(flowShape),
     locals: (widget.locals ?? []).map(varShape),
     diag: editor.diagFor(widget.id).map((d) => d.node + ":" + d.code + ":" + d.message),
@@ -697,8 +696,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     renderPartInspector(host, editor, widget, type, part);
     return;
   }
-  const fed = fedSlots(widget);
-  const feeds = widget.feeds ?? [];
+  const fed = boundSlots(widget);
   /* ONLY the widget's own properties: what a part declares is edited by
      selecting that part, and appears nowhere else. This is the whole point of parts
      owning properties — a Slider's inspector is its value, its range and its frame,
@@ -727,10 +725,11 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
 
   /* 1. Data in, and ONLY where the type takes values: what a widget consumes is its
    *    value-group slots, so a Button (which consumes nothing) shows no such section.
-   *    A fed slot is a card, an unfed one a row with a bind button. */
+   *    A bound slot's value IS its expression; a literal one edits natively. */
   if (valueSlots.length)
     body.append(
-      ...section("data-in", "Data in", String(feeds.length), () =>
+      ...section("data-in", "Data in",
+        String(valueSlots.filter((s) => fed.has(s.name)).length), () =>
         valueSlots.map((spec) => slotRow(editor, widget, type, fed, spec)),
       ),
     );
@@ -869,7 +868,7 @@ function renderPartInspector(
   });
   host.appendChild(el("div", { class: "inspector-head" }, crumbs));
 
-  const fed = fedSlots(widget);
+  const fed = boundSlots(widget);
   const specs = ownedSlots(type, path)
     .sort((a, b) => slotRank(a.name) - slotRank(b.name));
   const body = el("div", { class: "inspector-body" }, []);
@@ -943,19 +942,13 @@ function slotRow(
   return el("div", { class: "prop-grid" }, slotCells(editor, widget, type, fed, spec));
 }
 
-/* a bound editor stays visible but inert: every control inside stops taking input */
-function disableAll(node: HTMLElement): void {
-  for (const inner of node.querySelectorAll("input, select, button"))
-    (inner as HTMLInputElement).disabled = true;
-}
-
-/* label + editor + the bind chip: which property you are binding is answered by where
- * you are standing. A bound slot keeps its value editor, disabled, as a live
- * view of what the feed delivers (UNKNOWN until something arrives), and the feed's own
- * editor sits on a full-width row below it.
+/* label + editor: which property you are editing is answered by where you are
+ * standing. A LITERAL slot edits through its native picker; a BOUND slot's value IS
+ * an expression, so the field edits that text directly (the value box takes this row
+ * over wholesale in phase 4) while the bound class keeps the state legible.
  *
- * Whether the slot is bound is STRUCTURE (it decides the chip, the disabling and the card
- * below); what it currently reads is VALUE, and goes into the editor built here. */
+ * Whether the slot is bound is STRUCTURE (it decides which field exists); what it
+ * currently reads is VALUE, and goes into the editor built here. */
 function slotCells(
   editor: Editor,
   widget: Node,
@@ -965,61 +958,55 @@ function slotCells(
 ): HTMLElement[] {
   const bound = fed.has(spec.name);
   const runtime = runtimeSlots(widget, type);
-  /* a slot the runtime writes but no feed owns: the field is live, and editable as the
-     value the runtime starts from */
+  /* a slot the runtime writes but no expression owns: the field is live, and editable
+     as the value the runtime starts from */
   const driven = !bound && runtime.has(spec.name);
   const at = () => editor.store.widget(widget.id) ?? widget;
-  const read = () => editedSlot(at(), type, editor.live, runtime, spec.name);
+  const read = () =>
+    unspellSlotLiteral(editedSlot(at(), type, editor.live, runtime, spec.name));
   const commit = (next: Json) => {
     /* the address is the path into the instance's own nesting: a part's value is
-       written under the part, beside nothing else the widget holds */
-    const slots = withSlot(at().slots, spec.name, next);
+       written under the part, beside nothing else the widget holds; a native picker's
+       literal is spelled into the expression encoding on the way through */
+    const slots = withSlot(at().slots, spec.name, spellSlotLiteral(spec.shape, next));
     editor.apply([{ op: "set_prop", node: widget.id, key: "slots", value: slots }]);
   };
-  const feed = (widget.feeds ?? []).find((f) => f.slot === spec.name);
 
-  const control = el(
-    "span",
-    {
-      class: "value-cell" + (bound ? " bound" : "") + (driven ? " driven" : ""),
-      title: driven
-        ? spec.name + " is written at runtime; this is the value it starts from"
-        : undefined,
-    },
-    [valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, bound, editor)],
-  );
-  if (bound) disableAll(control);
-
-  /* one link icon, two states: bound shows it lit and unbinds, unbound offers the feed */
-  const link = bound
-    ? iconButton("unlink", "unbind " + spec.name, () => {
-        if (feed) editor.apply([{ op: "remove", node: feed.id }]);
-      })
-    : iconButton("link", "feed " + spec.name + " from the mesh, a variable or an expression", () =>
-        editor.apply([
-          {
-            op: "insert",
-            parent: widget.id,
-            list: "feeds",
-            node: { slot: spec.name, src: { kind: "V", name: "" }, path: "", xf: "" },
-          },
-        ]),
-      );
-  if (bound) link.classList.add("on");
+  let control: HTMLElement;
+  if (bound) {
+    /* the document truth is the expression: edit the text as typed, stored as typed
+       (the compiler teaches through the row's finding when it cannot compile) */
+    const expr = () => String(authoredSlot(at(), type, spec.name) ?? "");
+    const input = commitInput(expr(), (text) =>
+      editor.apply([{ op: "set_prop", node: widget.id, key: "slots",
+                      value: withSlot(at().slots, spec.name, text) }]),
+      { class: "field grow", title: spec.name + " is bound to this expression" });
+    bindField(slotCell(widget, spec.name) + ".expr", input, expr);
+    control = el("span", { class: "value-cell bound" }, [highlighted(input)]);
+  } else {
+    control = el(
+      "span",
+      {
+        class: "value-cell" + (driven ? " driven" : ""),
+        title: driven
+          ? spec.name + " is written at runtime; this is the value it starts from"
+          : undefined,
+      },
+      [valueEditor(spec, spec.shape, slotCell(widget, spec.name), read, commit, false,
+                   editor)],
+    );
+  }
 
   /* the shape is what the editor and the compiler enforce, so the row does not spell it
      out; it is on the label's tooltip for when the user wants to know, beside the
      property's full address (where you are standing already says which part owns it).
      A finding about this slot's value sits right here on its label. */
-  const cells = [
+  return [
     el("label", { text: slotLeaf(spec.name), title: spec.name + ": " + spec.shape }, [
       diagIcon(editor.diagAt(widget.id, spec.name)),
     ]),
     control,
-    link,
+    el("span"),
   ];
-  if (bound && feed)
-    cells.push(el("div", { class: "feed-below" }, [feedCard(editor, widget, type, feed)]));
-  return cells;
 }
 

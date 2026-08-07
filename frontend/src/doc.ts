@@ -9,7 +9,7 @@ import { ComponentDef, Doc, isInstance, Json, Node, Op, Page, Token, Var } from 
    is shared by a page, a component and a frame, because they all hold the SAME kind of
    child — that is the whole of what "one tree" means here. */
 const CHILD_LISTS = ["globals", "tokens", "components", "props", "behavior",
-                     "children", "pages", "locals", "feeds", "flows", "do"];
+                     "children", "pages", "locals", "flows", "do"];
 
 interface Entry {
   node: Json;

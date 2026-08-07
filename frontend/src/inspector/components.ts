@@ -1028,21 +1028,12 @@ function chassisRow(opts: {
   ]);
 }
 
-/* Which literal picker an attr's box gets, from the served table. The table declares
- * no variants column yet: the two variant-listing attrs (a text's `align`, a path's
- * `cap`) spell their vocabulary at the head of the NOTE — "start | center | end
- * (text-align)" — so that leading pattern is read as the declaration until the table
- * grows a real column. Strictly anchored: a prose note never matches. */
-function noteVariants(note: string): string[] | null {
-  const hit = /(?:^|:\s)([a-z][a-z-]*(?:\s\|\s[a-z][a-z-]*)+)(?=\s*\(|\s*$|\s[a-z])/
-    .exec(note ?? "");
-  return hit ? hit[1].split("|").map((s) => s.trim()) : null;
-}
-
+/* Which literal picker an attr's box gets, from the served table — `variants` is a
+ * real column now (registry/attrs.cpp serves it), so the enum picker reads data. */
 function attrBoxType(def: AttrDef): BoxType {
-  if (def.shape === "text") {
-    const variants = noteVariants(def.note);
-    if (variants) return { shape: "enum", variants: () => variants };
+  if (def.shape === "text" && def.variants && def.variants.length) {
+    const variants = def.variants;
+    return { shape: "enum", variants: () => variants };
   }
   if (def.shape === "num" || def.shape === "bool" || def.shape === "color" ||
       def.shape === "text" || def.shape === "list")

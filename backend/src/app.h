@@ -31,8 +31,12 @@ namespace hmi {
  * own root box, and the snapshot carries `node_attrs`, every page node's compiled attrs;
  * 10: list and map cells LEAVE `values` for the `aggs` delta lane — per-cell generation
  * and append cursor, appends only in a live frame, whole on a gen change, absent when
- * nothing moved — and `hist` is gone with the sampling ring it carried) */
-constexpr int kProto = 11;
+ * nothing moved — and `hist` is gone with the sampling ring it carried;
+ * 12: FEEDS ARE GONE (spec D1) — a slot value is number | bool | wire-tier EXPRESSION
+ * text the backend compiles and evaluates standing (`@entity.field` reads the mesh,
+ * quoted text is the literal), widgets carry a `poll` {slot: hz} map instead of
+ * poll_hz, and the attr table gains a `variants` column) */
+constexpr int kProto = 12;
 
 struct AppOptions {
     ServerOptions server;

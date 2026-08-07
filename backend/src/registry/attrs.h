@@ -44,6 +44,10 @@ struct AttrDef {
      * NOMINAL: the renderer owns the real mapping per mechanism (an ink shadow lands
      * on `filter`, not box-shadow — stage.ts), and non-empty is the whole contract. */
     const char* css = "";
+    /* the CLOSED VOCABULARY of a constrained-text attr (a text's `align`, a path's
+     * `cap`): served as a real column so the inspector's enum picker reads data rather
+     * than parsing the note's prose. Empty = free text. */
+    std::vector<std::string> variants;
 };
 
 /* The declared list of node kinds: frame, text, icon, path. This is NOT a second
