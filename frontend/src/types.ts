@@ -83,8 +83,9 @@ export interface Lang {
 export interface AttrDef {
   name: string;
   shape: "num" | "bool" | "text" | "color" | "series" | "any";
-  /* absent = no computed default: the attr is structural (show, repeat, clip, x, y, w, h,
-     rotate, a colour that is simply not painted) and `note` explains what absence means */
+  /* absent = no computed default: the attr is structural (show, repeat, clip, the box
+     fields, rotate, a colour that is simply not painted) and `note` explains what absence
+     means */
   default?: Json;
   note: string;
   /* the CSS property this attr lands on, absent where it has none the browser can

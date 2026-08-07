@@ -703,7 +703,9 @@ function slotSweep(type: WidgetType | null, name: string):
  * property, and on which element (a path's paint rides the <path>, not the box). An ink
  * shadow lands on `filter`, not box-shadow, which is why the served name is nominal. */
 const TRANSITION_COMMON: Record<string, string> = {
-  x: "left", y: "top", w: "width", h: "height",
+  left: "left", top: "top", right: "right", bottom: "bottom",
+  w: "width", h: "height",
+  min_w: "min-width", max_w: "max-width", min_h: "min-height", max_h: "max-height",
   rotate: "transform", origin_x: "transform-origin", origin_y: "transform-origin",
   shadow: "box-shadow", shadow_x: "box-shadow", shadow_y: "box-shadow",
   shadow_blur: "box-shadow",
@@ -980,8 +982,14 @@ function gestureStateWriter(state: StageState, editor: Editor) {
  * A style property clears with "", an SVG attribute with removeAttribute. */
 
 /* How a node sits in what holds it: the node places itself, in canvas px on a page and in
- * fractions of its parent inside a component. Both edges pin when neither x nor w is set,
- * which is why an overlay needs nothing said about it. */
+ * fractions of its parent inside a component. AN AXIS IS AUTHORED FROM EITHER END: `left`
+ * places the near edge (the origin point, exactly the old `x`), and `right`, once set,
+ * pins the FAR edge as an inset from the parent's — with both set the width follows the
+ * edges and `w` goes inert; with `right` alone the box anchors right at `w`. The browser
+ * itself derives the edge-pinned size, which is why this is all plain CSS writes. Both
+ * edges pin when nothing on the axis is set, which is why an overlay needs nothing said
+ * about it. `min_w`/`max_w`/`min_h`/`max_h` clamp whatever the axis derives — an authored
+ * size, pinned edges, or an aspect ratio. */
 function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   el.style.position = "absolute";
   /* which unit system this node's numbers are in: page nodes are canvas px, a
@@ -989,38 +997,54 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
   const px = !node.frac;
   const unit = (value: number) => (px ? value + "px" : pct(value));
   const aspect = num(attrOf(node, "aspect", cells));
-  const x = num(attrOf(node, "x", cells));
-  const y = num(attrOf(node, "y", cells));
+  const left = num(attrOf(node, "left", cells));
+  const top = num(attrOf(node, "top", cells));
+  const right = num(attrOf(node, "right", cells));
+  const bottom = num(attrOf(node, "bottom", cells));
   const w = num(attrOf(node, "w", cells));
   const h = num(attrOf(node, "h", cells));
   const ox = num(attrOf(node, "origin_x", cells)) ?? 0;
   const oy = num(attrOf(node, "origin_y", cells)) ?? 0;
-  /* A STRETCHED AXIS HAS NO PLACEMENT POINT: both edges are pinned, so there is no `x` for
-     the origin to be the reference OF, and the offset below must not apply to it. Only the
-     rotation half of `origin_x`/`origin_y` survives on such an axis. */
-  const spanX = w === null && x === null;
-  const spanY = h === null && y === null;
+  /* A STRETCHED AXIS HAS NO PLACEMENT POINT: both edges are pinned, so there is no `left`
+     for the origin to be the reference OF, and the offset below must not apply to it. Only
+     the rotation half of `origin_x`/`origin_y` survives on such an axis. A pinned FAR edge
+     takes the placement point away the same way: `left` and `right` are then both plain
+     edges, and the width is theirs to decide. */
+  const spanX = w === null && left === null && right === null;
+  const spanY = h === null && top === null && bottom === null;
   if (spanX) {
     el.style.left = "0";
     el.style.right = "0";
     el.style.width = "";
   } else {
-    el.style.left = unit(x ?? 0);
-    el.style.right = "";
-    el.style.width = w !== null ? unit(w) : "";
+    /* absent `left` pins to 0 only while the axis is left-authored; with `right` set the
+       absence means anchored-right, and left stays free */
+    el.style.left = left !== null ? unit(left) : right !== null ? "" : unit(0);
+    el.style.right = right !== null ? unit(right) : "";
+    el.style.width =
+      w !== null && !(left !== null && right !== null) ? unit(w) : "";
   }
   if (spanY) {
     el.style.top = "0";
     el.style.bottom = "0";
     el.style.height = "";
   } else {
-    el.style.top = unit(y ?? 0);
-    el.style.bottom = "";
-    el.style.height = h !== null ? unit(h) : "";
+    el.style.top = top !== null ? unit(top) : bottom !== null ? "" : unit(0);
+    el.style.bottom = bottom !== null ? unit(bottom) : "";
+    el.style.height =
+      h !== null && !(top !== null && bottom !== null) ? unit(h) : "";
   }
+  const minW = num(attrOf(node, "min_w", cells));
+  const maxW = num(attrOf(node, "max_w", cells));
+  const minH = num(attrOf(node, "min_h", cells));
+  const maxH = num(attrOf(node, "max_h", cells));
+  el.style.minWidth = minW !== null ? unit(minW) : "";
+  el.style.maxWidth = maxW !== null ? unit(maxW) : "";
+  el.style.minHeight = minH !== null ? unit(minH) : "";
+  el.style.maxHeight = maxH !== null ? unit(maxH) : "";
   el.style.aspectRatio = aspect !== null && aspect > 0 ? String(aspect) : "";
 
-  /* ONE REFERENCE POINT serves both jobs: the point `x`/`y` places, and the pivot
+  /* ONE REFERENCE POINT serves both jobs: the point `left`/`top` places, and the pivot
      `rotate` turns about — a fraction of the node's OWN box in either unit system, so a
      needle authored with its origin at its hub rotates about the dial's centre with
      nothing else said. The two jobs SEPARATE on a stretched axis, which is exactly what a
@@ -1028,8 +1052,8 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
      (It took the shift too until 2026-08-05, which put every needle half a dial up and to
      the left of where it belonged — invisible only because the box above it clipped.) */
   const rotate = num(attrOf(node, "rotate", cells));
-  const shiftX = spanX ? 0 : ox;
-  const shiftY = spanY ? 0 : oy;
+  const shiftX = spanX || right !== null ? 0 : ox;
+  const shiftY = spanY || bottom !== null ? 0 : oy;
   const parts: string[] = [];
   if (shiftX || shiftY)
     parts.push("translate(" + pct(-shiftX) + ", " + pct(-shiftY) + ")");

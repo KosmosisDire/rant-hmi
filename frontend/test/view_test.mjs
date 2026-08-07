@@ -182,7 +182,7 @@ const frameNamed = (node, name) => {
 check(page.children.length === 4, "the page is the four top-level panes, nothing loose");
 /* EVERY FIELD IS EXPRESSION TEXT, a literal being the degenerate case: the place a
    pane sits and the token it is painted with live in one map, and are read the same */
-check(frameNamed(page, "Main")?.attrs?.x === "22" &&
+check(frameNamed(page, "Main")?.attrs?.left === "22" &&
         frameNamed(page, "Main")?.attrs?.w === "880",
       "the main pane carries its own box in canvas px");
 check(frameNamed(page, "Main")?.attrs?.surface === "$surface",
@@ -303,7 +303,7 @@ ws.send(JSON.stringify({
       attrs: { surface: "'#222222'" },
       children: [
         { kind: "frame", name: "body",
-          attrs: { x: "0.1", y: "0.1", w: "0.8", h: "0.8" },
+          attrs: { left: "0.1", top: "0.1", w: "0.8", h: "0.8" },
           children: [{ kind: "text", name: "label", attrs: { text: "text" } }] },
       ],
       behavior: [],
@@ -321,7 +321,7 @@ while (!refreshed.node_attrs?.[String(pill.id)]) refreshed = await next("snapsho
 const pillBody = pill.children[0];
 check((refreshed.node_attrs?.[String(pill.id)]?.attrs?.surface?.code?.length ?? 0) > 0,
       "a doc component's ROOT compiles into node_attrs under its own id");
-check(refreshed.node_attrs?.[String(pillBody.id)]?.attrs?.x?.code?.[0]?.op === "CONST",
+check(refreshed.node_attrs?.[String(pillBody.id)]?.attrs?.left?.code?.[0]?.op === "CONST",
       "and its internal nodes too: an entered widget renders through the page's path");
 check(refreshed.node_attrs?.[String(pillBody.children[0].id)]?.attrs?.text?.code?.[0]?.op
         === "LOAD",
@@ -917,7 +917,7 @@ check(widgetLabels.includes("surface"), "and keeps the widget's own frame slots"
    is the same attr row a plain box gets, through the same commit */
 const widgetAttrNames = widgetPanel.host.querySelectorAll(".attr-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(widgetAttrNames.includes("x") && widgetAttrNames.includes("w"),
+check(widgetAttrNames.includes("left") && widgetAttrNames.includes("w"),
       "the widget view places the instance, got " + widgetAttrNames.join(","));
 {
   /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
@@ -1093,7 +1093,8 @@ labelPanel.render(designInspectorShape(labelEditor), (host) => renderDesignInspe
    parent decides which, so offering both would be offering a field that does nothing half
    the time — which is the sort of dead row this table exists to prevent */
 const attrRows = labelPanel.host.querySelectorAll(".attr-row");
-const MEASURED = ["x", "y", "w", "h", "origin_x", "origin_y", "rotate"];
+const MEASURED = ["left", "top", "right", "bottom", "w", "h",
+                  "min_w", "max_w", "min_h", "max_h", "origin_x", "origin_y", "rotate"];
 const ARRANGED = ["grow", "min"];
 const textVocabCount = editor.attrTable.perKind.text.length +
   editor.attrTable.common.filter((a) => !ARRANGED.includes(a.name)).length;
@@ -1103,7 +1104,7 @@ check(attrRows.length === textVocabCount,
 const attrNamed = (rows, name) =>
   rows.find((row) => row.querySelector(".attr-name")?.textContent === name);
 check(MEASURED.every((name) => attrNamed(attrRows, name) !== undefined),
-      "a child of a FREE frame places itself: x/y/w/h are offered");
+      "a child of a FREE frame places itself: the box fields are offered");
 check(ARRANGED.every((name) => attrNamed(attrRows, name) === undefined),
       "and the share its parent would have given it is not");
 const attrRowNamed = (rows, name) =>
@@ -1456,11 +1457,11 @@ stageStore.load({
 const prog = (v) => ({ code: [{ op: "CONST", v }] });
 const loads = (cell) => ({ code: [{ op: "LOAD", cell }] });
 const stageAttrs = {
-  "901": { attrs: { x: prog(22), y: prog(22), w: prog(440), h: prog(220),
+  "901": { attrs: { left: prog(22), top: prog(22), w: prog(440), h: prog(220),
                     radius: prog(3), surface: loads("theme:accent") } },
-  "902": { attrs: { x: prog(484), y: prog(22), w: prog(440), h: prog(220) } },
-  "903": { attrs: { x: prog(22), y: prog(22), w: prog(198), h: prog(110) } },
-  "904": { attrs: { x: prog(242), y: prog(22), w: prog(176), h: prog(110) } },
+  "902": { attrs: { left: prog(484), top: prog(22), w: prog(440), h: prog(220) } },
+  "903": { attrs: { left: prog(22), top: prog(22), w: prog(198), h: prog(110) } },
+  "904": { attrs: { left: prog(242), top: prog(22), w: prog(176), h: prog(110) } },
   "905": { attrs: {} },
 };
 
@@ -1511,6 +1512,41 @@ check(stageNode("leaf", 905).style.position === "absolute" &&
         stageNode("leaf", 905).style.right === "0",
       "an unplaced child stretches over its parent");
 check(row.style.borderRadius === "3px", "radius reaches the style");
+
+/* ---- EDGE-ANCHORED AXES: `right`/`bottom` pin the far edge and own the size ----
+   The browser derives an edge-pinned width itself, which is why the applier only ever
+   writes plain CSS edges: left+right stand and width clears; right alone anchors the box
+   at `w`; the min/max clamps land as their own properties on every combination. */
+const label = stageNode("leaf", 904);
+stageAttrs["904"].attrs = { left: prog(242), right: prog(44), top: prog(22),
+                            w: prog(176), h: prog(110) };
+stageEditor.live = { epoch: 21, values: {} };
+drawStage();
+check(label.style.left === "242px" && label.style.right === "44px" &&
+        label.style.width === "",
+      "both edges pin: the width is theirs and `w` goes inert, got width '" +
+        label.style.width + "'");
+stageAttrs["904"].attrs = { right: prog(44), top: prog(22), w: prog(176), h: prog(110) };
+stageEditor.live = { epoch: 22, values: {} };
+drawStage();
+check(label.style.left === "" && label.style.right === "44px" &&
+        label.style.width === "176px",
+      "the far edge alone anchors the box right at its own w, got left '" +
+        label.style.left + "' right '" + label.style.right + "'");
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), w: prog(176), h: prog(110),
+                            min_w: prog(88), max_w: prog(352), max_h: prog(132) };
+stageEditor.live = { epoch: 23, values: {} };
+drawStage();
+check(label.style.minWidth === "88px" && label.style.maxWidth === "352px" &&
+        label.style.maxHeight === "132px" && label.style.minHeight === "",
+      "the clamps land as their own properties, absent ones cleared, got min '" +
+        label.style.minWidth + "'");
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), w: prog(176), h: prog(110) };
+stageEditor.live = { epoch: 24, values: {} };
+drawStage();
+check(label.style.right === "" && label.style.minWidth === "" &&
+        label.style.maxWidth === "" && label.style.left === "242px",
+      "and every edge and clamp clears when its attr goes — the applier is total");
 
 /* ---- CLIPPING IS THE `clip` ATTR'S, and nobody else's ----
    Both of these boxes carried `overflow: hidden` from the STYLESHEET once, which made the
@@ -1565,7 +1601,7 @@ check(spanned.style.transform === "rotate(30deg)",
 check(spanned.style.transformOrigin === "50% 50%",
       "and still turns about its own origin, got " + spanned.style.transformOrigin);
 /* the same origin on a PLACED axis still shifts: that is what `x` places */
-stageAttrs["905"].attrs = { x: prog(40), y: prog(40), w: prog(60), h: prog(60),
+stageAttrs["905"].attrs = { left: prog(40), top: prog(40), w: prog(60), h: prog(60),
                             origin_x: prog(0.5), origin_y: prog(0.5), rotate: prog(30) };
 stageEditor.live = { epoch: 9, values: {} };
 drawStage();
@@ -1627,7 +1663,7 @@ stageStore.apply(stageStore.version() + 1, [
   { op: "insert", parent: 900, list: "children",
     node: { id: 906, kind: "text", name: "Ink", attrs: {} } },
 ]);
-stageAttrs["906"] = { attrs: { x: prog(22), y: prog(300), w: prog(200), h: prog(30),
+stageAttrs["906"] = { attrs: { left: prog(22), top: prog(300), w: prog(200), h: prog(30),
                                text: prog("shadowed") } };
 stageEditor.live = { epoch: 20, values: {} };
 drawStage();
@@ -1671,9 +1707,9 @@ shadowOn(906, { shadow: prog("") }, 24);
 check(ink().style.filter === "" && stageHost.querySelector("filter") === null,
       "clearing the shadow takes the filter with it");
 
-stageAttrs["901"].attrs = { x: prog(22), y: prog(22), w: prog(440), h: prog(220),
+stageAttrs["901"].attrs = { left: prog(22), top: prog(22), w: prog(440), h: prog(220),
                             radius: prog(3), surface: loads("theme:accent") };
-stageAttrs["903"].attrs = { x: prog(22), y: prog(22), w: prog(198), h: prog(110) };
+stageAttrs["903"].attrs = { left: prog(22), top: prog(22), w: prog(198), h: prog(110) };
 stageStore.apply(stageStore.version() + 1, [{ op: "remove", node: 906 }]);
 delete stageAttrs["906"];
 stageEditor.live = { epoch: 25, values: {} };
@@ -1765,7 +1801,7 @@ check(stageNode("frame", 901) === heldAgain &&
       { kind: "frame", name: "knob", attrs: { surface: pressedTint },
         interact: { primitive: "press", params: {}, emits: { tap: "tap" } } },
       { kind: "frame", name: "tick", attrs: { repeat: cell("slot:count"),
-                                              x: cell("repeat:frac") } },
+                                              left: cell("repeat:frac") } },
     ] },
   };
   const rStore = new DocStore();
@@ -1780,9 +1816,9 @@ check(stageNode("frame", 901) === heldAgain &&
     ] }],
   });
   const rAttrs = {
-    "510": { attrs: { x: prog(11), y: prog(11), w: prog(440), h: prog(220) } },
-    "511": { attrs: { x: prog(22), y: prog(22), w: prog(198), h: prog(110) } },
-    "520": { attrs: { x: prog(484), y: prog(11), w: prog(220), h: prog(110) } },
+    "510": { attrs: { left: prog(11), top: prog(11), w: prog(440), h: prog(220) } },
+    "511": { attrs: { left: prog(22), top: prog(22), w: prog(198), h: prog(110) } },
+    "520": { attrs: { left: prog(484), top: prog(11), w: prog(220), h: prog(110) } },
   };
   const rHost = new Element("section");
   const rView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
@@ -1940,7 +1976,7 @@ check(stageNode("frame", 901) === heldAgain &&
     template: { kind: "frame", name: "", attrs: {}, children: [
       /* the width transition's DURATION is an expression over the smoothed slot: what
          it must read is the TRUE value, never the eased picture of it */
-      { kind: "frame", name: "bar", attrs: { x: cell("slot:value"), w: prog(0.1),
+      { kind: "frame", name: "bar", attrs: { left: cell("slot:value"), w: prog(0.1),
                                              h: prog(0.5) },
         transitions: { w: { ms: { code: [{ op: "LOAD", cell: "slot:value" },
                                          { op: "CONST", v: 1000 },
@@ -1961,9 +1997,9 @@ check(stageNode("frame", 901) === heldAgain &&
     ] }],
   });
   const tAttrs = {
-    "710": { attrs: { x: prog(11), y: prog(11), w: prog(220), h: prog(110),
+    "710": { attrs: { left: prog(11), top: prog(11), w: prog(220), h: prog(110),
                       surface: prog("#333333") } },
-    "711": { attrs: { x: prog(11), y: prog(200), w: prog(220), h: prog(110) } },
+    "711": { attrs: { left: prog(11), top: prog(200), w: prog(220), h: prog(110) } },
   };
   const tView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
   const tHost = new Element("section");
@@ -1996,7 +2032,7 @@ check(stageNode("frame", 901) === heldAgain &&
   check(bar().style.transition === "width 200ms ease",
         "a template node's transition metadata reaches its element, its duration an "
         + "expression over the node's own scope, got '" + bar().style.transition + "'");
-  tAttrs["710"].transitions = { x: { ms: 400, profile: "linear" },
+  tAttrs["710"].transitions = { left: { ms: 400, profile: "linear" },
                                 surface: { ms: 300, profile: "ease-out" } };
   tEditor.live = { epoch: 2, values: {} };
   tDraw();
@@ -2012,19 +2048,19 @@ check(stageNode("frame", 901) === heldAgain &&
 
   /* A SPEED-TIMED ATTR: the rate turns into each move's OWN duration -- distance over
      speed -- so a short step gets a short blend. First sight only seeds the memory. */
-  tAttrs["710"].transitions = { x: { speed: prog(500), profile: prog("linear") } };
+  tAttrs["710"].transitions = { left: { speed: prog(500), profile: prog("linear") } };
   tEditor.live = { epoch: 30, values: {} };
   tDraw();
   check(box.style.transition === "",
         "a speed row's first sight seeds and times nothing, got '" +
           box.style.transition + "'");
-  tAttrs["710"].attrs.x = prog(211);
+  tAttrs["710"].attrs.left = prog(211);
   tEditor.live = { epoch: 31, values: {} };
   tDraw();
   check(box.style.transition === "left 400ms linear",
         "a 200px move at 500px per second is this move's own 400ms, got '" +
           box.style.transition + "'");
-  tAttrs["710"].attrs.x = prog(261);
+  tAttrs["710"].attrs.left = prog(261);
   tEditor.live = { epoch: 32, values: {} };
   tDraw();
   check(box.style.transition === "left 100ms linear",
@@ -2035,7 +2071,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "a pass where the value stands still keeps the last duration -- the list never "
         + "changes under a running blend");
   delete tAttrs["710"].transitions;
-  tAttrs["710"].attrs.x = prog(11);
+  tAttrs["710"].attrs.left = prog(11);
   tEditor.live = { epoch: 34, values: {} };
   tDraw();
 
@@ -2101,9 +2137,9 @@ check(stageNode("frame", 901) === heldAgain &&
               profile: "linear" }],
     template: { ...sweepType.template, children: [
       ...sweepType.template.children,
-      { kind: "frame", name: "rawbar", attrs: { x: cell("slot:raw"), w: prog(0.1),
+      { kind: "frame", name: "rawbar", attrs: { left: cell("slot:raw"), w: prog(0.1),
                                                 h: prog(0.2) } },
-      { kind: "frame", name: "pacebar", attrs: { x: cell("slot:pace"), w: prog(0.1),
+      { kind: "frame", name: "pacebar", attrs: { left: cell("slot:pace"), w: prog(0.1),
                                                  h: prog(0.1) } },
     ] },
   }] };
@@ -2167,9 +2203,12 @@ check(stageNode("frame", 901) === heldAgain &&
     framePanel.host.querySelectorAll(".attr-row")
       .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
   /* the box's own dressing and its one placement vocabulary: everything sits at its own
-     x/y in the one static space, so the same eight rows stand on every node */
+     left/top in the one static space — the far edges and the clamps beside them — so the
+     same box rows stand on every node */
   for (const name of ["surface", "border", "border_w", "radius",
-                      "x", "y", "w", "h", "aspect", "origin_x", "origin_y", "rotate"])
+                      "left", "top", "right", "bottom", "w", "h",
+                      "min_w", "max_w", "min_h", "max_h",
+                      "aspect", "origin_x", "origin_y", "rotate"])
     check(attrRowFor(name) !== null, "the node inspector edits " + name);
   for (const name of ["gap", "pad", "align", "justify", "grow", "min", "layout"])
     check(attrRowFor(name) === null,
@@ -2321,31 +2360,31 @@ check(stageNode("frame", 901) === heldAgain &&
   const origin = { x: 0, y: 0 };
 
   /* the resolved box prefers the doc's own constants and falls back to the screen */
-  const authored = freeBoxOf(freeNode({ x: "110", y: "110", w: "220", h: "110" }),
+  const authored = freeBoxOf(freeNode({ left: "110", top: "110", w: "220", h: "110" }),
                              { left: 900, top: 900, w: 900, h: 900 });
-  check(authored.x.value === 110 && authored.x.literal && authored.w.value === 220,
+  check(authored.left.value === 110 && authored.left.literal && authored.w.value === 220,
         "a literal field reads from the document, not the measurement");
-  const measured = freeBoxOf(freeNode({ x: "value.pick(2, 1)" }),
+  const measured = freeBoxOf(freeNode({ left: "value.pick(2, 1)" }),
                              { left: 396, top: 66, w: 220, h: 110 });
-  check(!measured.x.literal && Math.abs(measured.x.value - 396) < 1e-9,
+  check(!measured.left.literal && Math.abs(measured.left.value - 396) < 1e-9,
         "an expression field reads off the screen and may not be written");
   check(freeBoxOf(freeNode({ origin_x: "value" }), flat) === null,
         "an expression origin refuses the whole gesture: nothing safe to write through");
 
   /* which handles are offered */
-  const plain = freeBoxOf(freeNode({ x: "110", y: "110", w: "220", h: "110" }), flat);
+  const plain = freeBoxOf(freeNode({ left: "110", top: "110", w: "220", h: "110" }), flat);
   check(freeAllowed(plain, "move") && freeAllowed(plain, "BR") && freeAllowed(plain, "L"),
         "a box of constants offers everything");
-  const boundX = freeBoxOf(freeNode({ x: "value.mapRange(0,1,0,1408)", y: "220",
+  const boundX = freeBoxOf(freeNode({ left: "value.mapRange(0,1,0,1408)", top: "220",
                                       w: "220", h: "110" }), flat);
   check(freeAllowed(boundX, "move"), "one authored axis still leaves an axis-locked move");
   check(!freeAllowed(boundX, "L") && freeAllowed(boundX, "R") && freeAllowed(boundX, "B"),
-        "a bound x takes the left grip away but not the right (origin 0: R never writes x)");
-  const spun = freeBoxOf(freeNode({ x: "220", y: "220", w: "220", h: "110",
+        "a bound left takes the left grip away but not the right (origin 0: R never writes it)");
+  const spun = freeBoxOf(freeNode({ left: "220", top: "220", w: "220", h: "110",
                                     rotate: "45" }), flat);
   check(freeAllowed(spun, "move") && !freeAllowed(spun, "BR") && !freeAllowed(spun, "R"),
         "a rotated box still moves point-for-point but resizes through nothing");
-  const locked = freeBoxOf(freeNode({ x: "22", y: "22", w: "440", aspect: "2" }), flat);
+  const locked = freeBoxOf(freeNode({ left: "22", top: "22", w: "440", aspect: "2" }), flat);
   check(!freeAllowed(locked, "T") && !freeAllowed(locked, "B"),
         "aspect derives the unauthored size, whose own edges have nothing to write");
   check(freeAllowed(locked, "BR") && freeAllowed(locked, "R"),
@@ -2354,10 +2393,10 @@ check(stageNode("frame", 901) === heldAgain &&
   /* the move plan: snapped, axis-locked, and quiet about what did not change */
   const slide = freePlan("move", plain, origin);
   const slid = slide.commit(15, 0, true);   /* 110 + 15 = 125, snapped to 121 */
-  check(slid.x === 121 && !("y" in slid) && !("w" in slid),
-        "a move writes the snapped x it reached and nothing it did not touch, got " +
+  check(slid.left === 121 && !("top" in slid) && !("w" in slid),
+        "a move writes the snapped left it reached and nothing it did not touch, got " +
           JSON.stringify(slid));
-  check(slide.commit(15, 0, false).x === 125,
+  check(slide.commit(15, 0, false).left === 125,
         "Alt suspends the snap and the same travel lands raw");
   check(Object.keys(slide.commit(3, 0, true)).length === 0,
         "a move that snaps back to where it began writes nothing at all");
@@ -2365,53 +2404,112 @@ check(stageNode("frame", 901) === heldAgain &&
   /* THE GRID IS GLOBAL: the same drag inside a parent that sits off the origin snaps to
      the artboard's lines, not to lines of the parent's own */
   const nested = freePlan("move", plain, { x: 5, y: 0 });
-  check(nested.commit(15, 0, true).x === 127,
+  check(nested.commit(15, 0, true).left === 127,
         "a nested box snaps where the ARTBOARD's line is, got " +
           JSON.stringify(nested.commit(15, 0, true)));
 
-  /* a STRETCHED axis pins its size when first moved: the doc held neither x nor w */
+  /* a STRETCHED axis pins its size when first moved: the doc held nothing on it */
   const stretched = freeBoxOf(freeNode({}), { left: 0, top: 0, w: 1408, h: 792 });
   const pinned = freePlan("move", stretched, origin).commit(30, 0, true);
-  check(pinned.x === 33 && pinned.w === 1408 && !("h" in pinned),
+  check(pinned.left === 33 && pinned.w === 1408 && !("h" in pinned),
         "moving a stretched box writes the size the stretch was giving, got " +
           JSON.stringify(pinned));
 
   /* the resize plan: the grabbed edge moves, the opposite edge stands */
   const wider = freePlan("R", plain, origin).commit(15, 0, true);
-  check(wider.w === 231 && !("x" in wider),
+  check(wider.w === 231 && !("left" in wider),
         "dragging R at origin 0 writes only w, got " + JSON.stringify(wider));
   const fromLeft = freePlan("L", plain, origin).commit(15, 0, true);
-  check(fromLeft.x === 121 && fromLeft.w === 209,
-        "dragging L moves x and w together and the right edge stands, got " +
+  check(fromLeft.left === 121 && fromLeft.w === 209,
+        "dragging L moves left and w together and the right edge stands, got " +
           JSON.stringify(fromLeft));
   check(freePlan("R", plain, origin).apply(-1e6, 0, true).w >= 8 - 1e-9,
         "a resize stops at a graspable floor rather than vanishing");
   const corner = freePlan("BR", locked, origin).commit(30, 30, true);
-  check("w" in corner && !("h" in corner) && !("y" in corner),
+  check("w" in corner && !("h" in corner) && !("top" in corner),
         "a corner on an aspect-locked box drags the authored axis only, got " +
           JSON.stringify(corner));
 
-  /* an origin off the corner rides the writes: x places the origin, not the left edge */
-  const hub = freeBoxOf(freeNode({ x: "220", y: "220", w: "110", h: "110",
+  /* an origin off the corner rides the writes: left places the origin, not the edge */
+  const hub = freeBoxOf(freeNode({ left: "220", top: "220", w: "110", h: "110",
                                    origin_x: "0.5", origin_y: "0.5" }), flat);
   const hubMove = freePlan("move", hub, origin).commit(15, 0, true);
-  check(hubMove.x === 176 + 55,
+  check(hubMove.left === 176 + 55,
         "a centred origin: the snapped LEFT EDGE plus half the width, got " +
           JSON.stringify(hubMove));
+
+  /* ---- EDGE-ANCHORED AXES: a pinned far edge changes what the grips write ----
+     `right`/`bottom` are insets from the PARENT's far edge (`span`). With both edges
+     authored the width is theirs — no gesture ever writes w; with the far edge alone
+     the box anchors right and a move slides the inset. */
+  const spanned = { w: 1408, h: 792 };
+  const edged = freeBoxOf(freeNode({ left: "110", right: "88", top: "110", h: "110" }),
+                          { left: 110, top: 110, w: 1210, h: 110 },
+                          { x: 1, y: 1 }, spanned);
+  check(edged.right.present && edged.right.value === 88 && edged.w.value === 1210,
+        "an authored inset reads from the doc and the derived width off the screen");
+  const edgeMove = freePlan("move", edged, origin).commit(15, 0, true);
+  check(edgeMove.left === 121 && edgeMove.right === 77 && !("w" in edgeMove),
+        "moving a both-edges box slides BOTH edges and never writes w, got " +
+          JSON.stringify(edgeMove));
+  const edgeR = freePlan("R", edged, origin).commit(15, 0, true);
+  check(edgeR.right === 77 && !("left" in edgeR) && !("w" in edgeR),
+        "dragging R on a both-edges box writes the inset alone, got " +
+          JSON.stringify(edgeR));
+  const edgeL = freePlan("L", edged, origin).commit(15, 0, true);
+  check(edgeL.left === 121 && !("right" in edgeL) && !("w" in edgeL),
+        "dragging L writes the near edge alone: the width follows the edges, got " +
+          JSON.stringify(edgeL));
+  /* a `w` still written beside two pinned edges is INERT: the algebra must span the
+     MEASURED axis, not the dead number (the first browser drive caught exactly this) */
+  const edgedInert = freeBoxOf(freeNode({ left: "110", right: "88", top: "110",
+                                          h: "110", w: "500" }),
+                               { left: 110, top: 110, w: 1210, h: 110 },
+                               { x: 1, y: 1 }, spanned);
+  const inertMove = freePlan("move", edgedInert, origin).commit(15, 0, true);
+  check(inertMove.left === 121 && inertMove.right === 77 && !("w" in inertMove),
+        "an inert authored w does not poison a both-edges move, got " +
+          JSON.stringify(inertMove));
+
+  /* anchored right: no left at all — the box rides the parent's right edge at width w */
+  const anchored = freeBoxOf(freeNode({ right: "88", w: "220", top: "110", h: "110" }),
+                             { left: 1100, top: 110, w: 220, h: 110 },
+                             { x: 1, y: 1 }, spanned);
+  const aMove = freePlan("move", anchored, origin).commit(15, 0, true);
+  check(aMove.right === 77 && !("left" in aMove) && !("w" in aMove),
+        "moving an anchored-right box slides its inset and leaves it anchored, got " +
+          JSON.stringify(aMove));
+  const aL = freePlan("L", anchored, origin).commit(15, 0, true);
+  check(aL.w === 209 && !("left" in aL) && !("right" in aL),
+        "dragging its L writes w alone: the right edge stands on its anchor, got " +
+          JSON.stringify(aL));
+  const aR = freePlan("R", anchored, origin).commit(15, 0, true);
+  check(aR.right === 77 && aR.w === 231,
+        "dragging its R moves the anchor and the width together (the LEFT edge stands), got " +
+          JSON.stringify(aR));
+
+  /* an expression inset guards its grips exactly as an expression position does */
+  const exprEdge = freeBoxOf(freeNode({ right: "value * 2", w: "220",
+                                        top: "110", h: "110" }),
+                             { left: 1100, top: 110, w: 220, h: 110 },
+                             { x: 1, y: 1 }, spanned);
+  check(!freeAllowed(exprEdge, "R"), "a bound inset takes the right grip away");
+  check(freeAllowed(exprEdge, "L"),
+        "while L still resizes through w and never touches the anchor");
 
   /* ---- INSIDE A COMPONENT: the same plan, seamed at the read and the write ----
      A component's literals are FRACTIONS of the parent. `scale` blows them up to px on
      the way in, so every rule above — snap, floors, origins, freeAllowed — runs
      unchanged; the commit's caller divides back down and writes fmtFraction
      (manipulate.ts holds the divisors it measured). */
-  const fracBox = freeBoxOf(freeNode({ x: "0.25", y: "0.5", w: "0.5", h: "0.25" }),
+  const fracBox = freeBoxOf(freeNode({ left: "0.25", top: "0.5", w: "0.5", h: "0.25" }),
                             flat, { x: 440, y: 220 });
-  check(fracBox.x.value === 110 && fracBox.w.value === 220 &&
-          fracBox.y.value === 110 && fracBox.h.value === 55,
+  check(fracBox.left.value === 110 && fracBox.w.value === 220 &&
+          fracBox.top.value === 110 && fracBox.h.value === 55,
         "fraction literals scale by the parent's box into plan px");
   const fracSlid = freePlan("move", fracBox, origin).commit(23, 0, true);
-  check(fracSlid.x === 132, "the plan itself still snaps on the artboard's own grid");
-  check(fmtFraction(fracSlid.x / 440) === "0.3",
+  check(fracSlid.left === 132, "the plan itself still snaps on the artboard's own grid");
+  check(fmtFraction(fracSlid.left / 440) === "0.3",
         "and the caller divides back to a clean fraction of the parent");
   check(fmtFraction(0.123456789) === "0.1235" && fmtFraction(0.5) === "0.5",
         "a written fraction holds at most 4 decimals, got " + fmtFraction(0.123456789));
@@ -2442,7 +2540,7 @@ check(stageNode("frame", 901) === heldAgain &&
               behavior: [] } },
     { op: "insert", parent: store.pages()[0].id, list: "children",
       node: { id: 9880, kind: "frame", type: "Bulb", name: "Glow",
-              attrs: { x: "44", y: "44", w: "220", h: "110" },
+              attrs: { left: "44", top: "44", w: "220", h: "110" },
               slots: {}, locals: [], feeds: [], flows: [] } },
   ]);
   const ctxEditor = {
@@ -2598,20 +2696,20 @@ check(stageNode("frame", 901) === heldAgain &&
       { id: 950, name: "Chip", events: [], props: [],
         attrs: { surface: "'#333333'" },
         children: [{ id: 951, kind: "frame", name: "body",
-                     attrs: { x: "0.25", y: "0.25", w: "0.5", h: "0.5" } }],
+                     attrs: { left: "0.25", top: "0.25", w: "0.5", h: "0.5" } }],
         behavior: [] },
     ],
     pages: [{ id: 940, name: "P", children: [
       { id: 941, kind: "frame", type: "Chip", name: "chip1",
-        attrs: { x: "22", y: "22", w: "440", h: "220" },
+        attrs: { left: "22", top: "22", w: "440", h: "220" },
         slots: {}, locals: [], feeds: [], flows: [] },
     ] }],
   });
   const prog2 = (v) => ({ code: [{ op: "CONST", v }] });
   const ctxAttrs = {
-    "941": { attrs: { x: prog2(22), y: prog2(22), w: prog2(440), h: prog2(220) } },
+    "941": { attrs: { left: prog2(22), top: prog2(22), w: prog2(440), h: prog2(220) } },
     "950": { attrs: { surface: prog2("#333333") } },
-    "951": { attrs: { x: prog2(0.25), y: prog2(0.25), w: prog2(0.5), h: prog2(0.5) } },
+    "951": { attrs: { left: prog2(0.25), top: prog2(0.25), w: prog2(0.5), h: prog2(0.5) } },
   };
   const ctxHost = new Element("section");
   const ctxView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
@@ -2866,18 +2964,18 @@ check(stageNode("frame", 901) === heldAgain &&
     version: 1, next_id: 999, globals: [], tokens: [], components: [],
     pages: [{ id: 960, name: "T", children: [
       { id: 961, kind: "frame", name: "box",
-        attrs: { x: "22", y: "22", w: "220", h: "110" } },
+        attrs: { left: "22", top: "22", w: "220", h: "110" } },
       { id: 962, kind: "frame", type: "Toggle", name: "tog",
-        attrs: { x: "264", y: "22", w: "132", h: "66" },
+        attrs: { left: "264", top: "22", w: "132", h: "66" },
         slots: {}, locals: [], feeds: [], flows: [] },
       { id: 963, kind: "frame", type: "Panel", name: "pan",
-        attrs: { x: "440", y: "22", w: "264", h: "176" },
+        attrs: { left: "440", top: "22", w: "264", h: "176" },
         slots: {}, locals: [], feeds: [], flows: [] },
     ] }],
   });
   const prog3 = (v) => ({ code: [{ op: "CONST", v }] });
   const boxOf = (x, y, w, h) =>
-    ({ attrs: { x: prog3(x), y: prog3(y), w: prog3(w), h: prog3(h) } });
+    ({ attrs: { left: prog3(x), top: prog3(y), w: prog3(w), h: prog3(h) } });
   const tHost = new Element("section");
   const tView = { mode: "test", selection: [], part: "", hover: 0, state: {}, faults: {} };
   const tEditor = {

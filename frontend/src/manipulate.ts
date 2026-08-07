@@ -161,7 +161,7 @@ function measure(host: HTMLElement, editor: Editor, id: number):
     top: (at.top - pat.top) / k - pel.clientTop,
     w: at.width / k,
     h: at.height / k,
-  }, scale);
+  }, scale, { w: pel.clientWidth, h: pel.clientHeight });
   return { plan: (handle) => freePlan(handle, box, base), k,
            sx: frac ? scale.x : 0, sy: frac ? scale.y : 0 };
 }
@@ -279,8 +279,18 @@ function standingCheck(): void {
      what the pointer already placed. Re-asserted with the px (an applier pass rewrites
      `transition` from the metadata); the pass after the settle restores it. */
   el.style.transition = "none";
-  if (to.x !== undefined) el.style.left = to.x + "px";
-  if (to.y !== undefined) el.style.top = to.y + "px";
+  assertStyles(el, to);
+}
+
+/* the px a plan speaks land on the element verbatim: the near edges and sizes as
+   left/top/width/height, a pinned far edge as its own right/bottom inset — the same
+   properties place() writes, so the browser keeps deriving whatever the axis leaves
+   to it (an edge-pinned width, a clamp) mid-gesture too */
+function assertStyles(el: HTMLElement, to: FreeWrite): void {
+  if (to.left !== undefined) el.style.left = to.left + "px";
+  if (to.top !== undefined) el.style.top = to.top + "px";
+  if (to.right !== undefined) el.style.right = to.right + "px";
+  if (to.bottom !== undefined) el.style.bottom = to.bottom + "px";
   if (to.w !== undefined) el.style.width = to.w + "px";
   if (to.h !== undefined) el.style.height = to.h + "px";
 }
@@ -294,11 +304,7 @@ export function repaintFree(): void {
     if (el) {
       /* a drag writes where the pointer IS: a declared transition must not ease it */
       el.style.transition = "none";
-      const to = free.plan.apply(free.dx, free.dy, free.snap);
-      if (to.x !== undefined) el.style.left = to.x + "px";
-      if (to.y !== undefined) el.style.top = to.y + "px";
-      if (to.w !== undefined) el.style.width = to.w + "px";
-      if (to.h !== undefined) el.style.height = to.h + "px";
+      assertStyles(el, free.plan.apply(free.dx, free.dy, free.snap));
     }
     /* the handles ride the box they ring */
     refreshOverlay(free.host);
@@ -329,7 +335,7 @@ function onUp(ev: PointerEvent): void {
   for (const key of moved) {
     before[key] = node.attrs?.[key] ?? "";
     const value = to[key] as number;
-    const divisor = key === "x" || key === "w" ? held.sx : held.sy;
+    const divisor = key === "top" || key === "bottom" || key === "h" ? held.sy : held.sx;
     attrs[key] = divisor ? fmtFraction(value / divisor) : fmtPx(value);
   }
   held.editor.apply([{ op: "set_prop", node: held.id, key: "attrs", value: attrs }]);

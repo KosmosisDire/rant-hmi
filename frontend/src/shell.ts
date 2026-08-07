@@ -1011,10 +1011,17 @@ export class App implements Editor {
     const bh = y1 - y0;
     if (!(bw > 0) || !(bh > 0)) return;
     const parent = this.store.parentOf(ids[0]);
-    const space = this.writeSpace(typeof parent?.id === "number" ? parent.id : root.id);
+    const pid = typeof parent?.id === "number" ? parent.id : root.id;
+    const space = this.writeSpace(pid);
+    /* the parent's own px box: what a child's `right`/`bottom` inset measures from, so a
+       far edge can re-base under the group's the same way a near one does under x0/y0.
+       Unmeasurable (no rendered box) skips those fields, exactly as authored logic does. */
+    const span = space.frac ? { w: space.pw, h: space.ph }
+      : pid === root.id ? { w: this.artboard().w, h: this.artboard().h }
+      : (() => { const b = this.canvasBox(pid); return { w: b?.w ?? NaN, h: b?.h ?? NaN }; })();
     const ops: Op[] = [{
       op: "group", nodes: ids,
-      attrs: { x: this.fmtCoord(space, x0, "x"), y: this.fmtCoord(space, y0, "y"),
+      attrs: { left: this.fmtCoord(space, x0, "x"), top: this.fmtCoord(space, y0, "y"),
                w: this.fmtCoord(space, bw, "x"), h: this.fmtCoord(space, bh, "y") },
     }];
     for (const id of ids) {
@@ -1023,6 +1030,7 @@ export class App implements Editor {
       const attrs: Record<string, string> = { ...(node.attrs ?? {}) };
       let moved = false;
       const rebase = (key: string, axis: "x" | "y", delta: number): void => {
+        if (!Number.isFinite(delta)) return;
         const text = attrs[key];
         if (text === undefined || String(text).trim() === "") return;
         const lit = literalNumber(text, 0);
@@ -1035,8 +1043,12 @@ export class App implements Editor {
         }
         moved = true;
       };
-      rebase("x", "x", x0);
-      rebase("y", "y", y0);
+      rebase("left", "x", x0);
+      rebase("top", "y", y0);
+      /* a far edge's inset shrinks by the GROUP's own inset from the parent's far edge:
+         the same picture, measured from the new box's edge instead */
+      rebase("right", "x", Number.isFinite(span.w) ? span.w - x1 : NaN);
+      rebase("bottom", "y", Number.isFinite(span.h) ? span.h - y1 : NaN);
       /* a px size means the same inside the box; a fraction was of the PARENT and must
          become one of the group */
       if (space.frac) {
@@ -1064,10 +1076,20 @@ export class App implements Editor {
     if (base < 0) return;
     const ctx = this.contexts[this.contexts.length - 1];
     const frac = !!ctx && !!ctx.component;
-    const gx = literalNumber(frame.attrs?.x, 0) ?? 0;
-    const gy = literalNumber(frame.attrs?.y, 0) ?? 0;
+    const gx = literalNumber(frame.attrs?.left, 0) ?? 0;
+    const gy = literalNumber(frame.attrs?.top, 0) ?? 0;
     const gw = literalNumber(frame.attrs?.w, NaN);
     const gh = literalNumber(frame.attrs?.h, NaN);
+    /* what a child's far-edge inset carries out through: the group's own inset from the
+       PARENT's far edge — 1 - gx - gw in fractions, span - gx - gw in px, the span read
+       off the rendered page (the artboard itself at the root). Where the group's box or
+       the span is not a constant there is nothing to carry through, and the field keeps
+       its number exactly as an authored-logic position keeps its expression. */
+    const span = frac ? { w: 1, h: 1 }
+      : parent.id === this.root()?.id
+        ? { w: this.artboard().w, h: this.artboard().h }
+        : (() => { const b = this.canvasBox(parent.id as number);
+                   return { w: b?.w ?? NaN, h: b?.h ?? NaN }; })();
     const ops: Op[] = (frame.children ?? []).map((child, k) => ({
       op: "move",
       node: child.id,
@@ -1079,7 +1101,7 @@ export class App implements Editor {
       const attrs: Record<string, string> = { ...(child.attrs ?? {}) };
       let moved = false;
       const carry = (key: string, shift: number, scale: number | null): void => {
-        if (scale === null || !Number.isFinite(scale)) return;
+        if (scale === null || !Number.isFinite(scale) || !Number.isFinite(shift)) return;
         const text = attrs[key];
         if (text === undefined || String(text).trim() === "") return;
         const lit = literalNumber(text, 0);
@@ -1090,13 +1112,17 @@ export class App implements Editor {
         moved = true;
       };
       if (frac) {
-        carry("x", gx, gw);
-        carry("y", gy, gh);
+        carry("left", gx, gw);
+        carry("top", gy, gh);
+        carry("right", gw === null ? NaN : 1 - gx - gw, gw);
+        carry("bottom", gh === null ? NaN : 1 - gy - gh, gh);
         carry("w", 0, gw);
         carry("h", 0, gh);
       } else {
-        carry("x", gx, 1);
-        carry("y", gy, 1);
+        carry("left", gx, 1);
+        carry("top", gy, 1);
+        carry("right", span.w - gx - (gw === null ? NaN : gw), 1);
+        carry("bottom", span.h - gy - (gh === null ? NaN : gh), 1);
       }
       if (moved) ops.push({ op: "set_prop", node: child.id, key: "attrs", value: attrs });
     }
@@ -1123,7 +1149,7 @@ export class App implements Editor {
     const space = this.writeSpace(parent);
     node.attrs = {
       ...(node.attrs ?? {}),
-      x: this.fmtCoord(space, at.x, "x"), y: this.fmtCoord(space, at.y, "y"),
+      left: this.fmtCoord(space, at.x, "x"), top: this.fmtCoord(space, at.y, "y"),
       w: this.fmtCoord(space, w, "x"), h: this.fmtCoord(space, h, "y"),
     };
     this.apply([{ op: "insert", parent, list: "children", node }]);

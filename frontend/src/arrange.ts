@@ -193,7 +193,7 @@ export function fmtFraction(value: number): string {
   return String(Math.round(value * 10000) / 10000);
 }
 
-/* one of the four box fields, resolved for a gesture */
+/* one of the box fields, resolved for a gesture */
 export interface FreeField {
   value: number;      /* the canvas px actually showing */
   literal: boolean;   /* the doc holds a constant (or nothing): a gesture may write it */
@@ -202,12 +202,21 @@ export interface FreeField {
 }
 
 export interface FreeBox {
-  x: FreeField;
-  y: FreeField;
+  /* the doc's `left`/`top`: the ORIGIN POINT while the far edge is free, the plain near
+     edge once `right`/`bottom` pins it (place() applies no origin shift on such an axis) */
+  left: FreeField;
+  top: FreeField;
+  /* the far edges, as px INSETS from the parent's far edges — present means the axis is
+     sized or anchored by them */
+  right: FreeField;
+  bottom: FreeField;
   w: FreeField;
   h: FreeField;
   ox: number;
   oy: number;
+  /* the parent's own box in px: what an inset measures from, and what a write to one
+     converts back through */
+  span: { w: number; h: number };
   /* the size `aspect` derives — authored on the other axis only — which no resize may
      write; null when aspect is absent or inert (both sizes authored, or neither) */
   derived: "w" | "h" | null;
@@ -225,18 +234,20 @@ export interface MeasuredBox {
   h: number;
 }
 
-/* The document's four fields against the measured picture. SIZE resolves before POSITION
- * — x places the origin point, so reading it off the screen goes through w — the same
- * order the renderer solves in. Null when `origin_x`/`origin_y` hold expressions: the
- * origin converts between the box's edges and the doc's x/y, and an expression there
- * leaves nothing a gesture can safely write through.
+/* The document's box fields against the measured picture. SIZE resolves before POSITION
+ * — `left` places the origin point, so reading it off the screen goes through w — the
+ * same order the renderer solves in. Null when `origin_x`/`origin_y` hold expressions:
+ * the origin converts between the box's edges and the doc's left/top, and an expression
+ * there leaves nothing a gesture can safely write through.
  *
  * `scale` converts a FRACTION-space document (a component's internals) into the px the
  * plan's arithmetic runs in: a doc literal is multiplied by the parent's rendered size on
  * its axis, so the whole gesture thinks in artboard px and only the commit divides back.
- * On a page the scale is 1 and a literal is already the px it says. */
+ * On a page the scale is 1 and a literal is already the px it says. `span` is the
+ * parent's own px box, which is what an authored `right`/`bottom` inset measures from. */
 export function freeBoxOf(node: Node | null | undefined, measured: MeasuredBox,
-                          scale: { x: number; y: number } = { x: 1, y: 1 }): FreeBox | null {
+                          scale: { x: number; y: number } = { x: 1, y: 1 },
+                          span: { w: number; h: number } = { w: 0, h: 0 }): FreeBox | null {
   if (!node) return null;
   const attrs = node.attrs ?? {};
   const field = (key: string, fallback: number, k: number): FreeField => {
@@ -251,8 +262,18 @@ export function freeBoxOf(node: Node | null | undefined, measured: MeasuredBox,
   if (ox === null || oy === null) return null;
   const w = field("w", measured.w, scale.x);
   const h = field("h", measured.h, scale.y);
-  const x = field("x", measured.left + ox * w.value, scale.x);
-  const y = field("y", measured.top + oy * h.value, scale.y);
+  const right = field("right", span.w - (measured.left + measured.w), scale.x);
+  const bottom = field("bottom", span.h - (measured.top + measured.h), scale.y);
+  /* with BOTH edges authored the size is theirs and a written `w` is inert — the screen
+     is the truth of what the axis spans, whatever dead number the doc still carries */
+  if (attrs.left !== undefined && String(attrs.left).trim() !== "" && right.present)
+    w.value = measured.w;
+  if (attrs.top !== undefined && String(attrs.top).trim() !== "" && bottom.present)
+    h.value = measured.h;
+  /* a pinned far edge takes the origin point with it: the doc's `left` is then the plain
+     near edge, so the measured edge IS its fallback */
+  const left = field("left", measured.left + (right.present ? 0 : ox * w.value), scale.x);
+  const top = field("top", measured.top + (bottom.present ? 0 : oy * h.value), scale.y);
   /* aspect pins one size to the other. Only the one-authored-size case DERIVES: with both
      written aspect is inert, and with neither the axis insets win. An expression counts —
      whatever it evaluates to is still a lock. (When the derived axis is ALSO stretched by
@@ -261,7 +282,8 @@ export function freeBoxOf(node: Node | null | undefined, measured: MeasuredBox,
   const aspect = attrs.aspect !== undefined && String(attrs.aspect ?? "").trim() !== "";
   const derived = aspect && w.present !== h.present ? (w.present ? "h" : "w") : null;
   const rotate = literalNumber(attrs.rotate, 0);
-  return { x, y, w, h, ox, oy, derived, rotated: rotate === null || rotate !== 0 };
+  return { left, top, right, bottom, w, h, ox, oy, span, derived,
+           rotated: rotate === null || rotate !== 0 };
 }
 
 export type FreeHandle = "move" | "L" | "R" | "T" | "B" | "TL" | "TR" | "BL" | "BR";
@@ -271,19 +293,35 @@ export const FREE_HANDLES: FreeHandle[] = ["L", "R", "T", "B", "TL", "TR", "BL",
 /* May this handle be offered at all? A handle is a promise to write constants into the
  * fields its drag moves, so a field holding an EXPRESSION takes the handle away — drawn
  * disabled rather than silently overwriting authored logic. Which fields an edge moves
- * depends on the origin: dragging R changes x only when the origin is off the left edge,
- * dragging L only when it is off the right — asked exactly, so a plain box (origin 0)
- * keeps its right and bottom grips even when x or y is authored logic. */
+ * depends on how the axis is authored: with a far edge pinned, the R grip writes `right`
+ * (and `w` where the box anchors right) and the L grip writes `left` (or `w` where only
+ * the far edge is authored); with the far edge free the grips write left/w through the
+ * origin exactly as before — asked exactly, so a plain box (origin 0) keeps its right
+ * and bottom grips even when its position is authored logic. */
 export function freeAllowed(box: FreeBox | null, handle: FreeHandle): boolean {
   if (!box) return false;
-  if (handle === "move") return box.x.literal || box.y.literal;
+  /* a move slides every present position field on an axis together, so each must be a
+     constant (an absent one reads as its default, which is constant too) */
+  if (handle === "move")
+    return (box.left.literal && box.right.literal) ||
+           (box.top.literal && box.bottom.literal);
   if (box.rotated) return false;
-  const xOk = (edge: "L" | "R") =>
-    box.derived !== "w" && box.w.literal &&
-    ((edge === "L" ? box.ox === 1 : box.ox === 0) || box.x.literal);
-  const yOk = (edge: "T" | "B") =>
-    box.derived !== "h" && box.h.literal &&
-    ((edge === "T" ? box.oy === 1 : box.oy === 0) || box.y.literal);
+  const xOk = (edge: "L" | "R") => {
+    if (box.derived === "w") return false;
+    if (box.right.present) {
+      if (edge === "R") return box.right.literal && (box.left.present || box.w.literal);
+      return box.left.present ? box.left.literal : box.w.literal;
+    }
+    return box.w.literal && ((edge === "L" ? box.ox === 1 : box.ox === 0) || box.left.literal);
+  };
+  const yOk = (edge: "T" | "B") => {
+    if (box.derived === "h") return false;
+    if (box.bottom.present) {
+      if (edge === "B") return box.bottom.literal && (box.top.present || box.h.literal);
+      return box.top.present ? box.top.literal : box.h.literal;
+    }
+    return box.h.literal && ((edge === "T" ? box.oy === 1 : box.oy === 0) || box.top.literal);
+  };
   const horizontal = handle.includes("L") ? xOk("L") : handle.includes("R") ? xOk("R") : null;
   const vertical = handle.includes("T") ? yOk("T") : handle.includes("B") ? yOk("B") : null;
   /* a corner on an aspect-locked box still resizes: it drags the authored axis and the
@@ -297,10 +335,12 @@ export function freeAllowed(box: FreeBox | null, handle: FreeHandle): boolean {
 }
 
 /* what a free gesture is showing or writing, in ATTR space: the same numbers place()
-   turns into left/top/width/height percentages */
+   turns into the element's left/top/right/bottom/width/height */
 export interface FreeWrite {
-  x?: number;
-  y?: number;
+  left?: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
   w?: number;
   h?: number;
 }
@@ -325,8 +365,12 @@ const FREE_EPS = 1e-3;
 export function freePlan(handle: FreeHandle, box: FreeBox | null,
                          base: { x: number; y: number }): FreePlan | null {
   if (!box || !freeAllowed(box, handle)) return null;
-  const left = box.x.value - box.ox * box.w.value;
-  const top = box.y.value - box.oy * box.h.value;
+  /* the near edge in px: with the far edge pinned the doc's left/top IS the edge (no
+     origin shift rides such an axis), otherwise the origin algebra converts */
+  const oxEff = box.right.present ? 0 : box.ox;
+  const oyEff = box.bottom.present ? 0 : box.oy;
+  const left = box.left.value - oxEff * box.w.value;
+  const top = box.top.value - oyEff * box.h.value;
   const snapX = (value: number, on: boolean) => (on ? snapPx(base.x + value) - base.x : value);
   const snapY = (value: number, on: boolean) => (on ? snapPx(base.y + value) - base.y : value);
   /* a write is only a write when the number moved */
@@ -335,86 +379,130 @@ export function freePlan(handle: FreeHandle, box: FreeBox | null,
   if (handle === "move") {
     /* an axis whose position is authored logic simply does not move: the gesture is
        locked to the writable one rather than refused outright */
+    const xMove = box.left.literal && box.right.literal;
+    const yMove = box.top.literal && box.bottom.literal;
+    /* the edge that carries the AUTHORED number is the one that lands on the grid: the
+       near edge normally, the far one on a box anchored only by it */
     const at = (dx: number, dy: number, snap: boolean) => ({
-      left: box.x.literal ? snapX(left + dx, snap) : left,
-      top: box.y.literal ? snapY(top + dy, snap) : top,
+      left: !xMove ? left
+        : box.left.present || !box.right.present ? snapX(left + dx, snap)
+        : snapX(left + box.w.value + dx, snap) - box.w.value,
+      top: !yMove ? top
+        : box.top.present || !box.bottom.present ? snapY(top + dy, snap)
+        : snapY(top + box.h.value + dy, snap) - box.h.value,
     });
-    /* moving a STRETCHED axis pins its size: the doc held neither x nor w, the box was
-       both insets, and writing x alone would trade the stretch for content-sizing — so
-       the size the stretch was giving is written down with the position */
-    const pinW = !box.x.present && !box.w.present;
-    const pinH = !box.y.present && !box.h.present;
+    /* moving a STRETCHED axis pins its size: the doc held nothing on it, the box was both
+       insets, and writing left alone would trade the stretch for content-sizing — so the
+       size the stretch was giving is written down with the position */
+    const pinW = !box.left.present && !box.w.present && !box.right.present;
+    const pinH = !box.top.present && !box.h.present && !box.bottom.present;
+    /* every field the axis carries moves together, so the box keeps its size: a pinned
+       far edge slides by the same distance as the near one */
+    const xOut = (out: FreeWrite, lo: number) => {
+      if (box.left.present || !box.right.present) out.left = lo + oxEff * box.w.value;
+      if (box.right.present) out.right = box.span.w - (lo + box.w.value);
+      if (pinW) out.w = box.w.value;
+    };
+    const yOut = (out: FreeWrite, lo: number) => {
+      if (box.top.present || !box.bottom.present) out.top = lo + oyEff * box.h.value;
+      if (box.bottom.present) out.bottom = box.span.h - (lo + box.h.value);
+      if (pinH) out.h = box.h.value;
+    };
     return {
       apply(dx, dy, snap) {
         const to = at(dx, dy, snap);
         const out: FreeWrite = {};
-        if (box.x.literal) {
-          out.x = to.left + box.ox * box.w.value;
-          if (pinW) out.w = box.w.value;
-        }
-        if (box.y.literal) {
-          out.y = to.top + box.oy * box.h.value;
-          if (pinH) out.h = box.h.value;
-        }
+        if (xMove) xOut(out, to.left);
+        if (yMove) yOut(out, to.top);
         return out;
       },
       commit(dx, dy, snap) {
         const to = at(dx, dy, snap);
         const out: FreeWrite = {};
-        if (box.x.literal && changed(to.left, left)) {
-          out.x = to.left + box.ox * box.w.value;
-          if (pinW) out.w = box.w.value;
-        }
-        if (box.y.literal && changed(to.top, top)) {
-          out.y = to.top + box.oy * box.h.value;
-          if (pinH) out.h = box.h.value;
-        }
+        if (xMove && changed(to.left, left)) xOut(out, to.left);
+        if (yMove && changed(to.top, top)) yOut(out, to.top);
         return out;
       },
     };
   }
 
   /* a resize: the grabbed edge moves — snapped, then floored so the box stays graspable —
-     the opposite edge stands, and x/w (or y/h) are read back off the pair */
-  const xAxis = (dx: number, snap: boolean): { x: number; w: number } | null => {
+     the opposite edge stands, and the axis's own authored fields are read back off the
+     pair: left/w through the origin where the far edge is free; the pinned far edge's
+     inset (and, on a box anchored only by it, the width) where it is not */
+  const xAxis = (dx: number, snap: boolean): { lo: number; hi: number } | null => {
     if (!handle.includes("L") && !handle.includes("R")) return null;
     let lo = left;
     let hi = left + box.w.value;
     if (handle.includes("L")) lo = Math.min(snapX(lo + dx, snap), hi - MIN_FREE_PX);
     else hi = Math.max(snapX(hi + dx, snap), lo + MIN_FREE_PX);
-    return { x: lo + box.ox * (hi - lo), w: hi - lo };
+    return { lo, hi };
   };
-  const yAxis = (dy: number, snap: boolean): { y: number; h: number } | null => {
+  const yAxis = (dy: number, snap: boolean): { lo: number; hi: number } | null => {
     if (!handle.includes("T") && !handle.includes("B")) return null;
     if (box.derived === "h") return null;   /* the ratio owns this size; w carries the drag */
     let lo = top;
     let hi = top + box.h.value;
     if (handle.includes("T")) lo = Math.min(snapY(lo + dy, snap), hi - MIN_FREE_PX);
     else hi = Math.max(snapY(hi + dy, snap), lo + MIN_FREE_PX);
-    return { y: lo + box.oy * (hi - lo), h: hi - lo };
+    return { lo, hi };
   };
   const xPart = (dx: number, snap: boolean) => (box.derived === "w" ? null : xAxis(dx, snap));
+  /* gate: which values the resize would write, each against the doc's own number when
+     committing (null skips the gate — the live picture writes everything) */
+  const xWrites = (out: FreeWrite, to: { lo: number; hi: number },
+                   gate: ((next: number, was: number) => boolean) | null) => {
+    if (box.right.present) {
+      if (handle.includes("R")) {
+        const inset = box.span.w - to.hi;
+        if (!gate || gate(inset, box.right.value)) out.right = inset;
+        if (!box.left.present && (!gate || gate(to.hi - to.lo, box.w.value)))
+          out.w = to.hi - to.lo;
+      } else if (box.left.present) {
+        if (!gate || gate(to.lo, box.left.value)) out.left = to.lo;
+      } else if (!gate || gate(to.hi - to.lo, box.w.value)) {
+        out.w = to.hi - to.lo;
+      }
+    } else {
+      const at = to.lo + box.ox * (to.hi - to.lo);
+      if (!gate || gate(at, box.left.value)) out.left = at;
+      if (!gate || gate(to.hi - to.lo, box.w.value)) out.w = to.hi - to.lo;
+    }
+  };
+  const yWrites = (out: FreeWrite, to: { lo: number; hi: number },
+                   gate: ((next: number, was: number) => boolean) | null) => {
+    if (box.bottom.present) {
+      if (handle.includes("B")) {
+        const inset = box.span.h - to.hi;
+        if (!gate || gate(inset, box.bottom.value)) out.bottom = inset;
+        if (!box.top.present && (!gate || gate(to.hi - to.lo, box.h.value)))
+          out.h = to.hi - to.lo;
+      } else if (box.top.present) {
+        if (!gate || gate(to.lo, box.top.value)) out.top = to.lo;
+      } else if (!gate || gate(to.hi - to.lo, box.h.value)) {
+        out.h = to.hi - to.lo;
+      }
+    } else {
+      const at = to.lo + box.oy * (to.hi - to.lo);
+      if (!gate || gate(at, box.top.value)) out.top = at;
+      if (!gate || gate(to.hi - to.lo, box.h.value)) out.h = to.hi - to.lo;
+    }
+  };
   return {
     apply(dx, dy, snap) {
       const out: FreeWrite = {};
       const hx = xPart(dx, snap);
-      if (hx) { out.x = hx.x; out.w = hx.w; }
+      if (hx) xWrites(out, hx, null);
       const vy = yAxis(dy, snap);
-      if (vy) { out.y = vy.y; out.h = vy.h; }
+      if (vy) yWrites(out, vy, null);
       return out;
     },
     commit(dx, dy, snap) {
       const out: FreeWrite = {};
       const hx = xPart(dx, snap);
-      if (hx) {
-        if (changed(hx.x, box.x.value)) out.x = hx.x;
-        if (changed(hx.w, box.w.value)) out.w = hx.w;
-      }
+      if (hx) xWrites(out, hx, changed);
       const vy = yAxis(dy, snap);
-      if (vy) {
-        if (changed(vy.y, box.y.value)) out.y = vy.y;
-        if (changed(vy.h, box.h.value)) out.h = vy.h;
-      }
+      if (vy) yWrites(out, vy, changed);
       return out;
     },
   };
