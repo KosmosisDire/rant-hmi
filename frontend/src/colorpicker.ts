@@ -41,7 +41,7 @@ interface Hsva {
 
 /* ---- color math ---- */
 
-export function parseHex(text: string): Rgba | null {
+function parseHex(text: string): Rgba | null {
   if (typeof text !== "string" || !text.startsWith("#")) return null;
   const hex = text.slice(1);
   if (!/^[0-9a-fA-F]+$/.test(hex)) return null;
@@ -58,7 +58,7 @@ export function parseHex(text: string): Rgba | null {
   return null;
 }
 
-export function formatHex(c: Rgba): string {
+function formatHex(c: Rgba): string {
   const two = (n: number) => Math.round(n).toString(16).padStart(2, "0");
   const base = "#" + two(c.r) + two(c.g) + two(c.b);
   return c.a >= 255 ? base : base + two(c.a);
@@ -82,7 +82,7 @@ function clampChan(n: number, hi: number): number {
   return Math.max(0, Math.min(hi, n));
 }
 
-export function parseRgbaText(text: string): Rgba | null {
+function parseRgbaText(text: string): Rgba | null {
   const p = tupleParts(text);
   if (!p) return null;
   const chan = (token: string) => {
@@ -104,7 +104,7 @@ export function parseRgbaText(text: string): Rgba | null {
 
 /* the text row speaks HSL (the CSS vocabulary); the picker's session state stays HSV
    (the SV square is an HSV construct), converted at this boundary */
-export function parseHslaText(text: string): Hsva | null {
+function parseHslaText(text: string): Hsva | null {
   const p = tupleParts(text);
   if (!p) return null;
   const hRaw = tokenNum(p[0]);
@@ -212,7 +212,7 @@ function ensure(): void {
   document.body.appendChild(overlay);
 }
 
-export function closeColorPicker(): void {
+function closeColorPicker(): void {
   overlay?.classList.remove("on");
 }
 

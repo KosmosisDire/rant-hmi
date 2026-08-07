@@ -13,13 +13,9 @@ import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { cellText, diagIcon, Editor, liveIsOn } from "../editor.js";
 import { bind, bindChoice, bindField, bindText } from "../reconcile.js";
 import { iconMarkup, kindMark } from "../icons.js";
-import { Json, MeshField, Var } from "../types.js";
+import { Json, MeshField, SCALAR_LABEL, Var } from "../types.js";
 import { valueEditor } from "./editors.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
-
-const SCALAR_LABEL: Record<string, string> = {
-  f64: "number", bool: "bool", str: "text", timer: "timer", list: "list", map: "map",
-};
 
 const opened = new Set<number>();
 

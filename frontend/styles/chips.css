@@ -14,15 +14,8 @@
   white-space: nowrap;
 }
 
-.chip.slot {
-  background: var(--chip-2);
-}
 .chip.pad-mark {
   padding-left: 3px;
-}
-.chip.xf {
-  background: transparent;
-  color: var(--ink-3);
 }
 .chip.trigger {
   background: var(--acc-bg);
@@ -35,37 +28,11 @@
   border-color: transparent;
   color: var(--ink-3);
 }
-.chip.msg {
-  background: var(--ok-bg);
-  border-color: var(--ok-line);
-  color: var(--ok);
-  font-weight: 700;
-}
-.chip.unforce {
-  background: var(--warn-bg);
-  border-color: var(--warn-line);
-  color: var(--warn);
-  font-weight: 600;
-}
-.chip.kind-badge {
-  background: #1a1a1a;
-  border-color: var(--line-3);
-  color: var(--muted-2);
-  font-size: 11.5px;
-  cursor: help;
-}
 .chip.ghost-chip {
   background: transparent;
   border-style: dashed;
   border-color: var(--dash);
   color: var(--muted-2);
-}
-.chip.live {
-  background: #1a1a1a;
-  border-style: dashed;
-  border-color: var(--line-in);
-  color: var(--acc-ink);
-  font-weight: 600;
 }
 .chip .path {
   color: var(--acc-ink);

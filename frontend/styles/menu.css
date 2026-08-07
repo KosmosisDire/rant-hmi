@@ -100,14 +100,3 @@
   width: 100%;
   min-width: 120px;
 }
-
-/* a line of prose in a menu — what a group of items has in common, or why there are no
-   items at all. Not a button: nothing here runs, and it must not read as something that
-   could be clicked. */
-#ctx .menu-note {
-  padding: 4px 9px;
-  max-width: 240px;
-  font: 400 11px var(--mono);
-  line-height: 1.35;
-  color: var(--dim-2);
-}

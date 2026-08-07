@@ -65,9 +65,11 @@ export function treeRow(
   );
 }
 
-/* draw-kind glyphs: one mono mark per box direction / part draw, shared by both trees */
+/* draw-kind glyphs: one mono mark per node kind / box direction / part draw, shared by
+   both trees. `frame` and `rect` wear the same box mark — one is the node kind, the other
+   the draw it stands for. */
 export const PART_GLYPH: Record<string, string> = {
   row: "→", col: "↓", stack: "▤", auto: "⇆",
-  rect: "▭", bar: "▮", text: "T", icon: "✦",
+  frame: "▭", rect: "▭", bar: "▮", text: "T", icon: "✦",
   arc: "◠", needle: "↗", plot: "∿", path: "◇", code: "λ",
 };

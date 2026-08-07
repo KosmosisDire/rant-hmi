@@ -136,6 +136,12 @@ export interface Var {
   persist: boolean;
 }
 
+/* what a scalar variable type is CALLED in the UI. A type outside this table is a TypeRef
+   from the mesh, which names itself — so a miss here is also the struct test. */
+export const SCALAR_LABEL: Record<string, string> = {
+  f64: "number", bool: "bool", str: "text", timer: "timer", list: "list", map: "map",
+};
+
 /* a theme token: a named color role with one value per theme mode; a
    color slot value "$<name>" resolves through it in the view's own mode */
 export interface Token {

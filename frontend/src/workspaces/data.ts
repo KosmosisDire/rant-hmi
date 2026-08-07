@@ -18,7 +18,7 @@ import { iconMarkup, kindMark } from "../icons.js";
 import { sideOf, verbOf } from "../inspector/flows.js";
 import { newVariable, varCard, varShape } from "../inspector/vars.js";
 import { bindField, bindText } from "../reconcile.js";
-import { Feed, Json, MeshEntity, MeshField, MeshType, Node } from "../types.js";
+import { Feed, Json, MeshEntity, MeshField, MeshType, Node, SCALAR_LABEL } from "../types.js";
 
 /* ---- module view state: per view, never synced ---- */
 
@@ -133,10 +133,6 @@ function leafName(name: string): string {
   const at = name.lastIndexOf("/");
   return at < 0 ? name : name.slice(at + 1);
 }
-
-const SCALAR_LABEL: Record<string, string> = {
-  f64: "number", bool: "bool", str: "text", timer: "timer", list: "list", map: "map",
-};
 
 function typeKey(type: MeshType, index: number): string {
   return "t:" + (type.name || "#" + index);

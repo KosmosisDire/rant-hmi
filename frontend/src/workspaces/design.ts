@@ -21,11 +21,8 @@ import { ICONS, iconMarkup } from "../icons.js";
 import { componentInspectorShape, renderComponentInspector } from "../inspector/components.js";
 import { MenuItem, openMenu } from "../menu.js";
 import { bindText } from "../reconcile.js";
-import { makeFold, treeRow } from "../tree.js";
+import { makeFold, PART_GLYPH, treeRow } from "../tree.js";
 import { ComponentDef, Json } from "../types.js";
-
-/* one mono mark per node kind: the box, the type, the glyph, the ink */
-const KIND_GLYPH: Record<string, string> = { frame: "▭", text: "T", icon: "✦", path: "◇" };
 
 /* the component tree's own expansion state, independent of the Layers tree's */
 const fold = makeFold();
@@ -195,7 +192,7 @@ function docPartTreeRows(editor: Editor, comp: ComponentDef, part: Json, depth: 
   const key = "c" + comp.id + "/" + part.id;
   const open = fold.open(key, true);
   const children = (part.children ?? []) as Json[];
-  const glyph = KIND_GLYPH[part.kind] ?? "·";
+  const glyph = PART_GLYPH[part.kind] ?? "·";
   const label = el("span", { class: "layer-label" });
   bindText(part.id + ":name.layer", label, () =>
     (editor.store.node(part.id) as Json)?.name ?? "");
@@ -270,7 +267,7 @@ function builtinPartRows(
   const key = "b:" + comp + "/" + path;
   const open = fold.open(key, true);
   const children = Array.isArray(part?.children) ? (part.children as Json[]) : [];
-  const glyph = KIND_GLYPH[part?.kind] ?? "·";
+  const glyph = PART_GLYPH[part?.kind] ?? "·";
   const current = editor.builtinSel?.name === comp && editor.builtinSel.path === path;
   const row = treeRow(
     key,

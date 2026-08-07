@@ -144,11 +144,6 @@
   text-overflow: ellipsis;
 }
 
-/* the last segment of a statement absorbs the slack, so the truncation lands at the end */
-.do-say .say-grow {
-  flex: 1 1 auto;
-}
-
 .do-tail {
   display: flex;
   align-items: center;
