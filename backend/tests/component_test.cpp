@@ -921,66 +921,63 @@ void test_attr_vocabulary() {
     }
 }
 
-/* TRANSITIONS ARE RENDERING (smooth): the parser's marker and its refusals, the hoist
- * into program metadata at the attr sites with the num/color gate, the refusals at the
- * sites where nothing can sweep, and the property declaration served as slot metadata.
- * Nothing here touches the VM: the true value is never eased anywhere the backend runs. */
-void test_smooth() {
+/* TRANSITIONS ARE RENDERING: a transition is METADATA on the field, never part of any
+ * expression. The language redirects the old spelling by name; the node-level
+ * `transitions` map is checked against the attr table's css column and passed through
+ * to the served rows; the property declaration serves as slot metadata. Nothing here
+ * touches the VM: the true value is never eased anywhere the backend runs. */
+void test_transitions() {
     const TemplateScope scope = scope_of({"value", "fill_color", "options"});
 
-    /* the parser: a trailing marker, literals only, the closed profile vocabulary */
-    CHECK_EQ(lower("value.smooth(300)", scope), "LOAD(slot:value) SMOOTH");
-    CHECK_EQ(lower("(value * 2).smooth(150, 'ease-out')", scope),
-             "LOAD(slot:value) CONST(2.0) MUL SMOOTH");
-    {
-        TemplateExprResult result = compile_template_expr("value.smooth(250)", scope);
-        CHECK(result.ok);
-        CHECK_EQ(result.program["code"].back().value("ms", 0.0), 250.0);
-        CHECK_EQ(result.program["code"].back().value("profile", ""),
-                 std::string("ease"));   /* the default profile */
-    }
-    CHECK(refuses("value.smooth(300, 'bouncy')", scope, "not an easing profile"));
-    CHECK(refuses("value.smooth(0)", scope, "between 1 and 600000"));
-    CHECK(refuses("value.smooth(-5)", scope, "number literal"));
-    CHECK(refuses("value.smooth(value)", scope, "number literal"));
-    /* it wraps the WHOLE value, once, at the end */
-    CHECK(refuses("value.smooth(300) + 1", scope, "wraps the whole expression"));
-    CHECK(refuses("value.smooth(100).smooth(200)", scope, "wraps the whole expression"));
-    CHECK(refuses("options.map(v => v.smooth(100))", scope, "inside a lambda"));
-    CHECK(refuses("smooth(value, 300)", scope, "written after the value"));
+    /* the language: a transition is not an expression, and the refusal says where it
+     * lives now -- in both spellings someone might try */
+    CHECK(refuses("value.smooth(300)", scope, "transition button"));
+    CHECK(refuses("value.transition(300)", scope, "transition button"));
+    CHECK(refuses("smooth(value, 300)", scope, "transition button"));
 
-    /* the attr sites: the marker hoists OUT of the code into program metadata on a num
-     * or color attr, and everything else refuses with the pointer at the property */
+    /* the node metadata: valid rows pass through onto the served template, invalid ones
+     * are findings and are not served -- the picture snaps, never a promised sweep
+     * nothing draws */
     Json comp = {
         {"id", 800}, {"name", "Sweep"},
         {"props", Json::array({
             Json{{"id", 801}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
                  {"group", "value"}, {"smooth", 400.0}, {"profile", "ease-out"}},
-            Json{{"id", 802}, {"name", "fill_color"}, {"shape", "color"},
-                 {"default", "$accent"}, {"group", "appearance"}},
             Json{{"id", 804}, {"name", "rate"}, {"shape", "num"}, {"default", 1.0},
                  {"group", "config"}, {"smooth", 250.0}},
             Json{{"id", 803}, {"name", "label"}, {"shape", "text"}, {"default", "hi"},
                  {"group", "config"}},
         })},
+        {"transitions", Json{{"surface", Json{{"ms", 300.0}}}}},
         {"children", Json::array({
             Json{{"id", 811}, {"kind", "frame"}, {"name", "bar"},
-                 {"attrs", Json{{"w", "value.smooth(300)"},
-                                {"rotate", "value.smooth(250, 'ease-out')"},
-                                {"surface", "fill_color.smooth(400)"},
-                                {"show", "value.smooth(100)"}}},
-                 {"interact", Json{{"primitive", "drag1d"},
-                                   {"params", Json{{"min", "value.smooth(100)"}}}}}},
+                 {"attrs", Json{{"w", "value"}}},
+                 {"transitions", Json{{"w", Json{{"ms", 300.0}}},
+                                      {"rotate", Json{{"ms", 250.0},
+                                                      {"profile", "ease-out"}}},
+                                      {"show", Json{{"ms", 100.0}}},
+                                      {"nope", Json{{"ms", 100.0}}},
+                                      {"x", Json{{"ms", -5.0}}},
+                                      {"y", Json{{"ms", 100.0},
+                                                 {"profile", "bounce"}}}}}},
             Json{{"id", 812}, {"kind", "text"}, {"name", "cap"},
-                 {"attrs", Json{{"text", "label.smooth(300)"}}}},
+                 {"attrs", Json{{"text", "label"}}},
+                 {"transitions", Json{{"text", Json{{"ms", 300.0}}},
+                                      {"color", Json{{"ms", 200.0}}}}}},
             Json{{"id", 813}, {"kind", "path"}, {"name", "line"},
-                 {"anchors", Json::array({Json{{"x", "value.smooth(100)"}, {"y", "0"}}})}},
+                 {"anchors", Json::array({Json{{"x", "value"}, {"y", "0"}}})},
+                 {"transitions", Json{{"points", Json{{"ms", 150.0}}}}}},
         })},
     };
     Json root = {
         {"version", 1}, {"next_id", 900},
         {"components", Json::array({std::move(comp)})},
-        {"pages", Json::array()},
+        {"pages", Json::array({Json{
+            {"name", "Main"},
+            {"children", Json::array({Json{
+                {"kind", "frame"}, {"name", "Box"},
+                {"attrs", Json{{"x", "22"}}},
+                {"transitions", Json{{"x", Json{{"ms", 500.0}}}}}}})}}})},
     };
     Document document;
     std::string error;
@@ -989,30 +986,41 @@ void test_smooth() {
     Json registry = derive_registry(document, diags);
 
     const Json& sweep = registry["types"][12];
+    /* the component record is its ROOT node: its transitions ride the template root */
+    CHECK_EQ(sweep["template"]["transitions"]["surface"].value("ms", 0.0), 300.0);
     const Json& bar = sweep["template"]["children"][0];
-    /* hoisted: the code is the plain program, the transition rides beside it */
-    CHECK_EQ(ops_of(bar["attrs"]["w"]), "LOAD(slot:value)");
-    CHECK_EQ(bar["attrs"]["w"]["smooth"].value("ms", 0.0), 300.0);
-    CHECK_EQ(bar["attrs"]["w"]["smooth"].value("profile", ""), std::string("ease"));
-    CHECK_EQ(bar["attrs"]["rotate"]["smooth"].value("profile", ""),
-             std::string("ease-out"));
-    CHECK_EQ(ops_of(bar["attrs"]["surface"]), "LOAD(slot:fill_color)");
-    CHECK_EQ(bar["attrs"]["surface"]["smooth"].value("ms", 0.0), 400.0);
-
-    /* the refusals: a bool attr, a text attr, a gesture param, an anchor — each named,
-     * each degrading to an unserved field rather than a wrong sweep */
-    CHECK(!bar["attrs"].contains("show"));
-    CHECK(!bar["interact"]["params"].contains("min"));
-    CHECK(!sweep["template"]["children"][1]["attrs"].contains("text"));
-    CHECK(sweep["template"]["children"][2]["anchors"][0].contains("y"));
-    CHECK(!sweep["template"]["children"][2]["anchors"][0].contains("x"));
+    CHECK_EQ(bar["transitions"]["w"].value("ms", 0.0), 300.0);
+    CHECK(!bar["transitions"]["w"].contains("profile"));   /* absent = the view's ease */
+    CHECK_EQ(bar["transitions"]["rotate"].value("profile", ""), std::string("ease-out"));
+    /* the refused rows are absent AND named: show has no animatable property, nope is
+       no attr at all, x carries a bad time, y a bad profile */
+    CHECK(!bar["transitions"].contains("show"));
+    CHECK(!bar["transitions"].contains("nope"));
+    CHECK(!bar["transitions"].contains("x"));
+    CHECK(!bar["transitions"].contains("y"));
+    const Json& cap = sweep["template"]["children"][1];
+    CHECK(!cap["transitions"].contains("text"));   /* content has nothing to blend */
+    CHECK_EQ(cap["transitions"]["color"].value("ms", 0.0), 200.0);
+    /* a computed path CAN transition: d interpolates when the point count holds */
+    CHECK_EQ(sweep["template"]["children"][2]["transitions"]["points"].value("ms", 0.0),
+             150.0);
     std::set<std::string> wheres;
-    for (const Diag& d : diags) wheres.insert(d.where);
-    CHECK_EQ(diags.size(), size_t(4));
-    CHECK(wheres.count("show") == 1);
-    CHECK(wheres.count("text") == 1);
-    CHECK(wheres.count("interact.min") == 1);
-    CHECK(wheres.count("anchors[0].x") == 1);
+    for (const Diag& d : diags) {
+        CHECK_EQ(d.code, std::string("transition"));
+        wheres.insert(d.where);
+    }
+    CHECK_EQ(diags.size(), size_t(5));
+    CHECK(wheres.count("transitions.show") == 1);
+    CHECK(wheres.count("transitions.nope") == 1);
+    CHECK(wheres.count("transitions.x") == 1);
+    CHECK(wheres.count("transitions.y") == 1);
+    CHECK(wheres.count("transitions.text") == 1);
+
+    /* a PAGE node's transitions ride its node_attrs row the same way */
+    std::vector<Diag> page_diags;
+    Json rows = compile_page_attrs(document, page_diags);
+    const uint64_t box_id = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    CHECK_EQ(rows[std::to_string(box_id)]["transitions"]["x"].value("ms", 0.0), 500.0);
 
     /* the property declaration serves as slot metadata, exactly as authored */
     auto slot_named = [&](const char* name) -> const Json* {
@@ -1029,7 +1037,7 @@ void test_smooth() {
     const Json* label = slot_named("label");
     CHECK(label && !label->contains("smooth"));
 
-    /* a malformed declaration is a finding and is not served — and ONLY a number
+    /* a malformed declaration is a finding and is not served -- and ONLY a number
      * property sweeps: a colour's transition belongs on the attribute that draws it */
     {
         Json bad = {
@@ -1062,7 +1070,7 @@ void test_smooth() {
     }
 
     /* THE SCALAR TIER REFUSES BY NAME, teaching where a transition lives: a flow, a
-     * feed and the wire all read the true value, so smooth has no meaning there */
+     * feed and the wire all read the true value, so easing has no meaning there */
     {
         ExpressionScope escope;
         Binding value_binding;
@@ -1075,11 +1083,11 @@ void test_smooth() {
         std::string eerror;
         CHECK(!compile_expression("value.smooth(300)", ExprTier::Display, escope, emit,
                                   code, eresult, eerror));
-        CHECK(eerror.find("eases what a view draws") != std::string::npos);
+        CHECK(eerror.find("not written in an expression") != std::string::npos);
         eerror.clear();
-        CHECK(!compile_expression("value.smooth(300)", ExprTier::Wire, escope, emit,
+        CHECK(!compile_expression("value.transition(300)", ExprTier::Wire, escope, emit,
                                   code, eresult, eerror));
-        CHECK(eerror.find("declare the transition on the property") != std::string::npos);
+        CHECK(eerror.find("the value stays true") != std::string::npos);
     }
 }
 
@@ -1095,6 +1103,6 @@ int main() {
     test_part_property_rules();
     test_empty_component();
     test_attr_vocabulary();
-    test_smooth();
+    test_transitions();
     return check::summary("component_test");
 }

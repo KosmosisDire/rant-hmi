@@ -6,14 +6,16 @@
 namespace hmi {
 namespace {
 
-AttrDef def(const char* name, const char* shape, Json value, const char* note) {
-    return AttrDef{name, shape, std::move(value), note};
+AttrDef def(const char* name, const char* shape, Json value, const char* note,
+            const char* css = "") {
+    return AttrDef{name, shape, std::move(value), note, css};
 }
 
 /* no computed default: absence means "not applied", not "applied at some value" — the
  * note says what that means for this attr rather than inventing a number */
-AttrDef no_def(const char* name, const char* shape, const char* note) {
-    return AttrDef{name, shape, nullptr, note};
+AttrDef no_def(const char* name, const char* shape, const char* note,
+               const char* css = "") {
+    return AttrDef{name, shape, nullptr, note, css};
 }
 
 /* ---- the common set: honoured on any node, whatever it draws ---- */
@@ -45,22 +47,25 @@ const std::vector<AttrDef>& common_attrs_table() {
         no_def("x", "num",
                "the ORIGIN POINT's position in canvas px from the parent's origin (with "
                "origin_x 0 that is the left edge). Absent with `w` absent stretches the "
-               "axis to the parent; absent with `w` set pins to 0"),
-        no_def("y", "num", "the origin point's vertical position in canvas px; as `x`"),
+               "axis to the parent; absent with `w` set pins to 0", "left"),
+        no_def("y", "num", "the origin point's vertical position in canvas px; as `x`",
+               "top"),
         no_def("w", "num",
                "width in canvas px; absent = the axis stretches to the parent (both edges "
-               "pinned) or, where `x` is set, the content's own width"),
-        no_def("h", "num", "height in canvas px; as `w`"),
+               "pinned) or, where `x` is set, the content's own width", "width"),
+        no_def("h", "num", "height in canvas px; as `w`", "height"),
         def("aspect", "num", 0.0,
             "0 = free; > 0 derives the UNAUTHORED one of w/h from the authored one at "
             "that ratio (aspect-ratio). With both authored it is inert"),
         def("origin_x", "num", 0.0,
             "the node's OWN reference point on x, a fraction of its own width: the point "
-            "`x` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle"),
-        def("origin_y", "num", 0.0, "the node's own reference point on y; as `origin_x`"),
+            "`x` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle",
+            "transform-origin"),
+        def("origin_y", "num", 0.0, "the node's own reference point on y; as `origin_x`",
+            "transform-origin"),
         no_def("rotate", "num",
                "absent = no rotation; degrees clockwise about (origin_x, origin_y). "
-               "Applied to the whole subtree, so an offset child orbits"),
+               "Applied to the whole subtree, so an offset child orbits", "transform"),
 
         /* THE SHADOW, one authored intent on every kind. What draws it differs — a box
            casts a box-shadow, ink casts a filter over its own outline — and the view picks
@@ -69,16 +74,17 @@ const std::vector<AttrDef>& common_attrs_table() {
                "absent = no shadow; a colour casts one. THE COLOUR IS THE SWITCH, exactly "
                "as it is for `surface` — a fully transparent one casts nothing. Offset by "
                "shadow_x/shadow_y, softened by shadow_blur, turned inward by shadow_inset. "
-               "A shadow is never layout and never takes a gesture"),
+               "A shadow is never layout and never takes a gesture", "box-shadow"),
         def("shadow_x", "num", 0.0,
             "how far right the shadow falls, in canvas px. IT DOES NOT TURN WITH THE NODE: "
             "the offset is read in the artboard's own axes and the view cancels the "
             "rotation of this node and every parent above it, so a needle sweeping its dial "
-            "keeps one still shadow instead of swinging one around"),
+            "keeps one still shadow instead of swinging one around", "box-shadow"),
         def("shadow_y", "num", 0.0, "how far down the shadow falls, in canvas px; as "
-                                    "`shadow_x`, and just as unturning"),
+                                    "`shadow_x`, and just as unturning", "box-shadow"),
         def("shadow_blur", "num", 0.0,
-            "how soft the shadow's edge is, in canvas px. 0 is a hard copy of the shape"),
+            "how soft the shadow's edge is, in canvas px. 0 is a hard copy of the shape",
+            "box-shadow"),
         def("shadow_inset", "bool", false,
             "false casts the shadow OUTSIDE the shape; true turns it inward, so the shape "
             "reads as recessed. A frame does this with box-shadow's own inset; INK (text, "
@@ -94,17 +100,18 @@ const std::vector<AttrDef>& frame_attrs() {
     static const std::vector<AttrDef> table = {
         no_def("surface", "color",
                "absent = no surface at all, which is not the same as a transparent one "
-               "(background)"),
-        no_def("border", "color", "absent = no border (border-color)"),
-        def("border_w", "num", 1.0, "border width in canvas px"),
-        def("radius", "num", 0.0, "corner radius in canvas px (border-radius)"),
+               "(background)", "background-color"),
+        no_def("border", "color", "absent = no border (border-color)", "border-color"),
+        def("border_w", "num", 1.0, "border width in canvas px", "border-width"),
+        def("radius", "num", 0.0, "corner radius in canvas px (border-radius)",
+            "border-radius"),
         /* box-shadow's fourth length, and a box's alone: the filter that shadows ink has
            no such knob, and a row that quietly did nothing on three of the four kinds
            would be worse than a row that lives where it works. */
         def("shadow_spread", "num", 0.0,
             "grows (or, negative, shrinks) the shadow before it is blurred, in canvas px — "
             "how a lit panel wears a halo. A BOX'S ONLY: ink casts its shadow from its own "
-            "outline, which has no edge to push out"),
+            "outline, which has no edge to push out", "box-shadow"),
     };
     return table;
 }
@@ -114,8 +121,8 @@ const std::vector<AttrDef>& text_attrs() {
         no_def("text", "text",
                "the string drawn; UNKNOWN renders the unknown treatment, never a "
                "fabricated value"),
-        def("color", "color", "$ink", "the text colour"),
-        def("size", "num", 13.0, "font size in CSS pixels"),
+        def("color", "color", "$ink", "the text colour", "color"),
+        def("size", "num", 13.0, "font size in CSS pixels", "font-size"),
         def("align", "text", "start", "start | center | end (text-align)"),
         /* `bold`, not a numeric weight: `weight` would sit one letter from the common
            `grow` it replaced and mean something else entirely on the same node */
@@ -131,7 +138,9 @@ const std::vector<AttrDef>& icon_attrs() {
     static const std::vector<AttrDef> table = {
         def("name", "text", "",
             "a Lucide icon name; unresolved (including empty) draws nothing"),
-        def("color", "color", "$ink", "the icon's stroke colour"),
+        def("color", "color", "$ink", "the icon's stroke colour", "color"),
+        /* stroke_w rewrites the glyph's own markup (iconSig, stage.ts), so there is no
+           standing property for a transition to ride — deliberately not transitionable */
         def("stroke_w", "num", 1.5, "stroke width in the icon's own 24-unit box"),
     };
     return table;
@@ -141,17 +150,18 @@ const std::vector<AttrDef>& path_attrs() {
     static const std::vector<AttrDef> table = {
         no_def("fill", "color",
                "absent = no fill; an open path fills as if closed, which is SVG's own "
-               "rule and the reason `closed` is about the outline, not the paint"),
-        no_def("stroke", "color", "absent = no stroke; neither fill nor stroke draws nothing"),
+               "rule and the reason `closed` is about the outline, not the paint", "fill"),
+        no_def("stroke", "color", "absent = no stroke; neither fill nor stroke draws nothing",
+               "stroke"),
         def("stroke_w", "num", 1.0,
             "stroke width in CSS pixels — the anchors scale with the box, the stroke does "
-            "not (vector-effect: non-scaling-stroke)"),
+            "not (vector-effect: non-scaling-stroke)", "stroke-width"),
         def("cap", "text", "butt", "line ends: butt | round | square (stroke-linecap)"),
         no_def("points", "list",
             "COMPUTED ANCHORS: a list of anchor(x, y) records in fractions of the box, "
             "drawn in place of the authored anchors — a plot is a map over a list slot "
             "(history.map((v, i) => anchor(..., ...))). A Nil element is a GAP: the "
-            "line breaks there rather than bridging it"),
+            "line breaks there rather than bridging it", "d"),
     };
     return table;
 }
@@ -174,6 +184,9 @@ const std::map<std::string, const std::vector<AttrDef>*>& per_kind_table() {
 Json attr_def_json(const AttrDef& a) {
     Json row{{"name", a.name}, {"shape", a.shape}, {"note", a.note}};
     if (!a.default_value.is_null()) row["default"] = a.default_value;
+    /* served so the inspector offers the transition button on exactly the rows a
+       transition can ride — the same column the compiler validates against */
+    if (a.css[0]) row["css"] = a.css;
     return row;
 }
 
@@ -202,11 +215,11 @@ bool attr_known(const std::string& kind, const std::string& attr_name) {
     return false;
 }
 
-const char* attr_shape(const std::string& kind, const std::string& attr_name) {
-    for (const AttrDef& a : common_attrs())
-        if (attr_name == a.name) return a.shape;
+const char* attr_css(const std::string& kind, const std::string& attr_name) {
     for (const AttrDef& a : kind_attrs(kind))
-        if (attr_name == a.name) return a.shape;
+        if (attr_name == a.name) return a.css;
+    for (const AttrDef& a : common_attrs())
+        if (attr_name == a.name) return a.css;
     return "";
 }
 

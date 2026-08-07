@@ -22,9 +22,10 @@ namespace {
  * three or getting "unknown function" where "no view encoding" was meant. */
 
 const char* kStates[] = {"pressed", "dragging", "open", "hover"};
-/* the easing vocabulary smooth() takes: the CSS names, verbatim, because the colour
- * mechanism hands the profile straight to a CSS transition and the numeric mechanism
- * reproduces the same named curves — one vocabulary, whichever mechanism draws it */
+/* the easing vocabulary a transition takes (a node's `transitions` metadata, a
+ * property's declared sweep): the CSS names, verbatim, because the attr mechanism hands
+ * the profile straight to a CSS transition and the property tween reproduces the same
+ * named curves — one vocabulary, whichever mechanism draws it */
 const char* kProfiles[] = {"linear", "ease", "ease-in", "ease-out", "ease-in-out"};
 /* the three cells a repeated node's copy answers: 0-based index, the total copy count,
  * and index / (count - 1) (0 when count < 2, never NaN). `repeat` needs no opcode of its
@@ -43,17 +44,6 @@ class Parser {
         parse_ternary();
         if (error_.empty() && token_.kind != TokenKind::End)
             fail("unexpected '" + token_.text + "'");
-        /* SMOOTH WRAPS THE WHOLE VALUE, so the only place it may stand is last: a sweep
-         * needs one element and one field to remember its flight on, and a smooth buried
-         * mid-expression has neither. Lambda bodies are already refused at the parse. */
-        if (error_.empty()) {
-            for (size_t i = 0; i + 1 < code_.size(); ++i)
-                if (code_[i].value("op", "") == "SMOOTH") {
-                    fail("smooth wraps the whole expression: write it once, at the end "
-                         "(value.smooth(300))");
-                    break;
-                }
-        }
         if (!error_.empty()) {
             error = error_;
             return false;
@@ -326,53 +316,6 @@ class Parser {
         code_.push_back(Json{{"op", "ITERATE"}, {"mode", mode}, {"body", std::move(body)}});
     }
 
-    /* `value.smooth(ms[, profile])`: A TRANSITION IS RENDERING. The view eases what it
-     * draws toward the true value; the value itself — what behavior reads, what the wire
-     * carries, what a gesture proposes — is never eased, which is why this exists only in
-     * this tier and only over a whole attribute (the caller hoists the trailing op into
-     * program metadata; see compile/components.cpp). The arguments are LITERALS: a sweep's
-     * duration is a fact about the picture, not a computed value, and a varying one would
-     * retune mid-flight to no honest meaning. */
-    void parse_smooth() {
-        if (in_lambda_) {
-            fail("smooth eases a whole attribute; it cannot ride inside a lambda");
-            return;
-        }
-        if (!expect(TokenKind::LParen, "smooth takes (ms) or (ms, profile)")) return;
-        advance();
-        if (token_.kind != TokenKind::Number) {
-            fail("smooth takes its time in milliseconds, as a number literal");
-            return;
-        }
-        const double ms = token_.number;
-        if (!(ms > 0) || ms > 600000) {
-            fail("smooth takes a time between 1 and 600000 milliseconds");
-            return;
-        }
-        advance();
-        std::string profile = "ease";
-        if (token_.kind == TokenKind::Comma) {
-            advance();
-            if (token_.kind != TokenKind::String) {
-                fail("smooth's profile is a quoted name: linear, ease, ease-in, "
-                     "ease-out or ease-in-out");
-                return;
-            }
-            profile = token_.text;
-            bool known = false;
-            for (const char* p : kProfiles) known = known || profile == p;
-            if (!known) {
-                fail("'" + profile + "' is not an easing profile: linear, ease, "
-                     "ease-in, ease-out or ease-in-out");
-                return;
-            }
-            advance();
-        }
-        if (!expect(TokenKind::RParen, "expected ')'")) return;
-        advance();
-        code_.push_back(Json{{"op", "SMOOTH"}, {"ms", ms}, {"profile", profile}});
-    }
-
     void parse_postfix() {
         parse_primary();
         while (error_.empty() &&
@@ -397,8 +340,14 @@ class Parser {
             advance();
             if (const char* mode = iterate_mode(name)) {
                 parse_iterate(name, mode);
-            } else if (name == "smooth") {
-                parse_smooth();
+            } else if (name == "smooth" || name == "transition") {
+                /* A TRANSITION IS NOT PART OF THE EXPRESSION: the expression computes the
+                 * true value, and how the picture approaches it is metadata on the field
+                 * (a node's `transitions`, a property's declared sweep) — so it survives
+                 * every edit to the expression and never gates what a value may be. */
+                fail("a transition is not written in the expression: set it with the "
+                     "transition button beside the field");
+                return;
             } else if (name == "clamp") {
                 /* x.clamp(lo, hi): MAX then MIN, the same fold the builtin uses. Kept
                  * as its own case rather than going through view_method()'s bespoke
@@ -526,9 +475,9 @@ class Parser {
                  "it); a template reads the resulting list from the options property");
             return;
         }
-        if (name == "smooth") {
-            fail("smooth is written after the value it eases: "
-                 "value.smooth(300) or value.smooth(300, \"ease-out\")");
+        if (name == "smooth" || name == "transition") {
+            fail("a transition is not written in the expression: set it with the "
+                 "transition button beside the field");
             return;
         }
         const ViewBuiltin view = view_builtin(name);

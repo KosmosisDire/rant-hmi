@@ -37,6 +37,13 @@ struct AttrDef {
     const char* shape;         /* num | bool | text | color | list | map */
     Json default_value;        /* Json(nullptr) = no computed default; see `note` */
     const char* note;
+    /* THE CSS PROPERTY this attr lands on, "" where it lands on none the browser can
+     * animate — which is exactly what decides whether a TRANSITION may ride it (the
+     * node's `transitions` metadata hands the blend to a native CSS transition, so an
+     * attr with no animatable property has nothing to transition). The name here is
+     * NOMINAL: the renderer owns the real mapping per mechanism (an ink shadow lands
+     * on `filter`, not box-shadow — stage.ts), and non-empty is the whole contract. */
+    const char* css = "";
 };
 
 /* The declared list of node kinds: frame, text, icon, path. This is NOT a second
@@ -56,9 +63,10 @@ const std::vector<AttrDef>& kind_attrs(const std::string& kind);
 /* is `attr_name` in the common set or `kind`'s own set? */
 bool attr_known(const std::string& kind, const std::string& attr_name);
 
-/* the declared shape of one attr on one kind, "" where the table has no such row —
- * what the smooth() gate reads: numbers tween, colours cross-fade, nothing else sweeps */
-const char* attr_shape(const std::string& kind, const std::string& attr_name);
+/* the CSS property one attr lands on for `kind`, "" where it has none (or the table has
+ * no such row) — what the transitions metadata validates against: no animatable
+ * property, nothing to transition */
+const char* attr_css(const std::string& kind, const std::string& attr_name);
 
 /* the served wire shape, carried in the snapshot next to `lang` (app.cpp) exactly like
  * `builtins`: {"kinds": [...], "common": [AttrDef...], "perKind": {kind: [AttrDef...]}}.

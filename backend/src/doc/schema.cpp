@@ -100,6 +100,12 @@ const std::vector<NodeSpec>& table() {
                until it has an address to carry (compile/components.cpp holds that line). */
             text("name", ""),
             object("attrs", Json::object()),
+            /* PER-ATTR TRANSITIONS: {attr: {ms, profile?}} — metadata beside the attr,
+               never part of its expression. The view merges these into the element's
+               native CSS `transition`, so only attrs with an animatable CSS property
+               take one (the attr table's `css` column; compile/components.cpp checks).
+               Rendering only: the value the attr computes is never eased. */
+            object("transitions", Json::object()),
         };
         node.lists = {{"props", Kind::PropDef}};
         node.variants = {
@@ -260,6 +266,8 @@ const std::vector<NodeSpec>& table() {
             num("design_h", 120),
             object("attrs", Json::object()),
             object("interact", nullptr),
+            /* the component record IS its root node, transitions included */
+            object("transitions", Json::object()),
         };
         component.lists = {{"props", Kind::PropDef},
                            {"children", Kind::Node},

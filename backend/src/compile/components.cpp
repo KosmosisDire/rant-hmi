@@ -90,26 +90,11 @@ void check_attr_names(const Json& attrs, const std::string& kind, uint64_t node,
     }
 }
 
-/* does this compiled program end in the parser's SMOOTH marker? (the parser already
- * guarantees it can stand nowhere else) */
-bool trailing_smooth(const Json& program) {
-    auto code = program.find("code");
-    return code != program.end() && code->is_array() && !code->empty() &&
-           code->back().value("op", "") == "SMOOTH";
-}
-
 /* every attr entry: expression text -> a compiled view program; a bad one is a finding on
  * THIS node, named by the attr, and the attr is simply not served (an absent attr renders
- * its default, so the node degrades instead of vanishing).
- *
- * `kind` is the SMOOTH GATE: the node kind whose attr table says what each attr's value
- * is shaped like, or nullptr at a site where nothing can sweep at all (an arc's radii, a
- * gesture's params). A trailing smooth() HOISTS out of the code into program metadata
- * {"smooth": {ms, profile}} — the view interpreter stays stateless; the RENDERER eases a
- * number in its own loop and hands a colour to a CSS transition, so only those two
- * shapes may carry one. */
+ * its default, so the node degrades instead of vanishing) */
 Json compile_attrs(const Json& attrs, const TemplateScope& scope, uint64_t node,
-                   const std::string& prefix, Sink& sink, const char* kind = nullptr) {
+                   const std::string& prefix, Sink& sink) {
     Json out = Json::object();
     if (!attrs.is_object()) return out;
     for (auto it = attrs.begin(); it != attrs.end(); ++it) {
@@ -123,31 +108,65 @@ Json compile_attrs(const Json& attrs, const TemplateScope& scope, uint64_t node,
             sink.report(node, "template_expr", compiled.error, prefix + it.key());
             continue;
         }
-        if (trailing_smooth(compiled.program)) {
-            if (!kind) {
-                sink.report(node, "template_expr",
-                            "smooth cannot ease '" + it.key() + "' here: it rides a "
-                            "node's attribute or a property's declaration",
-                            prefix + it.key());
-                continue;
-            }
-            const std::string shape = attr_shape(kind, it.key());
-            if (shape != "num" && shape != "color") {
-                sink.report(node, "template_expr",
-                            "'" + it.key() + "' cannot sweep: smooth eases numbers (the "
-                            "view tweens them) and colours (the browser cross-fades "
-                            "them); to sweep a value every reader follows, declare the "
-                            "transition on the property instead",
-                            prefix + it.key());
-                continue;
-            }
-            Json& code = compiled.program["code"];
-            Json marker = code.back();
-            code.erase(code.size() - 1);
-            compiled.program["smooth"] = Json{{"ms", marker.value("ms", 0.0)},
-                                              {"profile", marker.value("profile", "ease")}};
-        }
         out[it.key()] = std::move(compiled.program);
+    }
+    return out;
+}
+
+/* THE TRANSITIONS METADATA, checked and passed through: {attr: {ms, profile?}} rows the
+ * view merges into the element's native CSS `transition`. Never compiled — a transition
+ * is not part of any expression; it is a fact about the FIELD, which is what lets it
+ * survive every edit to the expression beside it. What is checked: the attr must exist
+ * on this kind AND land on a CSS property the browser can animate (the attr table's
+ * `css` column — text content, structure and a rebuilt glyph have nothing to blend),
+ * the time must be sane, the profile a known easing name. A refused row is a finding
+ * and is not served: the picture snaps rather than promising a sweep nothing draws. */
+Json compile_transitions(const Json& node, const std::string& kind, uint64_t node_id,
+                         Sink& sink) {
+    Json out = Json::object();
+    const Json& rows = node.value("transitions", Json());
+    if (!rows.is_object()) return out;
+    for (auto it = rows.begin(); it != rows.end(); ++it) {
+        const std::string where = "transitions." + it.key();
+        if (!attr_known(kind, it.key())) {
+            sink.report(node_id, "transition",
+                        "'" + it.key() + "' is not an attr a '" + kind + "' node reads",
+                        where);
+            continue;
+        }
+        const char* css = attr_css(kind, it.key());
+        if (!css[0]) {
+            sink.report(node_id, "transition",
+                        "'" + it.key() + "' cannot transition: it lands on nothing the "
+                        "browser can animate",
+                        where);
+            continue;
+        }
+        if (!it->is_object() || !it->contains("ms") || !(*it)["ms"].is_number()) {
+            sink.report(node_id, "transition",
+                        "a transition is {ms, profile?}: a time in milliseconds and an "
+                        "optional easing name",
+                        where);
+            continue;
+        }
+        const double ms = (*it)["ms"].get<double>();
+        if (!(ms > 0 && ms <= 600000)) {
+            sink.report(node_id, "transition",
+                        "a transition's time is between 1 and 600000 milliseconds",
+                        where);
+            continue;
+        }
+        const std::string profile = it->value("profile", "");
+        if (!profile.empty() && !easing_profile(profile)) {
+            sink.report(node_id, "transition",
+                        "'" + profile + "' is not an easing profile: linear, ease, "
+                        "ease-in, ease-out or ease-in-out",
+                        where);
+            continue;
+        }
+        Json row{{"ms", ms}};
+        if (!profile.empty()) row["profile"] = profile;
+        out[it.key()] = std::move(row);
     }
     return out;
 }
@@ -189,16 +208,6 @@ Json compile_anchors(const Json& anchors, const TemplateScope& scope, uint64_t n
             TemplateExprResult compiled = compile_template_expr(it->get<std::string>(), scope);
             if (!compiled.ok) {
                 sink.report(node, "anchor", compiled.error, where + "." + it.key());
-                continue;
-            }
-            /* an anchor is one coordinate of many making one outline: easing them one by
-               one warps the shape mid-flight. The honest sweep is on the VALUE the
-               anchors read, where every coordinate follows the same eased number. */
-            if (trailing_smooth(compiled.program)) {
-                sink.report(node, "anchor",
-                            "an anchor cannot sweep; declare the transition on the "
-                            "property the anchors read, and the whole shape follows it",
-                            where + "." + it.key());
                 continue;
             }
             row[it.key()] = std::move(compiled.program);
@@ -397,7 +406,9 @@ Json compile_common(const Json& node, const std::string& kind, const Json& attrs
                     const TemplateScope& scope, uint64_t node_id, Sink& sink) {
     Json out{{"kind", kind},
              {"name", str_or(node, "name", "")},
-             {"attrs", compile_attrs(attrs, scope, node_id, "", sink, kind.c_str())}};
+             {"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
+    Json transitions = compile_transitions(node, kind, node_id, sink);
+    if (!transitions.empty()) out["transitions"] = std::move(transitions);
     if (kind == "path") {
         out["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
                                          node_id, sink);
@@ -467,7 +478,9 @@ void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
     const Json attrs = shown_attrs(node.value("attrs", Json::object()), path, walk);
-    Json row{{"attrs", compile_attrs(attrs, scope, node_id, "", sink, kind.c_str())}};
+    Json row{{"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
+    Json transitions = compile_transitions(node, kind, node_id, sink);
+    if (!transitions.empty()) row["transitions"] = std::move(transitions);
     if (kind == "path")
         row["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
                                          node_id, sink);
@@ -652,7 +665,9 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
         const std::string kind = str_or(node, "kind", "frame");
         check_attr_names(node.value("attrs", Json::object()), kind, id, sink);
         Json row{{"attrs", compile_attrs(node.value("attrs", Json::object()), scope, id, "",
-                                         sink, kind.c_str())}};
+                                         sink)}};
+        Json transitions = compile_transitions(node, kind, id, sink);
+        if (!transitions.empty()) row["transitions"] = std::move(transitions);
         if (kind == "path")
             row["anchors"] =
                 compile_anchors(node.value("anchors", Json::array()), scope, id, sink);

@@ -912,11 +912,11 @@ class Parser {
                 /* a TRANSITION is rendering: the view eases what it draws toward the
                    true value, and the value itself -- what a flow computes, a feed
                    stores, the wire carries -- is never eased. Refused by name so the
-                   author is pointed at the two places a transition lives. */
-                if (name == "smooth") {
-                    fail("smooth eases what a view draws, never the value itself: "
-                         "write it on an attribute (value.smooth(300)) or declare the "
-                         "transition on the property");
+                   author is pointed at where a transition actually lives. */
+                if (name == "smooth" || name == "transition") {
+                    fail("a transition is not written in an expression: it is set on "
+                         "the field (the transition button) or declared on the "
+                         "property, and only the picture eases -- the value stays true");
                     return Shape::Unknown;
                 }
                 const std::string meant = method_suggestion(receiver, name);
