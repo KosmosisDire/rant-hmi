@@ -19,9 +19,9 @@ import { diagIcon, Editor, section } from "../editor.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
-import { bindChoice, bindField, bindText } from "../reconcile.js";
+import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
 import { AttrDef, ComponentDef, EventSpec, Json, Node, PRIMITIVES, PropDef,
-         SlotSpec, eventKind, primitiveDef, signatureText } from "../types.js";
+         SlotSpec, TransitionMap, eventKind, primitiveDef, signatureText } from "../types.js";
 import { valueEditor } from "./editors.js";
 
 const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "list", "map"];
@@ -694,11 +694,12 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
     return typeof ms === "number" && ms > 0 ? String(ms) : "";
   });
   const profile = selectField(
-    ["ease", "linear", "ease-in", "ease-out", "ease-in-out"].map((v) => ({ value: v })),
+    PROFILES.map((v) => ({ value: v })),
     prop.profile || "ease",
     (v) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile", value: v }]),
   );
   bindChoice(prop.id + ":profile", pickerOf(profile), () => at().profile || "ease");
+  const sweepDiag = editor.diagAt(prop.id, "smooth");
 
   return el("div", { class: "propdef" }, [
     el("div", { class: "row" }, [
@@ -720,7 +721,7 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
           el("span", { class: "row-label", text: "SWEEP MS" }),
           sweep,
           profile,
-          diagIcon(editor.diagAt(prop.id, "smooth") ?? editor.diagAt(prop.id, "profile")),
+          diagIcon(sweepDiag.length ? sweepDiag : editor.diagAt(prop.id, "profile")),
         ])
       : null,
   ]);
@@ -899,6 +900,60 @@ export function attrsShape(editor: Editor, node: Node): string {
   return node.kind + ":" + strayAttrs(editor, node).join(",");
 }
 
+/* the easing vocabulary a transition takes: the CSS names, verbatim (the backend's
+   easing_profile is the same list) */
+const PROFILES = ["ease", "linear", "ease-in", "ease-out", "ease-in-out"];
+
+/* THE TRANSITION BUTTON, on exactly the attrs that land on a CSS property the browser
+ * can animate (the served `css` column — the same one the compiler validates against).
+ * It edits the node's `transitions` METADATA: {attr: {ms, profile?}}, merged by the
+ * view into the element's native CSS `transition`. Never part of the expression, so it
+ * survives every edit to the field beside it — the first of the per-field settings
+ * buttons (bindings and colour tokens being the pattern), to be unified later. */
+function transitionChip(editor: Editor, partId: number, def: AttrDef): HTMLElement | null {
+  if (!def.css) return null;
+  const rowsOf = () =>
+    ((editor.store.node(partId) as Node | null)?.transitions ?? {}) as TransitionMap;
+  const commit = (next: TransitionMap) =>
+    editor.apply([{ op: "set_prop", node: partId, key: "transitions", value: next }]);
+  const chip = iconButton("timer", "transition: how this field's picture approaches a "
+                                   + "new value (the value itself is never eased)", () => {
+    const rect = chip.getBoundingClientRect();
+    const held = rowsOf()[def.name] ?? null;
+    const ms = commitInput(held && held.ms > 0 ? String(held.ms) : "", (text) => {
+      const value = Number(text);
+      const next = { ...rowsOf() };
+      if (Number.isFinite(value) && value > 0)
+        next[def.name] = { ...(next[def.name] ?? {}), ms: value };
+      else delete next[def.name];
+      commit(next);
+    }, { class: "field", placeholder: "none" });
+    const profile = selectField(PROFILES.map((v) => ({ value: v })),
+                                held?.profile ?? "ease", (v) => {
+      const at = rowsOf()[def.name];
+      /* a profile means nothing without a time; the ms field is what turns it on */
+      if (at) commit({ ...rowsOf(), [def.name]: { ms: at.ms, profile: v } });
+    });
+    openMenu(rect.left, rect.bottom + 4, "transition " + def.name, [
+      { node: el("div", { class: "menu-field", title: "milliseconds; empty = none" },
+                 [el("span", { class: "row-label", text: "MS" }), ms]) },
+      { node: el("div", { class: "menu-field" },
+                 [el("span", { class: "row-label", text: "EASE" }), profile]) },
+      ...(held ? [{ label: "remove the transition", icon: "trash", run: () => {
+          const next = { ...rowsOf() };
+          delete next[def.name];
+          commit(next);
+        } }] : []),
+    ]);
+  });
+  chip.classList.add("transition-chip");
+  /* lit from birth where a transition stands: the bind keeps it honest afterwards */
+  if (rowsOf()[def.name]) chip.classList.add("on");
+  bindFlag(partId + ":transitions." + def.name, chip, "on",
+           () => !!rowsOf()[def.name]);
+  return chip;
+}
+
 function attrDefRow(
   editor: Editor,
   partId: number,
@@ -917,10 +972,15 @@ function attrDefRow(
     { class: "field grow", spellcheck: "false", placeholder: attrPlaceholder(def), title: def.note },
   );
   bindField(partId + ":attrs." + def.name, expr, () => String(attrsOf()[def.name] ?? ""));
+  /* one icon serves both findings a row can carry: the expression's, and — where the
+     expression is fine — its transition metadata's */
+  const exprDiag = editor.diagAt(partId, def.name);
+  const transDiag = editor.diagAt(partId, "transitions." + def.name);
   return el("div", { class: "attr-row" }, [
     el("span", { class: "field attr-name static", text: def.name, title: def.note }),
     highlighted(expr),
-    diagIcon(editor.diagAt(partId, def.name)),
+    transitionChip(editor, partId, def),
+    diagIcon(exprDiag.length ? exprDiag : transDiag),
   ]);
 }
 

@@ -79,6 +79,28 @@
   background: var(--line-2);
 }
 
+/* a labelled field row in a menu (the transition popover): the inspector's own
+   row-label idiom on the menu's rhythm */
+#ctx .menu-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+}
+
+#ctx .menu-field .row-label {
+  flex: none;
+  width: 38px;
+  font: 700 10px var(--mono);
+  letter-spacing: 0.1em;
+  color: var(--dim-2);
+}
+
+#ctx .menu-field .field {
+  width: 100%;
+  min-width: 120px;
+}
+
 /* a line of prose in a menu — what a group of items has in common, or why there are no
    items at all. Not a button: nothing here runs, and it must not read as something that
    could be clicked. */
