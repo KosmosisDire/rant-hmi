@@ -678,27 +678,35 @@ function propRow(editor: Editor, prop: PropDef): HTMLElement {
   );
 
   /* THE DECLARED TRANSITION, number properties only: rendered reads of this slot sweep
-     toward the true value over this many ms — the needle, the arc and the readout all
-     together — while behavior, gestures and the wire keep reading truth. 0 = none. */
+     toward the true value over this time — the needle, the arc and the readout all
+     together — while behavior, gestures and the wire keep reading truth. The time and
+     the profile are EXPRESSIONS over the declaring node's scope ("1000 / rate"); a
+     plain number / bare easing name is the literal. Empty = none. */
+  const shownSweep = (v: number | string | null | undefined) =>
+    typeof v === "number" ? (v > 0 ? String(v) : "") : (v ?? "");
   const sweep = commitInput(
-    typeof prop.smooth === "number" && prop.smooth > 0 ? String(prop.smooth) : "",
+    shownSweep(prop.smooth),
     (text) => {
-      const ms = Number(text);
+      const trimmed = text.trim();
+      const folded = Number(trimmed);
       editor.apply([{ op: "set_prop", node: prop.id, key: "smooth",
-                      value: Number.isFinite(ms) && ms > 0 ? ms : 0 }]);
+                      value: !trimmed ? 0
+                           : Number.isFinite(folded) ? folded : trimmed }]);
     },
-    { class: "field", placeholder: "none" },
+    { class: "field", placeholder: "none",
+      title: "milliseconds — a number or an expression over this component; "
+             + "empty = none" },
   );
-  bindField(prop.id + ":smooth", sweep, () => {
-    const ms = (at() as PropDef).smooth;
-    return typeof ms === "number" && ms > 0 ? String(ms) : "";
-  });
-  const profile = selectField(
-    PROFILES.map((v) => ({ value: v })),
-    prop.profile || "ease",
-    (v) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile", value: v }]),
+  bindField(prop.id + ":smooth", sweep, () => shownSweep((at() as PropDef).smooth));
+  const profile = commitInput(
+    prop.profile || "",
+    (text) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile",
+                              value: text.trim() }]),
+    { class: "field", placeholder: "ease",
+      title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
+             + "yielding one" },
   );
-  bindChoice(prop.id + ":profile", pickerOf(profile), () => at().profile || "ease");
+  bindField(prop.id + ":profile", profile, () => at().profile || "");
   const sweepDiag = editor.diagAt(prop.id, "smooth");
 
   return el("div", { class: "propdef" }, [
@@ -900,10 +908,6 @@ export function attrsShape(editor: Editor, node: Node): string {
   return node.kind + ":" + strayAttrs(editor, node).join(",");
 }
 
-/* the easing vocabulary a transition takes: the CSS names, verbatim (the backend's
-   easing_profile is the same list) */
-const PROFILES = ["ease", "linear", "ease-in", "ease-out", "ease-in-out"];
-
 /* THE TRANSITION BUTTON, on exactly the attrs that land on a CSS property the browser
  * can animate (the served `css` column — the same one the compiler validates against).
  * It edits the node's `transitions` METADATA: {attr: {ms, profile?}}, merged by the
@@ -920,22 +924,34 @@ function transitionChip(editor: Editor, partId: number, def: AttrDef): HTMLEleme
                                    + "new value (the value itself is never eased)", () => {
     const rect = chip.getBoundingClientRect();
     const held = rowsOf()[def.name] ?? null;
-    const ms = commitInput(held && held.ms > 0 ? String(held.ms) : "", (text) => {
-      const value = Number(text);
+    /* BOTH VALUES ARE EXPRESSIONS over the node's own scope — "1000 / rate" is a
+       duration — with a plain number and a bare easing name as the literals. A plain
+       number is stored as one, so the common case stays a clean document. */
+    const ms = commitInput(held ? String(held.ms) : "", (text) => {
+      const trimmed = text.trim();
       const next = { ...rowsOf() };
-      if (Number.isFinite(value) && value > 0)
-        next[def.name] = { ...(next[def.name] ?? {}), ms: value };
-      else delete next[def.name];
+      if (!trimmed) delete next[def.name];
+      else {
+        const folded = Number(trimmed);
+        next[def.name] = { ...(next[def.name] ?? {}),
+                           ms: Number.isFinite(folded) ? folded : trimmed };
+      }
       commit(next);
-    }, { class: "field", placeholder: "none" });
-    const profile = selectField(PROFILES.map((v) => ({ value: v })),
-                                held?.profile ?? "ease", (v) => {
+    }, { class: "field", placeholder: "none",
+         title: "milliseconds — a number or an expression; empty = none" });
+    const profile = commitInput(held?.profile ?? "", (text) => {
       const at = rowsOf()[def.name];
       /* a profile means nothing without a time; the ms field is what turns it on */
-      if (at) commit({ ...rowsOf(), [def.name]: { ms: at.ms, profile: v } });
-    });
+      if (!at) return;
+      const trimmed = text.trim();
+      const row: Json = { ms: at.ms };
+      if (trimmed) row.profile = trimmed;
+      commit({ ...rowsOf(), [def.name]: row as { ms: number | string } });
+    }, { class: "field", placeholder: "ease",
+         title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
+                + "yielding one" });
     openMenu(rect.left, rect.bottom + 4, "transition " + def.name, [
-      { node: el("div", { class: "menu-field", title: "milliseconds; empty = none" },
+      { node: el("div", { class: "menu-field" },
                  [el("span", { class: "row-label", text: "MS" }), ms]) },
       { node: el("div", { class: "menu-field" },
                  [el("span", { class: "row-label", text: "EASE" }), profile]) },
