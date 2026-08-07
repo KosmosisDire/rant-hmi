@@ -7,6 +7,7 @@
  * in two workspaces therefore expand independently and neither rebuilds the other. */
 
 import { el } from "./dom.js";
+import { makeFolds } from "./fold.js";
 import { iconMarkup } from "./icons.js";
 
 export interface Fold {
@@ -18,17 +19,17 @@ export interface Fold {
   revision(): number;
 }
 
+/* an instance of the one fold store (fold.ts), wearing the tree's toggle-then-rebuild
+ * idiom: `then` is where the owner asks for its refresh */
 export function makeFold(): Fold {
-  const state = new Map<string, boolean>();
-  let revision = 0;
+  const folds = makeFolds();
   return {
-    open: (key, dflt) => state.get(key) ?? dflt,
+    open: (key, dflt) => folds.open(key, dflt),
     toggle: (key, dflt, then) => {
-      state.set(key, !(state.get(key) ?? dflt));
-      revision++;
+      folds.toggle(key, dflt);
       then();
     },
-    revision: () => revision,
+    revision: () => folds.revision(),
   };
 }
 

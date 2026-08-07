@@ -11,21 +11,24 @@
 
 import { commitInput, el, iconButton, pickerOf, selectField } from "../dom.js";
 import { cellText, diagIcon, Editor, liveIsOn } from "../editor.js";
+import { makeFolds } from "../fold.js";
 import { bind, bindChoice, bindField, bindText } from "../reconcile.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { Json, MeshField, SCALAR_LABEL, Var } from "../types.js";
 import { valueEditor } from "./editors.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
-const opened = new Set<number>();
+/* which cards stand open, keyed by variable id: the open bit rides varShape, so a
+ * toggle rebuilds exactly that card */
+const opened = makeFolds();
 
 export function varShape(variable: Var): Json {
-  return [variable.id, variable.type, opened.has(variable.id)];
+  return [variable.id, variable.type, opened.open(String(variable.id))];
 }
 
 export function varCard(editor: Editor, variable: Var, scope: "global" | "local"): HTMLElement {
   const at = () => (editor.store.node(variable.id) as Var | null) ?? variable;
-  const open = opened.has(variable.id);
+  const open = opened.open(String(variable.id));
   const setProp = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: variable.id, key, value }]);
   const cell = "v" + variable.id;
@@ -74,8 +77,7 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   const card = el("div", { class: "card" + (open ? " open" : "") }, [head]);
   head.addEventListener("click", (ev) => {
     if ((ev.target as HTMLElement).closest("input, select, button")) return;
-    if (open) opened.delete(variable.id);
-    else opened.add(variable.id);
+    opened.set(String(variable.id), !open);
     editor.refresh();
   });
   if (!open) return card;

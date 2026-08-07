@@ -20,18 +20,22 @@
  * list around it. */
 
 import { chip, commitInput, el, iconButton, numberInput, pickerOf, selectField } from "../dom.js";
-import { diagIcon, Editor, variablesInScope } from "../editor.js";
+import { diagIcon, Editor } from "../editor.js";
+import { makeFolds } from "../fold.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
 import { EVENT_KINDS, Flow, Json, Op, Node, WidgetType, eventKind,
          signatureText } from "../types.js";
-import { attachAutocomplete, exprContext, flowNames, flowX } from "./autocomplete.js";
+import { attachAutocomplete } from "./autocomplete.js";
 import { localAt, scopeAt } from "./flowscope.js";
+import { flowScope, variablesInScope } from "./scope.js";
 import { openSourceTree, SourcePick, SourceTreeOptions } from "./sourcetree.js";
 import { highlighted } from "../highlight.js";
 
-const opened = new Set<number>();
+/* which cards stand open, keyed by flow id: the open bit rides flowShape, so a toggle
+ * rebuilds exactly that card */
+const opened = makeFolds();
 
 /* ---- the derived verb ---- */
 
@@ -148,7 +152,7 @@ export function flowShape(flow: Flow): Json {
   const first = when[0] ?? {};
   return [
     flow.id,
-    opened.has(flow.id),
+    opened.open(String(flow.id)),
     when.map((t: Json) => t?.kind ?? "event").join("|"),
     first.kind ?? "event",
     first.name ?? "",
@@ -176,7 +180,7 @@ export function flowShape(flow: Flow): Json {
 
 export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, flow: Flow): HTMLElement {
   const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
-  const open = opened.has(flow.id);
+  const open = opened.open(String(flow.id));
   const set = (key: string, value: Json) =>
     editor.apply([{ op: "set_prop", node: flow.id, key, value }]);
   const when: Json[] = Array.isArray(flow.when) ? flow.when : [];
@@ -237,8 +241,7 @@ export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, 
   const card = el("div", { class: "card" + (open ? " open" : "") }, [head]);
   head.addEventListener("click", (ev) => {
     if ((ev.target as HTMLElement).closest("input, select, button")) return;
-    if (open) opened.delete(flow.id);
-    else opened.add(flow.id);
+    opened.set(String(flow.id), !open);
     editor.refresh();
   });
   if (!open) return card;
@@ -624,12 +627,7 @@ function stepCell(
   const expr = (read: () => string, commit: (text: string) => void, key: string) => {
     const field = commitInput(read(), commit, { class: "field grow", placeholder: "expression" });
     bindField(step.id + ":" + key, field, read);
-    attachAutocomplete(
-      field,
-      exprContext(editor, widget, "wire",
-                  flowX(editor, widget, here, step.id),
-                  flowNames(editor, widget, here, step.id)),
-    );
+    attachAutocomplete(field, flowScope(editor, widget, flow, step.id));
     return field;
   };
 

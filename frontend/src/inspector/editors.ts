@@ -12,31 +12,13 @@
  * different control: swapping in a different control would change the row's height, and a
  * row that changes height moves everything under it. */
 
-import { colorField, TokenAccess } from "../colorpicker.js";
+import { colorField } from "../colorpicker.js";
 import { alignGrid, boolPair, chip, commitTextInput, el, numberInput, pickerOf, selectField } from "../dom.js";
 import { Editor, UNKNOWN_TEXT } from "../editor.js";
 import { kindMark } from "../icons.js";
 import { bindChoice, bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
-import { resolveColor } from "../slots.js";
 import { Json, SlotSpec, Node } from "../types.js";
-
-/* what a color editor needs to speak tokens: resolution in this view's mode, and the
- * grouped offer list for the $ menu */
-function tokenAccess(editor: Editor): TokenAccess {
-  const mode = () => editor.view.themeMode ?? "dark";
-  return {
-    resolve: (raw) => {
-      const resolved = resolveColor(raw, editor.store.tokens(), mode());
-      return typeof resolved === "string" ? resolved : raw;
-    },
-    list: () =>
-      editor.store.tokens().map((t) => ({
-        name: t.name,
-        group: t.group || "core",
-        hex: mode() === "light" ? t.light : t.dark,
-      })),
-  };
-}
+import { tokenAccess } from "./scope.js";
 import { openSourceTree, resolveShape, SourcePick, SourceTreeOptions } from "./sourcetree.js";
 import { openTypeTree } from "./typetree.js";
 

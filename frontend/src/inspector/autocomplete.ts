@@ -10,34 +10,11 @@
  * strand it, and rows insert on mousedown so the input's blur cannot race the pick. */
 
 import { el } from "../dom.js";
-import { Editor, variablesInScope } from "../editor.js";
+import { Editor } from "../editor.js";
 import { placeBox } from "../popover.js";
-import { Feed, Flow, Lang, LangEntry, MeshField, Node } from "../types.js";
-import { localAt, scopeAt } from "./flowscope.js";
-
-export interface NameRow {
-  label: string;   /* what inserting places: "setpoint", "widget.value", "x" */
-  shape?: string;  /* its shape, when known: "num" "bool" "text" "list" ... */
-  note?: string;   /* a short origin tag: "local", "global", "slot" */
-  elem?: string;   /* aggregate names: the element shape */
-  fields?: MeshField[];   /* struct names: the field table behind the dot */
-}
-
-export interface ExprContext {
-  /* "display" (a feed's transform) and "wire" (a flow guard/source) are the two
-     SCALAR positions; "attr" is a template attribute, compiled by a
-     different compiler (template_expr.cpp) with a smaller vocabulary again -- a row
-     can be legal on "display" and still have no view encoding (rgb was, until the
-     two tiers gained a shared vocabulary), so this needs its own filter rather than
-     reusing "display"'s. */
-  tier: "display" | "wire" | "attr";
-  lang(): Lang | null;
-  /* the shape of x at this position, or null when unknown; a struct x carries its
-     field table so the dot offers FIELDS, not methods */
-  x(): { shape: string; elem?: string; fields?: MeshField[] } | null;
-  /* every other name legal here (widget.<slot>, variables) */
-  names(): NameRow[];
-}
+import { Feed, Flow, LangEntry, MeshField, Node } from "../types.js";
+import { localAt } from "./flowscope.js";
+import { Scope } from "./scope.js";
 
 interface Row {
   insert: string;      /* text placed at the prefix */
@@ -179,7 +156,7 @@ function chainStart(text: string, at: number): number {
 
 /* walk one primary chain ("x.sort()[0]", "widget.value", "\"a,b\".split(\",\")") and
  * report the shape it yields; null when it cannot be known here */
-function resolveChain(chain: string, ctx: ExprContext): Resolved | null {
+function resolveChain(chain: string, ctx: Scope): Resolved | null {
   const lang = ctx.lang();
   chain = chain.trim();
   if (!chain) return null;
@@ -225,7 +202,7 @@ function resolveChain(chain: string, ctx: ExprContext): Resolved | null {
       current = entry ? { shape: entry.result } : null;
       if (entry?.name === "keys") current = { shape: "list", elem: "text" };
     } else if (name === "x") {
-      current = ctx.x();
+      current = ctx.x?.() ?? null;
     } else if (name === "widget" && chain[i] === ".") {
       const m2 = /^\.[A-Za-z_][A-Za-z0-9_]*/.exec(chain.slice(i));
       if (!m2) return null;
@@ -312,7 +289,7 @@ function signature(entry: LangEntry): string {
   return "(" + parts.join(", ") + ")";
 }
 
-function methodRows(ctx: ExprContext, receiver: Resolved | null, prefix: string): Row[] {
+function methodRows(ctx: Scope, receiver: Resolved | null, prefix: string): Row[] {
   const lang = ctx.lang();
   if (!lang) return [];
   const wire = ctx.tier === "wire";
@@ -351,14 +328,14 @@ function fieldRows(fields: MeshField[], prefix: string): Row[] {
     }));
 }
 
-function nameRows(ctx: ExprContext, prefix: string): Row[] {
+function nameRows(ctx: Scope, prefix: string): Row[] {
   const lang = ctx.lang();
   const wire = ctx.tier === "wire";
   const out: Row[] = [];
   const lower = prefix.toLowerCase();
-  const x = ctx.x();
-  if (!prefix || "x".startsWith(lower))
-    out.push({ insert: "x", label: "x", signature: "", result: x?.shape ?? "", note: "the value here" });
+  /* x exists only where the surface HAS a pipeline register (feed and flow rows) */
+  if (ctx.x && (!prefix || "x".startsWith(lower)))
+    out.push({ insert: "x", label: "x", signature: "", result: ctx.x()?.shape ?? "", note: "the value here" });
   for (const name of ctx.names()) {
     if (prefix && !name.label.toLowerCase().startsWith(lower)) continue;
     out.push({
@@ -384,7 +361,7 @@ function nameRows(ctx: ExprContext, prefix: string): Row[] {
   return out;
 }
 
-function refresh(input: HTMLInputElement, ctx: ExprContext): void {
+function refresh(input: HTMLInputElement, ctx: Scope): void {
   const caret = input.selectionStart ?? input.value.length;
   const text = input.value.slice(0, caret);
   const prefixMatch = /([A-Za-z_][A-Za-z0-9_]*)?$/.exec(text)!;
@@ -422,139 +399,14 @@ function refresh(input: HTMLInputElement, ctx: ExprContext): void {
   render(input);
 }
 
-const contexts = new WeakMap<HTMLInputElement, ExprContext>();
+const contexts = new WeakMap<HTMLInputElement, Scope>();
 
-const VAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
-
-/* a timer reads by field: what the dot offers on one */
-const TIMER_FIELDS: MeshField[] = [
-  { path: "running", shape: "bool" },
-  { path: "remaining", shape: "num" },
-  { path: "duration", shape: "num" },
-  { path: "progress", shape: "num" },
-];
-
-/* the standing name vocabulary at a widget: its slots as widget.<name>, then every
- * variable in scope */
-function scopeNames(editor: Editor, widget: Node | null): NameRow[] {
-  const rows: NameRow[] = [];
-  const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
-  for (const slot of type?.slots ?? [])
-    rows.push({
-      label: "widget." + slot.name,
-      shape: slot.shape === "enum" ? "text" : slot.shape,
-      note: "slot",
-    });
-  const locals = new Set((widget?.locals ?? []).map((v) => v.id));
-  for (const variable of variablesInScope(editor, widget)) {
-    if (variable.type === "timer") {
-      rows.push({
-        label: variable.name,
-        shape: "timer",
-        note: locals.has(variable.id) ? "local" : "global",
-        fields: TIMER_FIELDS,
-      });
-      continue;
-    }
-    /* beyond the scalars, a variable's type is a TypeRef: a dotted ref is
-       an enum, a root name a struct carrying its field table */
-    const scalar = VAR_SHAPE[variable.type];
-    const isEnum = !scalar && variable.type.includes(".");
-    const fields = scalar || isEnum
-      ? undefined
-      : editor.mesh.types.find((t) => t.name === variable.type)?.fields;
-    rows.push({
-      label: variable.name,
-      shape: scalar ?? (isEnum ? "enum" : "struct"),
-      note: locals.has(variable.id) ? "local" : "global",
-      fields,
-    });
-  }
-  return rows;
-}
-
-/* what x IS in a feed's transform: the source field's shape, from reflection (mesh
- * sources) or the variable's declared type (HMI sources); a WHOLE-entity source makes
- * x the message, its field table riding along so the dot completes fields */
-export function feedX(editor: Editor, widget: Node | null, feed: () => Feed) {
-  return (): { shape: string; elem?: string; fields?: MeshField[] } | null => {
-    const at = feed();
-    if (!at.src) return null;
-    if (at.src.kind === "L") {
-      const row = scopeNames(editor, widget).find((n) => n.label === at.src.name);
-      return row?.shape ? { shape: row.shape, fields: row.fields } : null;
-    }
-    const entity = editor.mesh.entities.find(
-      (e) => e.kind === at.src.kind && e.name === at.src.name,
-    );
-    if (!entity) return null;
-    const fields = entity.kind === "F" ? entity.returns ?? [] : entity.fields;
-    if (!(at.path ?? "") && fields.length > 1)
-      return { shape: "struct", fields };
-    const field =
-      fields.find((f) => f.path === (at.path ?? "")) ??
-      (fields.length === 1 ? fields[0] : null);
-    if (!field) return null;
-    return { shape: field.variants?.length ? "enum" : field.shape, elem: field.elem };
-  };
-}
-
-/* what x IS at one row of a flow: the pipeline register — Nil until a `set x = ...`
- * above this row fills it, retyped by each one. The event's own value arrives as a
- * named PARAMETER (flowNames lists it), never as x. */
-export function flowX(editor: Editor, widget: Node | null, flow: () => Flow, stepId = 0) {
-  return (): { shape: string; elem?: string; fields?: MeshField[] } | null =>
-    scopeAt(editor, widget, flow(), stepId).x;
-}
-
-/* The names a FLOW ROW may write: the standing scope plus this flow's own locals,
- * declared above this row only, and struct ones expanded to their fields so one field
- * can be computed from another. */
-export function flowNames(editor: Editor, widget: Node | null, flow: () => Flow, stepId: number) {
-  return (): NameRow[] => {
-    const rows = scopeNames(editor, widget);
-    const declared = new Set(rows.map((r) => r.label));
-    for (const local of scopeAt(editor, widget, flow(), stepId).locals) {
-      if (!declared.has(local.name))
-        rows.push({
-          label: local.name,
-          shape: local.shape,
-          elem: local.elem,
-          note: local.note,
-          fields: local.fields,
-        });
-      for (const field of local.fields ?? [])
-        rows.push({
-          label: local.name + "." + field.path,
-          shape: field.shape,
-          elem: field.elem,
-          note: local.type || "field",
-        });
-    }
-    return rows;
-  };
-}
-
-export function exprContext(
-  editor: Editor,
-  widget: Node | null,
-  tier: "display" | "wire",
-  x: () => { shape: string; elem?: string } | null,
-  names?: () => NameRow[],
-): ExprContext {
-  return {
-    tier,
-    lang: () => editor.lang,
-    x,
-    names: names ?? (() => scopeNames(editor, widget)),
-  };
-}
-
-/* Attach completion to an expression input. Keyboard: arrows move, Tab accepts,
+/* Attach completion to an expression input. The Scope comes from scope.ts — one of its
+ * factories, picked by the call site. Keyboard: arrows move, Tab accepts,
  * Enter commits the typed text (the menu closes and commitInput's Enter stands),
  * Escape closes (and only closes: the input's own Escape-revert fires when no menu
  * is open). */
-export function attachAutocomplete(input: HTMLInputElement, ctx: ExprContext): void {
+export function attachAutocomplete(input: HTMLInputElement, ctx: Scope): void {
   contexts.set(input, ctx);
   input.autocomplete = "off";
   input.spellcheck = false;

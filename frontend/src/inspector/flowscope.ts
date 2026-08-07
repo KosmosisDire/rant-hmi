@@ -10,8 +10,11 @@
  * only widens what autocomplete offers, while a wrong one would offer the wrong
  * vocabulary and be believed. */
 
-import { Editor, variablesInScope } from "../editor.js";
+import { Editor } from "../editor.js";
 import { eventKind, Flow, Json, MeshEntity, MeshField, Node } from "../types.js";
+/* scope.ts also imports scopeAt from here: a cycle on paper, but both edges are
+ * function calls deferred past load, so neither module reads the other while loading */
+import { variablesInScope } from "./scope.js";
 
 export interface LocalInfo {
   name: string;

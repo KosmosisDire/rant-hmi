@@ -17,8 +17,9 @@ import { diagIcon, Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { bindField } from "../reconcile.js";
 import { Feed, Json, SlotSpec, Node, WidgetType } from "../types.js";
-import { attachAutocomplete, exprContext, feedX } from "./autocomplete.js";
+import { attachAutocomplete } from "./autocomplete.js";
 import { sourceField, valueEditor } from "./editors.js";
+import { feedScope } from "./scope.js";
 import { highlighted } from "../highlight.js";
 
 /* a result cell's chosen mode, per view like folds; unset = decide from the text */
@@ -91,7 +92,7 @@ export function feedCard(editor: Editor, widget: Node, type: WidgetType | null, 
     const input = commitInput(read(), commit, { class: "field grow", placeholder });
     bindField(key, input, read);
     /* a feed's transform is DISPLAY tier: the full formatting vocabulary */
-    attachAutocomplete(input, exprContext(editor, widget, "display", feedX(editor, widget, at)));
+    attachAutocomplete(input, feedScope(editor, widget, feed));
     return highlighted(input);
   };
 
@@ -196,8 +197,7 @@ export function feedCard(editor: Editor, widget: Node, type: WidgetType | null, 
       editCase(index, { test: text, xf: heldCase(index).xf }),
       { class: "field grow", placeholder: "condition" });
     bindField(key + ".test", test, () => String(heldCase(index).test ?? ""));
-    attachAutocomplete(test,
-      exprContext(editor, widget, "display", feedX(editor, widget, at)));
+    attachAutocomplete(test, feedScope(editor, widget, feed));
     block.appendChild(
       el("div", { class: "feed-case" }, [
         highlighted(test, "when"),

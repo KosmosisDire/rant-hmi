@@ -8,9 +8,10 @@
 import { DropPlan } from "./arrange.js";
 import { DocStore } from "./doc.js";
 import { el } from "./dom.js";
+import { makeFolds } from "./fold.js";
 import { iconMarkup } from "./icons.js";
 import { placeBox } from "./popover.js";
-import { AggFrame, AttrTable, BuiltinDef, Diag, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry, Var } from "./types.js";
+import { AggFrame, AttrTable, BuiltinDef, Diag, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry } from "./types.js";
 
 export type Mode = "edit" | "test" | "operate";
 
@@ -300,7 +301,9 @@ export function diagIcon(diags: Diag[]): HTMLElement | null {
   return dot;
 }
 
-const folded = new Map<string, boolean>();
+/* the sections' shared instance of the one fold store (fold.ts): keys survive selection
+ * changes, and revision() goes unread because a section never rebuilds */
+const folds = makeFolds();
 
 /* the header is the whole row, the caret rotates rather than swapping glyph, and the state
  * is remembered per section key across selection changes. Folding is a pure
@@ -311,7 +314,7 @@ export function section(
   badge: string | null,
   body: () => (HTMLElement | null)[],
 ): HTMLElement[] {
-  const open = !folded.get(key);
+  const open = folds.open(key, true);
   const panel = el(
     "div",
     { class: "section-body" },
@@ -329,7 +332,7 @@ export function section(
     const opening = panel.style.display === "none";
     panel.style.display = opening ? "" : "none";
     head.classList.toggle("open", opening);
-    folded.set(key, !opening);
+    folds.set(key, opening);
   });
   return [head, panel];
 }
@@ -367,11 +370,4 @@ export function liveIsOn(live: Live | null, cell: string): boolean {
   const value = live?.values?.[cell];
   if (value === true) return true;
   return typeof value === "object" && value !== null && (value as Json).running === true;
-}
-
-/* every variable a widget's flows can name: its own locals shadow the globals */
-export function variablesInScope(editor: Editor, widget: Node | null): Var[] {
-  const locals = widget?.locals ?? [];
-  const shadowed = new Set(locals.map((v) => v.name));
-  return locals.concat(editor.store.globals().filter((v) => !shadowed.has(v.name)));
 }
