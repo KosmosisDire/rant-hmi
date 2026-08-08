@@ -5,7 +5,11 @@
   position: relative;
   display: inline-flex;
   min-width: 0;
-  overflow: hidden;
+  /* clip, NEVER hidden: `hidden` makes the wrapper a scroll container, and under the
+     input floor's blanket overscroll-behavior (input-floor.css) a scroll container
+     that cannot scroll still STOPS the wheel chain — the sidebar went unscrollable
+     over every expression box. `clip` clips identically without becoming one. */
+  overflow: clip;
 }
 
 .hl-wrap > .hl-input {
