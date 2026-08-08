@@ -64,6 +64,13 @@
   color: var(--ink-2);
 }
 
+/* the BUTTON is the gesture surface, never its glyph: a click that lands on the inner
+   svg would die the moment a repaint swaps that svg out from under the press (a live
+   value repainting the icon between pointerdown and pointerup ate the click whole) */
+.vb-icon > svg {
+  pointer-events: none;
+}
+
 /* a literal number under the icon: the icon IS the scrub handle */
 .vb-icon.vb-scrub {
   cursor: ew-resize;

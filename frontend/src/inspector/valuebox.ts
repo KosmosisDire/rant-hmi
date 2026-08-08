@@ -96,7 +96,8 @@ function fireChange(input: HTMLInputElement, commit: (text: string) => void): vo
 
 let browseShell: Shell | null = null;
 /* expansion state, shared across boxes and openings; the roots start open */
-const browseExpanded = new Set<string>(["hmi", "hmi/local", "hmi/global", "dart", "enums"]);
+const browseExpanded = new Set<string>(["hmi", "hmi/local", "hmi/global", "dart", "enums",
+                                        "flow"]);
 
 function ensureBrowse(): Shell {
   return (browseShell ??= makeShell({
@@ -400,7 +401,27 @@ export function valueBox(spec: BoxSpec): HTMLElement {
     : shape === "color" ? openColor
     : null;
 
-  /* ---- the icon's face: repainted per keystroke and per document echo ---- */
+  /* ---- the icon's face: repainted per keystroke and per document echo ----
+   *
+   * COMPARE BEFORE WRITE, always: this rides a bind lane that runs on EVERY sync pass,
+   * so live data streaming would otherwise rebuild every icon's SVG every frame — and
+   * an innerHTML swap mid-press destroys the element under the pointer, which is a
+   * dead click. The identity-stable law extends to the inspector: zero element
+   * creation at steady state; only a glyph that actually changed touches the DOM. */
+
+  let shownGlyph: string | null = null;
+  let shownTitle: string | null = null;
+  let shownSwatch = "";
+  const face = (glyph: string | null, size: number, title: string) => {
+    if (glyph !== null && glyph !== shownGlyph) {
+      shownGlyph = glyph;
+      icon.innerHTML = iconMarkup(glyph, size, 1.7);
+    }
+    if (title !== shownTitle) {
+      shownTitle = title;
+      icon.title = title;
+    }
+  };
 
   const paint = () => {
     const text = input.value.trim();
@@ -409,43 +430,44 @@ export function valueBox(spec: BoxSpec): HTMLElement {
     switch (shape) {
       case "num":
         icon.classList.toggle("vb-scrub", literal);
-        icon.innerHTML = iconMarkup("hash", 11, 1.7);
-        icon.title = literal
+        face("hash", 11, literal
           ? "drag to scrub — Shift is fine-grained; click to edit the text"
-          : DIM_HINT;
+          : DIM_HINT);
         break;
       case "bool": {
         const shown = text || (spec.emptyMeans === "default" ? spec.placeholder ?? "" : "");
-        icon.innerHTML = iconMarkup(shown === "true" ? "toggle-right" : "toggle-left", 12, 1.7);
-        icon.title = literal ? "click to flip" : DIM_HINT;
+        face(shown === "true" ? "toggle-right" : "toggle-left", 12,
+             literal ? "click to flip" : DIM_HINT);
         break;
       }
       case "color": {
         const hex = literalColor(shownText());
-        const parsed = hex ? parseHex(hex) : null;
-        if (swatch && parsed) {
-          paintSwatch(swatch, parsed);
-          swatch.classList.remove("vb-unknown");
-        } else if (swatch) {
-          /* an expression never paints a stale color: the unknown treatment */
-          swatch.style.background = "";
-          swatch.classList.add("vb-unknown");
+        const token = shownText().startsWith("$");
+        const key = (hex ?? "?") + (token ? "$" : "");
+        if (swatch && key !== shownSwatch) {
+          shownSwatch = key;
+          const parsed = hex ? parseHex(hex) : null;
+          if (parsed) {
+            paintSwatch(swatch, parsed);
+            swatch.classList.remove("vb-unknown");
+          } else {
+            /* an expression never paints a stale color: the unknown treatment */
+            swatch.style.background = "";
+            swatch.classList.add("vb-unknown");
+          }
+          swatch.classList.toggle("token", token);
         }
-        swatch?.classList.toggle("token", shownText().startsWith("$"));
-        icon.title = "pick a color";
+        face(null, 0, "pick a color");
         break;
       }
       case "enum":
-        icon.innerHTML = iconMarkup(SHAPE_GLYPH.enum, 11, 1.7);
-        icon.title = "pick a variant";
+        face(SHAPE_GLYPH.enum, 11, "pick a variant");
         break;
       case "align":
-        icon.innerHTML = iconMarkup(SHAPE_GLYPH.align, 11, 1.7);
-        icon.title = "pick a position";
+        face(SHAPE_GLYPH.align, 11, "pick a position");
         break;
       default:
-        icon.innerHTML = iconMarkup(SHAPE_GLYPH[shape] ?? "type", 11, 1.7);
-        icon.title = spec.title ?? "";
+        face(SHAPE_GLYPH[shape] ?? "type", 11, spec.title ?? "");
         break;
     }
   };
