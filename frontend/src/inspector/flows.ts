@@ -635,8 +635,9 @@ function stepCell(
   const cell = el("span", { class: "do-cell" }, []);
 
   /* an expression box, wire tier, seeing this row's own scope: x as the rows above
-     leave it, and the locals declared above this one. The scope has no roots(), so the
-     box's browse offers the flat name list — same universe autocomplete serves. */
+     leave it, and the locals declared above this one. The scope's browse serves the
+     "this flow" root over the standing tree — the same universe autocomplete
+     projects flat. */
   const box = (key: string, shape: BoxType["shape"], read: () => string,
                commit: (text: string) => void) =>
     valueBox({

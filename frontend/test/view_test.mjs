@@ -3304,13 +3304,22 @@ check(stageNode("frame", 901) === heldAgain &&
   check(pollClear && pollClear.value?.value === undefined,
         "and an empty rate deletes the key, got " + JSON.stringify(pollClear?.value));
 
-  /* THE BROWSE TREE grows hierarchy for slot scope: folders over the path-spelled
-     entity names, entity rows opening into field rows, a pick INSERTING the canonical
-     reference spelling. The options slot's browse adds the schema's enum types. */
+  /* THE BROWSE TREE grows hierarchy for slot scope: the tree is the ONE universe now
+     and names() its flat projection — the widget's slots NEST under a `widget`
+     folder, struct and timer variables fold over their field leaves, entities fold
+     by the / segments of their names, and every pick INSERTS a canonical spelling.
+     The options slot's browse adds the schema's enum types. */
   echo4a("value", "");
+  /* a struct and a timer variable, so their folders can be pinned */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: 9800, list: "locals",
+      node: { id: 9860, name: "valve", type: "Valve", init: 0, persist: false } },
+    { op: "insert", parent: 9800, list: "locals",
+      node: { id: 9861, name: "cook", type: "timer", init: 0, persist: false } },
+  ]);
   draw4a();
   document.activeElement = null;
-  const boxInput4a = row4a("value").querySelector("input");
+  let boxInput4a = row4a("value").querySelector("input");
   fire(row4a("value").querySelector(".vb-browse"), "click");
   const vbrowse = document.body.children.find((n) => n.id === "vbrowse");
   check(vbrowse !== null && vbrowse.className.includes("on"),
@@ -3320,8 +3329,54 @@ check(stageNode("frame", 901) === heldAgain &&
       .find((r) => r.textContent.startsWith(label)) ?? null;
   check(streeRow4a("hmi") !== null && streeRow4a("dart") !== null,
         "the slot scope browses as the two-root source tree");
-  check(streeRow4a("widget.value") !== null,
-        "the widget's own slots stand under hmi");
+  /* the widget folder: slots are ITS leaves, never flat rows at the hmi level */
+  check(streeRow4a("widget.value") === null,
+        "no flat widget.<slot> row stands at the top level");
+  const widgetFolder = streeRow4a("widget");
+  check(widgetFolder !== null, "the widget folder stands under hmi");
+  fire(widgetFolder, "click", { detail: 0 });
+  check(streeRow4a("value") !== null, "and opens into its slot leaves");
+  fire(streeRow4a("value"), "click", { detail: 0 });
+  check(boxInput4a.value === "widget.value",
+        "picking a slot leaf inserts its widget.<slot> spelling, got " +
+          boxInput4a.value);
+  check(!vbrowse.className.includes("on"), "and the pick closes the popover");
+
+  /* a STRUCT variable is a pickable folder: the leaf inserts the dotted field, the
+     row body the whole struct (the split-click idiom) */
+  echo4a("value", "");
+  draw4a();
+  document.activeElement = null;
+  boxInput4a = row4a("value").querySelector("input");
+  fire(row4a("value").querySelector(".vb-browse"), "click");
+  check(streeRow4a("mode") === null, "a shut variable folder hides its fields");
+  /* a coordinate click left of the icon folds a row that both expands and picks */
+  fire(streeRow4a("valve"), "click", { detail: 1, clientX: -1 });
+  check(streeRow4a("mode") !== null, "a struct variable expands to its field leaves");
+  fire(streeRow4a("mode"), "click", { detail: 0 });
+  check(boxInput4a.value === "valve.mode",
+        "a field leaf inserts the dotted spelling, got " + boxInput4a.value);
+  echo4a("value", "");
+  draw4a();
+  document.activeElement = null;
+  boxInput4a = row4a("value").querySelector("input");
+  fire(row4a("value").querySelector(".vb-browse"), "click");
+  fire(streeRow4a("valve"), "click", { detail: 0 });
+  check(boxInput4a.value === "valve",
+        "the folder row itself picks the whole struct, got " + boxInput4a.value);
+
+  /* the timer folder lists its four read fields */
+  echo4a("value", "");
+  draw4a();
+  document.activeElement = null;
+  boxInput4a = row4a("value").querySelector("input");
+  fire(row4a("value").querySelector(".vb-browse"), "click");
+  fire(streeRow4a("cook"), "click", { detail: 1, clientX: -1 });
+  check(streeRow4a("running") !== null && streeRow4a("remaining") !== null &&
+        streeRow4a("duration") !== null && streeRow4a("progress") !== null,
+        "a timer variable folders over running/remaining/duration/progress");
+
+  /* the dart root: entities folder by the / segments of their names */
   check(streeRow4a("cage") !== null,
         "a path-spelled entity folders by its / segments");
   check(streeRow4a("IO") === null, "a shut folder hides what is under it");
@@ -3337,6 +3392,29 @@ check(stageNode("frame", 901) === heldAgain &&
         "picking a field INSERTS the canonical reference spelling, got " +
           boxInput4a.value);
   check(!vbrowse.className.includes("on"), "and the pick closes the popover");
+
+  /* the flat projection: autocomplete's names are DERIVED from the same tree — the
+     slot spelling, the struct variable with its dot table, the timer, the mesh rows
+     in reflection order */
+  {
+    const { slotScope } = await import(mod("inspector/scope.js"));
+    const names4a = slotScope(editor4a, store.widget(9800)).names();
+    const byLabel = (label) => names4a.find((n) => n.label === label) ?? null;
+    check(byLabel("widget.value")?.note === "slot",
+          "names() projects the slot leaf back to its flat widget.value row");
+    const valveRow4a = byLabel("valve");
+    check(valveRow4a?.shape === "struct" && valveRow4a?.note === "local" &&
+          valveRow4a?.fields?.length === 1 && valveRow4a.fields[0].path === "mode",
+          "a struct variable projects as ONE row carrying its dot table");
+    check(byLabel("cook")?.fields?.length === 4,
+          "a timer projects with its four fields behind the dot");
+    check(byLabel("@sim/calc")?.note === "mesh" &&
+          byLabel("@cage/plc/IO.temp")?.note === "mesh",
+          "the mesh projects to its @ spellings");
+    const meshAt = names4a.findIndex((n) => n.label === "@sim/calc");
+    check(meshAt >= 0 && names4a[meshAt + 1]?.label === "@cage/plc/IO.temp",
+          "in reflection order, behind the hmi names");
+  }
 
   /* the options-shaped box: the enum types ride its browse tree (the old chip's job) */
   document.activeElement = null;
@@ -3458,9 +3536,18 @@ check(stageNode("frame", 901) === heldAgain &&
         "a flow box's browse leads with the flow's own names");
   check(flat4b("value") !== null,
         "the trigger's parameter stands under it");
-  fire(flat4b("widget.value"), "click", { detail: 0 });
+  /* the widget folder nests the slots here too (left open by the slot-tier leg —
+     the fold state is shared across boxes); the slot leaf is the LAST row labelled
+     `value`, behind the flow's parameter of the same name */
+  check(flat4b("widget.value") === null,
+        "no flat widget.<slot> row in a flow browse either");
+  check(flat4b("widget") !== null, "the widget folder frames the slots");
+  const slotLeaf4b = vb4b.querySelectorAll(".stree-row")
+    .filter((r) => r.textContent.startsWith("value"))
+    .at(-1) ?? null;
+  fire(slotLeaf4b, "click", { detail: 0 });
   check(fromInput.value === "widget.value",
-        "picking inserts the canonical spelling into the box, got " + fromInput.value);
+        "picking the slot leaf inserts the canonical spelling, got " + fromInput.value);
   check(!vb4b.className.includes("on"), "and the pick closes the popover");
   fire(fromInput, "change");
   const fromOp = ops4b.findLast((o) => o.node === 9903 && o.key === "from");

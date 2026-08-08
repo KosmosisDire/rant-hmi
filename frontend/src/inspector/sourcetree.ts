@@ -18,6 +18,7 @@ import { makeShell, placeBox, Shell } from "../popover.js";
 import { scrollToCurrent, streeTree } from "../streerows.js";
 import { Json, MeshEntity, MeshField, SlotSpec, Var, Node } from "../types.js";
 import { FlowScope } from "./flowscope.js";
+import { EntityFolder, foldEntities } from "./scope.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
 export interface SourcePick {
@@ -179,30 +180,6 @@ export function resolveShape(
   if (!path && fields.length !== 1) return entity.type ?? "";
   const field = path ? fields.find((f) => f.path === path) : fields[0];
   return field?.shape ?? "";
-}
-
-/* nested folders from the / segments of entity names, explorer style */
-interface Folder {
-  folders: Map<string, Folder>;
-  entities: MeshEntity[];
-}
-
-function fold_entities(entities: MeshEntity[]): Folder {
-  const root: Folder = { folders: new Map(), entities: [] };
-  for (const entity of entities) {
-    const segments = entity.name.split("/");
-    let at = root;
-    for (let i = 0; i + 1 < segments.length; ++i) {
-      let next = at.folders.get(segments[i]);
-      if (!next) {
-        next = { folders: new Map(), entities: [] };
-        at.folders.set(segments[i], next);
-      }
-      at = next;
-    }
-    at.entities.push(entity);
-  }
-  return root;
 }
 
 function leaf_name(name: string): string {
@@ -400,7 +377,7 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
     }
   };
 
-  const folder_rows = (folder: Folder, prefix: string, depth: number) => {
+  const folder_rows = (folder: EntityFolder, prefix: string, depth: number) => {
     for (const [name, child] of [...folder.folders.entries()].sort((a, b) =>
       a[0].localeCompare(b[0]),
     )) {
@@ -422,7 +399,7 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
   );
   /* searching flattens to matching leaves; the root folders only frame a browse */
   if (!searching) rows.push({ depth: 0, key: "dart", label: "dart", expandable: true });
-  if (openOr("dart")) folder_rows(fold_entities(mesh_entities), "", depth0);
+  if (openOr("dart")) folder_rows(foldEntities(mesh_entities), "", depth0);
 
   return rows;
 }
