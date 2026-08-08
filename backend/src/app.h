@@ -35,8 +35,12 @@ namespace hmi {
  * 12: FEEDS ARE GONE (spec D1) — a slot value is number | bool | wire-tier EXPRESSION
  * text the backend compiles and evaluates standing (`@entity.field` reads the mesh,
  * quoted text is the literal), widgets carry a `poll` {slot: hz} map instead of
- * poll_hz, and the attr table gains a `variants` column) */
-constexpr int kProto = 12;
+ * poll_hz, and the attr table gains a `variants` column;
+ * 13: READ and WRITE unify into ASSIGNMENT — the step kind `move` is `assign`, its
+ * `from` is `{expr}` always (plus `{init:true}` reset: the structural entity/local
+ * source forms died into the `@name` / bare-name spellings), and flow expressions
+ * bind the mesh under `@` exactly as slot expressions do */
+constexpr int kProto = 13;
 
 struct AppOptions {
     ServerOptions server;

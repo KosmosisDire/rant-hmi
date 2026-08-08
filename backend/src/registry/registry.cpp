@@ -188,7 +188,7 @@ Json event(const char* name, const char* param, const char* shape) {
  * as authored flows; a step writing a slot something else already writes (a feed, an
  * authored flow) is dropped PER STEP, so the raise beside it still speaks. */
 Json sets_slot(const char* slot, const char* expression) {
-    return Json{{"kind", "move"},
+    return Json{{"kind", "assign"},
                 {"from", {{"expr", expression}}},
                 {"to", {{"slot", slot}}}};
 }
@@ -216,7 +216,7 @@ Json on_every(const char* ms, std::initializer_list<Json> steps) {
 
 /* one element onto the end of a list slot, keeping the last `keep` of them */
 Json appends_slot(const char* slot, const char* expression, const char* keep) {
-    return Json{{"kind", "move"},
+    return Json{{"kind", "assign"},
                 {"from", {{"expr", expression}}},
                 {"to", {{"slot", slot}}},
                 {"mode", "append"},
@@ -338,7 +338,7 @@ Json press_interact() {
 /* <local> = <expression>: the staging step a suppressible slot write and its raise
  * share, so a FED control still raises the value it proposed */
 Json sets_local(const char* name, const char* expression) {
-    return Json{{"kind", "move"},
+    return Json{{"kind", "assign"},
                 {"from", {{"expr", expression}}},
                 {"to", {{"local", name}, {"path", ""}}}};
 }

@@ -181,21 +181,21 @@ const std::vector<NodeSpec>& table() {
         step.name = "step";
         step.variant_key = "kind";
         step.props = {enumer("kind",
-                             {"move", "gate", "deadband", "throttle", "debounce", "delay",
+                             {"assign", "gate", "deadband", "throttle", "debounce", "delay",
                               "tmr_start", "tmr_cancel", "raise"},
-                             "move")};
+                             "assign")};
         step.variants = {
-            /* ONE transfer step (spec 2.6). `from` and `to` are free-form objects
-               discriminated by which key they carry, so a source or destination gains a
-               form without a new prop:
-                 from  {"expr": "x"} | {"kind","name","path"} | {"local","path"}
-                       | {"init": true}                  (reset: the dest's own start)
+            /* ONE transfer step: an ASSIGNMENT — an lvalue target, an rvalue expression.
+               The expression is the universal read (reading a topic is just naming it:
+               `@entity.field`), so `from` carries exactly two forms:
+                 from  {"expr": "x"} | {"init": true}   (reset: the dest's own start)
                  to    {"local","path","type"?} | {"kind","name","path"} | {"slot"}
+               `to` stays structural: a destination is a PLACE, picked, never typed.
                `mode` applies to a V destination only (write/force/unforce) or names the
                APPEND into a list; every other verb is derived. `keep` bounds an append
                to the last N elements, which is the whole of what a history ring is, and
                `key` addresses one key of a map destination. Both are expressions. */
-            {"move", {object("from", Json{{"expr", "x"}}, Role::MoveRef),
+            {"assign", {object("from", Json{{"expr", "x"}}, Role::MoveRef),
                       object("to", Json::object(), Role::MoveRef),
                       enumer("mode", {"write", "force", "unforce", "append"}, "write"),
                       text("keep", "", Role::Expr),

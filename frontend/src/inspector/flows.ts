@@ -1,19 +1,18 @@
 /* Flow cards.
  *
  * EVERY STEP IS ONE LINE, AND THE LINE IS THE EDITOR. There is no summary/form split and
- * nothing to expand: a move's source, destination and mode sit as live controls on the
- * row itself, a guard's amount is an inline field, and the row NEVER wraps: content
- * squishes (the expression ellipsises, the chips clip) and the sidebar is resizable when
- * the user wants to read more.
+ * nothing to expand: an assignment's expression, destination and mode sit as live
+ * controls on the row itself, a guard's amount is an inline field, and the row NEVER
+ * wraps: content squishes (the expression ellipsises, the chips clip) and the sidebar is
+ * resizable when the user wants to read more.
  *
  * Every row occupies one skeleton, `grip | n | verb | content | (!) | x`, and the verb
- * column is fixed and right-aligned so verbs align down one edge. THE VERB IS DERIVED
- *, never chosen, and there are two words for a move: `read` (an entity's value
- * coming in) and `write` (a value going anywhere), plus `force`/`unforce` when a variable
- * destination's mode says so. WHERE something lives is never stated: both sides pick
- * from ONE tree (sourcetree.ts) holding the flow's locals, the variables, this widget's
- * own slots and the whole mesh, and the pick maps onto the document's key-discriminated
- * side forms.
+ * column is fixed and right-aligned so verbs align down one edge. THE VERB IS DERIVED,
+ * never chosen. A READ AND A WRITE ARE THE SAME THING — a move — so there is ONE step,
+ * `assign`: an lvalue target (picked, never typed: the reference chip over the source
+ * tree) and an rvalue EXPRESSION (the value box; reading a topic is just naming it,
+ * `@entity.field`). `force`/`unforce`/`append`/`reset` surface off the mode and the
+ * {init:true} source, never off a chosen word.
  *
  * SHAPE here is which rows exist, of what kind, with which side FORMS. The expressions,
  * names and rates written into them are values, so typing in one step never rebuilds the
@@ -39,7 +38,9 @@ const opened = makeFolds();
 
 /* ---- the derived verb ---- */
 
-/* which FORM a move's side takes, discriminated by key exactly as the backend does */
+/* which FORM an assignment's side takes, discriminated by key exactly as the backend
+ * does. `from` carries "expr" or "init" only now; the structural forms survive on `to`
+ * (the lvalue is a place, picked, never typed). */
 type Side = "expr" | "local" | "entity" | "slot" | "init" | "";
 
 export function sideOf(side: Json): Side {
@@ -52,22 +53,21 @@ export function sideOf(side: Json): Side {
   return "";
 }
 
-/* TWO words for a move: data comes off the mesh (`read`) or a value goes somewhere
- * (`write`), with force/unforce surfacing a variable destination's mode. The chip's kind
- * mark says WHAT the target is; the verb no longer restates it. */
+/* ONE word for the transfer: `assign`. force/unforce surface a variable destination's
+ * mode, append grows a list rather than replacing it, reset speaks the {init} source.
+ * The chip's kind mark says WHAT the target is; the verb never restates it. */
 export function verbOf(step: Json): string {
   switch (step?.kind) {
-    case "move": {
+    case "assign": {
       const to = step.to ?? {};
       if (sideOf(step.from) === "init") return "reset";
-      if (sideOf(to) === "entity") {
-        if (to.kind === "V" && step.mode === "force") return "force";
-        if (to.kind === "V" && step.mode === "unforce") return "unforce";
-        return "write";
-      }
+      if (sideOf(to) === "entity" && to.kind === "V" && step.mode === "force")
+        return "force";
+      if (sideOf(to) === "entity" && to.kind === "V" && step.mode === "unforce")
+        return "unforce";
       /* an append is its own verb: it grows a list rather than replacing it */
       if (step.mode === "append") return "append";
-      return sideOf(step.from) === "entity" ? "read" : "write";
+      return "assign";
     }
     case "gate": return "gate";
     case "deadband": return "deadband";
@@ -135,7 +135,7 @@ function targets(flow: Flow): { kind: string; name: string }[] {
     out.push({ kind, name });
   };
   for (const step of flow.do ?? []) {
-    if (step.kind !== "move") continue;
+    if (step.kind !== "assign") continue;
     if (sideOf(step.to) === "entity") push(step.to.kind ?? "V", step.to.name ?? "");
     if (sideOf(step.to) === "slot") push("", "widget." + (step.to.slot ?? ""));
   }
@@ -649,10 +649,12 @@ function stepCell(
       scope: flowScope(editor, widget, flow, step.id),
     });
 
-  if (step.kind === "move") {
+  if (step.kind === "assign") {
     const from = sideOf(step.from);
     const to = sideOf(step.to);
     const scope = () => scopeAt(editor, widget, here(), step.id);
+    /* the reset chip's re-pick: whatever is picked writes its EXPRESSION spelling —
+       the tree is an insertion assistant into the one rvalue form, never a mode */
     const fromOpts: SourceTreeOptions = {
       fields: true, hmi: true, wholeEntity: true, expr: true,
       kinds: ["V", "T", "L"], scope: scope(), slots: type?.slots ?? [],
@@ -663,9 +665,10 @@ function stepCell(
     };
     const setFrom = (pick: SourcePick) => {
       if (pick.family === "expr") set("from", { expr: pick.name });
-      else if (pick.family === "local") set("from", { local: pick.name, path: pick.path });
+      else if (pick.family === "local")
+        set("from", { expr: pick.name + (pick.path ? "." + pick.path : "") });
       else if (pick.family === "slot") set("from", { expr: "widget." + pick.name });
-      else set("from", { kind: pick.kind, name: pick.name, path: pick.path });
+      else set("from", { expr: "@" + pick.name + (pick.path ? "." + pick.path : "") });
     };
     const setTo = (pick: SourcePick) => {
       if (pick.family === "local")
@@ -678,7 +681,7 @@ function stepCell(
     };
 
     /* a PARAMETERLESS target (a function with no request fields, a payload-less
-       signal) takes no value at all: the send is the whole message, so the source
+       signal) takes no value at all: the send is the whole message, so the value
        side disappears from the row */
     const dest = at().to ?? {};
     const bareSend =
@@ -686,10 +689,9 @@ function stepCell(
       (editor.mesh?.entities.find((e) => e.kind === dest.kind && e.name === dest.name)
         ?.fields.length ?? 1) === 0;
 
-    /* the source: a typed expression with the tree a small button away, or the picked
-       thing as a chip whose click re-opens the tree (the tree's own "expression" row is
-       the way back). A reset's source IS the target's own declared start, so it renders
-       as the word rather than a pick. */
+    /* the rvalue: ONE expression box, always (reading the mesh is naming it — the
+       browse and autocomplete offer the @ spellings). A reset's source IS the target's
+       own declared start, so it renders as the word rather than a box. */
     if (bareSend) {
       /* nothing before the target: just the verb's arrow into it */
       cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
@@ -702,15 +704,8 @@ function stepCell(
       }));
       cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     } else if (verbOf(step) !== "unforce") {
-      if (from === "expr") {
-        /* the value box IS the fused control now: browse is its own affordance, and a
-           source-tree pick of a plain side is one "expression" row away (sideChip) */
-        cell.appendChild(box("from.expr", "text", () => String(at().from?.expr ?? ""),
-                             (text) => set("from", { expr: text })));
-      } else {
-        cell.appendChild(sideChip(editor, widget, step.id + ":from", () => at().from ?? {},
-                                  flow, step.id, fromOpts, setFrom));
-      }
+      cell.appendChild(box("from.expr", "text", () => String(at().from?.expr ?? ""),
+                           (text) => set("from", { expr: text })));
       cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     }
 
@@ -823,9 +818,9 @@ function stepCell(
   return cell;
 }
 
-/* One side of a move as the reference chip: its kind mark, its dotted name, its
- * resolved type. Clicking re-opens the tree. The chip covers the local, entity and slot
- * forms; the expression form renders as a value box instead (stepCell). */
+/* The assignment's TARGET as the reference chip: its kind mark, its dotted name, its
+ * resolved type. Clicking re-opens the tree. An lvalue is a place — picked, never
+ * typed — which is the principled boundary the value box stops at. */
 function sideChip(
   editor: Editor,
   widget: Node,
@@ -939,10 +934,9 @@ function grip(editor: Editor, step: Json, index: number): HTMLElement {
   return handle;
 }
 
-/* The + menu: read, write, then the guards, then the timers. Both transfer
- * entries insert a `move` with its holes visible; WHERE each side lives is the pick's
- * business, so the menu never asks. A struct value in scope adds a contextual entry that
- * fills its next unset field. */
+/* The + menu: assign, then the guards, then the timers. The one transfer entry inserts
+ * an `assign` with its holes visible; WHERE the target lives is the pick's business, so
+ * the menu never asks — and the rvalue reads anywhere by naming it. */
 function stepMenu(
   editor: Editor,
   widget: Node,
@@ -965,15 +959,12 @@ function stepMenu(
 
   const items = [
     {
-      label: "read",
-      icon: "arrow-left",
-      run: () => insert({ kind: "move", from: { kind: "", name: "", path: "" },
-                          to: { local: "", path: "" } }),
-    },
-    {
-      label: "write",
-      icon: "arrow-right",
-      run: () => insert({ kind: "move",
+      /* ONE transfer entry: a read and a write are the same thing — a move of a value
+         into a place. The rvalue box reads anything (@entity, a variable, arithmetic);
+         the target chip takes any lvalue. */
+      label: "assign",
+      icon: "equal",
+      run: () => insert({ kind: "assign",
                           from: { expr: triggerParams[0]?.name ?? "" },
                           to: { local: "", path: "" } }),
     },
@@ -988,7 +979,7 @@ function stepMenu(
     {
       label: "reset",
       icon: "reset",
-      run: () => insert({ kind: "move", from: { init: true }, to: { local: "", path: "" } }),
+      run: () => insert({ kind: "assign", from: { init: true }, to: { local: "", path: "" } }),
     },
     { separator: true },
     { label: "gate", run: () => insert({ kind: "gate", a: "" }) },

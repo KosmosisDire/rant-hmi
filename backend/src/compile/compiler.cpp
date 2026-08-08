@@ -145,11 +145,24 @@ std::string json_brief(const Json& value) {
     return text.size() > 32 ? text.substr(0, 29) + "..." : text;
 }
 
+/* the trimmed text when it is exactly one bare identifier (a local's name and nothing
+ * else), "" otherwise: the degenerate expression the whole-struct paths recognize */
+std::string bare_name(const std::string& text);
+
 std::string trimmed(const std::string& text) {
     size_t from = 0, to = text.size();
     while (from < to && std::isspace(static_cast<unsigned char>(text[from]))) ++from;
     while (to > from && std::isspace(static_cast<unsigned char>(text[to - 1]))) --to;
     return text.substr(from, to - from);
+}
+
+std::string bare_name(const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) return {};
+    if (!std::isalpha(static_cast<unsigned char>(t[0])) && t[0] != '_') return {};
+    for (const char c : t)
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') return {};
+    return t;
 }
 
 /* the locals a flow has declared so far, by name. `x` is not in here: it is the flow's
@@ -1484,14 +1497,19 @@ class Compiler {
     /* ONE TRANSFER STEP (spec 2.6). The author names a source and a destination; which
      * mechanic that is, and which word the row shows, both follow. The destination is
      * read first because it decides what the source has to produce. */
-    bool compile_move(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
-                      ExpressionScope& scope, FlowLocals& locals) {
+    /* ONE transfer step: `<lvalue> = <expression>`. The rvalue is always an expression
+     * (`{init:true}` the one special form: reset to the destination's own start); the
+     * lvalue stays structural. Reading the mesh is naming it — `@entity.field` in the
+     * rvalue — so there is no separate "read" form anymore. */
+    bool compile_assign(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+                        ExpressionScope& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
         const Json& to = step.value("to", Json::object());
         const SideKind source = side_kind(from);
         if (source == SideKind::None) {
-            diag(step_id, "move_source", "this move has no source", DiagGrade::Error, "from");
+            diag(step_id, "move_source", "this assignment has no value", DiagGrade::Error,
+                 "from");
             return false;
         }
 
@@ -1525,7 +1543,7 @@ class Compiler {
                 return false;
             }
             if (appends || !key.empty())
-                return aggregate_move(widget, step, flow, scope, found->second, appends,
+                return aggregate_assign(widget, step, flow, scope, found->second, appends,
                                       keep, key);
             /* a LIST or MAP slot takes a whole aggregate here: this is an HMI cell,
                not a machine, so the one-scalar rule steps aside for exactly its shape */
@@ -1550,9 +1568,9 @@ class Compiler {
                          DiagGrade::Error, "to");
                     return false;
                 }
-                return aggregate_move(widget, step, flow, scope, cell, appends, keep, key);
+                return aggregate_assign(widget, step, flow, scope, cell, appends, keep, key);
             }
-            return move_into_local(widget, step, flow, scope, locals);
+            return assign_into_local(widget, step, flow, scope, locals);
         }
         if (to.contains("kind")) {
             if (appends || !key.empty()) {
@@ -1562,7 +1580,7 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
-            return move_out(widget, step, flow, scope, locals);
+            return assign_out(widget, step, flow, scope, locals);
         }
         diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
         return false;
@@ -1576,7 +1594,7 @@ class Compiler {
      * replace the list, which is what an ordinary write already is, and a nested
      * aggregate has no representation at all — so both are refused where the shape can
      * be seen at compile time. */
-    bool aggregate_move(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool aggregate_assign(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                         ExpressionScope& scope, uint32_t cell, bool appends,
                         const std::string& keep, const std::string& key) {
         const uint64_t step_id = id_of(step);
@@ -1674,10 +1692,11 @@ class Compiler {
         return true;
     }
 
-    /* Put ONE value on the stack from a move's source. A struct source is not a scalar
-     * and is handled by its own paths; everything here yields a single value — except
-     * where `agg_ok` says the destination is a declared HMI aggregate, which may take a
-     * whole list or map (copy a variable, rebuild one with a map/filter). */
+    /* Put ONE value on the stack from an assignment's rvalue. The rvalue is always an
+     * EXPRESSION now — a mesh read is `@name` / `@name.field`, bound into the flow's
+     * scope by bind_entities — so this is one compile, one vocabulary. `agg_ok` says
+     * the destination is a declared HMI aggregate, which may take a whole list or map
+     * (copy a variable, rebuild one with a map/filter). */
     bool push_scalar(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                      ExpressionScope& scope, const Json& from, Shape expected,
                      Shape* actual = nullptr, bool agg_ok = false) {
@@ -1687,38 +1706,8 @@ class Compiler {
             return expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
                               expected, flow.code, flow.max_stack, actual, "from",
                               nullptr, agg_ok);
-        if (from.contains("local")) {
-            const std::string text = str_or(from, "local", "");
-            const std::string path = str_or(from, "path", "");
-            return expression(step_id, path.empty() ? text : text + "." + path, ExprTier::Wire,
-                              scope, expected, flow.code, flow.max_stack, actual, "from",
-                              nullptr, agg_ok);
-        }
-        if (from.contains("kind")) {
-            const int entity = resolve_entity(from, step_id, "from");
-            if (entity < 0) return false;
-            const int field = find_field(entity, str_or(from, "path", ""), step_id, "from");
-            if (field < 0) return false;
-            const FieldDef& def = program_.entities[entity].fields[field];
-            if (expected != Shape::Unknown && def.shape != expected) {
-                diag(step_id, "shape",
-                     "the source is " + std::string(shape_name(def.shape)) +
-                         ", but this destination wants " + shape_name(expected),
-                     DiagGrade::Error, "from");
-                return false;
-            }
-            program_.entities[entity].flow_reads = true;
-            Instruction load;
-            load.op = OpCode::LoadEnt;
-            load.a = static_cast<uint32_t>(entity);
-            load.b = static_cast<uint32_t>(field);
-            load.c = fault_site(step_id, "move_read", "the entity's value could not be read");
-            flow.code.push_back(load);
-            flow.max_stack = std::max(flow.max_stack, 1u);
-            if (actual) *actual = def.shape;
-            return true;
-        }
-        diag(step_id, "move_source", "this move has no source", DiagGrade::Error, "from");
+        diag(step_id, "move_source", "this assignment has no value", DiagGrade::Error,
+             "from");
         return false;
     }
 
@@ -1780,7 +1769,7 @@ class Compiler {
     /* `-> local`: the destination names a variable in scope, or declares a temporary by
      * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt; a
      * field of one by StoreField; a scalar by Store. */
-    bool move_into_local(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool assign_into_local(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                          ExpressionScope& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
@@ -1882,12 +1871,9 @@ class Compiler {
         if (name == "x" && path.empty()) {
             Shape produced = Shape::Unknown;
             uint16_t produced_type = 0;
-            if (!from.contains("expr")) {
-                if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
-                    return false;
-            } else if (!expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
-                                   Shape::Unknown, flow.code, flow.max_stack, &produced,
-                                   "from", &produced_type)) {
+            if (!expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
+                            Shape::Unknown, flow.code, flow.max_stack, &produced,
+                            "from", &produced_type)) {
                 return false;
             }
             flow.code.push_back(Instruction{OpCode::StoreX});
@@ -1940,18 +1926,27 @@ class Compiler {
         }
 
         /* A whole-entity read produces a STRUCT: the local takes that type, which is
-           what "a temporary is typed by what is first moved into it" means. (Starting
-           from a zeroed value is not a step: declare a variable with the type, and it
-           is born zeroed, spec 2.7.) */
+           what "a temporary is typed by what is first moved into it" means. The
+           spelling is the degenerate expression — the rvalue is EXACTLY `@name` and
+           the entity is a fielded one — recognized here because a struct is not a
+           stack value the expression VM could carry. (Starting from a zeroed value is
+           not a step: declare a variable with the type, and it is born zeroed.) */
         uint16_t struct_type = 0;
         int read_entity = -1;
-        if (from.contains("kind") && str_or(from, "path", "").empty()) {
-            const int entity = resolve_entity(from, step_id, "from");
-            if (entity < 0) return false;
-            if (program_.entities[entity].fields.size() > 1 ||
-                program_.entities[entity].type_id != 0) {
-                read_entity = entity;
-                struct_type = program_.entities[entity].type_id;
+        {
+            const std::string expr = trimmed(str_or(from, "expr", ""));
+            if (expr.size() > 1 && expr[0] == '@' &&
+                expr.find('.') == std::string::npos) {
+                const std::string ename = expr.substr(1);
+                for (uint32_t e = 0; e < program_.entities.size(); ++e) {
+                    if (program_.entities[e].name != ename) continue;
+                    if (program_.entities[e].fields.size() > 1 ||
+                        program_.entities[e].type_id != 0) {
+                        read_entity = static_cast<int>(e);
+                        struct_type = program_.entities[e].type_id;
+                    }
+                    break;
+                }
             }
         }
 
@@ -2010,7 +2005,7 @@ class Compiler {
     }
 
     /* `-> entity`: the one way a value leaves a flow. The verb comes from the kind. */
-    bool move_out(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool assign_out(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                   ExpressionScope& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
@@ -2029,7 +2024,7 @@ class Compiler {
         out.a = static_cast<uint32_t>(entity);
         out.b = 0;
         out.small = static_cast<uint16_t>(verb);
-        out.c = fault_site(step_id, "move_out", "UNKNOWN was not sent");
+        out.c = fault_site(step_id, "assign_out", "UNKNOWN was not sent");
 
         if (verb == Verb::Unforce) {
             flow.code.push_back(out);
@@ -2050,16 +2045,17 @@ class Compiler {
         }
 
         /* a whole struct goes out as the message; anything else fills one field. The
-           holder is a flow temporary or a declared struct variable, same as any other
-           name in scope. */
-        const std::string source_local = str_or(from, "local", "");
+           holder is a flow temporary or a declared struct variable, spelled as the
+           degenerate expression — the rvalue is EXACTLY its bare name (a struct is
+           not a stack value, so the whole-value send is recognized here). */
+        const std::string source_local = bare_name(str_or(from, "expr", ""));
         uint32_t held_cell = UINT32_MAX;
         if (!source_local.empty()) {
             auto held = locals.find(source_local);
             if (held != locals.end()) held_cell = held->second;
             else held_cell = declared_cell(widget, source_local);
         }
-        const bool whole = held_cell != UINT32_MAX && str_or(from, "path", "").empty() &&
+        const bool whole = held_cell != UINT32_MAX &&
                            program_.cells[held_cell].shape == Shape::Struct;
         if (whole) {
             const uint32_t cell = held_cell;
@@ -2073,7 +2069,7 @@ class Compiler {
             Instruction load;
             load.op = OpCode::Load;
             load.a = cell;
-            load.c = fault_site(step_id, "move_out", "the value could not be read");
+            load.c = fault_site(step_id, "assign_out", "the value could not be read");
             flow.code.push_back(load);
             flow.max_stack = std::max(flow.max_stack, 1u);
         } else {
@@ -2295,13 +2291,17 @@ class Compiler {
                        const EventParam* param = nullptr,
                        const std::unordered_map<std::string, std::string>* claimed = nullptr) {
         ExpressionScope scope = scope_for(widget, Shape::Unknown);
+        /* the mesh, under its '@' spellings: a flow's rvalue or guard reads an entity
+           by naming it, exactly as a slot expression does (same binding, same VM read
+           off the last-value cache / the aggregate mirrors) */
+        bind_entities(scope);
         if (param)
             scope.names[param->name] = Binding{param->shape, OpCode::LoadArg, 0, 0};
         FlowLocals locals;
         for (const Json& step : flow_node.value("do", Json::array())) {
             const uint64_t step_id = id_of(step);
             const std::string kind = step.value("kind", "");
-            if (kind == "move") {
+            if (kind == "assign") {
                 if (claimed) {
                     const std::string slot = slot_of(step.value("to", Json::object()));
                     if (!slot.empty() && claimed->find(slot) != claimed->end()) {
@@ -2317,7 +2317,7 @@ class Compiler {
                         continue;
                     }
                 }
-                if (!compile_move(widget, step, flow, scope, locals)) return false;
+                if (!compile_assign(widget, step, flow, scope, locals)) return false;
             } else if (kind == "raise") {
                 if (!compile_raise(widget, step, flow, scope)) return false;
             } else if (kind == "gate") {
@@ -2362,7 +2362,27 @@ class Compiler {
         }
         flow.code.push_back(Instruction{OpCode::Halt});
         flow.worst_steps = static_cast<uint32_t>(flow.code.size());
+        /* an entity read that arrived through an EXPRESSION (@name in an rvalue, a
+           guard, a keep/key) must stamp the same subscription a structural read did:
+           the mesh only consumes what something declares it reads */
+        stamp_flow_reads(flow.code);
         return true;
+    }
+
+    /* every mesh read this compiled code performs, marked so the mesh consumes the
+     * entity (lambda bodies included — an ITERATE's sub can read the mesh too) */
+    void stamp_flow_reads(const std::vector<Instruction>& code) {
+        for (const Instruction& ins : code) {
+            if (ins.op == OpCode::LoadEnt) {
+                if (ins.a < program_.entities.size())
+                    program_.entities[ins.a].flow_reads = true;
+            } else if (ins.op == OpCode::ReadEnt) {
+                if (ins.b < program_.entities.size())
+                    program_.entities[ins.b].flow_reads = true;
+            } else if (ins.op == OpCode::Iterate && ins.a < program_.subs.size()) {
+                stamp_flow_reads(program_.subs[ins.a].code);
+            }
+        }
     }
 
     void build_flows() {
@@ -2461,7 +2481,7 @@ class Compiler {
     std::vector<std::string> written_slots(const Json& flow) const {
         std::vector<std::string> out;
         for (const Json& step : flow.value("do", Json::array())) {
-            if (step.value("kind", "") != "move") continue;
+            if (step.value("kind", "") != "assign") continue;
             const std::string slot = slot_of(step.value("to", Json::object()));
             if (!slot.empty()) out.push_back(slot);
         }

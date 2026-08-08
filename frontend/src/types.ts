@@ -3,7 +3,10 @@
 
 export type Json = any;
 
-export const PROTO = 12;
+/* 13: read and write unified into ASSIGNMENT — the step kind is `assign`, its `from`
+ * is `{expr}` always (plus the `{init:true}` reset), and flow expressions bind the
+ * mesh under `@` exactly as slot expressions do */
+export const PROTO = 13;
 
 /* THE ARTBOARD: one static px space, 16:9, with one static grid — a system constant,
  * not document data. Every page-node x/y/w/h is a px of this space; the stage scales the

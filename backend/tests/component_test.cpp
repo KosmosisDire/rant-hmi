@@ -586,10 +586,10 @@ Document component_document() {
         {"behavior", Json::array({
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                  {"when_mode", "first"},
-                 {"do", Json::array({Json{{"kind", "move"},
+                 {"do", Json::array({Json{{"kind", "assign"},
                                           {"from", {{"expr", "!widget.value"}}},
                                           {"to", {{"local", "t"}, {"path", ""}}}},
-                                     Json{{"kind", "move"},
+                                     Json{{"kind", "assign"},
                                           {"from", {{"expr", "t"}}},
                                           {"to", {{"slot", "value"}}}},
                                      Json{{"kind", "raise"}, {"event", "changed"},

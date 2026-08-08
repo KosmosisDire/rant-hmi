@@ -402,7 +402,9 @@ function nameRows(ctx: Scope, prefix: string): Row[] {
 function refresh(input: HTMLInputElement, ctx: Scope): void {
   const caret = input.selectionStart ?? input.value.length;
   const text = input.value.slice(0, caret);
-  const prefixMatch = /([A-Za-z_][A-Za-z0-9_]*)?$/.exec(text)!;
+  /* an '@' opens a mesh reference and consumes the path-spelled entity name (slashes
+     included), so `@pla` completes to `@plant/temp` — the same spelling browse inserts */
+  const prefixMatch = /(@[A-Za-z0-9_/]*|[A-Za-z_][A-Za-z0-9_]*)?$/.exec(text)!;
   const prefix = prefixMatch[1] ?? "";
   prefixStart = caret - prefix.length;
   const beforePrefix = text.slice(0, prefixStart);

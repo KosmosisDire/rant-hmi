@@ -59,7 +59,7 @@ function refShape(editor: Editor): Json[] {
       });
       for (const flow of widget.flows ?? []) {
         for (const step of flow.do ?? [])
-          if (step.kind === "move")
+          if (step.kind === "assign")
             out.push(["m", widget.id, step.id, step.from ?? null, step.to ?? null]);
           else if (step.kind === "tmr_start" || step.kind === "tmr_cancel")
             out.push(["t", widget.id, step.id, step.kind, step.timer ?? ""]);
@@ -501,10 +501,16 @@ function entityDetail(host: HTMLElement, editor: Editor, kind: string, name: str
   }
 
   const slots = slotUses(editor, (text) => referencesEntity(text, name));
-  const flows = flowUses(editor, (step) =>
-    step.kind === "move" &&
-    ((sideOf(step.from) === "entity" && step.from.kind === kind && step.from.name === name) ||
-     (sideOf(step.to) === "entity" && step.to.kind === kind && step.to.name === name)));
+  const flows = flowUses(editor, (step) => {
+    /* a read is `@name` in the rvalue (or a gate); a write still names the entity
+       structurally as the target */
+    if (step.kind === "gate")
+      return typeof step.a === "string" && referencesEntity(step.a, name);
+    if (step.kind !== "assign") return false;
+    if (sideOf(step.to) === "entity" && step.to.kind === kind && step.to.name === name)
+      return true;
+    return typeof step.from?.expr === "string" && referencesEntity(step.from.expr, name);
+  });
   whereUsed(host, [
     ...slots.map((use) => slotUseRow(editor, use)),
     ...flows.map((use) => flowUseRow(editor, use)),
@@ -524,7 +530,12 @@ function varDetail(host: HTMLElement, editor: Editor, id: number): void {
     !shadows(widget, name) && referencesName(text, name));
   const flows = flowUses(editor, (step, widget) => {
     if (shadows(widget, name)) return false;
-    if (step.kind === "move") return sideNames(step.from, name) || sideNames(step.to, name);
+    /* an assignment reads through its rvalue EXPRESSION and writes a structural target */
+    if (step.kind === "assign")
+      return sideNames(step.to, name) ||
+        (typeof step.from?.expr === "string" && referencesName(step.from.expr, name));
+    if (step.kind === "gate")
+      return typeof step.a === "string" && referencesName(step.a, name);
     if (step.kind === "tmr_start" || step.kind === "tmr_cancel") return step.timer === name;
     return false;
   });

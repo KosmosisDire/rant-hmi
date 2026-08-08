@@ -128,7 +128,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 12, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 13, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.types.length === 12, "twelve widget types");
@@ -1396,7 +1396,7 @@ check(dataDetailPanel.host.querySelector(".now-value")?.textContent === "3.25",
 const globalUses = dataDetailPanel.host.querySelectorAll(".used-row");
 check(globalUses.some((r) => r.textContent.includes("Flow.value")),
       "where-used lists the slot expression reading the global");
-check(globalUses.some((r) => r.textContent.includes("Reset flow: write")),
+check(globalUses.some((r) => r.textContent.includes("Reset flow: assign")),
       "and the flow step writing it");
 
 /* the type detail: fields plus the entities carrying it */
@@ -3363,7 +3363,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const { closeMenu } = await import(mod("menu.js"));
   document.activeElement = null;
 
-  /* a Slider with a flow: gate, move-from-expression, raise — every expression
+  /* a Slider with a flow: gate, assign, raise — every expression
      surface a step can hold */
   store.apply(store.version() + 1, [
     { op: "insert", parent: store.pages()[0].id, list: "children", node: {
@@ -3372,7 +3372,7 @@ check(stageNode("frame", 901) === heldAgain &&
       flows: [{ id: 9901, when: [{ kind: "event", name: "changed" }], when_mode: "first",
                 do: [
                   { id: 9902, kind: "gate", a: "value > 5" },
-                  { id: 9903, kind: "move", from: { expr: "" }, to: { local: "", path: "" } },
+                  { id: 9903, kind: "assign", from: { expr: "" }, to: { local: "", path: "" } },
                   { id: 9904, kind: "raise", event: "changed", args: {} },
                 ] }] } },
   ]);
@@ -3437,12 +3437,12 @@ check(stageNode("frame", 901) === heldAgain &&
   fire(gateInput, "change");
   fire(gateInput, "blur");
 
-  /* the move's expression source: the box replaced the fused expr-pick control, and
-     browse-insert is the box's own affordance now */
-  const writeRow = rowByVerb("write");
+  /* the assignment's rvalue: ONE expression box (a read and a write are the same
+     thing), and browse-insert is the box's own affordance */
+  const writeRow = rowByVerb("assign");
   const fromBox = writeRow?.querySelector(".value-box") ?? null;
   check(fromBox !== null && writeRow.querySelector(".expr-pick") === null,
-        "a move's expression source is the same box — the fused expr-pick is gone");
+        "an assignment's rvalue is the same box — the fused expr-pick is gone");
   document.activeElement = null;
   const fromInput = fromBox.querySelector("input");
   fire(fromBox.querySelector(".vb-browse"), "click");
@@ -3452,8 +3452,12 @@ check(stageNode("frame", 901) === heldAgain &&
   const flat4b = (label) =>
     vb4b.querySelectorAll(".stree-row")
       .find((r) => r.textContent.startsWith(label)) ?? null;
-  check(flat4b("x") !== null,
-        "a flow scope browses flat, and x leads there too — one universe with the dropdown");
+  /* the flow scope browses HIERARCHICALLY now: its own names lead (the trigger's
+     parameter), then the hmi root — one universe with the dropdown */
+  check(flat4b("this flow") !== null,
+        "a flow box's browse leads with the flow's own names");
+  check(flat4b("value") !== null,
+        "the trigger's parameter stands under it");
   fire(flat4b("widget.value"), "click", { detail: 0 });
   check(fromInput.value === "widget.value",
         "picking inserts the canonical spelling into the box, got " + fromInput.value);
@@ -3462,6 +3466,67 @@ check(stageNode("frame", 901) === heldAgain &&
   const fromOp = ops4b.findLast((o) => o.node === 9903 && o.key === "from");
   check(fromOp?.value?.expr === "widget.value",
         "committing writes the expression side form, got " + JSON.stringify(fromOp?.value));
+
+  /* THE ENTITY ROOTS IN A FLOW: with a mesh reflected, the same rvalue box browses
+     the dart hierarchy the slot tier serves, and a pick inserts the @ spelling */
+  const editor4c = {
+    ...editor4b,
+    mesh: {
+      entities: [
+        { kind: "V", name: "plant/temp", writable: true,
+          fields: [{ path: "value", shape: "num" }, { path: "alarm", shape: "bool" }] },
+      ],
+      types: [],
+    },
+  };
+  panel4b.render(inspectorShape(editor4c) + ":mesh",
+                 (host) => renderInspector(host, editor4c));
+  const fromBox4c = panel4b.host.querySelectorAll(".do-row")
+    .find((r) => r.querySelector(".do-verb")?.textContent === "assign")
+    ?.querySelector(".value-box") ?? null;
+  const fromInput4c = fromBox4c.querySelector("input");
+  document.activeElement = null;
+  fire(fromBox4c.querySelector(".vb-browse"), "click");
+  const vb4c = document.body.children.find((n) => n.id === "vbrowse");
+  const row4c = (label) =>
+    vb4c.querySelectorAll(".stree-row")
+      .find((r) => r.textContent.startsWith(label)) ?? null;
+  check(row4c("dart") !== null,
+        "a flow box's browse offers the mesh root — the entity vocabulary reached flows");
+  /* dart starts expanded: its folders already stand */
+  fire(row4c("plant"), "click", { detail: 0 });
+  fire(row4c("temp"), "click", { detail: 0 });
+  const leaf4c = row4c("alarm");
+  check(leaf4c !== null, "an entity opens into its field leaves");
+  fire(leaf4c, "click", { detail: 0 });
+  check(fromInput4c.value.endsWith("@plant/temp.alarm"),
+        "and the pick inserts the @ spelling, got " + fromInput4c.value);
+  fire(fromInput4c, "change");
+  const fromOp4c = ops4b.findLast((o) => o.node === 9903 && o.key === "from");
+  check(String(fromOp4c?.value?.expr ?? "").includes("@plant/temp.alarm"),
+        "which commits into the rvalue, got " + JSON.stringify(fromOp4c?.value));
+
+  /* THE STEP MENU: one `assign` entry inserts the step with its holes visible */
+  const plus4c = panel4b.host.querySelectorAll("button")
+    .find((b) => b.textContent === "+ step");
+  fire(plus4c, "click");
+  const menuHost4c = document.body.children.find((n) => n.id === "ctx");
+  /* menu rows are icon+label markup: the shim keeps innerHTML verbatim, so match it */
+  const menuRow4c = menuHost4c.querySelectorAll("button")
+    .find((r) => (r.innerHTML ?? "").includes(">assign<")) ?? null;
+  check(menuRow4c !== null, "the step menu offers `assign` (read and write are gone)");
+  check(!menuHost4c.querySelectorAll("button")
+          .some((r) => (r.innerHTML ?? "").includes(">read<") ||
+                       (r.innerHTML ?? "").includes(">write<")),
+        "and no read/write entries remain");
+  fire(menuRow4c, "click");
+  const insOp = ops4b.findLast((o) => o.op === "insert" && o.list === "do");
+  check(insOp?.node?.kind === "assign" &&
+        typeof insOp.node.from?.expr === "string" &&
+        insOp.node.to?.local === "",
+        "picking it inserts an assign step — rvalue expression, unpicked target, got " +
+          JSON.stringify(insOp?.node));
+  closeMenu();
 
   /* the raise's argument: one box per declared parameter, bound by NAME */
   const raiseRow = rowByVerb("raise");

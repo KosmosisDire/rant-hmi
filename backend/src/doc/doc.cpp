@@ -304,7 +304,7 @@ Document Document::make_default() {
     reset["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
         {"when_mode", "first"},
-        {"do", Json::array({Json{{"kind", "move"},
+        {"do", Json::array({Json{{"kind", "assign"},
                                  {"from", {{"expr", "0"}}},
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
@@ -326,7 +326,7 @@ Document Document::make_default() {
     slider["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "changing"}}})},
         {"when_mode", "any"},
-        {"do", Json::array({Json{{"kind", "move"},
+        {"do", Json::array({Json{{"kind", "assign"},
                                  {"from", {{"expr", "value"}}},
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
     main_kids.push_back(std::move(slider));

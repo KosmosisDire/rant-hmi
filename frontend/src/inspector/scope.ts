@@ -168,14 +168,47 @@ export function pageScope(editor: Editor, widget: Node | null): Scope {
 }
 
 
-/* one row of a flow: wire tier, x and the locals as the rows above this one leave them */
+/* One row of a flow: wire tier, x and the locals as the rows above this one leave them
+ * — PLUS the mesh under its '@' spellings, exactly the vocabulary the backend now binds
+ * into flow expressions (bind_entities in compile_steps): an assignment's rvalue or a
+ * gate reads `@cage/plc/IO.temp` by naming it. The browse tree serves the same
+ * hierarchy the slot tier's does, with the flow's own names (x, the temporaries)
+ * leading, so autocomplete and browse stay one universe. */
 export function flowScope(editor: Editor, widget: Node | null, flow: Flow, stepId: number): Scope {
   const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
+  const names = flowNames(editor, widget, at, stepId);
+  const x = flowX(editor, widget, at, stepId);
   return {
     tier: "wire",
     lang: () => editor.lang,
-    names: flowNames(editor, widget, at, stepId),
-    x: flowX(editor, widget, at, stepId),
+    names: () => names().concat(entityNames(editor)),
+    x,
+    roots: () => {
+      const flowKids: BrowseRow[] = [];
+      const held = x();
+      if (held)
+        flowKids.push({ key: "flow/x", label: "x", shape: held.shape, insert: "x" });
+      /* the flow's OWN names: the event's parameter and the temporaries standing
+         above this row (declared variables ride the hmi root already) */
+      for (const local of scopeAt(editor, widget, at(), stepId).locals) {
+        if (local.note !== "temporary" && local.note !== "event parameter") continue;
+        flowKids.push({
+          key: "flow/" + local.name, label: local.name, shape: local.shape,
+          note: local.note === "temporary" ? "temp" : "param", insert: local.name,
+          children: (local.fields ?? []).map((field) => ({
+            key: "flow/" + local.name + "." + field.path,
+            label: field.path,
+            shape: field.shape,
+            insert: local.name + "." + field.path,
+          })),
+        });
+      }
+      const roots = slotRoots(editor, widget);
+      return flowKids.length
+        ? [{ key: "flow", label: "this flow", icon: "folder", children: flowKids },
+           ...roots]
+        : roots;
+    },
   };
 }
 

@@ -5,7 +5,7 @@
  * struct local carries the field table of the type that was moved into it. One pass
  * answers all of that, because they are all the same question.
  *
- * The inference mirrors the compiler's (`move_into_local`), and where the compiler would
+ * The inference mirrors the compiler’s (`compile_assign`), and where the compiler would
  * know more than a view can, this says nothing rather than guessing: an unresolved shape
  * only widens what autocomplete offers, while a wrong one would offer the wrong
  * vocabulary and be believed. */
@@ -68,46 +68,52 @@ function declared(editor: Editor, widget: Node | null): LocalInfo[] {
     });
 }
 
-/* what one move SOURCE yields, given what is in scope at that row */
+/* What one assignment's RVALUE yields, given what is in scope at that row. The rvalue
+ * is always an expression now; the degenerate spellings a picker writes are worth
+ * resolving here (a bare local name, `@entity`, `@entity.field`, a dotted local
+ * field) and anything compound is left to the expression resolver, which has the
+ * served tables. Mirrors the compiler (compile_assign): a whole fielded entity reads
+ * as a struct, a single-field one as its scalar. */
 function sourceShape(
   editor: Editor,
   from: Json,
   scope: Map<string, LocalInfo>,
 ): { shape: string; elem?: string; type?: string; fields?: MeshField[] } | null {
   if (!from || typeof from !== "object") return null;
+  if (typeof from.expr !== "string") return null;
+  const text = from.expr.trim();
 
-  if (typeof from.local === "string") {
-    const held = scope.get(from.local);
-    if (!held) return null;
-    if (!from.path) return held;
-    const field = (held.fields ?? []).find((f) => f.path === from.path);
+  const bare = /^[A-Za-z_][A-Za-z0-9_]*$/.exec(text);
+  if (bare) return scope.get(bare[0]) ?? null;
+
+  /* a local's field: `m.position` where m is a struct in scope */
+  const dotted = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z0-9_.]+)$/.exec(text);
+  if (dotted) {
+    const held = scope.get(dotted[1]);
+    const field = (held?.fields ?? []).find((f) => f.path === dotted[2]);
     return field ? { shape: field.shape, elem: field.elem } : null;
   }
 
-  if (typeof from.kind === "string") {
-    const entity = entityOf(editor, from);
-    if (!entity) return null;
-    const fields = writeFields(entity);
-    if (!from.path) {
-      /* a whole-entity read is a struct wherever the entity has a type to be; a
-         single-field entity reads as that field, which is what the compiler does */
-      if (entity.type || fields.length > 1)
-        return { shape: "struct", type: entity.type, fields };
-      return fields.length === 1 ? { shape: fields[0].shape, elem: fields[0].elem } : null;
+  /* a mesh read by name: `@name` whole, `@name.field` one field. Entity names are
+     path-spelled (slashes), the field separated by the last dot. */
+  if (text.startsWith("@")) {
+    const ref = text.slice(1);
+    const whole = editor.mesh.entities.find((e) => e.name === ref);
+    if (whole) {
+      const fields = writeFields(whole);
+      if (whole.type || fields.length > 1)
+        return { shape: "struct", type: whole.type, fields };
+      return fields.length === 1
+        ? { shape: fields[0].shape, elem: fields[0].elem }
+        : null;
     }
-    const field = fields.find((f) => f.path === from.path);
-    return field ? { shape: field.shape, elem: field.elem } : null;
-  }
-
-  if (typeof from.expr === "string") {
-    /* one bare name is worth resolving, since that is what a picker writes; anything
-       compound is left to the expression resolver, which has the served tables */
-    const bare = /^[A-Za-z_][A-Za-z0-9_]*$/.exec(from.expr.trim());
-    if (bare) {
-      const held = scope.get(bare[0]);
-      if (held) return held;
+    const dot = ref.lastIndexOf(".");
+    if (dot > 0) {
+      const entity = editor.mesh.entities.find((e) => e.name === ref.slice(0, dot));
+      const field = entity ? writeFields(entity).find((f) => f.path === ref.slice(dot + 1))
+                           : undefined;
+      if (field) return { shape: field.shape, elem: field.elem };
     }
-    return null;
   }
   return null;
 }
@@ -146,7 +152,7 @@ export function scopeAt(
 
   for (const step of (flow?.do ?? []) as Json[]) {
     if (step?.id === stepId) break;
-    if (step?.kind !== "move") continue;
+    if (step?.kind !== "assign") continue;
     const to = step.to ?? {};
     if (typeof to.local !== "string" || !to.local) continue;
     const produced = sourceShape(editor, step.from ?? {}, scope);

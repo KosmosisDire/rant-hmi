@@ -269,11 +269,11 @@ void test_structure_ops() {
                                    {"node", {{"kind", "delay"}, {"a", 250}}}}});
     CHECK_MSG(apply_ops(d, batch, r, err), err);
     const uint64_t step = r.ops[0]["node"]["id"].get<uint64_t>();
-    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", step}, {"key", "kind"}, {"value", "move"}}},
+    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", step}, {"key", "kind"}, {"value", "assign"}}},
                     err),
               err);
     const Json& s = *d.node(step);
-    CHECK(s["kind"] == "move");
+    CHECK(s["kind"] == "assign");
     CHECK(s["from"].is_object());
     CHECK(s["to"].is_object());
     CHECK(s["mode"] == "write");
@@ -290,7 +290,7 @@ void test_rename() {
                                  {"parent", flow},
                                  {"list", "do"},
                                  {"index", 0},
-                                 {"node", {{"kind", "move"},
+                                 {"node", {{"kind", "assign"},
                                            {"from", {{"expr", "flow * 2 + flowRate"}}},
                                            {"to", {{"local", "x"}, {"path", ""}}}}}}});
     CHECK_MSG(apply_ops(d, add, r, err), err);
@@ -442,14 +442,14 @@ void test_retype() {
  * the generic op machinery carries them and the inspector reads them from the schema. */
 void test_aggregate_move_props() {
     const NodeSpec& step = node_spec(Kind::Step);
-    const Prop* mode = find_prop(step, "move", "mode");
+    const Prop* mode = find_prop(step, "assign", "mode");
     if (!CHECK(mode != nullptr)) return;
     bool appends = false;
     for (const std::string& variant : mode->variants)
         if (variant == "append") appends = true;
     CHECK(appends);
-    const Prop* keep = find_prop(step, "move", "keep");
-    const Prop* key = find_prop(step, "move", "key");
+    const Prop* keep = find_prop(step, "assign", "keep");
+    const Prop* key = find_prop(step, "assign", "key");
     if (!CHECK(keep != nullptr && key != nullptr)) return;
     /* both are EXPRESSIONS, so a rename of a variable they name reaches them */
     CHECK(keep->role == Role::Expr);
@@ -470,7 +470,7 @@ void test_aggregate_move_props() {
     Json row = Json::array({Json{{"op", "insert"},
                                  {"parent", flow},
                                  {"list", "do"},
-                                 {"node", Json{{"kind", "move"},
+                                 {"node", Json{{"kind", "assign"},
                                                {"from", Json{{"expr", "x"}}},
                                                {"to", Json{{"local", "log"}}},
                                                {"mode", "append"},

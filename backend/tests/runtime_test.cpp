@@ -129,7 +129,7 @@ Document runtime_document() {
              {"do",
               Json::array({
                   steps::gate("value < 0"),
-                  Json{{"kind", "move"},
+                  Json{{"kind", "assign"},
                        {"from", {{"init", true}}},
                        {"to", {{"local", "msg"}, {"path", ""}}}},
               })}});
@@ -644,8 +644,8 @@ void test_enum_names() {
              /* an enum moved into a TEXT destination renders as its variant name */
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "held"}}})},
                   {"when_mode", "first"},
-                  {"do", Json::array({Json{{"kind", "move"},
-                                           {"from", {{"local", "gearMode"}, {"path", ""}}},
+                  {"do", Json::array({Json{{"kind", "assign"},
+                                           {"from", {{"expr", "gearMode"}}},
                                            {"to", {{"slot", "text"}}}}})}},
          })},
     };
@@ -1252,7 +1252,7 @@ void test_events_are_calls() {
             {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
             {"when_mode", "first"},
             {"do", Json::array({
-                Json{{"kind", "move"}, {"from", {{"expr", "false"}}},
+                Json{{"kind", "assign"}, {"from", {{"expr", "false"}}},
                      {"to", {{"slot", "value"}}}},
                 Json{{"kind", "raise"}, {"event", "changed"},
                      {"args", Json{{"value", "widget.value"}}}}})}}})},
@@ -2509,6 +2509,80 @@ void test_bare_topic_scalars() {
     CHECK(has_diag(compile_document(bad, builtin_registry(), mesh), "shape"));
 }
 
+/* ASSIGN'S RVALUE IS AN EXPRESSION AND THE EXPRESSION READS THE MESH: `@a + @b`
+ * compiles in a flow exactly as it would in a slot (bind_entities in the flow scope),
+ * the LoadEnts stamp flow_reads so the mesh consumes both entities, and a gate's
+ * condition may name an entity the same way. */
+void test_assign_expression_reads_mesh() {
+    EntityDef a;
+    a.kind = EntityKind::Variable;
+    a.name = "a";
+    a.readable = true;
+    a.fields = {FieldDef{"", Shape::Num}};
+    EntityDef b = a;
+    b.name = "b";
+    FakeMesh mesh(std::vector<EntityDef>{a, b});
+
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"}, {"slots", Json::object()},
+        {"flows",
+         Json::array({
+             flow_on("tap", {steps::set_var("total", "@a + @b")}),
+             flow_on("release", {steps::gate("@a > 5"),
+                                 steps::set_var("hits", "hits + 1")}),
+         })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({Json{{"name", "total"}, {"type", "f64"}, {"init", 0}},
+                               Json{{"name", "hits"}, {"type", "f64"}, {"init", 0}}})},
+                 {"pages", Json::array({Json{{"name", "P"},
+                                             {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("assign expr compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+
+    int a_at = -1, b_at = -1;
+    for (uint32_t i = 0; i < program.entities.size(); ++i) {
+        if (program.entities[i].name == "a") a_at = static_cast<int>(i);
+        if (program.entities[i].name == "b") b_at = static_cast<int>(i);
+    }
+    const int total = named_cell(program, "total");
+    const int hits = named_cell(program, "hits");
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    if (!CHECK(a_at >= 0 && b_at >= 0 && total >= 0 && hits >= 0 && widget)) return;
+
+    /* the expression-borne reads subscribe exactly as structural reads did */
+    CHECK(program.entities[a_at].flow_reads);
+    CHECK(program.entities[b_at].flow_reads);
+
+    RuntimeState state(program);
+    state.last[a_at].known = true;
+    state.last[a_at].fields[0] = Value::number(3);
+    state.last[b_at].known = true;
+    state.last[b_at].fields[0] = Value::number(4);
+
+    run_event(program, state, widget, "tap", Value::nil());
+    CHECK(state.values[total].tag == ValueTag::Num);
+    CHECK_EQ(state.values[total].data.num, 7.0);
+
+    /* the gate reads @a: 3 stands down, 7 passes */
+    run_event(program, state, widget, "release", Value::nil());
+    CHECK_EQ(state.values[hits].data.num, 0.0);
+    state.last[a_at].fields[0] = Value::number(7);
+    run_event(program, state, widget, "release", Value::nil());
+    CHECK_EQ(state.values[hits].data.num, 1.0);
+}
+
 void test_aggregate_expressions() {
     EntityDef plant;
     plant.kind = EntityKind::Variable;
@@ -2898,30 +2972,30 @@ void test_aggregate_refusals() {
     CHECK(refuses(flow_on("tap", {steps::set_key("log", "'k'", "1")}),
                   "a keyed write needs a map"));
     /* keep belongs to an append, and an append is not also a keyed write */
-    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", {{"local", "log"}}},
                                        {"keep", "3"}}}),
                   "keep bounds an APPEND"));
-    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", {{"local", "table"}}},
                                        {"mode", "append"},
                                        {"key", "'k'"}}}),
                   "not both"));
-    /* one element per append: replacing a list is an ordinary write. (An expression that
-       yields a list is refused a step earlier, by the wire tier's own scalar rule; a mesh
-       field that IS one reaches this check.) */
-    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
-                                       {"from", steps::entity_ref("V", "plant", "names")},
+    /* one element per append: replacing a list is an ordinary write. A mesh list field
+       is an expression read now (`@plant.names`), so the wire tier's own scalar rule
+       refuses it before the append-specific check ever sees it. */
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
+                                       {"from", {{"expr", "@plant.names"}}},
                                        {"to", {{"local", "log"}}},
                                        {"mode", "append"},
                                        {"keep", "3"}}}),
-                  "append takes one element"));
+                  "a wire value is one scalar"));
     CHECK(refuses(flow_on("tap", {steps::append_var("log", "[1, 2]", "3")}),
                   "a wire value is one scalar"));
     /* a mesh entity takes a whole value; neither verb reaches one */
-    CHECK(refuses(flow_on("tap", {Json{{"kind", "move"},
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", steps::entity_ref("V", "nothing")},
                                        {"mode", "append"}}}),
@@ -3188,6 +3262,7 @@ int main() {
     RUN(test_default_behavior);
     RUN(test_events_are_calls);
     RUN(test_bare_topic_scalars);
+    RUN(test_assign_expression_reads_mesh);
     RUN(test_value_shape_diagnostics);
     RUN(test_colors);
     RUN(test_tonemaps);

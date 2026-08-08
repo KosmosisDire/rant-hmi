@@ -155,7 +155,7 @@ export function operable(widget: Node | null, type: WidgetType | null): boolean 
   for (const flow of (type?.behavior ?? []) as Json[]) {
     if (!onEvent(flow)) continue;
     for (const step of (flow?.do ?? []) as Json[])
-      if (step?.kind === "move" && typeof step.to?.slot === "string" && step.to.slot &&
+      if (step?.kind === "assign" && typeof step.to?.slot === "string" && step.to.slot &&
           !fed.has(step.to.slot))
         return true;
   }

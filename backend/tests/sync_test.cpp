@@ -169,9 +169,9 @@ int main() {
     CHECK((*welcome)["proto"] == kProto);
     /* the number itself, pinned: the frontend bumps in lockstep, and a silent drift here
        is a client that talks a frame shape this backend no longer sends
-       (12: feeds are gone — a slot value is number | bool | expression text, `poll`
-       rides the widget, the attr table serves `variants`) */
-    CHECK(kProto == 12);
+       (13: read and write are one ASSIGNMENT — step kind `assign`, `from` always
+       {expr} plus the {init:true} reset, flows bind the mesh under `@`) */
+    CHECK(kProto == 13);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
