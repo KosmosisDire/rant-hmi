@@ -44,6 +44,10 @@ execFileSync(process.execPath, [tsc, "--project", join(here, "tsconfig.json")], 
 const STYLES = [
   "base",
   "input-floor",
+  /* `icons` right after the floor: it is the SHARED anatomy of the two icon
+     families, and every sheet below deliberately overrides it at equal
+     specificity with its context's deltas */
+  "icons",
   "topbar",
   "workspace",
   "workspace-style",

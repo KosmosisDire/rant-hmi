@@ -23,7 +23,7 @@ export function renderPageSelect(host: HTMLElement, editor: Editor): void {
   bindText("pagesel:name", name, () => editor.page()?.name ?? "");
   const button = el("button", { class: "page-select", title: "switch, rename or add pages" }, [
     name,
-    el("span", { class: "page-caret", html: iconMarkup("chevron-down", 9, 2) }),
+    el("span", { class: "icon-mark page-caret", html: iconMarkup("chevron-down", 9, 2) }),
   ]);
   button.addEventListener("click", () => openPageMenu(button, editor));
   host.appendChild(button);

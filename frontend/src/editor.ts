@@ -293,8 +293,8 @@ export function diagIcon(diags: Diag[]): HTMLElement | null {
       ? "warning"
       : "info";
   const dot = el("span", {
-    class: "diag-dot " + worst,
-    html: iconMarkup("alert", 11, 2),
+    class: "icon-mark diag-dot " + worst,
+    html: iconMarkup("alert", 16, 2),
   });
   dot.addEventListener("mouseenter", () => showPop(dot, diags));
   dot.addEventListener("mouseleave", hidePop);
@@ -322,7 +322,7 @@ export function section(
   );
   if (!open) panel.style.display = "none";
   const head = el("button", { class: "section-head" }, [
-    el("span", { class: "caret", html: iconMarkup("chevron-down", 10, 2) }),
+    el("span", { class: "icon-mark caret", html: iconMarkup("chevron-down", 10, 2) }),
     el("span", { class: "section-title", text: title }),
     badge !== null ? el("span", { class: "badge", text: badge }) : null,
     el("span", { class: "rule" }),

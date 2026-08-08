@@ -247,7 +247,7 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
       ? { open, toggle: () => toggleLayer(editor, node.id) }
       : null,
     [
-      el("span", { class: "layer-glyph", html: iconMarkup(glyphOf(node), 16, 1.5) }),
+      el("span", { class: "icon-mark layer-glyph", html: iconMarkup(glyphOf(node), 16, 1.5) }),
       label,
       diagIcon(instance ? editor.diagFor(node.id) : editor.diagAt(node.id)),
     ],
@@ -276,7 +276,7 @@ function templateRows(editor: Editor, instanceId: number, node: TemplateNode,
     "tpl " + node.kind,
     null,
     [
-      el("span", { class: "layer-glyph",
+      el("span", { class: "icon-mark layer-glyph",
                    html: iconMarkup(node.kind === "frame" ? "frame-free" : "node-" + node.kind,
                                     16, 1.5) }),
       el("span", { class: "layer-label", text: name }),
@@ -300,7 +300,7 @@ function readonlyRows(node: TemplateNode, depth: number, prefix: string): HTMLEl
     "tpl " + node.kind,
     null,
     [
-      el("span", { class: "layer-glyph",
+      el("span", { class: "icon-mark layer-glyph",
                    html: iconMarkup(node.kind === "frame" ? "frame-free" : "node-" + node.kind,
                                     16, 1.5) }),
       el("span", { class: "layer-label", text: name }),
@@ -1029,16 +1029,6 @@ function slotRows(
     editor.apply([{ op: "set_prop", node: widget.id, key: "slots", value: slots }]);
   };
   const boxType = slotBoxType(spec);
-  const box = valueBox({
-    key: slotCell(widget, spec.name),
-    read: text,
-    commit: commitText,
-    emptyMeans: "default",
-    placeholder: slotText(spec.default),
-    title: spec.name + ": " + spec.shape,
-    type: boxType,
-    scope,
-  });
 
   const arm = casesArm(ownSlot(at(), spec.name));
   const folded = caseKey(widget.id, spec.name);
@@ -1054,12 +1044,25 @@ function slotRows(
     if (open) casesChip.classList.add("on");
   }
 
+  /* the chips and the diag mark ride INSIDE the box (BoxSpec.trail): they are
+     metadata about the value, and the box is where the value lives */
+  const box = valueBox({
+    key: slotCell(widget, spec.name),
+    read: text,
+    commit: commitText,
+    emptyMeans: "default",
+    placeholder: slotText(spec.default),
+    title: spec.name + ": " + spec.shape,
+    type: boxType,
+    scope,
+    trail: [casesChip, pollChip(editor, widget, spec),
+            diagIcon(editor.diagAt(widget.id, spec.name))],
+  });
+
   const row = chassisRow({
     name: slotLeaf(spec.name),
     note: spec.name + ": " + spec.shape,
     box,
-    trail: [casesChip, pollChip(editor, widget, spec),
-            diagIcon(editor.diagAt(widget.id, spec.name))],
   });
   /* a slot row and an attr row may wear the same name (radius, surface — the deferred
      props-vs-attrs question); the class keeps them tellable apart */

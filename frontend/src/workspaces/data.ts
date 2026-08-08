@@ -554,7 +554,7 @@ function typeDetail(host: HTMLElement, editor: Editor, key: string): void {
   }
   host.appendChild(
     el("div", { class: "detail-head" }, [
-      el("span", { class: "stree-foldicon", html: iconMarkup("layers", 13, 1.6) }),
+      el("span", { class: "icon-mark stree-foldicon", html: iconMarkup("layers", 13, 1.6) }),
       el("span", { class: "detail-name", text: type.name || "(unnamed)" }),
       el("span", { class: "detail-type", text: "type" }),
     ]),

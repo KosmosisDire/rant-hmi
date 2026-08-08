@@ -47,16 +47,6 @@
   min-width: 0;
 }
 
-/* the per-field transition button: dim until a transition is set, accent once one is */
-.attr-row .transition-chip {
-  flex: none;
-  color: var(--dim-2);
-}
-
-.attr-row .transition-chip.on {
-  color: var(--acc);
-}
-
 .attr-row .attr-name {
   flex: 0 0 84px;
   min-width: 0;

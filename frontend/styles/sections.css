@@ -15,8 +15,6 @@
 }
 
 .section-head .caret {
-  flex: none;
-  display: inline-flex;
   color: var(--dim-2);
   transform: rotate(-90deg);
   transition: transform 0.12s;

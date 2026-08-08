@@ -96,8 +96,10 @@
   white-space: nowrap;
 }
 
-.arrow {
-  display: inline-flex;
+/* two marks, one quiet ink: the card head's fold caret (rotates shut) and the
+   chain arrow between a step's source and target */
+.fold-caret,
+.chain-arrow {
   color: var(--dim-2);
   line-height: 24px;
 }

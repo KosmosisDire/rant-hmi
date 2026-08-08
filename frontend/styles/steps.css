@@ -69,9 +69,7 @@
   flex: 0 1 auto;
 }
 
-.do-cell > .arrow,
-.do-cell > .op,
-.do-cell > .icon-btn {
+.do-cell > .op {
   flex: none;
   white-space: nowrap;
 }
@@ -106,7 +104,11 @@
   gap: 1px;
 }
 
+/* the one sanctioned size exception: a 30px square would grow every step line past
+   the list's 24px rhythm, so the tail's buttons keep the row's own height */
 .do-tail .icon-btn {
+  width: 24px;
+  height: 24px;
   color: var(--dim-2);
 }
 

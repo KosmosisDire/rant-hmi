@@ -1034,9 +1034,9 @@ function transitionChip(editor: Editor, node: Node, def: AttrDef): HTMLElement |
  * One builder where three stood (the declared attr row, the stray row, the interact
  * param row) — and the slot rows ride it too (panel.ts): the label cell is a static
  * name with the note as its tooltip and the warning ink on a stray, the box carries
- * the value, and everything after it is the caller's trail — a transition chip on
- * declared animatable attrs, the cases/poll chips on a slot, the remove on a stray,
- * the diag dot always. The box never carries row concerns. */
+ * the value AND the value's metadata (BoxSpec.trail: chips, the diag dot), and
+ * everything after the box is the caller's trail — ROW lifecycle only, like the
+ * remove on a stray. The box never carries row concerns. */
 export function chassisRow(opts: {
   name: string;
   note?: string;
@@ -1078,6 +1078,10 @@ function attrDefRow(
   attrsOf: () => Record<string, string>,
   commitAttrs: (next: Record<string, string>) => void,
 ): HTMLElement {
+  /* one icon serves both findings a row can carry: the expression's, and — where the
+     expression is fine — its transition metadata's */
+  const exprDiag = editor.diagAt(node.id, def.name);
+  const transDiag = editor.diagAt(node.id, "transitions." + def.name);
   const box = valueBox({
     key: node.id + ":attrs." + def.name,
     read: () => String(attrsOf()[def.name] ?? ""),
@@ -1092,17 +1096,13 @@ function attrDefRow(
     title: def.note,
     type: attrBoxType(def),
     scope,
+    trail: [transitionChip(editor, node, def),
+            diagIcon(exprDiag.length ? exprDiag : transDiag)],
   });
-  /* one icon serves both findings a row can carry: the expression's, and — where the
-     expression is fine — its transition metadata's */
-  const exprDiag = editor.diagAt(node.id, def.name);
-  const transDiag = editor.diagAt(node.id, "transitions." + def.name);
   return chassisRow({
     name: def.name,
     note: def.note,
     box,
-    trail: [transitionChip(editor, node, def),
-            diagIcon(exprDiag.length ? exprDiag : transDiag)],
   });
 }
 
@@ -1127,17 +1127,18 @@ function unknownAttrRow(
     emptyMeans: "unset",
     type: { shape: "text" },   /* undeclared: no shape info, so the glyph alone */
     scope,
+    trail: [diagIcon(editor.diagAt(node.id, key))],
   });
+  /* the remove is ROW lifecycle, not value metadata: it stays on the row */
   return chassisRow({
     name: key,
     unknown: true,
     box,
-    trail: [diagIcon(editor.diagAt(node.id, key)),
-            iconButton("x", "remove " + key, () => {
-              const next = { ...attrsOf() };
-              delete next[key];
-              commitAttrs(next);
-            })],
+    trail: [iconButton("x", "remove " + key, () => {
+      const next = { ...attrsOf() };
+      delete next[key];
+      commitAttrs(next);
+    })],
   });
 }
 
@@ -1293,10 +1294,10 @@ function interactParamRow(
        shape), so the box shows the glyph alone */
     type: { shape: "text" },
     scope: attrScope(editor, node),
+    trail: [diagIcon(editor.diagAt(node.id, "interact." + param))],
   });
   return chassisRow({
     name: param,
     box,
-    trail: [diagIcon(editor.diagAt(node.id, "interact." + param))],
   });
 }

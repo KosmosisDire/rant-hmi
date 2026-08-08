@@ -25,7 +25,9 @@
 
 .value-box > .hl-wrap {
   flex: 1 1 auto;
-  min-width: 0;
+  /* the text yields to the tail icons but never to nothing: a floor keeps a
+     hovered box with cases + poll + diag + browse still readable */
+  min-width: 60px;
   align-self: stretch;
 }
 
@@ -43,35 +45,12 @@
   padding: 0 6px;
 }
 
-/* ---- the icon ---- */
+/* ---- the icon: an .icon-btn joined to the box's left edge ---- */
 
 .vb-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex: none;
-  padding: 0;
   border: 0;
   border-right: 1px solid var(--line-2);
   border-radius: 2px 0 0 2px;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
-}
-
-.vb-icon:hover {
-  color: var(--ink-2);
-}
-
-/* the BUTTON is the gesture surface, never its glyph: a click that lands on the inner
-   svg would die the moment a repaint swaps that svg out from under the press (a live
-   value repainting the icon between pointerdown and pointerup ate the click whole) */
-.vb-icon > svg {
-  pointer-events: none;
-  width: 16px;
-  height: 16px;
 }
 
 /* a literal number under the icon: the icon IS the scrub handle */
@@ -126,24 +105,37 @@
   pointer-events: none;
 }
 
-/* ---- the browse button ---- */
+/* ---- the browse button: an .icon-btn one shade quieter, accent on hover ---- */
 
 .vb-browse {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 22px;
-  flex: none;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--dim-2);
-  cursor: pointer;
 }
 
 .vb-browse:hover {
   color: var(--acc-ink);
+}
+
+/* ---- the tail: the box's trailing icons rest hidden ----
+   Hover or focus reveals them; a chip in its .on state is standing authored state
+   (an active cases editor, a set poll rate) and stays. The diag dot is an
+   .icon-mark, never tagged vb-tail, so a finding never needs a hover to be seen. */
+
+.value-box > .vb-tail:not(.on) {
+  display: none;
+}
+
+.value-box:hover > .vb-tail,
+.value-box:focus-within > .vb-tail {
+  display: inline-flex;
+}
+
+/* inside the box the mark centers itself and holds the right edge — it renders
+   AFTER the tail buttons so the hover reveal never shifts it */
+.value-box .diag-dot {
+  margin-left: 0;
+  /* the browse button centers a 16px glyph in a 30px square, leaving 7px of air
+     against the box edge; the bare mark wears the same air so the glyphs align */
+  margin-right: 7px;
 }
 
 /* ---- the browse popover: the stree family on its own overlay ---- */
@@ -163,19 +155,6 @@
 
 .menu-align {
   padding: 6px 10px;
-}
-
-/* ---- the slot row's trailing chips: cases (a conditional's branches) and poll ---- */
-
-.attr-row .cases-chip,
-.attr-row .poll-chip {
-  flex: none;
-  color: var(--dim-2);
-}
-
-.attr-row .cases-chip.on,
-.attr-row .poll-chip.on {
-  color: var(--acc);
 }
 
 /* ---- the cases disclosure: the structured when/then editor below its row ---- */

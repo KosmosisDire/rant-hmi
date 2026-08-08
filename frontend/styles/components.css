@@ -20,8 +20,8 @@
   color: var(--dim);
 }
 
-/* the row-level verb menu (Override / Duplicate as… / Revert, spec 2.3 Forking); a
-   span, not a button (the row is already one) */
+/* the row-level verb menu (Override / Duplicate as… / Revert, spec 2.3 Forking): a
+   real button nested in the row's, quiet until the row is pointed at */
 .layer-menu {
   margin-left: auto;
   opacity: 0.45;

@@ -1,0 +1,48 @@
+/* ---------- the icon language: two families, one size ----------
+   Every small square icon in the editor is one of two things: an interactive
+   icon (.icon-btn — a real <button>) or a passive mark (.icon-mark — a span
+   whose parent, if anything, owns the click). Shared anatomy lives here and
+   ONLY here; a context adds a delta class for its differences. */
+
+:root {
+  --icon-btn: 30px;     /* the button's square */
+  --icon-glyph: 16px;   /* the svg inside an interactive icon */
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.icon-btn:hover { color: var(--ink-2); }
+.icon-btn.on { color: var(--acc); }
+.icon-btn.framed { border-color: var(--line-in); }
+.icon-btn.framed:hover { border-color: var(--acc); }
+
+/* the BUTTON is the gesture surface, never its glyph: a repaint that swaps the
+   svg mid-press would otherwise eat the click (the identity-stable law) */
+.icon-btn > svg {
+  pointer-events: none;
+  width: var(--icon-glyph);
+  height: var(--icon-glyph);
+}
+
+.icon-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--dim);
+}
+
+.icon-mark > svg { pointer-events: none; }

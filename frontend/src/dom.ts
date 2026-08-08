@@ -42,7 +42,7 @@ export function iconButton(
   return el("button", {
     class: "icon-btn" + (framed ? " framed" : ""),
     title,
-    html: iconMarkup(name, 11),
+    html: iconMarkup(name, 16, 1.7),
     onclick,
   });
 }
@@ -208,7 +208,7 @@ export function selectField(
   (picker as HTMLSelectElement).value = value;
   const wrap = el("span", { class: "select-wrap " + cls }, [
     picker,
-    el("span", { class: "caret-mark", html: iconMarkup("chevron-down", 9, 2) }),
+    el("span", { class: "icon-mark caret-mark", html: iconMarkup("chevron-down", 9, 2) }),
   ]);
   pickers.set(wrap, picker as HTMLSelectElement);
   return wrap;

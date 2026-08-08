@@ -118,10 +118,7 @@
 
 
 .do-grip {
-  display: inline-flex;
-  align-items: center;
   width: 12px;
-  flex: none;
   color: #4a4a4a;
   cursor: grab;
   user-select: none;
@@ -133,14 +130,11 @@
 }
 
 
+/* an .icon-mark in its tinted 17px badge box (icons.ts colours it inline) */
 .kind-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 17px;
   height: 17px;
   border-radius: 2px;
-  flex: none;
 }
 
 .note {

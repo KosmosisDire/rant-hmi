@@ -124,9 +124,7 @@ select.field {
 .select-wrap .caret-mark {
   position: absolute;
   right: 5px;
-  display: inline-flex;
   pointer-events: none;
-  color: var(--dim);
 }
 
 .select-wrap.trigger select.field {
@@ -174,36 +172,6 @@ select.field {
 .bool-pair button.on {
   background: var(--acc);
   color: #0d0d0d;
-}
-
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 24px;
-  flex: none;
-  border: 1px solid transparent;
-  border-radius: 2px;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
-}
-
-.icon-btn:hover {
-  color: var(--ink-2);
-}
-
-.icon-btn.on {
-  color: var(--acc);
-}
-
-.icon-btn.framed {
-  border-color: var(--line-in);
-}
-
-.icon-btn.framed:hover {
-  border-color: var(--acc);
 }
 
 .dashed-btn {

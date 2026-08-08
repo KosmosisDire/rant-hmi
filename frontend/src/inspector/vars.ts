@@ -36,7 +36,7 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   const isStruct = !SCALAR_LABEL[variable.type];
 
   const caret = el("span", {
-    class: "arrow",
+    class: "icon-mark fold-caret",
     html: iconMarkup("chevron-down", 10, 2),
     style: open ? "" : "transform:rotate(-90deg)",
   });

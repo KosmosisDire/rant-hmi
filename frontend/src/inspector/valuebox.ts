@@ -48,6 +48,12 @@ export interface BoxSpec {
   title?: string;              /* the row's note rides the input's tooltip */
   type: BoxType;
   scope: Scope;
+  /* trailing controls the box hosts between the text and browse — value METADATA
+     rides inside the box (the browse precedent): a slot's cases and poll chips, an
+     attr's transition chip, the diag dot. Row lifecycle (a stray's remove) stays on
+     the row. Buttons rest hidden until the box is hovered/focused (the vb-tail
+     rule); a chip in its .on state and the diag mark stay visible. */
+  trail?: (HTMLElement | null)[];
 }
 
 /* the type glyph per shape; color paints a swatch instead */
@@ -316,7 +322,7 @@ export function valueBox(spec: BoxSpec): HTMLElement {
   bindField(spec.key, input, spec.read);
   attachAutocomplete(input, spec.scope);
 
-  const icon = el("button", { class: "vb-icon", tabindex: "-1" });
+  const icon = el("button", { class: "icon-btn vb-icon", tabindex: "-1" });
   const swatch = shape === "color" ? el("span", { class: "vb-swatch" }) : null;
   if (swatch) icon.appendChild(swatch);
 
@@ -510,21 +516,32 @@ export function valueBox(spec: BoxSpec): HTMLElement {
   /* the browse button hides by absence: a scope with no names has nothing to insert */
   const browse = (spec.scope.roots ? spec.scope.roots().length : spec.scope.names().length)
     ? el("button", {
-        class: "vb-browse",
+        class: "icon-btn vb-browse",
         title: "insert a reference",
         tabindex: "-1",
-        html: iconMarkup("braces", 10, 1.7),
+        html: iconMarkup("code", 16, 1.7),
       })
     : null;
   /* pointerdown would blur the input and lose the caret the insert needs */
   browse?.addEventListener("pointerdown", (ev) => ev.preventDefault());
   browse?.addEventListener("click", () => openBrowse(browse, input, spec.scope));
 
+  /* tail BUTTONS rest hidden until hover/focus; a passive mark (the diag dot)
+     stays untagged and therefore never hides — an error must not need a hover.
+     Marks sit RIGHT of every button so the hover reveal never shifts them. */
+  const trail = (spec.trail ?? []).filter(Boolean) as HTMLElement[];
+  const buttons = trail.filter((cell) => cell.tagName === "BUTTON");
+  const marks = trail.filter((cell) => cell.tagName !== "BUTTON");
+  for (const cell of buttons) cell.classList.add("vb-tail");
+  browse?.classList.add("vb-tail");
+
   return el("span", { class: "value-box vb-" + shape }, [
     icon,
     highlighted(input),
     spec.type.unit ? el("span", { class: "vb-unit", text: spec.type.unit }) : null,
+    ...buttons,
     browse,
+    ...marks,
   ]);
 }
 

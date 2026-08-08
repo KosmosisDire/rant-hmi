@@ -93,7 +93,7 @@ export function iconMarkup(name: string, size = 11, width = 1.7): string {
 /* the kind mark in its tinted square: 15px, the colour carried by both glyph and tint */
 export function kindMark(kind: string, title?: string): HTMLElement {
   const span = document.createElement("span");
-  span.className = "kind-mark";
+  span.className = "icon-mark kind-mark";
   span.style.color = kindColor(kind);
   span.style.background = kindColor(kind) + "2b";
   if (title) span.title = title;

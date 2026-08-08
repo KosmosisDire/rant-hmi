@@ -1,9 +1,8 @@
 /* ---------- inline findings: a mark on the offending row, details on hover ---------- */
 
+/* an .icon-mark; the margin spaces it inside row labels and card heads (a box
+   centers it instead — value-box.css zeroes this) */
 .diag-dot {
-  display: inline-flex;
-  align-items: center;
-  vertical-align: -1px;
   margin-left: 5px;
   cursor: help;
 }

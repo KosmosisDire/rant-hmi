@@ -13,11 +13,11 @@ import { iconMarkup, kindMark } from "./icons.js";
 export function streeCaret(live: boolean, open: boolean): HTMLElement {
   return live
     ? el("span", {
-        class: "stree-caret",
+        class: "icon-mark stree-caret",
         html: iconMarkup("chevron-down", 9, 2),
         style: open ? "" : "transform:rotate(-90deg)",
       })
-    : el("span", { class: "stree-caret" });
+    : el("span", { class: "icon-mark stree-caret" });
 }
 
 export interface StreeRowSpec {
@@ -46,7 +46,7 @@ export function streeRow(spec: StreeRowSpec): HTMLElement {
     [
       spec.caret,
       spec.kind ? kindMark(spec.kind) : el("span", {
-        class: "stree-foldicon",
+        class: "icon-mark stree-foldicon",
         html: iconMarkup(spec.icon, 11, 1.6),
       }),
       el("span", { class: "stree-label", text: spec.label }),

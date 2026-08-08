@@ -123,10 +123,11 @@ export function designInspectorShape(editor: Editor): string {
  * verbs are one gesture away without crowding the row with icons — the row itself
  * stays a single click to SELECT. */
 function componentMenuButton(name: string, items: () => MenuItem[]): HTMLElement {
-  const btn = el("span", {
+  const btn = el("button", {
     class: "icon-btn layer-menu",
     title: "duplicate, override or revert " + name,
-    html: iconMarkup("ellipsis-vertical", 12),
+    tabindex: "-1",
+    html: iconMarkup("ellipsis-vertical", 16, 1.7),
   });
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -170,8 +171,8 @@ function docComponentRows(editor: Editor, comp: ComponentDef, shadows: boolean):
     parts.length ? { open, toggle: () => toggle(editor, key, false) } : null,
     [
       el("span", {
-        class: "layer-glyph",
-        html: iconMarkup(ICONS[comp.name] ? comp.name : "layers", 11, 1.7),
+        class: "icon-mark layer-glyph",
+        html: iconMarkup(ICONS[comp.name] ? comp.name : "layers", 16, 1.5),
       }),
       label,
       diagIcon(editor.diagNode(comp.id)),
@@ -201,7 +202,7 @@ function docPartTreeRows(editor: Editor, comp: ComponentDef, part: Json, depth: 
     depth,
     "part" + (editor.componentSel?.node === part.id ? " current" : ""),
     children.length ? { open, toggle: () => toggle(editor, key, true) } : null,
-    [el("span", { class: "layer-glyph draw", text: glyph }), label,
+    [el("span", { class: "icon-mark layer-glyph draw", text: glyph }), label,
      diagIcon(editor.diagNode(part.id))],
     () => editor.selectComponent(comp.id, part.id),
     part.name + " (" + part.kind + ")",
@@ -241,8 +242,8 @@ function builtinComponentRows(editor: Editor, comp: Json): HTMLElement[] {
     parts.length ? { open, toggle: () => toggle(editor, key, false) } : null,
     [
       el("span", {
-        class: "layer-glyph",
-        html: iconMarkup(ICONS[name] ? name : "layers", 11, 1.7),
+        class: "icon-mark layer-glyph",
+        html: iconMarkup(ICONS[name] ? name : "layers", 16, 1.5),
       }),
       el("span", { class: "layer-label", text: name }),
       componentMenuButton(name, () => builtinComponentMenu(editor, name)),
@@ -274,7 +275,7 @@ function builtinPartRows(
     depth,
     "part builtin" + (current ? " current" : ""),
     children.length ? { open, toggle: () => toggle(editor, key, true) } : null,
-    [el("span", { class: "layer-glyph draw", text: glyph }),
+    [el("span", { class: "icon-mark layer-glyph draw", text: glyph }),
      el("span", { class: "layer-label", text: name || "(unnamed)" })],
     () => editor.selectBuiltin(comp, path),
     name + " (" + part?.kind + ", read-only)",

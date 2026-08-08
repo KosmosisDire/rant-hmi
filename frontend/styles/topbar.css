@@ -50,11 +50,6 @@
   color: var(--ink);
 }
 
-.page-select .page-caret {
-  display: inline-flex;
-  color: var(--dim);
-}
-
 /* the workspace tabs: the same segment language as .seg, but a full-height tab whose
    active state is an accent underline rather than a fill */
 .tabs {
@@ -92,15 +87,22 @@
   display: none;
 }
 
-/* play opens the deployed (operate) view in its own tab */
-.topbar .play {
+/* play opens the deployed (operate) view in its own tab: kept at the bar's own
+   control size so the bar does not grow to the shared 30px square */
+.topbar .icon-btn.play {
   width: 26px;
   height: 24px;
+  border-radius: 2px;
   background: var(--input);
   color: var(--acc);
 }
 
-.topbar .play:hover {
+.topbar .icon-btn.play > svg {
+  width: 11px;
+  height: 11px;
+}
+
+.topbar .icon-btn.play:hover {
   border-color: var(--acc);
   color: var(--acc-ink);
 }

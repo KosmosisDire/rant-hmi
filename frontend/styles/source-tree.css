@@ -129,12 +129,9 @@
 
 .stree-caret {
   flex: 0 0 10px;
-  display: inline-flex;
-  color: var(--dim);
 }
 
 .stree-foldicon {
-  display: inline-flex;
   color: #8a8a8a;
 }
 

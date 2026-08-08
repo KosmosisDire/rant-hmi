@@ -946,6 +946,8 @@ const builtinToggleRow = designRow("b:Toggle");
 check(builtinToggleRow !== null, "the Components section lists unshadowed built-ins");
 check(builtinToggleRow.querySelectorAll(".layer-menu").length === 1,
       "a built-in row carries the row-level verb menu (Override <Name>, Duplicate as…)");
+check(builtinToggleRow.querySelectorAll(".layer-menu")[0].tagName === "BUTTON",
+      "the kebab is a real button of the shared .icon-btn family");
 check(builtinToggleRow.className.includes("builtin"), "and is marked read-only");
 fire(builtinToggleRow.children[0], "click");
 drawDesign();
@@ -1201,6 +1203,25 @@ attrDiagPanel.render(designInspectorShape(attrDiagEditor), (host) =>
 const diagAttrRow = attrDiagPanel.host.querySelectorAll(".attr-row")[0];
 check(diagAttrRow.querySelectorAll(".diag-dot.error").length === 1,
       "a component finding pins to the attr row the compiler named");
+/* the dot rides INSIDE the value box now (value metadata, the browse precedent) */
+const diagInBox = diagAttrRow.querySelector(".value-box")
+  ?.querySelector(".diag-dot.error") ?? null;
+check(diagInBox !== null, "and the dot stands inside the row's value box");
+check(!diagInBox.classList.contains("vb-tail"),
+      "the dot is never tagged vb-tail — a finding must not need a hover");
+check(diagInBox.classList.contains("icon-mark"),
+      "the dot is a passive mark, not a button");
+/* rightmost, after every tail button: the hover reveal must never shift it */
+const diagBoxKids = diagAttrRow.querySelector(".value-box").children;
+check(diagBoxKids[diagBoxKids.length - 1] === diagInBox,
+      "the dot is the box's LAST cell — tail buttons reveal to its left");
+/* hover still pops the findings: the mark's own mouseenter, wherever it stands */
+fire(diagInBox, "mouseenter");
+const diagPop = document.body.children.find((n) =>
+  (n.className ?? "").includes("diag-pop")) ?? null;
+check(diagPop !== null && diagPop.textContent.includes("unknown name 'nope'"),
+      "a diag dot inside a box still opens its findings popover on hover");
+fire(diagInBox, "mouseleave");
 
 /* the doc component SHADOWS a built-in by name: the built-in row folds away, and the
    row now carries a legible override tag, not just a tooltip (spec 3.1) */
@@ -3209,6 +3230,14 @@ check(stageNode("frame", 901) === heldAgain &&
         valueBox4a.querySelector("input") !== null &&
         valueBox4a.querySelector(".vb-browse") !== null,
         "with the literal icon, the expression input and the browse button");
+  /* ONE ICON LANGUAGE: both box buttons are .icon-btn; the browse rests hidden
+     behind the vb-tail rule until the box is hovered or focused */
+  check(valueBox4a.querySelector(".vb-icon").classList.contains("icon-btn"),
+        "the box icon is an .icon-btn");
+  check(valueBox4a.querySelector(".vb-browse").classList.contains("icon-btn"),
+        "the browse button is an .icon-btn");
+  check(valueBox4a.querySelector(".vb-browse").classList.contains("vb-tail"),
+        "browse is tagged vb-tail — hidden at rest, revealed on hover/focus");
 
   /* a num slot's box commits expression TEXT as typed — the string is the encoding */
   const startInput = row4a("start_angle").querySelector("input");
@@ -3244,8 +3273,17 @@ check(stageNode("frame", 901) === heldAgain &&
   const chainRow = row4a("value");
   const chip4a = chainRow.querySelector(".cases-chip");
   check(chip4a !== null, "a ?: chain grows the cases affordance on its row");
+  /* the chip rides INSIDE the value box now, as a tail icon of the box itself */
+  check(chainRow.querySelector(".value-box").querySelector(".cases-chip") === chip4a,
+        "the cases chip is a descendant of the row's value box");
+  check(chip4a.classList.contains("icon-btn") && chip4a.classList.contains("vb-tail"),
+        "the chip is a plain .icon-btn tail cell");
+  check(!chip4a.classList.contains("on"),
+        "shut, it rests in the hidden-until-hover state");
   fire(chip4a, "click");
   draw4a();
+  check(row4a("value").querySelector(".cases-chip").classList.contains("on"),
+        "open, the chip wears .on — standing state stays visible without a hover");
   const casesHost = panel4a.host.querySelector(".cases-editor");
   check(casesHost !== null, "opening it builds the structured editor below the row");
   const caseInputs = casesHost.querySelectorAll("input");
@@ -3288,6 +3326,9 @@ check(stageNode("frame", 901) === heldAgain &&
   draw4a();
   const pollBtn = row4a("value").querySelector(".poll-chip");
   check(pollBtn !== null, "a slot reading a mesh FUNCTION grows the poll settings");
+  check(row4a("value").querySelector(".value-box").querySelector(".poll-chip") === pollBtn
+        && pollBtn.classList.contains("vb-tail"),
+        "the poll chip rides inside the value box as a tail icon");
   fire(pollBtn, "click");
   const pollField = ctx4a.children[0].querySelector(".menu-field")
     ?.querySelector("input") ?? null;

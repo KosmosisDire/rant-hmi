@@ -192,7 +192,7 @@ export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, 
   const timerEntry = when.find((t) => t.kind === "timer");
 
   const caret = el("span", {
-    class: "arrow",
+    class: "icon-mark fold-caret",
     html: iconMarkup("chevron-down", 10, 2),
     style: open ? "" : "transform:rotate(-90deg)",
   });
@@ -229,11 +229,11 @@ export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, 
     every,
     ...(written.length
       ? written.flatMap((t) => [
-          el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
+          el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
           targetChip(flow, t),
         ])
       : [
-          el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
+          el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }),
           chip("nothing written", "ghost-chip"),
         ]),
   ]);
@@ -533,7 +533,7 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
   for (const p of params)
     list.appendChild(
       el("div", { class: "do-row" }, [
-        el("span", { class: "do-grip" }),
+        el("span", { class: "icon-mark do-grip" }),
         el("span", { class: "row-num", text: "1" }),
         el("span", { class: "do-verb", text: "given" }),
         el("span", { class: "do-cell" }, [
@@ -554,7 +554,7 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
 
   list.appendChild(
     el("div", { class: "do-row" }, [
-      el("span", { class: "do-grip" }),
+      el("span", { class: "icon-mark do-grip" }),
       el("span", { class: "row-num" }),
       el("span", { class: "do-verb" }),
       el("span", { class: "do-cell" }, [
@@ -695,7 +695,7 @@ function stepCell(
        own declared start, so it renders as the word rather than a box. */
     if (bareSend) {
       /* nothing before the target: just the verb's arrow into it */
-      cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
+      cell.appendChild(el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     } else if (from === "init") {
       cell.appendChild(refChip({
         key: step.id + ":from",
@@ -703,11 +703,11 @@ function stepCell(
         title: "the target's own declared start; pick something else to change the source",
         onPick: (word) => openSourceTree(word, editor, widget, fromOpts, setFrom),
       }));
-      cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
+      cell.appendChild(el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     } else if (verbOf(step) !== "unforce") {
       cell.appendChild(box("from.expr", "text", () => String(at().from?.expr ?? ""),
                            (text) => set("from", { expr: text })));
-      cell.appendChild(el("span", { class: "arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
+      cell.appendChild(el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     }
 
     cell.appendChild(sideChip(editor, widget, step.id + ":to", () => at().to ?? {},
@@ -851,7 +851,7 @@ function sideChip(
   return refChip({
     key,
     mark: mark ? kindMark(mark) : el("span", {
-      class: "stree-foldicon",
+      class: "icon-mark stree-foldicon",
       html: sideOf(read()) === "slot" ? iconMarkup("layers", 11, 1.6) : "",
     }),
     ghost: () => {
@@ -903,7 +903,7 @@ function sideChip(
  * reorder can be wrong but can never be rejected. */
 function grip(editor: Editor, step: Json, index: number): HTMLElement {
   const handle = el("span", {
-    class: "do-grip",
+    class: "icon-mark do-grip",
     title: "drag to reorder",
     html: iconMarkup("grip", 12, 1.5),
   });

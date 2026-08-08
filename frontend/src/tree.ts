@@ -45,8 +45,8 @@ export function treeRow(
   title?: string,
 ): HTMLElement {
   const caret = el("span", {
-    class: "layer-caret",
-    html: fold ? iconMarkup("chevron-down", 16, 2) : "",
+    class: "icon-mark layer-caret",
+    html: fold ? iconMarkup("chevron-down", 10, 2) : "",
     style: `flex-basis: calc(0.75em + ` + (depth) + `em);`,
   });
   if (fold)
