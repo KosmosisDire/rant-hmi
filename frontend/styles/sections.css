@@ -38,6 +38,12 @@
   border-top: 1px solid var(--line-2);
 }
 
+.section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .badge {
   padding: 0 6px;
   border-radius: 2px;

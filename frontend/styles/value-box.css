@@ -9,9 +9,9 @@
   align-items: center;
   flex: 1 1 auto;
   min-width: 0;
-  height: 24px;
+  height: 32px;
   border: 1px solid var(--line-in);
-  border-radius: 2px;
+  border-radius: 5px;
   background: var(--input);
 }
 
@@ -38,7 +38,8 @@
 
 /* borderless input: the underlay's origin shifts by the border it no longer has */
 .value-box .hl-under {
-  top: 0;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 0 6px;
 }
 
@@ -48,8 +49,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 30px;
   flex: none;
   padding: 0;
   border: 0;
@@ -69,6 +70,8 @@
    value repainting the icon between pointerdown and pointerup ate the click whole) */
 .vb-icon > svg {
   pointer-events: none;
+  width: 16px;
+  height: 16px;
 }
 
 /* a literal number under the icon: the icon IS the scrub handle */
@@ -87,11 +90,11 @@
 
 .vb-swatch {
   position: relative;
-  width: 14px;
-  height: 14px;
+  width: 20px;
+  height: 20px;
   flex: none;
-  border: 1px solid var(--line-in);
-  border-radius: 2px;
+  /* border: 1px solid var(--line-in); */
+  border-radius: 4px;
   overflow: hidden;
   pointer-events: none;
 }

@@ -6,13 +6,13 @@
 :root {
   --bg: #161616;
   --shell: #191919;
-  --sidebar: #1b1b1b;
+  --sidebar: #121212;
   --sidebar-2: #171717;
   --card: #202020;
   --tile: #1d1d1d;
   --stage: #131313;
   --stage-dot: #212121;
-  --input: #131313;
+  --input: #191919;
   --chip: #232323;
   --chip-2: #262626;
   --menu: #181818;
@@ -20,7 +20,7 @@
   --line: #2a2a2a;
   --line-2: #262626;
   --line-3: #2c2c2c;
-  --line-in: #333;
+  --line-in: #2C2C2C;
   --dash: #444;
 
   --ink: #ececec;
