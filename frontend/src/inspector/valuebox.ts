@@ -526,9 +526,11 @@ export function valueBox(spec: BoxSpec): HTMLElement {
   browse?.addEventListener("pointerdown", (ev) => ev.preventDefault());
   browse?.addEventListener("click", () => openBrowse(browse, input, spec.scope));
 
-  /* tail BUTTONS rest hidden until hover/focus; a passive mark (the diag dot)
-     stays untagged and therefore never hides — an error must not need a hover.
-     Marks sit RIGHT of every button so the hover reveal never shifts them. */
+  /* THE TAIL OVERLAY: every trailing cell rides one absolutely-positioned container
+     on the box's right edge, so revealing buttons never reflows the text. Tail
+     BUTTONS rest hidden until hover/focus; a passive mark (the diag dot) stays
+     untagged and therefore never hides — an error must not need a hover. Marks sit
+     RIGHT of every button so the hover reveal never shifts them. */
   const trail = (spec.trail ?? []).filter(Boolean) as HTMLElement[];
   const buttons = trail.filter((cell) => cell.tagName === "BUTTON");
   const marks = trail.filter((cell) => cell.tagName !== "BUTTON");
@@ -539,9 +541,7 @@ export function valueBox(spec: BoxSpec): HTMLElement {
     icon,
     highlighted(input),
     spec.type.unit ? el("span", { class: "vb-unit", text: spec.type.unit }) : null,
-    ...buttons,
-    browse,
-    ...marks,
+    el("span", { class: "vb-tail-box" }, [...buttons, browse, ...marks]),
   ]);
 }
 

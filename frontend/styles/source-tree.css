@@ -129,10 +129,12 @@
 
 .stree-caret {
   flex: 0 0 10px;
+  --icon-glyph: 9px;
 }
 
 .stree-foldicon {
   color: #8a8a8a;
+  --icon-glyph: 11px;
 }
 
 .stree-label {

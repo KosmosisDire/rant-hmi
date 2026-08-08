@@ -248,6 +248,7 @@
   flex: 0 0 10px;
   height: 100%;
   justify-content: flex-end;
+  --icon-glyph: 10px;
 }
 
 .layer-glyph {

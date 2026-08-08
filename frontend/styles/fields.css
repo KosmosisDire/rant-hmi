@@ -125,6 +125,7 @@ select.field {
   position: absolute;
   right: 5px;
   pointer-events: none;
+  --icon-glyph: 9px;
 }
 
 .select-wrap.trigger select.field {

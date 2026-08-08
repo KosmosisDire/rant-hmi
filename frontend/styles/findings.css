@@ -1,9 +1,11 @@
 /* ---------- inline findings: a mark on the offending row, details on hover ---------- */
 
-/* an .icon-mark; the margin spaces it inside row labels and card heads (a box
-   centers it instead — value-box.css zeroes this) */
+/* an .icon-btn in dress only (a span, not focusable): the same square cell as
+   its neighbours, compacted to the 24px rhythm of card heads and tree rows —
+   the value box's tail overlay sizes it back up to the full square */
 .diag-dot {
-  margin-left: 5px;
+  --icon-btn: 24px;
+  --icon-glyph: 14px;
   cursor: help;
 }
 

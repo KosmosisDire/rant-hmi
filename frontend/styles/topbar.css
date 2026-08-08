@@ -50,6 +50,8 @@
   color: var(--ink);
 }
 
+.page-caret { --icon-glyph: 9px; }
+
 /* the workspace tabs: the same segment language as .seg, but a full-height tab whose
    active state is an accent underline rather than a fill */
 .tabs {

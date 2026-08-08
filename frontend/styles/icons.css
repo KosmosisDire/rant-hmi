@@ -2,7 +2,9 @@
    Every small square icon in the editor is one of two things: an interactive
    icon (.icon-btn — a real <button>) or a passive mark (.icon-mark — a span
    whose parent, if anything, owns the click). Shared anatomy lives here and
-   ONLY here; a context adds a delta class for its differences. */
+   ONLY here; a context adds a delta class for its differences. Glyph SIZE is the
+   stylesheet's (--icon-glyph, both families); the call site's iconMarkup size
+   argument is inert — it still carries the stroke width. */
 
 :root {
   --icon-btn: 30px;     /* the button's square */
@@ -45,4 +47,8 @@
   color: var(--dim);
 }
 
-.icon-mark > svg { pointer-events: none; }
+.icon-mark > svg {
+  pointer-events: none;
+  width: var(--icon-glyph);
+  height: var(--icon-glyph);
+}

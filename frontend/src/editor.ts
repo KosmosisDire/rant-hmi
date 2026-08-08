@@ -293,7 +293,7 @@ export function diagIcon(diags: Diag[]): HTMLElement | null {
       ? "warning"
       : "info";
   const dot = el("span", {
-    class: "icon-mark diag-dot " + worst,
+    class: "icon-btn diag-dot " + worst,
     html: iconMarkup("alert", 16, 2),
   });
   dot.addEventListener("mouseenter", () => showPop(dot, diags));

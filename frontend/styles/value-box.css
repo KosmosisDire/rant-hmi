@@ -5,6 +5,7 @@
    stands only where the box's scope has names to insert. */
 
 .value-box {
+  position: relative;   /* the tail overlay anchors to the box's right edge */
   display: flex;
   align-items: center;
   flex: 1 1 auto;
@@ -25,9 +26,7 @@
 
 .value-box > .hl-wrap {
   flex: 1 1 auto;
-  /* the text yields to the tail icons but never to nothing: a floor keeps a
-     hovered box with cases + poll + diag + browse still readable */
-  min-width: 60px;
+  min-width: 0;
   align-self: stretch;
 }
 
@@ -115,27 +114,41 @@
   color: var(--acc-ink);
 }
 
-/* ---- the tail: the box's trailing icons rest hidden ----
-   Hover or focus reveals them; a chip in its .on state is standing authored state
-   (an active cases editor, a set poll rate) and stays. The diag dot is an
-   .icon-mark, never tagged vb-tail, so a finding never needs a hover to be seen. */
+/* ---- the tail overlay: the box's trailing icons on the input's right edge ----
+   One absolutely-positioned container holds them all, so revealing buttons on
+   hover never reflows the text. Buttons rest hidden; hover or focus reveals them,
+   and a chip in its .on state is standing authored state (an active cases editor,
+   a set poll rate) and stays. The diag dot is never tagged vb-tail, so a finding
+   never needs a hover to be seen; it renders LAST — rightmost, stationary. */
 
-.value-box > .vb-tail:not(.on) {
+.vb-tail-box {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  /* opaque, so revealed icons read over the text they overlay; the radius
+     matches the box's inner corner */
+  background: var(--input);
+  border-radius: 0 4px 4px 0;
+  /* in the tail the art runs a notch smaller than the 16px house glyph */
+  --icon-glyph: 14px;
+}
+
+.vb-tail-box > .vb-tail:not(.on) {
   display: none;
 }
 
-.value-box:hover > .vb-tail,
-.value-box:focus-within > .vb-tail {
+.value-box:hover .vb-tail-box > .vb-tail,
+.value-box:focus-within .vb-tail-box > .vb-tail {
   display: inline-flex;
 }
 
-/* inside the box the mark centers itself and holds the right edge — it renders
-   AFTER the tail buttons so the hover reveal never shifts it */
-.value-box .diag-dot {
-  margin-left: 0;
-  /* the browse button centers a 16px glyph in a 30px square, leaving 7px of air
-     against the box edge; the bare mark wears the same air so the glyphs align */
-  margin-right: 7px;
+/* in the tail the dot is a full square like its neighbours — findings.css
+   compacts it to the 24px row rhythm everywhere else */
+.vb-tail-box .diag-dot {
+  --icon-btn: 30px;
 }
 
 /* ---- the browse popover: the stree family on its own overlay ---- */

@@ -123,6 +123,7 @@
   cursor: grab;
   user-select: none;
   touch-action: none;
+  --icon-glyph: 12px;
 }
 
 .do-grip:hover {
@@ -135,6 +136,7 @@
   width: 17px;
   height: 17px;
   border-radius: 2px;
+  --icon-glyph: 11px;
 }
 
 .note {

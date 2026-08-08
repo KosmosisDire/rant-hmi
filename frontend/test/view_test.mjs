@@ -765,6 +765,18 @@ check(
   findingHead !== null && findingHead.querySelectorAll(".diag-dot.error").length === 1,
   "a widget-level error marks the inspector head",
 );
+/* the dot OUTSIDE any box: it renders in the head, wears the .icon-btn square
+   (dress only) and still opens its popover on hover */
+const headDot = findingHead.querySelector(".diag-dot.error");
+check(headDot.classList.contains("icon-btn") &&
+      !headDot.classList.contains("icon-mark"),
+      "a head dot wears .icon-btn like the box's tail cells");
+fire(headDot, "mouseenter");
+const headPop = document.body.children.find((n) =>
+  (n.className ?? "").includes("diag-pop")) ?? null;
+check(headPop !== null && headPop.textContent.includes("unknown type"),
+      "a dot outside any box still opens its findings popover on hover");
+fire(headDot, "mouseleave");
 const findingValueRow = slotRowIn(findingPanel.host, "value");
 check(
   findingValueRow !== null &&
@@ -1203,18 +1215,24 @@ attrDiagPanel.render(designInspectorShape(attrDiagEditor), (host) =>
 const diagAttrRow = attrDiagPanel.host.querySelectorAll(".attr-row")[0];
 check(diagAttrRow.querySelectorAll(".diag-dot.error").length === 1,
       "a component finding pins to the attr row the compiler named");
-/* the dot rides INSIDE the value box now (value metadata, the browse precedent) */
-const diagInBox = diagAttrRow.querySelector(".value-box")
-  ?.querySelector(".diag-dot.error") ?? null;
-check(diagInBox !== null, "and the dot stands inside the row's value box");
+/* the dot rides INSIDE the value box now (value metadata, the browse precedent),
+   in the tail OVERLAY — one absolute container, so a hover reveal never reflows */
+const diagTailBox = diagAttrRow.querySelector(".value-box")
+  ?.querySelector(".vb-tail-box") ?? null;
+check(diagTailBox !== null, "the box's tail rides one .vb-tail-box container");
+const diagInBox = diagTailBox?.querySelector(".diag-dot.error") ?? null;
+check(diagInBox !== null, "and the dot stands inside the tail container");
 check(!diagInBox.classList.contains("vb-tail"),
       "the dot is never tagged vb-tail — a finding must not need a hover");
-check(diagInBox.classList.contains("icon-mark"),
-      "the dot is a passive mark, not a button");
+check(diagInBox.classList.contains("icon-btn") &&
+      !diagInBox.classList.contains("icon-mark"),
+      "the dot wears the .icon-btn square (dress only — it stays a span)");
+check(diagTailBox.querySelector(".vb-browse") !== null,
+      "the browse button rides the same tail container");
 /* rightmost, after every tail button: the hover reveal must never shift it */
-const diagBoxKids = diagAttrRow.querySelector(".value-box").children;
+const diagBoxKids = diagTailBox.children;
 check(diagBoxKids[diagBoxKids.length - 1] === diagInBox,
-      "the dot is the box's LAST cell — tail buttons reveal to its left");
+      "the dot is the tail's LAST cell — buttons reveal to its left");
 /* hover still pops the findings: the mark's own mouseenter, wherever it stands */
 fire(diagInBox, "mouseenter");
 const diagPop = document.body.children.find((n) =>
@@ -3238,6 +3256,12 @@ check(stageNode("frame", 901) === heldAgain &&
         "the browse button is an .icon-btn");
   check(valueBox4a.querySelector(".vb-browse").classList.contains("vb-tail"),
         "browse is tagged vb-tail — hidden at rest, revealed on hover/focus");
+  /* the tail overlay: one container holds the trailing cells so a hover reveal
+     never reflows the text */
+  check(valueBox4a.querySelector(".vb-tail-box") !== null,
+        "a slot row's box carries the .vb-tail-box tail container");
+  check(valueBox4a.querySelector(".vb-tail-box").querySelector(".vb-browse") !== null,
+        "and browse rides inside it");
 
   /* a num slot's box commits expression TEXT as typed — the string is the encoding */
   const startInput = row4a("start_angle").querySelector("input");
@@ -3273,9 +3297,10 @@ check(stageNode("frame", 901) === heldAgain &&
   const chainRow = row4a("value");
   const chip4a = chainRow.querySelector(".cases-chip");
   check(chip4a !== null, "a ?: chain grows the cases affordance on its row");
-  /* the chip rides INSIDE the value box now, as a tail icon of the box itself */
-  check(chainRow.querySelector(".value-box").querySelector(".cases-chip") === chip4a,
-        "the cases chip is a descendant of the row's value box");
+  /* the chip rides INSIDE the value box's tail overlay, as a tail icon */
+  check(chainRow.querySelector(".value-box").querySelector(".vb-tail-box")
+          ?.querySelector(".cases-chip") === chip4a,
+        "the cases chip rides the box's tail container");
   check(chip4a.classList.contains("icon-btn") && chip4a.classList.contains("vb-tail"),
         "the chip is a plain .icon-btn tail cell");
   check(!chip4a.classList.contains("on"),
@@ -3326,9 +3351,10 @@ check(stageNode("frame", 901) === heldAgain &&
   draw4a();
   const pollBtn = row4a("value").querySelector(".poll-chip");
   check(pollBtn !== null, "a slot reading a mesh FUNCTION grows the poll settings");
-  check(row4a("value").querySelector(".value-box").querySelector(".poll-chip") === pollBtn
+  check(row4a("value").querySelector(".value-box").querySelector(".vb-tail-box")
+          ?.querySelector(".poll-chip") === pollBtn
         && pollBtn.classList.contains("vb-tail"),
-        "the poll chip rides inside the value box as a tail icon");
+        "the poll chip rides inside the box's tail container as a tail icon");
   fire(pollBtn, "click");
   const pollField = ctx4a.children[0].querySelector(".menu-field")
     ?.querySelector("input") ?? null;

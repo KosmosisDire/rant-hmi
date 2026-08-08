@@ -102,4 +102,5 @@
 .chain-arrow {
   color: var(--dim-2);
   line-height: 24px;
+  --icon-glyph: 10px;
 }
