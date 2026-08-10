@@ -1261,7 +1261,7 @@ extern "C" {
 #endif
 
 /* Bytes of the SOURCE TIMESTAMP prepended inside every sample a stamped topic commits,
- * ahead of the pattern header: wire payload = [sent_us u64 LE][pattern hdr][user payload].
+ * ahead of the pattern header: wire payload = [written_us u64 LE][pattern hdr][user payload].
  * Stamped once at the writer's commit point from DartConfig.source_time, so a repair
  * resend, a catch_up replay and an SHM chunk all carry the ORIGINAL stamp. A topic opts
  * out with DartQos.no_timestamp (then nothing is prepended and receivers are told so via
@@ -1323,8 +1323,8 @@ typedef struct {
                                     Advertised in the announce; ignored on a reliable topic and on
                                     the publish side. Set at create (immutable per topic). */
     uint8_t  no_timestamp;       /* PUBLISHER side: publish this topic WITHOUT the 8-byte source
-                                    timestamp (DART_TIMESTAMP_BYTES), so a receiver sees sent_us 0.
-                                    0 (the default) stamps every message with the sender's wall
+                                    timestamp (DART_TIMESTAMP_BYTES), so a receiver sees written_us 0.
+                                    0 (the default) stamps every message with the writer's wall
                                     clock at the commit point. The opt-out is advertised in the
                                     announce, so a receiver always knows whether the stream carries
                                     the stamp. Set at create (immutable per topic). */
@@ -2876,8 +2876,9 @@ typedef struct {
                                         for the callback's duration. */
     DartString     topic_name;     /* topic name (not NUL-terminated; use .data/.len), or {NULL,0} */
     DartBytes      header;           /* pattern-header bytes in front of the payload (the patterns
-                                        layer's call-id/status/flags prefix); {NULL,0} on a plain
-                                        topic. A view valid for the callback / take view. */
+                                        layer's call-id/status/flags prefix; a function response
+                                        also carries its [u8 len][message] text here); {NULL,0} on
+                                        a plain topic. A view valid for the callback / take view. */
     DartBytes      data;             /* the message payload after the header (data.data, data.len) */
     const DartSchema *schema;        /* the schema data decodes with: this topic's fields bound
                                         to the publisher's layout (a typed topic), or the publisher's
@@ -2889,10 +2890,12 @@ typedef struct {
                                         when it was taken), so rates and inter-arrival jitter
                                         measured by a frame-paced consumer reflect true arrival
                                         times, never the consumer's own cadence. */
-    uint64_t       sent_us;          /* the SENDER's wall clock (UTC microseconds) at the moment
-                                        its send committed into writer history: a source timestamp,
-                                        so a repaired or replayed message keeps its original value.
-                                        0 = the publisher opted out (DartQos.no_timestamp).
+    uint64_t       written_us;       /* the WRITER's wall clock (UTC microseconds) at the moment it
+                                        wrote this message into writer history: a source timestamp,
+                                        not a transmit one, so a repaired or replayed message keeps
+                                        the time it was originally written (a variable value set an
+                                        hour ago still reads as that write when it replays to a late
+                                        joiner). 0 = the publisher opted out (DartQos.no_timestamp).
                                         Comparability across hosts is only as good as their clock
                                         sync; never mix it with the monotonic recv_us. */
 } DartMsg;
@@ -3252,7 +3255,7 @@ void i_dart_node_set_sys_hooks(DartNode *n, i_DartSysEventFn on_event, i_DartSys
                                i_DartSysCloseFn on_close, void *user);
 /* Node-pool alloc/realloc/free (size 0 = free) for the patterns layer; its per-node manager
  * handle slot; the node's monotonic clock (us); and its WALL clock (UTC us), the same source
- * the transport stamps DartMsg.sent_us from, for a locally-applied write that never rode the
+ * the transport stamps DartMsg.written_us from, for a locally-applied write that never rode the
  * wire. Call only under the node lock. */
 void    *i_dart_node_sys_alloc(DartNode *n, void *ptr, size_t size);
 void   **i_dart_node_sys_slot (DartNode *n);
@@ -3546,6 +3549,11 @@ extern "C" {
 #define DART_CALL_TIMEOUT_US 5000000u      /* default client call timeout (5s) */
 #endif
 
+/* Max bytes of the human-readable response message (the wire carries its length in one
+ * byte, so this is fixed, not tunable). A longer message passed to dart_request_fail /
+ * dart_function_complete is truncated here, never refused. */
+#define DART_CALL_MSG_MAX 255u
+
 /* ---- FUNCTIONS ---------------------------------------------------------------------- */
 
 /* A call's outcome. OK/APP_ERROR/NO_HANDLER travel on the wire (the response status byte);
@@ -3576,8 +3584,8 @@ typedef struct DartRequest {
     uint32_t          caller;        /* the calling peer's id */
     DartString        caller_name;   /* the calling node's name (.data never NULL) */
     uint64_t          recv_us;       /* the node's monotonic clock at arrival */
-    uint64_t          sent_us;       /* the CALLER's wall clock when it sent the request
-                                        (DartMsg.sent_us; 0 = it opted out of the stamp) */
+    uint64_t          written_us;    /* the CALLER's wall clock when it wrote the request
+                                        (DartMsg.written_us; 0 = it opted out of the stamp) */
 } DartRequest;
 
 /* Delivered to the caller when a response arrives (or is synthesized). data is a view valid
@@ -3589,8 +3597,16 @@ typedef struct {
                                     side or a synthesized outcome) */
     uint32_t          provider;
     void             *user;      /* the user pointer passed to dart_function_call_async */
-    uint64_t          sent_us;   /* the PROVIDER's wall clock when it sent the response
-                                    (DartMsg.sent_us); 0 for a synthesized outcome */
+    uint64_t          written_us; /* the PROVIDER's wall clock when it wrote the response
+                                     (DartMsg.written_us); 0 for a synthesized outcome */
+    DartString        message;   /* human-readable outcome text, the ONE field a generic
+                                    consumer (an HMI) displays on failure: the provider's
+                                    message when it sent one (dart_request_fail /
+                                    dart_function_complete, capped at DART_CALL_MSG_MAX),
+                                    else default status text ("timeout", "peer lost", ...)
+                                    for every non-OK outcome, wire-carried or synthesized.
+                                    Empty (len 0) only on OK with no message; .data is
+                                    never NULL. A view, same lifetime as data. */
 } DartResponse;
 typedef void (*DartResponseFn)(const DartResponse *response);
 
@@ -3663,11 +3679,16 @@ DartFunction *dart_node_meta_function(DartNode *n);   /* NULL when disabled / no
 
 /* ---- in the handler callback (DartRequestFn) ----------------------------------------- */
 void      dart_request_reply(DartRequest *request, DartBytes rsp);   /* answer OK */
-void      dart_request_fail (DartRequest *request, DartBytes rsp);   /* answer APP_ERROR */
+/* Answer APP_ERROR. message is the human-readable reason (NUL-terminated, NULL = none:
+ * the caller then sees the default "app error"; truncated at DART_CALL_MSG_MAX). It rides
+ * the response header, so rsp may still carry structured failure data beside it. */
+void      dart_request_fail (DartRequest *request, const char *message, DartBytes rsp);
 /* Defer the reply: returns a token (0 on failure), suppresses the auto-ack, and lets the
- * handler return now. Complete it later (from any thread) with dart_function_complete. */
+ * handler return now. Complete it later (from any thread) with dart_function_complete
+ * (message as in dart_request_fail; also carried on OK for warning/debug text). */
 uint64_t  dart_request_defer(DartRequest *request);
-int       dart_function_complete(DartFunction *fn, uint64_t token, DartCallStatus status, DartBytes rsp);
+int       dart_function_complete(DartFunction *fn, uint64_t token, DartCallStatus status,
+                                 const char *message, DartBytes rsp);
 
 /* ---- VARIABLES ---------------------------------------------------------------------- */
 
@@ -3743,8 +3764,8 @@ typedef struct {
     uint32_t          write_seq;   /* the owner's write counter */
     uint32_t          source;      /* peer id the write arrived from; 0 = a local call */
     uint64_t          recv_us;     /* the node's monotonic clock when the write applied */
-    uint64_t          sent_us;     /* the WRITER's wall clock for this write: the delivering
-                                      message's DartMsg.sent_us for a remote write, this node's
+    uint64_t          written_us;  /* the WRITER's wall clock for this write: the delivering
+                                      message's DartMsg.written_us for a remote write, this node's
                                       wall clock for a local one (0 = the source opted out) */
 } DartVariableUpdate;
 typedef void (*DartVariableUpdateFn)(const DartVariableUpdate *update, void *user);
@@ -12970,7 +12991,7 @@ typedef struct {
                               the ring reads it at offset 0 for the sentinel test */
     uint32_t data_len;
     uint64_t t_recv_us;    /* poll-side arrival stamp, surfaced as DartMsg.recv_us */
-    uint64_t t_sent_us;    /* the publisher's source stamp, already stripped off the stored
+    uint64_t t_written_us; /* the publisher's source stamp, already stripped off the stored
                               bytes at enqueue (0 = the publisher opted out) */
     uint32_t publisher_id;
     uint8_t  name_len;     /* publisher name copied inline (discovery views die with the peer) */
@@ -13011,6 +13032,10 @@ struct DartTopic {   /* schema: node-owned copy */
                                            peers (0 = never computed; the epoch starts at 1) */
     uint8_t  prefix_bytes;              /* pattern-header bytes split off the front of each
                                            delivered payload into DartMsg.header (0 = plain topic) */
+    uint8_t  prefix_string;             /* the fixed prefix is followed by [u8 len][bytes] (a
+                                           response message), split into the header too. Wire
+                                           framing of the KIND (both ends derive it the same
+                                           way, like prefix_bytes itself), not pattern semantics */
     uint8_t  kind;                      /* DartTopicKind, mirrored from the def (reflection) */
     uint8_t  role;                      /* DartRole, mirrored at create + set_role (reflection) */
     uint8_t  name_len;                  /* stable topic-name copy: queued DartMsg views
@@ -13314,22 +13339,29 @@ static const char *i_dart_node_topic_name(DartNode *n, uint16_t topic_index){
 }
 
 /* Strip the leading source timestamp a stamped publisher prepends to every sample (see
- * DART_TIMESTAMP_BYTES): fills *sent_us and returns the rest of the wire. `stamped` comes
+ * DART_TIMESTAMP_BYTES): fills *written_us and returns the rest of the wire. `stamped` comes
  * from the writer's advertised interest, so we strip exactly what it wrote; an unstamped
- * stream (or one too short to hold a stamp) yields sent_us 0 and the bytes untouched.
+ * stream (or one too short to hold a stamp) yields written_us 0 and the bytes untouched.
  * THE single strip point: every delivery path (inline UDP, SHM, parked redelivery, the
  * consumer queue's enqueue) runs through here before the pattern-header split. */
-static DartBytes i_dart_node_strip_ts(DartBytes wire, int stamped, uint64_t *sent_us){
-    if (!stamped || wire.len < DART_TIMESTAMP_BYTES){ *sent_us = 0; return wire; }
-    *sent_us = i_dart_le_r64(wire.data);
+static DartBytes i_dart_node_strip_ts(DartBytes wire, int stamped, uint64_t *written_us){
+    if (!stamped || wire.len < DART_TIMESTAMP_BYTES){ *written_us = 0; return wire; }
+    *written_us = i_dart_le_r64(wire.data);
     return dart_bytes(wire.data + DART_TIMESTAMP_BYTES, wire.len - DART_TIMESTAMP_BYTES);
 }
 
-/* Split a delivered wire payload into its pattern header (the first prefix_bytes) and the
- * user payload after it. A plain topic (or a wire shorter than the prefix) yields an empty
- * header and the whole payload, so plain delivery is unchanged. */
+/* Split a delivered wire payload into its pattern header (the first prefix_bytes, plus a
+ * [u8 len][bytes] message on a prefix_string topic) and the user payload after it, so the
+ * schema always validates a message-free payload. A plain topic (or a wire shorter than
+ * the prefix) yields an empty header and the whole payload, so plain delivery is
+ * unchanged. A malformed message length is clamped to the wire: never an over-read, the
+ * worst case is an all-header message with an empty (op-only) payload. */
 static void i_dart_node_split(DartTopic *h, DartBytes wire, DartBytes *hdr, DartBytes *payload){
-    uint8_t pfx = (h && (uint32_t)wire.len >= h->prefix_bytes) ? h->prefix_bytes : 0u;
+    size_t pfx = (h && (uint32_t)wire.len >= h->prefix_bytes) ? h->prefix_bytes : 0u;
+    if (pfx && h->prefix_string && wire.len > pfx){
+        size_t ml = wire.data[pfx], avail = wire.len - pfx - 1u;
+        pfx += 1u + (ml <= avail ? ml : avail);
+    }
     hdr->data = pfx ? wire.data : NULL; hdr->len = pfx;
     payload->data = wire.data + pfx; payload->len = wire.len - pfx;
 }
@@ -13414,7 +13446,7 @@ static void i_dart_node_queue_lost(DartNode *n, uint16_t topic_index, uint32_t f
  * contract), 1 = refused (reliable at cap: the transport parks and the writer's flow
  * control backpressures the publisher). */
 static int i_dart_node_queue_push(DartNode *n, uint16_t topic_index, i_DartMsgQueue *q,
-                                  uint32_t from, DartBytes data, uint64_t sent_us){
+                                  uint32_t from, DartBytes data, uint64_t written_us){
     DartString name = i_dart_node_core_peer_name(n->core, from);
     uint32_t name_len = name.len > DART_NODE_NAME_MAX ? (uint32_t)DART_NODE_NAME_MAX
                                                       : (uint32_t)name.len;
@@ -13435,7 +13467,7 @@ static int i_dart_node_queue_push(DartNode *n, uint16_t topic_index, i_DartMsgQu
     {   i_DartQRec *rec = (i_DartQRec*)(q->buf + at);
         rec->rec_bytes = need; rec->data_len = (uint32_t)data.len;
         rec->t_recv_us = i_dart_plat_now_us();
-        rec->t_sent_us = sent_us;
+        rec->t_written_us = written_us;
         rec->publisher_id = from; rec->name_len = (uint8_t)name_len;
         rec->pad[0] = rec->pad[1] = rec->pad[2] = 0;
         if (name_len) memcpy((uint8_t*)rec + sizeof *rec, name.data, name_len);
@@ -13451,7 +13483,7 @@ static int i_dart_node_queue_push(DartNode *n, uint16_t topic_index, i_DartMsgQu
  * name copy), valid until the next take/dispatch on this topic. The decode schema is
  * re-resolved now rather than stored: the delivery map may repoint between queue and
  * take, and the record must never outlive a pointer into it. The source timestamp was
- * stripped at enqueue and rides the record, so a taken message carries the same sent_us an
+ * stripped at enqueue and rides the record, so a taken message carries the same written_us an
  * inline callback would have seen. */
 static void i_dart_node_queue_msg(DartNode *n, DartTopic *h, const i_DartQRec *rec, DartMsg *m){
     memset(m, 0, sizeof *m);
@@ -13466,7 +13498,7 @@ static void i_dart_node_queue_msg(DartNode *n, DartTopic *h, const i_DartQRec *r
     m->schema = i_dart_node_core_msg_schema(n->core, rec->publisher_id, h->index);
     if (h->prefix_bytes && m->data.len == 0) m->schema = NULL;   /* op-only pattern message */
     m->recv_us = rec->t_recv_us;
-    m->sent_us = rec->t_sent_us;
+    m->written_us = rec->t_written_us;
 }
 
 /* create the queue (qos.queue_bytes at topic create, or lazily on first take/dispatch).
@@ -13535,12 +13567,12 @@ static int i_dart_node_deliver(DartNode *n, uint16_t topic_index, uint32_t from,
     DartMsg m;
     DartTopic *h = (topic_index < i_dart_node_topic_hi(n)) ? n->handles[topic_index] : NULL;
     DartBytes hdr, payload, body;
-    uint64_t sent_us;
+    uint64_t written_us;
     const DartSchema *schema = i_dart_node_core_msg_schema(n->core, from, topic_index);
     /* source timestamp first (whether this writer stamps is in its advertised interest),
        then the pattern-header split: the schema validates the payload after both */
     body = i_dart_node_strip_ts(data,
-              dart_transport_peer_timestamped(n->transport, topic_index, from), &sent_us);
+              dart_transport_peer_timestamped(n->transport, topic_index, from), &written_us);
     i_dart_node_split(h, body, &hdr, &payload);
     /* a ZERO-LENGTH payload on a prefix-carrying (pattern) channel is an op-only message
        (a variable's unforce, an empty ack): the op byte is the content, so the payload
@@ -13558,7 +13590,7 @@ static int i_dart_node_deliver(DartNode *n, uint16_t topic_index, uint32_t from,
     if (h && h->q){
         /* store the wire minus the stamp (the stamp rides the record), so take/dispatch
            splits the prefix exactly as an inline delivery does */
-        if (i_dart_node_queue_push(n, topic_index, h->q, from, body, sent_us))
+        if (i_dart_node_queue_push(n, topic_index, h->q, from, body, written_us))
             return 1;   /* parked: the accepted retry re-counts */
         h->rx_msgs++; h->rx_bytes += data.len;
         return 0;
@@ -13574,7 +13606,7 @@ static int i_dart_node_deliver(DartNode *n, uint16_t topic_index, uint32_t from,
     m.header = hdr; m.data = payload;
     m.schema = schema;
     m.recv_us = i_dart_plat_now_us();
-    m.sent_us = sent_us;
+    m.written_us = written_us;
     if (h && h->sys_on_message) h->sys_on_message(h->sys_msg_user, &m);    /* patterns layer routing */
     else n->user_on_message(&m);
     return 0;
@@ -13617,7 +13649,7 @@ static int i_dart_node_schema_check(void *u, uint32_t peer, uint16_t topic_index
 }
 
 /* the transport's source clock (DartConfig.source_time): the platform WALL clock, stamped
- * into every message a stamped topic commits and surfaced as DartMsg.sent_us. Never the
+ * into every message a stamped topic commits and surfaced as DartMsg.written_us. Never the
  * monotonic clock the loop runs on: this value is read on other hosts. */
 static uint64_t i_dart_node_source_time(void *u){ (void)u; return i_dart_plat_wall_us(); }
 
@@ -14179,6 +14211,10 @@ static DartTopic *i_dart_node_create_impl(DartNode *n, const char *name, DartRol
         return NULL;
     }
     h->n = n; h->index = idx; h->prefix_bytes = prefix_bytes; h->kind = kind;
+    /* a function-response prefix is followed by [u8 len][message] on the wire: derived
+       from the kind, exactly as prefix_bytes is derived from per-kind constants, so
+       every creator of the kind (patterns, the explorer's capture) splits alike */
+    h->prefix_string = (uint8_t)(kind == DART_KIND_FUNC_RSP);
     h->role = (uint8_t)role;
     h->sys_on_message = sys_msg; h->sys_msg_user = sys_user;
     {   /* stable name copy: queued DartMsg views must not point into the relocatable arena */
@@ -15750,7 +15786,25 @@ static i_DartPatterns *i_dart_patterns_get(DartNode *n){
 
 /* ---- FUNCTIONS -------------------------------------------------------------------------- */
 
-#define DART__FN_PREFIX 5u   /* [u32 call_id][u8 flags-or-status] */
+#define DART__FN_PREFIX 5u   /* req: [u32 call_id][u8 flags]. rsp: [u32 call_id][u8 status]
+                                then [u8 msg_len][msg] (the response message: the node's
+                                split knows the FUNC_RSP framing, so all of it lands in
+                                DartMsg.header and the payload stays the schema's) */
+#define DART__FN_RSP_HDR_MAX (DART__FN_PREFIX + 1u + DART_CALL_MSG_MAX)
+
+/* default response-message text: what DartResponse.message shows when the provider sent
+ * none (or the outcome was synthesized locally), so a generic consumer always has text
+ * to display for a failure. OK stays empty. All static: no lifetime to manage. */
+static DartString i_dart_call_status_msg(DartCallStatus s){
+    switch (s){
+    case DART_CALL_APP_ERROR:  return dart_cstr("app error");
+    case DART_CALL_NO_HANDLER: return dart_cstr("no handler");
+    case DART_CALL_TIMEOUT:    return dart_cstr("timeout");
+    case DART_CALL_PEER_LOST:  return dart_cstr("peer lost");
+    case DART_CALL_CANCELLED:  return dart_cstr("cancelled");
+    case DART_CALL_OK: default: return dart_cstr("");
+    }
+}
 
 /* a caller-side outstanding call. A call made BEFORE any provider matched is not handed to
  * the transport (an unmatched reliable channel drops the send: nobody would ever replay it);
@@ -15786,6 +15840,8 @@ struct DartFunction {
     uint32_t        timeout_us;
     i_DartPending  *pending;        /* caller: outstanding calls */
     uint8_t        *sync_buf; uint32_t sync_cap;   /* sync-call reply scratch (view lifetime) */
+    char            sync_msg[DART_CALL_MSG_MAX];   /* sync-call response-message scratch */
+    uint8_t         sync_msg_len;
     uint8_t         is_provider;    /* a pure DEFINITION (a both-sides handle is 0 here, so
                                        every caller-side path covers it) */
     uint8_t         both;           /* both sides in one handle (the @dart/meta shape):
@@ -15807,13 +15863,25 @@ typedef struct {
 /* the downcast requires pub at offset 0 (C99: no _Static_assert) */
 typedef char i_dart_request_pub_first[(offsetof(i_DartRequest, pub) == 0) ? 1 : -1];
 
-/* send a response directly to one caller: [call_id][status] header, rsp payload. Runs from
- * a delivery callback or a held-lock context: the send commits reentrantly (no wait). */
+/* build the response header: [call_id][status][u8 msg_len][msg]. message may be NULL
+ * (msg_len 0); longer than DART_CALL_MSG_MAX truncates, never refuses. Returns the
+ * header length. hdr must hold DART__FN_RSP_HDR_MAX. */
+static size_t i_dart_func_rsp_hdr(uint8_t *hdr, uint32_t call_id, uint8_t status,
+                                  const char *message){
+    size_t ml = message ? strlen(message) : 0;
+    if (ml > DART_CALL_MSG_MAX) ml = DART_CALL_MSG_MAX;
+    i_dart_le_w32(hdr, call_id); hdr[4] = status; hdr[5] = (uint8_t)ml;
+    if (ml) memcpy(hdr + 6, message, ml);
+    return DART__FN_PREFIX + 1u + ml;
+}
+
+/* send a response directly to one caller: [call_id][status][msg] header, rsp payload. Runs
+ * from a delivery callback or a held-lock context: the send commits reentrantly (no wait). */
 static void i_dart_func_send_reply(DartFunction *fn, uint32_t caller, uint32_t call_id,
-                                   uint8_t status, DartBytes rsp){
-    uint8_t hdr[DART__FN_PREFIX];
-    i_dart_le_w32(hdr, call_id); hdr[4] = status;
-    (void)i_dart_topic_send_to(fn->rsp, caller, dart_bytes(hdr, DART__FN_PREFIX), rsp);
+                                   uint8_t status, const char *message, DartBytes rsp){
+    uint8_t hdr[DART__FN_RSP_HDR_MAX];
+    size_t hl = i_dart_func_rsp_hdr(hdr, call_id, status, message);
+    (void)i_dart_topic_send_to(fn->rsp, caller, dart_bytes(hdr, hl), rsp);
 }
 
 /* provider: a request arrived on the req channel. The public head carries what the DartMsg
@@ -15830,15 +15898,16 @@ static void i_dart_func_on_request(void *user, const DartMsg *msg){
     r.pub.caller        = msg->publisher_id;
     r.pub.caller_name   = msg->publisher_name;
     r.pub.recv_us       = msg->recv_us;
-    r.pub.sent_us       = msg->sent_us;
+    r.pub.written_us    = msg->written_us;
     r.fn = fn; r.call_id = i_dart_le_r32(msg->header.data); r.replied = 0;
     if (fn->on_request) fn->on_request(&r.pub, fn->on_request_user);
-    else {   /* no handler: NO_HANDLER is the answer, not the auto-ack too */
-        i_dart_func_send_reply(fn, r.pub.caller, r.call_id, DART_CALL_NO_HANDLER, dart_bytes(NULL,0));
+    else {   /* no handler: NO_HANDLER is the answer, not the auto-ack too (no message on
+                the wire: the caller side fills the default status text) */
+        i_dart_func_send_reply(fn, r.pub.caller, r.call_id, DART_CALL_NO_HANDLER, NULL, dart_bytes(NULL,0));
         r.replied = 1;
     }
     if (!r.replied)   /* handler returned without replying/deferring: auto-ack OK, empty */
-        i_dart_func_send_reply(fn, r.pub.caller, r.call_id, DART_CALL_OK, dart_bytes(NULL,0));
+        i_dart_func_send_reply(fn, r.pub.caller, r.call_id, DART_CALL_OK, NULL, dart_bytes(NULL,0));
 }
 
 /* caller: unlink the pending entry for call_id (dedup: a second provider's reply finds none) */
@@ -15889,7 +15958,14 @@ static void i_dart_func_on_response(void *user, const DartMsg *msg){
     r.status = (DartCallStatus)msg->header.data[4];
     r.data = msg->data; r.schema = msg->schema;
     r.provider = msg->publisher_id; r.user = p->user;
-    r.sent_us = msg->sent_us;
+    r.written_us = msg->written_us;
+    /* the response message follows the fixed prefix as [u8 len][msg]; the node's split
+       already bounded it, so the header length is the truth (not the len byte). A wire
+       message wins; none = the default status text, so message always displays. */
+    r.message = (msg->header.len > DART__FN_PREFIX + 1u)
+              ? dart_string((const char*)msg->header.data + DART__FN_PREFIX + 1u,
+                            msg->header.len - (DART__FN_PREFIX + 1u))
+              : i_dart_call_status_msg(r.status);
     if (p->on_response) p->on_response(&r);
     i_dart_func_free_pending(fn, p);
 }
@@ -16042,12 +16118,17 @@ int dart_function_call_async(DartFunction *fn, DartBytes req, DartResponseFn on_
  * The schema pointer is safe to hold: an interned schema lives until node close. */
 typedef struct { DartFunction *fn; volatile int done; DartCallStatus status;
                  const DartSchema *schema; uint32_t len; uint32_t provider;
-                 uint64_t sent_us; } i_DartSyncCtx;
+                 uint64_t written_us; } i_DartSyncCtx;
 static void i_dart_func_sync_response(const DartResponse *r){
     i_DartSyncCtx *c = (i_DartSyncCtx*)r->user;
     DartFunction *fn = c->fn;
     c->status = r->status; c->schema = r->schema; c->len = (uint32_t)r->data.len;
-    c->provider = r->provider; c->sent_us = r->sent_us;
+    c->provider = r->provider; c->written_us = r->written_us;
+    {   /* the message view dies with the callback: copy into the handle's scratch */
+        size_t ml = r->message.len <= DART_CALL_MSG_MAX ? r->message.len : DART_CALL_MSG_MAX;
+        if (ml) memcpy(fn->sync_msg, r->message.data, ml);
+        fn->sync_msg_len = (uint8_t)ml;
+    }
     if (r->data.len){
         if (fn->sync_cap < r->data.len){
             uint8_t *nb = (uint8_t*)i_dart_node_sys_alloc(fn->n, fn->sync_buf, r->data.len);
@@ -16070,7 +16151,7 @@ int dart_function_call(DartFunction *fn, DartBytes req, DartResponse *out, int t
     }
     i_dart_node_sys_unlock(fn->n, acquired);
     ctx.fn = fn; ctx.done = 0; ctx.status = DART_CALL_TIMEOUT; ctx.schema = NULL; ctx.len = 0;
-    ctx.provider = 0; ctx.sent_us = 0;
+    ctx.provider = 0; ctx.written_us = 0;
     r = i_dart_function_call_id(fn, req, i_dart_func_sync_response, &ctx,
                                 opts ? opts->provider : 0, &id);
     if (r != DART_OK) return r;
@@ -16098,7 +16179,10 @@ int dart_function_call(DartFunction *fn, DartBytes req, DartResponse *out, int t
                                (ctx.done && ctx.status != DART_CALL_TIMEOUT) ? ctx.len : 0);
         out->schema = out->data.len ? ctx.schema : NULL;
         out->provider = ctx.done ? ctx.provider : 0;
-        out->sent_us = ctx.done ? ctx.sent_us : 0;
+        out->written_us = ctx.done ? ctx.written_us : 0;
+        /* same lifetime rule as data: the scratch holds it until the next blocking call */
+        out->message = ctx.done ? dart_string(fn->sync_msg, fn->sync_msg_len)
+                                : i_dart_call_status_msg(DART_CALL_TIMEOUT);
     }
     /* 0 = timed out, whichever deadline (local or pending) expired first; 1 = a real outcome */
     return (ctx.done && ctx.status != DART_CALL_TIMEOUT) ? 1 : 0;
@@ -16112,14 +16196,19 @@ int dart_function_match_count(DartFunction *fn){
 /* ---- provider handler API ----------------------------------------------------------------
  * The handler's DartRequest* is the pub head of an i_DartRequest (first member), so these
  * recover the reply machinery by downcast. A copy of the public struct answers nothing. */
-static void i_dart_request_answer(DartRequest *request, uint8_t status, DartBytes rsp){
+static void i_dart_request_answer(DartRequest *request, uint8_t status, const char *message,
+                                  DartBytes rsp){
     i_DartRequest *r = (i_DartRequest*)request;
     if (!request || r->replied) return;
     r->replied = 1;
-    i_dart_func_send_reply(r->fn, request->caller, r->call_id, status, rsp);
+    i_dart_func_send_reply(r->fn, request->caller, r->call_id, status, message, rsp);
 }
-void dart_request_reply(DartRequest *request, DartBytes rsp){ i_dart_request_answer(request, DART_CALL_OK, rsp); }
-void dart_request_fail (DartRequest *request, DartBytes rsp){ i_dart_request_answer(request, DART_CALL_APP_ERROR, rsp); }
+void dart_request_reply(DartRequest *request, DartBytes rsp){
+    i_dart_request_answer(request, DART_CALL_OK, NULL, rsp);
+}
+void dart_request_fail (DartRequest *request, const char *message, DartBytes rsp){
+    i_dart_request_answer(request, DART_CALL_APP_ERROR, message, rsp);
+}
 
 uint64_t dart_request_defer(DartRequest *request){
     i_DartRequest *r = (i_DartRequest*)request;
@@ -16132,19 +16221,20 @@ uint64_t dart_request_defer(DartRequest *request){
     return (uint64_t)(uintptr_t)d;
 }
 
-int dart_function_complete(DartFunction *fn, uint64_t token, DartCallStatus status, DartBytes rsp){
+int dart_function_complete(DartFunction *fn, uint64_t token, DartCallStatus status,
+                           const char *message, DartBytes rsp){
     i_DartDefer *d = (i_DartDefer*)(uintptr_t)token;
-    uint8_t hdr[DART__FN_PREFIX]; DartTopic *rsp_topic; uint32_t caller;
+    uint8_t hdr[DART__FN_RSP_HDR_MAX]; size_t hl; DartTopic *rsp_topic; uint32_t caller;
     int acquired;
     if (!fn || !d) return DART_ERR_NO_TOPIC;
     acquired = i_dart_node_sys_lock(fn->n);
-    i_dart_le_w32(hdr, d->call_id); hdr[4] = (uint8_t)status;
+    hl = i_dart_func_rsp_hdr(hdr, d->call_id, (uint8_t)status, message);
     rsp_topic = d->fn->rsp; caller = d->caller;
     i_dart_node_sys_alloc(fn->n, d, 0);
     i_dart_node_sys_unlock(fn->n, acquired);
     /* send outside the lock: a deferred completion from an app thread engages backpressure
        (rsp is the app's buffer); from a callback it commits reentrantly as usual */
-    return i_dart_topic_send_to(rsp_topic, caller, dart_bytes(hdr, DART__FN_PREFIX), rsp);
+    return i_dart_topic_send_to(rsp_topic, caller, dart_bytes(hdr, hl), rsp);
 }
 
 /* ---- the built-in @dart/meta endpoint (patterns/core.h) ----------------------------------
@@ -16163,19 +16253,19 @@ static void i_dart_meta_on_request(DartRequest *request, void *user){
     i_DartPatterns *pm = (i_DartPatterns*)*i_dart_node_sys_slot(n);
     uint32_t mask = 0, need;
     DartBytes body;
-    if (!pm || !pm->meta_rsp_schema){ dart_request_fail(request, dart_bytes(NULL, 0)); return; }
+    if (!pm || !pm->meta_rsp_schema){ dart_request_fail(request, "meta schema unavailable", dart_bytes(NULL, 0)); return; }
     if (request->data.len >= 4) mask = i_dart_le_r32(request->data.data);   /* empty = everything */
     body = i_dart_node_snapshot(n, mask);
-    if (!body.data){ dart_request_fail(request, dart_bytes(NULL, 0)); return; }
+    if (!body.data){ dart_request_fail(request, "snapshot failed", dart_bytes(NULL, 0)); return; }
     need = dart_schema_msg_min(pm->meta_rsp_schema) + (uint32_t)body.len;
     if (pm->meta_msg_cap < need){
         uint8_t *nb = (uint8_t*)i_dart_node_sys_alloc(n, pm->meta_msg, need);
-        if (!nb){ dart_request_fail(request, dart_bytes(NULL, 0)); return; }
+        if (!nb){ dart_request_fail(request, "out of memory", dart_bytes(NULL, 0)); return; }
         pm->meta_msg = nb; pm->meta_msg_cap = need;
     }
     if (!dart_schema_message_default(pm->meta_rsp_schema, pm->meta_msg, pm->meta_msg_cap)
         || !dart_set_map(pm->meta_msg, pm->meta_msg_cap, pm->meta_rsp_schema, "info", body)){
-        dart_request_fail(request, dart_bytes(NULL, 0));
+        dart_request_fail(request, "meta encode failed", dart_bytes(NULL, 0));
         return;
     }
     dart_request_reply(request, dart_bytes(pm->meta_msg,
@@ -16236,7 +16326,7 @@ struct DartVariable {
                                        remote: the last arrival's msg->schema) */
     uint32_t        last_source;    /* peer behind the current state (0 = a local call) */
     uint64_t        last_write_us;  /* when the current state applied (node clock) */
-    uint64_t        last_sent_us;   /* the writer's wall clock for that write (0 = unstamped) */
+    uint64_t        last_written_us;   /* the writer's wall clock for that write (0 = unstamped) */
     uint32_t       *dup_peers;      /* owner: peers already reported for duplicate authority */
     uint16_t        dup_n, dup_cap;
 };
@@ -16269,15 +16359,15 @@ static int i_dart_var_would_change(const DartVariable *v, DartBytes val, int for
 
 /* the current state as a DartVariableUpdate (views into manager memory: callback-only) */
 static void i_dart_var_update_view(DartVariable *v, DartVariableUpdate *u){
-    u->variable  = v;
-    u->name      = i_dart_topic_name(v->value);
-    u->value     = dart_bytes(v->store, v->store_len);
-    u->schema    = v->cur_schema;
-    u->forced    = v->forced;
-    u->write_seq = v->write_seq;
-    u->source    = v->last_source;
-    u->recv_us   = v->last_write_us;
-    u->sent_us   = v->last_sent_us;
+    u->variable   = v;
+    u->name       = i_dart_topic_name(v->value);
+    u->value      = dart_bytes(v->store, v->store_len);
+    u->schema     = v->cur_schema;
+    u->forced     = v->forced;
+    u->write_seq  = v->write_seq;
+    u->source     = v->last_source;
+    u->recv_us    = v->last_write_us;
+    u->written_us = v->last_written_us;
 }
 
 /* a write just applied to the observed value (lock held, state already updated): stamp the
@@ -16285,9 +16375,9 @@ static void i_dart_var_update_view(DartVariable *v, DartVariableUpdate *u){
  * this thread (the poll / service thread for wire-originated writes, the caller's for local
  * ones) */
 static void i_dart_var_notify(DartVariable *v, int changed, uint32_t source, uint64_t when_us,
-                              uint64_t sent_us){
+                              uint64_t written_us){
     DartVariableUpdate u;
-    v->last_source = source; v->last_write_us = when_us; v->last_sent_us = sent_us;
+    v->last_source = source; v->last_write_us = when_us; v->last_written_us = written_us;
     if (!v->on_write && !(changed && v->on_change)) return;
     i_dart_var_update_view(v, &u);
     if (v->on_write)             v->on_write(&u, v->on_write_user);
@@ -16308,19 +16398,19 @@ static void i_dart_var_publish_locked(DartVariable *v){
  * forced (no event: the observed value did not change), else stored + published
  * (reentrantly) + notified. */
 static void i_dart_var_owner_apply(DartVariable *v, DartBytes val, uint32_t source,
-                                   uint64_t when_us, uint64_t sent_us){
+                                   uint64_t when_us, uint64_t written_us){
     int changed;
     if (v->forced){ i_dart_buf_put(v->n, &v->shadow, &v->shadow_len, &v->shadow_cap, val); return; }
     changed = i_dart_var_would_change(v, val, 0);
     if (!i_dart_buf_put(v->n, &v->store, &v->store_len, &v->store_cap, val)) return;
     v->has_value = 1; v->write_seq++;
     i_dart_var_publish_locked(v);
-    i_dart_var_notify(v, changed, source, when_us, sent_us);
+    i_dart_var_notify(v, changed, source, when_us, written_us);
 }
 /* owner: force to val. Without allow_force this is a SILENT NO-OP (force is opaque on the
  * wire; the local API layer refuses loudly before ever reaching here). */
 static void i_dart_var_owner_force(DartVariable *v, DartBytes val, uint32_t source,
-                                   uint64_t when_us, uint64_t sent_us){
+                                   uint64_t when_us, uint64_t written_us){
     int changed;
     if (!v->allow_force) return;
     changed = i_dart_var_would_change(v, val, 1);
@@ -16329,16 +16419,16 @@ static void i_dart_var_owner_force(DartVariable *v, DartBytes val, uint32_t sour
     if (!i_dart_buf_put(v->n, &v->store, &v->store_len, &v->store_cap, val)) return;
     v->forced = 1; v->has_value = 1; v->write_seq++;
     i_dart_var_publish_locked(v);
-    i_dart_var_notify(v, changed, source, when_us, sent_us);
+    i_dart_var_notify(v, changed, source, when_us, written_us);
 }
 static void i_dart_var_owner_unforce(DartVariable *v, uint32_t source, uint64_t when_us,
-                                     uint64_t sent_us){
+                                     uint64_t written_us){
     if (!v->forced) return;
     v->forced = 0;
     i_dart_buf_put(v->n, &v->store, &v->store_len, &v->store_cap, dart_bytes(v->shadow, v->shadow_len));
     v->write_seq++;
     i_dart_var_publish_locked(v);
-    i_dart_var_notify(v, 1, source, when_us, sent_us);   /* the forced flag flipped: always a change */
+    i_dart_var_notify(v, 1, source, when_us, written_us);   /* the forced flag flipped: always a change */
 }
 
 /* owner: a set/force/unforce op arrived on the set channel (delivery callback, lock held).
@@ -16347,9 +16437,9 @@ static void i_dart_var_owner_unforce(DartVariable *v, uint32_t source, uint64_t 
 static void i_dart_var_on_set(void *user, const DartMsg *msg){
     DartVariable *v = (DartVariable*)user;
     uint8_t op = msg->header.len >= 1 ? msg->header.data[0] : 0;
-    if (op & DART__SET_OP_UNFORCE)    i_dart_var_owner_unforce(v, msg->publisher_id, msg->recv_us, msg->sent_us);
-    else if (op & DART__SET_OP_FORCE) { if (msg->data.len) i_dart_var_owner_force(v, msg->data, msg->publisher_id, msg->recv_us, msg->sent_us); }
-    else                              { if (msg->data.len) i_dart_var_owner_apply(v, msg->data, msg->publisher_id, msg->recv_us, msg->sent_us); }
+    if (op & DART__SET_OP_UNFORCE)    i_dart_var_owner_unforce(v, msg->publisher_id, msg->recv_us, msg->written_us);
+    else if (op & DART__SET_OP_FORCE) { if (msg->data.len) i_dart_var_owner_force(v, msg->data, msg->publisher_id, msg->recv_us, msg->written_us); }
+    else                              { if (msg->data.len) i_dart_var_owner_apply(v, msg->data, msg->publisher_id, msg->recv_us, msg->written_us); }
 }
 
 /* accessor: a new value arrived on the value channel (cache it + its forced/write_seq,
@@ -16372,7 +16462,7 @@ static void i_dart_var_on_value(void *user, const DartMsg *msg){
         v->forced = (uint8_t)forced_in;
         v->write_seq = i_dart_le_r32(msg->header.data + 1);
         v->cur_schema = msg->schema;
-        i_dart_var_notify(v, changed, msg->publisher_id, msg->recv_us, msg->sent_us);
+        i_dart_var_notify(v, changed, msg->publisher_id, msg->recv_us, msg->written_us);
     }
 }
 
@@ -16767,7 +16857,8 @@ static uint64_t i_dart_func_reap(DartFunction *fn, uint64_t now, DartCallStatus 
         if (all || now >= p->deadline_us){
             *pp = p->next;
             {   DartResponse r; r.status = fail_status; r.data = dart_bytes(NULL,0);
-                r.schema = NULL; r.provider = 0; r.user = p->user; r.sent_us = 0;
+                r.schema = NULL; r.provider = 0; r.user = p->user; r.written_us = 0;
+                r.message = i_dart_call_status_msg(fail_status);
                 if (p->on_response) p->on_response(&r);
             }
             i_dart_func_free_pending(fn, p);
@@ -16787,7 +16878,8 @@ static void i_dart_func_reap_dest(DartFunction *fn, uint32_t dest){
         if (p->dest == dest){
             *pp = p->next;
             {   DartResponse r; r.status = DART_CALL_PEER_LOST; r.data = dart_bytes(NULL,0);
-                r.schema = NULL; r.provider = 0; r.user = p->user; r.sent_us = 0;
+                r.schema = NULL; r.provider = 0; r.user = p->user; r.written_us = 0;
+                r.message = i_dart_call_status_msg(DART_CALL_PEER_LOST);
                 if (p->on_response) p->on_response(&r);
             }
             i_dart_func_free_pending(fn, p);
@@ -17357,7 +17449,7 @@ struct Qos {
                                                publisher to this many samples/sec (it decimates
                                                to the newest); 0 = unlimited */
     bool        no_timestamp         = false;/* PUBLISHER: send without the per-message source
-                                               timestamp, so receivers read sent_us() == 0.
+                                               timestamp, so receivers read written_us() == 0.
                                                Default (false) stamps every message */
 };
 
@@ -17838,10 +17930,10 @@ public:
     /* node monotonic us when the poll RECEIVED it (queued: at enqueue), so paced
      * consumers measure true arrival times, never their own cadence */
     uint64_t         recv_us()        const { return msg_->recv_us; }
-    /* the SENDER's wall clock (UTC us) at the moment its send committed: a source stamp,
+    /* the WRITER's wall clock (UTC us) at the moment it wrote the message: a source stamp,
      * kept across repair and replay. 0 = the publisher opted out (Qos::no_timestamp).
      * Never mix it with the monotonic recv_us. */
-    uint64_t         sent_us()        const { return msg_->sent_us; }
+    uint64_t         written_us()        const { return msg_->written_us; }
 
 private:
     explicit MessageView(const detail::DartMsg* m) : FieldView(m->data, m->schema), msg_(m) {}
@@ -17950,8 +18042,8 @@ struct Peer {
 /* LogLine: one decoded @dart/log line handed to a Node::on_log handler. The `node` and
  * `text` views are valid for the callback only (copy them to keep them). wall_us is epoch
  * micros (comparable across nodes); mono_us is the publisher's monotonic clock (orders
- * within one node); recv_us is this node's clock when the poll received it; sent_us is the
- * transport's source stamp for the carrying message (see MessageView::sent_us). */
+ * within one node); recv_us is this node's clock when the poll received it; written_us is the
+ * transport's source stamp for the carrying message (see MessageView::written_us). */
 struct LogLine {
     LogLevel         level = LogLevel::Info;
     std::string_view node;         /* the publishing node's name */
@@ -17959,7 +18051,7 @@ struct LogLine {
     uint64_t         wall_us = 0;
     uint64_t         mono_us = 0;
     uint64_t         recv_us = 0;
-    uint64_t         sent_us = 0;
+    uint64_t         written_us = 0;
     std::string_view text;
 };
 
@@ -17979,7 +18071,7 @@ public:
     uint16_t         topic_index()    const { return m_.topic_index; }
     Bytes            header()         const { return { m_.header.data, m_.header.len }; }
     uint64_t         recv_us()        const { return m_.recv_us; }   /* arrival stamp (see MessageView) */
-    uint64_t         sent_us()        const { return m_.sent_us; }   /* source stamp (see MessageView) */
+    uint64_t         written_us()        const { return m_.written_us; }   /* source stamp (see MessageView) */
 private:
     void bind() { d_ = m_.data; s_ = m_.schema; ok_ = true; }
     detail::DartMsg m_{};
@@ -18568,15 +18660,23 @@ public:
     bool valid() const noexcept { return fn_ != nullptr && token_ != 0; }
     explicit operator bool() const noexcept { return valid(); }
 
-    bool complete(Bytes rsp = Bytes()) { return finish(detail::DART_CALL_OK, rsp); }
-    bool fail(Bytes rsp = Bytes())     { return finish(detail::DART_CALL_APP_ERROR, rsp); }
+    /* message: optional human-readable outcome text (ResponseView::message on the caller;
+     * truncated at DART_CALL_MSG_MAX). On fail it is what a generic consumer displays. */
+    bool complete(Bytes rsp = Bytes(), std::string_view message = {}) {
+        return finish(detail::DART_CALL_OK, message, rsp);
+    }
+    bool fail(std::string_view message = {}, Bytes rsp = Bytes()) {
+        return finish(detail::DART_CALL_APP_ERROR, message, rsp);
+    }
 
 private:
     Deferred(detail::DartFunction* fn, uint64_t token) : fn_(fn), token_(token) {}
-    bool finish(int status, Bytes rsp) {
+    bool finish(int status, std::string_view message, Bytes rsp) {
         if (!valid()) return false;
+        std::string m(message);   /* the C API takes a NUL-terminated string */
         int r = detail::dart_function_complete(fn_, token_,
-                    static_cast<detail::DartCallStatus>(status), priv::to_c(rsp));
+                    static_cast<detail::DartCallStatus>(status),
+                    m.empty() ? nullptr : m.c_str(), priv::to_c(rsp));
         fn_ = nullptr; token_ = 0;
         return r == 0;
     }
@@ -18595,10 +18695,16 @@ public:
     uint32_t         caller()        const { return rq_->caller; }
     std::string_view caller_name()   const { return { rq_->caller_name.data, rq_->caller_name.len }; }
     uint64_t         recv_us()       const { return rq_->recv_us; }
-    uint64_t         sent_us()       const { return rq_->sent_us; }   /* the caller's send stamp */
+    uint64_t         written_us()       const { return rq_->written_us; }   /* the caller's write stamp */
 
     void reply(Bytes rsp)       { detail::dart_request_reply(rq_, priv::to_c(rsp)); }
-    void fail(Bytes rsp = {})   { detail::dart_request_fail (rq_, priv::to_c(rsp)); }
+    /* message: the human-readable failure reason (ResponseView::message on the caller,
+     * truncated at DART_CALL_MSG_MAX; empty = the default "app error"). rsp may still
+     * carry structured failure data beside it. */
+    void fail(std::string_view message = {}, Bytes rsp = {}) {
+        std::string m(message);
+        detail::dart_request_fail(rq_, m.empty() ? nullptr : m.c_str(), priv::to_c(rsp));
+    }
     /* Park the reply: suppresses the auto-ack and lets the handler return now; the
      * returned Deferred completes the call later, from any thread. */
     Deferred<> defer() { return Deferred<>(fn_, detail::dart_request_defer(rq_)); }
@@ -18621,8 +18727,12 @@ public:
     bool       ok()          const { return st_ == CallStatus::Ok; }
     uint32_t   provider()    const { return provider_; }
     SendStatus send_status() const { return ss_; }
-    uint64_t   sent_us()     const { return sent_; }   /* the provider's send stamp (0 = synthesized) */
+    uint64_t   written_us()     const { return written_; }   /* the provider's write stamp (0 = synthesized) */
     Bytes      data()        const { return { data_.data(), data_.size() }; }
+    /* human-readable outcome text (owned): the provider's message, or default status text
+     * ("timeout", ...) on any answered/synthesized non-OK outcome. Empty on OK with no
+     * message, and on a synchronous send refusal (send_status() carries that). */
+    std::string_view message() const { return message_; }
     /* the schema data decodes with (interned in the node, valid until node close) */
     const detail::DartSchema* raw_schema() const { return schema_; }
 
@@ -18630,8 +18740,9 @@ private:
     CallStatus                st_ = CallStatus::Timeout;
     SendStatus                ss_ = SendStatus::Ok;
     uint32_t                  provider_ = 0;
-    uint64_t                  sent_ = 0;
+    uint64_t                  written_ = 0;
     std::vector<uint8_t>      data_;
+    std::string               message_;
     const detail::DartSchema* schema_ = nullptr;
     template <class A, class B> friend class RemoteFunction;
 };
@@ -18642,7 +18753,10 @@ public:
     CallStatus status()   const { return static_cast<CallStatus>(r_->status); }
     bool       ok()       const { return r_->status == detail::DART_CALL_OK; }
     uint32_t   provider() const { return r_->provider; }
-    uint64_t   sent_us()  const { return r_->sent_us; }   /* the provider's send stamp */
+    uint64_t   written_us()  const { return r_->written_us; }   /* the provider's write stamp */
+    /* human-readable outcome text (a view, callback lifetime): the provider's message, or
+     * default status text on any non-OK outcome; empty only on OK with no message. */
+    std::string_view message() const { return { r_->message.data, r_->message.len }; }
 
 private:
     explicit ResponseView(const detail::DartResponse* r)
@@ -19053,7 +19167,7 @@ public:
             ln.wall_us = m.get_uint("wall_us");
             ln.mono_us = m.get_uint("mono_us");
             ln.recv_us = m.recv_us();
-            ln.sent_us = m.sent_us();
+            ln.written_us = m.written_us();
             ln.text    = m.get_string("text");
             cb(ln);
         };
@@ -19400,7 +19514,7 @@ private:
         Request<> r(rq, b->fn.load());
 #if defined(__cpp_exceptions)
         try { b->h(r); }
-        catch (...) { detail::dart_request_fail(rq, detail::dart_bytes(nullptr, 0)); }
+        catch (...) { detail::dart_request_fail(rq, "handler threw", detail::dart_bytes(nullptr, 0)); }
 #else
         b->h(r);
 #endif
@@ -19446,12 +19560,14 @@ public:
         if (rc == 1) {
             r.st_       = static_cast<CallStatus>(out.status);
             r.provider_ = out.provider;
-            r.sent_     = out.sent_us;
+            r.written_  = out.written_us;
             r.schema_   = out.schema;
             if (out.data.len) r.data_.assign(out.data.data, out.data.data + out.data.len);
         } else if (rc < 0) {
             r.ss_ = static_cast<SendStatus>(rc);   /* status() stays Timeout: not answered */
         }
+        if (rc >= 0 && out.message.len)   /* answered or timed out: copy the outcome text */
+            r.message_.assign(out.message.data, out.message.len);
         return r;
     }
     /* Async form: returns as soon as the request is committed; on_response fires once
@@ -19540,7 +19656,7 @@ public:
     /* node monotonic us when the write applied */
     uint64_t         recv_us()   const { return u_->recv_us; }
     /* the writer's wall clock for this write (this node's own for a local write) */
-    uint64_t         sent_us()   const { return u_->sent_us; }
+    uint64_t         written_us()   const { return u_->written_us; }
     const detail::DartSchema* raw_schema() const { return u_->schema; }
 
 private:
@@ -19814,13 +19930,13 @@ public:
     std::string_view topic_name()     const { return topic_; }
     uint16_t         topic_index()    const { return idx_; }
     uint64_t         recv_us()        const { return recv_; }
-    uint64_t         sent_us()        const { return sent_; }
+    uint64_t         written_us()        const { return written_; }
 private:
     T           v_{};
     std::string pub_, topic_;
     uint32_t    pid_ = 0;
     uint16_t    idx_ = 0;
-    uint64_t    recv_ = 0, sent_ = 0;
+    uint64_t    recv_ = 0, written_ = 0;
     template <class U> friend class Subscriber;
 };
 
@@ -19836,14 +19952,14 @@ public:
     std::string_view caller_name()   const { return core_.caller_name(); }
     std::string_view function_name() const { return core_.function_name(); }
     uint64_t         recv_us()       const { return core_.recv_us(); }
-    uint64_t         sent_us()       const { return core_.sent_us(); }
+    uint64_t         written_us()       const { return core_.written_us(); }
 
     void reply(const Rsp& v) {
         std::vector<uint8_t> s;
         core_.reply(priv::encode(v, s));
     }
     void reply(Bytes raw)     { core_.reply(raw); }
-    void fail(Bytes raw = {}) { core_.fail(raw); }
+    void fail(std::string_view message = {}, Bytes raw = {}) { core_.fail(message, raw); }
     Deferred<Rsp> defer()     { return Deferred<Rsp>(core_.defer()); }
 
 private:
@@ -19859,11 +19975,11 @@ public:
     Deferred& operator=(Deferred&&) noexcept = default;
     bool valid() const noexcept { return core_.valid(); }
     explicit operator bool() const noexcept { return valid(); }
-    bool complete(const Rsp& v) {
+    bool complete(const Rsp& v, std::string_view message = {}) {
         std::vector<uint8_t> s;
-        return core_.complete(priv::encode(v, s));
+        return core_.complete(priv::encode(v, s), message);
     }
-    bool fail() { return core_.fail(); }
+    bool fail(std::string_view message = {}) { return core_.fail(message); }
 private:
     Deferred<> core_;
 };
@@ -19876,16 +19992,19 @@ public:
     bool       ok()          const { return st_ == CallStatus::Ok; }
     uint32_t   provider()    const { return provider_; }
     SendStatus send_status() const { return ss_; }
-    uint64_t   sent_us()     const { return sent_; }
+    uint64_t   written_us()     const { return written_; }
+    /* human-readable outcome text (owned): see Response<>::message */
+    std::string_view message() const { return message_; }
     const Rsp& value()       const { return v_; }
     const Rsp& operator*()   const { return v_; }
     const Rsp* operator->()  const { return &v_; }
 private:
-    CallStatus st_ = CallStatus::Timeout;
-    SendStatus ss_ = SendStatus::Ok;
-    uint32_t   provider_ = 0;
-    uint64_t   sent_ = 0;
-    Rsp        v_{};
+    CallStatus  st_ = CallStatus::Timeout;
+    SendStatus  ss_ = SendStatus::Ok;
+    uint32_t    provider_ = 0;
+    uint64_t    written_ = 0;
+    std::string message_;
+    Rsp         v_{};
     template <class A, class B> friend class RemoteFunction;
 };
 
@@ -19895,16 +20014,19 @@ public:
     CallStatus status()     const { return st_; }
     bool       ok()         const { return st_ == CallStatus::Ok; }
     uint32_t   provider()   const { return provider_; }
-    uint64_t   sent_us()    const { return sent_; }
+    uint64_t   written_us()    const { return written_; }
+    /* human-readable outcome text (a view, callback lifetime): see ResponseView<>::message */
+    std::string_view message() const { return message_; }
     const Rsp& value()      const { return v_; }
     const Rsp& operator*()  const { return v_; }
     const Rsp* operator->() const { return &v_; }
 private:
     ResponseView() = default;
-    CallStatus st_ = CallStatus::Timeout;
-    uint32_t   provider_ = 0;
-    uint64_t   sent_ = 0;
-    Rsp        v_{};
+    CallStatus       st_ = CallStatus::Timeout;
+    uint32_t         provider_ = 0;
+    uint64_t         written_ = 0;
+    std::string_view message_;
+    Rsp              v_{};
     template <class A, class B> friend class RemoteFunction;
 };
 
@@ -19933,7 +20055,7 @@ private:
         if constexpr (std::is_invocable_v<std::decay_t<H>&, const Req&, Request<Rsp>&>) {
             return [f = std::forward<H>(h)](Request<>& u) mutable {
                 Req q{};
-                if (!priv::decode(q, u.data(), u.raw_schema())) { u.fail(); return; }
+                if (!priv::decode(q, u.data(), u.raw_schema())) { u.fail("request decode failed"); return; }
                 Request<Rsp> tr(u);
                 f(q, tr);
             };
@@ -19943,7 +20065,7 @@ private:
                           "simple function handler must return Rsp");
             return [f = std::forward<H>(h)](Request<>& u) mutable {
                 Req q{};
-                if (!priv::decode(q, u.data(), u.raw_schema())) { u.fail(); return; }
+                if (!priv::decode(q, u.data(), u.raw_schema())) { u.fail("request decode failed"); return; }
                 Rsp r = f(q);
                 std::vector<uint8_t> s;
                 u.reply(priv::encode(r, s));
@@ -19976,7 +20098,8 @@ public:
         Response<> ur = core_.call(priv::encode(req, s), timeout_ms, opts);
         Response<Rsp> r;
         r.st_ = ur.status(); r.ss_ = ur.send_status(); r.provider_ = ur.provider();
-        r.sent_ = ur.sent_us();
+        r.written_ = ur.written_us();
+        r.message_.assign(ur.message());   /* own it: ur dies with this frame */
         if (ur.ok()) (void)priv::decode(r.v_, ur.data(), ur.raw_schema());
         return r;
     }
@@ -19986,7 +20109,8 @@ public:
         return core_.call_async(priv::encode(req, s),
             [cb = std::move(cb)](const ResponseView<>& uv) {
                 ResponseView<Rsp> tv;
-                tv.st_ = uv.status(); tv.provider_ = uv.provider(); tv.sent_ = uv.sent_us();
+                tv.st_ = uv.status(); tv.provider_ = uv.provider(); tv.written_ = uv.written_us();
+                tv.message_ = uv.message();
                 if (uv.ok()) (void)priv::decode(tv.v_, uv.data(), uv.raw_schema());
                 cb(tv);
             }, opts);
@@ -20215,12 +20339,12 @@ public:
         if (!um) return std::nullopt;
         Message<T> m;
         if (!priv::decode(m.v_, um->data(), um->raw_schema())) return std::nullopt;
-        m.pub_   = std::string(um->publisher_name());
-        m.topic_ = std::string(um->topic_name());
-        m.pid_   = um->publisher_id();
-        m.idx_   = um->topic_index();
-        m.recv_  = um->recv_us();
-        m.sent_  = um->sent_us();
+        m.pub_     = std::string(um->publisher_name());
+        m.topic_   = std::string(um->topic_name());
+        m.pid_     = um->publisher_id();
+        m.idx_     = um->topic_index();
+        m.recv_    = um->recv_us();
+        m.written_ = um->written_us();
         return m;
     }
     int dispatch(int max_msgs = 0, int timeout_ms = 0) { return core_.dispatch(max_msgs, timeout_ms); }
