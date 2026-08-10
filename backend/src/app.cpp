@@ -23,6 +23,11 @@ constexpr size_t kHistoryDepth = 128;
 /* how much log history the snapshot replays to a late joiner */
 constexpr size_t kLogKeep = 256;
 
+/* how long a fault site holds new occurrences after logging an entry (ticks are ms):
+ * a site faulting every tick reads as one line with a rising count every window, not
+ * a thousand lines a second */
+constexpr uint64_t kFaultWindowTicks = 5000;
+
 /* Client frames are untrusted: read fields without ever throwing. */
 Json field(const Json& object, const char* key) {
     if (!object.is_object()) return nullptr;
@@ -119,14 +124,20 @@ size_t App::poll() {
         size_t catchup = 0;
         while (next_tick_ <= now && catchup++ < 100) {
             std::string fault;
-            if (!scheduler_->tick(fault) && opts_.verbose)
-                std::printf("hmi: effect fault: %s\n", fault.c_str());
+            if (!scheduler_->tick(fault)) {
+                /* an effect fault joins the log through the same coalescer as the
+                   VM's runtime faults, keyed by its message */
+                ++effect_faults_[fault].pending;
+                if (opts_.verbose)
+                    std::printf("hmi: effect fault: %s\n", fault.c_str());
+            }
             /* before the next tick's clear_outputs erases them */
             drain_notices();
             next_tick_ += std::chrono::milliseconds(1);
         }
         if (next_tick_ + std::chrono::milliseconds(100) < now)
             next_tick_ = now;
+        drain_faults();
         if (scheduler_->state().tick - last_live_tick_ >= 33) publish_live();
     }
     publish_log();
@@ -406,6 +417,9 @@ void App::compile_runtime() {
     /* resend every aggregate whole on the next live frame: a migrated cell's generation
        moved, and a client holding the old one has to replace rather than append */
     agg_published_.assign(scheduler_->state().lists.size(), AggCursor{});
+    /* fault sites renumber with the program: drop the coalescing rows (a still-faulting
+       site simply announces itself again, which after an edit is the right thing) */
+    fault_sites_.clear();
     mesh_->apply(scheduler_->program());
     update_viewed_pages();
     if (server_.sessions())
@@ -544,6 +558,48 @@ void App::drain_notices() {
         fresh_log_.push_back(std::move(entry));
     }
     state.notice_count = 0;
+}
+
+/* RUNTIME FAULTS INTO THE LOG, coalesced per site. state.faults keeps one cumulative
+ * counter per compiled fault site (the diagnostics live in program.runtime_faults);
+ * this drain diffs each counter against what it last saw, logs a site's FIRST fault
+ * immediately, and from then on logs that site at most once per window with the count
+ * it gathered — "message (x512)". The key is the SITE (an effect fault's is its
+ * message), so two sites faulting in alternation each coalesce on their own clock;
+ * there is no shared "last entry" for them to defeat. */
+void App::drain_faults() {
+    if (!scheduler_) return;
+    const Program& program = scheduler_->program();
+    const RuntimeState& state = scheduler_->state();
+    const uint64_t now = state.tick;
+    if (fault_sites_.size() != program.runtime_faults.size())
+        fault_sites_.assign(program.runtime_faults.size(), PendingFault{});
+    auto emit = [&](PendingFault& row, const std::string& message) {
+        fresh_log_.push_back(
+            Json{{"level", "error"},
+                 {"node", "hmi"},
+                 {"text", row.pending > 1
+                              ? message + " (x" + std::to_string(row.pending) + ")"
+                              : message},
+                 {"wall_us", static_cast<uint64_t>(state.wall_ms * 1000.0)}});
+        row.pending = 0;
+        row.emit_tick = now + kFaultWindowTicks;
+    };
+    for (uint32_t i = 0; i < fault_sites_.size() && i < state.faults.size(); ++i) {
+        PendingFault& row = fault_sites_[i];
+        const uint32_t count = state.faults[i].count;
+        if (count != row.seen) {
+            /* != rather than >: a counter that restarted (a migrated state) reads as
+               its new value's worth of faults instead of a silent stall */
+            row.pending += count > row.seen ? count - row.seen : count;
+            row.seen = count;
+        }
+        if (row.pending && now >= row.emit_tick)
+            emit(row, program.runtime_faults[i].message);
+    }
+    for (auto& item : effect_faults_)
+        if (item.second.pending && now >= item.second.emit_tick)
+            emit(item.second, item.first);
 }
 
 /* the log's one exit: whatever this poll gathered — notify records and the mesh's

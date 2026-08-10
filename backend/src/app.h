@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <deque>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -91,6 +92,11 @@ class App {
     /* the notify steps' records, captured AFTER each tick (the next tick's
      * clear_outputs would erase them) into the pending frame */
     void drain_notices();
+    /* runtime + effect faults into the log, COALESCED PER SITE: the first fault of a
+     * site logs immediately, after which that site logs at most once per window with
+     * the count it gathered. Keyed per site (effect faults per message), so two sites
+     * faulting in alternation coalesce independently instead of defeating each other. */
+    void drain_faults();
 
     Json snapshot() const;
     /* `full` is the SNAPSHOT's reading: every aggregate cell whole. A live frame sends
@@ -151,6 +157,17 @@ class App {
     std::deque<Json> log_;
     std::vector<Json> fresh_log_;          /* arrived this poll, not yet broadcast */
     std::vector<MeshLogLine> mesh_logs_;   /* take_logs scratch, reused per poll */
+    /* FAULT COALESCING, one row per fault SITE (and one per effect-fault message):
+     * what the state counter read at the last drain, how many faults gathered since
+     * the last emitted entry, and the tick the next entry may go out — the window
+     * rides the scheduler's own tick clock, which migrates across recompiles. */
+    struct PendingFault {
+        uint32_t seen = 0;
+        uint64_t pending = 0;
+        uint64_t emit_tick = 0;
+    };
+    std::vector<PendingFault> fault_sites_;         /* [runtime fault site] */
+    std::map<std::string, PendingFault> effect_faults_;   /* by fault message */
 };
 
 } // namespace hmi
