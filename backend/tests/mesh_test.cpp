@@ -722,63 +722,6 @@ int main() {
                              [&] { return num_at(swapped_sched, swapped_cell) == 8.25; }, 100);
         }
         CHECK_MSG(seen, "the re-typed gauge value never arrived");
-
-        /* ---- the provider RESTARTS with the SAME schema: reflection is STICKY (the
-         * entity keeps its last-known type while its provider is gone, the signature
-         * holds, nothing recompiles — flows keep running), and when the provider
-         * returns the STANDING subscription rematches and feeds the same cell with
-         * no recompile and no re-apply ---- */
-        {
-            const auto peers_before = peer.peer_count();
-            gauge_pub.reset();
-            prov.reset();
-            bool gone = false;
-            for (int i = 0; i < 160 && !gone; ++i) {
-                gone = peer.peer_count() < peers_before;
-                if (!gone) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            CHECK_MSG(gone, "the departing provider never left the plant peer's view");
-
-            bool stayed = true;
-            bool churned = false;
-            for (int i = 0; i < 10; ++i) {
-                churned = mesh.refresh() || churned;
-                bool present = false;
-                for (const EntityDef& entity : mesh.reflection())
-                    if (entity.name == "gauge" && entity.fields.size() == 2) present = true;
-                stayed = stayed && present;
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            CHECK_MSG(stayed, "the gauge entity vanished while its provider was down");
-            CHECK_MSG(!churned, "reflection churned (= a recompile) with the provider down");
-
-            prov.emplace(
-                "plant2", dart::Node::MessageHandler{},
-                [](const dart::Event& event) {
-                    if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
-                },
-                peer_options);
-            CHECK(prov->valid());
-            gauge_pub.emplace(*prov, "gauge", &*gauge_v2,
-                              dart::Qos{dart::Reliability::Reliable});
-            CHECK(gauge_pub->valid());
-            CHECK(prov->start());
-
-            dart::MessageBuilder back_msg(*gauge_v2);
-            back_msg.set_f64("value", 9.75).set_uint("extra", 4);
-            CHECK(back_msg.ok());
-            bool recovered = false;
-            churned = false;
-            for (int i = 0; i < 100 && !recovered; ++i) {
-                churned = mesh.refresh() || churned;
-                gauge_pub->send(back_msg.bytes());
-                recovered = run_until(
-                    swapped_sched,
-                    [&] { return num_at(swapped_sched, swapped_cell) == 9.75; }, 100);
-            }
-            CHECK_MSG(recovered, "the same-typed provider's return never fed the standing cell");
-            CHECK_MSG(!churned, "a same-typed provider return churned the reflection");
-        }
     }
 
     /* ---- the built-in @dart/log stream: a peer's log lines reach take_logs, decoded

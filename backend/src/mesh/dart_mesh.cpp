@@ -516,15 +516,6 @@ bool DartMesh::refresh() {
         }
     }
 
-    /* STICKY REFLECTION: an entity whose provider dropped off the mesh (a node
-     * restarting, a cable pulled) KEEPS its last-known reflection instead of
-     * vanishing — the signature holds, nothing recompiles, and every flow naming it
-     * keeps running (reads hold the mirror, writes fault honestly until the owner
-     * returns, and DART rematches the standing handles by itself). Only a provider
-     * RETURNING with a different schema retires anything (the retype sweep below). */
-    for (const auto& item : impl_->folded)
-        if (fold.find(item.first) == fold.end()) fold.emplace(item.first, item.second);
-
     std::vector<EntityDef> next;
     std::string signature;
     for (const auto& item : fold) {
