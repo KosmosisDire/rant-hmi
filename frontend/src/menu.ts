@@ -45,7 +45,7 @@ export function openMenu(x: number, y: number, head: string, items: MenuItem[]):
     }
     box.appendChild(
       el("button", {
-        class: item.danger ? "danger" : "",
+        class: "menu-row" + (item.danger ? " danger" : ""),
         html: (item.icon ? iconMarkup(item.icon, 13, 1.6) : "") + "<span>" + (item.label ?? "") + "</span>",
         onclick: () => {
           closeMenu();

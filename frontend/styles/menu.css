@@ -31,7 +31,7 @@
   color: var(--dim-2);
 }
 
-#ctx button {
+#ctx button.menu-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -46,18 +46,18 @@
   cursor: pointer;
 }
 
-#ctx button:hover {
+#ctx button.menu-row:hover {
   background: #242424;
   color: var(--ink);
 }
 
-#ctx button svg {
+#ctx button.menu-row svg {
   color: var(--dim);
   flex: none;
 }
 
-#ctx button.danger,
-#ctx button.danger svg {
+#ctx button.menu-row.danger,
+#ctx button.menu-row.danger svg {
   color: #c9564d;
 }
 
