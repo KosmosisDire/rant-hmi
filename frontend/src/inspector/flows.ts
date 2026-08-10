@@ -174,6 +174,12 @@ export function flowShape(flow: Flow): Json {
       step.from?.local ?? "",
       step.to?.local ?? "",
       step.to?.name ?? "",
+      /* an entity target's FIELD picks whether it is an aggregate at all (the mesh "at
+         index" row), and a list target's `key` presence toggles the row between
+         write/append and the element form — neither shows in verbOf, so both are
+         structure here too */
+      step.to?.path ?? "",
+      String(step.key ?? "") !== "" ? "k" : "",
       /* a raise's param fields are structure keyed by WHICH event it raises */
       step.event ?? "",
       verbOf(step),
@@ -585,6 +591,18 @@ function destShape(editor: Editor, widget: Node, type: WidgetType | null, to: Js
   return "";
 }
 
+/* a mesh destination's aggregate field, when to names one: the shape that decides
+   whether the row offers an element index ("list") or nothing (a map field — the
+   compiler is the teacher there) */
+function entityAggField(editor: Editor, to: Json): { shape: string; elem?: string } | null {
+  if (typeof to?.kind !== "string" || !to.kind || to.kind === "L") return null;
+  if (!to.name || !to.path) return null;
+  const entity = editor.mesh.entities.find((e) => e.kind === to.kind && e.name === to.name);
+  const field = entity?.fields.find((f) => f.path === to.path);
+  if (!field || (field.shape !== "list" && field.shape !== "map")) return null;
+  return { shape: field.shape, elem: field.elem };
+}
+
 /* ---- one step, one line ---- */
 
 function stepRow(
@@ -728,30 +746,57 @@ function stepCell(
       cell.appendChild(picker);
     }
 
-    /* a LIST destination chooses replace-or-grow, and growing offers its window: `keep`
-       is how many elements stand (a ring authors "widget.rate * widget.window"). A MAP
-       destination writes one entry per run, so the key rides the row. Both read the
-       DECLARED shape — a local's type, a slot's shape — and an entity or a fresh temp
-       offers neither (the compiler is the teacher there). */
+    /* a LIST destination chooses replace, grow, or ONE ELEMENT by index: `keep` is how
+       many elements a grow keeps standing (a ring authors "widget.rate * widget.window"),
+       an index write addresses one position and doubles `key` as the index expression. A
+       MAP destination writes one entry per run, keyed by `key` as text. Both read the
+       DECLARED shape — a local's type, a slot's shape. An entity or a fresh temp offers
+       neither UNLESS the target is a mesh field of its own: a mesh list takes only the
+       element form (no mode to choose, since a whole-list write is not a thing there) and
+       a mesh map field renders nothing — the compiler is the teacher there. */
     const shape = destShape(editor, widget, type, at().to);
+    const indexKey = (): string => String(at().key ?? "");
     if (shape === "list") {
+      const derived = () => (indexKey() !== "" ? "index" : String(at().mode ?? "write"));
       const picker = selectField(
-        [{ value: "write" }, { value: "append" }],
-        String(step.mode ?? "write"),
-        (choice) => set("mode", choice),
+        [{ value: "write" }, { value: "append" }, { value: "index", label: "at index" }],
+        derived(),
+        (choice) => {
+          if (choice === "index")
+            editor.apply([
+              { op: "set_prop", node: step.id, key: "mode", value: "write" },
+              { op: "set_prop", node: step.id, key: "key", value: "0" },
+            ]);
+          else
+            editor.apply([
+              { op: "set_prop", node: step.id, key: "mode", value: choice },
+              { op: "set_prop", node: step.id, key: "key", value: "" },
+            ]);
+        },
         "mode",
       );
-      bindChoice(step.id + ":mode", pickerOf(picker), () => String(at().mode ?? "write"));
+      bindChoice(step.id + ":mode", pickerOf(picker), derived);
       cell.appendChild(picker);
-      if (String(step.mode ?? "write") === "append") {
+      if (derived() === "append") {
         cell.appendChild(el("span", { class: "op", text: "keep last" }));
         cell.appendChild(box("keep", "num", () => String(at().keep ?? ""),
                              (text) => set("keep", text)));
+      } else if (derived() === "index") {
+        cell.appendChild(el("span", { class: "op", text: "at" }));
+        cell.appendChild(box("key", "num", () => String(at().key ?? ""),
+                             (text) => set("key", text)));
       }
     } else if (shape === "map") {
       cell.appendChild(el("span", { class: "op", text: "at key" }));
       cell.appendChild(box("key", "text", () => String(at().key ?? ""),
                            (text) => set("key", text)));
+    } else {
+      const meshAgg = entityAggField(editor, at().to);
+      if (meshAgg?.shape === "list") {
+        cell.appendChild(el("span", { class: "op", text: "at index" }));
+        cell.appendChild(box("key", "num", () => String(at().key ?? ""),
+                             (text) => set("key", text)));
+      }
     }
     return cell;
   }

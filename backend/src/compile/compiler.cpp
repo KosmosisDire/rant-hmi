@@ -456,6 +456,7 @@ class Compiler {
                constant run, not in the scalar initial, which stays Nil */
             const uint32_t cell = add_cell(kind, owner, id_of(var), name, shape, Json(),
                                            var.value("persist", false));
+            program_.cells[cell].elem = declared_elem(var, name);
             aggregate_var_initial(var, shape, cell);
             return cell;
         }
@@ -1027,6 +1028,21 @@ class Compiler {
             else if (!pairs && value.is_array()) list_elements(site, value, out);
             else refuse_agg(site, "its start is " + json_brief(value));
         }
+        /* a declared element type holds from the very start: one foreign element in
+           the authored literal is a finding and the buffer starts empty instead */
+        const Shape elem = program_.cells[cell].elem;
+        if (elem != Shape::Unknown) {
+            const size_t stride = pairs ? 2 : 1;
+            for (size_t i = pairs ? 1 : 0; i < out.size(); i += stride) {
+                const Shape held = value_shape(out[i]);
+                if (held == elem || held == Shape::Nil) continue;
+                refuse_agg(site, "its elements are declared " +
+                                     std::string(shape_name(elem)) + ", and the start "
+                                     "holds a " + shape_name(held));
+                out.clear();
+                break;
+            }
+        }
         program_.cells[cell].has_list = true;
         program_.cells[cell].list_init = std::move(out);
     }
@@ -1044,6 +1060,23 @@ class Compiler {
         diag(widget_id, "slot_variant",
              "slot '" + slot + "' is " + json_brief(value) + ", which is not one of: " + known,
              DiagGrade::Error, slot);
+    }
+
+    /* the DECLARED element type of a list or map variable ("" = undeclared, any
+     * scalar): spelled with the scalar variable type names, so the vocabulary the
+     * type picker already teaches is the one this reads. A wrong spelling is a
+     * finding on the variable, never a silent anything-goes. */
+    Shape declared_elem(const Json& var, const std::string& name) {
+        const std::string text = trimmed(var.value("elem", ""));
+        if (text.empty()) return Shape::Unknown;
+        const Shape shape = var_shape(text);
+        if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text)
+            return shape;
+        diag(id_of(var), "value_shape",
+             "variable '" + name + "': '" + text +
+                 "' is not an element type; elements are f64, bool, str or icon",
+             DiagGrade::Error, "elem");
+        return Shape::Unknown;
     }
 
     Shape var_shape(const std::string& type) const {
@@ -1574,6 +1607,16 @@ class Compiler {
         if (to.contains("local")) {
             if (appends || !key.empty()) {
                 const std::string name = str_or(to, "local", "");
+                const std::string path = str_or(to, "path", "");
+                if (!path.empty()) {
+                    diag(step_id, "move_dest",
+                         "'" + name + "." + path + "' is inside a struct value, which "
+                         "the HMI cannot edit element by element yet; write the element "
+                         "to the entity's own field at an index, or stage it in a list "
+                         "variable",
+                         DiagGrade::Error, "to");
+                    return false;
+                }
                 uint32_t cell = UINT32_MAX;
                 auto found = locals.find(name);
                 if (found != locals.end()) cell = found->second;
@@ -1581,7 +1624,7 @@ class Compiler {
                 if (cell == UINT32_MAX) {
                     diag(step_id, "move_dest",
                          (appends ? "append writes into a list variable or a list slot; '"
-                                  : "a keyed write needs a map variable or a map slot; '") +
+                                  : "an element write needs a list or a map; '") +
                              name + "' is not declared",
                          DiagGrade::Error, "to");
                     return false;
@@ -1591,52 +1634,72 @@ class Compiler {
             return assign_into_local(widget, step, flow, scope, locals);
         }
         if (to.contains("kind")) {
-            if (appends || !key.empty()) {
+            if (appends) {
                 diag(step_id, "move_dest",
-                     "a mesh entity takes a whole value; append writes into a list "
-                     "variable or a list slot, and a keyed write into a map",
+                     "a mesh entity takes no append; a list variable or a list slot "
+                     "grows, and an array field takes one element at an index",
                      DiagGrade::Error, "to");
                 return false;
             }
+            /* a key on a mesh destination is an ELEMENT write into an array field;
+               assign_out owns the field resolution, so the refusals can name it */
             return assign_out(widget, step, flow, scope, locals);
         }
         diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
         return false;
     }
 
-    /* APPEND or KEYED WRITE into an aggregate cell. Both push the ELEMENT first and the
-     * bound (keep) or the address (key) after it, because the VM pops what was pushed
-     * last: one instruction shape, two verbs.
+    /* APPEND, KEYED or INDEXED WRITE into an aggregate cell. All push the ELEMENT
+     * first and the bound (keep) or the address (key / index) after it, because the VM
+     * pops what was pushed last: one instruction shape, three verbs. The address rides
+     * the step's one `key` field either way — a map addresses an entry by text key, a
+     * list a position by number index.
      *
      * The source is a SCALAR either way. A list into an append would be asking to
      * replace the list, which is what an ordinary write already is, and a nested
      * aggregate has no representation at all — so both are refused where the shape can
-     * be seen at compile time. */
+     * be seen at compile time. A DECLARED element type compiles the element toward it,
+     * so a wrong-shaped element teaches here rather than faulting at the write. */
     bool aggregate_assign(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
                         ExpressionScope& scope, uint32_t cell, bool appends,
                         const std::string& keep, const std::string& key) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
         const CellDef& def = program_.cells[cell];
-        const Shape wanted = appends ? Shape::List : Shape::Map;
-        if (def.shape != wanted) {
+        if (appends && def.shape != Shape::List) {
             diag(step_id, "move_dest",
-                 "'" + def.name + "' is " + shape_name(def.shape) + "; " +
-                     (appends ? "append writes into a list variable or a list slot"
-                              : "a keyed write needs a map variable or a map slot"),
+                 "'" + def.name + "' is " + shape_name(def.shape) +
+                     "; append writes into a list variable or a list slot",
                  DiagGrade::Error, "to");
             return false;
         }
-        Shape produced = Shape::Unknown;
-        if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+        if (!appends && def.shape != Shape::Map && def.shape != Shape::List) {
+            diag(step_id, "move_dest",
+                 "'" + def.name + "' is " + shape_name(def.shape) +
+                     "; an element write addresses a list by index or a map by key",
+                 DiagGrade::Error, "to");
             return false;
-        if (produced == Shape::List || produced == Shape::Map ||
-            produced == Shape::Struct) {
-            diag(step_id, "shape",
-                 appends ? "append takes one element; to replace the list write it whole"
-                         : "a map holds scalars by key; a whole aggregate is not a value",
-                 DiagGrade::Error, "from");
-            return false;
+        }
+        const bool indexed = !appends && def.shape == Shape::List;
+        if (def.elem != Shape::Unknown) {
+            /* the declared element type is the destination's shape: same coercions,
+               same refusals a same-shaped scalar destination gets (an enum appends to
+               a text list as its variant name) */
+            if (!push_typed(widget, step, flow, scope, from, def.elem, 0))
+                return false;
+        } else {
+            Shape produced = Shape::Unknown;
+            if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+                return false;
+            if (produced == Shape::List || produced == Shape::Map ||
+                produced == Shape::Struct) {
+                diag(step_id, "shape",
+                     appends ? "append takes one element; to replace the list write it whole"
+                             : "an element write takes one scalar; a whole aggregate is "
+                               "not an element",
+                     DiagGrade::Error, "from");
+                return false;
+            }
         }
         if (appends) {
             /* the bound is compiled ON TOP of the element already on the stack, so its
@@ -1679,24 +1742,39 @@ class Compiler {
                           std::to_string(kRetainedCeiling) +
                           "-element ceiling; add keep to bound it"
                     : "'" + def.name +
-                          "' could not append: an append takes ONE element, and a keep "
-                          "that is not a number leaves the list unbounded to the " +
+                          "' could not append: an append takes ONE element that fits "
+                          "the list, and a keep that is not a number leaves the list "
+                          "unbounded to the " +
                           std::to_string(kRetainedCeiling) + "-element ceiling");
             flow.code.push_back(ins);
             return true;
         }
-        /* likewise: the key rides above the value the write is carrying */
+        /* likewise: the address rides above the value the write is carrying — a map's
+           text key, or a list's number index */
         uint32_t key_stack = 1;
-        if (!expression(step_id, key, ExprTier::Wire, scope, Shape::Text, flow.code,
-                        key_stack, nullptr, "key"))
+        if (!expression(step_id, key, ExprTier::Wire, scope,
+                        indexed ? Shape::Num : Shape::Text, flow.code, key_stack,
+                        nullptr, "key"))
             return false;
         flow.max_stack = std::max(flow.max_stack, key_stack + 1);
         Instruction ins;
-        ins.op = OpCode::StoreKey;
-        ins.a = cell;
-        ins.b = fault_site(step_id, "store_key",
-                           "map '" + def.name + "' needs a text key, and holds at most " +
-                               std::to_string(kRetainedCeiling) + " of them");
+        if (indexed) {
+            ins.op = OpCode::StoreIndex;
+            ins.a = cell;
+            ins.b = fault_site(
+                step_id, "store_index",
+                "'" + def.name + "' did not take the element: the index must land "
+                "inside the list (an element write edits, it never grows), and the "
+                "element must fit the list");
+        } else {
+            ins.op = OpCode::StoreKey;
+            ins.a = cell;
+            ins.b = fault_site(step_id, "store_key",
+                               "map '" + def.name +
+                                   "' needs a text key, a value that fits it, and holds "
+                                   "at most " + std::to_string(kRetainedCeiling) +
+                                   " entries");
+        }
         flow.code.push_back(ins);
         return true;
     }
@@ -1931,6 +2009,18 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
+            /* an aggregate field of a struct VALUE is a read-side mirror: its storage
+               is the owner's, so the HMI has nowhere honest to put an edit. The
+               entity's own field takes the element (at an index); a list variable
+               stages anything richer. */
+            if (fields[field].shape == Shape::List || fields[field].shape == Shape::Map) {
+                diag(step_id, "move_dest",
+                     "'" + name + "." + path + "' is an aggregate field of a struct "
+                     "value, which the HMI cannot edit; write the element to the "
+                     "entity's own field at an index, or stage it in a list variable",
+                     DiagGrade::Error, "to");
+                return false;
+            }
             if (!push_typed(widget, step, flow, scope, from, fields[field].shape,
                             fields[field].type_id))
                 return false;
@@ -2076,6 +2166,13 @@ class Compiler {
         const bool whole = held_cell != UINT32_MAX &&
                            program_.cells[held_cell].shape == Shape::Struct;
         if (whole) {
+            if (!trimmed(str_or(step, "key", "")).empty()) {
+                diag(step_id, "move_dest",
+                     "a whole value goes out unaddressed; an index addresses one "
+                     "array field",
+                     DiagGrade::Error, "key");
+                return false;
+            }
             const uint32_t cell = held_cell;
             if (program_.cells[cell].type_id != target.type_id) {
                 diag(step_id, "type_mismatch",
@@ -2101,20 +2198,75 @@ class Compiler {
                          DiagGrade::Error, "to");
                 return false;
             }
-            /* an aggregate-shaped mesh field cannot be a write target: the encode side
-               never builds aggregates (a machine write is one scalar per field), so a
-               value pushed here would be dropped without a trace — refused instead */
-            if (target.fields[field].shape == Shape::List ||
-                target.fields[field].shape == Shape::Map) {
+            /* AN ARRAY FIELD TAKES ONE ELEMENT AT AN INDEX (the step's `key`): the
+               encode rewrites that element over the owner's own bytes, so the rest of
+               the array rides through the RMW untouched. Whole-aggregate writes and
+               map fields stay refused — the encode never builds those, so a value
+               pushed there would be dropped without a trace. */
+            const FieldDef& fdef = target.fields[field];
+            const std::string key = trimmed(str_or(step, "key", ""));
+            if (fdef.shape == Shape::Map) {
                 diag(step_id, "move_dest",
-                     std::string(entity_kind_name(target.kind)) + ":" + target.name + "." +
-                         target.fields[field].path +
-                         " is an aggregate field; a mesh write is one scalar per field",
+                     std::string(entity_kind_name(target.kind)) + ":" + target.name +
+                         "." + fdef.path +
+                         " is a map field, which a mesh write cannot address",
                      DiagGrade::Error, "to");
                 return false;
             }
-            if (!push_typed(widget, step, flow, scope, from, target.fields[field].shape,
-                            target.fields[field].type_id))
+            if (fdef.shape == Shape::List) {
+                if (key.empty()) {
+                    diag(step_id, "move_dest",
+                         std::string(entity_kind_name(target.kind)) + ":" + target.name +
+                             "." + fdef.path +
+                             " is an array field; a mesh write takes ONE element — "
+                             "give it an index",
+                         DiagGrade::Error, "to");
+                    return false;
+                }
+                if (target.kind != EntityKind::Variable &&
+                    target.kind != EntityKind::Topic) {
+                    diag(step_id, "move_dest",
+                         target.kind == EntityKind::Function
+                             ? "a function's arguments are sent whole with the call; "
+                               "an element write addresses a topic's or a variable's "
+                               "array"
+                             : "a signal fires a whole event; an element write "
+                               "addresses a topic's or a variable's array",
+                         DiagGrade::Error, "to");
+                    return false;
+                }
+                if (verb != Verb::Write && verb != Verb::Publish) {
+                    diag(step_id, "move_mode",
+                         "an array element is written, never forced",
+                         DiagGrade::Error, "to");
+                    return false;
+                }
+                if (!push_typed(widget, step, flow, scope, from, fdef.elem, 0))
+                    return false;
+                uint32_t key_stack = 1;
+                if (!expression(step_id, key, ExprTier::Wire, scope, Shape::Num,
+                                flow.code, key_stack, nullptr, "key"))
+                    return false;
+                flow.max_stack = std::max(flow.max_stack, key_stack + 1);
+                out.op = OpCode::MoveOutElem;
+                out.b = static_cast<uint32_t>(field);
+                out.c = fault_site(step_id, "assign_out",
+                                   "@" + target.name + "." + fdef.path +
+                                       " did not take the element: the index must be a "
+                                       "whole number inside the owner's array");
+                flow.code.push_back(out);
+                ++program_.layout.effect_capacity;
+                return true;
+            }
+            if (!key.empty()) {
+                diag(step_id, "move_dest",
+                     std::string(entity_kind_name(target.kind)) + ":" + target.name +
+                         "." + fdef.path +
+                         " is a scalar field; an index addresses an array",
+                     DiagGrade::Error, "key");
+                return false;
+            }
+            if (!push_typed(widget, step, flow, scope, from, fdef.shape, fdef.type_id))
                 return false;
             out.b = static_cast<uint32_t>(field);
         }

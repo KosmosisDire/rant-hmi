@@ -448,6 +448,21 @@ Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
                  : Value::retained_list(list_slot, count, elem);
 }
 
+/* does one element FIT a cell's DECLARED element shape? Unknown = undeclared (any
+ * scalar goes, the untyped list this always was), and Nil always fits — a gap is a
+ * value here as everywhere. Icon-typed declarations lower to Text, so the four cases
+ * cover every declarable element type. */
+static bool elem_fits(Shape elem, ValueTag tag) noexcept {
+    if (elem == Shape::Unknown || tag == ValueTag::Nil) return true;
+    switch (elem) {
+        case Shape::Num: return tag == ValueTag::Num;
+        case Shape::Bool: return tag == ValueTag::Bool;
+        case Shape::Text: return tag == ValueTag::Text;
+        case Shape::Color: return tag == ValueTag::Color;
+        default: return true;
+    }
+}
+
 bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Value value,
                                const Value& keep) noexcept {
     if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
@@ -458,6 +473,9 @@ bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Valu
     if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
         value.tag == ValueTag::Struct)
         return false;
+    /* a declared element type is a promise the runtime keeps: what the compiler could
+       not see (x, a mesh read) is refused here, loudly, at the write */
+    if (!elem_fits(cell.elem, value.tag)) return false;
     ListState& held = lists[cell.list_slot];
     /* the runaway case: with nothing bounding the ring, the ceiling is the only answer,
        and it refuses rather than silently dropping the oldest sample */
@@ -508,6 +526,8 @@ bool RuntimeState::store_key(const Program& program, uint32_t cell_index, const 
     if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
         value.tag == ValueTag::Struct)
         return false;
+    /* Nil ERASES below, so it passes; anything else must fit the declared value shape */
+    if (!elem_fits(cell.elem, value.tag)) return false;
     ListState& held = lists[cell.list_slot];
     /* the key is copied out before anything below can grow `texts` and move the slot it
        was resolved from; a key is one text value, so one buffer is the whole cost */
@@ -617,6 +637,15 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
             return true;
         }
         const AggView view = aggregate(value);
+        /* a DECLARED element type holds for a whole store too: one foreign element
+           refuses the whole picture, exactly as a wrong-shaped scalar refuses above —
+           a typed buffer must not be replaceable by what it could never have grown into.
+           A map's keys are text by construction; its VALUES are what the check walks. */
+        if (cell.elem != Shape::Unknown && view.data) {
+            const uint32_t entries = pairs ? view.count * 2 : view.count;
+            for (uint32_t i = pairs ? 1u : 0u; i < entries; i += pairs ? 2u : 1u)
+                if (!elem_fits(cell.elem, view.data[i].tag)) return false;
+        }
         /* AN UNCHANGED STORE IS NOT A CHANGE. A feed or computed binding re-evaluates
            every tick and stores what it built; copying an identical picture would move
            the generation, and the wire would resend the whole aggregate thirty times a
@@ -644,6 +673,41 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
     if (cell.text_slot >= texts.size()) return false;
     texts[cell.text_slot].set(text(program, value));
     values[cell_index] = Value::text(cell.text_slot);
+    return true;
+}
+
+bool RuntimeState::store_index(const Program& program, uint32_t cell_index,
+                               const Value& index, Value value) noexcept {
+    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    const CellDef& cell = program.cells[cell_index];
+    if (cell.shape != Shape::List || cell.list_slot >= lists.size()) return false;
+    if (index.tag != ValueTag::Num) return false;
+    if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
+        value.tag == ValueTag::Struct)
+        return false;
+    if (!elem_fits(cell.elem, value.tag)) return false;
+    ListState& held = lists[cell.list_slot];
+    /* the index truncates the way an `x[i]` read does; NaN and negatives land in the
+       first refusal, a position past the window in the second — an element write EDITS
+       what is there, it never grows the list (growth is Append's verb) */
+    const double raw = index.data.num;
+    if (!(raw >= 0.0)) return false;
+    const uint32_t at = static_cast<uint32_t>(raw);
+    if (at >= held.count) return false;
+    /* an unchanged element is no write at all: the wire stays silent */
+    if (same_element(program, *this, held.elems[at], value)) return true;
+    if (value.tag == ValueTag::Text) {
+        const uint32_t slot = list_text(held, at);
+        if (slot == UINT32_MAX) return false;
+        if (value.ref != slot) texts[slot].set(text(program, value));
+        value = Value::text(slot);
+    }
+    held.elems[at] = value;
+    /* the aggs lane speaks appends and whole pictures, never an in-place edit: the
+       generation moves and the window goes out whole on the next publish */
+    ++held.gen;
+    held.total = held.count;
+    values[cell_index] = retained_value(held, cell.list_slot, false);
     return true;
 }
 
@@ -762,6 +826,9 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
             /* the author restated where this cell starts: keep what the new program
                seeded rather than the value the old run had reached */
             if (authored_moved(old_program, old_program.cells[o], new_program, wanted)) break;
+            /* an element-type change is a retype: the buffer resets to its fresh seed
+               exactly as a scalar variable resets on a type change */
+            if (wanted.elem != old_program.cells[o].elem) break;
             const Value& value = old_state.values[o];
             if (wanted.shape == Shape::Text && value.tag == ValueTag::Text) {
                 if (wanted.text_slot < next.texts.size()) {

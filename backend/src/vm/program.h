@@ -100,6 +100,10 @@ struct CellDef {
     uint64_t node_id = 0;
     std::string name;
     Shape shape = Shape::Unknown;
+    /* list/map cells: the DECLARED element shape (a map's VALUE shape; keys are text).
+     * Unknown = undeclared, any scalar — every aggregate write enforces a declared one,
+     * so a typed list cannot drift into holding mixed elements. */
+    Shape elem = Shape::Unknown;
     Value initial = Value::nil();
     bool persistent = false;
     uint32_t text_slot = UINT32_MAX;

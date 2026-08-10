@@ -20,6 +20,27 @@ static void mirror_write(RuntimeState& state, const EffectRecord& record) noexce
     };
     if (record.bare) {
         if (record.field >= last.fields.size()) return;
+        /* an ELEMENT write lands in the entity's aggregate MIRROR, in place, so the
+           next tick reads its own write exactly as it does a scalar's. A mirror that
+           is empty or shorter than the index just skips — the owner's next delivery
+           is the truth either way, and the encode side bounds the real write. */
+        if (record.elem_index != UINT32_MAX) {
+            if (record.field >= state.entity_aggs[record.entity].size()) return;
+            const uint32_t mirror = state.entity_aggs[record.entity][record.field];
+            if (mirror == UINT32_MAX || mirror >= state.lists.size()) return;
+            ListState& held = state.lists[mirror];
+            if (record.elem_index >= held.count) return;
+            Value element = record.value;
+            if (element.tag == ValueTag::Text) {
+                const uint32_t slot = state.list_text(held, record.elem_index);
+                if (slot == UINT32_MAX) return;
+                state.texts[slot].set(record.bare_text.view());
+                element = Value::text(slot);
+            }
+            held.elems[record.elem_index] = element;
+            ++held.gen;
+            return;
+        }
         last.fields[record.field] =
             rehome(record.value, record.bare_text.view(), record.field);
         last.known = true;
@@ -55,6 +76,7 @@ bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
         view.entity = &entity;
         view.bare = record.bare;
         view.field = record.field;
+        view.elem_index = record.elem_index;
         view.value = record.value;
         view.fields = record.fields.data();
         view.set = record.set.data();

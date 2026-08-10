@@ -18,6 +18,10 @@ struct EffectView {
     const EntityDef* entity = nullptr;
     bool bare = false;
     uint32_t field = 0;
+    /* an ELEMENT write into an array field: the position `value` lands at, UINT32_MAX
+     * for a whole-field write. The encode rewrites that one element over the RMW base's
+     * own bytes, so the rest of the owner's array rides through untouched. */
+    uint32_t elem_index = UINT32_MAX;
     Value value = Value::nil();
     const Value* fields = nullptr;
     const uint8_t* set = nullptr;

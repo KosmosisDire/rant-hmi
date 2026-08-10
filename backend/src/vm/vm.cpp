@@ -931,14 +931,18 @@ bool copy_effect_text(const Program& program, RuntimeState& state, EffectRecord&
     return true;
 }
 
+/* effect records are POOLED and reused, so every emit path restates elem_index — a
+ * stale element position would quietly turn the next field write into an element one */
 bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
-               uint32_t field, const Value& value) noexcept {
+               uint32_t field, const Value& value,
+               uint32_t elem_index = UINT32_MAX) noexcept {
     if (value.tag == ValueTag::Nil || state.effect_count >= state.effects.size()) return false;
     EffectRecord& effect = state.effects[state.effect_count++];
     effect.verb = verb;
     effect.entity = entity;
     effect.bare = true;
     effect.field = field;
+    effect.elem_index = elem_index;
     effect.value = value;
     return copy_effect_text(program, state, effect, value, UINT32_MAX);
 }
@@ -950,6 +954,7 @@ bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_
     effect.verb = verb;
     effect.entity = entity;
     effect.bare = false;
+    effect.elem_index = UINT32_MAX;
     if (value.fields.size() > effect.fields.size()) return false;
     for (uint32_t i = 0; i < value.fields.size(); ++i) {
         if (value.fields[i].tag == ValueTag::Nil) return false;
@@ -1346,6 +1351,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     effect.verb = Verb::Unforce;
                     effect.entity = ins.a;
                     effect.bare = true;
+                    effect.elem_index = UINT32_MAX;
                     effect.value = Value::nil();
                     break;
                 }
@@ -1361,6 +1367,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     effect.entity = ins.a;
                     effect.bare = true;
                     effect.field = UINT32_MAX;
+                    effect.elem_index = UINT32_MAX;
                     effect.value = Value::nil();
                     break;
                 }
@@ -1497,6 +1504,31 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const Value key = pop();
                 const Value value = pop();
                 if (!state.store_key(program, ins.a, key, value)) fail(ins.b);
+                break;
+            }
+            /* one INDEX of a list cell; the index came off first, having been pushed
+             * last. A miss (not a number, outside the list, a foreign element type)
+             * is the state's refusal and faults here. */
+            case OpCode::StoreIndex: {
+                const Value index = pop();
+                const Value value = pop();
+                if (!state.store_index(program, ins.a, index, value)) fail(ins.b);
+                break;
+            }
+            /* one ELEMENT of a mesh entity's array field: [value, index] exactly as
+             * StoreIndex. The index resolves here (it must be a whole non-negative
+             * number); the bounds live at the ENCODE, against the owner's own bytes,
+             * because only the RMW base knows how long the array really is. */
+            case OpCode::MoveOutElem: {
+                const Value index = pop();
+                const Value value = pop();
+                if (index.tag != ValueTag::Num || !(index.data.num >= 0.0)) {
+                    fail(ins.c);
+                    break;
+                }
+                if (!emit_bare(program, state, static_cast<Verb>(ins.small), ins.a,
+                               ins.b, value, static_cast<uint32_t>(index.data.num)))
+                    fail(ins.c);
                 break;
             }
             case OpCode::MakeList: {

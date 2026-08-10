@@ -102,6 +102,24 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
     : "num";
   const isAgg = variable.type === "list" || variable.type === "map";
 
+  /* OF: list/map only — the element type the compiler enforces on appends and on
+     an indexed/keyed element write */
+  const ofRow: HTMLElement[] = [];
+  if (isAgg) {
+    const of = selectField(
+      [{ value: "", label: "anything" }, { value: "f64", label: "number" },
+       { value: "bool", label: "bool" }, { value: "str", label: "text" },
+       { value: "icon", label: "icon" }],
+      String(variable.elem ?? ""),
+      (choice) => setProp("elem", choice),
+    );
+    bindChoice(variable.id + ":elem", pickerOf(of), () => String(at().elem ?? ""));
+    ofRow.push(
+      el("span", { class: "row-label", text: "OF" }),
+      el("div", { class: "var-line" }, [of]),
+    );
+  }
+
   /* the INIT rows: a scalar edits one value; a list or a map edits the JSON of where it
      starts (empty means an empty container -- a declared buffer is appendable from
      birth, never UNKNOWN); an enum picks its start VARIANT; a struct edits a default
@@ -223,6 +241,7 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
       el("div", { class: "var-grid" }, [
         el("span", { class: "row-label", text: "TYPE" }, [diagIcon(typeDiags)]),
         el("div", { class: "var-line" }, [type]),
+        ...ofRow,
         ...initRows,
         el("span", { class: "row-label", text: "KEEP" }),
         el("div", { class: "var-line" }, [

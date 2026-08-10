@@ -486,10 +486,18 @@ bool DartMesh::refresh() {
     if (!impl_->node || !impl_->node->valid()) return false;
     impl_->dirty.store(false, std::memory_order_relaxed);
 
-    /* fold every peer's advertised entities by (kind, name). The provider side owns
-     * the schema and reliability; consumers only widen writable/forceable. */
+    /* fold every LIVE peer's advertised entities by (kind, name). The provider side
+     * owns the schema and reliability; consumers only widen writable/forceable.
+     * A DROPPED peer — silent past its timeout, its slot lingering only for a
+     * same-UUID resume — must NOT feed the fold: after a node restart the dead
+     * incarnation's stale detail cache still advertises the OLD schemas, and folding
+     * them beside (or ahead of) the live incarnation's makes the HMI keep or retake
+     * the old type against a re-typed provider — every match then refuses with
+     * schema-mismatch, values never flow, and the signature flaps as the two
+     * incarnations trade wins, recompiling in a storm. Down means down. */
     std::map<std::string, dart::Entity> fold;
     for (const dart::Peer& peer : impl_->node->peers()) {
+        if (!peer.active) continue;
         for (dart::Entity& entity : impl_->node->peer_entities(peer.id)) {
             if (entity.name.empty() || entity.name.compare(0, 2, "0x") == 0)
                 continue;   /* details not fetched yet; the next refresh sees them */
@@ -1092,9 +1100,76 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                                          dc::dart_string(text.data(), text.size()));
                 break;
             case dart::FieldType::Array:
-            case dart::FieldType::VArray:
+            case dart::FieldType::VArray: {
+                /* a WHOLE aggregate stays read-side (the RMW base keeps the owner's
+                   bytes untouched); ONE ELEMENT is writable at an index — rewritten in
+                   place over that base, so the rest of the owner's array rides through
+                   exactly as delivered. The bounds are the owner's: a variable array's
+                   live count is what the base carries, and an element write never
+                   grows it (growth belongs to the owner). */
+                if (effect.elem_index == UINT32_MAX) return true;
+                if (enc.elem == dart::FieldType::String) {
+                    if (!dc::dart_set_string_at(
+                            rec.out.data(), rec.out.size(), schema, path,
+                            static_cast<uint16_t>(effect.elem_index),
+                            dc::dart_string(text.data(), text.size()))) {
+                        fault = "field '" + enc.path + "' has no element " +
+                                std::to_string(effect.elem_index) + " to write";
+                        return false;
+                    }
+                    return true;
+                }
+                if (enc.elem != dart::FieldType::Bool && value.tag != ValueTag::Num) {
+                    fault = "field '" + enc.path + "' holds numbers; the element is not one";
+                    return false;
+                }
+                const dc::DartBytes view = dc::dart_get_array(
+                    dc::dart_bytes(rec.out.data(), rec.out.size()), schema, path);
+                const size_t size = elem_size_of(enc.elem);
+                const uint32_t count =
+                    view.data && size ? static_cast<uint32_t>(view.len / size) : 0;
+                if (effect.elem_index >= count) {
+                    fault = "field '" + enc.path + "' holds " + std::to_string(count) +
+                            " elements; index " + std::to_string(effect.elem_index) +
+                            " is past it (an element write never grows the owner's array)";
+                    return false;
+                }
+                uint8_t* at = rec.out.data() + (view.data - rec.out.data()) +
+                              static_cast<size_t>(effect.elem_index) * size;
+                switch (enc.elem) {
+                    case dart::FieldType::Bool:
+                        at[0] = value_truth(value) ? 1 : 0;
+                        break;
+                    case dart::FieldType::F32: {
+                        const float f = static_cast<float>(value.data.num);
+                        std::memcpy(at, &f, sizeof(f));
+                        break;
+                    }
+                    case dart::FieldType::F64:
+                        std::memcpy(at, &value.data.num, sizeof(double));
+                        break;
+                    default: {
+                        /* the integer kinds, little-endian, narrowing like a C cast —
+                           the same rules the whole-field setters apply */
+                        const bool unsigned_kind =
+                            enc.elem == dart::FieldType::U8 ||
+                            enc.elem == dart::FieldType::U16 ||
+                            enc.elem == dart::FieldType::U32 ||
+                            enc.elem == dart::FieldType::U64;
+                        const uint64_t raw =
+                            unsigned_kind
+                                ? static_cast<uint64_t>(
+                                      std::llround(std::max(0.0, value.data.num)))
+                                : static_cast<uint64_t>(std::llround(value.data.num));
+                        for (size_t i = 0; i < size; ++i)
+                            at[i] = static_cast<uint8_t>(raw >> (8 * i));
+                        break;
+                    }
+                }
+                return true;
+            }
             case dart::FieldType::Map:
-                /* aggregates are read-side only: the buffer holds an inert empty
+                /* map fields are read-side only: the buffer holds an inert empty
                  * placeholder and the RMW base keeps the owner's bytes untouched */
                 return true;
             default:

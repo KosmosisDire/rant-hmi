@@ -99,6 +99,9 @@ const char* op_name(OpCode op) {
         case OpCode::LoadArg: return "LOAD_ARG";
         case OpCode::Raise: return "RAISE";
         case OpCode::ClockRead: return "CLOCK_READ";
+        case OpCode::Notify: return "NOTIFY";
+        case OpCode::StoreIndex: return "STORE_INDEX";
+        case OpCode::MoveOutElem: return "MOVE_OUT_ELEM";
     }
     return "?";
 }

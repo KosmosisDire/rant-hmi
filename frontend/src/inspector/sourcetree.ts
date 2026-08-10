@@ -16,7 +16,7 @@ import { Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { makeShell, placeBox, Shell } from "../popover.js";
 import { scrollToCurrent, streeTree } from "../streerows.js";
-import { Json, MeshEntity, MeshField, SlotSpec, Var, Node } from "../types.js";
+import { aggLabel, Json, MeshEntity, MeshField, SlotSpec, Var, Node } from "../types.js";
 import { FlowScope } from "./flowscope.js";
 import { EntityFolder, foldEntities } from "./scope.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
@@ -171,7 +171,9 @@ export function resolveShape(
     const local = (widget?.locals ?? []).find((v) => v.name === ref.name);
     const found = local ?? editor.store.globals().find((v) => v.name === ref.name);
     if (!found) return "";
-    if (!path) return varShape(found.type);
+    if (!path)
+      return found.type === "list" || found.type === "map"
+        ? aggLabel(found.type, found.elem) : varShape(found.type);
     return varFields(editor, found.type).find((f) => f.path === path)?.shape ?? "";
   }
   const entity = editor.mesh.entities.find((e) => e.kind === ref.kind && e.name === ref.name);
@@ -274,8 +276,10 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
                     shape: opts.scope.x?.shape ?? "" },
           });
         for (const local of opts.scope.locals) {
-          const row = { name: local.name, shape: local.shape, type: local.type,
-                        fields: local.fields ?? [] };
+          const row = { name: local.name,
+                        shape: local.shape === "list" || local.shape === "map"
+                          ? aggLabel(local.shape, local.elem) : local.shape,
+                        type: local.type, fields: local.fields ?? [] };
           /* the trigger's parameter and the flow's temporaries both belong to THIS
              flow's own vocabulary, listed at the top beside x */
           if (local.note === "temporary" || local.note === "event parameter")
@@ -285,7 +289,8 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
       } else if (wanted("L")) {
         const named = (variable: Var): NamedVar => ({
           name: variable.name,
-          shape: varShape(variable.type),
+          shape: variable.type === "list" || variable.type === "map"
+            ? aggLabel(variable.type, variable.elem) : varShape(variable.type),
           type: varFields(editor, variable.type).length ? variable.type : undefined,
           fields: varFields(editor, variable.type),
         });

@@ -74,6 +74,10 @@ struct EffectRecord {
     uint32_t entity = 0;
     bool bare = false;
     uint32_t field = 0;
+    /* an ELEMENT write into an array field: the position `value` lands at, UINT32_MAX
+     * for every whole-field write. Records are pooled and reused, so every emit path
+     * must set it — a stale index would turn the next field write into an element one. */
+    uint32_t elem_index = UINT32_MAX;
     Value value = Value::nil();
     std::vector<Value> fields;
     std::vector<uint8_t> set;
@@ -220,6 +224,14 @@ class RuntimeState {
      * keep, so a runaway one is a bug by construction. */
     bool store_key(const Program& program, uint32_t cell, const Value& key,
                    Value value) noexcept;
+    /* Write ONE position of a list cell. The index must be a number inside the list
+     * (0..count-1): an element write EDITS in place, growth stays Append's verb, so a
+     * miss refuses rather than extending. A Nil value stores as Nil (a gap is a value;
+     * a list has no positional erase). An unchanged element is no write at all — the
+     * wire stays silent; a changed one is a discontinuity (gen moves, whole resend),
+     * because the aggs lane has no in-place-edit vocabulary. */
+    bool store_index(const Program& program, uint32_t cell, const Value& index,
+                     Value value) noexcept;
     /* One delivered aggregate field into its mirror slot: `data` is the delivery's
      * element run (a map's pairs interleaved, arrival order), `elem_texts[k]` the text
      * behind data[k] where that element is text. Bounds to the field's own bound and

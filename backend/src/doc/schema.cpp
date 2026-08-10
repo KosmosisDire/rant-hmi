@@ -161,6 +161,11 @@ const std::vector<NodeSpec>& table() {
                           {"f64", "bool", "str", "icon", "timer", "list", "map"}, "init",
                           {Json(0.0), Json(false), Json(""), Json(""), Json(1.0),
                            Json::array(), Json::object()}),
+            /* a list's or map's DECLARED ELEMENT type (a map's value type; keys are
+             * text): one of the scalar type names, "" = undeclared (any scalar). The
+             * compiler checks it where it can see and the runtime enforces it on every
+             * aggregate write; on a scalar variable it is inert. */
+            text("elem", ""),
             any("init", 0),
             boolean("persist", false),
         };
@@ -196,7 +201,9 @@ const std::vector<NodeSpec>& table() {
                `mode` applies to a V destination only (write/force/unforce) or names the
                APPEND into a list; every other verb is derived. `keep` bounds an append
                to the last N elements, which is the whole of what a history ring is, and
-               `key` addresses one key of a map destination. Both are expressions. */
+               `key` addresses ONE entry of an aggregate destination: a map's entry by
+               text key, a list's (or a mesh array field's) element by number index.
+               Both are expressions. */
             {"assign", {object("from", Json{{"expr", "x"}}, Role::MoveRef),
                       object("to", Json::object(), Role::MoveRef),
                       enumer("mode", {"write", "force", "unforce", "append"}, "write"),

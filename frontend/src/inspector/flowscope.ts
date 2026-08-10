@@ -57,6 +57,8 @@ function declared(editor: Editor, widget: Node | null): LocalInfo[] {
       const note = own.has(v.id) ? ("local" as const) : ("global" as const);
       const scalar = VAR_SHAPE[v.type];
       if (scalar) return { name: v.name, shape: scalar, note };
+      if (v.type === "list" || v.type === "map")
+        return { name: v.name, shape: v.type, elem: v.elem || undefined, note };
       if (v.type.includes(".")) return { name: v.name, shape: "enum", type: v.type, note };
       return {
         name: v.name,

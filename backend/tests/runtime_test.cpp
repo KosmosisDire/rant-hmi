@@ -2460,6 +2460,147 @@ void test_aggregate_variables() {
     CHECK_EQ(map_dump(restated, edited, table), "a=1,aa=6,zz=tail");
 }
 
+/* AN ELEMENT WRITE ADDRESSES ONE POSITION. `list[i] = v` edits in place — it never
+ * grows (growth is append's verb), a miss is a fault, an unchanged element is silent to
+ * the wire, and a changed one is a discontinuity (the aggs lane speaks appends, so the
+ * generation moves and the window resends whole). A DECLARED element type is enforced
+ * on every write verb, at compile where the shape is visible and at the write where it
+ * is not. A mesh entity's array field takes the same spelling: one element, rewritten
+ * over the owner's own bytes, mirrored so the next tick reads its own write. */
+void test_indexed_writes() {
+    EntityDef plant;
+    plant.kind = EntityKind::Variable;
+    plant.name = "plant";
+    FieldDef temps;
+    temps.path = "temps";
+    temps.shape = Shape::List;
+    temps.elem = Shape::Num;
+    temps.bound = 8;
+    FieldDef mode;
+    mode.path = "mode";
+    mode.shape = Shape::Num;
+    plant.fields = {temps, mode};
+    plant.writable = true;
+    FakeMesh mesh(std::vector<EntityDef>{plant});
+
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows",
+         Json::array({
+             flow_on("tap", {steps::set_index("buf", "1", "99"),
+                             steps::set_index("words", "0", "'first'")}),
+             /* past the window: the write refuses and faults, the list stands */
+             flow_on("press", {steps::set_index("buf", "5", "1")}),
+             /* the same value again: no write at all, the wire stays silent */
+             flow_on("release", {steps::set_index("buf", "1", "99")}),
+             /* a whole store into a TYPED list from an expression the compiler cannot
+                element-check: the runtime refuses the foreign picture at the store */
+             flow_on("held", {steps::set_var("nums", "words.map(v => v)")}),
+             /* one element of the entity's array, over the owner's own bytes */
+             flow_on("pressrelease", {steps::write_elem("V", "plant", "temps", "1", "77")}),
+         })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({
+                      Json{{"name", "buf"}, {"type", "list"},
+                           {"init", Json::array({10, 20, 30})}},
+                      Json{{"name", "words"}, {"type", "list"}, {"elem", "str"},
+                           {"init", Json::array({"a", "b"})}},
+                      Json{{"name", "nums"}, {"type", "list"}, {"elem", "f64"},
+                           {"init", Json::array({1, 2})}},
+                  })},
+                 {"pages",
+                  Json::array({Json{{"name", "P"},
+                                    {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("indexed compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    const int buf = named_cell(program, "buf");
+    const int words = named_cell(program, "words");
+    const int nums = named_cell(program, "nums");
+    if (!CHECK(buf >= 0 && words >= 0 && nums >= 0)) return;
+    /* the declared element type landed on the cell; the undeclared list stayed open */
+    CHECK(program.cells[buf].elem == Shape::Unknown);
+    CHECK(program.cells[words].elem == Shape::Text);
+    CHECK(program.cells[nums].elem == Shape::Num);
+
+    /* the owner's array arrives, so the RMW base and the mirror have bytes to edit */
+    mesh.push_update(EntityKind::Variable, "plant",
+                     {Value::list(0, 3, ValueTag::Num), Value::number(0)});
+    mesh.push_elems(0, {Value::number(1), Value::number(2), Value::number(3)});
+    std::string fault;
+    scheduler.tick(fault);
+    const RuntimeState& state = scheduler.state();
+    const uint32_t buf_slot = program.cells[buf].list_slot;
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    uint32_t seq = 0;
+    auto press = [&](const char* event, const Value& value) {
+        scheduler.post(InputEvent{1, widget, event, value, ++seq});
+        std::string one;
+        scheduler.tick(one);
+        return one;
+    };
+
+    press("tap", Value::boolean(true));
+    CHECK_EQ(list_dump(program, state, buf), "10,99,30");
+    CHECK_EQ(list_dump(program, state, words), "first,b");
+    /* an in-place edit is a discontinuity: the generation moved, the cursor rebased */
+    CHECK(state.lists[buf_slot].gen == 1);
+    CHECK(state.lists[buf_slot].total == 3);
+
+    /* past the window: faulted, nothing changed */
+    const uint32_t faults_before = state.fault_count;
+    press("press", Value::boolean(true));
+    CHECK_EQ(list_dump(program, state, buf), "10,99,30");
+    CHECK(state.fault_count > faults_before);
+
+    /* the same element again: silent — the generation stands still */
+    press("release", Value::boolean(false));
+    CHECK(state.lists[buf_slot].gen == 1);
+
+    /* a whole store of text into a list of numbers: refused at the write, faulted */
+    const uint32_t held_faults = state.fault_count;
+    press("held", Value::boolean(true));
+    CHECK_EQ(list_dump(program, state, nums), "1,2");
+    CHECK(state.fault_count > held_faults);
+
+    /* the entity element write went out over the owner's bytes, and the mirror took
+       it too: the next read of @plant.temps[1] is the write, without an owner echo */
+    mesh.clear();
+    press("pressrelease", Value::boolean(false));
+    bool wrote = false;
+    for (const std::string& line : mesh.transcript())
+        if (line.find("plant.temps[1]=77") != std::string::npos) wrote = true;
+    CHECK(wrote);
+    const uint32_t mirror = state.entity_aggs[0][0];
+    if (CHECK(mirror != UINT32_MAX && state.lists[mirror].count == 3)) {
+        CHECK(state.lists[mirror].elems[1].tag == ValueTag::Num);
+        CHECK_EQ(state.lists[mirror].elems[1].data.num, 77.0);
+    }
+
+    /* direct refusals the flows above cannot spell: a non-number index, a foreign
+       element on a typed cell, an aggregate element */
+    RuntimeState& mut = const_cast<RuntimeState&>(state);
+    CHECK(!mut.store_index(program, buf, Value::text(0), Value::number(1)));
+    CHECK(!mut.store_index(program, buf, Value::number(-1), Value::number(1)));
+    CHECK(!mut.store_index(program, nums, Value::number(0),
+                           state.values[words]));
+    CHECK(!mut.append_list(program, nums, Value::boolean(true), Value::nil()));
+    CHECK_EQ(list_dump(program, state, nums), "1,2");
+}
+
 /* WHOLE AGGREGATES FROM EXPRESSIONS. A declared list or map variable — or a list slot —
  * takes a whole aggregate the wire tier builds: copy a variable, rebuild one with map or
  * filter. The one-scalar rule steps aside exactly there and nowhere else: a scalar
@@ -2755,7 +2896,9 @@ void test_aggregate_expressions() {
     };
     refuses(steps::set_var("n", "src"), "one scalar");
     refuses(steps::set_x("src"), "one scalar");
-    refuses(steps::write_field("V", "plant", "temps", "src"), "aggregate field");
+    /* a whole list still never crosses to the mesh; the refusal now teaches the one
+       write an array field does take (an element, at an index) */
+    refuses(steps::write_field("V", "plant", "temps", "src"), "give it an index");
 }
 
 /* THE CEILINGS, and what happens at them. An unbounded append refuses at the retained
@@ -2980,12 +3123,17 @@ void test_aggregate_refusals() {
     EntityDef plant;
     plant.kind = EntityKind::Variable;
     plant.name = "plant";
+    plant.type_name = "Plant";
+    plant.writable = true;
     FieldDef names;
     names.path = "names";
     names.shape = Shape::List;
     names.elem = Shape::Text;
     names.bound = 4;
-    plant.fields = {names};
+    FieldDef speed;
+    speed.path = "speed";
+    speed.shape = Shape::Num;
+    plant.fields = {names, speed};
     FakeMesh mesh(std::vector<EntityDef>{plant});
     auto refuses = [&](Json flow, const char* needle) {
         Json button = {{"kind", "frame"}, {"type", "Button"}, {"name", "B"},
@@ -2997,6 +3145,8 @@ void test_aggregate_refusals() {
                           Json{{"name", "log"}, {"type", "list"}},
                           Json{{"name", "table"}, {"type", "map"}},
                           Json{{"name", "n"}, {"type", "f64"}, {"init", 0}},
+                          Json{{"name", "typed"}, {"type", "list"}, {"elem", "f64"}},
+                          Json{{"name", "m"}, {"type", "Plant"}},
                       })},
                      {"pages",
                       Json::array({Json{{"name", "P"},
@@ -3013,11 +3163,19 @@ void test_aggregate_refusals() {
                         diag.message.c_str());
         return false;
     };
-    /* append needs a list; a keyed write needs a map */
+    /* append needs a list; an element write needs an aggregate, and a LIST reads its
+       address as a NUMBER index — a text key against one is a shape refusal */
     CHECK(refuses(flow_on("tap", {steps::append_var("n", "1", "3")}),
                   "append writes into a list variable"));
-    CHECK(refuses(flow_on("tap", {steps::set_key("log", "'k'", "1")}),
-                  "a keyed write needs a map"));
+    CHECK(refuses(flow_on("tap", {steps::set_key("n", "'k'", "1")}),
+                  "an element write addresses a list by index or a map by key"));
+    CHECK(refuses(flow_on("tap", {steps::set_key("log", "'k'", "1")}), "num"));
+    /* a struct value's insides take no element writes; the entity's own field does */
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
+                                       {"from", {{"expr", "1"}}},
+                                       {"to", {{"local", "m"}, {"path", "names"}}},
+                                       {"key", "0"}}}),
+                  "inside a struct value"));
     /* keep belongs to an append, and an append is not also a keyed write */
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
@@ -3041,16 +3199,56 @@ void test_aggregate_refusals() {
                   "a wire value is one scalar"));
     CHECK(refuses(flow_on("tap", {steps::append_var("log", "[1, 2]", "3")}),
                   "a wire value is one scalar"));
-    /* a mesh entity takes a whole value; neither verb reaches one */
+    /* a mesh entity takes no append; its array fields take one ELEMENT at an index,
+       which must be present, a number, and never forced — and a scalar field takes
+       no index at all */
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", steps::entity_ref("V", "nothing")},
                                        {"mode", "append"}}}),
-                  "a mesh entity takes a whole value"));
+                  "a mesh entity takes no append"));
+    CHECK(refuses(flow_on("tap", {steps::write_field("V", "plant", "names", "'a'")}),
+                  "give it an index"));
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
+                                       {"from", {{"expr", "'a'"}}},
+                                       {"to", steps::entity_ref("V", "plant", "names")},
+                                       {"key", "0"},
+                                       {"mode", "force"}}}),
+                  "never forced"));
+    CHECK(refuses(flow_on("tap", {steps::write_elem("V", "plant", "speed", "0", "1")}),
+                  "a scalar field; an index addresses an array"));
+    /* the DECLARED element type teaches at compile where the shape is visible */
+    CHECK(refuses(flow_on("tap", {steps::append_var("typed", "'word'", "3")}), "num"));
+    CHECK(refuses(flow_on("tap", {steps::set_index("typed", "0", "'word'")}), "num"));
     /* an every trigger with no readable cadence drops the trigger and says so */
     CHECK(refuses(Json{{"when", Json::array({steps::every(Json("rate * 2"))})},
                        {"do", Json::array({steps::append_var("log", "1", "3")})}},
                   "an 'every' trigger needs `ms`"));
+
+    /* the DECLARED element type gates the declaration itself: a wrong spelling and a
+       foreign start element are findings on the variable */
+    auto var_refuses = [&](Json var, const char* needle) {
+        Json root = {{"version", 1},
+                     {"next_id", 1},
+                     {"globals", Json::array({std::move(var)})},
+                     {"pages",
+                      Json::array({Json{{"name", "P"}, {"children", Json::array()}}})}};
+        Document document;
+        std::string err;
+        CHECK(document.adopt(std::move(root), err));
+        CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+        for (const Diag& diag : compiled.program.diagnostics)
+            if (diag.message.find(needle) != std::string::npos) return true;
+        for (const Diag& diag : compiled.program.diagnostics)
+            std::printf("elem refusal: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+        return false;
+    };
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "banana"}},
+                      "not an element type"));
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "f64"},
+                           {"init", Json::array({1, "a"})}},
+                      "elements are declared num"));
 }
 
 /* variants(<TypeRef>): the options ARE the mesh enum's vocabulary, in declaration
@@ -3524,6 +3722,7 @@ int main() {
     RUN(test_reduce);
     RUN(test_list_cells);
     RUN(test_aggregate_variables);
+    RUN(test_indexed_writes);
     RUN(test_aggregate_expressions);
     RUN(test_aggregate_ceilings);
     RUN(test_map_reduce);

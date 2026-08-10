@@ -155,6 +155,8 @@ export interface Var {
   type: string;
   init: Json;
   persist: boolean;
+  /* list/map only — the declared element type ("" = any scalar) */
+  elem?: string;
 }
 
 /* what a scalar variable type is CALLED in the UI. A type outside this table is a TypeRef
@@ -163,6 +165,12 @@ export const SCALAR_LABEL: Record<string, string> = {
   f64: "number", bool: "bool", str: "text", icon: "icon", timer: "timer",
   list: "list", map: "map",
 };
+
+/* what a list's or map's declared element type reads as in a picker row:
+   "list of number"; bare "list" when the elements are undeclared */
+export function aggLabel(type: string, elem?: string): string {
+  return elem ? type + " of " + (SCALAR_LABEL[elem] ?? elem) : type;
+}
 
 /* a theme token: a named color role with one value per theme mode; a
    color slot value "$<name>" resolves through it in the view's own mode */

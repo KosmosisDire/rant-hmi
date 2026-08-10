@@ -62,6 +62,27 @@ inline Json set_key(const std::string& name, const std::string& key,
                 {"key", key}};
 }
 
+/* <list variable>[<index expression>] = <expression>: the same one address field a map
+ * uses, read as a position because the destination is a list. Edits in place, never
+ * grows. */
+inline Json set_index(const std::string& name, const std::string& index,
+                      const std::string& expression) {
+    return Json{{"kind", "assign"},
+                {"from", {{"expr", expression}}},
+                {"to", {{"local", name}}},
+                {"key", index}};
+}
+
+/* <expression> -> <entity>.<array field>[<index expression>]: one element over the
+ * owner's own bytes */
+inline Json write_elem(const char* kind, const std::string& name, const std::string& path,
+                       const std::string& index, const std::string& expression) {
+    return Json{{"kind", "assign"},
+                {"from", {{"expr", expression}}},
+                {"to", entity_ref(kind, name, path)},
+                {"key", index}};
+}
+
 /* a flow trigger that runs on its own clock: `ms` is a number or constant arithmetic
  * over the widget's slots */
 inline Json every(const Json& ms) {

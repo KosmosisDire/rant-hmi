@@ -133,6 +133,21 @@ enum class OpCode : uint8_t {
      * message, renders it as str() renders any scalar, and queues a NoticeRecord the
      * App drains after the tick and broadcasts — the VM never sees a session. */
     Notify,
+    /* WRITE ONE INDEX of list cell `a` (`b`: the fault site). The stack reads
+     * [value, index] -- the index was pushed last, so it comes off first. The index
+     * must land inside the list (0..count-1): an element write EDITS, it never grows —
+     * growth is Append's verb — so a miss is a fault, not a silent extension. A Nil
+     * value STORES as Nil (a gap is a value; a list has no positional erase). To the
+     * wire an in-place edit is a discontinuity: the aggs lane speaks appends, so the
+     * generation moves and the window resends whole. */
+    StoreIndex,
+    /* WRITE ONE ELEMENT of a mesh entity's array field: entity `a`, field `b`,
+     * verb in `small`, fault site in `c`. The stack reads [value, index], index off
+     * first, exactly as StoreIndex. The effect carries the element position and the
+     * encode side rewrites that one element over the owner's own bytes (RMW), so the
+     * rest of the array is preserved untouched; an index past the owner's live count
+     * is refused at the encode, never a grow. */
+    MoveOutElem,
 };
 
 /* the fields `time` reads by — ONE table, so the scalar tier's bindings, the template
