@@ -38,6 +38,7 @@ using Clock = std::chrono::steady_clock;
 constexpr size_t kSignalRingCap = 256;   /* queued signal fires before oldest drops */
 constexpr int kTakeBudget = 256;         /* topic messages decoded per entity per tick */
 constexpr uint32_t kEffectWaitUs = 20000;   /* bounded backpressure for effect sends */
+constexpr size_t kLogPendCap = 512;      /* undrained @dart/log lines before oldest drops */
 
 EntityKind kind_of(dart::EntityKind kind) {
     switch (kind) {
@@ -362,6 +363,12 @@ struct DartMesh::Impl {
 
     std::vector<uint64_t> viewed_pages;
 
+    /* the mesh-wide @dart/log stream: on_log callbacks (polling thread) append here,
+     * take_logs (logic thread) empties it; bounded drop-oldest so a deaf consumer can
+     * never grow it */
+    std::mutex log_mu;
+    std::deque<MeshLogLine> log_pending;
+
     Rec* ensure_rec(const EntityDef& def);
     void fill_rec_schema(Rec& rec, const dart::Entity& folded_entity) const;
     bool ensure_consumption(Rec& rec, std::string& err);
@@ -416,11 +423,45 @@ bool DartMesh::start(std::string& err) {
         err = dart::Node::last_open_error();
         return false;
     }
+    /* The mesh-wide log stream, one subscription per level, registered BEFORE the
+     * service thread starts (on_log widens the node's own log handle, which is setup
+     * work). A widened @dart/log topic is a CONSUMER-QUEUE topic — lines queue inside
+     * DART and nobody fires the handler until someone dispatches that queue — so
+     * take_logs pumps the three queues on the logic thread; the handler then runs
+     * there, copying the line into the pending ring and nothing else. */
+    for (const dart::LogLevel level :
+         {dart::LogLevel::Error, dart::LogLevel::Warn, dart::LogLevel::Info}) {
+        impl_->node->on_log(level, [impl, level](const dart::LogLine& line) {
+            MeshLogLine copy;
+            copy.level = static_cast<int>(level);
+            copy.node = std::string(line.node);
+            copy.text = std::string(line.text);
+            copy.wall_us = line.wall_us;
+            std::lock_guard<std::mutex> hold(impl->log_mu);
+            if (impl->log_pending.size() >= kLogPendCap) impl->log_pending.pop_front();
+            impl->log_pending.push_back(std::move(copy));
+        });
+    }
     if (!impl_->node->start()) {
         err = "mesh service thread failed to start";
         return false;
     }
     return true;
+}
+
+void DartMesh::take_logs(std::vector<MeshLogLine>& out) {
+    /* drain exactly the three log queues — never dart_node_dispatch, which would pull
+     * the ENTITY topics' queued messages through the (empty) node handler and eat them
+     * out from under drain()'s take path */
+    if (impl_->node && impl_->node->valid())
+        for (const dart::LogLevel level :
+             {dart::LogLevel::Error, dart::LogLevel::Warn, dart::LogLevel::Info}) {
+            dart::Topic channel = impl_->node->log_topic(level);
+            if (channel.valid()) channel.dispatch(/*max_msgs=*/64, /*timeout_ms=*/0);
+        }
+    std::lock_guard<std::mutex> hold(impl_->log_mu);
+    for (MeshLogLine& line : impl_->log_pending) out.push_back(std::move(line));
+    impl_->log_pending.clear();
 }
 
 const std::vector<EntityDef>& DartMesh::reflection() const noexcept { return impl_->entities; }

@@ -20,6 +20,9 @@ namespace {
  * older than this reloads from a snapshot instead */
 constexpr size_t kHistoryDepth = 128;
 
+/* how much log history the snapshot replays to a late joiner */
+constexpr size_t kLogKeep = 256;
+
 /* Client frames are untrusted: read fields without ever throwing. */
 Json field(const Json& object, const char* key) {
     if (!object.is_object()) return nullptr;
@@ -118,12 +121,15 @@ size_t App::poll() {
             std::string fault;
             if (!scheduler_->tick(fault) && opts_.verbose)
                 std::printf("hmi: effect fault: %s\n", fault.c_str());
+            /* before the next tick's clear_outputs erases them */
+            drain_notices();
             next_tick_ += std::chrono::milliseconds(1);
         }
         if (next_tick_ + std::chrono::milliseconds(100) < now)
             next_tick_ = now;
         if (scheduler_->state().tick - last_live_tick_ >= 33) publish_live();
     }
+    publish_log();
     /* reflection at control-plane rate: a schema arriving or changing recompiles
      * through the ordinary hot-swap path and re-serves the entity tree */
     if (std::chrono::steady_clock::now() >= next_mesh_refresh_) {
@@ -522,6 +528,49 @@ Json App::diagnostics() const {
     return rows;
 }
 
+/* one notify step's record into a wire entry: the flow already rendered the text, the
+ * tick already stamped the wall clock. `ms` rides only when the author set it — its
+ * absence IS the "scale with the length" instruction to the view. */
+void App::drain_notices() {
+    if (!scheduler_) return;
+    RuntimeState& state = scheduler_->state();
+    for (uint32_t i = 0; i < state.notice_count && i < state.notices.size(); ++i) {
+        const NoticeRecord& record = state.notices[i];
+        Json entry{{"level", "notify"},
+                   {"node", "hmi"},
+                   {"text", std::string(record.text.view())},
+                   {"wall_us", static_cast<uint64_t>(state.wall_ms * 1000.0)}};
+        if (record.ms) entry["ms"] = record.ms;
+        fresh_log_.push_back(std::move(entry));
+    }
+    state.notice_count = 0;
+}
+
+/* the log's one exit: whatever this poll gathered — notify records and the mesh's
+ * @dart/log lines — lands in the ring (the snapshot's backlog) and broadcasts as ONE
+ * `log` frame, so every session pops the same notifications at the same moment */
+void App::publish_log() {
+    mesh_logs_.clear();
+    mesh_->take_logs(mesh_logs_);
+    static const char* const kLevelNames[3] = {"error", "warn", "info"};
+    for (const MeshLogLine& line : mesh_logs_)
+        fresh_log_.push_back(
+            Json{{"level", kLevelNames[line.level >= 0 && line.level < 3 ? line.level : 2]},
+                 {"node", line.node},
+                 {"text", line.text},
+                 {"wall_us", line.wall_us}});
+    if (fresh_log_.empty()) return;
+    Json entries = Json::array();
+    for (Json& entry : fresh_log_) {
+        log_.push_back(entry);
+        entries.push_back(std::move(entry));
+    }
+    fresh_log_.clear();
+    while (log_.size() > kLogKeep) log_.pop_front();
+    if (server_.sessions())
+        server_.broadcast(Json{{"type", "log"}, {"entries", std::move(entries)}});
+}
+
 void App::publish_live() {
     if (!scheduler_) return;
     last_live_tick_ = scheduler_->state().tick;
@@ -538,6 +587,8 @@ void App::publish_live() {
 
 Json App::snapshot() const {
     Json live_frame = live(/*full=*/true);
+    Json log_rows = Json::array();
+    for (const Json& entry : log_) log_rows.push_back(entry);
     return Json{{"type", "snapshot"},
                 {"version", doc_.version()},
                 {"doc", doc_.root},
@@ -558,6 +609,10 @@ Json App::snapshot() const {
                  * (registry/attrs.h), never changes at runtime, so — exactly like
                  * `builtins` above — the snapshot is its only carrier */
                 {"attr_table", attr_table_json()},
+                /* the log backlog, oldest first: what the mesh's @dart/log topics said
+                 * and what notify steps spoke before this client joined. History only —
+                 * a snapshot never pops notifications; the `log` frame does that. */
+                {"log", std::move(log_rows)},
                 {"diag", Json{{"compile", diagnostics()}}}};
 }
 

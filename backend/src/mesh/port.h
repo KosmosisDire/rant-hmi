@@ -54,6 +54,16 @@ class MeshSink {
     virtual void on_update(const MeshUpdate& update) = 0;
 };
 
+/* One line off the mesh's built-in @dart/log/{error,warn,info} topics: who logged, at
+ * what wall time, and the line itself. Owned copies — the transport's views die with the
+ * delivery callback, and these cross from the mesh's polling thread to the logic thread. */
+struct MeshLogLine {
+    int level = 2;              /* 0 error, 1 warn, 2 info (DartLogLevel's order) */
+    std::string node;           /* the publishing node's name */
+    std::string text;
+    uint64_t wall_us = 0;       /* epoch micros, comparable across nodes */
+};
+
 class MeshPort {
   public:
     virtual ~MeshPort() = default;
@@ -79,6 +89,11 @@ class MeshPort {
      * changing re-resolves through the ordinary recompile + hot-swap path). Called at
      * control-plane rate on the logic thread; reflection() stays valid across it. */
     virtual bool refresh() { return false; }
+
+    /* Append every @dart/log line that arrived since the last call and forget them.
+     * Called at control-plane rate on the logic thread; a mesh with no log stream (the
+     * fake, an offline node) appends nothing. */
+    virtual void take_logs(std::vector<MeshLogLine>& out) { (void)out; }
 };
 
 bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,

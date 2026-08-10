@@ -16,6 +16,7 @@ import { DropPlan, fmtFraction, fmtPx, holds, literalNumber, snapPx } from "./ar
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
 import { AggEntry, Editor, foldAggs, Mode, StageContext, ViewState } from "./editor.js";
+import { LogView } from "./logbar.js";
 import { armSwallow, closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
@@ -103,6 +104,9 @@ export class App implements Editor {
   private sidebarsDirty = true;
   /* the gesture sequence (protocol `input.seq`): monotonic for the session's life */
   private inputSeq = 1;
+  /* the log sidebar + its toasts (logbar.ts): built in every view, operate included —
+     an operator is exactly who an error notification is for */
+  private logView!: LogView;
 
   /* `operate` is the deployed view: no topbar, no sidebars, the artboard alone */
   constructor(private shellHost: HTMLElement, url: string, private operate = false) {
@@ -126,6 +130,7 @@ export class App implements Editor {
         this.queueSidebars();
       },
       diag: (rows) => this.onDiag(rows),
+      log: (entries, fresh) => this.logView.log(entries, fresh),
       status: (state, detail) => this.onStatus(state, detail),
     });
   }
@@ -659,12 +664,17 @@ export class App implements Editor {
     this.nodes = { left, inspector, stage, banner, problems, pill };
     this.sidebars = { left: new Panel(left), inspector: new Panel(inspector) };
 
+    /* #app is a ROW since the log landed: the whole shell (topbar, workspaces, banner)
+       stands in one column beside the log sidebar, so opening or resizing the log
+       narrows the workspace rather than covering it */
+    const shellMain = el("div", { class: "shell-main" });
+
     if (this.operate) {
       /* the deployed view: the page, full window, and nothing else. The banner stays —
          reconnects and refused edits still need a voice. The problems button and pill
          exist unattached, so the status handlers have somewhere to write. */
-      this.shellHost.appendChild(el("main", { class: "workspace" }, [stage]));
-      this.shellHost.appendChild(banner);
+      shellMain.appendChild(el("main", { class: "workspace" }, [stage]));
+      shellMain.appendChild(banner);
     } else {
       const content = el("main", { class: "workspace" }, [
         left,
@@ -732,7 +742,7 @@ export class App implements Editor {
         ),
       );
 
-      this.shellHost.appendChild(
+      shellMain.appendChild(
         el("header", { class: "topbar" }, [
           el("div", { class: "wordmark", text: "DART HMI" }),
           tabs,
@@ -742,11 +752,15 @@ export class App implements Editor {
       );
       for (const ws of this.workspaces) {
         ws.root.hidden = ws.id !== this.workspace;
-        this.shellHost.appendChild(ws.root);
+        shellMain.appendChild(ws.root);
       }
-      this.shellHost.appendChild(banner);
+      shellMain.appendChild(banner);
       this.restoreSidebarWidths();
     }
+
+    this.shellHost.appendChild(shellMain);
+    /* the log sidebar, its gutter and the toast host, on #app's row beside the shell */
+    this.logView = new LogView(this.shellHost);
 
     /* the stage's own click (selection) is stage.ts's, next to the DOM it hit-tests; the
        right-click belongs here, where the menu and the insert verbs live */
@@ -815,6 +829,13 @@ export class App implements Editor {
   private onKey(ev: KeyboardEvent): void {
     const typing = (ev.target as HTMLElement)?.matches?.("input, select, textarea");
     if (typing) return;
+    /* the log toggles from anywhere typing does not own the key — every workspace,
+       every mode, the operate view included */
+    if ((ev.key === "l" || ev.key === "L") && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      this.logView.toggle();
+      ev.preventDefault();
+      return;
+    }
     if (ev.key === "Escape") {
       closeMenu();
       /* Escape steps out one level WITHIN the active workspace: in Design, part ->

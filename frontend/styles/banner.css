@@ -27,7 +27,7 @@
     grid-template-columns: 1fr;
   }
   .sidebar,
-  .gutter {
+  .workspace .gutter {
     display: none;
   }
 }

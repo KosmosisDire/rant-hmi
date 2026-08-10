@@ -236,6 +236,9 @@ struct ProgramLayout {
     /* raised-event buffer: one slot per Raise instruction — a cascade past this
      * faults rather than growing */
     uint32_t raise_capacity = 0;
+    /* notification buffer: one slot per Notify instruction, drained per tick like the
+     * effect records are */
+    uint32_t notice_capacity = 0;
     uint32_t max_entity_fields = 1;
     uint32_t deadband_slots = 0;
     uint32_t throttle_slots = 0;

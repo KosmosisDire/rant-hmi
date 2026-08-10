@@ -128,6 +128,11 @@ enum class OpCode : uint8_t {
      * a run can never see the second flip under it. The two TEXT fields render into the
      * fixed slot `b` reserved at compile, like any text-producing site. */
     ClockRead,
+    /* NOTIFY every connected view (`b`: 1 = pop an explicit ms duration first, 0 =
+     * the view derives one from the message's length; `c`: the fault site). Pops the
+     * message, renders it as str() renders any scalar, and queues a NoticeRecord the
+     * App drains after the tick and broadcasts — the VM never sees a session. */
+    Notify,
 };
 
 /* the fields `time` reads by — ONE table, so the scalar tier's bindings, the template

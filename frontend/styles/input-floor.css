@@ -94,9 +94,19 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
+/* a ROW: the shell column beside the log sidebar (logbar.css) */
 #app {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100%;
   background: var(--shell);
+}
+
+/* the shell column: topbar, workspaces, banner — everything that is not the log */
+.shell-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
 }

@@ -35,8 +35,10 @@
   padding: 1em;
 }
 
+/* scoped to the workspace's own gutters: the log's gutter (logbar.css) stays, since
+   the log is deliberately available while operating */
 [data-mode="operate"] .sidebar,
-[data-mode="operate"] .gutter {
+[data-mode="operate"] .workspace .gutter {
   display: none;
 }
 [data-mode="operate"] .workspace {

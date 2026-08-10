@@ -39,6 +39,7 @@ class DartMesh final : public MeshPort {
     void apply(const Program& program) override;
     void set_viewed_pages(const std::vector<uint64_t>& pages) override;
     bool refresh() override;
+    void take_logs(std::vector<MeshLogLine>& out) override;
 
   private:
     struct Impl;

@@ -272,6 +272,8 @@ RuntimeState::RuntimeState(const Program& program) {
     }
     raised.resize(std::max<uint32_t>(program.layout.raise_capacity, 1));
     for (RaisedRecord& record : raised) record.text = FixedText(kDefaultTextCap);
+    notices.resize(std::max<uint32_t>(program.layout.notice_capacity, 1));
+    for (NoticeRecord& record : notices) record.text = FixedText(kDefaultTextCap);
     faults.resize(std::max<size_t>(program.runtime_faults.size(), 1));
     for (uint32_t i = 0; i < program.runtime_faults.size(); ++i)
         faults[i].site = i;
@@ -648,6 +650,10 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
 void RuntimeState::clear_outputs() noexcept {
     effect_count = 0;
     raised_count = 0;
+    /* the App drains notices between ticks; this reset only matters to a harness that
+       ticks the scheduler bare, where an undrained notice dies quietly instead of
+       filling the buffer into a spurious fault */
+    notice_count = 0;
     fault_count = 0;
 }
 

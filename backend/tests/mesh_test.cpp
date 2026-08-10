@@ -672,5 +672,29 @@ int main() {
         CHECK_MSG(seen, "the re-typed gauge value never arrived");
     }
 
+    /* ---- the built-in @dart/log stream: a peer's log lines reach take_logs, decoded
+     * with the publisher's name, the level and a comparable wall stamp ---- */
+    {
+        CHECK(peer.log_error("boiler overtemp") == dart::SendStatus::Ok);
+        CHECK(peer.log_info("shift change") == dart::SendStatus::Ok);
+        std::vector<MeshLogLine> lines;
+        bool got_error = false;
+        bool got_info = false;
+        for (int i = 0; i < 100 && !(got_error && got_info); ++i) {
+            mesh.take_logs(lines);
+            for (const MeshLogLine& line : lines) {
+                if (line.level == 0 && line.text == "boiler overtemp" &&
+                    line.node == "plant" && line.wall_us > 0)
+                    got_error = true;
+                if (line.level == 2 && line.text == "shift change") got_info = true;
+            }
+            lines.clear();
+            if (!(got_error && got_info))
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        CHECK_MSG(got_error, "the peer's log_error line never arrived");
+        CHECK_MSG(got_info, "the peer's log_info line never arrived");
+    }
+
     return check::summary("mesh_test");
 }

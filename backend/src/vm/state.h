@@ -89,6 +89,14 @@ struct RaisedRecord {
     FixedText text;
 };
 
+/* one queued notification: the rendered message and how long it stays showing (0 = the
+ * view scales the time with the message's length). The App drains these after the tick
+ * and broadcasts them to every session — a notification is spoken once, to everyone. */
+struct NoticeRecord {
+    FixedText text;
+    uint32_t ms = 0;
+};
+
 struct RuntimeFault {
     uint32_t site = 0;
     uint64_t tick = 0;
@@ -176,6 +184,9 @@ class RuntimeState {
     /* raised events queued during a run, dispatched by the scheduler AFTER it halts */
     std::vector<RaisedRecord> raised;
     uint32_t raised_count = 0;
+    /* notifications queued during this tick, drained by the App after it */
+    std::vector<NoticeRecord> notices;
+    uint32_t notice_count = 0;
     std::vector<RuntimeFault> faults;
     uint32_t fault_count = 0;
 

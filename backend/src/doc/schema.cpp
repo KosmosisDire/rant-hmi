@@ -184,7 +184,7 @@ const std::vector<NodeSpec>& table() {
         step.variant_key = "kind";
         step.props = {enumer("kind",
                              {"assign", "gate", "deadband", "throttle", "debounce", "delay",
-                              "tmr_start", "tmr_cancel", "raise"},
+                              "tmr_start", "tmr_cancel", "raise", "notify"},
                              "assign")};
         step.variants = {
             /* ONE transfer step: an ASSIGNMENT — an lvalue target, an rvalue expression.
@@ -213,6 +213,11 @@ const std::vector<NodeSpec>& table() {
                be one the type DECLARES, and `args` maps each declared parameter's name
                to the expression that fills it */
             {"raise", {text("event"), object("args", Json::object())}},
+            /* notify <text> [for <ms>]: pop a notification up on every connected view.
+               The message is a DISPLAY-tier expression (it is for a human, so text
+               joining and formatting are legal); `ms` is how long it stays, empty =
+               the view scales the time with the message's length */
+            {"notify", {text("text", "", Role::Expr), text("ms", "", Role::Expr)}},
         };
         t.push_back(step);
 

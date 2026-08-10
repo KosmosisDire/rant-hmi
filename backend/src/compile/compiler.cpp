@@ -2301,6 +2301,43 @@ class Compiler {
         return true;
     }
 
+    /* `notify <text> [for <ms>]`: pop a notification up on every connected view. The
+     * message is a DISPLAY-tier expression — it is for a human, so text joining and the
+     * formatting vocabulary are exactly what it is made of — and `ms`, when authored,
+     * is how long it stays; absent, the view scales the time with the length. */
+    bool compile_notify(const Json& step, FlowProgram& flow, ExpressionScope& scope) {
+        const uint64_t step_id = id_of(step);
+        const std::string text = trimmed(str_or(step, "text", ""));
+        if (text.empty()) {
+            diag(step_id, "notify_text", "notify says nothing; give it a message",
+                 DiagGrade::Error, "text");
+            return false;
+        }
+        Shape actual = Shape::Unknown;
+        if (!expression(step_id, text, ExprTier::Display, scope, Shape::Unknown,
+                        flow.code, flow.max_stack, &actual, "text"))
+            return false;
+        if (actual == Shape::List || actual == Shape::Map) {
+            diag(step_id, "notify_text",
+                 "a notification is one line of text, not a " +
+                     std::string(shape_name(actual)),
+                 DiagGrade::Error, "text");
+            return false;
+        }
+        const std::string ms = trimmed(str_or(step, "ms", ""));
+        if (!ms.empty() &&
+            !expression(step_id, ms, ExprTier::Display, scope, Shape::Num, flow.code,
+                        flow.max_stack, nullptr, "ms"))
+            return false;
+        Instruction ins;
+        ins.op = OpCode::Notify;
+        ins.b = ms.empty() ? 0 : 1;
+        ins.c = fault_site(step_id, "notify", "notify needs a message it can render");
+        flow.code.push_back(ins);
+        ++program_.layout.notice_capacity;
+        return true;
+    }
+
     /* `param` is the trigger's signature (null = a nullary event); `claimed` is set for
      * TYPE BEHAVIOR: a slot-writing step whose slot is already claimed (a feed, an
      * authored flow) is DROPPED — per step, so the raise beside it still runs and a fed
@@ -2338,6 +2375,8 @@ class Compiler {
                 if (!compile_assign(widget, step, flow, scope, locals)) return false;
             } else if (kind == "raise") {
                 if (!compile_raise(widget, step, flow, scope)) return false;
+            } else if (kind == "notify") {
+                if (!compile_notify(step, flow, scope)) return false;
             } else if (kind == "gate") {
                 if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
                                 Shape::Bool, flow.code, flow.max_stack))

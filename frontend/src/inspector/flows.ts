@@ -76,6 +76,7 @@ export function verbOf(step: Json): string {
     case "delay": return "wait";
     case "tmr_start": return "start";
     case "tmr_cancel": return "cancel";
+    case "notify": return "notify";
     default: return step?.kind ?? "?";
   }
 }
@@ -140,9 +141,11 @@ function targets(flow: Flow): { kind: string; name: string }[] {
     if (sideOf(step.to) === "slot") push("", "widget." + (step.to.slot ?? ""));
   }
   if (out.length) return out;
-  for (const step of flow.do ?? [])
+  for (const step of flow.do ?? []) {
     if (step.kind === "tmr_start" || step.kind === "tmr_cancel")
       push("L", (step.kind === "tmr_start" ? "start " : "cancel ") + (step.timer ?? "?"));
+    if (step.kind === "notify") push("", "notify");
+  }
   return out;
 }
 
@@ -786,6 +789,20 @@ function stepCell(
     return cell;
   }
 
+  /* notify <message> for <ms> ms: pops up on every connected view and lands in the
+     log. The message is display vocabulary (text joining and formatting are legal —
+     it is for a human); an empty ms scales the showing time with the message's
+     length, capped at 10 s. */
+  if (step.kind === "notify") {
+    cell.appendChild(box("text", "text", () => String(at().text ?? ""),
+                         (text) => set("text", text)));
+    cell.appendChild(el("span", { class: "op", text: "for" }));
+    cell.appendChild(box("ms", "num", () => String(at().ms ?? ""),
+                         (text) => set("ms", text)));
+    cell.appendChild(el("span", { class: "op", text: "ms" }));
+    return cell;
+  }
+
   if (GUARD_KINDS.some((g) => g.value === step.kind)) {
     const amount = numberInput(Number(step.a ?? 0), (a) => set("a", a), { class: "field num" });
     bindField(step.id + ":a", amount, () => String(Number(at().a ?? 0)));
@@ -977,6 +994,8 @@ function stepMenu(
                               args: {} }),
         }]
       : []),
+    /* pop a notification up on every connected view; the log keeps it */
+    { label: "notify", run: () => insert({ kind: "notify", text: "" }) },
     {
       label: "reset",
       icon: "reset",

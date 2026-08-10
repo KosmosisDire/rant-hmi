@@ -3,10 +3,21 @@
 
 export type Json = any;
 
-/* 13: read and write unified into ASSIGNMENT — the step kind is `assign`, its `from`
- * is `{expr}` always (plus the `{init:true}` reset), and flow expressions bind the
- * mesh under `@` exactly as slot expressions do */
-export const PROTO = 13;
+/* 14: THE LOG — the snapshot carries `log` (the backlog of @dart/log lines and hmi
+ * notifications) and a `log` frame appends live entries; the step kind `notify`
+ * broadcasts a notification to every session as a level "notify" entry */
+export const PROTO = 14;
+
+/* one line of the log: what a mesh node said on @dart/log/<level>, or what a notify
+ * step spoke (level "notify", node "hmi"). `ms` rides only where the author set an
+ * explicit showing time; absent, the view scales it with the text's length. */
+export interface LogEntry {
+  level: "error" | "warn" | "info" | "notify" | string;
+  node: string;
+  text: string;
+  wall_us: number;
+  ms?: number;
+}
 
 /* THE ARTBOARD: one static px space, 16:9, with one static grid — a system constant,
  * not document data. Every page-node x/y/w/h is a px of this space; the stage scales the

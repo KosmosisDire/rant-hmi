@@ -54,6 +54,7 @@ const STYLES = [
   "workspace-design",
   "workspace-data",
   "shell",
+  "logbar",
   "stage",
   "sections",
   "cards",

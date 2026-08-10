@@ -9,6 +9,6 @@
 
 /* an inactive workspace is hidden, never torn down: its display rule must not win
    over the hidden attribute */
-#app > main[hidden] {
+#app .shell-main > main[hidden] {
   display: none;
 }

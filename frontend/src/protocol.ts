@@ -5,7 +5,7 @@
  * Anti-desync rules (PLAN.md) live here: a version that is not last + 1 is a GAP, and a
  * gap discards state and asks for a snapshot rather than patching around the hole. */
 
-import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Live, Mesh, NodeAttrs, Op, PROTO, Registry } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Live, LogEntry, Mesh, NodeAttrs, Op, PROTO, Registry } from "./types.js";
 
 export interface Handlers {
   /* the snapshot carries diagnostics too: they are computed at compile time, which is
@@ -21,6 +21,9 @@ export interface Handlers {
   diag(diag: Diag[]): void;
   /* the reflected entity tree changed (a peer or schema came or went) */
   mesh(mesh: Mesh): void;
+  /* the log: `fresh` entries just happened (append them, pop what pops); the
+     snapshot's backlog is history (fresh = false — replace, and never pop) */
+  log(entries: LogEntry[], fresh: boolean): void;
   status(state: Status, detail: string): void;
 }
 
@@ -135,6 +138,7 @@ export class Connection {
           frame.attr_table ?? { kinds: [], common: [], perKind: {} },
           frame.builtins ?? [],
           frame.node_attrs ?? {});
+        this.handlers.log(frame.log ?? [], false);
         this.flush();
         return;
       case "ops_applied":
@@ -156,6 +160,9 @@ export class Connection {
         return;
       case "mesh":
         this.handlers.mesh({ entities: frame.entities ?? [], types: frame.types ?? [] });
+        return;
+      case "log":
+        this.handlers.log(frame.entries ?? [], true);
         return;
       case "reject":
         /* the backend always follows a reject with a snapshot */

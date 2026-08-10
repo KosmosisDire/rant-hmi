@@ -1139,6 +1139,28 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 break;
             }
+            /* queue one notification: the message renders as str() renders any scalar
+               (a human reads it, so the formatting vocabulary IS the contract), the
+               record owns its text, and the App drains the buffer after the tick. A
+               Nil message is refused like a Nil send: UNKNOWN must not pop up as "". */
+            case OpCode::Notify: {
+                const Value ms_value = ins.b ? pop() : Value::nil();
+                const Value message = pop();
+                if (message.tag == ValueTag::Nil || message.tag == ValueTag::List ||
+                    message.tag == ValueTag::Map ||
+                    state.notice_count >= state.notices.size()) {
+                    fail(ins.c);
+                    break;
+                }
+                char buffer[64];
+                NoticeRecord& record = state.notices[state.notice_count++];
+                record.text.set(scalar_text(ctx, message, buffer, sizeof(buffer)));
+                record.ms = ms_value.tag == ValueTag::Num && ms_value.data.num > 0
+                                ? static_cast<uint32_t>(
+                                      std::min(ms_value.data.num, 600000.0))
+                                : 0;
+                break;
+            }
             case OpCode::Gate: {
                 const Value value = pop();
                 if (value.tag != ValueTag::Bool || !value.data.boolean) result.halted = true;

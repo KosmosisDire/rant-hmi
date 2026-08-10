@@ -39,8 +39,12 @@ namespace hmi {
  * 13: READ and WRITE unify into ASSIGNMENT — the step kind `move` is `assign`, its
  * `from` is `{expr}` always (plus `{init:true}` reset: the structural entity/local
  * source forms died into the `@name` / bare-name spellings), and flow expressions
- * bind the mesh under `@` exactly as slot expressions do */
-constexpr int kProto = 13;
+ * bind the mesh under `@` exactly as slot expressions do;
+ * 14: THE LOG — the snapshot carries `log` (the backlog of @dart/log lines and hmi
+ * notifications, oldest first) and a `log` frame appends live entries {level, node,
+ * text, wall_us, ms?}; the step kind `notify` broadcasts a notification to every
+ * session as a level "notify" entry */
+constexpr int kProto = 14;
 
 struct AppOptions {
     ServerOptions server;
@@ -81,6 +85,12 @@ class App {
     void compile_runtime();
     void publish_live();
     void update_viewed_pages();
+    /* everything the log gained this pass — the mesh's @dart/log arrivals and the
+     * notify steps' notices — into the ring and out to every session as one frame */
+    void publish_log();
+    /* the notify steps' records, captured AFTER each tick (the next tick's
+     * clear_outputs would erase them) into the pending frame */
+    void drain_notices();
 
     Json snapshot() const;
     /* `full` is the SNAPSHOT's reading: every aggregate cell whole. A live frame sends
@@ -135,6 +145,12 @@ class App {
         uint64_t total = UINT64_MAX;
     };
     std::vector<AggCursor> agg_published_;
+    /* THE LOG RING: what the mesh's @dart/log topics said and what notify steps spoke,
+     * newest at the back, bounded. The snapshot carries the whole ring (a late joiner
+     * sees history); a `log` frame carries only what just arrived. */
+    std::deque<Json> log_;
+    std::vector<Json> fresh_log_;          /* arrived this poll, not yet broadcast */
+    std::vector<MeshLogLine> mesh_logs_;   /* take_logs scratch, reused per poll */
 };
 
 } // namespace hmi

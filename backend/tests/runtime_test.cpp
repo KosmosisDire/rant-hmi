@@ -1130,6 +1130,51 @@ void drain_raised(const Program& program, RuntimeState& state) {
     state.raised_count = 0;
 }
 
+/* NOTIFY IS A STEP: the flow renders the message as str() renders any scalar and
+ * queues a NoticeRecord for the App to broadcast. The message is DISPLAY vocabulary —
+ * text joining is legal, it is for a human — an explicit ms rides the record, an
+ * absent one leaves 0 for the view to scale with the length, and an empty message is
+ * a compile refusal rather than a blank popup. */
+void test_notify() {
+    FakeMesh mesh{std::vector<EntityDef>{}};
+    Document document = widget_document(
+        "Toggle", Json{{"value", false}},
+        Json{{"flows", Json::array({Json{
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({Json{{"kind", "notify"},
+                                           {"text", "'line ' + 1"}},
+                                      Json{{"kind", "notify"},
+                                           {"text", "'hold'"},
+                                           {"ms", "2500"}}})}}})}});
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed without a diagnostic"
+                               : compiled.program.diagnostics[0].message);
+    CHECK(compiled.program.layout.notice_capacity == 2);
+    RuntimeState state(compiled.program);
+    const uint64_t id = only_widget(document);
+    run_event(compiled.program, state, id, "tap", Value::nil());
+    CHECK(state.notice_count == 2);
+    CHECK(state.notices[0].text.view() == "line 1");
+    CHECK(state.notices[0].ms == 0);
+    CHECK(state.notices[1].text.view() == "hold");
+    CHECK(state.notices[1].ms == 2500);
+    /* the next tick's clear (the App drains between ticks) empties the buffer */
+    state.clear_outputs();
+    CHECK(state.notice_count == 0);
+
+    /* a message-less notify refuses at compile: there is nothing to say */
+    Document empty_message = widget_document(
+        "Toggle", Json{{"value", false}},
+        Json{{"flows", Json::array({Json{
+                  {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({Json{{"kind", "notify"}, {"text", ""}}})}}})}});
+    CHECK(has_diag(compile_document(empty_message, builtin_registry(), mesh),
+                   "notify_text"));
+}
+
 /* AN EVENT IS A FUNCTION CALL. The control's behavior maintains its state and RAISES
  * its declared pair; the author's flow handles `changed(value)` with the parameter
  * bound by name — the same sentence on a Toggle, a Slider, a Dropdown. */
@@ -3467,6 +3512,7 @@ int main() {
     RUN(test_expression_rejection);
     RUN(test_tiers);
     RUN(test_default_behavior);
+    RUN(test_notify);
     RUN(test_events_are_calls);
     RUN(test_bare_topic_scalars);
     RUN(test_assign_expression_reads_mesh);
