@@ -39,7 +39,8 @@ const { renderStyleWorkspace, styleShape } = await import(mod("workspaces/style.
 const { dataShape, dataSelect, renderDataDetail, renderDataTree } =
   await import(mod("workspaces/data.js"));
 const { pageSelectShape, renderPageSelect } = await import(mod("pageselect.js"));
-const { renderStage, setTransitionClock, stepTransitions } = await import(mod("stage.js"));
+const { renderStage, setTransitionClock, stepTransitions, setWallClock, stepTime } =
+  await import(mod("stage.js"));
 const { dropAtPageEnd, dropPlan, dropZone, fmtFraction, fmtPx, freeAllowed, freeBoxOf,
         freePlan, settle, snapPx } =
   await import(mod("arrange.js"));
@@ -2165,6 +2166,79 @@ check(stageNode("frame", 901) === heldAgain &&
         + rawbar().style.left);
 
   setTransitionClock(null);
+}
+
+/* ---- THE CLOCK: time cells tick the view ----
+   `time` reads by field ("time:<field>" cells): `time.now` is the animation clock —
+   seconds off the same replaceable clock the sweeps use — and the rest is the viewer's
+   wall clock, replaced here so the civil fields hold still under the checks. The clock
+   has its OWN ticker (stepTime): it re-runs exactly the binds whose time cell moved,
+   and the wire's live diff never touches a time cell. */
+{
+  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  const kStore = new DocStore();
+  kStore.load({
+    version: 1, next_id: 999, globals: [], tokens: [], components: [],
+    pages: [{ id: 720, name: "Clock", children: [
+      { id: 730, kind: "text", name: "readout", attrs: {}, children: [] },
+      { id: 731, kind: "frame", name: "mover", attrs: {}, children: [] },
+    ] }],
+  });
+  const kAttrs = {
+    "730": { attrs: { left: prog(11), top: prog(11), w: prog(220), h: prog(44),
+                      text: cell("time:text") } },
+    "731": { attrs: { top: prog(110), w: prog(110), h: prog(110),
+                      left: { code: [{ op: "LOAD", cell: "time:now" },
+                                     { op: "CONST", v: 100 }, { op: "MUL" }] } } },
+  };
+  const kView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const kHost = new Element("section");
+  const kEditor = {
+    store: kStore, registry: { version: 1, types: [] }, nodeAttrs: kAttrs,
+    live: { epoch: 1, values: {} }, view: kView,
+    page: () => kStore.pages()[0],
+    contexts: [],
+    root() { return this.page(); },
+    artboard: () => ({ w: 1408, h: 792 }),
+    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    select: () => undefined, input: () => undefined,
+  };
+  let know = 2000;
+  let kwall = new Date(2026, 7, 10, 12, 34, 56).getTime();
+  setTransitionClock(() => know);
+  setWallClock(() => kwall);
+  renderStage(kHost, kEditor);
+  const kNode = (id) => kHost.querySelectorAll("[data-id]")
+    .find((n) => n.getAttribute("data-id") === String(id)) ?? null;
+  check(kNode(730).textContent === "12:34:56",
+        "time.text renders the pinned wall clock, got '" + kNode(730).textContent + "'");
+  check(kNode(731).style.left === "200px",
+        "time.now is the animation clock in seconds, got " + kNode(731).style.left);
+
+  /* the ticker's step: only what moved re-runs. A frame later the animation clock has
+     moved and the wall second has not. */
+  know = 2500;
+  stepTime(kHost, kEditor);
+  check(kNode(731).style.left === "250px",
+        "stepTime re-runs the time.now reader, got " + kNode(731).style.left);
+  check(kNode(730).textContent === "12:34:56", "while the wall second stands");
+  kwall += 1000;
+  stepTime(kHost, kEditor);
+  check(kNode(730).textContent === "12:34:57",
+        "and the second flipping repaints the readout, got '" +
+          kNode(730).textContent + "'");
+
+  /* the wire's live diff leaves time cells alone: a live frame moving nothing this
+     picture reads must not misread the ticker-driven cells as moved */
+  kEditor.live = { epoch: 1, values: { "999.unrelated": 5 } };
+  know = 2600;
+  renderStage(kHost, kEditor);
+  check(kNode(731).style.left === "250px",
+        "a live frame does not advance the clock: the ticker owns time cells, got " +
+          kNode(731).style.left);
+
+  setTransitionClock(null);
+  setWallClock(null);
 }
 
 /* ---- the node inspector ----

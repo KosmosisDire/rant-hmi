@@ -1137,6 +1137,17 @@ class Compiler {
         scope.qualified[name + ".duration"] = Binding{Shape::Num, OpCode::TmrRead, index, 2};
     }
 
+    /* the system clock, in every scalar scope: `time` reads by field, off the one table
+       the VM dispatches on. Bound FIRST-AS-RESERVED: it lands after every variable and
+       timer, so `time.*` is always the clock — the same reservation the display tier
+       makes by checking `time` before the property scope. */
+    void bind_clock(ExpressionScope& scope) {
+        constexpr uint32_t count = sizeof(kClockFields) / sizeof(kClockFields[0]);
+        for (uint32_t i = 0; i < count; ++i)
+            scope.qualified[std::string("time.") + kClockFields[i].name] =
+                Binding{kClockFields[i].shape, OpCode::ClockRead, i, 0};
+    }
+
     ExpressionScope scope_for(const WidgetInfo& widget, Shape x_shape) {
         ExpressionScope scope;
         scope.x_shape = x_shape;
@@ -1144,6 +1155,7 @@ class Compiler {
         for (const auto& item : widget.locals) bind_variable(scope, item.first, item.second);
         for (const auto& item : global_timers_) bind_timer(scope, item.first, item.second);
         for (const auto& item : widget.timers) bind_timer(scope, item.first, item.second);
+        bind_clock(scope);
         for (const auto& item : widget.slots) {
             const CellDef& cell = program_.cells[item.second];
             scope.qualified["widget." + item.first] =
@@ -1305,6 +1317,8 @@ class Compiler {
                 case OpCode::Load:
                 case OpCode::LoadField:
                 case OpCode::TmrRead:
+                /* the clock moves every tick by definition */
+                case OpCode::ClockRead:
                     sp.every_tick = true;
                     break;
                 case OpCode::LoadEnt: {

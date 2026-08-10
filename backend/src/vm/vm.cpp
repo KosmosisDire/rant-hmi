@@ -1403,6 +1403,61 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 if (!push(value)) fail(ins.c);
                 break;
             }
+            /* THE CLOCK: `time.now` reads the tick counter (seconds — deterministic,
+             * replay-safe), everything else the wall-clock stamp the scheduler took at
+             * the top of this tick. The two text fields render into the fixed slot `b`
+             * their read site reserved at compile. */
+            case OpCode::ClockRead: {
+                const ClockField field = static_cast<ClockField>(ins.a);
+                if (field == ClockField::Now) {
+                    if (!push(Value::number(static_cast<double>(state.tick) / 1000.0)))
+                        fail(ins.c);
+                    break;
+                }
+                if (field == ClockField::Unix) {
+                    if (!push(Value::number(std::floor(state.wall_ms / 1000.0))))
+                        fail(ins.c);
+                    break;
+                }
+                const time_t seconds = static_cast<time_t>(state.wall_ms / 1000.0);
+                std::tm parts{};
+#if defined(_WIN32)
+                const bool civil = localtime_s(&parts, &seconds) == 0;
+#else
+                const bool civil = localtime_r(&seconds, &parts) != nullptr;
+#endif
+                if (!civil) {
+                    if (!push(Value::nil())) fail(ins.c);
+                    break;
+                }
+                if (field == ClockField::Text || field == ClockField::Date) {
+                    if (ins.b >= state.texts.size()) {
+                        fail(ins.c);
+                        break;
+                    }
+                    char buffer[16];
+                    if (field == ClockField::Text)
+                        std::snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d",
+                                      parts.tm_hour, parts.tm_min, parts.tm_sec);
+                    else
+                        std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
+                                      parts.tm_year + 1900, parts.tm_mon + 1,
+                                      parts.tm_mday);
+                    state.texts[ins.b].set(buffer);
+                    if (!push(Value::text(ins.b))) fail(ins.c);
+                    break;
+                }
+                const double number =
+                    field == ClockField::Year      ? parts.tm_year + 1900
+                    : field == ClockField::Month   ? parts.tm_mon + 1
+                    : field == ClockField::Day     ? parts.tm_mday
+                    : field == ClockField::Weekday ? parts.tm_wday
+                    : field == ClockField::Hour    ? parts.tm_hour
+                    : field == ClockField::Minute  ? parts.tm_min
+                                                   : parts.tm_sec;
+                if (!push(Value::number(number))) fail(ins.c);
+                break;
+            }
             /* THE RING, AUTHORED: one element onto a list cell, trimmed to whatever
              * `keep` asks for. The operands come off in reverse push order (keep last
              * in, first out), and a refusal is a FAULT rather than a silent drop —

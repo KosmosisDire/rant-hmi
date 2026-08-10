@@ -133,6 +133,41 @@ const TIMER_FIELDS: MeshField[] = [
   { path: "progress", shape: "num" },
 ];
 
+/* the clock reads by field too — the view's mirror of lang/ir.h kClockFields, offered
+ * on every expression surface (the scalar tiers bind it in scope_for, the template
+ * tier answers "time:" cells). `now` is the animation clock, seconds since start. */
+const TIME_FIELDS: MeshField[] = [
+  { path: "now", shape: "num" },
+  { path: "unix", shape: "num" },
+  { path: "year", shape: "num" },
+  { path: "month", shape: "num" },
+  { path: "day", shape: "num" },
+  { path: "weekday", shape: "num" },
+  { path: "hour", shape: "num" },
+  { path: "minute", shape: "num" },
+  { path: "second", shape: "num" },
+  { path: "text", shape: "text" },
+  { path: "date", shape: "text" },
+];
+
+/* the standing `time` folder: not itself pickable (time reads by field), its leaves
+ * inserting the dotted spellings */
+function timeRow(prefix: string): BrowseRow {
+  return {
+    key: prefix + "/time",
+    label: "time",
+    icon: "clock",
+    children: TIME_FIELDS.map((field) => ({
+      key: prefix + "/time." + field.path,
+      label: field.path,
+      shape: field.shape,
+      insert: "time." + field.path,
+      field,
+      flat: { note: "clock" },
+    })),
+  };
+}
+
 /* ---- the hmi universe: this widget's names, structured ----
  *
  * `widget` is a folder over the slot leaves (a slot's canonical spelling is
@@ -185,6 +220,9 @@ function hmiRows(editor: Editor, widget: Node | null): BrowseRow[] {
     if (buckets[scope].length)
       rows.push({ key: "hmi/" + scope, label: scope, icon: "folder",
                   children: buckets[scope] });
+  /* the clock stands in every scalar scope (scope_for binds it last), so the hmi
+     universe always offers it */
+  rows.push(timeRow("hmi"));
   return rows;
 }
 
@@ -498,6 +536,7 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
   const rows: BrowseRow[] = [
     viewInput("state", "this view", STATE_FIELDS),
     viewInput("repeat", "this copy", REPEAT_FIELDS),
+    timeRow("attr"),
   ];
   const comp = owningComponent(editor, node.id);
   if (!comp) return rows;

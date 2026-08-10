@@ -2,6 +2,8 @@
 
 /* for view_builtin(): the builtin vocabulary is one table, shared with the scalar tier */
 #include "lang/expression.h"
+/* for kClockFields: the `time` vocabulary is one table, shared with the scalar tier */
+#include "lang/ir.h"
 #include "lang/lexer.h"
 
 #include <cstring>
@@ -275,7 +277,8 @@ class Parser {
         for (size_t i = 0; i < params.size(); ++i) {
             const std::string& param = params[i];
             if (param == "x" || param == "state" || param == "repeat" ||
-                param == "tile" || param == "true" || param == "false") {
+                param == "time" || param == "tile" || param == "true" ||
+                param == "false") {
                 fail("'" + param + "' cannot name a lambda parameter");
                 return;
             }
@@ -656,6 +659,33 @@ class Parser {
         if (name == "tile") {
             fail("a node cannot read its own size yet: x, y, w and h are fractions of the "
                  "box it is given, so a size relative to that box needs no measurement");
+            return;
+        }
+        /* THE CLOCK, reserved ahead of the property scope (the same reservation the
+           scalar tier makes by binding it last): `time.now` ticks per frame for
+           animation, the rest is the viewer's wall clock — a LOAD of a symbolic cell
+           the renderer answers and re-runs readers of on its own ticker */
+        if (name == "time") {
+            if (token_.kind != TokenKind::Dot) {
+                fail("'time' reads by field (time.now / time.unix / time.year / "
+                     "time.month / time.day / time.weekday / time.hour / time.minute / "
+                     "time.second / time.text / time.date)");
+                return;
+            }
+            advance();
+            if (token_.kind != TokenKind::Ident) {
+                fail("expected a field after '.'");
+                return;
+            }
+            const std::string field = token_.text;
+            bool known = false;
+            for (const ClockFieldDef& f : kClockFields) known = known || field == f.name;
+            if (!known) {
+                fail("unknown field 'time." + field + "'");
+                return;
+            }
+            advance();
+            emit_load("time:" + field);
             return;
         }
         /* the view's own inputs: this view's gesture state, and — inside a repeated node —

@@ -1,6 +1,7 @@
 #include "scheduler.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace hmi {
 
@@ -228,6 +229,12 @@ void Scheduler::on_update(const MeshUpdate& update) {
 
 bool Scheduler::tick(std::string& fault) {
     ++state_.tick;
+    /* one wall-clock sample per tick: everything this tick runs sees the same instant */
+    if (!state_.wall_pinned)
+        state_.wall_ms = static_cast<double>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
     state_.clear_outputs();
 
     /* tick step 1: the mesh's arrivals, decoded, before anything time-driven runs */

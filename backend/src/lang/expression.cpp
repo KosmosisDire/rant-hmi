@@ -1046,7 +1046,12 @@ class Parser {
     }
 
     Shape load_binding(const Binding& binding) {
-        emit(binding.load, binding.a, binding.b);
+        /* a TEXT clock field (time.text / time.date) renders into a fixed slot of its
+           own, reserved per read site like any text-producing call */
+        if (binding.load == OpCode::ClockRead && binding.shape == Shape::Text)
+            emit(OpCode::ClockRead, binding.a, sink_.alloc_text_slot());
+        else
+            emit(binding.load, binding.a, binding.b);
         pushed();
         enum_type_ = binding.shape == Shape::Enum ? binding.enum_type : 0;
         elem_ = binding.shape == Shape::List || binding.shape == Shape::Map
@@ -1300,6 +1305,13 @@ class Parser {
         }
         if (qualified != name) {
             fail("unknown field '" + qualified + "'");
+            return Shape::Unknown;
+        }
+        /* the clock reads by field, and saying so beats "unknown name" */
+        if (name == "time" && scope_.qualified.count("time.now")) {
+            fail("'time' reads by field (time.now / time.unix / time.year / time.month / "
+                 "time.day / time.weekday / time.hour / time.minute / time.second / "
+                 "time.text / time.date)");
             return Shape::Unknown;
         }
         fail("unknown name '" + name + "'");

@@ -9,7 +9,9 @@
 #include "vm/vm.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <new>
 
 /* These tests exercise the language against a real Program, which the language itself no
@@ -3240,6 +3242,108 @@ void test_theme_tokens() {
     CHECK(fill && fill->tag == ValueTag::Color && fill->data.rgba == 0x4e8ef7ffu);
 }
 
+/* THE CLOCK: `time` reads by field in every scalar scope. `time.now` is the tick
+ * counter in seconds — deterministic, replay-safe — and the civil fields come off the
+ * wall-clock stamp the scheduler takes per tick, PINNED here so the checks and the VM
+ * read one instant through the same localtime. */
+void test_clock() {
+    FakeMesh mesh(std::vector<EntityDef>{});
+    Json widgets = Json::array();
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
+                           {"slots", Json{{"value", "time.now"}}}});
+    widgets.push_back(Json{
+        {"kind", "frame"}, {"type", "Readout"}, {"name", "b"},
+        {"slots",
+         Json{{"value", "time.hour * 10000 + time.minute * 100 + time.second"}}}});
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "c"},
+                           {"slots", Json{{"text", "time.text"}}}});
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "d"},
+                           {"slots", Json{{"text", "time.date"}}}});
+    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "e"},
+                           {"slots", Json{{"value", "time.unix"}}}});
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals", Json::array()},
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("clock compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+    if (!CHECK(compiled.program.slot_programs.size() == 5)) return;
+    /* the clock moves every tick by definition */
+    for (const SlotProgram& slot : compiled.program.slot_programs)
+        CHECK(slot.every_tick);
+
+    const Json& kids = document.root["pages"][0]["children"];
+    const uint64_t ids[5] = {
+        json_u64_or(kids[0]["id"], 0), json_u64_or(kids[1]["id"], 0),
+        json_u64_or(kids[2]["id"], 0), json_u64_or(kids[3]["id"], 0),
+        json_u64_or(kids[4]["id"], 0)};
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    RuntimeState& state = scheduler.state();
+    /* pin the wall: 2026-02-02T01:20:00Z-ish, civil expectations computed through the
+       very localtime the VM uses so the test holds in any zone */
+    state.wall_pinned = true;
+    state.wall_ms = 1770000000000.0;
+    const time_t seconds = static_cast<time_t>(state.wall_ms / 1000.0);
+    std::tm parts{};
+#if defined(_WIN32)
+    CHECK(localtime_s(&parts, &seconds) == 0);
+#else
+    CHECK(localtime_r(&seconds, &parts) != nullptr);
+#endif
+    std::string fault;
+    scheduler.tick(fault);
+
+    auto value_of = [&](int widget, const char* slot) -> const Value& {
+        static const Value nil = Value::nil();
+        const int cell = slot_cell_of(program, ids[widget], slot);
+        return cell >= 0 ? state.values[cell] : nil;
+    };
+    /* one tick in: one millisecond of program time */
+    CHECK(value_of(0, "value").tag == ValueTag::Num);
+    CHECK(value_of(0, "value").data.num == 0.001);
+    CHECK_EQ(value_of(1, "value").data.num,
+             static_cast<double>(parts.tm_hour * 10000 + parts.tm_min * 100 +
+                                 parts.tm_sec));
+    char expect[16];
+    std::snprintf(expect, sizeof(expect), "%02d:%02d:%02d", parts.tm_hour, parts.tm_min,
+                  parts.tm_sec);
+    CHECK_EQ(std::string(state.text(program, value_of(2, "text"))), expect);
+    std::snprintf(expect, sizeof(expect), "%04d-%02d-%02d", parts.tm_year + 1900,
+                  parts.tm_mon + 1, parts.tm_mday);
+    CHECK_EQ(std::string(state.text(program, value_of(3, "text"))), expect);
+    CHECK_EQ(value_of(4, "value").data.num, std::floor(state.wall_ms / 1000.0));
+
+    /* the tick counter is time.now's whole truth: another two ticks, three ms */
+    scheduler.tick(fault);
+    scheduler.tick(fault);
+    CHECK(value_of(0, "value").data.num == 0.003);
+
+    /* bare `time` teaches its fields; an unknown field names itself */
+    Document bare = widget_document("Readout", Json{{"value", "time"}});
+    CompileResult refused = compile_document(bare, builtin_registry(), mesh);
+    bool taught = false;
+    for (const Diag& diag : refused.program.diagnostics)
+        if (diag.message.find("reads by field") != std::string::npos &&
+            diag.message.find("time.now") != std::string::npos)
+            taught = true;
+    CHECK(taught);
+    Document typo = widget_document("Readout", Json{{"value", "time.hours"}});
+    CompileResult unknown = compile_document(typo, builtin_registry(), mesh);
+    bool named = false;
+    for (const Diag& diag : unknown.program.diagnostics)
+        if (diag.message.find("time.hours") != std::string::npos) named = true;
+    CHECK(named);
+}
+
 } // namespace
 
 /* stderr is unbuffered, so the LAST name printed before a native crash is the test
@@ -3280,5 +3384,6 @@ int main() {
     RUN(test_suspend_holds_text);
     RUN(test_document_tolerance);
     RUN(test_theme_tokens);
+    RUN(test_clock);
     return check::summary("runtime_test");
 }

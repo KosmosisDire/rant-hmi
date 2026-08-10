@@ -153,6 +153,8 @@ interface StageState {
   /* every bind currently casting a shadow — what the turn ticker re-runs */
   shadowed: Set<Bind>;
   turnTicking: boolean;
+  /* a frame is already scheduled to advance the time cells (the clock ticker) */
+  timeTicking: boolean;
   /* what a RECONCILE is keyed on: mode, artboard size, document version, compile epoch */
   docSig: string;
   /* the theme vars last emitted on the page, so a token that left is removed */
@@ -193,6 +195,7 @@ function stateOf(host: HTMLElement): StageState {
               byKid: new Map(), marks: new Map(), recording: null, pass: 0,
               tweens: new Map(), now: 0, ticking: false, tick: () => undefined,
               turning: new Set(), shadowed: new Set(), turnTicking: false,
+              timeTicking: false,
               docSig: "", tokenNames: [], tokens: [], flushState: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
@@ -530,6 +533,41 @@ export function setTransitionClock(fn: (() => number) | null): void {
     typeof performance !== "undefined" ? performance.now() : Date.now());
 }
 
+/* ---- the time cells ----
+ *
+ * `time` is the display tier's clock, read by field ("time:<field>" cells, the vocabulary
+ * in lang/ir.h kClockFields). `time.now` is seconds since this view loaded — the
+ * animation clock, ticking per frame; the rest is the viewer's wall clock, moving once a
+ * second. Rendering, not truth: the backend's own tiers read the backend's clock, and
+ * nothing here rides the wire. A replaced wall clock (tests) pins the civil fields the
+ * way setTransitionClock pins the sweeps. */
+let wallClock: (() => number) | null = null;
+
+export function setWallClock(fn: (() => number) | null): void {
+  wallClock = fn;
+}
+
+function timeField(name: string): Json {
+  if (name === "now") return clock() / 1000;
+  const at = new Date(wallClock ? wallClock() : Date.now());
+  const pad = (n: number) => String(n).padStart(2, "0");
+  switch (name) {
+    case "unix": return Math.floor(at.getTime() / 1000);
+    case "year": return at.getFullYear();
+    case "month": return at.getMonth() + 1;
+    case "day": return at.getDate();
+    case "weekday": return at.getDay();
+    case "hour": return at.getHours();
+    case "minute": return at.getMinutes();
+    case "second": return at.getSeconds();
+    case "text":
+      return pad(at.getHours()) + ":" + pad(at.getMinutes()) + ":" + pad(at.getSeconds());
+    case "date":
+      return at.getFullYear() + "-" + pad(at.getMonth() + 1) + "-" + pad(at.getDate());
+    default: return null;
+  }
+}
+
 function advanceTween(t: Tween, now: number): void {
   if (t.done) return;
   const at = t.ms > 0 ? (now - t.start) / t.ms : 1;
@@ -608,6 +646,67 @@ export function stepTransitions(host: HTMLElement, editor: Editor, now?: number)
     positionRings(host, editor);
   }
   scheduleTweens(state);
+}
+
+/* ---- the clock ticker ----
+ *
+ * The time cells move on their own — no wire frame, no gesture — so they get their own
+ * frame loop, scoped exactly like the sweeps': scheduled only while some bind reads a
+ * time cell, and stopped by a manual clock so tests step by hand. Each frame diffs every
+ * read time cell against its mark and patches exactly the readers whose cell moved —
+ * `time.now` moves every frame, the wall fields once a second, and a picture reading
+ * only `time.hour` repaints once an hour. */
+function timeLive(state: StageState): boolean {
+  for (const key of state.byDep.keys()) if (key.startsWith("time:")) return true;
+  for (const key of state.byKid.keys()) if (key.startsWith("time:")) return true;
+  return false;
+}
+
+/* one clock step: diff, patch the readers, reschedule. Exported for tests, which pin
+ * the clocks and step this by hand. */
+export function stepTime(host: HTMLElement, editor: Editor): void {
+  const state = stateOf(host);
+  const moved = new Map<string, string>();
+  const look = (key: string) => {
+    if (!key.startsWith("time:") || moved.has(key)) return;
+    const mark = JSON.stringify(timeField(key.slice(5)));
+    if (mark !== state.marks.get(key)) moved.set(key, mark);
+  };
+  for (const key of state.byDep.keys()) look(key);
+  for (const key of state.byKid.keys()) look(key);
+  if (moved.size) {
+    state.now = clock();
+    state.pass++;
+    const parents = new Set<Bind>();
+    const binds = new Set<Bind>();
+    for (const [key, mark] of moved) {
+      state.marks.set(key, mark);
+      for (const parent of state.byKid.get(key) ?? []) parents.add(parent);
+      for (const bind of state.byDep.get(key) ?? []) binds.add(bind);
+    }
+    for (const parent of parents)
+      if (state.binds.get(parent.key) === parent)
+        reconcileChildren(state, editor, parent, parent.node.children, parent.repeat);
+    for (const bind of binds)
+      if (state.binds.get(bind.key) === bind && bind.pass !== state.pass)
+        runAppliers(state, editor, bind);
+    repaintFree();
+    positionRings(host, editor);
+  }
+  scheduleTime(host, editor);
+}
+
+function scheduleTime(host: HTMLElement, editor: Editor): void {
+  const state = stateOf(host);
+  if (state.timeTicking || manualClock || !timeLive(state)) return;
+  state.timeTicking = true;
+  const frame = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (fn: () => void) => setTimeout(fn, 16);
+  frame(() => {
+    state.timeTicking = false;
+    stepTime(host, editor);
+  });
 }
 
 /* ---- evaluating a transition's OWN values ----
@@ -881,6 +980,13 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         /* the FRACTION of the way through: 0 at the first copy, 1 at the last, which is
            what places a tick at its own value rather than a step past it */
         return repeat.count > 1 ? repeat.index / (repeat.count - 1) : 0;
+      }
+      /* the clock (timeField above): recorded like any cell, ticked by its own frame
+         loop — stepTime re-runs exactly the binds whose time cell moved */
+      case "time": {
+        const value = timeField(name);
+        sawCell(state, "time:" + name, JSON.stringify(value));
+        return value;
       }
       /* optcount/optnames/optfrac: an option list is a value now -- the `options` param
          evaluates to a real list -- so nothing needs a cell of its own to expand one.
@@ -1764,9 +1870,10 @@ function livePatch(host: HTMLElement, editor: Editor): boolean {
   const state = stateOf(host);
   const moved = new Map<string, string>();
   const look = (key: string) => {
-    /* a state cell is WRITER-DRIVEN: gestureStateWriter patches it the moment it lands,
-       and nothing else can move it */
-    if (moved.has(key) || key.startsWith("state:")) return;
+    /* a state cell is WRITER-DRIVEN (gestureStateWriter patches it the moment it lands)
+       and a time cell is TICKER-DRIVEN (stepTime's own frame loop): neither is the
+       wire's to move */
+    if (moved.has(key) || key.startsWith("state:") || key.startsWith("time:")) return;
     const now = markNow(editor, key);
     if (now !== state.marks.get(key)) moved.set(key, now);
   };
@@ -1813,6 +1920,7 @@ function flushCell(host: HTMLElement, editor: Editor, key: string): void {
   repaintFree();
   positionRings(host, editor);
   scheduleTweens(state);
+  scheduleTime(host, editor);
 }
 
 /* ---- the rings ---- */
@@ -2073,6 +2181,8 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
   positionRings(host, editor);
   /* a pass may have set sweeps in flight: keep them advancing until they settle */
   scheduleTweens(state);
+  /* and it may have bound time cells: the clock ticker runs while any are read */
+  scheduleTime(host, editor);
 }
 
 /* the node the browser's own hit test named: the deepest one under the pointer, 0 where

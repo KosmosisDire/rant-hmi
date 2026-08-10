@@ -122,6 +122,41 @@ enum class OpCode : uint8_t {
      * queued on the state and the scheduler dispatches it AFTER this run halts — a raise
      * never re-enters the VM under the raising flow. */
     Raise,
+    /* push CLOCK FIELD `a` (a ClockField below): `time.now` is seconds since the program
+     * started (the tick counter, so replay stays deterministic), everything else is the
+     * wall clock the scheduler stamped at the top of this tick — one sample per tick, so
+     * a run can never see the second flip under it. The two TEXT fields render into the
+     * fixed slot `b` reserved at compile, like any text-producing site. */
+    ClockRead,
+};
+
+/* the fields `time` reads by — ONE table, so the scalar tier's bindings, the template
+ * tier's vocabulary and the VM's dispatch can never drift. The view mirrors it
+ * (inspector/scope.ts TIME_FIELDS, stage.ts timeField) the way it mirrors kStates. */
+enum class ClockField : uint16_t {
+    Now,       /* seconds since the HMI started, fractional: the animation clock */
+    Unix,      /* whole seconds since the epoch */
+    Year,
+    Month,     /* 1..12 */
+    Day,       /* 1..31 */
+    Weekday,   /* 0 = Sunday .. 6 = Saturday */
+    Hour,      /* 0..23 */
+    Minute,
+    Second,
+    Text,      /* "HH:MM:SS", local time */
+    Date,      /* "YYYY-MM-DD", local time */
+};
+
+struct ClockFieldDef {
+    const char* name;
+    Shape shape;
+};
+
+constexpr ClockFieldDef kClockFields[] = {
+    {"now", Shape::Num},    {"unix", Shape::Num},   {"year", Shape::Num},
+    {"month", Shape::Num},  {"day", Shape::Num},    {"weekday", Shape::Num},
+    {"hour", Shape::Num},   {"minute", Shape::Num}, {"second", Shape::Num},
+    {"text", Shape::Text},  {"date", Shape::Text},
 };
 
 /* what Iterate does with each element's body result (rides Instruction::small) */

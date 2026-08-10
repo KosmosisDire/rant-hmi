@@ -118,6 +118,13 @@ class RuntimeState {
     explicit RuntimeState(const Program& program);
 
     uint64_t tick = 0;
+    /* THE WALL CLOCK, epoch milliseconds, stamped by the scheduler at the top of each
+     * tick (never mid-run, so one run can never see the second flip under it). ClockRead
+     * serves its civil fields; `time.now` reads the tick counter instead, which is what
+     * keeps a replayed program's arithmetic deterministic. Tests pin it by setting
+     * wall_pinned and writing wall_ms by hand. */
+    double wall_ms = 0;
+    bool wall_pinned = false;
     std::vector<Value> values;
     std::vector<FixedText> texts;
     /* mesh-inbound text storage, appended after the cell slots: one scratch slot for
