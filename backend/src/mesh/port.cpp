@@ -36,11 +36,17 @@ static void mirror_write(RuntimeState& state, const EffectRecord& record) noexce
 
 bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
                    std::string& fault) noexcept {
+    /* every effect gets its attempt: one entity's failed send (its node down, say)
+     * must not swallow the tick's writes to everything else. The last failure's
+     * message is the tick's fault; a different one still standing next tick surfaces
+     * then, and the app coalesces per message either way. */
+    bool ok = true;
     for (uint32_t i = 0; i < state.effect_count; ++i) {
         const EffectRecord& record = state.effects[i];
         if (record.entity >= program.entities.size()) {
             fault = "effect names an invalid entity";
-            return false;
+            ok = false;
+            continue;
         }
         mirror_write(state, record);
         const EntityDef& entity = program.entities[record.entity];
@@ -55,9 +61,13 @@ bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
         view.field_count = static_cast<uint32_t>(entity.fields.size());
         view.bare_text = record.bare_text.view();
         view.field_text = record.field_text.data();
-        if (!mesh.execute(view, fault)) return false;
+        std::string one;
+        if (!mesh.execute(view, one)) {
+            fault = std::move(one);
+            ok = false;
+        }
     }
-    return true;
+    return ok;
 }
 
 } // namespace hmi
