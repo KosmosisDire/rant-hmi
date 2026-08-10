@@ -69,7 +69,7 @@ export function verbOf(step: Json): string {
       if (step.mode === "append") return "append";
       return "assign";
     }
-    case "gate": return "gate";
+    case "gate": return "if";
     case "deadband": return "deadband";
     case "throttle": return "throttle";
     case "debounce":
@@ -754,7 +754,7 @@ function stepCell(
   }
 
   if (step.kind === "gate") {
-    cell.appendChild(el("span", { class: "op", text: "only if" }));
+    /* the verb already reads "if", so the condition follows it bare */
     /* a condition's literal form IS true/false, so the bool icon is honest here */
     cell.appendChild(box("a", "bool", () => String(at().a ?? ""),
                          (text) => set("a", text)));
@@ -983,7 +983,7 @@ function stepMenu(
       run: () => insert({ kind: "assign", from: { init: true }, to: { local: "", path: "" } }),
     },
     { separator: true },
-    { label: "gate", run: () => insert({ kind: "gate", a: "" }) },
+    { label: "if", run: () => insert({ kind: "gate", a: "" }) },
     ...(continuous ? [{ label: "deadband", run: () => insert({ kind: "deadband", a: 1 }) }] : []),
     { label: "debounce", run: () => insert({ kind: "debounce", a: 200 }) },
     { label: "throttle", run: () => insert({ kind: "throttle", a: 200 }) },

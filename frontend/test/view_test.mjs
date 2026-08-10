@@ -3544,7 +3544,7 @@ check(stageNode("frame", 901) === heldAgain &&
       .find((r) => r.querySelector(".do-verb")?.textContent === verb) ?? null;
 
   /* the gate's condition: a value box, committing as typed */
-  const gateRow = rowByVerb("gate");
+  const gateRow = rowByVerb("if");
   const gateBox = gateRow?.querySelector(".value-box") ?? null;
   check(gateBox !== null, "a gate's condition is a value box on its row");
   check(gateBox.querySelector(".vb-icon") !== null &&
