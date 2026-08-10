@@ -53,6 +53,10 @@ struct EntityDef {
      * single-field source): the mesh must consume it so the last-value mirror is live,
      * exactly as it does for an entity a feed names */
     bool flow_reads = false;
+    /* stamped when a FLOW writes/calls/emits this entity: the mesh establishes the
+     * accessor at apply() so the owner match has formed long before the first effect
+     * (a write through a just-created accessor fails until its match converges) */
+    bool flow_writes = false;
 };
 
 /* the field table a FEED reads from: the response side of a function, else the value */

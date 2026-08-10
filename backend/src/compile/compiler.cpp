@@ -2426,8 +2426,10 @@ class Compiler {
         return true;
     }
 
-    /* every mesh read this compiled code performs, marked so the mesh consumes the
-     * entity (lambda bodies included — an ITERATE's sub can read the mesh too) */
+    /* every mesh read AND write this compiled code performs, marked so the mesh
+     * consumes the entity (lambda bodies included — an ITERATE's sub can read the mesh
+     * too). Writes stamp so apply() creates the accessor up front: a write through an
+     * accessor created at the moment of the first effect finds no owner matched yet */
     void stamp_flow_reads(const std::vector<Instruction>& code) {
         for (const Instruction& ins : code) {
             if (ins.op == OpCode::LoadEnt) {
@@ -2436,6 +2438,9 @@ class Compiler {
             } else if (ins.op == OpCode::ReadEnt) {
                 if (ins.b < program_.entities.size())
                     program_.entities[ins.b].flow_reads = true;
+            } else if (ins.op == OpCode::MoveOut) {
+                if (ins.a < program_.entities.size())
+                    program_.entities[ins.a].flow_writes = true;
             } else if (ins.op == OpCode::Iterate && ins.a < program_.subs.size()) {
                 stamp_flow_reads(program_.subs[ins.a].code);
             }

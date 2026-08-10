@@ -156,6 +156,20 @@ int main() {
     dart::VariableDefinition<> suction(peer, "suction", &*suck_schema, suction_options);
     CHECK(suction.valid());
 
+    /* a variable the document only WRITES (no feed, no flow read anywhere): its
+     * accessor exists solely because the compiler stamps flow_writes, and the very
+     * first write races the accessor's forming owner match */
+    auto set_schema = dart::Schema::compile("Set { target: f64 }");
+    CHECK(set_schema.has_value());
+    if (!set_schema) return check::summary("mesh_test");
+    dart::MessageBuilder set_initial(*set_schema);
+    set_initial.set_f64("target", 0.0);
+    CHECK(set_initial.ok());
+    dart::VariableOptions<> setpoint_options;
+    setpoint_options.initial = set_initial.bytes();
+    dart::VariableDefinition<> setpoint(peer, "setpoint", &*set_schema, setpoint_options);
+    CHECK(setpoint.valid());
+
     std::atomic<int> calls{0};
     dart::FunctionDefinition<> status(
         peer, "status", &*req_schema, &*rsp_schema,
@@ -234,8 +248,9 @@ int main() {
     CHECK_MSG(mesh.start(err), err);
 
     /* reflection settles once discovery + detail fetches land */
-    const char* wanted[] = {"tank_level", "history", "belt", "status", "alarm",
-                            "cmd",        "suction", "flag", "pressure", "gauge"};
+    const char* wanted[] = {"tank_level", "history", "belt", "status",   "alarm",
+                            "cmd",        "suction", "flag", "pressure", "gauge",
+                            "setpoint"};
     constexpr size_t kWanted = sizeof(wanted) / sizeof(wanted[0]);
     bool reflected = false;
     for (int i = 0; i < 100 && !reflected; ++i) {
@@ -411,6 +426,21 @@ int main() {
         {"slots", Json{{"value", "@gauge.value"}}},
     };
 
+    /* WRITE-ONLY: no expression anywhere reads @setpoint, so only the flow_writes
+     * stamp gives it a standing accessor */
+    Json setpoint_widget = {
+        {"kind", "frame"},
+        {"type", "Button"},
+        {"name", "Setpoint"},
+        {"flows", Json::array({
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"when_mode", "any"},
+                 {"do", Json::array({
+                     steps::write_field("V", "setpoint", "target", "5.5"),
+                 })}},
+        })},
+    };
+
     Json root = {
         {"version", 1},
         {"next_id", 1},
@@ -421,7 +451,8 @@ int main() {
                                                               alarm_widget, hist_widget,
                                                               suction_widget,
                                                               pressure_widget,
-                                                              gauge_widget})}}})},
+                                                              gauge_widget,
+                                                              setpoint_widget})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -446,6 +477,27 @@ int main() {
     Scheduler sched(std::move(compiled.program), mesh);
     mesh.apply(sched.program());
     mesh.set_viewed_pages({page_id});
+
+    /* ---- THE FIRST WRITE, immediately: the setpoint accessor was created by the
+     * apply() a moment ago (flow_writes is its only claim to one) and its owner
+     * match is still forming. ONE tap, no retries — the write must land anyway
+     * (the mesh layer waits out the forming match instead of failing with a
+     * no-owner send status and dropping the effect). ---- */
+    {
+        const uint64_t setpoint_id = page["children"][9].value("id", 0);
+        sched.post(InputEvent{2, setpoint_id, "tap", Value::number(0), 1});
+        const bool landed = run_until(
+            sched,
+            [&] {
+                auto bytes = setpoint.get();
+                if (!bytes) return false;
+                const dart::detail::DartBytes data =
+                    dart::detail::dart_bytes(bytes->data(), bytes->size());
+                return dart::detail::dart_get_f64(data, set_schema->raw(), "target") == 5.5;
+            },
+            2000);
+        CHECK_MSG(landed, "the FIRST write to a write-only variable never landed");
+    }
 
     const int level_cell = cell_of(sched.program(), level_id, "value");
     const int label_cell = cell_of(sched.program(), label_id, "text");

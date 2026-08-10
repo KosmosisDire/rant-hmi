@@ -27,6 +27,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <thread>
 
 namespace hmi {
 namespace {
@@ -38,6 +39,8 @@ using Clock = std::chrono::steady_clock;
 constexpr size_t kSignalRingCap = 256;   /* queued signal fires before oldest drops */
 constexpr int kTakeBudget = 256;         /* topic messages decoded per entity per tick */
 constexpr uint32_t kEffectWaitUs = 20000;   /* bounded backpressure for effect sends */
+constexpr int kOwnerWaitMs = 50;      /* one write's bounded wait on a still-forming owner match */
+constexpr int kOwnerFormingMs = 2000; /* how long a fresh accessor is credited a forming match */
 constexpr size_t kLogPendCap = 512;      /* undrained @dart/log lines before oldest drops */
 
 EntityKind kind_of(dart::EntityKind kind) {
@@ -305,6 +308,13 @@ struct Rec {
     std::optional<dart::Signal<>> sig;
     std::optional<dart::RemoteFunction<>> fn;
 
+    /* the owner-match story for writes through the variable accessor: var_created
+     * bounds how long a FORMING match is worth waiting on; owner_seen flips the first
+     * time the owner provably exists (an update arrives, or a write lands), after
+     * which a no-owner send status means the node LEFT and failing fast is honest */
+    Clock::time_point var_created{};
+    std::atomic<bool> owner_seen{false};
+
     /* latest-wins slot: variable updates and function responses (service thread in,
      * logic thread out); signals keep order in a bounded ring instead */
     std::mutex slot_mu;
@@ -553,6 +563,7 @@ bool DartMesh::refresh() {
         rec.topic.reset();
         rec.topic_pub = false;
         rec.var.reset();
+        rec.owner_seen.store(false, std::memory_order_relaxed);
         rec.sig.reset();
         rec.fn.reset();
         rec.schema = {};
@@ -663,8 +674,11 @@ bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
                 dart::VariableOptions<> options;
                 options.backpressure_wait_us = kEffectWaitUs;
                 rec.var.emplace(*node, rec.name, schema, options);
+                rec.var_created = Clock::now();
                 Rec* self = &rec;
                 rec.var->on_change([self](const dart::VariableUpdate& update) {
+                    /* an update can only come from the owner: the match has formed */
+                    self->owner_seen.store(true, std::memory_order_relaxed);
                     const dart::Bytes value = update.value();
                     std::lock_guard<std::mutex> hold(self->slot_mu);
                     self->slot.assign(value.begin(), value.end());
@@ -756,9 +770,11 @@ void DartMesh::apply(const Program& program) {
     /* an entity ANY program reads — a flow's `read <entity>`, a single-field source,
      * a slot expression's `@entity` (the dep scan stamps those too) — needs a live
      * subscription: without one its last-value mirror never fills and every read
-     * yields Nil, so a gate over it can never pass */
+     * yields Nil, so a gate over it can never pass. An entity a flow only WRITES
+     * needs its accessor standing just as early: one created at the moment of the
+     * first effect has no owner matched yet, and that first write would fail */
     for (const EntityDef& def : program.entities)
-        if (def.flow_reads) consume(def);
+        if (def.flow_reads || def.flow_writes) consume(def);
 }
 
 /* ============================== drain ======================================= */
@@ -1111,6 +1127,24 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
     return true;
 }
 
+/* what a failed send status MEANS, in the author's language; the raw number only
+ * where no story is known */
+static std::string send_status_story(dart::SendStatus status) {
+    switch (status) {
+        case dart::SendStatus::NoTopic:
+            return "found no provider on the mesh (its node may be down)";
+        case dart::SendStatus::BadRole:
+            return "was refused: the provider is read-only";
+        case dart::SendStatus::TooBig:
+            return "exceeds the message size bound";
+        case dart::SendStatus::OutOfMemory:
+            return "failed: the mesh node is out of memory";
+        default:
+            return "failed (send status " +
+                   std::to_string(static_cast<int>(status)) + ")";
+    }
+}
+
 bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
     Impl& impl = *impl_;
     if (!effect.entity) {
@@ -1190,9 +1224,30 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             fault = "verb does not apply to the mesh";
             return false;
     }
+    /* A variable write's owner match may still be FORMING: the library queues an
+     * unmatched function CALL and match-waits a topic SEND, but the accessor write
+     * route fails fast with NoTopic while no owner has matched. Retry briefly — only
+     * while this accessor has never seen its owner (once seen, NoTopic means the node
+     * LEFT, and failing fast is honest) and only while the accessor is young enough
+     * for "still forming" to be the likely story, so a write to a genuinely absent
+     * owner never stalls the tick loop at steady state. */
+    if (status == dart::SendStatus::NoTopic && rec->var &&
+        (effect.verb == Verb::Write || effect.verb == Verb::Force) &&
+        !rec->owner_seen.load(std::memory_order_relaxed)) {
+        const Clock::time_point deadline =
+            std::min(Clock::now() + std::chrono::milliseconds(kOwnerWaitMs),
+                     rec->var_created + std::chrono::milliseconds(kOwnerFormingMs));
+        while (status == dart::SendStatus::NoTopic && Clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            status = effect.verb == Verb::Force ? rec->var->force(payload)
+                                                : rec->var->set(payload);
+        }
+    }
+    if (status == dart::SendStatus::Ok && rec->kind == EntityKind::Variable)
+        rec->owner_seen.store(true, std::memory_order_relaxed);
     if (status != dart::SendStatus::Ok) {
-        fault = std::string(verb_name(effect.verb)) + " of '" + rec->name +
-                "' failed (send status " + std::to_string(static_cast<int>(status)) + ")";
+        fault = std::string(verb_name(effect.verb)) + " of '" + rec->name + "' " +
+                send_status_story(status);
         return false;
     }
     if (rec->kind == EntityKind::Variable && rec->compiled) {
