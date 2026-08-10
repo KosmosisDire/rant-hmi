@@ -203,6 +203,23 @@ int main() {
     CHECK(pressure.valid());
     CHECK(peer.start());
 
+    /* a SECOND provider node the retype section below restarts with a new schema */
+    auto gauge_v1 = dart::Schema::compile("Gauge { value: f64, unit: string<8> }");
+    CHECK(gauge_v1.has_value());
+    if (!gauge_v1) return check::summary("mesh_test");
+    std::optional<dart::Node> prov;
+    std::optional<dart::Publisher<>> gauge_pub;
+    prov.emplace(
+        "plant2", dart::Node::MessageHandler{},
+        [](const dart::Event& event) {
+            if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
+        },
+        peer_options);
+    CHECK(prov->valid());
+    gauge_pub.emplace(*prov, "gauge", &*gauge_v1, dart::Qos{dart::Reliability::Reliable});
+    CHECK(gauge_pub->valid());
+    CHECK(prov->start());
+
     /* ---- the adapter ---- */
     DartMeshOptions mesh_options;
     mesh_options.node_name = "hmi-under-test";
@@ -217,8 +234,8 @@ int main() {
     CHECK_MSG(mesh.start(err), err);
 
     /* reflection settles once discovery + detail fetches land */
-    const char* wanted[] = {"tank_level", "history", "belt", "status",
-                            "alarm",      "cmd",     "suction", "flag", "pressure"};
+    const char* wanted[] = {"tank_level", "history", "belt", "status", "alarm",
+                            "cmd",        "suction", "flag", "pressure", "gauge"};
     constexpr size_t kWanted = sizeof(wanted) / sizeof(wanted[0]);
     bool reflected = false;
     for (int i = 0; i < 100 && !reflected; ++i) {
@@ -387,6 +404,13 @@ int main() {
         })},
     };
 
+    Json gauge_widget = {
+        {"kind", "frame"},
+        {"type", "Readout"},
+        {"name", "Gauge"},
+        {"slots", Json{{"value", "@gauge.value"}}},
+    };
+
     Json root = {
         {"version", 1},
         {"next_id", 1},
@@ -396,7 +420,8 @@ int main() {
                                                               speed_widget, temp_widget,
                                                               alarm_widget, hist_widget,
                                                               suction_widget,
-                                                              pressure_widget})}}})},
+                                                              pressure_widget,
+                                                              gauge_widget})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -571,6 +596,80 @@ int main() {
             released = run_until(sched, [&] { return !suction.forced(); }, 200);
         }
         CHECK_MSG(released, "the unforce never landed");
+    }
+
+    /* ---- a provider restarting with a NEW schema for a live topic: the adapter
+     * retires the old-typed handle and codec on refresh and re-subscribes with the
+     * new type through the ordinary recompile + apply path, so a binding whose field
+     * survives the change keeps working without an HMI restart ---- */
+    {
+        const uint64_t gauge_id = page["children"][8].value("id", 0);
+        const int gauge_cell = cell_of(sched.program(), gauge_id, "value");
+        CHECK(gauge_cell >= 0);
+
+        /* baseline: the v1 subscription feeds the cell */
+        dart::MessageBuilder v1_msg(*gauge_v1);
+        v1_msg.set_f64("value", 6.5).set_string("unit", "bar");
+        CHECK(v1_msg.ok());
+        bool seen = false;
+        for (int i = 0; i < 80 && !seen; ++i) {
+            gauge_pub->send(v1_msg.bytes());
+            seen = run_until(sched, [&] { return num_at(sched, gauge_cell) == 6.5; }, 100);
+        }
+        CHECK_MSG(seen, "gauge v1 value never arrived");
+
+        /* the provider restarts with a CHANGED schema (value survives, unit -> extra) */
+        auto gauge_v2 = dart::Schema::compile("Gauge { value: f64, extra: u8 }");
+        CHECK(gauge_v2.has_value());
+        if (!gauge_v2) return check::summary("mesh_test");
+        gauge_pub.reset();
+        prov.reset();
+        prov.emplace(
+            "plant2", dart::Node::MessageHandler{},
+            [](const dart::Event& event) {
+                if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
+            },
+            peer_options);
+        CHECK(prov->valid());
+        gauge_pub.emplace(*prov, "gauge", &*gauge_v2, dart::Qos{dart::Reliability::Reliable});
+        CHECK(gauge_pub->valid());
+        CHECK(prov->start());
+
+        /* refresh at control-plane pace until the new type reflects with its fields */
+        bool retyped = false;
+        for (int i = 0; i < 100 && !retyped; ++i) {
+            mesh.refresh();
+            for (const EntityDef& entity : mesh.reflection())
+                if (entity.name == "gauge" && entity.schema_hash == gauge_v2->hash() &&
+                    entity.fields.size() == 2)
+                    retyped = true;
+            if (!retyped) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        CHECK_MSG(retyped, "the re-typed gauge never reflected");
+
+        /* the app's hot-swap: recompile against the new reflection, re-apply */
+        CompileResult swapped = compile_document(document, builtin_registry(), mesh);
+        for (const Diag& diag : swapped.program.diagnostics)
+            if (diag.grade == DiagGrade::Error)
+                std::printf("recompile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+        CHECK(swapped.ok);
+        if (!swapped.ok) return check::summary("mesh_test");
+        Scheduler swapped_sched(std::move(swapped.program), mesh);
+        mesh.apply(swapped_sched.program());
+        mesh.set_viewed_pages({page_id});
+
+        const int swapped_cell = cell_of(swapped_sched.program(), gauge_id, "value");
+        CHECK(swapped_cell >= 0);
+        dart::MessageBuilder v2_msg(*gauge_v2);
+        v2_msg.set_f64("value", 8.25).set_uint("extra", 3);
+        CHECK(v2_msg.ok());
+        seen = false;
+        for (int i = 0; i < 80 && !seen; ++i) {
+            gauge_pub->send(v2_msg.bytes());
+            seen = run_until(swapped_sched,
+                             [&] { return num_at(swapped_sched, swapped_cell) == 8.25; }, 100);
+        }
+        CHECK_MSG(seen, "the re-typed gauge value never arrived");
     }
 
     return check::summary("mesh_test");

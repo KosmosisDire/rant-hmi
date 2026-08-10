@@ -1,6 +1,7 @@
 /* The real DART adapter behind the MeshPort seam (PLAN.md stage 5). One dart::Node on
  * its own service thread; reflection from the peer entity walk, folded and deduped into
- * EntityDefs; handles cached per entity for the node's lifetime; payloads encoded and
+ * EntityDefs; handles cached per entity until its schema hash changes (then retired
+ * and re-created with the new type); payloads encoded and
  * decoded by the OWNER's reflected layout, never a schema we impose. dart.hpp stays
  * behind this header (pimpl), so compile/vm/sched never see it. */
 #pragma once

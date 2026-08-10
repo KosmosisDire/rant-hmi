@@ -296,7 +296,8 @@ struct Rec {
     std::vector<FieldDef> rsp_fields;
     std::vector<EncField> enc;
 
-    /* handles, created on first need, cached for the node's lifetime */
+    /* handles, created on first need, cached until the entity re-types (refresh
+     * retires them and the next apply() recreates them with the new schema) */
     std::optional<dart::Topic> topic;           /* Topic entity: sub + (role-flipped) pub */
     bool topic_pub = false;
     std::optional<dart::RemoteVariable<>> var;
@@ -492,12 +493,43 @@ bool DartMesh::refresh() {
     }
     if (signature == impl_->signature) return false;
 
+    /* an entity that came back with a NEW type: retire the rec's typed handles and
+     * codec now, so the recompile this refresh triggers re-subscribes with the new
+     * schema (ensure_rec refills from `folded`, ensure_consumption recreates the
+     * handles; the vendored Topic ctor parks a re-typed name's old channel Inactive).
+     * The Rec object itself stays: service-thread handler captures remain valid, and
+     * the old handlers go silent because their old-typed channels match nothing. */
     for (const auto& item : fold) {
-        auto rec = impl_->recs.find(item.first);
-        if (rec != impl_->recs.end() && rec->second->schema.hash != 0 &&
-            rec->second->schema.hash != item.second.schema_hash)
-            impl_->log("schema changed for live entity (handles keep the old type until restart)",
-                       item.first);
+        auto it = impl_->recs.find(item.first);
+        if (it == impl_->recs.end()) continue;
+        Rec& rec = *it->second;
+        const bool retyped =
+            (rec.schema.hash != 0 && rec.schema.hash != item.second.schema_hash) ||
+            (rec.rsp_schema.hash != 0 && rec.rsp_schema.hash != item.second.rsp_schema_hash);
+        if (!retyped) continue;
+        impl_->log("entity re-typed, re-subscribing with the new schema", item.first);
+        if (rec.topic) rec.topic->set_role(dart::Role::Inactive);
+        rec.topic.reset();
+        rec.topic_pub = false;
+        rec.var.reset();
+        rec.sig.reset();
+        rec.fn.reset();
+        rec.schema = {};
+        rec.rsp_schema = {};
+        rec.compiled.reset();
+        rec.rsp_compiled.reset();
+        rec.enc.clear();
+        rec.default_request.clear();
+        rec.last_payload.clear();
+        rec.last_payload_hash = 0;
+        rec.last_schema = nullptr;
+        {
+            std::lock_guard<std::mutex> hold(rec.slot_mu);
+            rec.slot.clear();
+            rec.slot_schema = nullptr;
+            rec.slot_dirty = false;
+            rec.ring.clear();
+        }
     }
     impl_->signature = std::move(signature);
     impl_->entities = std::move(next);
@@ -533,8 +565,8 @@ Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
 
 /* (Re)build a record's compiled schemas + encode table from the latest reflection.
  * Runs at creation and again whenever a record still lacks a schema one has arrived
- * for (an entity that reflected untyped and typed later). Live HANDLES keep the type
- * they were created with; only the codec upgrades. */
+ * for: an entity that reflected untyped and typed later, or one whose type CHANGED
+ * (refresh retired its old codec and handles, so the next apply() lands here). */
 void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& folded_entity) const {
     rec.schema = folded_entity.schema;
     rec.rsp_schema = folded_entity.rsp_schema;

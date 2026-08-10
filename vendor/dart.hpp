@@ -19314,16 +19314,21 @@ inline Topic::Topic(Node& node, std::string_view name, Role role,
     auto it = impl->topics.find(nm);
     if (it != impl->topics.end()) {
         if (sh && it->second.schema_hash && sh != it->second.schema_hash) {
-            priv::raise_msg("dart::Topic: same-name topic already exists with a different schema");
+            /* HMI patch: the name is being re-created with a NEW type (the provider
+             * re-typed its topic). There is no channel destroy, so park the old
+             * channel and fall through to create a fresh slot with this schema;
+             * handles on the old channel stay valid but match nothing. */
+            detail::dart_topic_set_role(it->second.ch, detail::DART_INACTIVE);
+            impl->topics.erase(it);
+        } else {
+            uint8_t bits = (uint8_t)(it->second.bits | priv::role_bits(role));
+            if (bits != it->second.bits) {
+                detail::dart_topic_set_role(it->second.ch, static_cast<detail::DartRole>(priv::role_from_bits(bits)));
+                it->second.bits = bits;
+            }
+            ch_ = it->second.ch;
             return;
         }
-        uint8_t bits = (uint8_t)(it->second.bits | priv::role_bits(role));
-        if (bits != it->second.bits) {
-            detail::dart_topic_set_role(it->second.ch, static_cast<detail::DartRole>(priv::role_from_bits(bits)));
-            it->second.bits = bits;
-        }
-        ch_ = it->second.ch;
-        return;
     }
     detail::DartTopicOpts co;
     std::memset(&co, 0, sizeof co);
