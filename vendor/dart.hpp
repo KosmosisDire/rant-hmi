@@ -3664,6 +3664,8 @@ int  dart_function_call_async(DartFunction *fn, DartBytes req, DartResponseFn on
                               void *user, const DartCallOpts *opts);
 /* Providers matched (remote side) / callers matched (definition side). */
 int  dart_function_match_count(DartFunction *fn);
+/* HMI patch 2 (see dart_variable_retire): pending calls still time out normally */
+void dart_function_retire(DartFunction *fn);
 
 /* ---- the built-in @dart/meta introspection endpoint ----------------------------------
  * Every node (patterns compiled in, opts.disable_meta off) hosts a "@dart/meta" function
@@ -3779,6 +3781,18 @@ int  dart_variable_wait(DartVariable *var, int timeout_ms);
 /* Remote: owners matched (0 = no owner present). Definition: remotes matched. */
 int  dart_variable_match_count(DartVariable *var);
 
+/* HMI patch 2: RETIRE a pattern handle whose provider re-typed or whose incarnation
+ * changed, so a same-name SUCCESSOR owns the name outright. Channels cannot be
+ * destroyed, so retire PARKS them Inactive (they unmatch and leave the announce) and
+ * silences the handlers; the struct stays pool-allocated (a stray in-flight delivery
+ * finds valid memory) and stays in the manager list (pending-call reaping continues;
+ * the list is not name-keyed). Without this, the old live-typed channels shadow the
+ * successor's on peers and refuse every match with schema-mismatch. A dist refresh of
+ * dart.hpp SILENTLY DROPS this patch — re-apply (or upstream) whenever the vendored
+ * file is replaced. dart_function_retire / dart_signal_retire are declared with their
+ * patterns below. */
+void dart_variable_retire(DartVariable *var);
+
 /* ---- SIGNALS ------------------------------------------------------------------------ */
 
 /* A reliable fire-and-forget event: N emitters, N listeners, NEVER latched (a late joiner
@@ -3803,6 +3817,8 @@ DartSignal *dart_node_create_signal(DartNode *n, const char *name, const DartSch
 int  dart_signal_emit(DartSignal *sig, DartBytes payload);
 /* Listeners currently matched (other nodes subscribed to this signal). */
 int  dart_signal_listener_count(DartSignal *sig);
+/* HMI patch 2 (see dart_variable_retire) */
+void dart_signal_retire(DartSignal *sig);
 
 /* ---- REFLECTION (entity enumeration) -------------------------------------------------
  * The canonical way to see what exists on the network. Observers consume ENTITIES, never
@@ -16114,6 +16130,19 @@ int dart_function_call_async(DartFunction *fn, DartBytes req, DartResponseFn on_
     return i_dart_function_call_id(fn, req, on_response, user, opts ? opts->provider : 0, NULL);
 }
 
+/* HMI patch 2: park the channels and silence the handler so a same-name successor owns
+ * the name outright (see dart_variable_retire). The handle STAYS in the manager list,
+ * so calls pending at retire still reach their timeout through the ordinary reaper. */
+void dart_function_retire(DartFunction *fn){
+    int acquired;
+    if (!fn) return;
+    acquired = i_dart_node_sys_lock(fn->n);
+    fn->on_request = NULL; fn->on_request_user = NULL;
+    i_dart_node_sys_unlock(fn->n, acquired);
+    if (fn->req) dart_topic_set_role(fn->req, DART_INACTIVE);
+    if (fn->rsp) dart_topic_set_role(fn->rsp, DART_INACTIVE);
+}
+
 /* blocking-call response capture: copy the payload into the function's scratch, mark done.
  * The schema pointer is safe to hold: an interned schema lives until node close. */
 typedef struct { DartFunction *fn; volatile int done; DartCallStatus status;
@@ -16635,6 +16664,20 @@ int dart_variable_unforce(DartVariable *var){
 
 int dart_variable_forced(DartVariable *var){ return var ? var->forced : 0; }
 
+/* HMI patch 2: park the channels and silence the handlers so a same-name successor
+ * owns the name outright (see the declaration for the full story). The struct stays
+ * pool-allocated and in the manager list; set_role takes the node lock itself. */
+void dart_variable_retire(DartVariable *var){
+    int acquired;
+    if (!var) return;
+    acquired = i_dart_node_sys_lock(var->n);
+    var->on_change = NULL; var->on_change_user = NULL;
+    var->on_write  = NULL; var->on_write_user  = NULL;
+    i_dart_node_sys_unlock(var->n, acquired);
+    if (var->value) dart_topic_set_role(var->value, DART_INACTIVE);
+    if (var->set)   dart_topic_set_role(var->set,   DART_INACTIVE);
+}
+
 int dart_variable_on_change(DartVariable *var, DartVariableUpdateFn on_change, void *user){
     int acquired;
     if (!var) return DART_ERR_NO_TOPIC;
@@ -16722,6 +16765,16 @@ DartSignal *dart_node_create_signal(DartNode *n, const char *name, const DartSch
     s->next = pm->sigs; pm->sigs = s;
     i_dart_node_sys_unlock(n, acquired);
     return s;
+}
+
+/* HMI patch 2: park the channel and silence the handler (see dart_variable_retire) */
+void dart_signal_retire(DartSignal *sig){
+    int acquired;
+    if (!sig) return;
+    acquired = i_dart_node_sys_lock(sig->n);
+    sig->on_signal = NULL; sig->user = NULL;
+    i_dart_node_sys_unlock(sig->n, acquired);
+    if (sig->topic) dart_topic_set_role(sig->topic, DART_INACTIVE);
 }
 
 int dart_signal_emit(DartSignal *sig, DartBytes payload){
@@ -19594,6 +19647,13 @@ public:
 
     int  match_count()    const { return fn_ ? detail::dart_function_match_count(fn_) : 0; }
     bool has_definition() const { return match_count() > 0; }
+    /* HMI patch 2: park the channels so a same-name successor owns the name outright;
+     * calls pending at retire still reach their timeout. This handle goes inert. */
+    void retire() {
+        if (!fn_) return;
+        detail::dart_function_retire(fn_);
+        fn_ = nullptr;
+    }
 
 private:
     /* wrap a node-owned function handle (the @dart/meta endpoint): callable, never
@@ -19708,6 +19768,13 @@ public:
     bool forced() const { return var_ && detail::dart_variable_forced(var_) == 1; }
     /* remotes currently matched to this definition */
     int remote_count() const { return var_ ? detail::dart_variable_match_count(var_) : 0; }
+    /* HMI patch 2: park the channels and silence the handlers so a same-name successor
+     * owns the name outright; this handle goes inert (valid() turns false) */
+    void retire() {
+        if (!var_) return;
+        detail::dart_variable_retire(var_);
+        var_ = nullptr;
+    }
 
     /* Observe this variable. on_change fires only when the observed state actually
      * changes (the first value, different bytes, or a forced flip), and replays the
@@ -19812,6 +19879,13 @@ public:
         return static_cast<SendStatus>(detail::dart_signal_emit(sig_, priv::to_c(payload)));
     }
     int listener_count() const { return sig_ ? detail::dart_signal_listener_count(sig_) : 0; }
+    /* HMI patch 2: park the channel and silence the handler so a same-name successor
+     * owns the name outright; this handle goes inert */
+    void retire() {
+        if (!sig_) return;
+        detail::dart_signal_retire(sig_);
+        sig_ = nullptr;
+    }
 
 private:
     struct Box : priv::HandlerBox {

@@ -11,12 +11,15 @@
 #include "mesh/dart_mesh.h"
 #include "compile/components.h"
 #include "sched/scheduler.h"
+#include "vm/state.h"
 
 #include "dart.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <functional>
+#include <memory>
 #include <thread>
 
 using namespace hmi;
@@ -49,6 +52,13 @@ int cell_of(const Program& program, uint64_t widget, const char* slot) {
     for (uint32_t i = 0; i < program.cells.size(); ++i)
         if (program.cells[i].kind == CellKind::Slot && program.cells[i].owner_widget == widget &&
             program.cells[i].name == slot)
+            return static_cast<int>(i);
+    return -1;
+}
+
+int global_cell_of(const Program& program, const char* name) {
+    for (uint32_t i = 0; i < program.cells.size(); ++i)
+        if (program.cells[i].kind == CellKind::Global && program.cells[i].name == name)
             return static_cast<int>(i);
     return -1;
 }
@@ -722,6 +732,321 @@ int main() {
                              [&] { return num_at(swapped_sched, swapped_cell) == 8.25; }, 100);
         }
         CHECK_MSG(seen, "the re-typed gauge value never arrived");
+    }
+
+    /* ---- THE RESTART CYCLE, app-faithful: refresh at control-plane pace, and every
+     * refresh that reports change RECOMPILES with state migration, exactly as
+     * App::poll does. The restarting provider hosts ALL THREE pattern kinds — a
+     * TOPIC (gauge), a VARIABLE read and written (dial), and a polled FUNCTION
+     * (meter). A provider dying may kill ITS flows (honest diags) — nothing else.
+     * Its RETURN — same-typed first, then retyped — must resume every feed, every
+     * write and the beat flow, and values that survived the outage keep going. */
+    {
+        auto cycle_v2 = dart::Schema::compile("Gauge { value: f64, extra: u8 }");
+        auto dial_v1 = dart::Schema::compile("Dial { setting: f64 }");
+        auto meter_q = dart::Schema::compile("MeterQ { q: u8 }");
+        auto meter_r1 = dart::Schema::compile("MeterR { r: f64 }");
+        CHECK(cycle_v2 && dial_v1 && meter_q && meter_r1);
+        if (!cycle_v2 || !dial_v1 || !meter_q || !meter_r1)
+            return check::summary("mesh_test");
+
+        std::optional<dart::VariableDefinition<>> dial_def;
+        std::optional<dart::FunctionDefinition<>> meter_def;
+        double meter_reply = 21.5;
+        auto host_plant2 = [&](const dart::Schema* gauge_schema,
+                               const dart::Schema* dial_schema, double dial_setting,
+                               const dart::Schema* meter_rsp) {
+            prov.emplace(
+                "plant2", dart::Node::MessageHandler{},
+                [](const dart::Event& event) {
+                    if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
+                },
+                peer_options);
+            CHECK(prov->valid());
+            gauge_pub.emplace(*prov, "gauge", gauge_schema,
+                              dart::Qos{dart::Reliability::Reliable});
+            CHECK(gauge_pub->valid());
+            dart::MessageBuilder seed(*dial_schema);
+            seed.set_f64("setting", dial_setting);
+            CHECK(seed.ok());
+            dart::VariableOptions<> dial_opts;
+            dial_opts.initial = seed.bytes();
+            dial_def.emplace(*prov, "dial", dial_schema, dial_opts);
+            CHECK(dial_def->valid());
+            meter_def.emplace(*prov, "meter", &*meter_q, meter_rsp,
+                              [&meter_reply, meter_rsp](dart::Request<>& request) {
+                                  dart::MessageBuilder reply(*meter_rsp);
+                                  reply.set_f64("r", meter_reply);
+                                  request.reply(reply.bytes());
+                              });
+            CHECK(meter_def->valid());
+            CHECK(prov->start());
+        };
+        auto kill_plant2 = [&] {
+            meter_def.reset();
+            dial_def.reset();
+            gauge_pub.reset();
+            prov.reset();
+        };
+
+        /* the cycle's own document: gauge feed + beat flow into a global, dial feed +
+         * tap write, polled meter feed, and a HEALTHY node's tank as the control */
+        Json cy_gauge = {
+            {"kind", "frame"},
+            {"type", "Readout"},
+            {"name", "CyGauge"},
+            {"slots", Json{{"value", "@gauge.value"}}},
+            {"flows", Json::array({
+                Json{{"when", Json::array({steps::every(50)})},
+                     {"when_mode", "any"},
+                     {"do", Json::array({steps::set_var("hold", "@gauge.value")})}},
+            })},
+        };
+        Json cy_dial = {
+            {"kind", "frame"},
+            {"type", "Readout"},
+            {"name", "CyDial"},
+            {"slots", Json{{"value", "@dial.setting"}}},
+            {"flows", Json::array({
+                Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                     {"when_mode", "any"},
+                     {"do", Json::array({
+                         steps::write_field("V", "dial", "setting", "33.5"),
+                     })}},
+            })},
+        };
+        Json cy_meter = {
+            {"kind", "frame"},
+            {"type", "Readout"},
+            {"name", "CyMeter"},
+            {"slots", Json{{"value", "@meter.r"}}},
+            {"poll", Json{{"value", 20}}},
+        };
+        Json cy_tank = {
+            {"kind", "frame"},
+            {"type", "Readout"},
+            {"name", "CyTank"},
+            {"slots", Json{{"value", "@tank_level.level"}}},
+        };
+        Json cy_root = {
+            {"version", 1},
+            {"next_id", 1},
+            {"globals",
+             Json::array({Json{{"name", "hold"}, {"type", "f64"}, {"init", 0}}})},
+            {"pages",
+             Json::array({Json{{"name", "Cycle"},
+                               {"children", Json::array({cy_gauge, cy_dial, cy_meter,
+                                                         cy_tank})}}})},
+        };
+        Document cycle_doc;
+        CHECK_MSG(cycle_doc.adopt(std::move(cy_root), err), err);
+        const Json& cy_page = cycle_doc.root["pages"][0];
+        const uint64_t cy_page_id = cy_page.value("id", 0);
+        const uint64_t cy_gauge_id = cy_page["children"][0].value("id", 0);
+        const uint64_t cy_dial_id = cy_page["children"][1].value("id", 0);
+        const uint64_t cy_meter_id = cy_page["children"][2].value("id", 0);
+        const uint64_t cy_tank_id = cy_page["children"][3].value("id", 0);
+
+        std::unique_ptr<Scheduler> cur;
+        auto recompile = [&] {
+            CompileResult result = compile_document(cycle_doc, builtin_registry(), mesh);
+            auto next = std::make_unique<Scheduler>(std::move(result.program), mesh);
+            if (cur)
+                next->state() =
+                    migrate_state(cur->program(), cur->state(), next->program());
+            cur = std::move(next);
+            mesh.apply(cur->program());
+            mesh.set_viewed_pages({cy_page_id});
+        };
+        auto dump_faults = [&](const char* when) {
+            const RuntimeState& state = cur->state();
+            for (uint32_t i = 0;
+                 i < state.faults.size() && i < cur->program().runtime_faults.size(); ++i)
+                if (state.faults[i].count)
+                    std::printf("cycle faults %s: %s (x%u)\n", when,
+                                cur->program().runtime_faults[i].message.c_str(),
+                                state.faults[i].count);
+        };
+        auto dump_diags = [&](const char* when) {
+            for (const Diag& diag : cur->program().diagnostics)
+                if (diag.grade == DiagGrade::Error)
+                    std::printf("cycle diags %s: [%s] %s\n", when, diag.code.c_str(),
+                                diag.message.c_str());
+        };
+        /* wait for one widget's cell to reach a value, refreshing/recompiling at
+         * control-plane pace and pumping the publisher, exactly as the live app runs */
+        auto wait_cell = [&](uint64_t widget, const char* slot, double want, int rounds,
+                             std::function<void()> pump) {
+            for (int i = 0; i < rounds; ++i) {
+                if (mesh.refresh()) recompile();
+                if (pump) pump();
+                const int cell = cell_of(cur->program(), widget, slot);
+                if (run_until(*cur, [&] { return num_at(*cur, cell) == want; }, 100))
+                    return true;
+            }
+            return false;
+        };
+        auto wait_hold = [&](double want, int rounds) {
+            for (int i = 0; i < rounds; ++i) {
+                if (mesh.refresh()) recompile();
+                const int cell = global_cell_of(cur->program(), "hold");
+                if (run_until(*cur, [&] { return num_at(*cur, cell) == want; }, 100))
+                    return true;
+            }
+            return false;
+        };
+        /* wait for the trio to reflect with the wanted shapes (hash for the topic,
+         * field counts for the variable's value and the function's response) */
+        auto reflect_trio = [&](uint64_t gauge_hash, size_t dial_fields,
+                                size_t meter_rsp_fields) {
+            for (int i = 0; i < 150; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (mesh.refresh() && cur) recompile();
+                bool gauge_ok = false, dial_ok = false, meter_ok = false;
+                for (const EntityDef& entity : mesh.reflection()) {
+                    if (entity.name == "gauge" && entity.schema_hash == gauge_hash)
+                        gauge_ok = true;
+                    if (entity.name == "dial" && entity.fields.size() == dial_fields)
+                        dial_ok = true;
+                    if (entity.name == "meter" &&
+                        entity.rsp_fields.size() == meter_rsp_fields)
+                        meter_ok = true;
+                }
+                if (gauge_ok && dial_ok && meter_ok) return true;
+            }
+            return false;
+        };
+        auto dial_setting_is = [&](const dart::Schema& schema, double want) {
+            auto bytes = dial_def->get();
+            if (!bytes) return false;
+            const dart::detail::DartBytes data =
+                dart::detail::dart_bytes(bytes->data(), bytes->size());
+            return dart::detail::dart_get_f64(data, schema.raw(), "setting") == want;
+        };
+        uint64_t cy_seq = 1;
+        /* tap the dial widget until its write lands at the owner (a human re-taps;
+         * each round is one tap, not a blind retry of a dropped effect) */
+        auto write_dial = [&](const dart::Schema& schema, int rounds) {
+            for (int i = 0; i < rounds; ++i) {
+                if (mesh.refresh()) recompile();
+                cur->post(InputEvent{3, cy_dial_id, "tap", Value::number(0), cy_seq++});
+                if (run_until(*cur, [&] { return dial_setting_is(schema, 33.5); }, 200))
+                    return true;
+            }
+            return false;
+        };
+
+        /* plant2 restarts hosting the trio; the cycle doc compiles once they reflect */
+        kill_plant2();
+        host_plant2(&*cycle_v2, &*dial_v1, 7.5, &*meter_r1);
+        CHECK_MSG(reflect_trio(cycle_v2->hash(), 1, 1), "cycle: the trio never reflected");
+        recompile();
+        dump_diags("at baseline");
+
+        /* baseline: all three feed, the beat flow mirrors, the write lands */
+        dart::MessageBuilder base_msg(*cycle_v2);
+        base_msg.set_f64("value", 8.5).set_uint("extra", 1);
+        CHECK(base_msg.ok());
+        CHECK_MSG(wait_cell(cy_gauge_id, "value", 8.5, 80,
+                            [&] { gauge_pub->send(base_msg.bytes()); }),
+                  "cycle baseline: the gauge never fed");
+        CHECK_MSG(wait_hold(8.5, 30), "cycle baseline: the beat flow never mirrored");
+        CHECK_MSG(wait_cell(cy_dial_id, "value", 7.5, 80, {}),
+                  "cycle baseline: the dial variable never fed");
+        CHECK_MSG(wait_cell(cy_meter_id, "value", 21.5, 80, {}),
+                  "cycle baseline: the meter poll never answered");
+        CHECK_MSG(write_dial(*dial_v1, 40), "cycle baseline: the dial write never landed");
+        dump_faults("at baseline");
+
+        /* ---- the provider dies: entities leave, the refresh loop recompiles, its
+         * flows die with honest diags — and NOTHING else breaks ---- */
+        kill_plant2();
+        bool vanished = false;
+        for (int i = 0; i < 150 && !vanished; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (mesh.refresh()) recompile();
+            vanished = true;
+            for (const EntityDef& entity : mesh.reflection())
+                if (entity.name == "gauge" || entity.name == "dial" ||
+                    entity.name == "meter")
+                    vanished = false;
+        }
+        CHECK_MSG(vanished, "cycle: the dead provider's entities never left reflection");
+        dump_diags("while down");
+
+        dart::MessageBuilder tank_new(*tank_schema);
+        tank_new.set_f64("level", 55.25).set_string("label", "up");
+        CHECK(tank_new.ok());
+        CHECK(tank.set(tank_new.bytes()) == dart::SendStatus::Ok);
+        CHECK_MSG(wait_cell(cy_tank_id, "value", 55.25, 30, {}),
+                  "cycle: a healthy entity stopped feeding while another node was down");
+        CHECK_MSG(num_at(*cur, global_cell_of(cur->program(), "hold")) == 8.5,
+                  "cycle: the global lost its value in the outage recompile");
+        dump_faults("while down");
+
+        /* ---- SAME-TYPED return: every feed, the poll, the beat flow and the write
+         * resume with no help ---- */
+        meter_reply = 22.75;
+        host_plant2(&*cycle_v2, &*dial_v1, 12.25, &*meter_r1);
+        CHECK_MSG(reflect_trio(cycle_v2->hash(), 1, 1),
+                  "cycle: the same-typed return never reflected");
+        dump_diags("after same-typed return");
+        dart::MessageBuilder back_msg(*cycle_v2);
+        back_msg.set_f64("value", 9.75).set_uint("extra", 2);
+        CHECK(back_msg.ok());
+        CHECK_MSG(wait_cell(cy_gauge_id, "value", 9.75, 80,
+                            [&] { gauge_pub->send(back_msg.bytes()); }),
+                  "cycle: the same-typed gauge never resumed");
+        CHECK_MSG(wait_hold(9.75, 30),
+                  "cycle: the beat flow never resumed after the same-typed return");
+        CHECK_MSG(wait_cell(cy_dial_id, "value", 12.25, 80, {}),
+                  "cycle: the same-typed dial variable never resumed");
+        CHECK_MSG(wait_cell(cy_meter_id, "value", 22.75, 80, {}),
+                  "cycle: the same-typed meter poll never resumed");
+        CHECK_MSG(write_dial(*dial_v1, 40),
+                  "cycle: the dial write never landed after the same-typed return");
+        dump_faults("after same-typed return");
+
+        /* ---- RETYPED return: every schema changes (the read fields survive by
+         * name); the retype path must land through the same refresh loop ---- */
+        kill_plant2();
+        vanished = false;
+        for (int i = 0; i < 150 && !vanished; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (mesh.refresh()) recompile();
+            vanished = true;
+            for (const EntityDef& entity : mesh.reflection())
+                if (entity.name == "gauge" || entity.name == "dial" ||
+                    entity.name == "meter")
+                    vanished = false;
+        }
+        CHECK_MSG(vanished, "cycle: the provider never left before the retyped return");
+
+        auto cycle_v3 = dart::Schema::compile("Gauge { value: f64, mode: u16 }");
+        auto dial_v2 = dart::Schema::compile("Dial { setting: f64, span: u8 }");
+        auto meter_r2 = dart::Schema::compile("MeterR { r: f64, ok: bool }");
+        CHECK(cycle_v3 && dial_v2 && meter_r2);
+        if (!cycle_v3 || !dial_v2 || !meter_r2) return check::summary("mesh_test");
+        meter_reply = 64.25;
+        host_plant2(&*cycle_v3, &*dial_v2, 19.5, &*meter_r2);
+        CHECK_MSG(reflect_trio(cycle_v3->hash(), 2, 2),
+                  "cycle: the retyped return never reflected");
+        dump_diags("after retyped return");
+        dart::MessageBuilder v3_msg(*cycle_v3);
+        v3_msg.set_f64("value", 11.5).set_uint("mode", 2);
+        CHECK(v3_msg.ok());
+        CHECK_MSG(wait_cell(cy_gauge_id, "value", 11.5, 80,
+                            [&] { gauge_pub->send(v3_msg.bytes()); }),
+                  "cycle: the retyped gauge never resumed");
+        CHECK_MSG(wait_hold(11.5, 30),
+                  "cycle: the beat flow never resumed after the retyped return");
+        CHECK_MSG(wait_cell(cy_dial_id, "value", 19.5, 80, {}),
+                  "cycle: the retyped dial variable never resumed");
+        CHECK_MSG(wait_cell(cy_meter_id, "value", 64.25, 80, {}),
+                  "cycle: the retyped meter poll never resumed");
+        CHECK_MSG(write_dial(*dial_v2, 40),
+                  "cycle: the dial write never landed after the retyped return");
+        dump_faults("after retyped return");
     }
 
     /* ---- the built-in @dart/log stream: a peer's log lines reach take_logs, decoded

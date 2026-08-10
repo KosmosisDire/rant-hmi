@@ -370,6 +370,11 @@ struct DartMesh::Impl {
     std::string signature;
     /* per-entity reflected schemas from the last refresh, keyed like recs */
     std::map<std::string, dart::Entity> folded;
+    /* per-entity PROVIDING peer ids from the last refresh that saw the entity: the
+     * incarnation identity a provider restart is detected by (a restarted node gets a
+     * fresh peer id). Keys persist while an entity is absent, so a down-then-up
+     * transition still compares the old incarnation against the new one. */
+    std::map<std::string, std::vector<uint32_t>> providers;
 
     std::vector<uint64_t> viewed_pages;
 
@@ -382,6 +387,7 @@ struct DartMesh::Impl {
     Rec* ensure_rec(const EntityDef& def);
     void fill_rec_schema(Rec& rec, const dart::Entity& folded_entity) const;
     bool ensure_consumption(Rec& rec, std::string& err);
+    void retire_rec_patterns(Rec& rec);
     bool encode(Rec& rec, const EffectView& effect, std::string& fault);
     void deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDef>& fields,
                  dc::DartBytes data, const dc::DartSchema* schema);
@@ -496,12 +502,14 @@ bool DartMesh::refresh() {
      * schema-mismatch, values never flow, and the signature flaps as the two
      * incarnations trade wins, recompiling in a storm. Down means down. */
     std::map<std::string, dart::Entity> fold;
+    std::map<std::string, std::vector<uint32_t>> providers_now;
     for (const dart::Peer& peer : impl_->node->peers()) {
         if (!peer.active) continue;
         for (dart::Entity& entity : impl_->node->peer_entities(peer.id)) {
             if (entity.name.empty() || entity.name.compare(0, 2, "0x") == 0)
                 continue;   /* details not fetched yet; the next refresh sees them */
             const std::string key = rec_key(kind_of(entity.kind), entity.name);
+            if (entity.provides) providers_now[key].push_back(peer.id);
             auto it = fold.find(key);
             if (it == fold.end()) {
                 fold.emplace(key, std::move(entity));
@@ -522,6 +530,35 @@ bool DartMesh::refresh() {
                 kept.provides = kept.provides || entity.provides;
             }
         }
+    }
+
+    /* A PROVIDER INCARNATION CHANGED (its node restarted: a fresh peer id took over
+     * the name, with no overlap with the ids that provided it before). The standing
+     * pattern lanes go deaf across that boundary even when the schema is unchanged,
+     * so retire them and let the recompile's apply() re-create fresh ones. A second
+     * provider joining, or one of several leaving, keeps an id in common and does
+     * not retire. Keys persist while an entity is absent, so a restart with a down
+     * window compares across the gap. */
+    bool provider_changed = false;
+    for (auto& item : providers_now) {
+        auto last = impl_->providers.find(item.first);
+        if (last != impl_->providers.end() && !last->second.empty()) {
+            bool overlap = false;
+            for (uint32_t id : item.second)
+                if (std::find(last->second.begin(), last->second.end(), id) !=
+                    last->second.end())
+                    overlap = true;
+            if (!overlap) {
+                auto rec_it = impl_->recs.find(item.first);
+                if (rec_it != impl_->recs.end() &&
+                    (rec_it->second->var || rec_it->second->sig || rec_it->second->fn)) {
+                    impl_->log("provider restarted, re-subscribing", item.first);
+                    impl_->retire_rec_patterns(*rec_it->second);
+                    provider_changed = true;
+                }
+            }
+        }
+        impl_->providers[item.first] = std::move(item.second);
     }
 
     std::vector<EntityDef> next;
@@ -550,7 +587,9 @@ bool DartMesh::refresh() {
         signature += ";";
         next.push_back(std::move(def));
     }
-    if (signature == impl_->signature) return false;
+    /* a provider restart with an unchanged signature still reports change: the
+     * retired handles need the recompile's apply() to re-create them */
+    if (signature == impl_->signature) return provider_changed;
 
     /* an entity that came back with a NEW type: retire the rec's typed handles and
      * codec now, so the recompile this refresh triggers re-subscribes with the new
@@ -570,10 +609,7 @@ bool DartMesh::refresh() {
         if (rec.topic) rec.topic->set_role(dart::Role::Inactive);
         rec.topic.reset();
         rec.topic_pub = false;
-        rec.var.reset();
-        rec.owner_seen.store(false, std::memory_order_relaxed);
-        rec.sig.reset();
-        rec.fn.reset();
+        impl_->retire_rec_patterns(rec);
         rec.schema = {};
         rec.rsp_schema = {};
         rec.compiled.reset();
@@ -656,6 +692,25 @@ void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& folded_entity
                                             rec.default_request.size());
         }
     }
+}
+
+/* Park + drop the PATTERN handles (variable / signal / function). Their standing
+ * lanes go DEAF across a provider incarnation change — a fresh accessor provably
+ * receives where the standing one does not — and a live old-typed channel would
+ * shadow a same-name successor on every peer, refusing each match with
+ * schema-mismatch. retire() (the vendored HMI patch 2) parks the underlying
+ * channels Inactive so the successor owns the name outright. The plain TOPIC
+ * handle STAYS: topic subscriptions rematch a returning provider by themselves,
+ * and the C++ topic cache would hand a parked channel straight back on a
+ * same-schema re-create. */
+void DartMesh::Impl::retire_rec_patterns(Rec& rec) {
+    if (rec.var) rec.var->retire();
+    rec.var.reset();
+    rec.owner_seen.store(false, std::memory_order_relaxed);
+    if (rec.sig) rec.sig->retire();
+    rec.sig.reset();
+    if (rec.fn) rec.fn->retire();
+    rec.fn.reset();
 }
 
 bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
