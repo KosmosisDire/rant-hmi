@@ -155,10 +155,12 @@ const std::vector<NodeSpec>& table() {
              * empty, that a flow appends to or writes by key. Anything beyond these is a
              * TypeRef (spec 2.7): the variable holds a struct, zeroed, and the compiler
              * resolves the name. */
+            /* `icon` is a scalar too: the value is the glyph's NAME (ordinary text at
+             * runtime); the declared type is what earns it the icon-grid editor */
             text_retyping("type", "f64",
-                          {"f64", "bool", "str", "timer", "list", "map"}, "init",
-                          {Json(0.0), Json(false), Json(""), Json(1.0), Json::array(),
-                           Json::object()}),
+                          {"f64", "bool", "str", "icon", "timer", "list", "map"}, "init",
+                          {Json(0.0), Json(false), Json(""), Json(""), Json(1.0),
+                           Json::array(), Json::object()}),
             any("init", 0),
             boolean("persist", false),
         };
@@ -278,7 +280,8 @@ const std::vector<NodeSpec>& table() {
         prop.name = "prop";
         prop.props = {
             text("name"),
-            enumer("shape", {"num", "bool", "text", "color", "enum", "list", "map"}, "num"),
+            enumer("shape", {"num", "bool", "text", "color", "icon", "enum", "list", "map"},
+                   "num"),
             any("default", 0.0),
             enumer("group", {"value", "appearance", "config", "frame"}, "appearance"),
             text("editor", ""),

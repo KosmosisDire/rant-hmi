@@ -34,7 +34,7 @@ namespace hmi {
 
 struct AttrDef {
     const char* name;
-    const char* shape;         /* num | bool | text | color | list | map */
+    const char* shape;         /* num | bool | text | color | icon | list | map */
     Json default_value;        /* Json(nullptr) = no computed default; see `note` */
     const char* note;
     /* THE CSS PROPERTY this attr lands on, "" where it lands on none the browser can

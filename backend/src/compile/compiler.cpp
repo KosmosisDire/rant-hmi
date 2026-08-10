@@ -834,10 +834,11 @@ class Compiler {
     /* A registry slot declared `enum` is CONSTRAINED TEXT: its values are the variant NAMES
      * the author picks and the template draws ("center"), so the cell holds the name. The
      * VM's Enum shape means something else, a mesh field's backing integer (spec 2.2), and
-     * conflating them left every enum slot holding Nil. */
+     * conflating them left every enum slot holding Nil. `icon` is the same species: the
+     * declared shape drives the editor (the icon grid), the value is the glyph's NAME. */
     Shape slot_shape(const Json& slot) const {
         const std::string name = slot.value("shape", "");
-        return name == "enum" ? Shape::Text : shape_from_name(name);
+        return name == "enum" || name == "icon" ? Shape::Text : shape_from_name(name);
     }
 
     /* WHERE an authored aggregate is being read, so one set of parsers can serve a slot
@@ -1049,6 +1050,9 @@ class Compiler {
         if (type == "f64") return Shape::Num;
         if (type == "bool") return Shape::Bool;
         if (type == "str") return Shape::Text;
+        /* an icon VARIABLE holds the glyph's name: the declared type drives the
+           editor (the icon grid), the runtime cell is ordinary text */
+        if (type == "icon") return Shape::Text;
         if (type == "timer") return Shape::Timer;
         /* an aggregate is an ORDINARY variable type now: a list is what a flow appends
            a history into, a map what it writes by key */

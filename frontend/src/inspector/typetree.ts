@@ -40,6 +40,9 @@ const SCALARS = [
   { ref: "f64", label: "number" },
   { ref: "bool", label: "bool" },
   { ref: "str", label: "text" },
+  /* an icon variable holds a glyph NAME (text at runtime); the declared type is
+     what earns its editors the icon grid */
+  { ref: "icon", label: "icon" },
   { ref: "timer", label: "timer" },
   { ref: "list", label: "list" },
   { ref: "map", label: "map" },

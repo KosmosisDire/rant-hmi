@@ -96,7 +96,10 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   });
 
   const initShape =
-    variable.type === "bool" ? "bool" : variable.type === "str" ? "text" : "num";
+    variable.type === "bool" ? "bool"
+    : variable.type === "str" ? "text"
+    : variable.type === "icon" ? "icon"
+    : "num";
   const isAgg = variable.type === "list" || variable.type === "map";
 
   /* the INIT rows: a scalar edits one value; a list or a map edits the JSON of where it

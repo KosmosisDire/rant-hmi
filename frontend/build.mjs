@@ -70,6 +70,7 @@ const STYLES = [
   "menu",
   "banner",
   "colorpicker",
+  "iconpicker",
   "theme-tokens",
   "align-grid",
   "bound-slots",

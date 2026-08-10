@@ -172,7 +172,9 @@ const std::vector<AttrDef>& text_attrs() {
 
 const std::vector<AttrDef>& icon_attrs() {
     static const std::vector<AttrDef> table = {
-        def("name", "text", "",
+        /* shape `icon`, not `text`: the value IS a text (the glyph's name), but the
+           declared shape is what earns the field the icon-grid picker */
+        def("name", "icon", "",
             "a Lucide icon name; unresolved (including empty) draws nothing"),
         def("color", "color", "$ink", "the icon's stroke colour", "color"),
         /* stroke_w rewrites the glyph's own markup (iconSig, stage.ts), so there is no

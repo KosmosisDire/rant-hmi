@@ -13,6 +13,7 @@
  * row that changes height moves everything under it. */
 
 import { colorField } from "../colorpicker.js";
+import { iconField } from "../iconpicker.js";
 import { alignGrid, boolPair, commitTextInput, el, numberInput, pickerOf, selectField } from "../dom.js";
 import { Editor, UNKNOWN_TEXT } from "../editor.js";
 import { bindChoice, bindField, bindGroup, bindText } from "../reconcile.js";
@@ -134,6 +135,10 @@ export function valueEditor(
       bindChoice(key, pickerOf(wrap), () => text(read()));
       return wrap;
     }
+    case "icon":
+      /* the raw value is the glyph's BARE name; the button paints it and opens the
+         grid — the colorField anatomy carried to ink */
+      return iconField(text(value), commit, key, () => text(read()));
     case "text": {
       /* a textarea, not an input: a caption may hold EXPLICIT newlines (Shift+Enter);
          Enter still commits, and the row stays one line tall either way */

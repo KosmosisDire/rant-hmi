@@ -26,7 +26,7 @@ import { valueEditor } from "./editors.js";
 import { attrScope, Scope } from "./scope.js";
 import { BoxType, valueBox } from "./valuebox.js";
 
-const PROP_SHAPES = ["num", "bool", "text", "color", "enum", "list", "map"];
+const PROP_SHAPES = ["num", "bool", "text", "color", "icon", "enum", "list", "map"];
 const PROP_GROUPS = ["value", "appearance", "config", "frame"];
 /* the shapes an event's PARAMETER may carry. A list or a map is not one (an event
    passes a value, never a history) and `enum` needs a type to name its variants, which
@@ -1065,7 +1065,7 @@ function attrBoxType(def: AttrDef): BoxType {
     return { shape: "enum", variants: () => variants };
   }
   if (def.shape === "num" || def.shape === "bool" || def.shape === "color" ||
-      def.shape === "text" || def.shape === "list")
+      def.shape === "icon" || def.shape === "text" || def.shape === "list")
     return { shape: def.shape };
   return { shape: "text" };   /* `any` and anything unforeseen: the glyph alone */
 }

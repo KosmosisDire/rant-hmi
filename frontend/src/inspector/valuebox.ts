@@ -23,6 +23,7 @@
 import { openColorPicker, paintSwatch, parseHex } from "../colorpicker.js";
 import { alignGrid, commitInput, el } from "../dom.js";
 import { highlighted } from "../highlight.js";
+import { ICON_UNKNOWN_GLYPH, isIconName, openIconPicker } from "../iconpicker.js";
 import { iconMarkup } from "../icons.js";
 import { closeMenu, openMenu } from "../menu.js";
 import { makeShell, Shell } from "../popover.js";
@@ -32,7 +33,7 @@ import { announceInput, attachAutocomplete } from "./autocomplete.js";
 import { BrowseRow, Scope } from "./scope.js";
 
 export interface BoxType {
-  shape: "num" | "bool" | "text" | "color" | "enum" | "align" | "list" | "map";
+  shape: "num" | "bool" | "text" | "color" | "icon" | "enum" | "align" | "list" | "map";
   step?: number;               /* scrub grain; 1 when unsaid */
   unit?: string;               /* suffix chip (ms, s, Hz) — reserved, no caller yet */
   variants?: () => string[];   /* enum boxes: what the picker lists */
@@ -347,6 +348,9 @@ export function valueBox(spec: BoxSpec): HTMLElement {
       case "enum": return variants().includes(stripQuotes(text));
       case "align": return ALIGN_POSITIONS.includes(stripQuotes(text));
       case "color": return literalColor(text) !== null;
+      /* an icon literal is the QUOTED name (the expression spelling the grid writes);
+         a bare word is a name to the compilers, so it counts as an expression here */
+      case "icon": return text !== stripQuotes(text) && isIconName(stripQuotes(text));
       default: return true;   /* text and the aggregates: no gesture to gate */
     }
   };
@@ -401,10 +405,14 @@ export function valueBox(spec: BoxSpec): HTMLElement {
                     () => input.value.trim());
   };
 
+  const openIcon = () =>
+    openIconPicker(icon, stripQuotes(shownText()), (name) => write(spellVariant(name)));
+
   const openPicker =
     shape === "enum" ? openEnum
     : shape === "align" ? openAlign
     : shape === "color" ? openColor
+    : shape === "icon" ? openIcon
     : null;
 
   /* ---- the icon's face: repainted per keystroke and per document echo ----
@@ -464,6 +472,14 @@ export function valueBox(spec: BoxSpec): HTMLElement {
           swatch.classList.toggle("token", token);
         }
         face(null, 0, "pick a color");
+        break;
+      }
+      case "icon": {
+        /* the icon's face IS the picked glyph — the swatch precedent carried to ink:
+           a literal paints itself, anything else paints the stand-in, dimmed */
+        const name = stripQuotes(shownText());
+        face(isIconName(name) ? name : ICON_UNKNOWN_GLYPH, 12,
+             literal || !text ? "pick an icon" : DIM_HINT);
         break;
       }
       case "enum":
@@ -537,7 +553,9 @@ export function valueBox(spec: BoxSpec): HTMLElement {
   for (const cell of buttons) cell.classList.add("vb-tail");
   browse?.classList.add("vb-tail");
 
-  return el("span", { class: "value-box vb-" + shape }, [
+  /* the per-shape wrapper class is a selector hook; the icon SHAPE spells itself
+     vb-glyph because vb-icon is already the type-icon BUTTON's class */
+  return el("span", { class: "value-box vb-" + (shape === "icon" ? "glyph" : shape) }, [
     icon,
     highlighted(input),
     spec.type.unit ? el("span", { class: "vb-unit", text: spec.type.unit }) : null,

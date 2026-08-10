@@ -86,8 +86,9 @@ export interface Lang {
 export interface AttrDef {
   name: string;
   /* mirrors registry/attrs.cpp: `list` is the computed-anchors shape (a path's
-     `points`), `any` the shapeless escape (clip's bool-or-number) */
-  shape: "num" | "bool" | "text" | "color" | "list" | "any";
+     `points`), `any` the shapeless escape (clip's bool-or-number). `icon` is text
+     whose value is a Lucide glyph NAME — the shape that earns the icon-grid picker */
+  shape: "num" | "bool" | "text" | "color" | "icon" | "list" | "any";
   /* absent = no computed default: the attr is structural (show, repeat, clip, the box
      fields, rotate, a colour that is simply not painted) and `note` explains what absence
      means */
@@ -138,7 +139,8 @@ export interface AttrTable {
 export interface Var {
   id: number;
   name: string;
-  /* "f64" | "bool" | "str" | "timer" | "list" | "map", or any TypeRef from the mesh */
+  /* "f64" | "bool" | "str" | "icon" | "timer" | "list" | "map", or any TypeRef from
+     the mesh */
   type: string;
   init: Json;
   persist: boolean;
@@ -147,7 +149,8 @@ export interface Var {
 /* what a scalar variable type is CALLED in the UI. A type outside this table is a TypeRef
    from the mesh, which names itself — so a miss here is also the struct test. */
 export const SCALAR_LABEL: Record<string, string> = {
-  f64: "number", bool: "bool", str: "text", timer: "timer", list: "list", map: "map",
+  f64: "number", bool: "bool", str: "text", icon: "icon", timer: "timer",
+  list: "list", map: "map",
 };
 
 /* a theme token: a named color role with one value per theme mode; a
@@ -248,7 +251,7 @@ export function isInstance(node: Node | null | undefined): boolean {
 export interface PropDef {
   id: number;
   name: string;
-  shape: "num" | "bool" | "text" | "color" | "enum" | "list" | "map";
+  shape: "num" | "bool" | "text" | "color" | "icon" | "enum" | "list" | "map";
   default: Json;
   group: "value" | "appearance" | "config" | "frame";
   editor: string;

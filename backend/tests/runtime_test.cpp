@@ -3344,6 +3344,109 @@ void test_clock() {
     CHECK(named);
 }
 
+/* THE ICON TYPE: `icon` is a DECLARED shape — a variable type, a prop shape, the icon
+ * node's `name` attr — whose value is the glyph's NAME. The enum precedent: the
+ * declaration earns the editor (the icon grid), the runtime cell is ordinary text, so
+ * an icon variable feeds an icon slot and a number into one refuses. */
+void test_icon() {
+    FakeMesh mesh(std::vector<EntityDef>{});
+    Json badge = {
+        {"id", 800}, {"name", "Badge"},
+        {"props", Json::array({Json{{"id", 801}, {"name", "symbol"}, {"shape", "icon"},
+                                    {"default", "gauge"}, {"group", "appearance"}}})},
+        {"events", Json::array()},
+        {"children", Json::array()},
+        {"behavior", Json::array()},
+    };
+    Json root = {
+        {"version", 1}, {"next_id", 1000},
+        {"components", Json::array({std::move(badge)})},
+        {"globals",
+         Json::array({Json{{"name", "glyph"}, {"type", "icon"}, {"init", "bell"}}})},
+        {"pages", Json::array({Json{{"name", "P"}, {"children", Json::array({
+            /* an authored icon literal, the quoted spelling the grid writes */
+            Json{{"kind", "frame"}, {"type", "Badge"}, {"name", "lit"},
+                 {"slots", Json{{"symbol", "'siren'"}}}},
+            /* an icon VARIABLE feeding an icon slot: the type-safety path */
+            Json{{"kind", "frame"}, {"type", "Badge"}, {"name", "fed"},
+                 {"slots", Json{{"symbol", "glyph"}}}},
+            /* nothing authored: the declared default stands */
+            Json{{"kind", "frame"}, {"type", "Badge"}, {"name", "bare"}},
+            /* the icon NODE's `name` attr wears the shape too; its value compiles as
+               any display attr does */
+            Json{{"kind", "icon"}, {"name", "mark"},
+                 {"attrs", Json{{"name", "'activity'"}}}},
+        })}}})},
+    };
+    Document doc;
+    std::string err;
+    CHECK(doc.adopt(std::move(root), err));
+    /* the schema kept both declarations rather than clamping them away */
+    CHECK_EQ(doc.root["globals"][0]["type"].get<std::string>(), "icon");
+    CHECK_EQ(doc.root["components"][0]["props"][0]["shape"].get<std::string>(), "icon");
+
+    std::vector<Diag> derive_diags;
+    Json derived = derive_registry(doc, derive_diags);
+    CompileResult compiled = compile_document(doc, derived, mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("icon compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
+    CHECK(compiled.ok);
+
+    const Json& kids = doc.root["pages"][0]["children"];
+    const uint64_t lit = json_u64_or(kids[0]["id"], 0);
+    const uint64_t fed = json_u64_or(kids[1]["id"], 0);
+    const uint64_t bare = json_u64_or(kids[2]["id"], 0);
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    RuntimeState& state = scheduler.state();
+    std::string fault;
+    scheduler.tick(fault);
+
+    /* every icon cell is a TEXT cell holding the glyph's name */
+    for (uint32_t i = 0; i < program.cells.size(); ++i) {
+        const CellDef& cell = program.cells[i];
+        if (cell.name == "glyph" || cell.name == "symbol")
+            CHECK(cell.shape == Shape::Text);
+    }
+    auto slot_text = [&](uint64_t widget) -> std::string {
+        const int cell = slot_cell_of(program, widget, "symbol");
+        if (cell < 0) return "<no cell>";
+        return std::string(state.text(program, state.values[cell]));
+    };
+    CHECK_EQ(slot_text(lit), "siren");
+    CHECK_EQ(slot_text(fed), "bell");
+    CHECK_EQ(slot_text(bare), "gauge");
+
+    /* type safety: a number into an icon slot is a refusal, not a coercion */
+    Json bad_root = {
+        {"version", 1}, {"next_id", 2000},
+        {"components", Json::array({Json{
+            {"id", 800}, {"name", "Badge"},
+            {"props", Json::array({Json{{"id", 801}, {"name", "symbol"},
+                                        {"shape", "icon"}, {"default", "gauge"},
+                                        {"group", "appearance"}}})},
+            {"events", Json::array()}, {"children", Json::array()},
+            {"behavior", Json::array()}}})},
+        {"globals", Json::array()},
+        {"pages", Json::array({Json{{"name", "P"}, {"children", Json::array({
+            Json{{"kind", "frame"}, {"type", "Badge"}, {"name", "bad"},
+                 {"slots", Json{{"symbol", "1 + 2"}}}}})}}})},
+    };
+    Document bad_doc;
+    std::string bad_err;
+    CHECK(bad_doc.adopt(std::move(bad_root), bad_err));
+    std::vector<Diag> bad_derive;
+    Json bad_registry = derive_registry(bad_doc, bad_derive);
+    CompileResult refused = compile_document(bad_doc, bad_registry, mesh);
+    bool shape_flagged = false;
+    for (const Diag& diag : refused.program.diagnostics)
+        if (diag.code == "shape" && diag.message.find("symbol") != std::string::npos)
+            shape_flagged = true;
+    CHECK(shape_flagged);
+}
+
 } // namespace
 
 /* stderr is unbuffered, so the LAST name printed before a native crash is the test
@@ -3385,5 +3488,6 @@ int main() {
     RUN(test_document_tolerance);
     RUN(test_theme_tokens);
     RUN(test_clock);
+    RUN(test_icon);
     return check::summary("runtime_test");
 }

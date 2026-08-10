@@ -1,0 +1,80 @@
+/* ---------- icon picker ---------- */
+
+#ipick {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: none;
+}
+
+#ipick.on {
+  display: block;
+}
+
+.ipick-pop {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 300px;
+  padding: 8px;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  background: var(--menu);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+
+.ipick-search {
+  width: 100%;
+}
+
+.ipick-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  max-height: 264px;
+  overflow-y: auto;
+}
+
+.ipick-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.ipick-cell:hover {
+  background: var(--chip);
+  color: var(--ink);
+}
+
+/* the one the value currently names */
+.ipick-cell.on {
+  border-color: var(--acc-deep-line);
+  background: var(--acc-bg);
+  color: var(--acc-ink);
+}
+
+.ipick-foot {
+  min-height: 1em;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* the raw editors' glyph button (a prop's DEFAULT, a variable's INIT): the swatch
+   anatomy, but painting an icon; unknown names paint the stand-in, dimmed */
+.ipick-face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ipick-face.unknown {
+  opacity: 0.45;
+}

@@ -1006,7 +1006,7 @@ function slotBoxType(spec: SlotSpec): BoxType {
     return step ? { shape: "num", step } : { shape: "num" };
   }
   if (spec.shape === "bool" || spec.shape === "text" || spec.shape === "color" ||
-      spec.shape === "list" || spec.shape === "map")
+      spec.shape === "icon" || spec.shape === "list" || spec.shape === "map")
     return { shape: spec.shape };
   return { shape: "text" };   /* anything unforeseen: the glyph alone */
 }
