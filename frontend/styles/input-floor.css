@@ -102,11 +102,15 @@ button:focus-visible {
   background: var(--shell);
 }
 
-/* the shell column: topbar, workspaces, banner — everything that is not the log */
+/* the shell column: topbar, workspaces, banner — everything that is not the log.
+   CLIPPED: a wide log squeezes the column below the workspace grid's fixed sidebar
+   tracks, and without the clip the overflowing inspector (whose sticky head carries
+   a z-index) would paint on top of the log */
 .shell-main {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
+  overflow: hidden;
 }
