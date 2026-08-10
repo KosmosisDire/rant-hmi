@@ -9,8 +9,8 @@
  * SEARCH AND FILTERS: a search box and a funnel button head the list — filter by
  * level, by source node, by time frame, or by text. Filters are a way of LOOKING, not
  * a state of the log: they are deliberately never persisted, and while any is active
- * the funnel lights up and a strip above the list says "showing N of M — clear", so
- * a filtered view can never be mistaken for a quiet system. Filters touch only the
+ * the funnel lights up and a strip above the list counts "showing N / M logs", so a
+ * filtered view can never be mistaken for a quiet system. Filters touch only the
  * list; what pops as a toast is never filtered.
  *
  * Notifications POP UP regardless of the bar: errors and level "notify" entries raise
@@ -169,8 +169,12 @@ export class LogView {
 
   private row(entry: LogEntry): HTMLElement {
     const node = el("div", { class: "log-row " + entry.level }, [
-      el("span", { class: "log-time", text: stamp(entry.wall_us) }),
-      el("span", { class: "log-node", text: entry.node }),
+      /* the stamp and the source share one fixed-width column (logbar.css), so the
+         message always starts at the same x; hover reads a clipped name in full */
+      el("span", { class: "log-meta" }, [
+        el("span", { class: "log-time", text: stamp(entry.wall_us) }),
+        el("span", { class: "log-node", text: entry.node, title: entry.node }),
+      ]),
       el("span", { class: "log-text", text: entry.text }),
     ]);
     /* what the filters read: the level and node verbatim, the wall clock in ms, and
@@ -205,20 +209,13 @@ export class LogView {
       if (hit) shown++;
     }
     /* THE FORGET-PROOFING: while anything is filtered, the funnel lights and the
-       strip counts what is hidden — a filtered log never reads as a quiet one */
+       strip counts what is hidden — a filtered log never reads as a quiet one. The
+       count is the whole message; the funnel holds the detail. */
     const active = this.filtersActive();
     this.funnel.classList.toggle("on", active);
     this.filterbar.hidden = !active;
-    if (active) {
-      const parts: string[] = [];
-      if (this.levelsOff.size)
-        parts.push([...this.levelsOff].map((l) => "no " + l).join(", "));
-      if (this.nodesOff.size) parts.push(this.nodesOff.size + " nodes hidden");
-      if (this.spanMs)
-        parts.push("last " + (SPANS.find((s) => s.ms === this.spanMs)?.label ?? "?"));
-      this.shownOf.textContent =
-        "showing " + shown + " of " + total + (parts.length ? " — " + parts.join(" · ") : "");
-    }
+    if (active)
+      this.shownOf.textContent = "showing " + shown + " / " + total + " logs";
     /* a standing time frame ages rows out on its own clock, traffic or not */
     if (this.spanMs && !this.ageTimer)
       this.ageTimer = window.setInterval(() => this.applyFilters(), 10000);

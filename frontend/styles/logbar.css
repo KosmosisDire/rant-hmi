@@ -10,6 +10,8 @@
   flex-direction: column;
   background: var(--sidebar);
   border-left: 1px solid var(--line);
+  /* above the shell column's own stacking (the inspector head carries z-index 2) */
+  z-index: 5;
 }
 .logbar[hidden],
 .log-gutter[hidden] {
@@ -200,18 +202,29 @@
 .log-row {
   display: flex;
   gap: 8px;
-  align-items: baseline;
-  padding: 1px 10px 1px 8px;
+  align-items: flex-start;
+  padding: 3px 10px 3px 8px;
   border-left: 2px solid transparent;
+  /* the dim seam between entries, just enough to tell neighbours apart */
+  border-bottom: 1px solid #1b1b1b;
   overflow-wrap: anywhere;
 }
+/* ONE fixed-width column for the stamp and the source, so every message starts at
+   the same x whatever the node is called; a long name ellipsises and the hover
+   title carries the whole of it */
+.log-row .log-meta {
+  flex: 0 0 76px;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
 .log-row .log-time {
-  flex: 0 0 auto;
   color: var(--dim);
 }
 .log-row .log-node {
-  flex: 0 0 auto;
-  max-width: 9em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
