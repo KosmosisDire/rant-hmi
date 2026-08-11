@@ -340,6 +340,118 @@ void test_rename() {
     CHECK((*d.node(step))["from"]["expr"] == "flowRate * 2 + flowRate");   /* untouched: shadowed */
 }
 
+/* THE RENAME FOLLOWS THE LEXICAL SCOPE, and reaches every place expression text lives.
+ *
+ * Both halves were broken by the scoping work and neither was visible to a test: a plain
+ * element holds locals, flows and gestures now (so the instances-only fan-out never
+ * reached it), and its ATTRS name variables (so half the expression text in the document
+ * was invisible to the rewrite). A rename that misses a site does not fail — it silently
+ * repoints a picture at a name nothing declares. */
+void test_rename_scope() {
+    Document d = Document::make_default();
+    std::string err;
+    const uint64_t page = id_of(d.root["pages"][0]);
+    CHECK(global_named(d, "flow") != nullptr);
+
+    /* a PLAIN element — no `type` — carrying every kind of expression site it can hold */
+    ApplyResult r;
+    Json zone_op = Json::array({Json{
+        {"op", "insert"}, {"parent", page}, {"list", "children"},
+        {"node", {{"kind", "frame"}, {"name", "Zone"},
+                  {"attrs", {{"left", "10"}, {"w", "flow * 2"}}},
+                  {"transitions", {{"w", {{"ms", "flow"}, {"profile", "ease-out"}}}}},
+                  {"interact", {{"primitive", "press"}, {"params", {{"min", "flow"}}}}},
+                  {"flows", Json::array({Json{
+                      {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                      {"do", Json::array({Json{{"kind", "assign"},
+                                               {"from", {{"expr", "flow + 1"}}},
+                                               {"to", {{"local", "seen"}, {"path", ""}}}}})}}})}}}}});
+    CHECK_MSG(apply_ops(d, zone_op, r, err), err);
+    const uint64_t zone = r.ops[0]["node"]["id"].get<uint64_t>();
+
+    /* a nested element that REDECLARES the name owns everything below it */
+    ApplyResult sr;
+    Json shadow_op = Json::array({Json{
+        {"op", "insert"}, {"parent", zone}, {"list", "children"},
+        {"node", {{"kind", "frame"}, {"name", "Shadow"},
+                  {"attrs", {{"w", "flow"}}},
+                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "f64"}}})}}}}});
+    CHECK_MSG(apply_ops(d, shadow_op, sr, err), err);
+    const uint64_t shadow = sr.ops[0]["node"]["id"].get<uint64_t>();
+
+    /* a path's anchors are coordinate rows of expression text */
+    ApplyResult pr;
+    Json ink_op = Json::array({Json{
+        {"op", "insert"}, {"parent", page}, {"list", "children"},
+        {"node", {{"kind", "path"}, {"name", "Ink"},
+                  {"anchors", Json::array({Json{{"x", "flow"}, {"y", "0"}}})}}}}});
+    CHECK_MSG(apply_ops(d, ink_op, pr, err), err);
+    const uint64_t ink = pr.ops[0]["node"]["id"].get<uint64_t>();
+
+    /* a COMPONENT whose own property is called `flow`: a page's variable rename must
+       not touch it, because nothing inside a component can name a page's variable */
+    ApplyResult cr;
+    Json comp_op = Json::array({Json{
+        {"op", "insert"}, {"parent", 0}, {"list", "components"},
+        {"node", {{"name", "Sealed"}, {"attrs", {{"w", "flow"}}},
+                  {"props", Json::array({Json{{"name", "flow"}, {"shape", "num"}}})}}}}});
+    CHECK_MSG(apply_ops(d, comp_op, cr, err), err);
+    const uint64_t sealed = cr.ops[0]["node"]["id"].get<uint64_t>();
+
+    const uint64_t var_id = id_of(*global_named(d, "flow"));
+    CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", var_id}, {"name", "rate"}}}, err), err);
+
+    /* EVERY SITE ON THE PLAIN ELEMENT followed */
+    CHECK((*d.node(zone))["attrs"]["w"] == "rate * 2");
+    CHECK((*d.node(zone))["attrs"]["left"] == "10");
+    CHECK((*d.node(zone))["transitions"]["w"]["ms"] == "rate");
+    CHECK((*d.node(zone))["interact"]["params"]["min"] == "rate");
+    CHECK((*d.node(zone))["flows"][0]["do"][0]["from"]["expr"] == "rate + 1");
+    CHECK((*d.node(ink))["anchors"][0]["x"] == "rate");
+    /* a BARE EASING NAME is a literal, not code: "ease-out" lexes as two identifiers and
+       a blind rewrite would break it the day a variable is called `ease` or `out` */
+    CHECK((*d.node(zone))["transitions"]["w"]["profile"] == "ease-out");
+    /* the redeclaring subtree kept its own meaning */
+    CHECK((*d.node(shadow))["attrs"]["w"] == "flow");
+    /* and the component's property is a different language entirely */
+    CHECK((*d.node(sealed))["attrs"]["w"] == "flow");
+
+    /* CAPTURE AT DEPTH is refused: an element declaring the NEW name would swallow a
+       reference beneath it, and after the rewrite that is indistinguishable from intent */
+    ApplyResult dr;
+    Json deep_op = Json::array({Json{
+        {"op", "insert"}, {"parent", zone}, {"list", "children"},
+        {"node", {{"kind", "frame"}, {"name", "Deep"},
+                  {"attrs", {{"w", "rate"}}},
+                  {"locals", Json::array({Json{{"name", "speed"}, {"type", "f64"}}})}}}}});
+    CHECK_MSG(apply_ops(d, deep_op, dr, err), err);
+    const uint64_t deep = dr.ops[0]["node"]["id"].get<uint64_t>();
+    CHECK(!apply(d, {Json{{"op", "rename"}, {"node", var_id}, {"name", "speed"}}}, err));
+    CHECK(err.find(std::to_string(deep)) != std::string::npos);
+    CHECK((*d.node(deep))["attrs"]["w"] == "rate");   /* refused whole: nothing rewritten */
+
+    /* a LOCAL's rename stops at the same boundary, from the other side: the element that
+       declares it is the root of its own scope, and a child redeclaring it is not ours */
+    ApplyResult lr;
+    Json local_op = Json::array({Json{
+        {"op", "insert"}, {"parent", zone}, {"list", "locals"},
+        {"node", {{"name", "hits"}, {"type", "f64"}}}}});
+    CHECK_MSG(apply_ops(d, local_op, lr, err), err);
+    const uint64_t hits = lr.ops[0]["node"]["id"].get<uint64_t>();
+    CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", zone}, {"key", "attrs"},
+                             {"value", {{"left", "10"}, {"w", "hits"}}}}}, err), err);
+    ApplyResult kr;
+    Json kid_op = Json::array({Json{
+        {"op", "insert"}, {"parent", shadow}, {"list", "children"},
+        {"node", {{"kind", "frame"}, {"name", "Kid"}, {"attrs", {{"w", "hits"}}},
+                  {"locals", Json::array({Json{{"name", "hits"}, {"type", "f64"}}})}}}}});
+    CHECK_MSG(apply_ops(d, kid_op, kr, err), err);
+    const uint64_t kid = kr.ops[0]["node"]["id"].get<uint64_t>();
+    CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", hits}, {"name", "taps"}}}, err), err);
+    CHECK((*d.node(zone))["attrs"]["w"] == "taps");
+    CHECK((*d.node(kid))["attrs"]["w"] == "hits");
+}
+
 void test_expr_rewrite() {
     CHECK(rewrite_ident("x + flow", "flow", "rate") == "x + rate");
     CHECK(rewrite_ident("x.flow", "flow", "rate") == "x.flow");          /* a field */
@@ -960,6 +1072,7 @@ int main() {
     test_reparent();
     test_group();
     test_rename();
+    test_rename_scope();
     test_expr_rewrite();
     test_retype();
     test_aggregate_move_props();

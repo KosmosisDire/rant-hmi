@@ -97,13 +97,13 @@ const std::vector<NodeSpec>& table() {
                declares a property — the segment its addresses are built from. Free text
                until it has an address to carry (compile/components.cpp holds that line). */
             text("name", ""),
-            object("attrs", Json::object()),
+            object("attrs", Json::object(), Role::ExprTree),
             /* PER-ATTR TRANSITIONS: {attr: {ms, profile?}} — metadata beside the attr,
                never part of its expression. The view merges these into the element's
                native CSS `transition`, so only attrs with an animatable CSS property
                take one (the attr table's `css` column; compile/components.cpp checks).
                Rendering only: the value the attr computes is never eased. */
-            object("transitions", Json::object()),
+            object("transitions", Json::object(), Role::Transitions),
         };
         /* WHAT AN ELEMENT DECLARES, whatever kind it is: the properties it owns, the
            variables it holds and the behavior it runs. None of the three is a fact about
@@ -132,20 +132,20 @@ const std::vector<NodeSpec>& table() {
                  string is the degenerate text literal, `@entity.field` a live mesh
                  read, a bare name a variable) — what a separate `feeds` list used to
                  spell rides in the value itself now. Empty text = unset. */
-              object("slots", Json::object(), Role::SlotMap),
+              object("slots", Json::object(), Role::ExprTree),
               /* PER-SLOT POLL CADENCE, {slot: hz}: metadata beside the slot, exactly
                  as `transitions` rides beside attrs — read where the slot's expression
                  calls a mesh FUNCTION, whose response arrives only as often as it is
                  asked for. Absent = 2 Hz. */
               object("poll", Json::object()),
-              object("interact", nullptr)},
+              object("interact", nullptr, Role::Interact)},
              {{"children", Kind::Node}}},
             {"text", {}, {}},
             {"icon", {}, {}},
             /* THE INK: ordered anchors whose every coordinate is expression text, plus
                `closed` (an open stroke or a filled shape). Never a `d` string — that is an
                import surface at most, and nothing here can compute with one. */
-            {"path", {array("anchors"), boolean("closed", false)}, {}},
+            {"path", {array("anchors", Role::ExprTree), boolean("closed", false)}, {}},
         };
         t.push_back(node);
 
@@ -273,10 +273,10 @@ const std::vector<NodeSpec>& table() {
              * the same 240 x 120 default stands in for one. */
             num("design_w", 240),
             num("design_h", 120),
-            object("attrs", Json::object()),
-            object("interact", nullptr),
+            object("attrs", Json::object(), Role::ExprTree),
+            object("interact", nullptr, Role::Interact),
             /* the component record IS its root node, transitions included */
-            object("transitions", Json::object()),
+            object("transitions", Json::object(), Role::Transitions),
         };
         /* NO `locals` HERE YET. A component's own variables would need ONE SET PER
            INSTANCE (two placements are two machines), and a per-instance variable has no

@@ -25,12 +25,33 @@ struct RefEdit {
     Json value;
 };
 
-/* every variable reference in this subtree, rewritten from -> to; returns the count */
+/* every variable reference in this subtree, rewritten from -> to; returns the count.
+ * FLAT: it descends every element regardless of what they declare, which is right only
+ * where the whole subtree is known to be one scope. Prefer rename_scoped below. */
 int rename_refs(Kind kind, Json& node, const std::string& from, const std::string& to,
                 std::vector<RefEdit>* edits);
 
 /* how many references to `name` this subtree holds */
 int count_refs(Kind kind, Json& node, const std::string& name);
+
+/* ---- THE SCOPED FAN-OUT: a rename follows the same lexical scope the compiler resolves
+ * by (compile/compiler.cpp scope_for, compile/components.cpp for the display tier).
+ *
+ * Every element holds locals, so a name means different things at different depths: an
+ * element that REDECLARES it owns every reference below it, and rewriting those would
+ * quietly repoint somebody else's variable. Both walks prune such a subtree whole.
+ * `declared_here` marks the element that declares the variable being renamed — its own
+ * declaration is not a shadow of itself. ---- */
+
+/* every reference to `from` this element lexically owns, rewritten to `to` */
+int rename_scoped(Json& element, const std::string& from, const std::string& to,
+                  std::vector<RefEdit>* edits, bool declared_here);
+
+/* The element whose own local named `name` would CAPTURE a reference to `from` beneath
+ * it, or 0 where none would — the check a rename has to pass before it rewrites
+ * anything, since after the rewrite the capture is indistinguishable from intent. */
+uint64_t capture_site(Json& element, const std::string& from, const std::string& name,
+                      bool declared_here);
 
 /* a valid variable identifier */
 bool valid_name(const std::string& name);

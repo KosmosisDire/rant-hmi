@@ -502,28 +502,42 @@ bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
     const std::string from = str_field(*e->node, "name");
     std::vector<RefEdit> edits;
 
-    const Json no_locals = Json::array();
+    /* THE FAN-OUT FOLLOWS THE LEXICAL SCOPE, which is why neither branch walks a flat
+     * subtree. A GLOBAL is in scope on every element of every page — not only on the
+     * instances, which is all this reached while an instance was the only node that could
+     * hold a variable — and it stops wherever an element declares the name itself. A
+     * COMPONENT is never walked at all: nothing inside one can name a page's variable
+     * (strict isolation), so a bare word in there is a property and renaming it would be
+     * rewriting an unrelated language. */
     if (global) {
-        for (Document::InstanceRef ir : d.instances()) {
-            Json& w = *ir.instance;
-            auto lit = w.find("locals");
-            const Json& locals = lit != w.end() ? *lit : no_locals;
-            if (has_var(locals, from)) continue;   /* shadowed: its refs are not ours */
-            if (has_var(locals, name) && count_refs(Kind::Node, w, from) > 0) {
-                err = "'" + name + "' is a local of node " +
-                      std::to_string(json_u64_or(w["id"], 0)) + " and would capture it";
+        auto pages = d.root.find("pages");
+        std::vector<Json*> roots;
+        if (pages != d.root.end() && pages->is_array())
+            for (Json& page : *pages) {
+                auto kids = page.find("children");
+                if (kids == page.end() || !kids->is_array()) continue;
+                for (Json& child : *kids) roots.push_back(&child);
+            }
+        for (Json* root : roots)
+            if (uint64_t at = capture_site(*root, from, name, false)) {
+                err = "'" + name + "' is a local of node " + std::to_string(at) +
+                      " and would capture it";
                 return false;
             }
-            rename_refs(Kind::Node, w, from, name, &edits);
-        }
+        for (Json* root : roots) rename_scoped(*root, from, name, &edits, false);
     } else {
         Json& w = *pe->node;
         const Json* globals = d.root.find("globals") == d.root.end() ? nullptr : &d.root["globals"];
-        if (globals && has_var(*globals, name) && count_refs(Kind::Node, w, name) > 0) {
-            err = "'" + name + "' is a global this instance already uses";
+        int uses_new = 0;
+        if (globals && has_var(*globals, name)) {
+            std::vector<RefEdit> none;
+            uses_new = rename_scoped(w, name, "", &none, false);
+        }
+        if (uses_new > 0) {
+            err = "'" + name + "' is a global this element already uses";
             return false;
         }
-        rename_refs(Kind::Node, w, from, name, &edits);
+        rename_scoped(w, from, name, &edits, true);
     }
 
     (*e->node)["name"] = name;

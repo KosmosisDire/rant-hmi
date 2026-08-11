@@ -55,9 +55,18 @@ enum class Role {
     Expr,        /* expression text: identifiers may name variables */
     Triggers,    /* the flow's `when` array: timer entries name variables */
     MoveRef,     /* a move's `from` / `to`: an expression, a local name, or {kind, name} */
-    SlotMap,     /* an instance's `slots` object: every STRING leaf is an expression (a
-                    number or bool is a degenerate literal), nested one object deep per
-                    element, so rename fan-out walks the leaves */
+    /* A VALUE WHOSE STRING LEAVES ARE ALL EXPRESSION TEXT, walked whole — objects and
+       arrays, to any depth. An instance's `slots` (nested one object per element), a
+       node's `attrs`, a path's `anchors`: a number or a bool in there is a degenerate
+       literal with nothing to rename, and every string is code. */
+    ExprTree,
+    /* `transitions`: {attr: {ms, profile?}}. Not an ExprTree, because a `profile` may be
+       a BARE EASING NAME — a literal that happens to lex as identifiers ("ease-out"), so
+       walking it blindly would rewrite it when a variable is called `ease`. */
+    Transitions,
+    /* `interact`: {primitive, params?, bubbles?}. Only `params` is expression text;
+       `primitive` is a closed vocabulary that would otherwise rename like a variable. */
+    Interact,
 };
 
 struct Prop {
