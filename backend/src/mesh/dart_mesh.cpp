@@ -152,6 +152,7 @@ struct EncField {
     std::string path;
     dart::FieldType kind = dart::FieldType::U8;
     dart::FieldType elem = dart::FieldType::U8;   /* enum backing */
+    uint16_t str_cap = 0;   /* string elements: the slot cap ([u16 len][cap] each) */
 };
 
 /* The reflected schema as the HMI's field vocabulary: dotted leaf paths. Struct
@@ -199,7 +200,7 @@ void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
             default: def.shape = Shape::Num; break;
         }
         out.push_back(std::move(def));
-        if (enc) enc->push_back(EncField{path, field.kind, field.elem});
+        if (enc) enc->push_back(EncField{path, field.kind, field.elem, field.str_cap});
     }
 }
 
@@ -215,6 +216,37 @@ size_t elem_size_of(dart::FieldType kind) {
         case dart::FieldType::I32:
         case dart::FieldType::F32: return 4;
         default: return 8;   /* U64 I64 F64 */
+    }
+}
+
+/* one scalar element's wire bytes at `at` (little-endian, narrowing like a C cast —
+ * the same rules the whole-field setters apply); the inverse of scalar_elem */
+void pack_scalar_elem(dart::FieldType kind, const Value& value, uint8_t* at) {
+    switch (kind) {
+        case dart::FieldType::Bool:
+            at[0] = value_truth(value) ? 1 : 0;
+            return;
+        case dart::FieldType::F32: {
+            const float f = static_cast<float>(value.data.num);
+            std::memcpy(at, &f, sizeof(f));
+            return;
+        }
+        case dart::FieldType::F64:
+            std::memcpy(at, &value.data.num, sizeof(double));
+            return;
+        default: {
+            const bool unsigned_kind =
+                kind == dart::FieldType::U8 || kind == dart::FieldType::U16 ||
+                kind == dart::FieldType::U32 || kind == dart::FieldType::U64;
+            const uint64_t raw =
+                unsigned_kind
+                    ? static_cast<uint64_t>(std::llround(std::max(0.0, value.data.num)))
+                    : static_cast<uint64_t>(std::llround(value.data.num));
+            const size_t size = elem_size_of(kind);
+            for (size_t i = 0; i < size; ++i)
+                at[i] = static_cast<uint8_t>(raw >> (8 * i));
+            return;
+        }
     }
 }
 
@@ -355,6 +387,8 @@ struct Rec {
 
     /* encode scratch */
     std::vector<uint8_t> out;
+    /* whole-array packing scratch: elements' wire bytes before dart_set_array */
+    std::vector<uint8_t> pack;
 };
 
 struct DartMesh::Impl {
@@ -807,9 +841,16 @@ void DartMesh::apply(const Program& program) {
         if (def.kind == EntityKind::Variable && !rec->last_payload.empty() &&
             rec->last_schema) {
             std::lock_guard<std::mutex> hold(rec->slot_mu);
-            rec->slot = rec->last_payload;
-            rec->slot_schema = rec->last_schema;
-            rec->slot_dirty = true;
+            /* NEVER CLOBBER AN UNDRAINED ARRIVAL. A fresh value can land in the slot
+             * a moment before this apply (a provider's restart replay racing the
+             * recompile its return triggers): re-seeding over it would stand the
+             * STALE mirror value forever, because on_change is edge-triggered and
+             * the owner will not say an unchanged value twice. */
+            if (!rec->slot_dirty) {
+                rec->slot = rec->last_payload;
+                rec->slot_schema = rec->last_schema;
+                rec->slot_dirty = true;
+            }
         }
         return rec;
     };
@@ -1156,13 +1197,80 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                 break;
             case dart::FieldType::Array:
             case dart::FieldType::VArray: {
-                /* a WHOLE aggregate stays read-side (the RMW base keeps the owner's
-                   bytes untouched); ONE ELEMENT is writable at an index — rewritten in
-                   place over that base, so the rest of the owner's array rides through
-                   exactly as delivered. The bounds are the owner's: a variable array's
-                   live count is what the base carries, and an element write never
-                   grows it (growth belongs to the owner). */
-                if (effect.elem_index == UINT32_MAX) return true;
+                /* THE WHOLE ARRAY (no index): when this effect carries elements for
+                   the field and the field was actually GIVEN, they pack and land via
+                   dart_set_array — a fixed array takes at most its schema's count
+                   (the rest zeroes), a variable one becomes exactly the list.
+                   Ungiven, the RMW base keeps the owner's bytes untouched.
+                   ONE ELEMENT (an index) rewrites in place over that base, so the
+                   rest of the owner's array rides through exactly as delivered; the
+                   bounds are the owner's, and an element write never grows. */
+                if (effect.elem_index == UINT32_MAX) {
+                    const bool given =
+                        effect.bare || (effect.set && index < effect.field_count &&
+                                        effect.set[index]);
+                    const MeshElems* span =
+                        effect.elems && index < effect.field_count
+                            ? &effect.elems[index]
+                            : nullptr;
+                    if (!given || !span || !span->data) return true;
+                    const uint32_t entries = span->count;
+                    if (enc.elem == dart::FieldType::String) {
+                        const size_t slot = 2u + enc.str_cap;
+                        rec.pack.assign(static_cast<size_t>(entries) * slot, 0);
+                        for (uint32_t k = 0; k < entries; ++k) {
+                            if (span->data[k].tag == ValueTag::Nil) {
+                                fault = "field '" + enc.path +
+                                        "' has an UNKNOWN element at " +
+                                        std::to_string(k) +
+                                        "; a send of UNKNOWN is refused";
+                                return false;
+                            }
+                            const std::string_view at =
+                                span->texts ? span->texts[k] : std::string_view{};
+                            const size_t len =
+                                std::min(at.size(), static_cast<size_t>(enc.str_cap));
+                            rec.pack[k * slot] = static_cast<uint8_t>(len & 0xff);
+                            rec.pack[k * slot + 1] =
+                                static_cast<uint8_t>((len >> 8) & 0xff);
+                            if (len)
+                                std::memcpy(rec.pack.data() + k * slot + 2, at.data(),
+                                            len);
+                        }
+                    } else {
+                        const size_t size = elem_size_of(enc.elem);
+                        rec.pack.assign(static_cast<size_t>(entries) * size, 0);
+                        for (uint32_t k = 0; k < entries; ++k) {
+                            const Value& element = span->data[k];
+                            if (element.tag == ValueTag::Nil) {
+                                fault = "field '" + enc.path +
+                                        "' has an UNKNOWN element at " +
+                                        std::to_string(k) +
+                                        "; a send of UNKNOWN is refused";
+                                return false;
+                            }
+                            if (enc.elem != dart::FieldType::Bool &&
+                                element.tag != ValueTag::Num) {
+                                fault = "field '" + enc.path +
+                                        "' holds numbers; element " +
+                                        std::to_string(k) + " is not one";
+                                return false;
+                            }
+                            pack_scalar_elem(enc.elem, element,
+                                             rec.pack.data() + k * size);
+                        }
+                    }
+                    grow_for(rec.pack.size() + 16);
+                    if (!dc::dart_set_array(
+                            rec.out.data(), rec.out.size(), schema, path,
+                            dc::dart_bytes(rec.pack.data(), rec.pack.size()))) {
+                        fault = "field '" + enc.path + "' did not take " +
+                                std::to_string(entries) +
+                                " elements (a fixed array holds its schema's count)";
+                        return false;
+                    }
+                    return true;
+                }
                 if (enc.elem == dart::FieldType::String) {
                     if (!dc::dart_set_string_at(
                             rec.out.data(), rec.out.size(), schema, path,
@@ -1191,42 +1299,25 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                 }
                 uint8_t* at = rec.out.data() + (view.data - rec.out.data()) +
                               static_cast<size_t>(effect.elem_index) * size;
-                switch (enc.elem) {
-                    case dart::FieldType::Bool:
-                        at[0] = value_truth(value) ? 1 : 0;
-                        break;
-                    case dart::FieldType::F32: {
-                        const float f = static_cast<float>(value.data.num);
-                        std::memcpy(at, &f, sizeof(f));
-                        break;
-                    }
-                    case dart::FieldType::F64:
-                        std::memcpy(at, &value.data.num, sizeof(double));
-                        break;
-                    default: {
-                        /* the integer kinds, little-endian, narrowing like a C cast —
-                           the same rules the whole-field setters apply */
-                        const bool unsigned_kind =
-                            enc.elem == dart::FieldType::U8 ||
-                            enc.elem == dart::FieldType::U16 ||
-                            enc.elem == dart::FieldType::U32 ||
-                            enc.elem == dart::FieldType::U64;
-                        const uint64_t raw =
-                            unsigned_kind
-                                ? static_cast<uint64_t>(
-                                      std::llround(std::max(0.0, value.data.num)))
-                                : static_cast<uint64_t>(std::llround(value.data.num));
-                        for (size_t i = 0; i < size; ++i)
-                            at[i] = static_cast<uint8_t>(raw >> (8 * i));
-                        break;
-                    }
+                pack_scalar_elem(enc.elem, value, at);
+                return true;
+            }
+            case dart::FieldType::Map: {
+                /* the HMI has no map encode. A map field the author actually GAVE
+                   refuses loudly — a value dropped without a trace is the one
+                   unforgivable outcome; ungiven, the RMW base keeps the owner's
+                   bytes untouched as ever. */
+                const bool given =
+                    !effect.bare && effect.set && index < effect.field_count &&
+                    effect.set[index] && effect.elems && index < effect.field_count &&
+                    effect.elems[index].data;
+                if (given) {
+                    fault = "field '" + enc.path +
+                            "' is a map, which the HMI cannot encode";
+                    return false;
                 }
                 return true;
             }
-            case dart::FieldType::Map:
-                /* map fields are read-side only: the buffer holds an inert empty
-                 * placeholder and the RMW base keeps the owner's bytes untouched */
-                return true;
             default:
                 fault = "field '" + enc.path + "' has a kind the HMI cannot encode";
                 return false;
