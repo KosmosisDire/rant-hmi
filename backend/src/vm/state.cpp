@@ -236,6 +236,17 @@ RuntimeState::RuntimeState(const Program& program) {
             item.set[start.first] = 1;
         }
     }
+    /* a struct's AGGREGATE fields mirror their derived cells' handles (born-empty
+       retained lists, seeded just above), replacing the inert scratch placeholder */
+    for (uint32_t i = 0; i < program.cells.size(); ++i) {
+        const CellDef& cell = program.cells[i];
+        if (cell.field_of == UINT32_MAX || cell.field_of >= program.cells.size())
+            continue;
+        const uint32_t slot = program.cells[cell.field_of].struct_slot;
+        if (slot >= structs.size()) continue;
+        if (cell.field_index < structs[slot].fields.size())
+            structs[slot].fields[cell.field_index] = values[i];
+    }
 
     last.resize(program.entities.size());
     for (uint32_t i = 0; i < program.entities.size(); ++i)
@@ -261,6 +272,27 @@ RuntimeState::RuntimeState(const Program& program) {
     }
 
     stack.resize(std::max<uint32_t>(program.layout.stack_values, 1), Value::nil());
+    /* aggregate payload capacity: the widest single entity's aggregate fields decide
+       what one effect may have to carry (a map's entries interleave, so 2x pairs) */
+    uint32_t agg_values_cap = 0, agg_texts_cap = 0;
+    for (const EntityDef& entity : program.entities) {
+        uint32_t values_here = 0, texts_here = 0;
+        for (const FieldDef& field : entity.fields) {
+            if (field.shape != Shape::List && field.shape != Shape::Map) continue;
+            const uint32_t bound =
+                std::min<uint32_t>(field.bound ? field.bound : kVarrCeiling,
+                                   kRetainedCeiling);
+            if (field.shape == Shape::Map) {
+                values_here += bound * 2;
+                texts_here += bound * 2;
+            } else {
+                values_here += bound;
+                if (field.elem == Shape::Text) texts_here += bound;
+            }
+        }
+        agg_values_cap = std::max(agg_values_cap, values_here);
+        agg_texts_cap = std::max(agg_texts_cap, texts_here);
+    }
     effects.resize(std::max<uint32_t>(program.layout.effect_capacity, 1));
     for (EffectRecord& effect : effects) {
         effect.fields.resize(max_fields, Value::nil());
@@ -269,6 +301,11 @@ RuntimeState::RuntimeState(const Program& program) {
         effect.field_text.reserve(max_fields);
         for (uint32_t i = 0; i < max_fields; ++i)
             effect.field_text.emplace_back(kDefaultTextCap);
+        effect.agg_values.resize(agg_values_cap, Value::nil());
+        effect.agg_span.resize(max_fields, {UINT32_MAX, 0});
+        effect.agg_texts.reserve(agg_texts_cap);
+        for (uint32_t i = 0; i < agg_texts_cap; ++i)
+            effect.agg_texts.emplace_back(kDefaultTextCap);
     }
     raised.resize(std::max<uint32_t>(program.layout.raise_capacity, 1));
     for (RaisedRecord& record : raised) record.text = FixedText(kDefaultTextCap);
@@ -867,6 +904,18 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
             }
             break;
         }
+    }
+    /* struct aggregate fields re-point at THIS run's derived handles: the content
+       migrated by the derived cells' own names above, and whatever handle
+       migrate_struct copied referenced the retired run's slots */
+    for (uint32_t n = 0; n < new_program.cells.size(); ++n) {
+        const CellDef& cell = new_program.cells[n];
+        if (cell.field_of == UINT32_MAX || cell.field_of >= new_program.cells.size())
+            continue;
+        const uint32_t slot = new_program.cells[cell.field_of].struct_slot;
+        if (slot >= next.structs.size()) continue;
+        if (cell.field_index < next.structs[slot].fields.size())
+            next.structs[slot].fields[cell.field_index] = next.values[n];
     }
     return next;
 }

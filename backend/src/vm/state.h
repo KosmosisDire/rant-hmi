@@ -83,6 +83,17 @@ struct EffectRecord {
     std::vector<uint8_t> set;
     FixedText bare_text;
     std::vector<FixedText> field_text;
+    /* AGGREGATE payloads, deep-copied at EMIT exactly as scalar values are (a later
+     * write in the same tick must not retro-edit this effect): per field a run in
+     * `agg_values` (agg_span = offset,VALUES count; a map's entries interleaved;
+     * UINT32_MAX offset = no aggregate). Text elements are re-homed into `agg_texts`
+     * and their Value.ref re-pointed at that LOCAL index — these Values never
+     * re-enter the VM; the flush resolves them into string views. */
+    std::vector<Value> agg_values;
+    std::vector<FixedText> agg_texts;
+    std::vector<std::pair<uint32_t, uint32_t>> agg_span;
+    uint32_t agg_used = 0;
+    uint32_t agg_text_used = 0;
 };
 
 /* one queued raise: the RaiseDef it speaks as, its argument, and owned text storage so

@@ -148,6 +148,13 @@ enum class OpCode : uint8_t {
      * rest of the array is preserved untouched; an index past the owner's live count
      * is refused at the encode, never a grow. */
     MoveOutElem,
+    /* MARK FIELD `b` of struct cell `a` as SET and refresh its handle. Emitted after
+     * every write that lands in a struct value's aggregate-field DERIVED CELL: the
+     * field's storage is that cell (Program.struct_field_cells maps it), but the
+     * struct's own set-bit — what decides whether a move out carries our elements or
+     * the RMW base keeps the owner's — lives on the StructState, and the Store family
+     * has no operand room to reach it. Pops nothing. */
+    MarkField,
 };
 
 /* the fields `time` reads by — ONE table, so the scalar tier's bindings, the template

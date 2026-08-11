@@ -280,6 +280,9 @@ Json App::live(bool full) const {
     const RuntimeState& state = scheduler_->state();
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
+        /* a struct value's derived field cell never publishes: it has no key of its
+           own and the struct's would collide */
+        if (cell.field_of != UINT32_MAX) continue;
         const Value& value = state.values[i];
         const std::string key =
             cell.kind == CellKind::Slot

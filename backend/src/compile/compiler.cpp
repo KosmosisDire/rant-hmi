@@ -502,6 +502,7 @@ class Compiler {
         }
         const uint32_t cell = add_struct_cell(kind, owner, 0, id_of(var), name,
                                               static_cast<uint16_t>(type_id));
+        add_field_cells(kind, owner, 0, name, cell);
         /* a struct variable's DEFAULTS: an object of field values over the type's
            zero, applied at start and by a reset */
         if (init.is_object()) {
@@ -1153,16 +1154,108 @@ class Compiler {
 
     /* a struct-typed variable also puts each of its fields in scope, dotted, the same
      * way a struct temporary does (ensure_struct_local): `staged.position` reads like
-     * any other name */
+     * any other name. An AGGREGATE field binds to its DERIVED CELL (real retained
+     * storage) rather than LoadField, so `m.v` reads, appends and element-writes like
+     * any list variable. */
     void bind_variable(ExpressionScope& scope, const std::string& name, uint32_t cell_index) {
         const CellDef& cell = program_.cells[cell_index];
         scope.names[name] = Binding{cell.shape, OpCode::Load, cell_index, 0, cell.type_id};
         if (cell.shape != Shape::Struct) return;
         const std::vector<FieldDef>& fields = struct_fields(program_, cell.type_id);
-        for (uint32_t i = 0; i < fields.size(); ++i)
+        for (uint32_t i = 0; i < fields.size(); ++i) {
+            const uint32_t derived = field_cell(cell_index, i);
             scope.qualified[name + "." + fields[i].path] =
-                Binding{fields[i].shape, OpCode::LoadField, cell_index, i,
-                        fields[i].type_id};
+                derived != UINT32_MAX
+                    ? Binding{fields[i].shape, OpCode::Load, derived, 0, 0,
+                              fields[i].elem}
+                    : Binding{fields[i].shape, OpCode::LoadField, cell_index, i,
+                              fields[i].type_id};
+        }
+    }
+
+    /* the derived cell holding one aggregate field of a struct cell, else UINT32_MAX */
+    uint32_t field_cell(uint32_t struct_cell, uint32_t field) const {
+        const uint32_t slot = program_.cells[struct_cell].struct_slot;
+        if (slot >= program_.struct_field_cells.size()) return UINT32_MAX;
+        const std::vector<uint32_t>& row = program_.struct_field_cells[slot];
+        return field < row.size() ? row[field] : UINT32_MAX;
+    }
+
+    /* Every aggregate field of a fresh struct cell gets a DERIVED CELL of its own
+     * ("jogCmd.v"): an ordinary list/map cell — born empty, element-typed by the
+     * field, taking every aggregate write verb, migrating by name — that IS the
+     * field's storage. The struct's own field Value mirrors its handle for a move
+     * out; Program.struct_field_cells is the map every tier resolves through. The
+     * cells never publish (field_of marks them; the struct's key would collide). */
+    void add_field_cells(CellKind kind, uint64_t owner, uint64_t flow_id,
+                         const std::string& name, uint32_t struct_cell) {
+        const uint16_t type_id = program_.cells[struct_cell].type_id;
+        const uint32_t slot = program_.cells[struct_cell].struct_slot;
+        const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
+        if (program_.struct_field_cells.size() <= slot)
+            program_.struct_field_cells.resize(slot + 1);
+        program_.struct_field_cells[slot].assign(fields.size(), UINT32_MAX);
+        for (uint32_t i = 0; i < fields.size(); ++i) {
+            if (fields[i].shape != Shape::List && fields[i].shape != Shape::Map)
+                continue;
+            const uint32_t cell = add_cell(kind, owner, 0, name + "." + fields[i].path,
+                                           fields[i].shape, Json(), false);
+            CellDef& def = program_.cells[cell];
+            def.has_list = true;   /* born EMPTY: appendable from birth, never UNKNOWN */
+            def.elem = fields[i].elem;
+            def.field_of = struct_cell;
+            def.field_index = static_cast<uint16_t>(i);
+            def.owner_flow = flow_id;
+            program_.struct_field_cells[slot][i] = cell;
+        }
+    }
+
+    /* the derived cell behind `<name>.<path>` when the holder is a struct and the
+     * field is an aggregate; every miss teaches */
+    uint32_t resolve_field_cell(uint32_t holder, const std::string& name,
+                                const std::string& path, uint64_t step_id) {
+        const CellDef& cell = program_.cells[holder];
+        if (cell.shape != Shape::Struct) {
+            diag(step_id, "move_dest",
+                 "'" + name + "' is " + shape_name(cell.shape) + ", which has no fields",
+                 DiagGrade::Error, "to");
+            return UINT32_MAX;
+        }
+        const std::vector<FieldDef>& fields = struct_fields(program_, cell.type_id);
+        int field = -1;
+        for (uint32_t i = 0; i < fields.size(); ++i)
+            if (fields[i].path == path) field = static_cast<int>(i);
+        if (field < 0) {
+            diag(step_id, "unresolved_field",
+                 "'" + type_name_of(cell.type_id) + "' has no field '" + path + "'",
+                 DiagGrade::Error, "to");
+            return UINT32_MAX;
+        }
+        if (fields[field].shape != Shape::List && fields[field].shape != Shape::Map) {
+            diag(step_id, "move_dest",
+                 "'" + name + "." + path + "' is " + shape_name(fields[field].shape) +
+                     "; an element write addresses a list by index or a map by key",
+                 DiagGrade::Error, "to");
+            return UINT32_MAX;
+        }
+        const uint32_t derived = field_cell(holder, static_cast<uint32_t>(field));
+        if (derived == UINT32_MAX)
+            diag(step_id, "move_dest",
+                 "'" + name + "." + path + "' has no storage in this program",
+                 DiagGrade::Error, "to");
+        return derived;
+    }
+
+    /* the MarkField every derived-cell write is followed by: the set-bit — what
+     * decides whether a move out carries our elements or keeps the owner's bytes —
+     * lives on the StructState, out of the Store family's reach */
+    bool mark_field(FlowProgram& flow, uint32_t derived) {
+        Instruction mark;
+        mark.op = OpCode::MarkField;
+        mark.a = program_.cells[derived].field_of;
+        mark.b = program_.cells[derived].field_index;
+        flow.code.push_back(mark);
+        return true;
     }
 
     /* a timer variable reads by FIELD (`blink.running`, `blink.remaining`): the state
@@ -1608,15 +1701,6 @@ class Compiler {
             if (appends || !key.empty()) {
                 const std::string name = str_or(to, "local", "");
                 const std::string path = str_or(to, "path", "");
-                if (!path.empty()) {
-                    diag(step_id, "move_dest",
-                         "'" + name + "." + path + "' is inside a struct value, which "
-                         "the HMI cannot edit element by element yet; write the element "
-                         "to the entity's own field at an index, or stage it in a list "
-                         "variable",
-                         DiagGrade::Error, "to");
-                    return false;
-                }
                 uint32_t cell = UINT32_MAX;
                 auto found = locals.find(name);
                 if (found != locals.end()) cell = found->second;
@@ -1628,6 +1712,16 @@ class Compiler {
                              name + "' is not declared",
                          DiagGrade::Error, "to");
                     return false;
+                }
+                /* a struct value's AGGREGATE FIELD is its derived cell: the same
+                   verbs a list variable takes, plus the set-bit mark a move out reads */
+                if (!path.empty()) {
+                    const uint32_t derived =
+                        resolve_field_cell(cell, name, path, step_id);
+                    if (derived == UINT32_MAX) return false;
+                    return aggregate_assign(widget, step, flow, scope, derived, appends,
+                                          keep, key) &&
+                           mark_field(flow, derived);
                 }
                 return aggregate_assign(widget, step, flow, scope, cell, appends, keep, key);
             }
@@ -2009,17 +2103,22 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
-            /* an aggregate field of a struct VALUE is a read-side mirror: its storage
-               is the owner's, so the HMI has nowhere honest to put an edit. The
-               entity's own field takes the element (at an index); a list variable
-               stages anything richer. */
+            /* an AGGREGATE field of a struct value is its derived cell: a whole list
+               or map lands there exactly as it lands in a declared list variable —
+               the one-scalar rule steps aside for a declared HMI aggregate — and the
+               MarkField sets the bit a move out reads */
             if (fields[field].shape == Shape::List || fields[field].shape == Shape::Map) {
-                diag(step_id, "move_dest",
-                     "'" + name + "." + path + "' is an aggregate field of a struct "
-                     "value, which the HMI cannot edit; write the element to the "
-                     "entity's own field at an index, or stage it in a list variable",
-                     DiagGrade::Error, "to");
-                return false;
+                const uint32_t derived = field_cell(cell, static_cast<uint32_t>(field));
+                if (derived == UINT32_MAX) {
+                    diag(step_id, "move_dest",
+                         "'" + name + "." + path + "' has no storage in this program",
+                         DiagGrade::Error, "to");
+                    return false;
+                }
+                return push_typed(widget, step, flow, scope, from,
+                                  fields[field].shape, 0, /*agg_ok=*/true) &&
+                       emit_store(flow, step_id, derived) &&
+                       mark_field(flow, derived);
             }
             if (!push_typed(widget, step, flow, scope, from, fields[field].shape,
                             fields[field].type_id))
@@ -2214,14 +2313,24 @@ class Compiler {
                 return false;
             }
             if (fdef.shape == Shape::List) {
+                /* the WHOLE ARRAY: a list expression's elements pack over the RMW
+                   base at the encode. Bounds are the schema's — a fixed array takes
+                   at most its count (the rest zero), a variable one becomes exactly
+                   the list. */
                 if (key.empty()) {
-                    diag(step_id, "move_dest",
-                         std::string(entity_kind_name(target.kind)) + ":" + target.name +
-                             "." + fdef.path +
-                             " is an array field; a mesh write takes ONE element — "
-                             "give it an index",
-                         DiagGrade::Error, "to");
-                    return false;
+                    if (verb != Verb::Write && verb != Verb::Publish &&
+                        verb != Verb::Call && verb != Verb::Emit) {
+                        diag(step_id, "move_mode", "an array is written, never forced",
+                             DiagGrade::Error, "to");
+                        return false;
+                    }
+                    if (!push_typed(widget, step, flow, scope, from, Shape::List, 0,
+                                    /*agg_ok=*/true))
+                        return false;
+                    out.b = static_cast<uint32_t>(field);
+                    flow.code.push_back(out);
+                    ++program_.layout.effect_capacity;
+                    return true;
                 }
                 if (target.kind != EntityKind::Variable &&
                     target.kind != EntityKind::Topic) {
@@ -2314,10 +2423,17 @@ class Compiler {
         const uint32_t cell =
             add_struct_cell(CellKind::Temp, widget.id, flow.flow_id, 0, name, type_id);
         locals[name] = cell;
+        add_field_cells(CellKind::Temp, widget.id, flow.flow_id, name, cell);
         const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
-        for (uint32_t i = 0; i < fields.size(); ++i)
+        for (uint32_t i = 0; i < fields.size(); ++i) {
+            const uint32_t derived = field_cell(cell, i);
             scope.qualified[name + "." + fields[i].path] =
-                Binding{fields[i].shape, OpCode::LoadField, cell, i, fields[i].type_id};
+                derived != UINT32_MAX
+                    ? Binding{fields[i].shape, OpCode::Load, derived, 0, 0,
+                              fields[i].elem}
+                    : Binding{fields[i].shape, OpCode::LoadField, cell, i,
+                              fields[i].type_id};
+        }
         return cell;
     }
 

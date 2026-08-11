@@ -931,6 +931,43 @@ bool copy_effect_text(const Program& program, RuntimeState& state, EffectRecord&
     return true;
 }
 
+/* one aggregate value's elements into the record's OWN storage — deep copy at emit,
+ * exactly as a scalar's value is copied: a later write in this same tick must not
+ * retro-edit an effect already recorded. Text elements re-home into agg_texts and
+ * ref that LOCAL index (these Values never re-enter the VM; the flush resolves them). */
+bool copy_effect_agg(const Program& program, RuntimeState& state, EffectRecord& effect,
+                     const Value& value, uint32_t field) noexcept {
+    (void)program;
+    if (field >= effect.agg_span.size()) return false;
+    const AggView view = state.aggregate(value);
+    const bool pairs = value.tag == ValueTag::Map;
+    const uint32_t entries = pairs ? view.count * 2 : view.count;
+    if (entries && !view.data) return false;
+    if (effect.agg_used + entries > static_cast<uint32_t>(effect.agg_values.size()))
+        return false;
+    effect.agg_span[field] = {effect.agg_used, entries};
+    for (uint32_t k = 0; k < entries; ++k) {
+        Value element = view.data[k];
+        if (element.tag == ValueTag::Text) {
+            if (effect.agg_text_used >= effect.agg_texts.size()) return false;
+            effect.agg_texts[effect.agg_text_used].set(state.text(program, element));
+            element = Value::text(effect.agg_text_used++);
+        }
+        effect.agg_values[effect.agg_used + k] = element;
+    }
+    effect.agg_used += entries;
+    return true;
+}
+
+/* records are pooled: a stale span from the record's last life would hand the encode
+ * another effect's elements, so every build path resets before it fills */
+void reset_effect_aggs(EffectRecord& effect) noexcept {
+    effect.agg_used = 0;
+    effect.agg_text_used = 0;
+    std::fill(effect.agg_span.begin(), effect.agg_span.end(),
+              std::pair<uint32_t, uint32_t>{UINT32_MAX, 0});
+}
+
 /* effect records are POOLED and reused, so every emit path restates elem_index — a
  * stale element position would quietly turn the next field write into an element one */
 bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
@@ -944,6 +981,11 @@ bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t 
     effect.field = field;
     effect.elem_index = elem_index;
     effect.value = value;
+    reset_effect_aggs(effect);
+    if ((value.tag == ValueTag::List || value.tag == ValueTag::Map) &&
+        field != UINT32_MAX && elem_index == UINT32_MAX &&
+        !copy_effect_agg(program, state, effect, value, field))
+        return false;
     return copy_effect_text(program, state, effect, value, UINT32_MAX);
 }
 
@@ -956,10 +998,15 @@ bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_
     effect.bare = false;
     effect.elem_index = UINT32_MAX;
     if (value.fields.size() > effect.fields.size()) return false;
+    reset_effect_aggs(effect);
     for (uint32_t i = 0; i < value.fields.size(); ++i) {
         if (value.fields[i].tag == ValueTag::Nil) return false;
         effect.fields[i] = value.fields[i];
         effect.set[i] = value.set[i];
+        if ((value.fields[i].tag == ValueTag::List ||
+             value.fields[i].tag == ValueTag::Map) &&
+            !copy_effect_agg(program, state, effect, value.fields[i], i))
+            return false;
         if (!copy_effect_text(program, state, effect, value.fields[i], i)) return false;
     }
     ++state.effect_count;
@@ -1271,6 +1318,19 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         item.fields[start.first] = start.second;
                         item.set[start.first] = 1;
                     }
+                /* aggregate fields reset to their derived cells' EMPTY state and the
+                   handles land back in the fields */
+                if (holder.ref < program.struct_field_cells.size()) {
+                    const std::vector<uint32_t>& row =
+                        program.struct_field_cells[holder.ref];
+                    for (uint32_t i = 0; i < row.size() && i < item.fields.size(); ++i) {
+                        if (row[i] == UINT32_MAX) continue;
+                        state.hold_list(program, state, row[i],
+                                        program.cells[row[i]].list_slot, nullptr, 0,
+                                        program.cells[row[i]].shape == Shape::Map);
+                        item.fields[i] = state.values[row[i]];
+                    }
+                }
                 break;
             }
             /* `read <entity> -> cell`: the cached last value, every bit set, which is
@@ -1286,15 +1346,41 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 StructState& item = state.structs[holder.ref];
                 const LastValueState& last = state.last[ins.b];
                 const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
+                const std::vector<uint32_t>* derived_row =
+                    holder.ref < program.struct_field_cells.size()
+                        ? &program.struct_field_cells[holder.ref]
+                        : nullptr;
                 for (uint32_t i = 0; i < item.fields.size(); ++i) {
                     const Shape shape = i < defs.size() ? defs[i].shape : Shape::Unknown;
-                    /* aggregates are read-side only, so the value carries the inert
-                     * placeholder and the wire keeps the owner's own bytes */
-                    if (shape == Shape::List || shape == Shape::Map)
-                        item.fields[i] = zero_value(shape);
-                    else
-                        item.fields[i] = last.known && i < last.fields.size() ? last.fields[i]
-                                                                             : Value::nil();
+                    /* an AGGREGATE field copies the entity's mirror into its derived
+                     * cell. With no delivery to copy, the field stays UNSET so a move
+                     * out keeps the owner's bytes — an invented empty array would
+                     * zero the machine's. */
+                    if (shape == Shape::List || shape == Shape::Map) {
+                        const uint32_t derived =
+                            derived_row && i < derived_row->size() ? (*derived_row)[i]
+                                                                   : UINT32_MAX;
+                        if (derived == UINT32_MAX) {
+                            item.fields[i] = zero_value(shape);
+                            item.set[i] = 0;
+                            continue;
+                        }
+                        const bool pairs = shape == Shape::Map;
+                        const Value mirror = last.known && i < last.fields.size()
+                                                 ? last.fields[i]
+                                                 : Value::nil();
+                        const bool known = value_shape(mirror) == shape;
+                        const AggView view =
+                            known ? state.aggregate(mirror) : AggView{};
+                        state.hold_list(program, state, derived,
+                                        program.cells[derived].list_slot, view.data,
+                                        view.count, pairs);
+                        item.fields[i] = state.values[derived];
+                        item.set[i] = known ? 1 : 0;
+                        continue;
+                    }
+                    item.fields[i] = last.known && i < last.fields.size() ? last.fields[i]
+                                                                          : Value::nil();
                     /* re-home cached text into the struct's own slot (see StoreField) */
                     if (item.fields[i].tag == ValueTag::Text && i < item.texts.size() &&
                         item.texts[i] < state.texts.size() &&
@@ -1353,6 +1439,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     effect.bare = true;
                     effect.elem_index = UINT32_MAX;
                     effect.value = Value::nil();
+                    reset_effect_aggs(effect);
                     break;
                 }
                 if (ins.b == UINT32_MAX) {
@@ -1369,6 +1456,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     effect.field = UINT32_MAX;
                     effect.elem_index = UINT32_MAX;
                     effect.value = Value::nil();
+                    reset_effect_aggs(effect);
                     break;
                 }
                 /* the last-value mirror takes this write when the effect FLUSHES (end
@@ -1513,6 +1601,27 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const Value index = pop();
                 const Value value = pop();
                 if (!state.store_index(program, ins.a, index, value)) fail(ins.b);
+                break;
+            }
+            /* MARK one field of a struct value SET and refresh its handle: emitted
+             * after every write into an aggregate field's derived cell. The set-bit
+             * decides whether a move out carries our elements or the RMW base keeps
+             * the owner's bytes; the handle refresh keeps the struct's own field
+             * Value naming the current count. */
+            case OpCode::MarkField: {
+                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
+                                                                 : Value::nil();
+                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size())
+                    break;
+                StructState& item = state.structs[holder.ref];
+                if (ins.b >= item.set.size()) break;
+                item.set[ins.b] = 1;
+                if (holder.ref < program.struct_field_cells.size()) {
+                    const std::vector<uint32_t>& row =
+                        program.struct_field_cells[holder.ref];
+                    if (ins.b < row.size() && row[ins.b] != UINT32_MAX)
+                        item.fields[ins.b] = state.values[row[ins.b]];
+                }
                 break;
             }
             /* one ELEMENT of a mesh entity's array field: [value, index] exactly as

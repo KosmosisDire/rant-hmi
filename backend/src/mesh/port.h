@@ -13,6 +13,8 @@
 
 namespace hmi {
 
+struct MeshElems;
+
 struct EffectView {
     Verb verb = Verb::Write;
     const EntityDef* entity = nullptr;
@@ -28,6 +30,12 @@ struct EffectView {
     uint32_t field_count = 0;
     std::string_view bare_text;
     const FixedText* field_text = nullptr;
+    /* AGGREGATE payloads per field (the emit's deep copy, resolved into spans at
+     * flush): elems[i] carries field i's elements — a map's pairs interleaved,
+     * texts[k] backing data[k] where that element is text. Null where this effect
+     * carries no aggregate. Valid for the execute() call only. The write-out mirror
+     * of MeshUpdate.elems. */
+    const MeshElems* elems = nullptr;
 };
 
 /* The decoded elements behind one aggregate field: `count` Values (a map interleaves

@@ -2601,6 +2601,152 @@ void test_indexed_writes() {
     CHECK_EQ(list_dump(program, state, nums), "1,2");
 }
 
+/* A STRUCT VALUE'S AGGREGATE FIELD IS A DERIVED CELL: `jogCmd.v` has real retained
+ * storage of its own, takes every aggregate verb a list variable takes (whole store,
+ * append, element by index), reads back like any list, fills from the entity's mirror
+ * on a read, and a move out carries its ELEMENTS — deep-copied at emit — which the
+ * encode packs over the RMW base. An unread struct's aggregate field stays UNSET, so
+ * a write-out keeps the owner's own bytes rather than zeroing the machine's array. */
+void test_struct_agg_fields() {
+    EntityDef jog;
+    jog.kind = EntityKind::Variable;
+    jog.name = "jog";
+    jog.type_name = "Jog";
+    jog.writable = true;
+    FieldDef v;
+    v.path = "v";
+    v.shape = Shape::List;
+    v.elem = Shape::Num;
+    v.bound = 4;
+    FieldDef mode;
+    mode.path = "mode";
+    mode.shape = Shape::Num;
+    jog.fields = {v, mode};
+    FakeMesh mesh(std::vector<EntityDef>{jog});
+
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows",
+         Json::array({
+             /* the user's literal case: a list variable INTO the field, then the
+                whole message out */
+             flow_on("tap", {steps::set_field("jogCmd", "v", "src"),
+                             steps::write_value("jogCmd", "V", "jog")}),
+             flow_on("press", {Json{{"kind", "assign"},
+                                    {"from", {{"expr", "9"}}},
+                                    {"to", {{"local", "jogCmd"}, {"path", "v"}}},
+                                    {"key", "1"}}}),
+             flow_on("release", {steps::set_var("readback", "jogCmd.v"),
+                                 steps::set_var("second", "jogCmd.v[1]")}),
+             flow_on("held", {Json{{"kind", "assign"},
+                                   {"from", {{"expr", "40"}}},
+                                   {"to", {{"local", "jogCmd"}, {"path", "v"}}},
+                                   {"mode", "append"},
+                                   {"keep", "4"}}}),
+         })},
+    };
+    /* the RMW flow rides its OWN widget: a press-family trigger would co-fire with
+       the raw press/release posts above (pressrelease speaks on both edges) and its
+       ReadEnt would re-fill the field over the element write mid-test */
+    Json rmw = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "C"},
+        {"flows",
+         Json::array({
+             /* read-modify-write: the read copies the entity's mirror into the
+                field, so the write-out speaks the machine's own array */
+             flow_on("tap", {steps::read_into("jogCmd", "V", "jog"),
+                             steps::write_value("jogCmd", "V", "jog")}),
+         })},
+    };
+    Json root = {{"version", 1},
+                 {"next_id", 1},
+                 {"globals",
+                  Json::array({
+                      Json{{"name", "jogCmd"}, {"type", "Jog"}},
+                      Json{{"name", "src"}, {"type", "list"}, {"elem", "f64"},
+                           {"init", Json::array({1, 2, 3})}},
+                      Json{{"name", "readback"}, {"type", "list"}},
+                      Json{{"name", "second"}, {"type", "f64"}},
+                  })},
+                 {"pages",
+                  Json::array({Json{{"name", "P"},
+                                    {"children", Json::array({button, rmw})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("struct agg compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    const int holder = named_cell(program, "jogCmd");
+    const int derived = named_cell(program, "jogCmd.v");
+    const int readback = named_cell(program, "readback");
+    const int second = named_cell(program, "second");
+    if (!CHECK(holder >= 0 && derived >= 0 && readback >= 0 && second >= 0)) return;
+    /* the derived cell is the field's storage: element-typed by the schema, born
+       empty, and marked as belonging to its struct */
+    CHECK(program.cells[derived].shape == Shape::List);
+    CHECK(program.cells[derived].elem == Shape::Num);
+    CHECK(program.cells[derived].field_of == static_cast<uint32_t>(holder));
+    CHECK(program.cells[derived].has_list);
+
+    const uint64_t widget =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    uint32_t seq = 0;
+    auto press = [&](const char* event, const Value& value) {
+        scheduler.post(InputEvent{1, widget, event, value, ++seq});
+        std::string one;
+        scheduler.tick(one);
+    };
+    const RuntimeState& state = scheduler.state();
+
+    /* whole list into the field, whole message out: the transcript carries the
+       ELEMENTS, and the unwritten scalar rides as the struct's zero */
+    press("tap", Value::boolean(true));
+    bool whole = false;
+    for (const std::string& line : mesh.transcript())
+        if (line.find("v=[1,2,3]") != std::string::npos) whole = true;
+    CHECK(whole);
+
+    /* one element edited in place; reads come back through the same storage */
+    press("press", Value::boolean(true));
+    press("release", Value::boolean(false));
+    CHECK_EQ(list_dump(program, state, readback), "1,9,3");
+    CHECK(state.values[second].tag == ValueTag::Num);
+    CHECK_EQ(state.values[second].data.num, 9.0);
+
+    /* append grows it within the keep window */
+    press("held", Value::boolean(true));
+    press("release", Value::boolean(false));
+    CHECK_EQ(list_dump(program, state, readback), "1,9,3,40");
+
+    /* the machine's own array arrives; a read copies it into the field and the
+       write-out speaks it — read-modify-write, honestly */
+    mesh.push_update(EntityKind::Variable, "jog",
+                     {Value::list(0, 2, ValueTag::Num), Value::number(5)});
+    mesh.push_elems(0, {Value::number(7), Value::number(8)});
+    std::string fault;
+    scheduler.tick(fault);
+    mesh.clear();
+    const uint64_t rmw_widget =
+        json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
+    scheduler.post(InputEvent{1, rmw_widget, "tap", Value::boolean(true), ++seq});
+    scheduler.tick(fault);
+    bool rmw_out = false;
+    for (const std::string& line : mesh.transcript())
+        if (line.find("v=[7,8]") != std::string::npos &&
+            line.find("mode=5") != std::string::npos)
+            rmw_out = true;
+    CHECK(rmw_out);
+    press("release", Value::boolean(false));
+    CHECK_EQ(list_dump(program, state, readback), "7,8");
+}
+
 /* WHOLE AGGREGATES FROM EXPRESSIONS. A declared list or map variable — or a list slot —
  * takes a whole aggregate the wire tier builds: copy a variable, rebuild one with map or
  * filter. The one-scalar rule steps aside exactly there and nowhere else: a scalar
@@ -2896,9 +3042,8 @@ void test_aggregate_expressions() {
     };
     refuses(steps::set_var("n", "src"), "one scalar");
     refuses(steps::set_x("src"), "one scalar");
-    /* a whole list still never crosses to the mesh; the refusal now teaches the one
-       write an array field does take (an element, at an index) */
-    refuses(steps::write_field("V", "plant", "temps", "src"), "give it an index");
+    /* a whole list DOES cross to a mesh array field now (the encode packs it); what
+       still refuses is an aggregate into a scalar position, checked above */
 }
 
 /* THE CEILINGS, and what happens at them. An unbounded append refuses at the retained
@@ -3170,12 +3315,18 @@ void test_aggregate_refusals() {
     CHECK(refuses(flow_on("tap", {steps::set_key("n", "'k'", "1")}),
                   "an element write addresses a list by index or a map by key"));
     CHECK(refuses(flow_on("tap", {steps::set_key("log", "'k'", "1")}), "num"));
-    /* a struct value's insides take no element writes; the entity's own field does */
+    /* a struct value's list field takes element writes NOW — so what teaches is the
+       ordinary element-type refusal, exactly as on a declared list variable */
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", {{"local", "m"}, {"path", "names"}}},
                                        {"key", "0"}}}),
-                  "inside a struct value"));
+                  "wants text"));
+    CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
+                                       {"from", {{"expr", "1"}}},
+                                       {"to", {{"local", "m"}, {"path", "speed"}}},
+                                       {"key", "0"}}}),
+                  "an element write addresses a list by index or a map by key"));
     /* keep belongs to an append, and an append is not also a keyed write */
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
@@ -3207,8 +3358,10 @@ void test_aggregate_refusals() {
                                        {"to", steps::entity_ref("V", "nothing")},
                                        {"mode", "append"}}}),
                   "a mesh entity takes no append"));
+    /* a mesh array field takes the WHOLE list now — so a scalar source against one
+       is the ordinary shape refusal, and the element form still wants its index */
     CHECK(refuses(flow_on("tap", {steps::write_field("V", "plant", "names", "'a'")}),
-                  "give it an index"));
+                  "wants list"));
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "'a'"}}},
                                        {"to", steps::entity_ref("V", "plant", "names")},
@@ -3723,6 +3876,7 @@ int main() {
     RUN(test_list_cells);
     RUN(test_aggregate_variables);
     RUN(test_indexed_writes);
+    RUN(test_struct_agg_fields);
     RUN(test_aggregate_expressions);
     RUN(test_aggregate_ceilings);
     RUN(test_map_reduce);

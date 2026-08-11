@@ -102,6 +102,7 @@ const char* op_name(OpCode op) {
         case OpCode::Notify: return "NOTIFY";
         case OpCode::StoreIndex: return "STORE_INDEX";
         case OpCode::MoveOutElem: return "MOVE_OUT_ELEM";
+        case OpCode::MarkField: return "MARK_FIELD";
     }
     return "?";
 }

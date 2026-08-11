@@ -22,6 +22,30 @@ std::string print_value(const Value& value, std::string_view text) {
     return out.str();
 }
 
+/* an aggregate field with its elements resolved: what the transcript pins for the
+ * write-out tests — a list as [a,b,c], a map as {k=v,...} */
+std::string print_agg(const Value& value, const MeshElems& span) {
+    const bool pairs = value.tag == ValueTag::Map;
+    std::ostringstream out;
+    out << std::setprecision(17);
+    out << (pairs ? "{" : "[");
+    for (uint32_t k = 0; k < span.count; ++k) {
+        const std::string_view text = span.texts ? span.texts[k] : std::string_view{};
+        if (pairs) {
+            if (k % 2 == 0) {
+                if (k) out << ",";
+                out << text << "=";
+                continue;
+            }
+        } else if (k) {
+            out << ",";
+        }
+        out << print_value(span.data[k], text);
+    }
+    out << (pairs ? "}" : "]");
+    return out.str();
+}
+
 } // namespace
 
 FakeMesh::FakeMesh(std::vector<EntityDef> entities) : entities_(std::move(entities)) {}
@@ -40,18 +64,28 @@ bool FakeMesh::execute(const EffectView& effect, std::string& fault) noexcept {
         transcript_.push_back(out.str());
         return true;
     }
+    const auto span_of = [&](uint32_t field) -> const MeshElems* {
+        return effect.elems && field < effect.field_count && effect.elems[field].data
+                   ? &effect.elems[field]
+                   : nullptr;
+    };
     if (effect.bare) {
         if (effect.field < effect.entity->fields.size() &&
             !effect.entity->fields[effect.field].path.empty())
             out << "." << effect.entity->fields[effect.field].path;
         if (effect.elem_index != UINT32_MAX) out << "[" << effect.elem_index << "]";
-        out << "=" << print_value(effect.value, effect.bare_text);
+        const MeshElems* span = span_of(effect.field);
+        out << "=" << (span && effect.elem_index == UINT32_MAX
+                           ? print_agg(effect.value, *span)
+                           : print_value(effect.value, effect.bare_text));
     } else {
         out << "{";
         for (uint32_t i = 0; i < effect.field_count; ++i) {
             if (i) out << ",";
+            const MeshElems* span = span_of(i);
             out << effect.entity->fields[i].path << "="
-                << print_value(effect.fields[i], effect.field_text[i].view());
+                << (span ? print_agg(effect.fields[i], *span)
+                         : print_value(effect.fields[i], effect.field_text[i].view()));
         }
         out << "}";
     }

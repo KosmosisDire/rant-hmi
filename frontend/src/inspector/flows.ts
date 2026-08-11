@@ -579,14 +579,21 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
 }
 
 /* the declared shape of a move destination, where the document can say: a bare local's
-   own type, a slot's declared shape. "" where nothing declares one (an entity, a temp
-   declared by use, a dotted path into a struct). */
-function destShape(editor: Editor, widget: Node, type: WidgetType | null, to: Json): string {
+   own type, a slot's declared shape, or a struct value's aggregate FIELD (its derived
+   cell takes the same verbs a list variable does). "" where nothing declares one (an
+   entity, a temp declared by use, a scalar field of a struct). */
+function destShape(editor: Editor, widget: Node, type: WidgetType | null, flow: Flow,
+                   stepId: number, to: Json): string {
   if (typeof to?.slot === "string")
     return type?.slots.find((s) => s.name === to.slot)?.shape ?? "";
   if (typeof to?.local === "string" && !to.path) {
     const declared = variablesInScope(editor, widget).find((v) => v.name === to.local);
     return declared?.type === "list" || declared?.type === "map" ? declared.type : "";
+  }
+  if (typeof to?.local === "string" && to.path) {
+    const held = localAt(editor, widget, flow, stepId, String(to.local));
+    const field = (held?.fields ?? []).find((f) => f.path === to.path);
+    return field?.shape === "list" || field?.shape === "map" ? field.shape : "";
   }
   return "";
 }
@@ -754,7 +761,7 @@ function stepCell(
        neither UNLESS the target is a mesh field of its own: a mesh list takes only the
        element form (no mode to choose, since a whole-list write is not a thing there) and
        a mesh map field renders nothing — the compiler is the teacher there. */
-    const shape = destShape(editor, widget, type, at().to);
+    const shape = destShape(editor, widget, type, here(), step.id, at().to);
     const indexKey = (): string => String(at().key ?? "");
     if (shape === "list") {
       const derived = () => (indexKey() !== "" ? "index" : String(at().mode ?? "write"));
@@ -791,11 +798,24 @@ function stepCell(
       cell.appendChild(box("key", "text", () => String(at().key ?? ""),
                            (text) => set("key", text)));
     } else {
+      /* a mesh LIST field takes the whole array or one element — no append (growth
+         belongs to the owner); a mesh map field renders nothing, the compiler teaches */
       const meshAgg = entityAggField(editor, at().to);
       if (meshAgg?.shape === "list") {
-        cell.appendChild(el("span", { class: "op", text: "at index" }));
-        cell.appendChild(box("key", "num", () => String(at().key ?? ""),
-                             (text) => set("key", text)));
+        const meshDerived = () => (indexKey() !== "" ? "index" : "write");
+        const picker = selectField(
+          [{ value: "write" }, { value: "index", label: "at index" }],
+          meshDerived(),
+          (choice) => set("key", choice === "index" ? "0" : ""),
+          "mode",
+        );
+        bindChoice(step.id + ":mode", pickerOf(picker), meshDerived);
+        cell.appendChild(picker);
+        if (meshDerived() === "index") {
+          cell.appendChild(el("span", { class: "op", text: "at" }));
+          cell.appendChild(box("key", "num", () => String(at().key ?? ""),
+                               (text) => set("key", text)));
+        }
       }
     }
     return cell;

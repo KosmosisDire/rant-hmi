@@ -124,6 +124,13 @@ struct CellDef {
     uint32_t list_slot = UINT32_MAX;
     bool has_list = false;
     std::vector<Value> list_init;
+    /* a DERIVED FIELD CELL: this aggregate cell IS the storage of one aggregate field
+     * of a struct cell ("jogCmd.v") — field_of names that struct cell, field_index the
+     * field. Derived cells are bound in scope under the dotted name, take every
+     * aggregate write verb, migrate by name, and never publish (the struct's own key
+     * would collide). UINT32_MAX = an ordinary cell. */
+    uint32_t field_of = UINT32_MAX;
+    uint16_t field_index = 0;
     /* Temp only: the flow it belongs to, so two flows may reuse a name */
     uint64_t owner_flow = 0;
 };
@@ -289,6 +296,10 @@ struct Program {
     std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;
     std::vector<Diag> runtime_faults;
+    /* [struct slot][field] -> the derived cell holding that aggregate field's entries
+     * (UINT32_MAX where the field is scalar). What ReadEnt fills, New clears, MarkField
+     * refreshes through, and a move out resolves elements from. */
+    std::vector<std::vector<uint32_t>> struct_field_cells;
     ProgramLayout layout;
 
     uint32_t add_text(const std::string& text);
