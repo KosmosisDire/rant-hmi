@@ -53,6 +53,14 @@ struct Sink {
     }
 };
 
+/* WHY A COMPONENT'S ATTRS SEE NOTHING OF THE PAGE. Appended to every unknown-name
+ * refusal inside a component, in the same words the scalar tier uses for the same rule
+ * (compile/compiler.cpp) — one rule, said once, wherever the author meets it. */
+constexpr const char* kIsolatedHelp =
+    " — a component sees its own properties and nothing of the page it sits on, so that "
+    "it works wherever it is placed. Declare a property here and let each instance's own "
+    "value bring the variable or the mesh field in";
+
 /* A name is read as a BARE IDENTIFIER in expressions and joined with dots into slot
  * addresses (`bar.fill_color`), so a name carrying an address takes letters, digits and
  * underscores. A name that carries NO address is a label and takes anything. */
@@ -87,6 +95,47 @@ void check_attr_names(const Json& attrs, const std::string& kind, uint64_t node,
         sink.report(node, "attr_name",
                     "'" + it.key() + "' is not an attr a '" + kind + "' node reads",
                     it.key());
+    }
+}
+
+/* THE MESH AS THE DISPLAY TIER SEES IT, built once per compile: every readable field
+ * under its '@' spelling, mapped to the cell the live frame publishes it in. The field
+ * table comes through `feed_fields` — the wire tier's own rule, a function's RESPONSE
+ * fields and anything else's value fields — so the two tiers cannot come to offer
+ * different fields for one entity. A single-field entity also answers to its bare name,
+ * landing on the SAME cell, so `@level` and `@level.value` are one key and not two. */
+std::shared_ptr<const TemplateMesh> build_mesh(const std::vector<EntityDef>* reflection,
+                                               std::set<std::string>* reads) {
+    auto out = std::make_shared<TemplateMesh>();
+    out->reads = reads;
+    if (!reflection) return out;
+    for (const EntityDef& def : *reflection) {
+        const std::vector<FieldDef>& fields = feed_fields(def);
+        if (fields.empty()) continue;
+        const std::string base = "@" + def.name;
+        auto cell_of = [&](const FieldDef& field) {
+            return TemplateMeshField{mesh_cell(def.name, field.path), def.name, field.path};
+        };
+        if (fields.size() == 1) out->fields[base] = cell_of(fields[0]);
+        if (fields.size() == 1 && fields[0].path.empty()) continue;
+        for (const FieldDef& field : fields)
+            out->fields[base + "." + field.path] = cell_of(field);
+        out->fielded.insert(base);
+    }
+    return out;
+}
+
+/* one `globals` / `locals` list, as the attr scope reads it: the name, the DOCUMENT id
+ * (which is the live cell's key), and the declared type — enough to resolve a reference
+ * and to refuse the two shapes an attr cannot read. A row with no usable name is skipped
+ * silently: the scalar compiler is where a variable's own mistakes are reported. */
+void take_vars(const Json& rows, std::vector<TemplateVar>& out) {
+    if (!rows.is_array()) return;
+    for (const Json& var : rows) {
+        if (!var.is_object()) continue;
+        const std::string name = str_or(var, "name", "");
+        if (name.empty() || !identifier(name)) continue;
+        out.push_back(TemplateVar{name, id_of(var), str_or(var, "type", "f64")});
     }
 }
 
@@ -638,6 +687,9 @@ Json compile_component(const Json& component, Sink& sink) {
     Walk walk;
     TemplateScope root;
     root.addresses = walk.addresses;
+    /* no vars, no mesh, and a refusal that says why: the isolation rule, enforced by
+       what the scope simply does not carry */
+    root.unknown_help = kIsolatedHelp;
     /* the root carries no path segment: its properties are the instance's own, so the
        addresses a document already names stay bare */
     collect_tree(component, "", true, root, walk, sink);
@@ -762,20 +814,33 @@ const Json& builtin_registry() {
     return built;
 }
 
-Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
+Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
+                        const std::vector<EntityDef>* mesh,
+                        std::set<std::string>* attr_reads) {
     Json out = Json::object();
     Sink sink;
     sink.diags = &diags;
 
-    /* A PAGE NODE READS NO PROPERTIES — nothing declares any there yet, so the scope is
-     * empty and what an attr can say is a literal, a theme token, and arithmetic over
-     * them. That is a scope, not a different language: the day a frame declares a
-     * property and a feed writes it, this scope grows and the compiler does not change. */
-    const TemplateScope scope;
-    std::function<void(const Json&)> walk = [&](const Json& node) {
+    /* A PAGE NODE READS THE WHOLE PAGE UNIVERSE: the document's globals, the locals of
+     * every element enclosing it and its own, and the mesh. Not because the display tier
+     * gained a language — it is the same compiler, over the same grammar — but because it
+     * is finally handed the same VOCABULARY the wire tier has always had. A name that
+     * resolves here loads a cell the backend publishes; where it resolves is a fact about
+     * where the element sits, which is the whole of the scoping rule. */
+    TemplateScope page_scope;
+    page_scope.mesh = build_mesh(mesh, attr_reads);
+    take_vars(document.root.value("globals", Json::array()), page_scope.vars);
+
+    std::function<void(const Json&, const TemplateScope&)> walk =
+        [&](const Json& node, const TemplateScope& outer) {
         if (!node.is_object()) return;
         const uint64_t id = id_of(node);
         const std::string kind = str_or(node, "kind", "frame");
+        /* this element's own locals, INSIDE its own attrs and everything below: the
+           lexical chain the scalar tier walks (compiler.cpp scope_for), built here by
+           carrying the scope down instead of walking parents back up */
+        TemplateScope scope = outer;
+        take_vars(node.value("locals", Json::array()), scope.vars);
         check_attr_names(node.value("attrs", Json::object()), kind, id, sink);
         Json row{{"attrs", compile_attrs(node.value("attrs", Json::object()), scope, id, "",
                                          sink)}};
@@ -791,13 +856,14 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
         Json interact = compile_interact(node, scope, id, sink);
         if (!interact.is_null()) row["interact"] = std::move(interact);
         out[std::to_string(id)] = std::move(row);
-        for (const Json& child : array_or_empty(node, "children")) walk(child);
+        for (const Json& child : array_or_empty(node, "children")) walk(child, scope);
     };
 
     auto pages = document.root.find("pages");
     if (pages != document.root.end() && pages->is_array())
         for (const Json& page : *pages)
-            for (const Json& child : array_or_empty(page, "children")) walk(child);
+            for (const Json& child : array_or_empty(page, "children"))
+                walk(child, page_scope);
 
     /* DOC COMPONENTS COMPILE HERE TOO, keyed by their own node ids (globally unique, so
      * the two key spaces cannot collide). The sink is SILENT: derive_registry has already
@@ -812,6 +878,7 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
             Walk pass;
             TemplateScope component_root;
             component_root.addresses = pass.addresses;
+            component_root.unknown_help = kIsolatedHelp;
             collect_tree(component, "", true, component_root, pass, quiet);
             Json root_node = component;
             root_node["kind"] = "frame";

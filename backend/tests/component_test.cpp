@@ -921,6 +921,172 @@ void test_attr_vocabulary() {
     }
 }
 
+/* THE DISPLAY TIER GETS THE WHOLE UNIVERSE. What an attr may name is a fact about WHERE
+ * the element sits, not about which kind of element it is: on a page it names the
+ * variables in its lexical scope and the mesh, exactly as a flow on that element does;
+ * inside a component it names neither, and the refusal teaches the way in.
+ *
+ * The reads are gathered as the attrs compile and stamped onto the entities by the
+ * program compile behind them, because a field nobody consumed would never fill its
+ * mirror and the picture would read UNKNOWN forever. */
+void test_page_universe() {
+    /* one motor (two fields), one bare sensor: the two spellings a read can take */
+    std::vector<EntityDef> mesh_defs;
+    {
+        EntityDef sensor;
+        sensor.kind = EntityKind::Variable;
+        sensor.name = "cage/sensor";
+        sensor.fields = {FieldDef{"", Shape::Num}};
+        EntityDef motor;
+        motor.kind = EntityKind::Variable;
+        motor.name = "cage/motor";
+        motor.type_name = "Motor";
+        motor.fields = {FieldDef{"speed", Shape::Num}, FieldDef{"enabled", Shape::Bool}};
+        mesh_defs = {sensor, motor};
+    }
+
+    Json root = {
+        {"version", 1}, {"next_id", 900},
+        {"globals", Json::array({
+            Json{{"id", 500}, {"name", "setpoint"}, {"type", "f64"}, {"init", 4}},
+            Json{{"id", 501}, {"name", "ticker"}, {"type", "timer"}},
+            Json{{"id", 502}, {"name", "spec"}, {"type", "Motor"}}})},
+        /* a component whose attrs try for the page and are refused */
+        {"components", Json::array({Json{
+            {"id", 600}, {"name", "Sealed"},
+            {"children", Json::array({Json{
+                {"id", 611}, {"kind", "frame"}, {"name", "inner"},
+                {"attrs", Json{{"w", "setpoint"}, {"h", "@cage/sensor"}}}}})}}})},
+        {"pages", Json::array({Json{
+            {"id", 100}, {"name", "Main"},
+            {"children", Json::array({
+                Json{{"id", 110}, {"kind", "frame"}, {"name", "outer"},
+                     {"locals", Json::array({Json{{"id", 510}, {"name", "hits"},
+                                                  {"type", "f64"}}})},
+                     {"attrs", Json{{"w", "hits * 10"}, {"opacity", "@cage/motor.speed"}}},
+                     {"children", Json::array({
+                         Json{{"id", 111}, {"kind", "frame"}, {"name", "kid"},
+                              /* the ancestor's local, a global, and the shadowing rule */
+                              {"attrs", Json{{"w", "hits + setpoint"},
+                                             {"h", "@cage/sensor"}}}},
+                         Json{{"id", 112}, {"kind", "frame"}, {"name", "shadow"},
+                              {"locals", Json::array({Json{{"id", 511}, {"name", "hits"},
+                                                           {"type", "f64"}}})},
+                              {"attrs", Json{{"w", "hits"}}}}})}},
+                /* outside that subtree: the local is not in scope, and neither is a
+                   field the motor does not have */
+                Json{{"id", 120}, {"kind", "frame"}, {"name", "sibling"},
+                     {"attrs", Json{{"w", "hits"}, {"h", "@cage/motor.torque"}}}},
+                /* the two shapes an attr cannot read, refused by name */
+                Json{{"id", 130}, {"kind", "frame"}, {"name", "unreadable"},
+                     {"attrs", Json{{"w", "ticker"}, {"h", "spec"}}}}})}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+
+    std::vector<Diag> diags;
+    std::set<std::string> reads;
+    Json rows = compile_page_attrs(document, diags, &mesh_defs, &reads);
+
+    /* A VARIABLE IS A CELL: the load names the DOCUMENT id, which is the very key the
+       runtime already publishes the variable's value under (`v<id>`) */
+    CHECK_EQ(ops_of(rows["110"]["attrs"]["w"]), "LOAD(var:510) CONST(10.0) MUL");
+    /* an element's own local is in scope inside its OWN attrs, and in its children's */
+    CHECK_EQ(ops_of(rows["111"]["attrs"]["w"]), "LOAD(var:510) LOAD(var:500) ADD");
+    /* nearest declaration wins: the child's own `hits`, not the ancestor's */
+    CHECK_EQ(ops_of(rows["112"]["attrs"]["w"]), "LOAD(var:511)");
+    /* a bare-scalar entity reads whole under its own name; a fielded one by field */
+    CHECK_EQ(ops_of(rows["111"]["attrs"]["h"]), "LOAD(mesh:cage/sensor)");
+    CHECK_EQ(ops_of(rows["110"]["attrs"]["opacity"]), "LOAD(mesh:cage/motor.speed)");
+
+    /* OUT OF SCOPE IS A FINDING, not a silent Nil */
+    auto finding = [&](uint64_t node, const char* where) -> const Diag* {
+        for (const Diag& d : diags)
+            if (d.node_id == node && d.where == where) return &d;
+        return nullptr;
+    };
+    const Diag* stray = finding(120, "w");
+    CHECK(stray != nullptr);
+    if (stray) CHECK(stray->message.find("unknown name 'hits'") != std::string::npos);
+    const Diag* no_field = finding(120, "h");
+    CHECK(no_field != nullptr);
+    if (no_field)
+        CHECK(no_field->message.find("unknown field '@cage/motor.torque'") !=
+              std::string::npos);
+    /* a timer and a whole message read BY FIELD, which one cell cannot answer: refused
+       by name with what to write instead, never compiled into a forever-UNKNOWN load */
+    const Diag* timer = finding(130, "w");
+    CHECK(timer != nullptr);
+    if (timer) CHECK(timer->message.find("reads by field") != std::string::npos);
+    const Diag* whole = finding(130, "h");
+    CHECK(whole != nullptr);
+    if (whole) CHECK(whole->message.find("whole Motor message") != std::string::npos);
+
+    /* A COMPONENT SEES NEITHER, and the refusal says why — the same words the scalar
+       tier uses, because it is one rule. Pinned by DERIVE_REGISTRY: a component's attrs
+       compile twice (once for the template, once by id for the context editor) and one
+       mistake gets one finding, so the second pass runs silent. */
+    std::vector<Diag> comp_diags;
+    derive_registry(document, comp_diags);
+    auto sealed = [&](const char* where) -> const Diag* {
+        for (const Diag& d : comp_diags)
+            if (d.node_id == 611 && d.where == where) return &d;
+        return nullptr;
+    };
+    const Diag* sealed_var = sealed("w");
+    CHECK(sealed_var != nullptr);
+    if (sealed_var)
+        CHECK(sealed_var->message.find("works wherever it is placed") != std::string::npos);
+    const Diag* sealed_mesh = sealed("h");
+    CHECK(sealed_mesh != nullptr);
+    if (sealed_mesh)
+        CHECK(sealed_mesh->message.find("nothing here can name the mesh") !=
+              std::string::npos);
+    /* and the component's attempt left NO read behind: an isolated surface cannot make
+       the page subscribe to anything */
+    CHECK_EQ(reads.size(), size_t(2));
+    CHECK(reads.count(std::string("cage/sensor\n")) == 1);
+    CHECK(reads.count(std::string("cage/motor\nspeed")) == 1);
+
+    /* THE STAMP: the program compile behind the attrs marks exactly those fields, and
+       marks the entity as read so the mesh consumes it — the attr's picture and a
+       flow's guard fill from ONE mirror */
+    FakeMesh mesh(mesh_defs);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh, &reads);
+    auto entity_named = [&](const char* name) -> const EntityDef* {
+        for (const EntityDef& def : compiled.program.entities)
+            if (def.name == name) return &def;
+        return nullptr;
+    };
+    const EntityDef* sensor = entity_named("cage/sensor");
+    CHECK(sensor != nullptr);
+    if (sensor) {
+        CHECK(sensor->flow_reads);
+        CHECK_EQ(sensor->attr_reads.size(), size_t(1));
+        if (!sensor->attr_reads.empty()) CHECK_EQ(int(sensor->attr_reads[0]), 1);
+    }
+    const EntityDef* motor = entity_named("cage/motor");
+    CHECK(motor != nullptr);
+    if (motor) {
+        CHECK(motor->flow_reads);
+        CHECK_EQ(motor->attr_reads.size(), size_t(2));
+        if (motor->attr_reads.size() == 2) {
+            CHECK_EQ(int(motor->attr_reads[0]), 1);   /* speed is read */
+            CHECK_EQ(int(motor->attr_reads[1]), 0);   /* enabled is not */
+        }
+    }
+    /* nothing stamped without the reads: a document whose attrs name no mesh leaves the
+       consume list exactly where the flows put it */
+    CompileResult bare = compile_document(document, builtin_registry(), mesh);
+    for (const EntityDef& def : bare.program.entities) CHECK(def.attr_reads.empty());
+
+    /* THE KEY IS ONE SPELLING, shared by the compiler that emits the load and the live
+       frame that fills it (lang/template_expr.h) */
+    CHECK_EQ(mesh_cell("cage/sensor", ""), std::string("mesh:cage/sensor"));
+    CHECK_EQ(mesh_cell("cage/motor", "speed"), std::string("mesh:cage/motor.speed"));
+}
+
 /* TRANSITIONS ARE RENDERING: a transition is METADATA on the field, never part of any
  * expression. The language redirects the old spelling by name; the node-level
  * `transitions` map is checked against the attr table's css column and passed through
@@ -1127,6 +1293,7 @@ int main() {
     test_part_property_rules();
     test_empty_component();
     test_attr_vocabulary();
+    test_page_universe();
     test_transitions();
     return check::summary("component_test");
 }

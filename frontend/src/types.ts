@@ -3,15 +3,22 @@
 
 export type Json = any;
 
-/* 15: ONE VOCABULARY — COMPONENT (a definition in the library), INSTANCE (a node
+/* 16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — a PAGE element's attrs name the
+ * variables in their lexical scope and the mesh, exactly as a flow on that element does.
+ * A served view program carries two more cell kinds, `var:<id>` (read from the
+ * variable's own `v<id>` live value) and `mesh:<entity>[.<field>]`, and a live frame
+ * carries the mesh fields the attrs read beside the cells — scalars in `values`,
+ * aggregates on the `aggs` lane. A COMPONENT's attrs still name neither: isolation is
+ * what the scope does not carry.
+ * (15: ONE VOCABULARY — COMPONENT (a definition in the library), INSTANCE (a node
  * placing one) and ELEMENT (any node in the tree, including one named inside a
  * component). The registry serves `components`, not `types`; an `input` frame carries
  * {node, event, value, seq, element} where `widget_id` and `part` stood; a flow
  * trigger's channel key is `element`; and the expression prefix `instance.<slot>` is
  * spelled `this.<slot>` in both tiers.
- * (14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
+ * 14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
  * the step kind `notify` broadcasts a notification to every session.) */
-export const PROTO = 15;
+export const PROTO = 16;
 
 /* one line of the log: what a mesh node said on @dart/log/<level>, or what a notify
  * step spoke (level "notify", node "hmi"). `ms` rides only where the author set an

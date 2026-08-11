@@ -15,6 +15,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -50,8 +51,14 @@ namespace hmi {
  * component). The served registry lists `components`, not `types`; an `input` frame
  * carries {node, event, value, seq, element} where `widget_id` and `part` stood; a
  * flow trigger's channel key is `element`; and the expression prefix `widget.<slot>`
- * is spelled `this.<slot>` in both tiers */
-constexpr int kProto = 15;
+ * is spelled `this.<slot>` in both tiers;
+ * 16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — an attr on a PAGE element names the
+ * variables in its lexical scope and the mesh, exactly as a flow does. A served view
+ * program gains two cell kinds, `var:<id>` (loaded from the variable's own `v<id>` live
+ * value) and `mesh:<entity>[.<field>]`, and a live frame carries the read mesh fields
+ * beside the cells — scalars in `values`, aggregates on the `aggs` lane. A COMPONENT's
+ * attrs still see neither: isolation is what the scope does not carry */
+constexpr int kProto = 16;
 
 struct AppOptions {
     ServerOptions server;
@@ -64,7 +71,10 @@ struct AppOptions {
 
 class App {
   public:
-    explicit App(AppOptions opts);
+    /* `mesh` overrides the port the options would build. The service loop never passes
+     * one; a test does, so the whole App — the compile, the consume list, the live frame
+     * — can be exercised against a mesh whose arrivals it controls. */
+    explicit App(AppOptions opts, std::unique_ptr<MeshPort> mesh = nullptr);
 
     bool start(std::string& err);
     void stop();
@@ -109,8 +119,10 @@ class App {
      * only what moved — appends since the cursor, or the whole cell when its generation
      * did — and omits a cell that did not move at all. */
     Json live(bool full = false) const;
-    /* one aggregate cell's frame entry, or null when it has not moved since the cursor */
-    Json agg_entry(const CellDef& cell, const Value& value, bool full) const;
+    /* one aggregate's frame entry, or null when it has not moved since the cursor. Takes
+     * the RETAINED SLOT rather than a cell, because a mesh field's mirror lives in the
+     * same `lists` vector (appended after the cells') and rides the same delta lane. */
+    Json agg_entry(uint32_t list_slot, Shape shape, const Value& value, bool full) const;
     Json mesh_json() const;
     /* the expression vocabulary (builtins + shape-scoped methods) for autocomplete */
     static Json lang_json();
@@ -134,6 +146,10 @@ class App {
     /* every page node's compiled attrs, keyed by node id: the other half of the compile
        product, and the reason a page and a component render through one path */
     Json node_attrs_;
+    /* every mesh field a PAGE's attrs read, as "<entity>\n<path>": the attr compiler
+       gathers it, the program compile stamps the entities with it, and the live frame
+       carries their mirrors. Held across the compile because both halves need it. */
+    std::set<std::string> attr_entity_reads_;
     std::vector<Diag> component_diags_;
     Server server_;
     std::unordered_map<uint64_t, SessionState> sessions_;

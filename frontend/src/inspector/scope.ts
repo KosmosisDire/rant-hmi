@@ -225,13 +225,26 @@ function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
   if (slots.length)
     rows.push({ key: "hmi/this", label: "this", icon: "layers", children: slots });
 
-  /* the three places a name can come from, foldered in the order they shadow: what this
-     element declares, what an element ABOVE it declares, and the document's globals */
-  const own = new Set((instance?.locals ?? []).map((v) => v.id));
+  rows.push(...variableRows(editor, instance, "hmi"));
+  /* the clock stands in every scalar scope (scope_for binds it last), so the hmi
+     universe always offers it */
+  rows.push(timeRow("hmi"));
+  return rows;
+}
+
+/* THE VARIABLES IN SCOPE, foldered in the order they shadow: what this element declares,
+ * what an element ABOVE it declares, and the document's globals. One builder, because the
+ * scalar surfaces and a page element's ATTRS now read the very same list — the whole
+ * point of the scoping work is that where a name resolves is a fact about where the
+ * element sits and not about which surface is asking. */
+function variableRows(editor: Editor, element: Node | null, prefix: string,
+                      keep?: (variable: Var) => boolean): BrowseRow[] {
+  const own = new Set((element?.locals ?? []).map((v) => v.id));
   const globals = new Set(editor.store.globals().map((v) => v.id));
   const buckets: Record<"local" | "outer" | "global", BrowseRow[]> =
     { local: [], outer: [], global: [] };
-  for (const variable of variablesInScope(editor, instance)) {
+  for (const variable of variablesInScope(editor, element)) {
+    if (keep && !keep(variable)) continue;
     const note = own.has(variable.id) ? ("local" as const)
                : globals.has(variable.id) ? ("global" as const)
                : ("outer" as const);
@@ -244,14 +257,14 @@ function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
       : scalar || isEnum ? []
       : editor.mesh.types.find((t) => t.name === variable.type)?.fields ?? [];
     buckets[note].push({
-      key: "v:" + variable.name,
+      key: prefix + "/v:" + variable.name,
       label: variable.name,
       kind: note === "global" ? "g" : "l",
       shape: variable.type === "timer" ? "timer" : scalar ?? (isEnum ? "enum" : "struct"),
       insert: variable.name,
       flat: { note },
       children: fields.map((field) => ({
-        key: "v:" + variable.name + "." + field.path,
+        key: prefix + "/v:" + variable.name + "." + field.path,
         label: field.path,
         shape: field.variants?.length ? "enum" : field.shape,
         insert: variable.name + "." + field.path,
@@ -261,13 +274,11 @@ function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
   }
   const FOLDER: Record<"local" | "outer" | "global", string> =
     { local: "local", outer: "enclosing", global: "global" };
+  const rows: BrowseRow[] = [];
   for (const scope of ["local", "outer", "global"] as const)
     if (buckets[scope].length)
-      rows.push({ key: "hmi/" + scope, label: FOLDER[scope], icon: "folder",
+      rows.push({ key: prefix + "/" + scope, label: FOLDER[scope], icon: "folder",
                   children: buckets[scope] });
-  /* the clock stands in every scalar scope (scope_for binds it last), so the hmi
-     universe always offers it */
-  rows.push(timeRow("hmi"));
   return rows;
 }
 
@@ -540,8 +551,10 @@ export function optionsSlotScope(editor: Editor, instance: Node | null): Scope {
  * tokens are legal too ($name lexes to a theme load), which is why tokens() is served
  * here and the color picker grows its Tokens tab on this surface.
  *
- * A PAGE node's scope is EMPTY on the backend (compile_page_attrs: nothing declares a
- * property there yet), so a node outside any component offers only the view's inputs. */
+ * A PAGE node's scope is the PAGE UNIVERSE (compile_page_attrs): the variables in its
+ * lexical scope — its own locals, every enclosing element's, the globals — and the mesh,
+ * the same names a flow on that element reads. Inside a component neither is offered,
+ * which is where isolation shows in the UI. */
 
 const STATE_FIELDS: MeshField[] = [
   { path: "pressed", shape: "bool" },
@@ -573,6 +586,18 @@ function owningComponent(editor: Editor, id: number): ComponentDef | null {
   return null;
 }
 
+/* CAN AN ATTR READ THIS VARIABLE AT ALL? A timer and a whole struct are read BY FIELD,
+ * and a view program's cell load hands back one value — the compiler refuses both by name
+ * (lang/template_expr.cpp no_display_reading), so the browse tree does not offer them.
+ * Everything else — the scalars, an icon, an enum (a dotted TypeRef), a list, a map —
+ * rides the wire already. */
+function displayReadable(variable: Var): boolean {
+  if (variable.type === "timer") return false;
+  return VAR_SHAPE[variable.type] !== undefined || variable.type === "list" ||
+         variable.type === "map" || variable.type === "icon" ||
+         variable.type.includes(".");
+}
+
 function attrRoots(editor: Editor, node: Node): BrowseRow[] {
   const viewInput = (name: string, note: string, fields: MeshField[]): BrowseRow => ({
     key: "attr/" + name,
@@ -594,7 +619,13 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
     timeRow("attr"),
   ];
   const comp = owningComponent(editor, node.id);
-  if (!comp) return rows;
+  /* ON A PAGE: the variables in lexical scope and the whole mesh, which is what an
+     element outside a component may now name. Inside one: neither, and the absence IS
+     the isolation rule — the compiler refuses the rest with a message that teaches the
+     way in, and not offering it is how the rule teaches before the refusal has to. */
+  if (!comp)
+    return rows.concat(variableRows(editor, node, "attr", displayReadable),
+                       dartRoot(editor));
   /* the served slot table carries every property address in the component — bare for
      the component's own, dotted for an element's — which is exactly the reference universe
      the template compiler resolves */

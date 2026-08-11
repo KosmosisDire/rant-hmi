@@ -242,8 +242,9 @@ bool gesture_from(const std::string& event, const std::string& primitive) {
 
 class Compiler {
   public:
-    Compiler(const Document& document, const Json& registry, const MeshPort& mesh)
-        : document_(document), registry_(registry), mesh_(mesh) {
+    Compiler(const Document& document, const Json& registry, const MeshPort& mesh,
+             const std::set<std::string>* attr_reads = nullptr)
+        : document_(document), registry_(registry), mesh_(mesh), attr_reads_(attr_reads) {
         program_.document_version = document.version();
         program_.add_text("");
         /* The theme tokens (spec 2.10), name -> DARK value: the backend has no view and
@@ -362,6 +363,21 @@ class Compiler {
 
     void copy_entities() {
         program_.entities = mesh_.reflection();
+        /* THE DISPLAY TIER'S READS, stamped before anything else looks at the table: an
+           attr naming `@entity.field` has to make the mesh consume that entity exactly as
+           a flow reading it does, or the mirror never fills and the picture draws UNKNOWN
+           forever. `flow_reads` is the consume flag's name and stays it — what changed is
+           that a second tier can now set it. */
+        if (attr_reads_)
+            for (EntityDef& def : program_.entities) {
+                const std::vector<FieldDef>& fields = feed_fields(def);
+                for (uint32_t i = 0; i < fields.size(); ++i) {
+                    if (!attr_reads_->count(def.name + "\n" + fields[i].path)) continue;
+                    if (def.attr_reads.empty()) def.attr_reads.assign(fields.size(), 0);
+                    def.attr_reads[i] = 1;
+                    def.flow_reads = true;
+                }
+            }
         program_.types.assign(1, TypeDef{});
         auto assign_enum = [&](FieldDef& field) {
             if (field.variants.empty()) return;
@@ -2990,6 +3006,9 @@ class Compiler {
     std::unordered_map<std::string, uint32_t> global_timers_;
     std::vector<ElementInfo> elements_;
     std::vector<PendingSlot> pending_slots_;
+    /* what the DISPLAY tier read of the mesh ("<entity>\n<path>"), gathered by the attr
+       compiler before this one ran (app.cpp) */
+    const std::set<std::string>* attr_reads_ = nullptr;
 };
 
 } // namespace
@@ -3007,8 +3026,9 @@ Shape shape_from_name(const std::string& name) {
 }
 
 CompileResult compile_document(const Document& document, const Json& component_registry,
-                               const MeshPort& mesh) {
-    return Compiler(document, component_registry, mesh).run();
+                               const MeshPort& mesh,
+                               const std::set<std::string>* attr_reads) {
+    return Compiler(document, component_registry, mesh, attr_reads).run();
 }
 
 } // namespace hmi

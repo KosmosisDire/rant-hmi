@@ -915,6 +915,22 @@ function sawCell(state: StageState, key: string, mark: string): void {
   state.marks.set(key, mark);
 }
 
+/* ONE PUBLISHED CELL, read by key the way every published cell is read: an AGGREGATE
+ * lives in the standing copies the shell folds the delta lane into, and what gets
+ * recorded is that copy's VERSION — comparing a thousand-element list per frame to learn
+ * whether a plot moved is the cost the counter exists to remove. A scalar lives in
+ * `values`. An absent key is Nil, honestly: nothing has published it yet. */
+function liveCell(state: StageState, editor: Editor, key: string): Json {
+  const held = editor.agg?.(key) ?? null;
+  if (held) {
+    sawCell(state, key, "a" + held.version);
+    return held.values;
+  }
+  const live = editor.live?.values?.[key];
+  sawCell(state, key, JSON.stringify(live ?? null));
+  return live === undefined ? null : live;
+}
+
 /* The cells one node's programs read. `slot:` is the instance's own value — LIVE FIRST:
  * the cell the runtime publishes, else what this placement authors, else the type's
  * default, which is the whole of what makes a bound surface a working lamp. */
@@ -977,6 +993,15 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         }
         return out;
       }
+      /* A VARIABLE and A MESH FIELD, on a page element's attrs. Both are ONE published
+         value read by key, which is the whole of what the display tier needed to name the
+         same universe a flow does — a variable's key is its own `v<id>` (the cell the
+         runtime already published long before an attr could load it), a mesh field's is
+         the served spelling itself. Aggregates ride the standing copies exactly as a list
+         slot does; scalars ride `values`, and an absent key is honestly Nil. */
+      case "var":
+      case "mesh":
+        return liveCell(state, editor, kind === "var" ? "v" + name : cell);
       /* a token is a CSS custom property, not a colour this view resolves: the page root
          carries the values and the browser swaps them with the theme */
       case "theme":

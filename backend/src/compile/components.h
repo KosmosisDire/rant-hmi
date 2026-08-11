@@ -19,7 +19,10 @@
 
 #include "diag.h"
 #include "doc/doc.h"
+#include "vm/program.h"
 
+#include <set>
+#include <string>
 #include <vector>
 
 namespace hmi {
@@ -37,7 +40,15 @@ const Json& builtin_registry();
  * every DOC COMPONENT node's too, keyed the same way (ids are globally unique). The
  * renderer walks the document tree it already holds and pulls each node's programs from
  * here, so a page and an entered component render through one path. Component findings
- * are NOT re-reported here; derive_registry already pinned them. */
-Json compile_page_attrs(const Document& document, std::vector<Diag>& diags);
+ * are NOT re-reported here; derive_registry already pinned them.
+ *
+ * `mesh` is the reflection a PAGE node's expressions may name (a component's may not —
+ * strict isolation), and every `@entity.field` one of them reads is recorded in
+ * `attr_reads` as "<entity>\n<path>": the document compiler stamps those entities so the
+ * mesh consumes them and the live frame carries their mirrors. Both are optional so a
+ * test can compile a page's attrs with no mesh at all. */
+Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
+                        const std::vector<EntityDef>* mesh = nullptr,
+                        std::set<std::string>* attr_reads = nullptr);
 
 } // namespace hmi

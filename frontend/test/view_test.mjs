@@ -129,7 +129,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 15, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 16, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.components.length === 12, "twelve components");
@@ -1593,6 +1593,56 @@ drawStage();
 check(label.style.right === "" && label.style.minWidth === "" &&
         label.style.maxWidth === "" && label.style.left === "242px",
       "and every edge and clamp clears when its attr goes — the applier is total");
+
+/* ---- THE DISPLAY TIER READS THE WHOLE UNIVERSE ----
+   A page element's attrs name the variables in scope and the mesh, and each arrives as
+   ONE published cell read by key: a variable under the `v<id>` the runtime has always
+   published it as, a mesh field under the served spelling. Nothing here is a new
+   evaluation place — it is the same interpreter over the same programs, finally handed
+   the same vocabulary a flow has. An aggregate rides the standing copies (the delta
+   lane), which is why the read tries `agg` before `values`. */
+const stageAggs = new Map();
+stageEditor.agg = (key) => stageAggs.get(key) ?? null;
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), h: prog(110),
+                            w: loads("var:510") };
+stageEditor.live = { epoch: 30, values: { v510: 300 } };
+drawStage();
+check(label.style.width === "300px",
+      "an attr reads a VARIABLE from its own v<id> cell, got '" + label.style.width + "'");
+stageEditor.live = { epoch: 31, values: { v510: 140 } };
+drawStage();
+check(label.style.width === "140px",
+      "and a live frame patches it, got '" + label.style.width + "'");
+stageEditor.live = { epoch: 32, values: {} };
+drawStage();
+check(label.style.width === "",
+      "an unpublished variable is honestly Nil, not a stale pixel, got '" +
+        label.style.width + "'");
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), h: prog(110),
+                            w: loads("mesh:cage/motor.speed") };
+stageEditor.live = { epoch: 33, values: { "mesh:cage/motor.speed": 176 } };
+drawStage();
+check(label.style.width === "176px",
+      "an attr reads a MESH FIELD under the served spelling, got '" +
+        label.style.width + "'");
+/* an AGGREGATE lives in the standing copies, not in `values`: what the fold holds is
+   what the program indexes, and what is RECORDED is the copy's version */
+stageAggs.set("v520", { version: 1, values: [11, 22, 33] });
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), h: prog(110),
+                            w: { code: [{ op: "LOAD", cell: "var:520" }, { op: "LENGTH" }] } };
+stageEditor.live = { epoch: 34, values: {} };
+drawStage();
+check(label.style.width === "3px",
+      "a list variable reads from the standing copies the delta lane folds into, got '" +
+        label.style.width + "'");
+stageAggs.set("v520", { version: 2, values: [11, 22, 33, 44, 55] });
+stageEditor.live = { epoch: 35, values: {} };
+drawStage();
+check(label.style.width === "5px",
+      "and its VERSION is what a live frame diffs, got '" + label.style.width + "'");
+stageAttrs["904"].attrs = { left: prog(242), top: prog(22), w: prog(176), h: prog(110) };
+stageEditor.live = { epoch: 36, values: {} };
+drawStage();
 
 /* ---- CLIPPING IS THE `clip` ATTR'S, and nobody else's ----
    Both of these boxes carried `overflow: hidden` from the STYLESHEET once, which made the

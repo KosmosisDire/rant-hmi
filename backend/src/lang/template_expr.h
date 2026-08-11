@@ -17,6 +17,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -29,6 +30,54 @@ namespace hmi {
  * including the document's node schema to get it would put the whole document model
  * above lang/ back inside it. Identical aliases may coexist. */
 using Json = nlohmann::json;
+
+/* ---- THE PAGE UNIVERSE: what an element on a PAGE may name beyond its properties ----
+ *
+ * Both halves below are EMPTY inside a component, and that emptiness is the isolation
+ * rule itself: a component sees its own properties and nothing of the page it sits on,
+ * so that it works wherever it is placed. On a page they are filled, and a display-tier
+ * expression names exactly what a wire-tier one does. */
+
+/* One variable a bare name may mean. The cell is `v<id>` — the variable's DOCUMENT id,
+ * which is what the runtime already publishes under, so nothing of the program compile
+ * has to be threaded into the attr compiler to know the key. */
+struct TemplateVar {
+    std::string name;
+    uint64_t id = 0;
+    /* the declared type, verbatim ("f64" "bool" "str" "icon" "list" "map" "timer", or a
+     * TypeRef). Carried so a shape with NO display-tier reading is refused by name
+     * rather than compiled into a cell that reads Nil forever. */
+    std::string type;
+};
+
+/* one readable mesh field, by its '@' spelling */
+struct TemplateMeshField {
+    std::string cell;     /* "mesh:<entity>[.<path>]", the cell the view loads */
+    std::string entity;
+    std::string path;
+};
+
+/* THE CELL ONE MESH FIELD RIDES IN. One spelling, shared by the compiler that emits the
+ * load and the live frame that fills it — two concatenations in two files agreeing by
+ * luck is exactly how a picture comes to read UNKNOWN with nothing to explain it. A
+ * field with no path (a bare-scalar entity) is the entity's own name. */
+inline std::string mesh_cell(const std::string& entity, const std::string& path) {
+    return path.empty() ? "mesh:" + entity : "mesh:" + entity + "." + path;
+}
+
+struct TemplateMesh {
+    /* "@name" — a single-field entity reads whole — and "@name.path" alike, both
+     * landing on the SAME cell so one key serves either spelling */
+    std::map<std::string, TemplateMeshField> fields;
+    /* entities with more than one readable field: a bare `@name` there is a whole
+     * message, refused with "pick a field" rather than "unknown entity" */
+    std::set<std::string> fielded;
+    /* WHERE THE READS ARE RECORDED, gathered across every attr in the document as
+     * "<entity>\n<path>". The document compiler stamps these entities so the mesh
+     * consumes them and live() publishes their mirrors — an attr read nobody consumed
+     * would draw UNKNOWN forever. Null where nothing is collecting. */
+    std::set<std::string>* reads = nullptr;
+};
 
 /* What identifiers mean inside ONE ELEMENT's attrs.
  *
@@ -52,6 +101,15 @@ struct TemplateScope {
     std::vector<std::pair<std::string, std::string>> props;
     /* every property address in the component, for dotted reads */
     std::shared_ptr<const std::set<std::string>> addresses;
+    /* the variables in lexical scope here, OUTERMOST FIRST — the globals, then each
+     * enclosing element's locals, then this element's own. Nearest wins, so the lookup
+     * runs backwards. Empty inside a component. */
+    std::vector<TemplateVar> vars;
+    /* the mesh, shared by every scope of one compile. Null inside a component. */
+    std::shared_ptr<const TemplateMesh> mesh;
+    /* appended to every unknown-name refusal: what this surface's emptiness MEANS (the
+     * scalar tier's ExpressionScope carries the same field, with the same text) */
+    std::string unknown_help;
 
     bool addressed(const std::string& address) const {
         return addresses && addresses->count(address) != 0;
@@ -64,6 +122,29 @@ struct TemplateScope {
     }
 
     bool has_prop(const std::string& name) const { return find(name) != nullptr; }
+
+    /* the variable a bare name means — nearest declaration wins, so the search runs
+     * from the inside out over a list built from the outside in */
+    const TemplateVar* variable(const std::string& name) const {
+        for (size_t i = vars.size(); i-- > 0;)
+            if (vars[i].name == name) return &vars[i];
+        return nullptr;
+    }
+
+    const TemplateMeshField* mesh_field(const std::string& spelling) const {
+        if (!mesh) return nullptr;
+        auto found = mesh->fields.find(spelling);
+        return found == mesh->fields.end() ? nullptr : &found->second;
+    }
+
+    bool mesh_fielded(const std::string& spelling) const {
+        return mesh && mesh->fielded.count(spelling) != 0;
+    }
+
+    /* one compiled read, recorded for the mesh to consume and the wire to carry */
+    void read_mesh(const TemplateMeshField& field) const {
+        if (mesh && mesh->reads) mesh->reads->insert(field.entity + "\n" + field.path);
+    }
 
     /* the cell a bare name loads; the name itself when nothing declares it (the parser
      * refuses that case before asking) */

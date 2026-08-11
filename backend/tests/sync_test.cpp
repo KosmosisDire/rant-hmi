@@ -30,6 +30,9 @@ namespace {
 
 constexpr int kPort = 7581;
 const char* kDocPath = "hmi_sync_test.tmp.json";
+/* the mesh-lane app runs on its own port and its own document, so the offline suite
+   above keeps exactly the world it was written against */
+const char* kMeshDocPath = "hmi_sync_mesh_test.tmp.json";
 const char* kStatics = "hmi_sync_test_statics";
 
 /* a test client: collects frames by type, in arrival order */
@@ -171,8 +174,11 @@ int main() {
        is a client that talks a frame shape this backend no longer sends
        (15: ONE VOCABULARY — the registry serves `components` rather than `types`, an
        `input` frame carries {node, ..., element} where widget_id/part stood, a flow
-       trigger's channel key is `element`, and `instance.<slot>` is spelled `this.<slot>`) */
-    CHECK(kProto == 15);
+       trigger's channel key is `element`, and `instance.<slot>` is spelled `this.<slot>`;
+       16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — a page element's attrs name the
+       variables in scope and the mesh, so a view program carries `var:<id>` and
+       `mesh:<entity>[.<field>]` cells and a live frame carries the read mesh fields) */
+    CHECK(kProto == 16);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
@@ -569,6 +575,118 @@ int main() {
             CHECK(frame_of(frames, "ops_applied") != nullptr);
             a.take();
         }
+    }
+
+    /* ---- A MESH FIELD AN ATTR READS RIDES THE LIVE FRAME ----
+     *
+     * The last link of the display tier's universe, through a whole App: the attr
+     * compiler records the read, the program compile stamps the entity so the mesh
+     * consumes it, and the live frame carries the mirror under the SERVED SPELLING — the
+     * one string both sides build through mesh_cell(). Its own app on its own port, over
+     * a mesh whose arrivals this test controls. */
+    {
+        std::remove(kMeshDocPath);
+        AppOptions mesh_opts;
+        mesh_opts.server.port = kPort + 1;
+        mesh_opts.server.statics = kStatics;
+        mesh_opts.doc_path = kMeshDocPath;
+        EntityDef tank;
+        tank.kind = EntityKind::Variable;
+        tank.name = "tank";
+        tank.readable = true;
+        FieldDef readings;
+        readings.path = "readings";
+        readings.shape = Shape::List;
+        readings.elem = Shape::Num;
+        readings.bound = 8;
+        tank.fields = {FieldDef{"level", Shape::Num}, readings};
+        auto port = std::make_unique<FakeMesh>(std::vector<EntityDef>{tank});
+        FakeMesh* fake = port.get();
+        App mesh_app(mesh_opts, std::move(port));
+        std::string mesh_err;
+        if (CHECK_MSG(mesh_app.start(mesh_err), mesh_err)) {
+            const std::string mesh_url =
+                "ws://127.0.0.1:" + std::to_string(kPort + 1) + "/sync";
+            Client d;
+            join(mesh_app, d, mesh_url, "d");
+            const uint64_t mesh_page =
+                mesh_app.document().root["pages"][0]["id"].get<uint64_t>();
+            d.send(Json{{"type", "apply_ops"},
+                        {"base_version", mesh_app.document().version()},
+                        {"ops", Json::array({Json{
+                            {"op", "insert"}, {"parent", mesh_page}, {"list", "children"},
+                            {"node", {{"kind", "frame"},
+                                      {"attrs", {{"w", "@tank.level"},
+                                                 {"h", "@tank.readings.length"}}}}}}})}});
+            CHECK(frame_of(pump(mesh_app, d, 1), "ops_applied") != nullptr);
+
+            /* the read is what makes the key exist at all: before any delivery the
+               mirror is unknown, and an unknown cell omits its key rather than
+               publishing a zero nobody measured */
+            auto carried = [&](double& out) {
+                bool seen = false;
+                const auto stop = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(1500);
+                while (!seen && std::chrono::steady_clock::now() < stop) {
+                    mesh_app.poll();
+                    for (const Json& frame : d.take()) {
+                        if (frame.value("type", std::string()) != "live") continue;
+                        auto values = frame.find("values");
+                        if (values == frame.end()) continue;
+                        auto found = values->find("mesh:tank.level");
+                        if (found == values->end() || !found->is_number()) continue;
+                        out = found->get<double>();
+                        seen = true;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+                return seen;
+            };
+            double quiet = 0;
+            CHECK(!carried(quiet));
+
+            fake->push_update(EntityKind::Variable, "tank", {Value::number(42.5)});
+            double level = 0;
+            CHECK(carried(level));
+            CHECK_EQ(level, 42.5);
+
+            /* and it MOVES: the picture follows the mirror, frame after frame */
+            fake->push_update(EntityKind::Variable, "tank", {Value::number(7.25)});
+            double next = 0;
+            CHECK(carried(next));
+            CHECK_EQ(next, 7.25);
+
+            /* AN ARRAY FIELD RIDES THE DELTA LANE, not `values` — the same lane a list
+               cell rides, off the same mirror the wire tier reads. This is what lets a
+               picture be drawn per element of a mesh array. */
+            fake->push_update(
+                EntityKind::Variable, "tank",
+                {Value::number(7.25), Value::list(0, 3, ValueTag::Num)});
+            fake->push_elems(1, {Value::number(1), Value::number(2), Value::number(3)});
+            size_t elements = 0;
+            {
+                const auto stop = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(1500);
+                while (!elements && std::chrono::steady_clock::now() < stop) {
+                    mesh_app.poll();
+                    for (const Json& frame : d.take()) {
+                        if (frame.value("type", std::string()) != "live") continue;
+                        auto aggs = frame.find("aggs");
+                        if (aggs == frame.end()) continue;
+                        auto found = aggs->find("mesh:tank.readings");
+                        if (found == aggs->end()) continue;
+                        auto values = found->find("values");
+                        if (values != found->end() && values->is_array())
+                            elements = values->size();
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+            }
+            CHECK_EQ(elements, size_t(3));
+            d.close();
+        }
+        mesh_app.stop();
+        std::remove(kMeshDocPath);
     }
 
     a.close();

@@ -3,6 +3,7 @@
 #include "compile/compiler.h"
 #include "compile/components.h"
 #include "lang/expression.h"
+#include "lang/template_expr.h"
 #include "doc/ops.h"
 #include "registry/attrs.h"
 #include "registry/registry.h"
@@ -68,8 +69,11 @@ void op_targets(const Json& ops, std::vector<uint64_t>& out) {
 
 } // namespace
 
-App::App(AppOptions opts) : opts_(std::move(opts)), server_(opts_.server) {
-    if (opts_.mesh) {
+App::App(AppOptions opts, std::unique_ptr<MeshPort> mesh)
+    : opts_(std::move(opts)), server_(opts_.server) {
+    if (mesh) {
+        mesh_ = std::move(mesh);
+    } else if (opts_.mesh) {
         auto mesh = std::make_unique<DartMesh>(opts_.mesh_opts);
         dart_mesh_ = mesh.get();
         mesh_ = std::move(mesh);
@@ -292,7 +296,7 @@ Json App::live(bool full) const {
            every frame is the same bytes over and over for one appended sample, and at a
            4096-element window that is the broadcast's whole cost. */
         if (cell.shape == Shape::List || cell.shape == Shape::Map) {
-            Json entry = agg_entry(cell, value, full);
+            Json entry = agg_entry(cell.list_slot, cell.shape, value, full);
             if (!entry.is_null()) aggs[key] = std::move(entry);
             continue;
         }
@@ -305,6 +309,43 @@ Json App::live(bool full) const {
                 values[key] = wire_scalar(program, state, value);
                 break;
             default: break;
+        }
+    }
+    /* THE MESH FIELDS A PAGE'S ATTRS READ. Only those: the display tier is a compression
+     * of display state and this lane exists to keep it one, so an entity a flow alone
+     * reads never rides here. The value is the SAME last-value mirror the flow reads
+     * (LoadEnt), which is what makes an attr and a guard agree about a field; an unknown
+     * one omits its key, exactly as a Nil cell does, and the view reads Nil for it. */
+    for (uint32_t e = 0; e < program.entities.size(); ++e) {
+        const EntityDef& def = program.entities[e];
+        if (def.attr_reads.empty() || e >= state.last.size()) continue;
+        const LastValueState& last = state.last[e];
+        const std::vector<FieldDef>& fields = feed_fields(def);
+        for (uint32_t i = 0; i < fields.size() && i < def.attr_reads.size(); ++i) {
+            if (!def.attr_reads[i]) continue;
+            const std::string key = mesh_cell(def.name, fields[i].path);
+            if (fields[i].shape == Shape::List || fields[i].shape == Shape::Map) {
+                const uint32_t mirror = e < state.entity_aggs.size() &&
+                                                i < state.entity_aggs[e].size()
+                                            ? state.entity_aggs[e][i]
+                                            : UINT32_MAX;
+                if (mirror == UINT32_MAX) continue;
+                Json entry = agg_entry(mirror, fields[i].shape,
+                                       last.known ? last.fields[i] : Value::nil(), full);
+                if (!entry.is_null()) aggs[key] = std::move(entry);
+                continue;
+            }
+            if (!last.known || i >= last.fields.size()) continue;
+            switch (last.fields[i].tag) {
+                case ValueTag::Num:
+                case ValueTag::Bool:
+                case ValueTag::Text:
+                case ValueTag::Color:
+                case ValueTag::Enum:
+                    values[key] = wire_scalar(program, state, last.fields[i]);
+                    break;
+                default: break;
+            }
         }
     }
     for (uint32_t i = 0; i < program.timers.size(); ++i) {
@@ -339,14 +380,13 @@ Json App::live(bool full) const {
  * When the generation moves — a whole store, a clear, a recompile — the frame carries the
  * whole window and the client replaces rather than appends. A map is small and has no
  * append order, so it goes whole on any change at all. */
-Json App::agg_entry(const CellDef& cell, const Value& value, bool full) const {
+Json App::agg_entry(uint32_t list_slot, Shape shape, const Value& value, bool full) const {
     const Program& program = scheduler_->program();
     const RuntimeState& state = scheduler_->state();
-    if (cell.list_slot >= state.lists.size()) return Json();
-    const ListState& held = state.lists[cell.list_slot];
-    const AggCursor cursor = cell.list_slot < agg_published_.size()
-                                 ? agg_published_[cell.list_slot]
-                                 : AggCursor{};
+    if (list_slot >= state.lists.size()) return Json();
+    const ListState& held = state.lists[list_slot];
+    const AggCursor cursor =
+        list_slot < agg_published_.size() ? agg_published_[list_slot] : AggCursor{};
     const bool moved = cursor.gen != held.gen || cursor.total != held.total;
     if (!full && !moved) return Json();
 
@@ -354,7 +394,7 @@ Json App::agg_entry(const CellDef& cell, const Value& value, bool full) const {
         return Json{{"gen", held.gen}, {"nil", true}};
 
     const AggView view = state.aggregate(value);
-    if (cell.shape == Shape::Map) {
+    if (shape == Shape::Map) {
         Json entries = Json::object();
         for (uint32_t k = 0; k < view.count; ++k)
             entries[std::string(state.text(program, view.data[k * 2]))] =
@@ -409,8 +449,15 @@ void App::compile_runtime() {
     /* A PAGE COMPILES TOO. Its nodes are the same nodes a component's are, so their attrs
      * are lowered by the same compiler into the same view programs, and the renderer runs
      * one interpreter over both. This is the whole of what "one tree" costs the backend. */
-    node_attrs_ = compile_page_attrs(doc_, component_diags_);
-    CompileResult compiled = compile_document(doc_, registry_, *mesh_);
+    /* THE ATTRS COMPILE FIRST, and what they read of the mesh goes into the program
+     * compile behind them: a display-tier `@entity.field` has to be consumed and
+     * published like any other read, and this is the one seam where the two compilers
+     * meet. A page's expressions see the mesh; a component's deliberately do not. */
+    attr_entity_reads_.clear();
+    node_attrs_ = compile_page_attrs(doc_, component_diags_, &mesh_->reflection(),
+                                     &attr_entity_reads_);
+    CompileResult compiled =
+        compile_document(doc_, registry_, *mesh_, &attr_entity_reads_);
     auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);
     if (scheduler_)
         next->state() = migrate_state(scheduler_->program(), scheduler_->state(),

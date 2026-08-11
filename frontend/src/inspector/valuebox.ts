@@ -103,8 +103,9 @@ function fireChange(input: HTMLInputElement, commit: (text: string) => void): vo
 
 let browseShell: Shell | null = null;
 /* expansion state, shared across boxes and openings; the roots start open */
-const browseExpanded = new Set<string>(["hmi", "hmi/local", "hmi/global", "dart", "enums",
-                                        "flow"]);
+const browseExpanded = new Set<string>(["hmi", "hmi/local", "hmi/outer", "hmi/global",
+                                        "attr/local", "attr/outer", "attr/global",
+                                        "dart", "enums", "flow"]);
 
 function ensureBrowse(): Shell {
   return (browseShell ??= makeShell({

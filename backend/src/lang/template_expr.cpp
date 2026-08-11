@@ -34,6 +34,24 @@ const char* kProfiles[] = {"linear", "ease", "ease-in", "ease-out", "ease-in-out
  * own — like `state`, it is a LOAD of a symbolic cell the renderer answers per copy. */
 const char* kRepeatFields[] = {"index", "count", "fraction"};
 
+/* WHICH DECLARED TYPES HAVE NO DISPLAY-TIER READING, and why — empty where the variable
+ * is legal here. A timer and a whole struct are read BY FIELD, and a view program's LOAD
+ * hands back one value per cell; rather than compile a reference that draws UNKNOWN
+ * forever, both are refused by name with what to write instead. Everything else a
+ * variable can be — the scalars, an icon, an enum TypeRef (dotted), a list, a map — rides
+ * the wire already and costs this tier nothing but the load. */
+std::string no_display_reading(const std::string& name, const std::string& type) {
+    if (type == "timer")
+        return "'" + name + "' is a timer, and a timer reads by field, which an attr has "
+               "no encoding for: carry what the picture needs in a variable of its own";
+    if (type.empty() || type == "f64" || type == "bool" || type == "str" ||
+        type == "icon" || type == "list" || type == "map" ||
+        type.find('.') != std::string::npos)
+        return "";
+    return "'" + name + "' is a whole " + type + " message, and an attr reads one value: "
+           "put the field the picture needs in a variable of its own";
+}
+
 class Parser {
   public:
     Parser(const std::string& source, const TemplateScope& scope)
@@ -638,6 +656,16 @@ class Parser {
             code_.push_back(Json{{"op", "MAKE_LIST"}, {"n", count}});
             return;
         }
+        /* THE MESH, spelled exactly as the wire tier spells it (`@cage/plc/IO.level`).
+           The lexer already makes an Entity token — what used to be missing was anything
+           on this side to resolve it, which is why an element outside a component could
+           reference nothing. A read lands on a `mesh:` cell the backend publishes from
+           the same last-value mirror a flow reads, so the two tiers cannot disagree about
+           what the field is worth. */
+        if (token_.kind == TokenKind::Entity) {
+            parse_entity();
+            return;
+        }
         if (token_.kind != TokenKind::Ident) {
             fail("expected an expression");
             return;
@@ -746,6 +774,20 @@ class Parser {
             emit_load("slot:" + scope_.address(name));
             return;
         }
+        /* THEN A VARIABLE: a global, or a local declared on this element or on one
+           enclosing it, loaded from the same `v<id>` cell the wire tier's own storage
+           publishes under — so a picture and a flow read ONE value, never two that drift.
+           A property shadows a variable, which only a hand-built document can arrange:
+           inside a component there are no variables, and on a page no properties. */
+        if (const TemplateVar* variable = scope_.variable(name)) {
+            const std::string refused = no_display_reading(name, variable->type);
+            if (!refused.empty()) {
+                fail(refused);
+                return;
+            }
+            emit_load("var:" + std::to_string(variable->id));
+            return;
+        }
         /* otherwise a DOTTED name is an address from the template root: another
            element's property, read where it is needed rather than moved to where every
            reader can see it */
@@ -756,8 +798,50 @@ class Parser {
             return;
         }
         fail("unknown name '" + name + "'; a bare identifier here is a property this "
-             "element declares or inherits from one above it, and a dotted one is "
-             "another element's property by address");
+             "element declares or inherits from one above it, a variable in scope, and a "
+             "dotted one is another element's property by address" + scope_.unknown_help);
+    }
+
+    /* ONE MESH REFERENCE, resolved the scalar tier's way spelling for spelling: a
+     * single-field entity reads whole under its bare `@name` (and a dot after that is an
+     * ordinary method on the value), a fielded one reads `@name.path`, walking the field
+     * map a segment at a time so a dotted DART path resolves at its longest match. */
+    void parse_entity() {
+        const std::string name = "@" + token_.text;
+        advance();
+        if (!scope_.mesh) {
+            fail("nothing here can name the mesh" + scope_.unknown_help);
+            return;
+        }
+        const bool fielded = scope_.mesh_fielded(name);
+        if (const TemplateMeshField* bare = scope_.mesh_field(name))
+            if (!fielded || token_.kind != TokenKind::Dot) {
+                scope_.read_mesh(*bare);
+                emit_load(bare->cell);
+                return;
+            }
+        std::string qualified = name;
+        while (token_.kind == TokenKind::Dot) {
+            advance();
+            if (token_.kind != TokenKind::Ident) {
+                fail("expected a field after '.'");
+                return;
+            }
+            qualified += "." + token_.text;
+            advance();
+            if (const TemplateMeshField* field = scope_.mesh_field(qualified)) {
+                scope_.read_mesh(*field);
+                emit_load(field->cell);
+                return;
+            }
+        }
+        if (qualified != name) {
+            fail("unknown field '" + qualified + "'");
+            return;
+        }
+        fail(fielded ? "'" + name + "' is a whole message; pick a field (" + name +
+                           ".<field>)"
+                     : "unknown entity '" + name + "'" + scope_.unknown_help);
     }
 
     Lexer lexer_;

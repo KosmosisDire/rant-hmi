@@ -53,6 +53,12 @@ struct EntityDef {
      * single-field source): the mesh must consume it so the last-value mirror is live,
      * exactly as it does for an entity a feed names */
     bool flow_reads = false;
+    /* stamped when a display-tier ATTR reads a field of this entity, one flag per
+     * read-side field (parallel to feed_fields, empty where nothing reads it): the mesh
+     * must consume the entity like any other read, AND the live frame carries the marked
+     * fields' mirrors under `mesh:<name>[.<path>]` so a view program can load them. A
+     * read nobody published would draw UNKNOWN forever. */
+    std::vector<uint8_t> attr_reads;
     /* stamped when a FLOW writes/calls/emits this entity: the mesh establishes the
      * accessor at apply() so the owner match has formed long before the first effect
      * (a write through a just-created accessor fails until its match converges) */
