@@ -44,7 +44,7 @@
   /* box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.45); */
 }
 
-/* A WIDGET INSTANCE renders as its component's own root box — a frame in every way except
+/* AN INSTANCE renders as its component's own root box — a frame in every way except
    one: it holds no children OF THIS PAGE, so it is not a container anything can be dropped
    into, and it wears `.leaf` rather than `.frame` to say so to every container search. */
 .leaf {
@@ -189,7 +189,7 @@
   user-select: none;
 }
 
-/* THE PREVIEW-RESIZE GRIPS, only inside an entered widget: they resize the SESSION'S
+/* THE PREVIEW-RESIZE GRIPS, only inside an entered component: they resize the SESSION'S
    preview of the component — nothing is written — so they sit on the artboard's own
    edge, outside the page and its camera transform, and are deliberately not the
    selection handles' shape. */

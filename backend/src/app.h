@@ -24,7 +24,7 @@ namespace hmi {
  * (3: the snapshot carries `builtins`, the built-ins' editable document form; 4: the
  * snapshot also carries `attr_table`, the closed attr vocabulary, spec 2.3; 5: the doc
  * lost `canvas` and every node lost `geom`; 6: a frame gained layout "stack", justify,
- * surface/border/border_w/radius, and both frames and widgets gained grow/min; 7: move
+ * surface/border/border_w/radius, and both frames and instances gained grow/min; 7: move
  * reparents (its echo always carries parent+list+index) and `wrap` folds siblings into a
  * fresh frame; 8: ONE TREE — Frame, Widget and Part are one `node` kind with four
  * variants (frame | text | icon | path), every field is expression text in `attrs`, an
@@ -35,7 +35,7 @@ namespace hmi {
  * nothing moved — and `hist` is gone with the sampling ring it carried;
  * 12: FEEDS ARE GONE (spec D1) — a slot value is number | bool | wire-tier EXPRESSION
  * text the backend compiles and evaluates standing (`@entity.field` reads the mesh,
- * quoted text is the literal), widgets carry a `poll` {slot: hz} map instead of
+ * quoted text is the literal), instances carry a `poll` {slot: hz} map instead of
  * poll_hz, and the attr table gains a `variants` column;
  * 13: READ and WRITE unify into ASSIGNMENT — the step kind `move` is `assign`, its
  * `from` is `{expr}` always (plus `{init:true}` reset: the structural entity/local
@@ -44,8 +44,14 @@ namespace hmi {
  * 14: THE LOG — the snapshot carries `log` (the backlog of @dart/log lines and hmi
  * notifications, oldest first) and a `log` frame appends live entries {level, node,
  * text, wall_us, ms?}; the step kind `notify` broadcasts a notification to every
- * session as a level "notify" entry */
-constexpr int kProto = 14;
+ * session as a level "notify" entry;
+ * 15: ONE VOCABULARY — COMPONENT (a definition in the library), INSTANCE (a node
+ * placing one) and ELEMENT (any node in the tree, including one named inside a
+ * component). The served registry lists `components`, not `types`; an `input` frame
+ * carries {node, event, value, seq, element} where `widget_id` and `part` stood; a
+ * flow trigger's channel key is `element`; and the expression prefix `widget.<slot>`
+ * is spelled `this.<slot>` in both tiers */
+constexpr int kProto = 15;
 
 struct AppOptions {
     ServerOptions server;
@@ -110,7 +116,7 @@ class App {
     static Json lang_json();
     /* the current compile's diagnostics, as the wire carries them. A joining client gets
      * them in its snapshot: they are computed once at startup, so a view that arrives
-     * later would otherwise never learn why its widget is dead. */
+     * later would otherwise never learn why its instance is dead. */
     Json diagnostics() const;
     void send_snapshot(uint64_t session);
     void reject(uint64_t session, const std::string& reason);

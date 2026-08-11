@@ -1,6 +1,6 @@
 /* ---------- left sidebar: the breadcrumb strip, then the Layers tree ---------- */
 
-/* WHERE THE EDITOR IS STANDING: the page's name, then one crumb per entered widget.
+/* WHERE THE EDITOR IS STANDING: the page's name, then one crumb per entered component.
    Quiet on a page; inside a component the strip turns the accent on and says out loud
    that the edit is to the component. */
 .context-strip {
@@ -188,7 +188,7 @@
   color: var(--ink);
 }
 
-/* the selected widget or part, the same treatment as the source tree's current row */
+/* the selected instance or element, the same treatment as the source tree's current row */
 .layer-row.current {
   background: rgba(78, 142, 247, 0.14);
   color: var(--ink);
@@ -212,11 +212,11 @@
   color: var(--ink);
 }
 
-.layer-row.part {
+.layer-row.element {
   color: var(--muted);
 }
 
-/* a frame groups widgets and other frames (spec 2.8): the same quiet, slightly bolder
+/* a frame groups instances and other frames (spec 2.8): the same quiet, slightly bolder
    treatment a page row gets, so a group reads as structure rather than content */
 .layer-row.frame {
   color: var(--muted);
@@ -229,7 +229,7 @@
 
 /* A COMPONENT'S OWN NODES under an instance row: shown, and visibly not this page's —
    dimmed, ordinary weight, and they answer for the instance (clicking one selects it;
-   editing them is entering the widget). The whole tree is on display; only the page's
+   editing them is entering the component). The whole tree is on display; only the page's
    own rows are in reach. */
 .layer-row.tpl {
   color: var(--dim);

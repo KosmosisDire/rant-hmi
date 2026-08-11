@@ -22,16 +22,17 @@ export type Mode = "edit" | "test" | "operate";
  * drag painted). What is left is selection and presentation. */
 export interface ViewState {
   mode: Mode;
-  /* the selected PART of the selected widget: a part path into its template, "" = none */
-  part: string;
+  /* the selected ELEMENT of the selected instance: an element path into its
+     component's template, "" = none */
+  element: string;
   selection: number[];
   hover: number;
-  /* per-widget interaction state, the "state:" half of the cell space an attr program
+  /* per-instance interaction state, the "state:" half of the cell space an attr program
      reads (state.pressed / dragging / open / hover): view-local, written by the gesture
      primitives (gestures.ts) outside edit mode, never synced — a pressed LOOK is this
      view's own; the pressed CONSEQUENCE comes back as a live cell like any other. */
   state: Record<number, Record<string, Json>>;
-  faults: Record<number, string>;               /* worst compile grade, per widget */
+  faults: Record<number, string>;               /* worst compile grade, per instance */
   /* which side of every theme token this view paints: a local preview
      preference, persisted per browser, never synced */
   themeMode?: "dark" | "light";
@@ -41,7 +42,7 @@ export interface ViewState {
  * fabricated number, and never blank — blank reads as "empty", which is a different claim. */
 export const UNKNOWN_TEXT = "--";
 
-/* ONE ENTERED WIDGET: the editor is inside a component's own context, editing the
+/* ONE ENTERED COMPONENT: the editor is inside a component's own context, editing the
  * component itself (every instance follows). A stack of these is the breadcrumb — a
  * component whose internals hold another instance can be entered again.
  *
@@ -145,8 +146,8 @@ export interface Editor {
   mesh: Mesh;
   /* the served expression vocabulary (builtins + shape-scoped methods) */
   lang: Lang | null;
-  /* the closed attr vocabulary: common attrs plus each part kind's own,
-     with the renderer's own defaults — what the part inspector's Attrs section lists
+  /* the closed attr vocabulary: common attrs plus each element kind's own,
+     with the renderer's own defaults — what the element inspector's Attrs section lists
      in full, set or not. Snapshot-only, like `lang` and `builtins`. */
   attrTable: AttrTable | null;
   /* every PAGE node's compiled attrs, keyed by node id. The document says what the tree
@@ -155,19 +156,19 @@ export interface Editor {
   /* the built-in components' editable document form (no ids): what the Components
      tree browses and what a fork copies into doc.components */
   builtins: BuiltinDef[];
-  /* the component-edit selection, SEPARATE from the widget selection (the two are
-     mutually exclusive): `node` is the component id itself, or a Part node id in it */
+  /* the component-edit selection, SEPARATE from the instance selection (the two are
+     mutually exclusive): `node` is the component id itself, or an element node id in it */
   componentSel: { component: number; node: number } | null;
   /* the built-in being BROWSED. A built-in is not in the document and carries no ids,
      so it cannot be addressed the way componentSel addresses an editable one: it is
-     named, plus a CHILD-INDEX PATH into its parts ("" = the component itself, "0" =
-     its root part, "0.1" = that part's second child). Index rather than name because
-     this addresses the definition's own tree, where an unnamed node is still a node —
-     unlike a part path, which addresses only what a property can hang off.
+     named, plus a CHILD-INDEX PATH into its elements ("" = the component itself, "0" =
+     its root element, "0.1" = that element's second child). Index rather than name
+     because this addresses the definition's own tree, where an unnamed node is still a
+     node — unlike an element path, which addresses only what a property can hang off.
      Read-only, and mutually exclusive with both other selections. */
   builtinSel: { name: string; path: string } | null;
   view: ViewState;
-  /* the entered-widget stack, outermost first; empty = editing the page itself */
+  /* the entered-component stack, outermost first; empty = editing the page itself */
   contexts: StageContext[];
   /* one aggregate cell's standing copy, or null where nothing has arrived for it. The
      frames are deltas, so this -- not `live` -- is where a list or a map is read from. */
@@ -181,9 +182,9 @@ export interface Editor {
   /* the artboard's current dimensions in artboard px: the fixed canvas on a page, the
      preview size inside a context. Gestures divide the screen by this. */
   artboard(): { w: number; h: number };
-  /* ENTER A WIDGET: push the instance's component onto the context stack. `path` names
-     an internal node (template names joined with dots) to land selected. */
-  enterWidget(id: number, path?: string): void;
+  /* ENTER A COMPONENT: push the instance's component onto the context stack. `path`
+     names an internal element (template names joined with dots) to land selected. */
+  enterComponent(id: number, path?: string): void;
   /* step out to `depth` contexts (0 = the page), selecting the instance stepped out of */
   exitTo(depth: number): void;
   /* resize the current context's preview box: session-local, never written */
@@ -195,20 +196,20 @@ export interface Editor {
   /* the same node, but only when it is an INSTANCE (a frame naming a component): the
      inspector's data/behavior/appearance sections are about the component's slots, so
      they ask this rather than testing a kind themselves */
-  selectedWidget(): Node | null;
+  selectedInstance(): Node | null;
   apply(ops: Op[]): void;
   /* post one gesture event (sequenced per session): the view reports what the pointer
      did — the canonical gesture name, its fixed payload (nothing for a moment like
-     tap), and WHICH PART raised it — and the backend runs every flow it reaches,
+     tap), and WHICH ELEMENT raised it — and the backend runs every flow it reaches,
      identically for every view, which is the product's own rule. */
-  input(widget: number, event: string, value?: Json, part?: string): void;
+  input(node: number, event: string, value?: Json, element?: string): void;
   setPage(id: number): void;
   /* insert a fresh page and switch to it once the echo issues its id (the topbar page
      selector's "+ New page") */
   addPage(): void;
   /* land the author on a consumer found elsewhere (the Data workspace's where-used):
-     switch to the widget's page, select it, and show the content workspace */
-  reveal(widget: number): void;
+     switch to the instance's page, select it, and show the content workspace */
+  reveal(instance: number): void;
   select(ids: number[]): void;
   /* WHAT THE POINTER IS ON, wherever the pointer is: a Layers row and the node it stands
      for are one thing seen twice, so both surfaces write this and both read it (0 = none).
@@ -220,18 +221,18 @@ export interface Editor {
      document back on screen (which is also how a cancelled resize drops its inline styles).
      Nothing here reaches the store: a preview is a rendering. */
   previewMove(node: number, plan: DropPlan | null): void;
-  /* the verbs of ONE node (a widget's or a frame's), opened at a screen position. The
+  /* the verbs of ONE node (an instance's or a frame's), opened at a screen position. The
      stage's right-click and the Layers tree's are the same menu over the same node: the
      tree is the only place a frame can be right-clicked at all, since on the stage its
      own children cover it. */
   openNodeMenu(x: number, y: number, node: number): void;
-  /* select one widget and narrow to one of its template parts (a part path);
-     "" steps back to the widget. `select` always clears any part. */
-  selectPart(id: number, path: string): void;
-  /* select a document component (or one part node in it) for editing; clears the
-     widget selection, as selecting a widget clears this */
+  /* select one instance and narrow to one element of its component's template (an
+     element path); "" steps back to the instance. `select` always clears any element. */
+  selectElement(id: number, path: string): void;
+  /* select a document component (or one element node in it) for editing; clears the
+     instance selection, as selecting an instance clears this */
   selectComponent(component: number, node: number): void;
-  /* browse a built-in (or one part node inside it, by child-index path): the inspector
+  /* browse a built-in (or one element node inside it, by child-index path): the inspector
      shows the definition READ-ONLY, since nothing in the document owns it until it is
      overridden. This is how the shipped types are read before forking one. */
   selectBuiltin(name: string, path: string): void;
@@ -249,8 +250,8 @@ export interface Editor {
   /* the theme preview mode: sets view.themeMode, persists it locally and
      repaints the artboard; the Style workspace's toggle is the only caller for now */
   setThemeMode(mode: "dark" | "light"): void;
-  /* what the compiler said about this widget or anything inside it */
-  diagFor(widget: number): Diag[];
+  /* what the compiler said about this instance or anything inside it */
+  diagFor(instance: number): Diag[];
   /* the findings pinned to one node, or to one field of it. No `where` asks for the node's own findings only. */
   diagAt(node: number, where?: string): Diag[];
   /* every finding about a node, whatever field of it they name. A summary line stands for

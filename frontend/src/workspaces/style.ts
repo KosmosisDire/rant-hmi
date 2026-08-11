@@ -11,8 +11,8 @@ import { Editor } from "../editor.js";
 import { bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { Json, Token } from "../types.js";
 
-/* how many authored slot values reference this token, across every page. A widget's
-   slots nest one object per part, so the count walks them. */
+/* how many authored slot values reference this token, across every page. An instance's
+   slots nest one object per element, so the count walks them. */
 function usedCount(editor: Editor, name: string): number {
   const ref = "$" + name;
   let count = 0;
@@ -23,7 +23,7 @@ function usedCount(editor: Editor, name: string): number {
     }
   };
   for (const page of editor.store.pages())
-    for (const widget of editor.store.widgetsOn(page)) walk(widget.slots);
+    for (const instance of editor.store.instancesOn(page)) walk(instance.slots);
   return count;
 }
 

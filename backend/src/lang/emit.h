@@ -50,7 +50,7 @@ struct EmitSink {
 
     /* register a RUNTIME FINDING an instruction can fault to, returning its site index.
      * The language needs exactly one: an iteration whose source outran its trip bound
-     * must say so by name rather than quietly fold the part of the list it could reach. */
+     * must say so by name rather than quietly fold the portion of the list it reached. */
     virtual uint32_t add_fault_site(const std::string& code,
                                     const std::string& message) = 0;
 };

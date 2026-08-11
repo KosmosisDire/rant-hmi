@@ -9,14 +9,14 @@
   white-space: nowrap;
 }
 
-.part-def {
+.element-def {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin: 8px 0 4px;
 }
 
-.part-def .spacer {
+.element-def .spacer {
   flex: 1;
 }
 

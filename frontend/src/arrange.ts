@@ -44,7 +44,7 @@ export function literalNumber(text: string | undefined, fallback: number): numbe
 }
 
 /* The zone the pointer names, from the row's own proportions. A frame row has a middle that
- * means INSIDE; a widget row has no inside, so its whole height splits at the halfway mark
+ * means INSIDE; an instance row has no inside, so its whole height splits at the halfway mark
  * and every position names a gap. `ratio` is 0 at the row's top edge and 1 at its bottom. */
 export function dropZone(isFrame: boolean, ratio: number): Zone {
   if (!isFrame) return ratio < 0.5 ? "before" : "after";
@@ -146,7 +146,7 @@ export function settle(page: Page, dragId: number, raw: DropPlan): DropPlan | nu
   /* into something that cannot hold a child: a leaf, or an INSTANCE, whose subtree belongs
      to the component it names. Asked HERE, where every drop passes, rather than only where
      the tree asks it — the stage aims by pointer and would otherwise find the inside of a
-     widget a perfectly good target. */
+     instance a perfectly good target. */
   if (raw.parent !== page.id && !holds(seatOf(page, raw.parent)?.node)) return null;
 
   /* THE SERVER ERASES FIRST: by the time it inserts, the list it is inserting into is the
@@ -447,7 +447,7 @@ export function freePlan(handle: FreeHandle, box: FreeBox | null,
     else hi = Math.max(snapY(hi + dy, snap), lo + MIN_FREE_PX);
     return { lo, hi };
   };
-  const xPart = (dx: number, snap: boolean) => (box.derived === "w" ? null : xAxis(dx, snap));
+  const xPlan = (dx: number, snap: boolean) => (box.derived === "w" ? null : xAxis(dx, snap));
   /* gate: which values the resize would write, each against the doc's own number when
      committing (null skips the gate — the live picture writes everything) */
   const xWrites = (out: FreeWrite, to: { lo: number; hi: number },
@@ -491,7 +491,7 @@ export function freePlan(handle: FreeHandle, box: FreeBox | null,
   return {
     apply(dx, dy, snap) {
       const out: FreeWrite = {};
-      const hx = xPart(dx, snap);
+      const hx = xPlan(dx, snap);
       if (hx) xWrites(out, hx, null);
       const vy = yAxis(dy, snap);
       if (vy) yWrites(out, vy, null);
@@ -499,7 +499,7 @@ export function freePlan(handle: FreeHandle, box: FreeBox | null,
     },
     commit(dx, dy, snap) {
       const out: FreeWrite = {};
-      const hx = xPart(dx, snap);
+      const hx = xPlan(dx, snap);
       if (hx) xWrites(out, hx, changed);
       const vy = yAxis(dy, snap);
       if (vy) yWrites(out, vy, changed);

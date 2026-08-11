@@ -33,9 +33,9 @@ std::string str_or(const Json& node, const char* key, const char* fallback) {
     return it != node.end() && it->is_string() ? it->get<std::string>() : fallback;
 }
 
-/* An instance's authored value for one slot ADDRESS (spec 2.3). A widget's `slots`
- * object mirrors the type's parts: a widget-level slot is a key, a part's slot a key
- * inside an object named for the part, so "bar.fill_color" walks two levels. Null when
+/* An instance's authored value for one slot ADDRESS (spec 2.3). An instance's `slots`
+ * object mirrors the component's elements: a component-level slot is a key, an element's
+ * slot a key inside an object named for it, so "bar.fill_color" walks two levels. Null when
  * nothing is authored there (the type's default stands) — including when the path runs
  * into a non-object, which is a stale value, not a value. */
 const Json* authored_slot(const Json& slots, const std::string& address) {
@@ -170,15 +170,15 @@ std::string bare_name(const std::string& text) {
  * naming it lowers to StoreX and nothing else changes. */
 using FlowLocals = std::unordered_map<std::string, uint32_t>;
 
-/* one armed part of a widget's template: where a gesture rides, compiled once so
+/* one armed element of a component's template: where a gesture rides, compiled once so
  * trigger validation and the dispatch topology read the same facts */
 struct ArmedInfo {
-    std::string part;        /* dotted node names under the root; "" = the root itself */
+    std::string element;     /* dotted node names under the root; "" = the root itself */
     std::string primitive;
     bool bubbles = true;
 };
 
-struct WidgetInfo {
+struct ElementInfo {
     uint64_t id = 0;
     uint64_t page = 0;
     const Json* node = nullptr;
@@ -191,7 +191,7 @@ struct WidgetInfo {
 
 /* ---- the GESTURE VOCABULARY, closed on both sides (mirrors frontend types.ts) ----
  *
- * A gesture event is never DECLARED: picking a primitive for a part IS the declaration,
+ * A gesture event is never DECLARED: picking a primitive for an element IS the declaration,
  * and the whole family arrives with fixed signatures. tap/press/release/held/open are
  * MOMENTS and carry nothing — which event fired is the information; pressrelease alone
  * carries the edge, the drags carry the value in motion, the picks carry the option. */
@@ -214,7 +214,7 @@ bool gesture_param(const std::string& name, EventParam& out) {
     return false;
 }
 
-/* which primitives raise it (the availability check reads the armed parts) */
+/* which primitives raise it (the availability check reads the armed elements) */
 bool gesture_from(const std::string& event, const std::string& primitive) {
     if (event == "tap" || event == "press" || event == "release" || event == "held" ||
         event == "pressrelease")
@@ -246,11 +246,11 @@ class Compiler {
     CompileResult run() {
         copy_entities();
         build_cells();
-        build_armed_parts();
+        build_armed_elements();
         build_slot_programs();
         /* The type's defaults are compiled FIRST, so they run first: by the time an
-         * authored flow on the same event runs, the widget's own state already reflects
-         * the gesture and `widget.<slot>` agrees with what the event passed. */
+         * authored flow on the same event runs, the instance's own state already reflects
+         * the gesture and `this.<slot>` agrees with what the event passed. */
         build_type_behavior();
         build_flows();
         program_.layout.stack_values = std::max<uint32_t>(program_.layout.stack_values, 1);
@@ -265,7 +265,7 @@ class Compiler {
     /* an authored slot EXPRESSION, held from build_cells (where the cell is made) to
      * build_slot_programs (when every cell the expression could read exists) */
     struct PendingSlot {
-        uint64_t widget_id = 0;
+        uint64_t node_id = 0;
         std::string name;
         std::string text;
         uint32_t cell = 0;
@@ -285,7 +285,7 @@ class Compiler {
 
     const Json* type_named(const std::string& name) const {
         if (!registry_.is_object()) return nullptr;
-        auto types = registry_.find("types");
+        auto types = registry_.find("components");
         if (types == registry_.end() || !types->is_array()) return nullptr;
         for (const Json& type : *types)
             if (type.value("name", "") == name) return &type;
@@ -397,12 +397,12 @@ class Compiler {
         program_.layout.elem_texts += intake_texts;
     }
 
-    uint32_t add_cell(CellKind kind, uint64_t owner_widget, uint64_t node_id,
+    uint32_t add_cell(CellKind kind, uint64_t owner_node, uint64_t node_id,
                       const std::string& name, Shape shape, const Json& initial,
                       bool persistent) {
         CellDef cell;
         cell.kind = kind;
-        cell.owner_widget = owner_widget;
+        cell.owner_node = owner_node;
         cell.name = name;
         cell.node_id = node_id;
         cell.shape = shape;
@@ -427,9 +427,9 @@ class Compiler {
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
 
-    uint32_t add_timer(uint64_t owner_widget, const Json& var) {
+    uint32_t add_timer(uint64_t owner_node, const Json& var) {
         TimerDef timer;
-        timer.owner_widget = owner_widget;
+        timer.owner_node = owner_node;
         timer.node_id = id_of(var);
         timer.name = var.value("name", "");
         timer.event = "timer:" + std::to_string(timer.node_id);
@@ -572,23 +572,23 @@ class Compiler {
             std::function<void(const Json&)> walk_children = [&](const Json& node) {
                 auto children = node.find("children");
                 if (children == node.end() || !children->is_array()) return;
-                for (const Json& widget : *children) {
-                    const std::string type_name = widget.value("type", "");
+                for (const Json& instance : *children) {
+                    const std::string type_name = instance.value("type", "");
                     /* pre-order, so cells and flows are built in document order — which is
                        the order the scheduler runs them in */
-                    if (type_name.empty()) { walk_children(widget); continue; }
+                    if (type_name.empty()) { walk_children(instance); continue; }
 
-                    WidgetInfo info;
-                    info.id = id_of(widget);
+                    ElementInfo info;
+                    info.id = id_of(instance);
                     info.page = page_id;
-                    info.node = &widget;
+                    info.node = &instance;
                     info.type = type_named(type_name);
                     if (!info.type)
-                        diag(info.id, "widget_type",
-                             "widget type '" + type_name + "' is not registered");
+                        diag(info.id, "component_type",
+                             "component '" + type_name + "' is not registered");
 
-                    auto locals = widget.find("locals");
-                    if (locals != widget.end() && locals->is_array()) {
+                    auto locals = instance.find("locals");
+                    if (locals != instance.end() && locals->is_array()) {
                         for (const Json& var : *locals) {
                             const std::string name = var.value("name", "");
                             const uint32_t cell = declare_variable(var, CellKind::Local, info.id);
@@ -601,8 +601,8 @@ class Compiler {
 
                     if (info.type) {
                         const Json& authored =
-                            widget.contains("slots") && widget["slots"].is_object()
-                                ? widget["slots"] : empty_object_;
+                            instance.contains("slots") && instance["slots"].is_object()
+                                ? instance["slots"] : empty_object_;
                         for (const Json& slot : info.type->value("slots", Json::array())) {
                             const std::string name = slot.value("name", "");
                             const Shape shape = slot_shape(slot);
@@ -613,8 +613,8 @@ class Compiler {
                                encoding (spec D1) */
                             Json initial = slot.value("default", Json());
                             std::string expr_text;
-                            /* the slot's NAME is its address: a part's property is stored
-                               nested under the part, so the lookup walks the dots */
+                            /* the slot's NAME is its address: an element's property is
+                               stored nested under it, so the lookup walks the dots */
                             if (const Json* override = authored_slot(authored, name)) {
                                 if (override->is_string()) {
                                     const std::string text =
@@ -633,7 +633,7 @@ class Compiler {
                                         initial = *override;
                                     } else {
                                         /* AN EXPRESSION: compiled after every cell of
-                                           this widget exists (build_slot_programs); a
+                                           this instance exists (build_slot_programs); a
                                            constant folds back into the start, anything
                                            live becomes a standing program and the cell
                                            starts UNKNOWN */
@@ -672,7 +672,7 @@ class Compiler {
                                     info.id, name, expr_text, info.slots[name], slot});
                         }
                     }
-                    widgets_.push_back(std::move(info));
+                    elements_.push_back(std::move(info));
                 }
             };
             walk_children(page);
@@ -680,20 +680,20 @@ class Compiler {
     }
 
     /* ONE SLOT'S AUTHORED NUMBER, the instance's value first and the type's default
-     * otherwise: what a compile-time constant over a widget's own configuration reads
+     * otherwise: what a compile-time constant over an instance's own configuration reads
      * (an edit recompiles, so compile time is live enough). */
-    bool slot_number(const WidgetInfo& widget, const std::string& slot, double& out) const {
-        if (!widget.node || !widget.type) return false;
-        const Json& authored = widget.node->contains("slots") &&
-                                       (*widget.node)["slots"].is_object()
-                                   ? (*widget.node)["slots"]
+    bool slot_number(const ElementInfo& element, const std::string& slot, double& out) const {
+        if (!element.node || !element.type) return false;
+        const Json& authored = element.node->contains("slots") &&
+                                       (*element.node)["slots"].is_object()
+                                   ? (*element.node)["slots"]
                                    : empty_object_;
         if (const Json* at = authored_slot(authored, slot))
             if (at->is_number()) {
                 out = at->get<double>();
                 return true;
             }
-        for (const Json& row : widget.type->value("slots", Json::array()))
+        for (const Json& row : element.type->value("slots", Json::array()))
             if (row.value("name", "") == slot) {
                 auto def = row.find("default");
                 if (def == row.end() || !def->is_number()) return false;
@@ -703,17 +703,17 @@ class Compiler {
         return false;
     }
 
-    /* THE CONSTANT FOLDER: `+ - * / ( )` over numeric literals and the widget's own slot
+    /* THE CONSTANT FOLDER: `+ - * / ( )` over numeric literals and the instance's own slot
      * values, and nothing else. It is what lets a cadence be authored as "1000 / rate"
      * and a keep as "rate * window" — configuration arithmetic, resolved once at compile
      * against values an edit would recompile anyway, rather than a second expression
      * tier the scheduler would have to evaluate per tick.
      *
-     * `widget.` is accepted as a prefix so the same text reads in a flow's expressions
+     * `this.` is accepted as a prefix so the same text reads in a flow's expressions
      * and here. Anything it cannot resolve fails, and the caller turns that into a
      * finding: a cadence that quietly fell back to a default would be a lie about how
      * often something samples. */
-    bool fold_const(const WidgetInfo& widget, const std::string& text, double& out) const {
+    bool fold_const(const ElementInfo& element, const std::string& text, double& out) const {
         size_t at = 0;
         bool ok = true;
         const std::function<double()> sum = [&]() -> double {
@@ -751,9 +751,9 @@ class Compiler {
                     return 0.0;
                 }
                 std::string name = text.substr(start, at - start);
-                if (name.compare(0, 7, "widget.") == 0) name = name.substr(7);
+                if (name.compare(0, 5, "this.") == 0) name = name.substr(5);
                 double value = 0.0;
-                if (!slot_number(widget, name, value)) ok = false;
+                if (!slot_number(element, name, value)) ok = false;
                 return value;
             };
             double left = unary();
@@ -789,10 +789,10 @@ class Compiler {
     }
 
     /* AN `every` TRIGGER: the flow runs on its own clock, with no event behind it. `ms`
-     * is a number or the text of a constant expression over the widget's slots; anything
+     * is a number or the text of a constant expression over the instance's slots; anything
      * unresolvable drops the trigger with a finding rather than picking a rate nobody
      * asked for. Ticks are milliseconds, clamped to something a scheduler can honour. */
-    bool cadence_trigger(const WidgetInfo& widget, const Json& trigger, uint64_t flow_id,
+    bool cadence_trigger(const ElementInfo& element, const Json& trigger, uint64_t flow_id,
                          FlowProgram& flow) {
         auto ms = trigger.find("ms");
         double period = 0.0;
@@ -801,12 +801,12 @@ class Compiler {
             period = ms->get<double>();
             ok = std::isfinite(period);
         } else if (ms != trigger.end() && ms->is_string()) {
-            ok = fold_const(widget, ms->get<std::string>(), period);
+            ok = fold_const(element, ms->get<std::string>(), period);
         }
         if (!ok || period <= 0.0) {
             diag(flow_id, "trigger",
                  "an 'every' trigger needs `ms`: a number, or constant arithmetic over "
-                 "this widget's slots (\"1000 / rate\")");
+                 "this instance's slots (\"1000 / rate\")");
             return false;
         }
         period = std::min(3600000.0, std::max(10.0, period));
@@ -821,13 +821,13 @@ class Compiler {
      * fault, it just paints nothing until the token exists again. A WARNING, not an
      * error: a missing styling name degrades the paint, it does not invalidate the
      * program the way an unresolved entity does. */
-    Json resolve_token(uint64_t widget_id, const std::string& slot, const Json& value) {
+    Json resolve_token(uint64_t node_id, const std::string& slot, const Json& value) {
         if (!value.is_string()) return value;
         const std::string text = value.get<std::string>();
         if (text.empty() || text[0] != '$') return value;
         auto found = tokens_.find(text.substr(1));
         if (found != tokens_.end()) return Json(found->second);
-        diag(widget_id, "unknown_token",
+        diag(node_id, "unknown_token",
              "unknown token '" + text + "': the slot paints transparent",
              DiagGrade::Warning, slot);
         return Json("#00000000");
@@ -874,9 +874,9 @@ class Compiler {
      *
      * Returns whether an initial was authored at all; the elements land in `out`, text
      * among them as constant-pool refs. */
-    bool list_slot_initial(uint64_t widget_id, const std::string& slot, const Json& value,
+    bool list_slot_initial(uint64_t node_id, const std::string& slot, const Json& value,
                            std::vector<Value>& out) {
-        const AggSite site{widget_id, "slot '" + slot + "' is a list", slot,
+        const AggSite site{node_id, "slot '" + slot + "' is a list", slot,
                            "Write the options as a list ([\"Off\", \"Low\", \"High\"]) "
                            "or as variants(Type.field), naming an enum in the mesh. To "
                            "FOLLOW a variable instead, write its name as the value — "
@@ -889,7 +889,7 @@ class Compiler {
                 const std::string ref = trimmed(text.substr(9, text.size() - 10));
                 const int type_id = find_type_ref(ref);
                 if (type_id < 0 || program_.types[type_id].kind != TypeKind::Enum) {
-                    diag(widget_id, "unresolved_type",
+                    diag(node_id, "unresolved_type",
                          "slot '" + slot + "': variants(" + ref + ") needs '" + ref +
                              "' to name an enum in the mesh (a field's type reads "
                              "Type.field)",
@@ -915,9 +915,9 @@ class Compiler {
     /* THE AUTHORED VALUE OF A MAP SLOT: an object of scalars, or the text of one. The
      * same two spellings a list slot takes, for the same reason — an inspector field
      * commits a string and the document keeps what it was given. */
-    bool map_slot_initial(uint64_t widget_id, const std::string& slot, const Json& value,
+    bool map_slot_initial(uint64_t node_id, const std::string& slot, const Json& value,
                           std::vector<Value>& out) {
-        const AggSite site{widget_id, "slot '" + slot + "' is a map", slot,
+        const AggSite site{node_id, "slot '" + slot + "' is a map", slot,
                            "Write it as an object of scalars ({\"a\": 1, \"b\": 2})"};
         Json object = value;
         if (object.is_string()) {
@@ -1049,7 +1049,7 @@ class Compiler {
     }
 
     /* a value outside a slot's declared variant set is a typo, not a new option */
-    void check_variants(uint64_t widget_id, const std::string& slot, const Json& spec,
+    void check_variants(uint64_t node_id, const std::string& slot, const Json& spec,
                         const Json& value) {
         auto variants = spec.find("variants");
         if (variants == spec.end() || !variants->is_array() || !value.is_string()) return;
@@ -1058,7 +1058,7 @@ class Compiler {
         std::string known;
         for (const Json& variant : *variants)
             known += (known.empty() ? "" : ", ") + variant.get<std::string>();
-        diag(widget_id, "slot_variant",
+        diag(node_id, "slot_variant",
              "slot '" + slot + "' is " + json_brief(value) + ", which is not one of: " + known,
              DiagGrade::Error, slot);
     }
@@ -1095,8 +1095,8 @@ class Compiler {
         return Shape::Unknown;
     }
 
-    WidgetInfo* widget_info(uint64_t id) {
-        for (WidgetInfo& info : widgets_)
+    ElementInfo* element_info(uint64_t id) {
+        for (ElementInfo& info : elements_)
             if (info.id == id) return &info;
         return nullptr;
     }
@@ -1278,17 +1278,17 @@ class Compiler {
                 Binding{kClockFields[i].shape, OpCode::ClockRead, i, 0};
     }
 
-    ExpressionScope scope_for(const WidgetInfo& widget, Shape x_shape) {
+    ExpressionScope scope_for(const ElementInfo& element, Shape x_shape) {
         ExpressionScope scope;
         scope.x_shape = x_shape;
         for (const auto& item : globals_) bind_variable(scope, item.first, item.second);
-        for (const auto& item : widget.locals) bind_variable(scope, item.first, item.second);
+        for (const auto& item : element.locals) bind_variable(scope, item.first, item.second);
         for (const auto& item : global_timers_) bind_timer(scope, item.first, item.second);
-        for (const auto& item : widget.timers) bind_timer(scope, item.first, item.second);
+        for (const auto& item : element.timers) bind_timer(scope, item.first, item.second);
         bind_clock(scope);
-        for (const auto& item : widget.slots) {
+        for (const auto& item : element.slots) {
             const CellDef& cell = program_.cells[item.second];
-            scope.qualified["widget." + item.first] =
+            scope.qualified["this." + item.first] =
                 Binding{cell.shape, OpCode::Load, item.second, 0};
         }
         return scope;
@@ -1324,77 +1324,80 @@ class Compiler {
         return true;
     }
 
-    /* the ARMED PARTS of every widget, off the served template: trigger validation and
-     * the runtime's bubbling topology read one compiled truth */
-    void build_armed_parts() {
-        for (WidgetInfo& widget : widgets_) {
-            if (!widget.type) continue;
-            auto tmpl = widget.type->find("template");
-            if (tmpl == widget.type->end() || !tmpl->is_object()) continue;
-            collect_armed(*tmpl, "", widget, /*root=*/true);
+    /* the ARMED ELEMENTS of every instance, off the served template: trigger validation
+     * and the runtime's bubbling topology read one compiled truth */
+    void build_armed_elements() {
+        for (ElementInfo& element : elements_) {
+            if (!element.type) continue;
+            auto tmpl = element.type->find("template");
+            if (tmpl == element.type->end() || !tmpl->is_object()) continue;
+            collect_armed(*tmpl, "", element, /*root=*/true);
         }
     }
 
-    void collect_armed(const Json& node, const std::string& path, WidgetInfo& widget,
+    void collect_armed(const Json& node, const std::string& path, ElementInfo& element,
                        bool root) {
         auto interact = node.find("interact");
         if (interact != node.end() && interact->is_object() &&
             !str_or(*interact, "primitive", "").empty()) {
             ArmedInfo info;
-            info.part = path;
+            info.element = path;
             info.primitive = str_or(*interact, "primitive", "");
             info.bubbles = interact->value("bubbles", true);
-            widget.armed.push_back(info);
-            /* the root's own channel IS the widget-level one; only named parts enter
-               the bubbling table */
+            element.armed.push_back(info);
+            /* the root's own channel IS the instance-level one; only named elements
+               enter the bubbling table */
             if (!path.empty())
-                program_.armed_parts.push_back(ArmedPart{widget.id, path, info.bubbles});
+                program_.armed_elements.push_back(
+                    ArmedElement{element.id, path, info.bubbles});
         }
         (void)root;
         auto children = node.find("children");
         if (children == node.end() || !children->is_array()) return;
         for (const Json& child : *children) {
             const std::string name = str_or(child, "name", "");
-            collect_armed(child, path.empty() ? name : path + "." + name, widget,
+            collect_armed(child, path.empty() ? name : path + "." + name, element,
                           /*root=*/false);
         }
     }
 
-    /* Resolve a trigger's SIGNATURE: a gesture event checks that some armed part (or
+    /* Resolve a trigger's SIGNATURE: a gesture event checks that some armed element (or
      * the named one) raises it and takes its fixed parameter; a custom event reads the
-     * type's declaration. False = the trigger is invalid (diagnosed here). */
-    bool event_signature(const WidgetInfo& widget, const std::string& event,
-                         const std::string& part, uint64_t flow, bool in_behavior,
+     * component's declaration. False = the trigger is invalid (diagnosed here).
+     * `channel` is the ELEMENT CHANNEL the trigger listens on — spelled apart from
+     * `element` here because that already names the instance being validated. */
+    bool event_signature(const ElementInfo& element, const std::string& event,
+                         const std::string& channel, uint64_t flow, bool in_behavior,
                          EventParam& param, bool& has_param) {
         has_param = false;
         if (gesture_event(event)) {
             bool available = false;
-            for (const ArmedInfo& armed : widget.armed) {
-                if (!part.empty() && armed.part != part) continue;
+            for (const ArmedInfo& armed : element.armed) {
+                if (!channel.empty() && armed.element != channel) continue;
                 if (gesture_from(event, armed.primitive)) { available = true; break; }
             }
             if (!available) {
                 diag(flow, "event",
-                     part.empty()
-                         ? "no part of this widget raises '" + event +
-                               "'; give a part the gesture that raises it"
-                         : "part '" + part + "' does not raise '" + event + "'",
+                     channel.empty()
+                         ? "no element of this component raises '" + event +
+                               "'; give an element the gesture that raises it"
+                         : "element '" + channel + "' does not raise '" + event + "'",
                      DiagGrade::Error);
                 return false;
             }
             has_param = gesture_param(event, param);
             return true;
         }
-        if (!part.empty()) {
+        if (!channel.empty()) {
             diag(flow, "event",
-                 "a part channel carries gestures; '" + event + "' is raised by the "
-                 "component itself and arrives on the widget's own channel",
+                 "an element channel carries gestures; '" + event + "' is raised by the "
+                 "component itself and arrives on the instance's own channel",
                  DiagGrade::Error);
             return false;
         }
         (void)in_behavior;
-        if (widget.type)
-            for (const Json& row : widget.type->value("events", Json::array())) {
+        if (element.type)
+            for (const Json& row : element.type->value("events", Json::array())) {
                 if (row.value("name", "") != event) continue;
                 const Json params = row.value("params", Json::array());
                 if (params.is_array() && params.size() > 1) {
@@ -1411,7 +1414,7 @@ class Compiler {
                 }
                 return true;
             }
-        diag(flow, "event", "widget type has no event '" + event + "'");
+        diag(flow, "event", "this component has no event '" + event + "'");
         return false;
     }
 
@@ -1471,33 +1474,33 @@ class Compiler {
     }
 
     /* THE STANDING SLOT PROGRAMS (spec D1): every pending authored expression, compiled
-     * against the widget's scope PLUS the mesh. A constant folds into the cell's start
+     * against the instance's scope PLUS the mesh. A constant folds into the cell's start
      * and leaves no program; anything live stores into the cell whenever a dep moves —
      * every tick where it reads cells, on delivery where it reads only the mesh. */
     void build_slot_programs() {
         for (const PendingSlot& pending : pending_slots_) {
-            WidgetInfo* widget = widget_info(pending.widget_id);
-            if (!widget) continue;
-            compile_slot_program(*widget, pending);
+            ElementInfo* element = element_info(pending.node_id);
+            if (!element) continue;
+            compile_slot_program(*element, pending);
         }
     }
 
-    void compile_slot_program(WidgetInfo& widget, const PendingSlot& pending) {
+    void compile_slot_program(ElementInfo& element, const PendingSlot& pending) {
         const Shape wanted = program_.cells[pending.cell].shape;
         const bool aggregate = wanted == Shape::List || wanted == Shape::Map;
-        ExpressionScope scope = scope_for(widget, Shape::Unknown);
+        ExpressionScope scope = scope_for(element, Shape::Unknown);
         scope.no_x = true;   /* a slot expression has no pipeline register */
         bind_entities(scope);
         SlotProgram sp;
-        sp.widget_id = widget.id;
-        sp.page_id = widget.page;
+        sp.node_id = element.id;
+        sp.page_id = element.page;
         sp.slot = pending.name;
         sp.cell = pending.cell;
         Shape produced = Shape::Unknown;
-        if (!expression(widget.id, pending.text, ExprTier::Display, scope,
+        if (!expression(element.id, pending.text, ExprTier::Display, scope,
                         aggregate ? wanted : Shape::Unknown, sp.code, sp.max_stack,
                         &produced, pending.name, nullptr, aggregate))
-            return;   /* the finding is already pinned to the widget's slot row */
+            return;   /* the finding is already pinned to the instance's slot row */
         /* the one automatic coercion (spec 6.2): an enum-yielding expression filling a
            text slot reads as its variant name, so a Dropdown bound to an enum field
            needs no authored transform */
@@ -1512,7 +1515,7 @@ class Compiler {
         }
         if (!aggregate && wanted != Shape::Unknown && produced != Shape::Unknown &&
             produced != Shape::Nil && produced != wanted) {
-            diag(widget.id, "shape",
+            diag(element.id, "shape",
                  "the expression yields " + std::string(shape_name(produced)) +
                      ", but slot '" + pending.name + "' wants " + shape_name(wanted),
                  DiagGrade::Error, pending.name);
@@ -1526,7 +1529,7 @@ class Compiler {
             /* a constant text ref wears kConstantRef: strip it to read the pool */
             const uint32_t pool = value.ref & ~kConstantRef;
             if (value.tag == ValueTag::Text && pool < program_.texts.size())
-                check_variants(widget.id, pending.name, pending.spec,
+                check_variants(element.id, pending.name, pending.spec,
                                Json(program_.texts[pool]));
             return;
         }
@@ -1537,8 +1540,8 @@ class Compiler {
         for (uint32_t dep : sp.dep_entities) {
             if (program_.entities[dep].kind != EntityKind::Function) continue;
             double hz = 2.0;
-            auto poll = widget.node->find("poll");
-            if (poll != widget.node->end() && poll->is_object()) {
+            auto poll = element.node->find("poll");
+            if (poll != element.node->end() && poll->is_object()) {
                 auto rate = poll->find(pending.name);
                 if (rate != poll->end() && rate->is_number() &&
                     rate->get<double>() > 0.0)
@@ -1550,7 +1553,7 @@ class Compiler {
         Instruction store;
         store.op = OpCode::Store;
         store.a = pending.cell;
-        store.c = fault_site(widget.id, "slot_store",
+        store.c = fault_site(element.id, "slot_store",
                              "slot '" + pending.name + "' could not store its value");
         sp.code.push_back(store);
         sp.code.push_back(Instruction{OpCode::Halt});
@@ -1580,11 +1583,11 @@ class Compiler {
         return slot;
     }
 
-    /* A DECLARED name in this widget's scope: its own local variable, else a global.
+    /* A DECLARED name in this instance's scope: its own local variable, else a global.
      * Temporaries are not here; they are declared by the move that writes them. */
-    uint32_t declared_cell(const WidgetInfo& widget, const std::string& name) const {
-        auto local = widget.locals.find(name);
-        if (local != widget.locals.end()) return local->second;
+    uint32_t declared_cell(const ElementInfo& element, const std::string& name) const {
+        auto local = element.locals.find(name);
+        if (local != element.locals.end()) return local->second;
         auto global = globals_.find(name);
         return global == globals_.end() ? UINT32_MAX : global->second;
     }
@@ -1593,11 +1596,11 @@ class Compiler {
      * handle, the fields live in that slot (spec 5.2). A flow temporary and a declared
      * struct variable differ only in kind and lifetime: a temporary's slot is snapshot
      * around suspensions, a variable's is stable storage. */
-    uint32_t add_struct_cell(CellKind kind, uint64_t widget_id, uint64_t flow_id,
+    uint32_t add_struct_cell(CellKind kind, uint64_t owner_node, uint64_t flow_id,
                              uint64_t node_id, const std::string& name, uint16_t type_id) {
         CellDef cell;
         cell.kind = kind;
-        cell.owner_widget = widget_id;
+        cell.owner_node = owner_node;
         cell.owner_flow = flow_id;
         cell.node_id = node_id;
         cell.name = name;
@@ -1612,11 +1615,11 @@ class Compiler {
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
 
-    uint32_t add_temp_cell(uint64_t flow_id, uint64_t widget_id, const std::string& name,
+    uint32_t add_temp_cell(uint64_t flow_id, uint64_t node_id, const std::string& name,
                            Shape shape) {
         CellDef cell;
         cell.kind = CellKind::Temp;
-        cell.owner_widget = widget_id;
+        cell.owner_node = node_id;
         cell.owner_flow = flow_id;
         cell.name = name;
         cell.shape = shape;
@@ -1628,10 +1631,10 @@ class Compiler {
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
 
-    int resolve_timer(const WidgetInfo& widget, const std::string& name,
+    int resolve_timer(const ElementInfo& element, const std::string& name,
                       uint64_t node) {
-        auto local = widget.timers.find(name);
-        if (local != widget.timers.end()) return static_cast<int>(local->second);
+        auto local = element.timers.find(name);
+        if (local != element.timers.end()) return static_cast<int>(local->second);
         auto global = global_timers_.find(name);
         if (global != global_timers_.end()) return static_cast<int>(global->second);
         diag(node, "timer", "timer '" + name + "' is unresolved");
@@ -1645,7 +1648,7 @@ class Compiler {
      * (`{init:true}` the one special form: reset to the destination's own start); the
      * lvalue stays structural. Reading the mesh is naming it — `@entity.field` in the
      * rvalue — so there is no separate "read" form anymore. */
-    bool compile_assign(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool compile_assign(const ElementInfo& element, const Json& step, FlowProgram& flow,
                         ExpressionScope& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
@@ -1680,18 +1683,18 @@ class Compiler {
 
         const std::string slot = slot_of(to);
         if (!slot.empty()) {
-            auto found = widget.slots.find(slot);
-            if (found == widget.slots.end()) {
-                diag(step_id, "move_dest", "this widget has no slot '" + slot + "'",
+            auto found = element.slots.find(slot);
+            if (found == element.slots.end()) {
+                diag(step_id, "move_dest", "this instance has no slot '" + slot + "'",
                      DiagGrade::Error, "to");
                 return false;
             }
             if (appends || !key.empty())
-                return aggregate_assign(widget, step, flow, scope, found->second, appends,
+                return aggregate_assign(element, step, flow, scope, found->second, appends,
                                       keep, key);
             /* a LIST or MAP slot takes a whole aggregate here: this is an HMI cell,
                not a machine, so the one-scalar rule steps aside for exactly its shape */
-            return push_typed(widget, step, flow, scope, from,
+            return push_typed(element, step, flow, scope, from,
                               program_.cells[found->second].shape, 0,
                               /*agg_ok=*/true) &&
                    emit_store(flow, step_id, found->second);
@@ -1704,7 +1707,7 @@ class Compiler {
                 uint32_t cell = UINT32_MAX;
                 auto found = locals.find(name);
                 if (found != locals.end()) cell = found->second;
-                else cell = declared_cell(widget, name);
+                else cell = declared_cell(element, name);
                 if (cell == UINT32_MAX) {
                     diag(step_id, "move_dest",
                          (appends ? "append writes into a list variable or a list slot; '"
@@ -1719,13 +1722,13 @@ class Compiler {
                     const uint32_t derived =
                         resolve_field_cell(cell, name, path, step_id);
                     if (derived == UINT32_MAX) return false;
-                    return aggregate_assign(widget, step, flow, scope, derived, appends,
+                    return aggregate_assign(element, step, flow, scope, derived, appends,
                                           keep, key) &&
                            mark_field(flow, derived);
                 }
-                return aggregate_assign(widget, step, flow, scope, cell, appends, keep, key);
+                return aggregate_assign(element, step, flow, scope, cell, appends, keep, key);
             }
-            return assign_into_local(widget, step, flow, scope, locals);
+            return assign_into_local(element, step, flow, scope, locals);
         }
         if (to.contains("kind")) {
             if (appends) {
@@ -1737,7 +1740,7 @@ class Compiler {
             }
             /* a key on a mesh destination is an ELEMENT write into an array field;
                assign_out owns the field resolution, so the refusals can name it */
-            return assign_out(widget, step, flow, scope, locals);
+            return assign_out(element, step, flow, scope, locals);
         }
         diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
         return false;
@@ -1754,7 +1757,7 @@ class Compiler {
      * aggregate has no representation at all — so both are refused where the shape can
      * be seen at compile time. A DECLARED element type compiles the element toward it,
      * so a wrong-shaped element teaches here rather than faulting at the write. */
-    bool aggregate_assign(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool aggregate_assign(const ElementInfo& element, const Json& step, FlowProgram& flow,
                         ExpressionScope& scope, uint32_t cell, bool appends,
                         const std::string& keep, const std::string& key) {
         const uint64_t step_id = id_of(step);
@@ -1779,11 +1782,11 @@ class Compiler {
             /* the declared element type is the destination's shape: same coercions,
                same refusals a same-shaped scalar destination gets (an enum appends to
                a text list as its variant name) */
-            if (!push_typed(widget, step, flow, scope, from, def.elem, 0))
+            if (!push_typed(element, step, flow, scope, from, def.elem, 0))
                 return false;
         } else {
             Shape produced = Shape::Unknown;
-            if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+            if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced))
                 return false;
             if (produced == Shape::List || produced == Shape::Map ||
                 produced == Shape::Struct) {
@@ -1816,7 +1819,7 @@ class Compiler {
                    ceiling is not an error (the list simply holds the last 4096), but it
                    is not what the author asked for either */
                 double window = 0.0;
-                if (fold_const(widget, keep, window) &&
+                if (fold_const(element, keep, window) &&
                     window > static_cast<double>(kRetainedCeiling))
                     diag(step_id, "keep_bound",
                          "keep is " + std::to_string(static_cast<long long>(window)) +
@@ -1887,10 +1890,10 @@ class Compiler {
      * scope by bind_entities — so this is one compile, one vocabulary. `agg_ok` says
      * the destination is a declared HMI aggregate, which may take a whole list or map
      * (copy a variable, rebuild one with a map/filter). */
-    bool push_scalar(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool push_scalar(const ElementInfo& element, const Json& step, FlowProgram& flow,
                      ExpressionScope& scope, const Json& from, Shape expected,
                      Shape* actual = nullptr, bool agg_ok = false) {
-        (void)widget;
+        (void)element;
         const uint64_t step_id = id_of(step);
         if (from.contains("expr"))
             return expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
@@ -1905,12 +1908,12 @@ class Compiler {
      * coercions (spec 6.2): text into an enum-typed field or variable becomes the
      * variant's value (a Dropdown's selected name writes back with no authored
      * transform), and an enum into a text destination renders as its variant name. */
-    bool push_typed(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool push_typed(const ElementInfo& element, const Json& step, FlowProgram& flow,
                     ExpressionScope& scope, const Json& from, Shape wanted,
                     uint16_t type_id, bool agg_ok = false) {
         if (wanted == Shape::Text) {
             Shape produced = Shape::Unknown;
-            if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+            if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced))
                 return false;
             if (produced == Shape::Enum) {
                 Instruction name;
@@ -1932,9 +1935,9 @@ class Compiler {
             return true;
         }
         if (wanted != Shape::Enum || type_id == 0)
-            return push_scalar(widget, step, flow, scope, from, wanted, nullptr, agg_ok);
+            return push_scalar(element, step, flow, scope, from, wanted, nullptr, agg_ok);
         Shape produced = Shape::Unknown;
-        if (!push_scalar(widget, step, flow, scope, from, Shape::Unknown, &produced))
+        if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced))
             return false;
         if (produced == Shape::Text) {
             Instruction coerce;
@@ -1959,7 +1962,7 @@ class Compiler {
     /* `-> local`: the destination names a variable in scope, or declares a temporary by
      * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt; a
      * field of one by StoreField; a scalar by Store. */
-    bool assign_into_local(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool assign_into_local(const ElementInfo& element, const Json& step, FlowProgram& flow,
                          ExpressionScope& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
@@ -1978,7 +1981,7 @@ class Compiler {
             uint32_t cell = UINT32_MAX;
             auto found = locals.find(name);
             if (found != locals.end()) cell = found->second;
-            else cell = declared_cell(widget, name);
+            else cell = declared_cell(element, name);
             if (name == "x" || cell == UINT32_MAX) {
                 diag(step_id, "move_source",
                      "'" + name + "' has no declared start to reset to",
@@ -2023,16 +2026,16 @@ class Compiler {
                 return false;
             }
             const bool fresh = locals.find(name) == locals.end() &&
-                               declared_cell(widget, name) == UINT32_MAX;
+                               declared_cell(element, name) == UINT32_MAX;
             if (fresh && program_.types[type_id].kind == TypeKind::Enum) {
-                const uint32_t cell = add_temp_cell(flow.flow_id, widget.id, name,
+                const uint32_t cell = add_temp_cell(flow.flow_id, element.id, name,
                                                     Shape::Enum);
                 program_.cells[cell].type_id = static_cast<uint16_t>(type_id);
                 locals[name] = cell;
                 scope.names[name] = Binding{Shape::Enum, OpCode::Load, cell, 0,
                                             static_cast<uint16_t>(type_id)};
             } else if (fresh) {
-                const uint32_t cell = ensure_struct_local(widget, flow, locals, scope,
+                const uint32_t cell = ensure_struct_local(element, flow, locals, scope,
                                                           name, static_cast<uint16_t>(type_id),
                                                           step_id);
                 if (cell == UINT32_MAX) return false;
@@ -2044,7 +2047,7 @@ class Compiler {
                 flow.code.push_back(zero);
             } else {
                 const uint32_t held = locals.count(name) ? locals[name]
-                                                         : declared_cell(widget, name);
+                                                         : declared_cell(element, name);
                 if (program_.cells[held].type_id != type_id) {
                     diag(step_id, "type_mismatch",
                          "'" + name + "' does not hold a " + type_name_of(
@@ -2079,7 +2082,7 @@ class Compiler {
             uint32_t cell = UINT32_MAX;
             auto found = locals.find(name);
             if (found != locals.end()) cell = found->second;
-            else cell = declared_cell(widget, name);
+            else cell = declared_cell(element, name);
             if (cell == UINT32_MAX) {
                 diag(step_id, "move_dest",
                      "'" + name + "' has no value yet at this row", DiagGrade::Error, "to");
@@ -2115,12 +2118,12 @@ class Compiler {
                          DiagGrade::Error, "to");
                     return false;
                 }
-                return push_typed(widget, step, flow, scope, from,
+                return push_typed(element, step, flow, scope, from,
                                   fields[field].shape, 0, /*agg_ok=*/true) &&
                        emit_store(flow, step_id, derived) &&
                        mark_field(flow, derived);
             }
-            if (!push_typed(widget, step, flow, scope, from, fields[field].shape,
+            if (!push_typed(element, step, flow, scope, from, fields[field].shape,
                             fields[field].type_id))
                 return false;
             Instruction set;
@@ -2158,7 +2161,7 @@ class Compiler {
         }
 
         if (struct_type != 0) {
-            const uint32_t cell = ensure_struct_local(widget, flow, locals, scope, name,
+            const uint32_t cell = ensure_struct_local(element, flow, locals, scope, name,
                                                       struct_type, step_id);
             if (cell == UINT32_MAX) return false;
             program_.entities[read_entity].flow_reads = true;
@@ -2173,7 +2176,7 @@ class Compiler {
 
         /* a scalar destination: an existing variable keeps its declared shape, a fresh
            temporary takes the source's */
-        uint32_t cell = declared_cell(widget, name);
+        uint32_t cell = declared_cell(element, name);
         Shape wanted = cell == UINT32_MAX ? Shape::Unknown : program_.cells[cell].shape;
         if (cell == UINT32_MAX) {
             auto found = locals.find(name);
@@ -2187,14 +2190,14 @@ class Compiler {
            (rendered as its name), exactly like the same-shaped fields do. A declared
            LIST or MAP variable takes a whole aggregate — an HMI cell, not a machine. */
         if (cell != UINT32_MAX) {
-            if (!push_typed(widget, step, flow, scope, from, wanted,
+            if (!push_typed(element, step, flow, scope, from, wanted,
                             program_.cells[cell].type_id, /*agg_ok=*/true))
                 return false;
             return emit_store(flow, step_id, cell);
         }
         Shape produced = Shape::Unknown;
         const size_t mark = flow.code.size();
-        if (!push_scalar(widget, step, flow, scope, from, wanted, &produced)) return false;
+        if (!push_scalar(element, step, flow, scope, from, wanted, &produced)) return false;
         if (cell == UINT32_MAX) {
             if (produced == Shape::Unknown || produced == Shape::Nil) {
                 diag(step_id, "temp_shape",
@@ -2204,7 +2207,7 @@ class Compiler {
                 flow.code.resize(mark);
                 return false;
             }
-            cell = add_temp_cell(flow.flow_id, widget.id, name, produced);
+            cell = add_temp_cell(flow.flow_id, element.id, name, produced);
             locals[name] = cell;
             scope.names[name] = Binding{produced, OpCode::Load, cell, 0};
         }
@@ -2212,7 +2215,7 @@ class Compiler {
     }
 
     /* `-> entity`: the one way a value leaves a flow. The verb comes from the kind. */
-    bool assign_out(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool assign_out(const ElementInfo& element, const Json& step, FlowProgram& flow,
                   ExpressionScope& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
@@ -2260,7 +2263,7 @@ class Compiler {
         if (!source_local.empty()) {
             auto held = locals.find(source_local);
             if (held != locals.end()) held_cell = held->second;
-            else held_cell = declared_cell(widget, source_local);
+            else held_cell = declared_cell(element, source_local);
         }
         const bool whole = held_cell != UINT32_MAX &&
                            program_.cells[held_cell].shape == Shape::Struct;
@@ -2324,7 +2327,7 @@ class Compiler {
                              DiagGrade::Error, "to");
                         return false;
                     }
-                    if (!push_typed(widget, step, flow, scope, from, Shape::List, 0,
+                    if (!push_typed(element, step, flow, scope, from, Shape::List, 0,
                                     /*agg_ok=*/true))
                         return false;
                     out.b = static_cast<uint32_t>(field);
@@ -2350,7 +2353,7 @@ class Compiler {
                          DiagGrade::Error, "to");
                     return false;
                 }
-                if (!push_typed(widget, step, flow, scope, from, fdef.elem, 0))
+                if (!push_typed(element, step, flow, scope, from, fdef.elem, 0))
                     return false;
                 uint32_t key_stack = 1;
                 if (!expression(step_id, key, ExprTier::Wire, scope, Shape::Num,
@@ -2375,13 +2378,13 @@ class Compiler {
                      DiagGrade::Error, "key");
                 return false;
             }
-            if (!push_typed(widget, step, flow, scope, from, fdef.shape, fdef.type_id))
+            if (!push_typed(element, step, flow, scope, from, fdef.shape, fdef.type_id))
                 return false;
             out.b = static_cast<uint32_t>(field);
         }
         flow.code.push_back(out);
         ++program_.layout.effect_capacity;
-        (void)widget;
+        (void)element;
         return true;
     }
 
@@ -2390,7 +2393,7 @@ class Compiler {
      * struct variable of the same type is a legal destination (that is how a value is
      * staged across flows, spec 2.7); a declared variable of any other type is a
      * finding rather than a coercion. */
-    uint32_t ensure_struct_local(const WidgetInfo& widget, FlowProgram& flow,
+    uint32_t ensure_struct_local(const ElementInfo& element, FlowProgram& flow,
                                  FlowLocals& locals, ExpressionScope& scope,
                                  const std::string& name, uint16_t type_id, uint64_t step_id) {
         auto found = locals.find(name);
@@ -2405,7 +2408,7 @@ class Compiler {
             }
             return found->second;
         }
-        const uint32_t declared = declared_cell(widget, name);
+        const uint32_t declared = declared_cell(element, name);
         if (declared != UINT32_MAX) {
             const CellDef& cell = program_.cells[declared];
             if (cell.shape != Shape::Struct || cell.type_id != type_id) {
@@ -2421,9 +2424,9 @@ class Compiler {
             return declared;
         }
         const uint32_t cell =
-            add_struct_cell(CellKind::Temp, widget.id, flow.flow_id, 0, name, type_id);
+            add_struct_cell(CellKind::Temp, element.id, flow.flow_id, 0, name, type_id);
         locals[name] = cell;
-        add_field_cells(CellKind::Temp, widget.id, flow.flow_id, name, cell);
+        add_field_cells(CellKind::Temp, element.id, flow.flow_id, name, cell);
         const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
         for (uint32_t i = 0; i < fields.size(); ++i) {
             const uint32_t derived = field_cell(cell, i);
@@ -2466,36 +2469,36 @@ class Compiler {
     /* A CLAIMED slot's write, redirected into a run-local shadow so program order holds
      * within the flow (see the call site). Scalar shapes only: the write compiles
      * exactly as it would have — same coercions, same refusals — into a temp cell, and
-     * `widget.<slot>` rebinds to that cell for the steps below. An aggregate-shaped
+     * `this.<slot>` rebinds to that cell for the steps below. An aggregate-shaped
      * slot (or an append/key write) still stands down whole: a shadow list is storage
      * this run has no business allocating. */
-    bool shadow_slot_write(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool shadow_slot_write(const ElementInfo& element, const Json& step, FlowProgram& flow,
                            ExpressionScope& scope, const std::string& slot) {
         const uint64_t step_id = id_of(step);
-        auto found = widget.slots.find(slot);
-        if (found == widget.slots.end()) return true;   /* claimed name, no cell: drop */
+        auto found = element.slots.find(slot);
+        if (found == element.slots.end()) return true;   /* claimed name, no cell: drop */
         const CellDef& def = program_.cells[found->second];
         const std::string mode = str_or(step, "mode", "write");
         if (def.shape == Shape::List || def.shape == Shape::Map || mode == "append" ||
             !trimmed(str_or(step, "key", "")).empty())
             return true;                                /* aggregate: plain stand-down */
-        if (!push_typed(widget, step, flow, scope, step.value("from", Json::object()),
+        if (!push_typed(element, step, flow, scope, step.value("from", Json::object()),
                         def.shape, def.type_id))
             return false;
         const uint32_t shadow =
-            add_temp_cell(flow.flow_id, widget.id, "widget." + slot + "'", def.shape);
+            add_temp_cell(flow.flow_id, element.id, "this." + slot + "'", def.shape);
         program_.cells[shadow].type_id = def.type_id;
         if (!emit_store(flow, step_id, shadow)) return false;
-        scope.qualified["widget." + slot] =
+        scope.qualified["this." + slot] =
             Binding{def.shape, OpCode::Load, shadow, 0, def.type_id};
         return true;
     }
 
-    /* `raise <event>(args)`: the one step that SPEAKS as the widget. The event must be
+    /* `raise <event>(args)`: the one step that SPEAKS as the instance. The event must be
      * one the type declares — a gesture is the pointer's to raise — and the argument
      * expression compiles against the declared parameter's shape. The record queues on
      * the state; the scheduler dispatches it after this run halts. */
-    bool compile_raise(const WidgetInfo& widget, const Json& step, FlowProgram& flow,
+    bool compile_raise(const ElementInfo& element, const Json& step, FlowProgram& flow,
                        ExpressionScope& scope) {
         const uint64_t step_id = id_of(step);
         const std::string name = trimmed(str_or(step, "event", ""));
@@ -2514,8 +2517,8 @@ class Compiler {
            would dangle the moment the loop ends */
         Json row;
         bool declared = false;
-        if (widget.type)
-            for (const Json& r : widget.type->value("events", Json::array()))
+        if (element.type)
+            for (const Json& r : element.type->value("events", Json::array()))
                 if (r.value("name", "") == name) { row = r; declared = true; break; }
         if (!declared) {
             diag(step_id, "raise_event",
@@ -2551,11 +2554,11 @@ class Compiler {
         }
         uint32_t at = UINT32_MAX;
         for (uint32_t i = 0; i < program_.raises.size(); ++i)
-            if (program_.raises[i].widget_id == widget.id &&
+            if (program_.raises[i].node_id == element.id &&
                 program_.raises[i].event == name)
                 at = i;
         if (at == UINT32_MAX) {
-            program_.raises.push_back(RaiseDef{widget.id, name});
+            program_.raises.push_back(RaiseDef{element.id, name});
             at = static_cast<uint32_t>(program_.raises.size() - 1);
         }
         Instruction ins;
@@ -2610,10 +2613,10 @@ class Compiler {
      * TYPE BEHAVIOR: a slot-writing step whose slot is already claimed (a feed, an
      * authored flow) is DROPPED — per step, so the raise beside it still runs and a fed
      * control still speaks `changed` while standing down its local echo. */
-    bool compile_steps(const WidgetInfo& widget, const Json& flow_node, FlowProgram& flow,
+    bool compile_steps(const ElementInfo& element, const Json& flow_node, FlowProgram& flow,
                        const EventParam* param = nullptr,
                        const std::unordered_map<std::string, std::string>* claimed = nullptr) {
-        ExpressionScope scope = scope_for(widget, Shape::Unknown);
+        ExpressionScope scope = scope_for(element, Shape::Unknown);
         /* the mesh, under its '@' spellings: a flow's rvalue or guard reads an entity
            by naming it, exactly as a slot expression does (same binding, same VM read
            off the last-value cache / the aggregate mirrors) */
@@ -2630,19 +2633,19 @@ class Compiler {
                     if (!slot.empty() && claimed->find(slot) != claimed->end()) {
                         /* THE WRITE STILL HOLDS WITHIN THIS RUN. The claimed cell stays
                            the feed's, but program order must not lie: a later step
-                           reading widget.<slot> reads what this flow just wrote — the
+                           reading this.<slot> reads what this flow just wrote — the
                            store lands in a run-local SHADOW and the name follows it,
-                           so `value = false; raise changed(widget.value)` speaks false
+                           so `value = false; raise changed(this.value)` speaks false
                            on a fed instance instead of the fed value. An aggregate
                            write (append, key, list/map slot) still just stands down. */
-                        if (!shadow_slot_write(widget, step, flow, scope, slot))
+                        if (!shadow_slot_write(element, step, flow, scope, slot))
                             return false;
                         continue;
                     }
                 }
-                if (!compile_assign(widget, step, flow, scope, locals)) return false;
+                if (!compile_assign(element, step, flow, scope, locals)) return false;
             } else if (kind == "raise") {
-                if (!compile_raise(widget, step, flow, scope)) return false;
+                if (!compile_raise(element, step, flow, scope)) return false;
             } else if (kind == "notify") {
                 if (!compile_notify(step, flow, scope)) return false;
             } else if (kind == "gate") {
@@ -2673,7 +2676,7 @@ class Compiler {
                 ins.c = fault_site(step_id, "suspend", "suspension state is invalid");
                 flow.code.push_back(ins);
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
-                const int timer = resolve_timer(widget, str_or(step, "timer", ""), step_id);
+                const int timer = resolve_timer(element, str_or(step, "timer", ""), step_id);
                 if (timer < 0) return false;
                 Instruction ins;
                 ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
@@ -2716,9 +2719,9 @@ class Compiler {
     }
 
     void build_flows() {
-        for (WidgetInfo& widget : widgets_) {
-            auto flows = widget.node->find("flows");
-            if (flows == widget.node->end() || !flows->is_array()) continue;
+        for (ElementInfo& element : elements_) {
+            auto flows = element.node->find("flows");
+            if (flows == element.node->end() || !flows->is_array()) continue;
             for (const Json& node : *flows) {
                 const uint64_t flow_id = id_of(node);
                 const Json& triggers = node.value("when", Json::array());
@@ -2729,7 +2732,7 @@ class Compiler {
                 const uint32_t group = program_.layout.fired_groups++;
                 for (const Json& trigger : triggers) {
                     FlowProgram flow;
-                    flow.widget_id = widget.id;
+                    flow.node_id = element.id;
                     flow.flow_id = flow_id;
                     flow.group = group;
                     flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
@@ -2739,26 +2742,27 @@ class Compiler {
                     bool has_param = false;
                     if (trigger.value("kind", "") == "timer") {
                         const std::string name = trigger.value("var", "");
-                        const int timer = resolve_timer(widget, name, flow_id);
+                        const int timer = resolve_timer(element, name, flow_id);
                         if (timer < 0) continue;
                         flow.event = program_.timers[timer].event;
                         program_.timers[timer].rearm_groups.push_back(group);
                     } else if (trigger.value("kind", "") == "every") {
-                        if (!cadence_trigger(widget, trigger, flow_id, flow)) continue;
+                        if (!cadence_trigger(element, trigger, flow_id, flow)) continue;
                     } else {
                         flow.event = trigger.value("name", "");
-                        /* PARTS ARE PRIVATE ANATOMY: an instance flow's trigger never
-                           names one — the widget-level channel and the component's own
-                           events are its whole vocabulary */
-                        const std::string part = trigger.value("part", "");
-                        if (!part.empty()) {
+                        /* A COMPONENT'S ELEMENTS ARE PRIVATE ANATOMY: an instance flow's
+                           trigger never names one — the instance-level channel and the
+                           component's own events are its whole vocabulary */
+                        const std::string channel = trigger.value("element", "");
+                        if (!channel.empty()) {
                             diag(flow_id, "event",
-                                 "'" + part + "' is a part of this widget's component; "
-                                 "part channels live in the component's behavior",
+                                 "'" + channel + "' is an element of this instance's "
+                                 "component; element channels live in the component's "
+                                 "behavior",
                                  DiagGrade::Error);
                             continue;
                         }
-                        if (!event_signature(widget, flow.event, "", flow_id,
+                        if (!event_signature(element, flow.event, "", flow_id,
                                              /*in_behavior=*/false, param, has_param))
                             continue;
                         flow.hold_ticks =
@@ -2769,7 +2773,7 @@ class Compiler {
                                 ? static_cast<uint32_t>(std::max(0.0, every.get<double>()))
                                 : 0;
                     }
-                    if (!compile_steps(widget, node, flow, has_param ? &param : nullptr)) {
+                    if (!compile_steps(element, node, flow, has_param ? &param : nullptr)) {
                         const std::string message = "flow could not be compiled";
                         flow.code.clear();
                         Instruction fault;
@@ -2788,21 +2792,21 @@ class Compiler {
         }
     }
 
-    /* Who already writes each of a widget's slots, and what to call it in a diagnostic.
+    /* Who already writes each of an instance's slots, and what to call it in a diagnostic.
      * One writer per slot is the rule that keeps a slot deterministic (spec 2.3); this is
      * where it is decided, once, at compile time. */
-    std::unordered_map<std::string, std::string> claimed_slots(const WidgetInfo& widget) const {
+    std::unordered_map<std::string, std::string> claimed_slots(const ElementInfo& element) const {
         std::unordered_map<std::string, std::string> out;
         /* a slot whose authored value became a STANDING program is spoken for: its
            expression is the writer (a constant folded back into the start is not) */
         for (const SlotProgram& sp : program_.slot_programs)
-            if (sp.widget_id == widget.id)
+            if (sp.node_id == element.id)
                 out[sp.slot] = "its value is a bound expression";
-        auto flows = widget.node->find("flows");
-        if (flows != widget.node->end() && flows->is_array())
+        auto flows = element.node->find("flows");
+        if (flows != element.node->end() && flows->is_array())
             for (const Json& flow : *flows)
                 for (const std::string& slot : written_slots(flow))
-                    out[slot] = "a flow on this widget writes it";
+                    out[slot] = "a flow on this instance writes it";
         return out;
     }
 
@@ -2818,7 +2822,7 @@ class Compiler {
         return out;
     }
 
-    /* A widget type's DEFAULT BEHAVIOR: ordinary flows shipped in the registry row rather
+    /* A component's DEFAULT BEHAVIOR: ordinary flows shipped in the registry row rather
      * than authored per instance, so a Toggle toggles the moment it is placed. They are
      * compiled by this same compiler into the same programs, so there is no per-type code
      * and a custom component declares behavior the same way.
@@ -2830,37 +2834,37 @@ class Compiler {
      * default local echo. Standing down is deterministic and silent: the author asked for
      * the writer that won, so there is nothing to report. */
     void build_type_behavior() {
-        for (WidgetInfo& widget : widgets_) {
-            if (!widget.type) continue;
-            const Json& behavior = widget.type->value("behavior", Json::array());
+        for (ElementInfo& element : elements_) {
+            if (!element.type) continue;
+            const Json& behavior = element.type->value("behavior", Json::array());
             if (!behavior.is_array() || behavior.empty()) continue;
             /* stand-down is PER STEP now (compile_steps drops the claimed slot writes),
                so a fed control still raises `changed` while its local echo yields */
-            const std::unordered_map<std::string, std::string> claimed = claimed_slots(widget);
+            const std::unordered_map<std::string, std::string> claimed = claimed_slots(element);
             for (const Json& node : behavior) {
                 for (const Json& trigger : node.value("when", Json::array())) {
                     FlowProgram flow;
-                    flow.widget_id = widget.id;
-                    /* the widget's own id: document ids are unique, so this cannot collide
+                    flow.node_id = element.id;
+                    /* the instance's own id: document ids are unique, so this cannot collide
                        with an authored flow, and it keeps state-site identity stable */
-                    flow.flow_id = widget.id;
+                    flow.flow_id = element.id;
                     flow.group = program_.layout.fired_groups++;
                     flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
                     EventParam param;
                     bool has_param = false;
                     if (trigger.value("kind", "") == "every") {
-                        if (!cadence_trigger(widget, trigger, widget.id, flow)) continue;
+                        if (!cadence_trigger(element, trigger, element.id, flow)) continue;
                     } else {
                         flow.event = trigger.value("name", "");
-                        /* behavior is the ONE place a trigger may name a part channel */
-                        flow.part = trigger.value("part", "");
-                        if (!event_signature(widget, flow.event, flow.part, widget.id,
+                        /* behavior is the ONE place a trigger may name an element channel */
+                        flow.element = trigger.value("element", "");
+                        if (!event_signature(element, flow.event, flow.element, element.id,
                                              /*in_behavior=*/true, param, has_param))
                             continue;
                         flow.hold_ticks = static_cast<uint32_t>(
                             std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
                     }
-                    if (!compile_steps(widget, node, flow, has_param ? &param : nullptr,
+                    if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        &claimed))
                         continue;
                     program_.layout.stack_values =
@@ -2883,7 +2887,7 @@ class Compiler {
     std::unordered_map<std::string, uint16_t> struct_names_;  /* root name -> type id */
     std::set<std::string> ambiguous_;                         /* reported once each */
     std::unordered_map<std::string, uint32_t> global_timers_;
-    std::vector<WidgetInfo> widgets_;
+    std::vector<ElementInfo> elements_;
     std::vector<PendingSlot> pending_slots_;
 };
 
@@ -2901,9 +2905,9 @@ Shape shape_from_name(const std::string& name) {
     return Shape::Unknown;
 }
 
-CompileResult compile_document(const Document& document, const Json& widget_registry,
+CompileResult compile_document(const Document& document, const Json& component_registry,
                                const MeshPort& mesh) {
-    return Compiler(document, widget_registry, mesh).run();
+    return Compiler(document, component_registry, mesh).run();
 }
 
 } // namespace hmi

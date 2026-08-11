@@ -166,7 +166,7 @@ void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
     for (const dart::SchemaField& field : info.fields) {
         stack.resize(field.depth);
         std::string path;
-        for (const std::string& part : stack) path += part + ".";
+        for (const std::string& segment : stack) path += segment + ".";
         path += field.name;
         if (field.kind == dart::FieldType::Struct) {
             stack.push_back(field.name);
@@ -854,8 +854,8 @@ void DartMesh::apply(const Program& program) {
         }
         return rec;
     };
-    /* a FUNCTION a slot expression reads is POLLED: the widget's `poll` map set the
-     * cadence at compile, page-gated by the widget's page (the visibility rule) */
+    /* a FUNCTION a slot expression reads is POLLED: the instance's `poll` map set the
+     * cadence at compile, page-gated by the instance's page (the visibility rule) */
     for (const SlotProgram& slot : program.slot_programs) {
         if (!slot.poll_ms) continue;
         for (uint32_t dep : slot.dep_entities) {

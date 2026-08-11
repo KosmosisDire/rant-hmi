@@ -2,20 +2,20 @@
    (the bound/driven slot-cell states this file was named for died with the old slot
    cells — the value box's own preview/dim states carry that story now) */
 
-[data-mode="test"] .widget,
-[data-mode="operate"] .widget {
+[data-mode="test"] .instance,
+[data-mode="operate"] .instance {
   touch-action: none;
 }
 
 /* the pointer cursor follows the hit test exactly: only what an interact element
-   PAINTED invites a press; a widget's inert background reads as surface */
-[data-mode="test"] .widget [data-act],
-[data-mode="operate"] .widget [data-act] {
+   PAINTED invites a press; an instance's inert background reads as surface */
+[data-mode="test"] .instance [data-act],
+[data-mode="operate"] .instance [data-act] {
   cursor: pointer;
 }
 
-[data-mode="test"] .widget.disabled [data-act],
-[data-mode="operate"] .widget.disabled [data-act] {
+[data-mode="test"] .instance.disabled [data-act],
+[data-mode="operate"] .instance.disabled [data-act] {
   cursor: not-allowed;
 }
 

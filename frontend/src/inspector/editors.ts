@@ -1,5 +1,5 @@
 /* Value editors, chosen by SHAPE. Nothing here switches
- * on a widget type or a slot name: the registry says what shape a slot is and this maps a
+ * on a component or a slot name: the registry says what shape a slot is and this maps a
  * shape to a control.
  *
  * Every editor is built once and then DRIVEN: it takes the key it shows and a reader, and

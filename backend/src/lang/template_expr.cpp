@@ -344,7 +344,7 @@ class Parser {
             if (const char* mode = iterate_mode(name)) {
                 parse_iterate(name, mode);
             } else if (name == "smooth" || name == "transition") {
-                /* A TRANSITION IS NOT PART OF THE EXPRESSION: the expression computes the
+                /* A TRANSITION IS NO PART OF THE EXPRESSION: the expression computes the
                  * true value, and how the picture approaches it is metadata on the field
                  * (a node's `transitions`, a property's declared sweep) — so it survives
                  * every edit to the expression and never gates what a value may be. */
@@ -434,14 +434,14 @@ class Parser {
 
     /* The dotted chain that follows an identifier, resolved against the component's
      * address table. It stops at the FIRST complete address, so whatever follows is
-     * ordinary postfix (`arc.thickness.round()`): a property and a part beside it can
+     * ordinary postfix (`arc.thickness.round()`): a property and an element beside it can
      * never share a name, which is what makes the shortest match the only one. */
     bool address_chain(const std::string& head, std::string& out) {
         std::string address = head;
         while (token_.kind == TokenKind::Dot) {
             advance();
             if (token_.kind != TokenKind::Ident) {
-                fail("expected a part or property name after '.'");
+                fail("expected an element or property name after '.'");
                 return false;
             }
             address += "." + token_.text;
@@ -452,7 +452,7 @@ class Parser {
             }
         }
         fail("'" + address + "' names no property in this component; a dotted name is "
-             "a part's path plus the property it owns");
+             "an element's path plus the property it owns");
         return false;
     }
 
@@ -732,15 +732,23 @@ class Parser {
             parse_call(name);
             return;
         }
+        /* THE PREFIX MOVED: `widget.<slot>` is `this.<slot>` now, and inside a
+           component's own attrs a property has always read by its BARE name. Refusing
+           the old prefix by name is what teaches both. */
+        if (name == "widget") {
+            fail("'widget.' is spelled 'this.' now; inside a component's own attrs a "
+                 "property reads by its bare name");
+            return;
+        }
         /* a name in scope is that property, and anything dotted after it is ordinary
            postfix (`value.pick(...)`) */
         if (scope_.has_prop(name)) {
             emit_load("slot:" + scope_.address(name));
             return;
         }
-        /* otherwise a DOTTED name is an address from the template root: another part's
-           property, read where it is needed rather than moved to where every reader
-           can see it */
+        /* otherwise a DOTTED name is an address from the template root: another
+           element's property, read where it is needed rather than moved to where every
+           reader can see it */
         if (token_.kind == TokenKind::Dot) {
             std::string address;
             if (!address_chain(name, address)) return;
@@ -748,8 +756,8 @@ class Parser {
             return;
         }
         fail("unknown name '" + name + "'; a bare identifier here is a property this "
-             "part declares or inherits from one above it, and a dotted one is another "
-             "part's property by address");
+             "element declares or inherits from one above it, and a dotted one is "
+             "another element's property by address");
     }
 
     Lexer lexer_;

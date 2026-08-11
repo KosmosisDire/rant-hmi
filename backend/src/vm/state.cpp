@@ -11,7 +11,7 @@ namespace {
 constexpr uint32_t kDefaultTextCap = 256;
 
 bool same_cell(const CellDef& a, const CellDef& b) {
-    return a.kind == b.kind && a.owner_widget == b.owner_widget && a.name == b.name &&
+    return a.kind == b.kind && a.owner_node == b.owner_node && a.name == b.name &&
            a.shape == b.shape && a.owner_flow == b.owner_flow;
 }
 

@@ -9,7 +9,7 @@
  * not the field's. What is left is the pure document half: the value encoding, the
  * address walk, and the ownership sets. */
 
-import { Json, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, WidgetType, Node } from "./types.js";
+import { Json, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, ComponentType, Node } from "./types.js";
 
 /* ---- the slot value ENCODING (spec D1) ----
  *
@@ -100,19 +100,19 @@ export function variantNames(mesh: Mesh, ref: string): string[] {
   return found?.field?.variants?.map((v) => v.name) ?? [];
 }
 
-export function typeOf(registry: Registry | null, name: string): WidgetType | null {
+export function typeOf(registry: Registry | null, name: string): ComponentType | null {
   if (!registry) return null;
-  return registry.types.find((t) => t.name === name) ?? null;
+  return registry.components.find((t) => t.name === name) ?? null;
 }
 
-function slotSpec(type: WidgetType | null, name: string): SlotSpec | null {
+function slotSpec(type: ComponentType | null, name: string): SlotSpec | null {
   if (!type) return null;
   return type.slots.find((s) => s.name === name) ?? null;
 }
 
-/* every authored slot value on this widget, visited at its dotted address */
+/* every authored slot value on this instance, visited at its dotted address */
 export function eachAuthoredSlot(
-  widget: Node,
+  instance: Node,
   visit: (address: string, value: Json) => void,
 ): void {
   const walk = (level: Json, prefix: string) => {
@@ -123,35 +123,35 @@ export function eachAuthoredSlot(
       else visit(address, held);
     }
   };
-  walk(widget.slots ?? {}, "");
+  walk(instance.slots ?? {}, "");
 }
 
 /* which slots this instance BINDS: the authored value is an expression, so the
  * backend evaluates it standing and the cell is the runtime's to write (what the
  * `feeds` list used to say, spelled in the value itself) */
-export function boundSlots(widget: Node): Set<string> {
+export function boundSlots(instance: Node): Set<string> {
   const out = new Set<string>();
-  eachAuthoredSlot(widget, (address, value) => {
+  eachAuthoredSlot(instance, (address, value) => {
     if (slotExpression(value)) out.add(address);
   });
   return out;
 }
 
-/* Would a gesture on this widget DO anything? An authored flow on an event answers yes.
+/* Would a gesture on this instance DO anything? An authored flow on an event answers yes.
  * So does the type's default behavior — but only where a slot that default writes is
  * NOT fed: a fed control is a pure view of the machine and the compiler drops its
- * default, so pressing it runs nothing. Outside edit mode a widget that answers no is
+ * default, so pressing it runs nothing. Outside edit mode an instance that answers no is
  * INERT PASS-THROUGH (the stage gives it pointer-events none): a picture must never
  * swallow the press aimed at what it overlays. */
-export function operable(widget: Node | null, type: WidgetType | null): boolean {
-  if (!widget) return false;
+export function operable(instance: Node | null, type: ComponentType | null): boolean {
+  if (!instance) return false;
   /* a trigger with a name and no kind IS an event — the backend reads it the same
-     tolerant way, and the two must agree or a widget goes inert while its flow runs */
+     tolerant way, and the two must agree or an instance goes inert while its flow runs */
   const onEvent = (flow: Json) =>
     ((flow?.when ?? []) as Json[]).some((t: Json) =>
       t?.kind === "event" || (!t?.kind && typeof t?.name === "string" && t.name));
-  if ((widget.flows ?? []).some(onEvent)) return true;
-  const fed = boundSlots(widget);
+  if ((instance.flows ?? []).some(onEvent)) return true;
+  const fed = boundSlots(instance);
   for (const flow of (type?.behavior ?? []) as Json[]) {
     if (!onEvent(flow)) continue;
     for (const step of (flow?.do ?? []) as Json[])
@@ -162,17 +162,17 @@ export function operable(widget: Node | null, type: WidgetType | null): boolean 
   return false;
 }
 
-/* the live cell key for a widget slot; the backend owns this naming */
-export function slotCell(widget: Node, slot: string): string {
-  return widget.id + "." + slot;
+/* the live cell key for an instance slot; the backend owns this naming */
+export function slotCell(instance: Node, slot: string): string {
+  return instance.id + "." + slot;
 }
 
 /* ---- nested slot values ----
  *
- * A slot's NAME is its address: bare for the widget's own properties, prefixed by the
- * owning part's path for the ones a part declares (`bar.fill_color`). An instance
- * stores them the same way it reads them — nested, one object per part — so the shape
- * of a widget's `slots` mirrors the shape of its type. */
+ * A slot's NAME is its address: bare for the component's own properties, prefixed by
+ * the owning element's path for the ones an element declares (`bar.fill_color`). An
+ * instance stores them the same way it reads them — nested, one object per element —
+ * so the shape of an instance's `slots` mirrors the shape of its component. */
 
 /* what the document authors at one address, or undefined when it authors nothing there
    (including when the path runs into a non-object: a stale value is not a value) */
@@ -186,7 +186,7 @@ function slotValue(slots: Json, address: string): Json {
 }
 
 /* the same object with one address set, copied down the path it touches: op application
-   replaces the widget's whole `slots` value, and nothing else may be disturbed */
+   replaces the instance's whole `slots` value, and nothing else may be disturbed */
 export function withSlot(slots: Json, address: string, value: Json): Json {
   const segments = address.split(".");
   const root: Json = { ...((slots ?? {}) as Record<string, Json>) };
@@ -202,20 +202,20 @@ export function withSlot(slots: Json, address: string, value: Json): Json {
 }
 
 /* what the DOCUMENT says a slot is: the instance value, else the type default */
-export function authoredSlot(widget: Node, type: WidgetType | null, name: string): Json {
-  const instance = slotValue(widget.slots, name);
-  if (instance !== undefined) return instance;
+export function authoredSlot(instance: Node, type: ComponentType | null, name: string): Json {
+  const authored = slotValue(instance.slots, name);
+  if (authored !== undefined) return authored;
   const spec = slotSpec(type, name);
   return spec ? spec.default : null;
 }
 
 /* the instance's OWN authored value alone, undefined where it authors nothing — what a
  * slot's value box shows, with the type default standing as the placeholder */
-export function ownSlot(widget: Node, address: string): Json {
-  return slotValue(widget.slots, address);
+export function ownSlot(instance: Node, address: string): Json {
+  return slotValue(instance.slots, address);
 }
 
-/* the same object with one address REMOVED, part objects emptied along the way pruned:
+/* the same object with one address REMOVED, element objects emptied along the way pruned:
  * an empty box unsets the slot, and the document keeps only what was authored */
 export function withoutSlot(slots: Json, address: string): Json {
   const segments = address.split(".");

@@ -1,7 +1,7 @@
 /* The scalar expression compiler: the authored language of feeds, flow guards and move
  * sources (spec 6), lowered to the instruction form in lang/ir.h.
  *
- * It knows nothing about widgets, entities, cells or flows. Names arrive already
+ * It knows nothing about instances, entities, cells or flows. Names arrive already
  * resolved as Bindings — the CALLER decided what `setpoint` addresses — and everything
  * emitted lands through an EmitSink (lang/emit.h). That is what lets the same compiler
  * serve the backend's Program and anything else that can hold a constant pool. */

@@ -113,7 +113,7 @@ function onDown(host: HTMLElement, editor: Editor, ev: PointerEvent): void {
     return;
   }
   /* A GRAB TAKES THE DEEPEST NODE, the same one a click would select and the hover ring
-     is already showing: a press on a widget moves the widget, a press on a box's own
+     is already showing: a press on an instance moves the instance, a press on a box's own
      pixels (its surface, its empty room) moves the box and everything riding it. The
      artboard background belongs to no node and arms nothing. */
   const grip = (ev.target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;

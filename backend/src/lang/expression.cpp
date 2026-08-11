@@ -168,7 +168,7 @@ const std::unordered_map<std::string, BuiltinSpec>& builtins() {
         {"hsv", {Builtin::Hsv, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true, "@"}},
         {"str", {Builtin::Str, 1, 1, {ANY}, Shape::Text, false, "STR"}},
         /* view-only: the estimated rendered width of TEXT at SIZE, in artboard units --
-           the same estimator drawText/richUnits use and the `code` part API's own
+           the same estimator drawText/richUnits use and the retired `code` node's own
            the view's own measure(), so an author's own layout maths agrees with what
            actually renders. No wire meaning (a machine does not care how wide a label
            draws), so it never had a scalar Builtin to begin with. */
@@ -1208,7 +1208,7 @@ class Parser {
         }
         if (name == "x" && scope_.no_x) {
             fail("there is no x here: a slot expression names its sources directly "
-                 "(a variable, widget.<slot>, @entity.<field>)");
+                 "(a variable, this.<slot>, @entity.<field>)");
             return Shape::Unknown;
         }
         if (name == "x") {
@@ -1304,7 +1304,14 @@ class Parser {
             if (q != scope_.qualified.end()) return load_binding(q->second);
         }
         if (qualified != name) {
-            fail("unknown field '" + qualified + "'");
+            /* THE PREFIX MOVED: an instance's own slot is `this.<slot>` in both tiers.
+               Refusing by name is what teaches the spelling — an "unknown field" here
+               would leave the author guessing which half was wrong. */
+            if (name == "widget")
+                fail("'widget." + qualified.substr(7) + "' is spelled 'this." +
+                     qualified.substr(7) + "' now");
+            else
+                fail("unknown field '" + qualified + "'");
             return Shape::Unknown;
         }
         /* the clock reads by field, and saying so beats "unknown name" */
@@ -1312,6 +1319,10 @@ class Parser {
             fail("'time' reads by field (time.now / time.unix / time.year / time.month / "
                  "time.day / time.weekday / time.hour / time.minute / time.second / "
                  "time.text / time.date)");
+            return Shape::Unknown;
+        }
+        if (name == "widget") {
+            fail("'widget' is spelled 'this' now: a slot reads as this.<slot>");
             return Shape::Unknown;
         }
         fail("unknown name '" + name + "'");
@@ -1432,7 +1443,7 @@ const std::vector<LangRow>& language_reference() {
         std::vector<LangRow> rows;
         for (const auto& item : builtins()) {
             const BuiltinSpec& spec = item.second;
-            /* a view-only row is not part of the authored scalar vocabulary, so it must
+            /* a view-only row is not in the authored scalar vocabulary, so it must
                not be offered by autocomplete in a feed or a flow */
             if (spec.view_only) continue;
             LangRow row;

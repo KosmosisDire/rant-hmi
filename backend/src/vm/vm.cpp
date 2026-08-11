@@ -343,7 +343,7 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
         case Builtin::Max: if (n == 2) return Value::number(std::max(number(0), number(1))); break;
         /* ORDINARY trigonometry: sin(0) == 0, cos(0) == 1, exactly as everywhere else
          * angles are used mathematically. The "0 = up, clockwise" rule (spec 2.3, the
-         * radial widgets) is a POLAR convention layered on TOP of these by whoever
+         * radial components) is a POLAR convention layered on TOP of these by whoever
          * calls them (`cx + r*sin(a), cy - r*cos(a)`) -- it is
          * not baked in here, so an author composing their own polar placement gets the
          * primitives polar() itself is built from, not a second incompatible dialect. */
@@ -1915,22 +1915,23 @@ RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState
     return run_code(program, flow.code, &flow, state, Value::nil());
 }
 
-bool part_reaches(const Program& program, uint64_t widget, const std::string& flow_part,
-                  const std::string& part) noexcept {
-    if (!flow_part.empty()) return flow_part == part;
-    if (part.empty()) return true;
-    for (const ArmedPart& armed : program.armed_parts)
-        if (armed.widget_id == widget && armed.part == part) return armed.bubbles;
-    return true;   /* an unlisted part bubbles: robust to a view naming a stale one */
+bool element_reaches(const Program& program, uint64_t node,
+                     const std::string& flow_element,
+                     const std::string& element) noexcept {
+    if (!flow_element.empty()) return flow_element == element;
+    if (element.empty()) return true;
+    for (const ArmedElement& armed : program.armed_elements)
+        if (armed.node_id == node && armed.element == element) return armed.bubbles;
+    return true;   /* an unlisted element bubbles: robust to a view naming a stale one */
 }
 
-RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget_id,
+RunResult run_event(const Program& program, RuntimeState& state, uint64_t node_id,
                     const std::string& event, Value arg,
-                    const std::string& part) noexcept {
+                    const std::string& element) noexcept {
     RunResult total;
     for (const FlowProgram& flow : program.flows) {
-        if (flow.widget_id != widget_id || flow.event != event) continue;
-        if (!part_reaches(program, widget_id, flow.part, part)) continue;
+        if (flow.node_id != node_id || flow.event != event) continue;
+        if (!element_reaches(program, node_id, flow.element, element)) continue;
         if (flow.first_only && flow.group < state.fired.size() && state.fired[flow.group])
             continue;
         if (flow.first_only && flow.group < state.fired.size()) state.fired[flow.group] = 1;

@@ -3,10 +3,15 @@
 
 export type Json = any;
 
-/* 14: THE LOG — the snapshot carries `log` (the backlog of @dart/log lines and hmi
- * notifications) and a `log` frame appends live entries; the step kind `notify`
- * broadcasts a notification to every session as a level "notify" entry */
-export const PROTO = 14;
+/* 15: ONE VOCABULARY — COMPONENT (a definition in the library), INSTANCE (a node
+ * placing one) and ELEMENT (any node in the tree, including one named inside a
+ * component). The registry serves `components`, not `types`; an `input` frame carries
+ * {node, event, value, seq, element} where `widget_id` and `part` stood; a flow
+ * trigger's channel key is `element`; and the expression prefix `instance.<slot>` is
+ * spelled `this.<slot>` in both tiers.
+ * (14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
+ * the step kind `notify` broadcasts a notification to every session.) */
+export const PROTO = 15;
 
 /* one line of the log: what a mesh node said on @dart/log/<level>, or what a notify
  * step spoke (level "notify", node "hmi"). `ms` rides only where the author set an
@@ -191,7 +196,7 @@ export interface Flow {
 
 /* ---- THE NODE: one kind, four variants, one field model ----
  *
- * A page's frames, a component's internals and a widget instance are the same thing.
+ * A page's frames, a component's internals and an instance are the same thing.
  * `kind` says what a node draws; everything a node LOOKS like is expression text in
  * `attrs`, checked against the served vocabulary (AttrTable) and compiled to view
  * programs by the backend. Only what is structural stays a field of its own: `kind`,
@@ -338,8 +343,8 @@ export type Instr = {
 };
 
 export interface SlotSpec {
-  /* the slot's ADDRESS: a widget-level property is a bare name, a part's is its owning
-     part's path plus the name (`bar.fill_color`). It is what a feed's `slot`, a move's
+  /* the slot's ADDRESS: a component-level property is a bare name, an element's is its
+     owning element's path plus the name (`bar.fill_color`). It is what a feed's `slot`, a move's
      destination, a live cell key and an instance's nesting all use. */
   name: string;
   shape: string;
@@ -360,7 +365,7 @@ export interface SlotSpec {
 
 /* a component's DECLARED event: a function signature its behavior raises with the
  * `raise` step and an instance's flows handle with the params bound by name. Gesture
- * events are never rows here — the primitive a part carries brings that family. */
+ * events are never rows here — the primitive an element carries brings that family. */
 export interface EventSpec {
   name: string;
   params: EventParam[];
@@ -371,15 +376,15 @@ export type Attrs = Record<string, Program>;
 export interface Interact {
   primitive: "press" | "drag1d" | "drag_radial" | "pick";
   params: Attrs;
-  /* false keeps this part's gestures off the widget-level channel (static propagation
-     topology — the system's whole answer to stopPropagation) */
+  /* false keeps this element's gestures off the instance-level channel (static
+     propagation topology — the system's whole answer to stopPropagation) */
   bubbles?: boolean;
 }
 
 /* ---- the interaction vocabulary, closed on both sides ----
  *
  * AN EVENT IS A FUNCTION CALL: a name plus typed parameters a handler flow binds by
- * name. Gesture events are NEVER DECLARED — a part carrying a primitive brings that
+ * name. Gesture events are NEVER DECLARED — an element carrying a primitive brings that
  * family with the fixed signatures below (the backend compiler mirrors this table) —
  * while a component's OWN events are declared {name, params} signatures and raised with
  * the `raise` step. The trigger picker, the events editor and the gesture picker all
@@ -432,8 +437,8 @@ export interface EventParam {
 }
 
 /* The GESTURE events, with their fixed signatures. tap/press/release/held/open are
- * MOMENTS and carry nothing — which event fired is the information, and the widget's
- * state is readable as widget.<slot>; pressrelease alone carries the edge, the drags
+ * MOMENTS and carry nothing — which event fired is the information, and the instance's
+ * state is readable as this.<slot>; pressrelease alone carries the edge, the drags
  * carry the value in motion, the picks carry the option. */
 export interface EventKind {
   name: string;
@@ -507,7 +512,7 @@ export interface NodeAttrs {
   transitions?: CompiledTransitionMap;
 }
 
-export interface WidgetType {
+export interface ComponentType {
   name: string;
   slots: SlotSpec[];
   events: EventSpec[];
@@ -523,7 +528,7 @@ export interface WidgetType {
 
 export interface Registry {
   version: number;
-  types: WidgetType[];
+  components: ComponentType[];
 }
 
 /* ---- document ops ---- */
@@ -565,7 +570,7 @@ export interface AggFrame {
 export interface Live {
   epoch: number;
   values: Record<string, Json>;
-  /* aggregate cells, keyed like `values` ("<widget>.<slot>" / "v<node>"): deltas on a
+  /* aggregate cells, keyed like `values` ("<instance>.<slot>" / "v<node>"): deltas on a
      live frame, the whole cell on a snapshot. The shell folds these into its standing
      copies (editor.ts) and a `slot:` read serves from those first (stage.ts). */
   aggs?: Record<string, AggFrame>;
@@ -574,7 +579,7 @@ export interface Live {
 /* ---- diagnostics ---- */
 
 /* One compile finding, addressed to the document node it is about. `node` may
- * be any node, so a view maps it to the widget that owns it before marking the canvas.
+ * be any node, so a view maps it to the instance that owns it before marking the canvas.
  * `where` narrows it to a field within that node (a slot name, "init") so the sidebars can
  * pin it on the exact row; empty when the node itself is the line. */
 export interface Diag {

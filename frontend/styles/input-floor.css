@@ -5,7 +5,7 @@
    explicit whitelist below, keyed on data-input="text" | "scroll" | "native", matching the
    allowances input.ts uses for the event half of the same policy. This block sits early on
    purpose: a component rule further down the file has the same specificity and wins, so a
-   widget that needs its own drag (sliders, the colour picker, the gutters) keeps saying so
+   control that needs its own drag (sliders, the colour picker, the gutters) keeps saying so
    where it is defined. */
 * {
   touch-action: none;

@@ -1,7 +1,7 @@
-/* Widget types as document data (spec 2.3): the template-expression compiler's
+/* Components as document data (spec 2.3): the template-expression compiler's
  * lowering to view programs, the built-in components compiling clean into the exact
  * served wire shape, and a document component shadowing / extending the built-ins
- * with diagnostics pinned to the part and attr that broke. */
+ * with diagnostics pinned to the element and attr that broke. */
 #include "check.h"
 #include "compile/compiler.h"
 #include "compile/components.h"
@@ -21,7 +21,7 @@ using namespace hmi;
 
 namespace {
 
-/* a widget-level scope: every name addresses bare, as the component's own props do */
+/* an instance-level scope: every name addresses bare, as the component's own props do */
 TemplateScope scope_of(std::initializer_list<const char*> props) {
     TemplateScope scope;
     std::vector<std::string> names;
@@ -396,15 +396,15 @@ void test_builtins_compile_clean() {
      * all is most of the test; the rest pins the served shape */
     const Json& registry = builtin_registry();
     CHECK(registry["version"] == 1);
-    CHECK_EQ(registry["types"].size(), size_t(12));
+    CHECK_EQ(registry["components"].size(), size_t(12));
 
     const char* expected[] = {"Button", "Toggle",   "Slider",  "Knob",
                               "RadialSlider", "Gauge", "Selector", "Trend",
                               "Readout", "Dropdown", "Label",   "Panel"};
     for (size_t i = 0; i < 12; ++i)
-        CHECK_EQ(registry["types"][i].value("name", ""), std::string(expected[i]));
+        CHECK_EQ(registry["components"][i].value("name", ""), std::string(expected[i]));
 
-    for (const Json& type : registry["types"]) {
+    for (const Json& type : registry["components"]) {
         const std::string name = type.value("name", "");
         CHECK_MSG(type["slots"].is_array() && !type["slots"].empty(),
                   name + " has no slots");
@@ -430,7 +430,7 @@ void test_builtins_compile_clean() {
 
     /* THE ROOT IS THE COMPONENT: no wrapper node stands between a type and its content,
        so the template's own name is the type's and its box is the instance's box */
-    for (const Json& type : registry["types"]) {
+    for (const Json& type : registry["components"]) {
         CHECK_EQ(type["template"].value("name", ""), type.value("name", ""));
         CHECK(type["template"]["kind"] == "frame");
         CHECK_MSG(type["template"]["attrs"].contains("surface"),
@@ -439,7 +439,7 @@ void test_builtins_compile_clean() {
     }
 
     /* pin a few known lowerings end to end, one per vocabulary feature */
-    const Json& toggle = registry["types"][1];
+    const Json& toggle = registry["components"][1];
     const Json& pill = toggle["template"]["children"][0];
     /* the pill owns both colours, so they lower to the ADDRESSES under it while `value` —
        the component's own — stays bare */
@@ -456,7 +456,7 @@ void test_builtins_compile_clean() {
     CHECK(toggle["behavior"][0]["do"][2]["kind"] == "raise");
 
     /* A BAR IS A FRAME WHOSE WIDTH IS AN EXPRESSION: no draw kind, no renderer case */
-    const Json& slider = registry["types"][2];
+    const Json& slider = registry["components"][2];
     const Json& fill = slider["template"]["children"][0]["children"][0];
     CHECK_EQ(ops_of(fill["attrs"]["w"]),
              "LOAD(slot:value) LOAD(slot:min) SUB LOAD(slot:max) LOAD(slot:min) SUB "
@@ -468,9 +468,9 @@ void test_builtins_compile_clean() {
     CHECK_EQ(ops_of(mark["attrs"]["repeat"]), "LOAD(slot:scale.divisions)");
     CHECK_EQ(ops_of(mark["attrs"]["left"]), "LOAD(repeat:fraction)");
 
-    /* A PLOT IS A PATH whose anchors are data: the widget's own history LIST maps to
+    /* A PLOT IS A PATH whose anchors are data: the instance's own history LIST maps to
        anchor records in the template's own text, and no renderer knows what a plot is */
-    const Json& trend = registry["types"][7];
+    const Json& trend = registry["components"][7];
     CHECK_EQ(ops_of(trend["template"]["children"][0]["attrs"]["points"]),
              "LOAD(slot:history) ITERATE[MAP]{"
              "ARG(1) LOAD(slot:history) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
@@ -492,17 +492,17 @@ void test_builtins_compile_clean() {
         CHECK_EQ(sampler["when"][0].value("kind", ""), "every");
         CHECK_EQ(sampler["when"][0].value("ms", ""), "1000 / rate");
         CHECK_EQ(sampler["do"][0].value("mode", ""), "append");
-        CHECK_EQ(sampler["do"][0].value("keep", ""), "widget.rate * widget.window");
+        CHECK_EQ(sampler["do"][0].value("keep", ""), "this.rate * this.window");
         CHECK_EQ(sampler["do"][0]["to"].value("slot", ""), "history");
     }
 
-    const Json& readout = registry["types"][8];
+    const Json& readout = registry["components"][8];
     CHECK_EQ(ops_of(readout["template"]["children"][0]["attrs"]["text"]),
              "LOAD(slot:value) LOAD(slot:reading.decimals) TO_FIXED");
 
     /* the Selector's detents count the list, the labels index it, and the needle
        rides indexOf — the resolver cells are gone whole */
-    const Json& selector = registry["types"][6];
+    const Json& selector = registry["components"][6];
     const Json& dial = selector["template"]["children"][0];
     CHECK_EQ(ops_of(dial["children"][1]["attrs"]["repeat"]),
              "LOAD(slot:options) LENGTH");
@@ -514,7 +514,7 @@ void test_builtins_compile_clean() {
 
     /* AN ARC IS A PATH: its anchors are the trig the language already had, so the corner
        of the annulus is a compiled program like any other field */
-    const Json& gauge = registry["types"][5];
+    const Json& gauge = registry["components"][5];
     const Json& track = gauge["template"]["children"][0]["children"][0]["children"][0];
     CHECK(track["kind"] == "path" && track["closed"] == true);
     CHECK_EQ(track["anchors"].size(), size_t(4));
@@ -523,7 +523,7 @@ void test_builtins_compile_clean() {
 
     /* PropDef extras round-trip: fine steps, bounds, editors — and an address that says
        which node owns what */
-    const Json& knob = registry["types"][3];
+    const Json& knob = registry["components"][3];
     bool thickness = false, arc_color = false;
     for (const Json& slot : knob["slots"]) {
         if (slot.value("name", "") == "dial.arc.thickness") {
@@ -577,7 +577,7 @@ Document component_document() {
         {"events", Json::array({Json{{"name", "changed"},
                                      {"params", Json::array({Json{{"name", "value"},
                                                                   {"shape", "bool"}}})}}})},
-        /* the root carries the press: tap is valid in behavior because a part raises it */
+        /* the root carries the press: tap is valid in behavior because an element raises it */
         {"interact", Json{{"primitive", "press"}, {"params", Json{{"hold_ms", "600"}}}}},
         {"children", Json::array({
             Json{{"id", 211}, {"kind", "frame"}, {"name", "lamp"},
@@ -587,7 +587,7 @@ Document component_document() {
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                  {"when_mode", "first"},
                  {"do", Json::array({Json{{"kind", "assign"},
-                                          {"from", {{"expr", "!widget.value"}}},
+                                          {"from", {{"expr", "!this.value"}}},
                                           {"to", {{"local", "t"}, {"path", ""}}}},
                                      Json{{"kind", "assign"},
                                           {"from", {{"expr", "t"}}},
@@ -621,12 +621,12 @@ void test_doc_components() {
     Json registry = derive_registry(document, diags);
 
     /* Meter appends; Toggle shadows IN PLACE, keeping the built-in order */
-    CHECK_EQ(registry["types"].size(), size_t(13));
-    CHECK(registry["types"][1]["name"] == "Toggle");
-    CHECK(registry["types"][12]["name"] == "Meter");
+    CHECK_EQ(registry["components"].size(), size_t(13));
+    CHECK(registry["components"][1]["name"] == "Toggle");
+    CHECK(registry["components"][12]["name"] == "Meter");
 
-    /* the bad expression is a finding on the PART node, named by the attr; the good
-     * attrs on the same part still compiled */
+    /* the bad expression is a finding on the ELEMENT node, named by the attr; the good
+     * attrs on the same element still compiled */
     CHECK_EQ(diags.size(), size_t(1));
     if (!diags.empty()) {
         CHECK_EQ(diags[0].node_id, uint64_t(111));
@@ -634,7 +634,7 @@ void test_doc_components() {
         CHECK_EQ(diags[0].code, std::string("template_expr"));
         CHECK(diags[0].message.find("nope") != std::string::npos);
     }
-    const Json& face = registry["types"][12]["template"]["children"][0];
+    const Json& face = registry["components"][12]["template"]["children"][0];
     CHECK_EQ(ops_of(face["attrs"]["surface"]), "LOAD(slot:fill_color)");
     /* the node's own `shown` switch is folded into whatever the type computes: it draws
        when both hold */
@@ -643,13 +643,13 @@ void test_doc_components() {
     CHECK(!face["attrs"].contains("radius"));   /* the broken attr is not served */
 
     /* the shadow really replaced the built-in template and props */
-    const Json& toggle = registry["types"][1];
+    const Json& toggle = registry["components"][1];
     CHECK_EQ(toggle["slots"].size(), size_t(2));   /* `value` + the lamp node's `shown` */
     CHECK_EQ(ops_of(toggle["template"]["children"][0]["attrs"]["surface"]),
              "CONST(\"#ff0000\")");
 
     /* the document compiler consumes the derived registry like any other: the Meter
-     * widget gets its slot cell, and the shadowed Toggle keeps its default behavior */
+     * instance gets its slot cell, and the shadowed Toggle keeps its default behavior */
     FakeMesh mesh;
     CompileResult compiled = compile_document(document, registry, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
@@ -658,7 +658,7 @@ void test_doc_components() {
     bool meter_cell = false;
     for (const CellDef& cell : compiled.program.cells)
         if (cell.kind == CellKind::Slot && cell.name == "value" &&
-            cell.owner_widget ==
+            cell.owner_node ==
                 json_u64_or(document.root["pages"][0]["children"][0]["id"], 0))
             meter_cell = true;
     CHECK(meter_cell);
@@ -714,7 +714,7 @@ void test_part_properties() {
             {"name", "Main"},
             {"children", Json::array({Json{
                 {"kind", "frame"}, {"type", "Dial"}, {"name", "D"},
-                /* the instance's values nest exactly like the parts do */
+                /* the instance's values nest exactly like the elements do */
                 {"slots", Json{{"value", 3.0},
                                {"gauge", Json{{"shade", "#101010"},
                                               {"arc", Json{{"fill_color", "#00ff00"}}}}}}}}})}}})},
@@ -727,7 +727,7 @@ void test_part_properties() {
     CHECK_MSG(diags.empty(), diags.empty() ? "" : diags[0].message);
 
     /* every property is served ONCE, under its owner's path */
-    const Json& dial = registry["types"][12];
+    const Json& dial = registry["components"][12];
     std::set<std::string> names;
     for (const Json& slot : dial["slots"]) names.insert(slot.value("name", ""));
     CHECK(names.count("value") == 1);
@@ -762,7 +762,7 @@ void test_part_properties() {
     const uint64_t id = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto cell_named = [&](const char* name) -> const CellDef* {
         for (const CellDef& cell : compiled.program.cells)
-            if (cell.kind == CellKind::Slot && cell.owner_widget == id && cell.name == name)
+            if (cell.kind == CellKind::Slot && cell.owner_node == id && cell.name == name)
                 return &cell;
         return nullptr;
     };
@@ -841,14 +841,14 @@ void test_empty_component() {
     std::vector<Diag> diags;
     Json registry = derive_registry(document, diags);
     CHECK(diags.empty());
-    CHECK_EQ(registry["types"].size(), size_t(13));
-    CHECK(registry["types"][12]["template"]["kind"] == "frame");
-    CHECK(registry["types"][12]["template"]["children"].empty());
+    CHECK_EQ(registry["components"].size(), size_t(13));
+    CHECK(registry["components"][12]["template"]["kind"] == "frame");
+    CHECK(registry["components"][12]["template"]["children"].empty());
 }
 
 /* The closed attr vocabulary (registry/attrs.h): a name outside the common set and the
  * node's own kind is a mistake, not a silent no-op — `rotation` typed for `rotate` used to
- * compile clean and simply never fire. There is no open kind any more: `code` parts are
+ * compile clean and simply never fire. There is no open kind any more: `code` nodes are
  * gone, so every attr on every node is checked against the one table. */
 void test_attr_vocabulary() {
     /* one misspelled attr: exactly one finding, on THAT node, `where` = the attr name —
@@ -994,7 +994,7 @@ void test_transitions() {
     std::vector<Diag> diags;
     Json registry = derive_registry(document, diags);
 
-    const Json& sweep = registry["types"][12];
+    const Json& sweep = registry["components"][12];
     /* the component record is its ROOT node: its transitions ride the template root.
        EVERY VALUE IS A PROGRAM now — a literal is the degenerate CONST. */
     CHECK_EQ(ops_of(sweep["template"]["transitions"]["surface"]["ms"]), "CONST(300.0)");
@@ -1086,7 +1086,7 @@ void test_transitions() {
         Json registry2 = derive_registry(document2, diags2);
         CHECK_EQ(diags2.size(), size_t(3));
         for (const Diag& d : diags2) CHECK_EQ(d.code, std::string("prop_smooth"));
-        const Json& slots = registry2["types"][12]["slots"];
+        const Json& slots = registry2["components"][12]["slots"];
         CHECK(!slots[0].contains("smooth"));
         /* the ms was legal, the profile was not: the sweep serves, the profile does not */
         CHECK(slots[1].contains("smooth") && !slots[1].contains("profile"));

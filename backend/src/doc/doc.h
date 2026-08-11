@@ -51,8 +51,8 @@ class Document {
     /* Every INSTANCE in document order — a frame node carrying a `type` — with the page
      * it belongs to. Page identity is what gates mesh polling and scopes a rename, so an
      * instance nested five frames deep still resolves to its page, never to its parent. */
-    struct WidgetRef { Json* page; Json* widget; };
-    std::vector<WidgetRef> widgets();
+    struct InstanceRef { Json* page; Json* instance; };
+    std::vector<InstanceRef> instances();
 
     /* Every node of every page AND of every component, root-first: the walk that belongs
      * to anything treating the document as one tree (the token rename, the attr compile).

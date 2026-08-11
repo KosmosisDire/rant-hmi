@@ -42,7 +42,7 @@ void Scheduler::run_one(uint32_t index, Value value) {
 }
 
 /* Dispatch every RAISED event the runs so far queued, in order, on the raising
- * widget's own channel. A raise during the drain appends to the same queue; the queue's
+ * instance's own channel. A raise during the drain appends to the same queue; the queue's
  * capacity (one slot per Raise instruction, never compacted mid-drain) is what bounds a
  * cascade — a raise loop fills it and the Raise op faults, it cannot spin. */
 void Scheduler::drain_raised() {
@@ -61,8 +61,8 @@ void Scheduler::drain_raised() {
         }
         for (uint32_t i = 0; i < program_.flows.size(); ++i) {
             const FlowProgram& flow = program_.flows[i];
-            if (flow.widget_id == def.widget_id && flow.event == def.event &&
-                flow.part.empty())
+            if (flow.node_id == def.node_id && flow.event == def.event &&
+                flow.element.empty())
                 run_one(i, value);
         }
     }
@@ -70,58 +70,58 @@ void Scheduler::drain_raised() {
     draining_ = false;
 }
 
-void Scheduler::dispatch(uint64_t widget, const std::string& part,
+void Scheduler::dispatch(uint64_t node, const std::string& element,
                          const std::string& event, Value arg) {
     state_.reset_scratch();
     for (uint32_t i = 0; i < program_.flows.size(); ++i) {
         const FlowProgram& flow = program_.flows[i];
-        if (flow.widget_id != widget || flow.event != event) continue;
-        if (!part_reaches(program_, widget, flow.part, part)) continue;
+        if (flow.node_id != node || flow.event != event) continue;
+        if (!element_reaches(program_, node, flow.element, element)) continue;
         run_one(i, arg);
     }
 }
 
 void Scheduler::on_press(const InputEvent& event) {
     auto existing = std::find_if(pressed_.begin(), pressed_.end(), [&](const Pressed& row) {
-        return row.session == event.session && row.widget == event.widget &&
-               row.part == event.part;
+        return row.session == event.session && row.node == event.node &&
+               row.element == event.element;
     });
     if (existing == pressed_.end())
-        pressed_.push_back(Pressed{event.session, event.widget, event.part});
+        pressed_.push_back(Pressed{event.session, event.node, event.element});
     holds_.erase(
         std::remove_if(holds_.begin(), holds_.end(), [&](const Hold& hold) {
             return hold.session == event.session &&
-                   program_.flows[hold.flow].widget_id == event.widget;
+                   program_.flows[hold.flow].node_id == event.node;
         }),
         holds_.end());
     for (uint32_t i = 0; i < program_.flows.size(); ++i) {
         const FlowProgram& flow = program_.flows[i];
-        if (flow.widget_id != event.widget || flow.event != "held") continue;
-        if (!part_reaches(program_, event.widget, flow.part, event.part)) continue;
+        if (flow.node_id != event.node || flow.event != "held") continue;
+        if (!element_reaches(program_, event.node, flow.element, event.element)) continue;
         holds_.push_back(
             Hold{event.session, i, state_.tick + flow.hold_ticks, flow.every_ticks});
     }
     /* press() carries nothing — which edge fired IS the information; the down/up bool
        belongs to pressrelease alone */
-    dispatch(event.widget, event.part, "press", Value::nil());
-    dispatch(event.widget, event.part, "pressrelease", Value::boolean(true));
+    dispatch(event.node, event.element, "press", Value::nil());
+    dispatch(event.node, event.element, "pressrelease", Value::boolean(true));
 }
 
 void Scheduler::on_release(const InputEvent& event) {
     pressed_.erase(
         std::remove_if(pressed_.begin(), pressed_.end(), [&](const Pressed& row) {
-            return row.session == event.session && row.widget == event.widget &&
-                   row.part == event.part;
+            return row.session == event.session && row.node == event.node &&
+                   row.element == event.element;
         }),
         pressed_.end());
     holds_.erase(
         std::remove_if(holds_.begin(), holds_.end(), [&](const Hold& hold) {
             return hold.session == event.session &&
-                   program_.flows[hold.flow].widget_id == event.widget;
+                   program_.flows[hold.flow].node_id == event.node;
         }),
         holds_.end());
-    dispatch(event.widget, event.part, "release", Value::nil());
-    dispatch(event.widget, event.part, "pressrelease", Value::boolean(false));
+    dispatch(event.node, event.element, "release", Value::nil());
+    dispatch(event.node, event.element, "pressrelease", Value::boolean(false));
 }
 
 void Scheduler::release_session(uint64_t session) {
@@ -134,9 +134,9 @@ void Scheduler::release_session(uint64_t session) {
     for (const Pressed& row : down) {
         InputEvent synth;
         synth.session = session;
-        synth.widget = row.widget;
+        synth.node = row.node;
         synth.event = "release";
-        synth.part = row.part;
+        synth.element = row.element;
         synth.sequence = sequence++;
         post(std::move(synth));
     }
@@ -270,7 +270,7 @@ bool Scheduler::tick(std::string& fault) {
                 state_.texts[state_.input_scratch].set(event.text);
                 value = Value::text(state_.input_scratch);
             }
-            dispatch(event.widget, event.part, event.event, value);
+            dispatch(event.node, event.element, event.event, value);
         }
     }
     inbound_.clear();
@@ -282,7 +282,7 @@ bool Scheduler::tick(std::string& fault) {
             continue;
         }
         /* held() is nullary — the firing IS the information; a flow reads the
-           widget's own slots for values */
+           instance's own slots for values */
         state_.reset_scratch();
         run_one(hold.flow, Value::nil());
         if (hold.repeat) {
@@ -299,7 +299,7 @@ bool Scheduler::tick(std::string& fault) {
      * not — which is how a Trend has a past the moment a page opens now that its ring is
      * an ordinary list a flow appends to. Runs after the slot programs, so a sample lands
      * the same tick the value it reads arrived. Document order, because the flows vector
-     * already is document order and two rings on one widget must not race.
+     * already is document order and two rings on one instance must not race.
      *
      * The catch-up clamp is what keeps a stalled tick from firing a burst: a cursor that
      * has fallen behind is pulled forward to the next tick rather than replaying the

@@ -67,7 +67,7 @@ Json path(const char* name, Json attrs, Json anchors, bool closed = true) {
  * expressions and its children's. The line between a component-level property and a
  * node's is where it is READ:
  *
- *   the COMPONENT owns what the widget IS: the value it carries, its range, how it is
+ *   the COMPONENT owns what the control IS: the value it carries, its range, how it is
  *   dragged and how its box is dressed.
  *
  *   a NODE owns what it PAINTS: its colours, its own corner radius, the text it draws.
@@ -80,8 +80,9 @@ Json owns(Json node, Json props) {
 
 /* the gesture riding a node. No emits map: gestures post their canonical names and the
  * component's BEHAVIOR maps them to state and raised events — visible flow code where a
- * rename table used to be. `bubbles: false` keeps a part's gestures off the widget-level
- * channel (a close button whose tap must not read as "the card was tapped"). */
+ * rename table used to be. `bubbles: false` keeps an element's gestures off the
+ * instance-level channel (a close button whose tap must not read as "the card was
+ * tapped"). */
 Json interact(const char* primitive, Json params, bool bubbles = true) {
     Json row = Json{{"primitive", primitive}, {"params", std::move(params)}};
     if (!bubbles) row["bubbles"] = false;
@@ -167,8 +168,8 @@ Json align_slot(const char* def) {
 
 /* A DECLARED EVENT: the component's own vocabulary, spoken with the `raise` step in its
  * behavior. An event is a FUNCTION CALL — a name plus typed parameters the instance's
- * flows bind by name — and gesture events are never declared here: the primitive a part
- * carries brings its whole family with fixed signatures (tap(), pressrelease(down), ...).
+ * flows bind by name — and gesture events are never declared here: the primitive an
+ * element carries brings its whole family with fixed signatures (tap(), pressrelease(down), ...).
  *
  * Every CONTROL declares the pair: `changing(value)` while the value is in motion under
  * the finger (continuous controls only — a toggle is never mid-change), and
@@ -206,7 +207,7 @@ Json on_event(const char* name, std::initializer_list<Json> steps) {
 }
 
 /* A CADENCE flow: no event behind it, just its own clock. `ms` is constant arithmetic
- * over the widget's own slots, folded at compile — which is how a Trend's sampling rate
+ * over the component's own slots, folded at compile — which is how a Trend's sampling rate
  * stays a property of the instance and not of the machine. */
 Json on_every(const char* ms, std::initializer_list<Json> steps) {
     return Json{{"when", Json::array({Json{{"kind", "every"}, {"ms", ms}}})},
@@ -224,7 +225,7 @@ Json appends_slot(const char* slot, const char* expression, const char* keep) {
 }
 
 /* Two base sets, composed per component rather than forced on every one: a property a
- * widget does not use must not appear in its inspector, and that is a decision in this
+ * component does not use must not appear in its inspector, and that is a decision in this
  * data.
  *
  * STATE applies to anything that renders at all. BOX is the root frame's own dressing —
@@ -307,7 +308,7 @@ Json compose_slots(Json base, std::initializer_list<Json> own) {
 
 /* ONE COMPONENT = one pre-made frame: its own props, events and behavior, plus the
  * attrs and children of the box an instance renders as. There is no wrapper node and no
- * "one root part" rule — the component record IS the root.
+ * "one root element" rule — the component record IS the root.
  *
  * THE DESIGN FRAME (design_w x design_h, canvas px, on the 22px grid) is the component's
  * NATURAL SIZE: the size it is authored against, previewed at, and dropped onto a page
@@ -426,7 +427,7 @@ Json toggle_component() {
                 /* the toggle's own logic, stated where it can be read: propose the
                    inverse, echo it locally (a claimed slot drops this step alone), and
                    SPEAK it — a fed toggle still raises what it proposed */
-                Json::array({on_event("tap", {sets_local("t", "!widget.value"),
+                Json::array({on_event("tap", {sets_local("t", "!this.value"),
                                               sets_slot("value", "t"),
                                               raises("changed", "value", "t")})}));
 }
@@ -531,7 +532,7 @@ Json slider_component() {
                                         Json{{"axis", "'x'"}, {"min", "min"},
                                              {"max", "max"}, {"step", "step"}})),
                          /* empty (the default) draws nothing, and a binding fills it: a
-                            computed feed over widget.value is the old readout */
+                            computed feed over this.value is the old readout */
                          Json::array({
                              slot("fill_color", "color", "$accent", "appearance", "color"),
                              slot("track_color", "color", "$track", "appearance", "color"),
@@ -556,7 +557,7 @@ Json readout_component() {
                     slot("value", "num", 0, "value"),
                 }),
                 /* a display declares nothing: the press family arrives with the gesture,
-                   and a flow reads `widget.value` for the value it is showing */
+                   and a flow reads `this.value` for the value it is showing */
                 Json::array(),
                 box_attrs(),
                 Json::array({
@@ -611,7 +612,7 @@ Json trend_component() {
                        below — and bindable, so a mesh-side history can feed it whole and
                        the sampler stands down (one writer per slot, decided at compile) */
                     slot("history", "list", Json::array(), "value"),
-                    /* the SAMPLING is the widget's: the cadence and the keep window are
+                    /* the SAMPLING is the component's: the cadence and the keep window are
                        constant arithmetic over these two slots */
                     slot("rate", "num", 10, "config"),
                     slot("window", "num", 60, "config"),
@@ -633,8 +634,8 @@ Json trend_component() {
                                       slot("max", "num", 100, "config")})),
                 }),
                 Json::array({on_every("1000 / rate",
-                                      {appends_slot("history", "widget.value",
-                                                    "widget.rate * widget.window")})}));
+                                      {appends_slot("history", "this.value",
+                                                    "this.rate * this.window")})}));
 }
 
 Json dropdown_component() {
@@ -714,7 +715,7 @@ Json radial_interact(Json extra_params) {
 }
 
 /* the two arcs every radial control wears: the track over the whole sweep, and the fill
- * over the part of it the value has reached */
+ * over the portion of it the value has reached */
 Json radial_arcs(const Str& outer, double thickness) {
     const Str a0 = "start_angle";
     const Str a1 = "start_angle + sweep_angle";
@@ -1055,7 +1056,7 @@ Json selector_component() {
 Json label_component() {
     return component("Label", 264, 44,
                 compose_slots(tile_base(), {
-                    /* the text a Label shows is the widget's own DATA, not one node's
+                    /* the text a Label shows is the component's own DATA, not one node's
                        dressing: it is what a feed binds and what a press proposes */
                     slot("text", "text", "", "value"),
                     /* a label reads like a line of text, so it starts left, not centre */

@@ -215,21 +215,21 @@ Json withSlotText(Json slots, const std::string& address, const char* value) {
     return slots;
 }
 
-/* one widget's slot CELL, by the slot's dotted address */
-int slot_cell_of(const Program& program, uint64_t widget, const std::string& slot) {
+/* one instance's slot CELL, by the slot's dotted address */
+int slot_cell_of(const Program& program, uint64_t instance, const std::string& slot) {
     for (uint32_t i = 0; i < program.cells.size(); ++i)
         if (program.cells[i].kind == CellKind::Slot &&
-            program.cells[i].owner_widget == widget && program.cells[i].name == slot)
+            program.cells[i].owner_node == instance && program.cells[i].name == slot)
             return static_cast<int>(i);
     return -1;
 }
 
-/* one widget's STANDING slot program, by the slot's dotted address; null where the
+/* one instance's STANDING slot program, by the slot's dotted address; null where the
  * authored value folded to a constant (or nothing is authored at all) */
-const SlotProgram* slot_program_of(const Program& program, uint64_t widget,
+const SlotProgram* slot_program_of(const Program& program, uint64_t instance,
                                    const std::string& slot) {
     for (const SlotProgram& sp : program.slot_programs)
-        if (sp.widget_id == widget && sp.slot == slot) return &sp;
+        if (sp.node_id == instance && sp.slot == slot) return &sp;
     return nullptr;
 }
 
@@ -273,7 +273,7 @@ void test_compile_and_run() {
     RuntimeState state(compiled.program);
 
     /* the computed binding: no mesh dep, a cell dep makes it an every-tick program */
-    const uint64_t widget = slider_id(document);
+    const uint64_t instance = slider_id(document);
     const uint64_t readout_id =
         json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
     const SlotProgram* computed =
@@ -287,7 +287,7 @@ void test_compile_and_run() {
     const uint64_t before_run = allocation_count.load(std::memory_order_relaxed);
     allocation_trace = true;
     RunResult input =
-        run_event(compiled.program, state, widget, input_event, Value::number(3));
+        run_event(compiled.program, state, instance, input_event, Value::number(3));
     allocation_trace = false;
     const uint64_t after_run = allocation_count.load(std::memory_order_relaxed);
     CHECK(after_run == before_run);
@@ -304,7 +304,7 @@ void test_compile_and_run() {
 
     state.clear_outputs();
     RunResult commit =
-        run_event(compiled.program, state, widget, "commit", Value::number(4));
+        run_event(compiled.program, state, instance, "commit", Value::number(4));
     CHECK(!commit.faulted);
     CHECK(state.effect_count == 1);
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
@@ -312,7 +312,7 @@ void test_compile_and_run() {
     CHECK(mesh.transcript()[1] == "write V:motor{speed=10,enabled=true}");
 
     /* the mesh-bound slot: entity-dep only, re-evaluated on delivery, off the cache */
-    const SlotProgram* bound = slot_program_of(compiled.program, widget, "value");
+    const SlotProgram* bound = slot_program_of(compiled.program, instance, "value");
     if (!CHECK(bound != nullptr)) return;
     CHECK(!bound->every_tick && bound->dep_entities.size() == 1);
     seed_entity(state, compiled.program, "sensor", 0, Value::number(12.34));
@@ -451,14 +451,14 @@ void test_replay() {
 
     RuntimeState first(compiled.program);
     RuntimeState second(compiled.program);
-    const uint64_t widget = slider_id(document);
+    const uint64_t instance = slider_id(document);
     const Value events[] = {Value::number(2), Value::number(7), Value::number(11)};
     std::string fault;
     for (const Value& value : events) {
         first.clear_outputs();
         second.clear_outputs();
-        run_event(compiled.program, first, widget, "input", value);
-        run_event(compiled.program, second, widget, "input", value);
+        run_event(compiled.program, first, instance, "input", value);
+        run_event(compiled.program, second, instance, "input", value);
         CHECK(flush_effects(compiled.program, first, first_mesh, fault));
         CHECK(flush_effects(compiled.program, second, second_mesh, fault));
     }
@@ -518,7 +518,7 @@ void test_typed_variables() {
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
-    const uint64_t widget = slider_id(document);
+    const uint64_t instance = slider_id(document);
 
     int msg = -1;
     for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
@@ -535,15 +535,15 @@ void test_typed_variables() {
     CHECK(state.structs[cell.struct_slot].set[1] == 1);
     CHECK(state.structs[cell.struct_slot].set[0] == 0);
 
-    run_event(compiled.program, state, widget, "input", Value::number(3));
+    run_event(compiled.program, state, instance, "input", Value::number(3));
     state.clear_outputs();
-    run_event(compiled.program, state, widget, "commit", Value::number(4));
+    run_event(compiled.program, state, instance, "commit", Value::number(4));
     CHECK(state.structs[cell.struct_slot].fields[0].data.num == 10);
     CHECK(state.structs[cell.struct_slot].set[0] == 1);
 
     /* RESET: back to the declared start, not to bare zero */
     state.clear_outputs();
-    run_event(compiled.program, state, widget, "commit", Value::number(-1));
+    run_event(compiled.program, state, instance, "commit", Value::number(-1));
     CHECK(state.structs[cell.struct_slot].fields[0].data.num == 0);
     CHECK(state.structs[cell.struct_slot].set[0] == 0);
     CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
@@ -599,14 +599,14 @@ void test_typed_temporaries() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     RuntimeState state(compiled.program);
     std::string fault;
 
-    run_event(compiled.program, state, widget, "input", Value::number(7));
+    run_event(compiled.program, state, instance, "input", Value::number(7));
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
     state.clear_outputs();
-    run_event(compiled.program, state, widget, "input", Value::number(9));
+    run_event(compiled.program, state, instance, "input", Value::number(9));
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
     CHECK(mesh.transcript().size() == 2);
     /* `enabled` is the type's zero BOTH runs: the row re-zeroes, nothing carries */
@@ -674,13 +674,13 @@ void test_enum_names() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     const uint64_t fmt_id = json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
     RuntimeState state(compiled.program);
 
     /* the binding carries no authored render; the compiler appended the .name read */
     CHECK(compiled.program.slot_programs.size() == 3);
-    const SlotProgram* feed = slot_program_of(compiled.program, widget, "text");
+    const SlotProgram* feed = slot_program_of(compiled.program, instance, "text");
     if (!CHECK(feed != nullptr)) return;
     int gear = -1;
     for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
@@ -734,7 +734,7 @@ void test_enum_names() {
 
     /* writing the name lands the value */
     state.clear_outputs();
-    RunResult tap = run_event(compiled.program, state, widget, "tap", Value::nil());
+    RunResult tap = run_event(compiled.program, state, instance, "tap", Value::nil());
     CHECK(!tap.faulted);
     std::string fault;
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
@@ -745,7 +745,7 @@ void test_enum_names() {
 
     /* a name outside the vocabulary faults instead of writing a wrong integer */
     state.clear_outputs();
-    RunResult press = run_event(compiled.program, state, widget, "press", Value::nil());
+    RunResult press = run_event(compiled.program, state, instance, "press", Value::nil());
     CHECK(press.faulted);
 
     /* an enum-typed VARIABLE: seeded at its DEFAULT variant by name, and text stores
@@ -759,7 +759,7 @@ void test_enum_names() {
     CHECK(state.values[gear_mode].tag == ValueTag::Enum);
     CHECK(state.values[gear_mode].data.integer == 2);
     state.clear_outputs();
-    RunResult release = run_event(compiled.program, state, widget, "release", Value::nil());
+    RunResult release = run_event(compiled.program, state, instance, "release", Value::nil());
     CHECK(!release.faulted);
     CHECK(state.values[gear_mode].tag == ValueTag::Enum);
     CHECK(state.values[gear_mode].data.integer == 1);
@@ -768,12 +768,12 @@ void test_enum_names() {
     int text_cell = -1;
     for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
         if (compiled.program.cells[i].kind == CellKind::Slot &&
-            compiled.program.cells[i].owner_widget == widget &&
+            compiled.program.cells[i].owner_node == instance &&
             compiled.program.cells[i].name == "text")
             text_cell = static_cast<int>(i);
     CHECK(text_cell >= 0);
     state.clear_outputs();
-    RunResult held = run_event(compiled.program, state, widget, "held", Value::nil());
+    RunResult held = run_event(compiled.program, state, instance, "held", Value::nil());
     CHECK(!held.faulted);
     CHECK(state.text(compiled.program, state.values[text_cell]) == "run");
 
@@ -794,22 +794,22 @@ void test_enum_names() {
     CHECK_MSG(expr_error.find("display") != std::string::npos, expr_error);
 }
 
-/* a page with one widget of `type`, its authored slots, and whatever else is passed in */
-Document widget_document(const char* type, Json slots, Json extra = Json::object()) {
-    Json widget = Json{{"kind", "frame"}, {"type", type}, {"name", "w"}, {"slots", std::move(slots)}};
-    for (auto item = extra.begin(); item != extra.end(); ++item) widget[item.key()] = item.value();
+/* a page with one instance of `type`, its authored slots, and whatever else is passed in */
+Document instance_document(const char* type, Json slots, Json extra = Json::object()) {
+    Json instance = Json{{"kind", "frame"}, {"type", type}, {"name", "w"}, {"slots", std::move(slots)}};
+    for (auto item = extra.begin(); item != extra.end(); ++item) instance[item.key()] = item.value();
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
                  {"pages", Json::array({Json{{"name", "P"},
-                                             {"children", Json::array({std::move(widget)})}}})}};
+                                             {"children", Json::array({std::move(instance)})}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
     return document;
 }
 
-uint64_t only_widget(const Document& document) {
+uint64_t only_instance(const Document& document) {
     return json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
 }
 
@@ -903,7 +903,7 @@ void test_slot_conditionals() {
 
 /* THE STANDING SLOT PROGRAMS (spec D1), through the scheduler: a slot expression over
  * TWO topics re-evaluates when either moves; a literal slot folds to a constant and
- * leaves no program; an unparseable expression pins a finding to the widget's slot
+ * leaves no program; an unparseable expression pins a finding to the instance's slot
  * row. */
 void test_standing_slots() {
     EntityDef left;
@@ -918,14 +918,14 @@ void test_standing_slots() {
     right.fields = {FieldDef{"value", Shape::Num}};
     FakeMesh mesh(std::vector<EntityDef>{left, right});
 
-    Document document = widget_document(
+    Document document = instance_document(
         "Readout", Json{{"value", "@left.value + @right.value"},
                         {"reading", Json{{"decimals", 2}}}});
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t id = only_widget(document);
+    const uint64_t id = only_instance(document);
     /* MULTI-SOURCE is the point: one program, two recorded deps, no every-tick */
     if (!CHECK(compiled.program.slot_programs.size() == 1)) return;
     const SlotProgram& sum = compiled.program.slot_programs[0];
@@ -960,18 +960,18 @@ void test_standing_slots() {
     scheduler.tick(fault);
     CHECK(state.values[value].data.num == 17);
 
-    /* an unparseable expression is a FINDING on the widget's slot row, and the cell
+    /* an unparseable expression is a FINDING on the instance's slot row, and the cell
        stays UNKNOWN — commit is never blocked, the compiler teaches */
-    Document broken = widget_document("Readout", Json{{"value", "widget.."}});
+    Document broken = instance_document("Readout", Json{{"value", "this.."}});
     CompileResult failed = compile_document(broken, builtin_registry(), mesh);
     CHECK(!failed.ok);
     bool pinned = false;
     for (const Diag& diag : failed.program.diagnostics)
-        if (diag.node_id == only_widget(broken) && diag.where == "value" &&
+        if (diag.node_id == only_instance(broken) && diag.where == "value" &&
             diag.code == "expression")
             pinned = true;
     CHECK(pinned);
-    const int broken_cell = slot_cell_of(failed.program, only_widget(broken), "value");
+    const int broken_cell = slot_cell_of(failed.program, only_instance(broken), "value");
     CHECK(broken_cell >= 0);
     RuntimeState empty(failed.program);
     CHECK(broken_cell >= 0 && empty.values[broken_cell].tag == ValueTag::Nil);
@@ -1053,11 +1053,11 @@ void test_compile_fault() {
 void test_default_behavior() {
     FakeMesh mesh(reflection());
 
-    Document bare = widget_document("Toggle", Json{{"value", false}});
+    Document bare = instance_document("Toggle", Json{{"value", false}});
     CompileResult compiled = compile_document(bare, builtin_registry(), mesh);
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
-    const uint64_t id = only_widget(bare);
+    const uint64_t id = only_instance(bare);
     CHECK(state.values[0].tag != ValueTag::Nil);   /* a bool slot starts from its value */
     run_event(compiled.program, state, id, "tap", Value::boolean(true));
     const uint32_t slot = [&] {
@@ -1074,18 +1074,18 @@ void test_default_behavior() {
 
     /* a bound expression takes the slot over: the control becomes a view of the
        machine (motor.enabled is the reflection's one bool field) */
-    Document fed = widget_document("Toggle", Json{{"value", "@motor.enabled"}});
+    Document fed = instance_document("Toggle", Json{{"value", "@motor.enabled"}});
     CompileResult fed_compiled = compile_document(fed, builtin_registry(), mesh);
     /* standing down is deterministic and silent: the binding is what the author
        asked for */
     CHECK(!has_diag(fed_compiled, "behavior_inactive"));
     RuntimeState fed_state(fed_compiled.program);
-    run_event(fed_compiled.program, fed_state, only_widget(fed), "tap", Value::boolean(true));
+    run_event(fed_compiled.program, fed_state, only_instance(fed), "tap", Value::boolean(true));
     CHECK(fed_state.effect_count == 0);   /* nothing ran: the default stood down */
 
     /* an authored flow writing the same slot wins over the default, silently: the
        precedence is deterministic and the author asked for the winner */
-    Document authored = widget_document(
+    Document authored = instance_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -1095,7 +1095,7 @@ void test_default_behavior() {
     CHECK(authored_compiled.ok);
     CHECK(!has_diag(authored_compiled, "behavior_inactive"));
     RuntimeState authored_state(authored_compiled.program);
-    const uint64_t authored_id = only_widget(authored);
+    const uint64_t authored_id = only_instance(authored);
     run_event(authored_compiled.program, authored_state, authored_id, "tap",
               Value::boolean(true));
     run_event(authored_compiled.program, authored_state, authored_id, "tap",
@@ -1103,8 +1103,8 @@ void test_default_behavior() {
     /* the author's flow assigns true, so a second tap does NOT toggle it back */
     CHECK(authored_state.values[slot].data.boolean == true);
 
-    /* a slot is the widget's own: another widget's slot is not addressable */
-    Document reaching = widget_document(
+    /* a slot is the instance's own: another instance's slot is not addressable */
+    Document reaching = instance_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -1114,7 +1114,7 @@ void test_default_behavior() {
 }
 
 /* the scheduler's drain, in miniature, for tests that run events directly: dispatch
- * every raised record on its widget's own channel, in order */
+ * every raised record on its instance's own channel, in order */
 void drain_raised(const Program& program, RuntimeState& state) {
     for (uint32_t at = 0; at < state.raised_count; ++at) {
         const RaisedRecord& record = state.raised[at];
@@ -1125,7 +1125,7 @@ void drain_raised(const Program& program, RuntimeState& state) {
             state.texts[state.input_scratch].set(record.text.view());
             value = Value::text(state.input_scratch);
         }
-        run_event(program, state, def.widget_id, def.event, value);
+        run_event(program, state, def.node_id, def.event, value);
     }
     state.raised_count = 0;
 }
@@ -1137,7 +1137,7 @@ void drain_raised(const Program& program, RuntimeState& state) {
  * a compile refusal rather than a blank popup. */
 void test_notify() {
     FakeMesh mesh{std::vector<EntityDef>{}};
-    Document document = widget_document(
+    Document document = instance_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -1153,7 +1153,7 @@ void test_notify() {
                                : compiled.program.diagnostics[0].message);
     CHECK(compiled.program.layout.notice_capacity == 2);
     RuntimeState state(compiled.program);
-    const uint64_t id = only_widget(document);
+    const uint64_t id = only_instance(document);
     run_event(compiled.program, state, id, "tap", Value::nil());
     CHECK(state.notice_count == 2);
     CHECK(state.notices[0].text.view() == "line 1");
@@ -1165,7 +1165,7 @@ void test_notify() {
     CHECK(state.notice_count == 0);
 
     /* a message-less notify refuses at compile: there is nothing to say */
-    Document empty_message = widget_document(
+    Document empty_message = instance_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -1187,7 +1187,7 @@ void test_events_are_calls() {
     FakeMesh mesh(std::vector<EntityDef>{bit});
 
     /* the canonical write-back: on changed, send the value the control landed on */
-    Document document = widget_document(
+    Document document = instance_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
@@ -1198,7 +1198,7 @@ void test_events_are_calls() {
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
     RuntimeState state(compiled.program);
-    const uint64_t id = only_widget(document);
+    const uint64_t id = only_instance(document);
 
     /* tap() carries nothing; the toggle's behavior flips its value and SPEAKS it */
     run_event(compiled.program, state, id, "tap", Value::nil());
@@ -1225,7 +1225,7 @@ void test_events_are_calls() {
        local echo stands down PER STEP — and the raise beside it still runs, carrying the
        value the toggle proposed. This is what makes bind-in + write-back the
        two-sentence story. */
-    Document fed = widget_document(
+    Document fed = instance_document(
         "Toggle", Json{{"value", "@bit.on"}},
         Json{{"flows", Json::array({Json{
                  {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
@@ -1236,7 +1236,7 @@ void test_events_are_calls() {
                                    ? "compile failed without a diagnostic"
                                    : fed_compiled.program.diagnostics[0].message);
     RuntimeState fed_state(fed_compiled.program);
-    const uint64_t fed_id = only_widget(fed);
+    const uint64_t fed_id = only_instance(fed);
     const uint32_t fed_slot = [&] {
         for (uint32_t i = 0; i < fed_compiled.program.cells.size(); ++i)
             if (fed_compiled.program.cells[i].kind == CellKind::Slot &&
@@ -1256,17 +1256,17 @@ void test_events_are_calls() {
 
     /* a drag's parameter IS the value in motion: input(value) fills the slot and the
        pair speaks it */
-    Document slider = widget_document("Slider", Json{{"value", 0}, {"min", 0}, {"max", 100}});
+    Document slider = instance_document("Slider", Json{{"value", 0}, {"min", 0}, {"max", 100}});
     CompileResult slider_compiled = compile_document(slider, builtin_registry(), mesh);
     RuntimeState slider_state(slider_compiled.program);
-    run_event(slider_compiled.program, slider_state, only_widget(slider), "input",
+    run_event(slider_compiled.program, slider_state, only_instance(slider), "input",
               Value::number(62.5));
     for (uint32_t i = 0; i < slider_compiled.program.cells.size(); ++i)
         if (slider_compiled.program.cells[i].name == "value")
             CHECK(slider_state.values[i].data.num == 62.5);
 
     /* pressrelease(down): the edge event, bound by its declared name */
-    Document jog = widget_document(
+    Document jog = instance_document(
         "Button", Json::object(),
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "pressrelease"}}})},
@@ -1277,14 +1277,14 @@ void test_events_are_calls() {
                                    ? "compile failed without a diagnostic"
                                    : jog_compiled.program.diagnostics[0].message);
     RuntimeState jog_state(jog_compiled.program);
-    run_event(jog_compiled.program, jog_state, only_widget(jog), "pressrelease",
+    run_event(jog_compiled.program, jog_state, only_instance(jog), "pressrelease",
               Value::boolean(true));
     CHECK(jog_state.effect_count == 1);
     CHECK(jog_state.effects[0].value.data.boolean == true);
 
     /* THE SHADOW: a component's behavior writes its fed slot and then reads it — and
        must see ITS OWN write within the run. Program order does not lie on a fed
-       instance: `value = false; raise changed(widget.value)` speaks false, while the
+       instance: `value = false; raise changed(this.value)` speaks false, while the
        cell itself stays the feed's. */
     Json onoff = {
         {"id", 700}, {"name", "OnOff"},
@@ -1302,7 +1302,7 @@ void test_events_are_calls() {
                 Json{{"kind", "assign"}, {"from", {{"expr", "false"}}},
                      {"to", {{"slot", "value"}}}},
                 Json{{"kind", "raise"}, {"event", "changed"},
-                     {"args", Json{{"value", "widget.value"}}}}})}}})},
+                     {"args", Json{{"value", "this.value"}}}}})}}})},
     };
     Json shadow_root = {
         {"version", 1}, {"next_id", 1000},
@@ -1327,12 +1327,12 @@ void test_events_are_calls() {
                                       ? "compile failed without a diagnostic"
                                       : shadow_compiled.program.diagnostics[0].message);
     RuntimeState shadow_state(shadow_compiled.program);
-    const uint64_t shadow_id = only_widget(shadow_doc);
+    const uint64_t shadow_id = only_instance(shadow_doc);
     const uint32_t shadow_slot = [&] {
         for (uint32_t i = 0; i < shadow_compiled.program.cells.size(); ++i)
             if (shadow_compiled.program.cells[i].kind == CellKind::Slot &&
                 shadow_compiled.program.cells[i].name == "value" &&
-                shadow_compiled.program.cells[i].owner_widget == shadow_id)
+                shadow_compiled.program.cells[i].owner_node == shadow_id)
                 return i;
         return UINT32_MAX;
     }();
@@ -1347,8 +1347,8 @@ void test_events_are_calls() {
     /* ...and the fed cell itself never moved */
     CHECK(shadow_state.values[shadow_slot].data.boolean == true);
 
-    /* a gesture no part of the widget raises is a finding, not a dead flow */
-    Document deaf = widget_document(
+    /* a gesture no element of the component raises is a finding, not a dead flow */
+    Document deaf = instance_document(
         "Toggle", Json{{"value", false}},
         Json{{"flows", Json::array({Json{
                   {"when", Json::array({Json{{"kind", "event"}, {"name", "input"}}})},
@@ -1362,16 +1362,16 @@ void test_events_are_calls() {
 void test_value_shape_diagnostics() {
     FakeMesh mesh(reflection());
 
-    Document mistyped = widget_document("Toggle", Json{{"value", 3}});
+    Document mistyped = instance_document("Toggle", Json{{"value", 3}});
     CHECK(has_diag(compile_document(mistyped, builtin_registry(), mesh), "value_shape"));
 
     /* an explicit null is a deliberate UNKNOWN, not a mistake */
-    Document unknown = widget_document("Toggle", Json{{"value", nullptr}});
+    Document unknown = instance_document("Toggle", Json{{"value", nullptr}});
     CHECK(!has_diag(compile_document(unknown, builtin_registry(), mesh), "value_shape"));
 
     /* an enum slot holds a variant NAME, so it is text (quoted, the D2 spelling)
        and its folded value is checked against the vocabulary */
-    Document aligned = widget_document("Label", Json{{"align", "'center'"}});
+    Document aligned = instance_document("Label", Json{{"align", "'center'"}});
     CompileResult ok = compile_document(aligned, builtin_registry(), mesh);
     CHECK(!has_diag(ok, "slot_variant"));
     CHECK(!has_diag(ok, "value_shape"));
@@ -1382,7 +1382,7 @@ void test_value_shape_diagnostics() {
             text_align = true;
     CHECK(text_align);
 
-    Document typo = widget_document("Label", Json{{"align", "'middle'"}});
+    Document typo = instance_document("Label", Json{{"align", "'middle'"}});
     CHECK(has_diag(compile_document(typo, builtin_registry(), mesh), "slot_variant"));
 }
 
@@ -1399,7 +1399,7 @@ void test_colors() {
     sensor.fields = {FieldDef{"value", Shape::Num}};
     FakeMesh mesh(std::vector<EntityDef>{bit, sensor});
 
-    Document document = widget_document(
+    Document document = instance_document(
         "Readout",
         Json{{"reading", Json{{"text_color", "on.pick(#7fc4a0, #e0857c)"},
                               /* a CONSTANT chain folds into the cell's start */
@@ -1417,7 +1417,7 @@ void test_colors() {
             std::printf("colors compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
-    const uint64_t id = only_widget(document);
+    const uint64_t id = only_instance(document);
 
     auto rgba_of = [&](const SlotProgram* feed) {
         const Value& value = state.values[feed->cell];
@@ -1490,7 +1490,7 @@ void test_colors() {
     CHECK_EQ(state.values[channels->cell].data.num, 129.0);   /* 0x80 + a of 1.0 */
 
     /* `*` doubles the channels (alpha kept), `.invert()` / `invert()` flip them */
-    Document folded = widget_document(
+    Document folded = instance_document(
         "Readout", Json{{"reading", Json{{"text_color", "(#204060 * 2).invert()"}}},
                         {"units", Json{{"text_color", "invert(#204080 / 2)"}}}});
     CompileResult folded_compiled = compile_document(folded, builtin_registry(), mesh);
@@ -1498,9 +1498,9 @@ void test_colors() {
     CHECK(folded_compiled.program.slot_programs.size() == 2);
     RuntimeState folded_state(folded_compiled.program);
     const SlotProgram* scaled = slot_program_of(
-        folded_compiled.program, only_widget(folded), "reading.text_color");
+        folded_compiled.program, only_instance(folded), "reading.text_color");
     const SlotProgram* inverted = slot_program_of(
-        folded_compiled.program, only_widget(folded), "units.text_color");
+        folded_compiled.program, only_instance(folded), "units.text_color");
     if (!CHECK(scaled && inverted)) return;
     run_slot(folded_compiled.program, *scaled, folded_state);
     run_slot(folded_compiled.program, *inverted, folded_state);
@@ -1520,7 +1520,7 @@ void test_colors() {
     }
 
     /* a color where the slot wants one is fine; a number there is a shape diagnostic */
-    Document wrong = widget_document(
+    Document wrong = instance_document(
         "Readout", Json{{"reading", Json{{"text_color", "@sensor.value"}}}});
     CHECK(has_diag(compile_document(wrong, builtin_registry(), mesh), "shape"));
 
@@ -1550,23 +1550,23 @@ void test_tonemaps() {
     tag.fields = {FieldDef{"text", Shape::Text}};
     FakeMesh mesh(std::vector<EntityDef>{sensor, tag});
 
-    Json widgets = Json::array();
-    widgets.push_back(Json{
+    Json instances = Json::array();
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
         {"slots", Json{{"reading", Json{{"text_color", "jet(@sensor.value)"}}},
                        {"units", Json{{"text_color", "hot(@sensor.value)"}}},
                        {"surface", "coolWarm(@sensor.value)"},
                        {"border", "viridis(@sensor.value)"}}}});
-    widgets.push_back(Json{
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "b"},
         {"slots", Json{{"line", Json{{"text_color", "color(@tag.text)"}}}}}});
-    widgets.push_back(Json{
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Button"}, {"name", "c"},
         {"slots", Json{{"surface", "grayscale(@sensor.value)"}}}});
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
-                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(instances)}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -1640,33 +1640,33 @@ void test_text_and_enums() {
     sensor.fields = {FieldDef{"value", Shape::Num}};
     FakeMesh mesh(std::vector<EntityDef>{machine, sensor});
 
-    Json widgets = Json::array();
-    widgets.push_back(Json{
+    Json instances = Json::array();
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
         {"slots", Json{{"units", Json{{"text", "@machine.mode.name"}}},
                        {"reading",
                         Json{{"decimals", "@machine.mode.is(running).pick(4, 1)"}}},
                        {"value", "@machine.mode.int"}}}});
-    widgets.push_back(Json{
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "b"},
         {"slots", Json{{"units", Json{{"text", "@sensor.value.toFixed(2)"}}},
                        {"value", "num(@machine.note.trim())"},
                        {"reading", Json{{"decimals", "@machine.note.length"}}}}}});
-    widgets.push_back(Json{
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "c"},
         {"slots",
          Json{{"text",
                "@machine.note.trim().title().replace(\"Ab\", \"Z\").padStart(4, \"_\")"}}}});
-    widgets.push_back(Json{
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "d"},
         {"slots", Json{{"text", "fmtDuration(@sensor.value)"}}}});
-    widgets.push_back(Json{
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "e"},
         {"slots", Json{{"text", "str(@sensor.value)"}}}});
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
-                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(instances)}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -1685,8 +1685,8 @@ void test_text_and_enums() {
         json_u64_or(kids[0]["id"], 0), json_u64_or(kids[1]["id"], 0),
         json_u64_or(kids[2]["id"], 0), json_u64_or(kids[3]["id"], 0),
         json_u64_or(kids[4]["id"], 0)};
-    auto sp = [&](int widget, const char* slot) {
-        return slot_program_of(program, ids[widget], slot);
+    auto sp = [&](int instance, const char* slot) {
+        return slot_program_of(program, ids[instance], slot);
     };
     auto text_of = [&](const SlotProgram* feed) {
         return std::string(state.text(compiled.program, state.values[feed->cell]));
@@ -1806,38 +1806,38 @@ void test_lists_and_maps() {
         return Json{{"kind", "frame"}, {"type", "Readout"}, {"name", name},
                     {"slots", std::move(slots)}};
     };
-    Json widgets = Json::array();
-    widgets.push_back(readout3("a", "@plant.temps.max", "@plant.temps.length",
+    Json instances = Json::array();
+    instances.push_back(readout3("a", "@plant.temps.max", "@plant.temps.length",
                                "@plant.names.join(\", \")"));
-    widgets.push_back(readout3("b", "@plant.temps.sort()[0]",
+    instances.push_back(readout3("b", "@plant.temps.sort()[0]",
                                "@plant.temps.slice(1, 3).sum",
                                "@plant.names.sort().join(\"|\")"));
-    widgets.push_back(readout3("c", "num(@plant.config.get(\"speed\"))",
+    instances.push_back(readout3("c", "num(@plant.config.get(\"speed\"))",
                                "@plant.config.length",
                                "@plant.config.keys().sort().join(\",\")"));
-    widgets.push_back(readout3("d", "@plant.names.indexOf(\"b\")", nullptr,
+    instances.push_back(readout3("d", "@plant.names.indexOf(\"b\")", nullptr,
                                "@plant.config.has(\"mode\").pick(\"y\", \"n\")"));
-    widgets.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "e"},
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "e"},
         {"slots",
          Json{{"text", "@plant.csv.split(\",\").slice(0, 2).join(\"+\")"}}}});
-    widgets.push_back(readout3("f", "values(@plant.config).length", nullptr, nullptr));
+    instances.push_back(readout3("f", "values(@plant.config).length", nullptr, nullptr));
     /* lambdas (spec 6.4): every mode, end to end through the scheduler. temps is
        [30, 10, 20]; names is ["b", "c", "a"]. */
-    widgets.push_back(readout3("g", "@plant.temps.map(v => v * 2).sum",
+    instances.push_back(readout3("g", "@plant.temps.map(v => v * 2).sum",
                                "@plant.temps.filter(v => v > 15).length",
                                "@plant.names.map(v => v.upper()).join(\",\")"));
-    widgets.push_back(readout3("h", "@plant.temps.any(v => v > 25).pick(1, 0)",
+    instances.push_back(readout3("h", "@plant.temps.any(v => v > 25).pick(1, 0)",
                                "@plant.temps.all(v => v > 25).pick(1, 0)",
                                "@plant.names.sortBy(v => v).join(\"\")"));
     /* the body's own value orders the elements (a negated key reverses); chaining a
        lambda result is an ordinary list */
-    widgets.push_back(readout3("i", "@plant.temps.sortBy(v => -v).first",
+    instances.push_back(readout3("i", "@plant.temps.sortBy(v => -v).first",
                                "@plant.temps.filter(v => v > 15).map(v => v / 10).sum",
                                nullptr));
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
-                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(instances)}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -1869,14 +1869,14 @@ void test_lists_and_maps() {
 
     const Json& kids = document.root["pages"][0]["children"];
     auto wid = [&](uint32_t at) { return json_u64_or(kids[at]["id"], 0); };
-    auto cell_num = [&](uint32_t widget_at, const char* slot) {
-        const int cell = slot_cell_of(program, wid(widget_at), slot);
+    auto cell_num = [&](uint32_t instance_at, const char* slot) {
+        const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return -2e9;
         const Value& value = state.values[cell];
         return value.tag == ValueTag::Num ? value.data.num : -1e9;
     };
-    auto cell_text = [&](uint32_t widget_at, const char* slot) {
-        const int cell = slot_cell_of(program, wid(widget_at), slot);
+    auto cell_text = [&](uint32_t instance_at, const char* slot) {
+        const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return std::string("<no cell>");
         return std::string(state.text(program, state.values[cell]));
     };
@@ -2016,25 +2016,25 @@ void test_reduce() {
                                    {"reading", Json{{"decimals", decimals}}},
                                    {"units", Json{{"text", units}}}}}};
     };
-    Json widgets = Json::array();
+    Json instances = Json::array();
     /* a numeric fold IS the sum, spelled out; the text fold proves each iteration's
        result is re-homed before it becomes the accumulator */
-    widgets.push_back(readout("a", "@fold.temps.reduce((acc, v) => acc + v, 0)",
+    instances.push_back(readout("a", "@fold.temps.reduce((acc, v) => acc + v, 0)",
                               "@fold.temps.sum",
                               "@fold.temps.reduce((acc, v) => acc + str(v), \"\")"));
     /* the index, on both sides: a fold that weights by position, a map that reads it */
-    widgets.push_back(readout("b", "@fold.temps.reduce((acc, v, i) => acc + v * i, 0)",
+    instances.push_back(readout("b", "@fold.temps.reduce((acc, v, i) => acc + v * i, 0)",
                               "@fold.temps.map((v, i) => v * 100 + i).sum",
                               "@fold.names.map((v, i) => str(i) + v).join(\",\")"));
     /* an empty list leaves the starting value alone, and a fold over text joins */
-    widgets.push_back(readout("c",
+    instances.push_back(readout("c",
                               "@fold.temps.slice(0, 0).reduce((acc, v) => acc + v, 7)",
                               "@fold.temps.reduce((acc, v) => acc + 1, 0)",
                               "@fold.names.reduce((acc, v) => acc + v, \"\")"));
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
-                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(instances)}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -2057,14 +2057,14 @@ void test_reduce() {
 
     const Json& kids = document.root["pages"][0]["children"];
     auto wid = [&](uint32_t at) { return json_u64_or(kids[at]["id"], 0); };
-    auto cell_num = [&](uint32_t widget_at, const char* slot) {
-        const int cell = slot_cell_of(program, wid(widget_at), slot);
+    auto cell_num = [&](uint32_t instance_at, const char* slot) {
+        const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return -2e9;
         const Value& value = state.values[cell];
         return value.tag == ValueTag::Num ? value.data.num : -1e9;
     };
-    auto cell_text = [&](uint32_t widget_at, const char* slot) {
-        const int cell = slot_cell_of(program, wid(widget_at), slot);
+    auto cell_text = [&](uint32_t instance_at, const char* slot) {
+        const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return std::string("<no cell>");
         return std::string(state.text(program, state.values[cell]));
     };
@@ -2151,7 +2151,7 @@ void test_list_cells() {
     plant.fields = {names};
     FakeMesh mesh(std::vector<EntityDef>{plant});
 
-    Json widgets = Json::array({
+    Json instances = Json::array({
         selector("authored", Json::array({"a", "b", "c"})),
         /* the same list spelled as TEXT: what an inspector field commits */
         selector("typed", Json("[\"x\", \"y\"]")),
@@ -2163,7 +2163,7 @@ void test_list_cells() {
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
-                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(instances)}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -2174,10 +2174,10 @@ void test_list_cells() {
                         diag.message.c_str());
     CHECK(compiled.ok);
 
-    auto options_cell = [](const Program& program, uint64_t widget) {
+    auto options_cell = [](const Program& program, uint64_t instance) {
         for (uint32_t i = 0; i < program.cells.size(); ++i)
             if (program.cells[i].kind == CellKind::Slot &&
-                program.cells[i].owner_widget == widget && program.cells[i].name == "options")
+                program.cells[i].owner_node == instance && program.cells[i].name == "options")
                 return static_cast<int>(i);
         return -1;
     };
@@ -2399,11 +2399,11 @@ void test_aggregate_variables() {
     CHECK_EQ(map_dump(program, state, table), "a=1,b=2");
     CHECK(state.lists[log_slot].gen == 0 && state.lists[log_slot].total == 0);
 
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto raise = [&](const char* event) {
         state.reset_scratch();
-        run_event(program, state, widget, event, Value::nil());
+        run_event(program, state, instance, event, Value::nil());
     };
 
     /* APPEND grows the list; the keep window trims the FRONT, and each surviving text
@@ -2543,11 +2543,11 @@ void test_indexed_writes() {
     scheduler.tick(fault);
     const RuntimeState& state = scheduler.state();
     const uint32_t buf_slot = program.cells[buf].list_slot;
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     uint32_t seq = 0;
     auto press = [&](const char* event, const Value& value) {
-        scheduler.post(InputEvent{1, widget, event, value, ++seq});
+        scheduler.post(InputEvent{1, instance, event, value, ++seq});
         std::string one;
         scheduler.tick(one);
         return one;
@@ -2645,7 +2645,7 @@ void test_struct_agg_fields() {
                                    {"keep", "4"}}}),
          })},
     };
-    /* the RMW flow rides its OWN widget: a press-family trigger would co-fire with
+    /* the RMW flow rides its OWN instance: a press-family trigger would co-fire with
        the raw press/release posts above (pressrelease speaks on both edges) and its
        ReadEnt would re-fill the field over the element write mid-test */
     Json rmw = {
@@ -2695,11 +2695,11 @@ void test_struct_agg_fields() {
     CHECK(program.cells[derived].field_of == static_cast<uint32_t>(holder));
     CHECK(program.cells[derived].has_list);
 
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     uint32_t seq = 0;
     auto press = [&](const char* event, const Value& value) {
-        scheduler.post(InputEvent{1, widget, event, value, ++seq});
+        scheduler.post(InputEvent{1, instance, event, value, ++seq});
         std::string one;
         scheduler.tick(one);
     };
@@ -2733,9 +2733,9 @@ void test_struct_agg_fields() {
     std::string fault;
     scheduler.tick(fault);
     mesh.clear();
-    const uint64_t rmw_widget =
+    const uint64_t rmw_instance =
         json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
-    scheduler.post(InputEvent{1, rmw_widget, "tap", Value::boolean(true), ++seq});
+    scheduler.post(InputEvent{1, rmw_instance, "tap", Value::boolean(true), ++seq});
     scheduler.tick(fault);
     bool rmw_out = false;
     for (const std::string& line : mesh.transcript())
@@ -2801,26 +2801,26 @@ void test_bare_topic_scalars() {
     int flag_at = -1;
     for (uint32_t i = 0; i < program.entities.size(); ++i)
         if (program.entities[i].name == "flag") flag_at = static_cast<int>(i);
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
-    if (!CHECK(lit >= 0 && flag_at >= 0 && widget)) return;
+    if (!CHECK(lit >= 0 && flag_at >= 0 && instance)) return;
 
     RuntimeState state(program);
     state.last[flag_at].known = true;
     state.last[flag_at].fields[0] = Value::boolean(true);
 
-    run_event(program, state, widget, "tap", Value::nil());
+    run_event(program, state, instance, "tap", Value::nil());
     CHECK(state.values[lit].tag == ValueTag::Bool);
     CHECK(state.values[lit].data.boolean == true);
 
     /* a fresh temporary takes the topic's scalar shape, and reads like any bool */
-    run_event(program, state, widget, "press", Value::nil());
+    run_event(program, state, instance, "press", Value::nil());
     CHECK(state.values[lit].tag == ValueTag::Bool);
     CHECK(state.values[lit].data.boolean == false);
 
     /* and the variable goes back out as the anonymous value */
     state.clear_outputs();
-    run_event(program, state, widget, "release", Value::nil());
+    run_event(program, state, instance, "release", Value::nil());
     std::string fault;
     CHECK_MSG(flush_effects(program, state, mesh, fault), fault);
     CHECK(mesh.transcript().size() == 1);
@@ -2891,9 +2891,9 @@ void test_assign_expression_reads_mesh() {
     }
     const int total = named_cell(program, "total");
     const int hits = named_cell(program, "hits");
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
-    if (!CHECK(a_at >= 0 && b_at >= 0 && total >= 0 && hits >= 0 && widget)) return;
+    if (!CHECK(a_at >= 0 && b_at >= 0 && total >= 0 && hits >= 0 && instance)) return;
 
     /* the expression-borne reads subscribe exactly as structural reads did */
     CHECK(program.entities[a_at].flow_reads);
@@ -2905,15 +2905,15 @@ void test_assign_expression_reads_mesh() {
     state.last[b_at].known = true;
     state.last[b_at].fields[0] = Value::number(4);
 
-    run_event(program, state, widget, "tap", Value::nil());
+    run_event(program, state, instance, "tap", Value::nil());
     CHECK(state.values[total].tag == ValueTag::Num);
     CHECK_EQ(state.values[total].data.num, 7.0);
 
     /* the gate reads @a: 3 stands down, 7 passes */
-    run_event(program, state, widget, "release", Value::nil());
+    run_event(program, state, instance, "release", Value::nil());
     CHECK_EQ(state.values[hits].data.num, 0.0);
     state.last[a_at].fields[0] = Value::number(7);
-    run_event(program, state, widget, "release", Value::nil());
+    run_event(program, state, instance, "release", Value::nil());
     CHECK_EQ(state.values[hits].data.num, 1.0);
 }
 
@@ -2964,12 +2964,12 @@ void test_aggregate_expressions() {
     const int src = named_cell(program, "src");
     const int dst = named_cell(program, "dst");
     const int copy = named_cell(program, "copy");
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     int options = -1;
     for (uint32_t i = 0; i < program.cells.size(); ++i)
         if (program.cells[i].kind == CellKind::Slot &&
-            program.cells[i].owner_widget == widget &&
+            program.cells[i].owner_node == instance &&
             program.cells[i].name == "options")
             options = static_cast<int>(i);
     if (!CHECK(src >= 0 && dst >= 0 && copy >= 0 && options >= 0)) return;
@@ -2977,7 +2977,7 @@ void test_aggregate_expressions() {
     RuntimeState state(program);
     auto raise = [&](const char* event) {
         state.reset_scratch();
-        run_event(program, state, widget, event, Value::nil());
+        run_event(program, state, instance, event, Value::nil());
     };
 
     raise("select");
@@ -3049,7 +3049,7 @@ void test_aggregate_expressions() {
 /* THE CEILINGS, and what happens at them. An unbounded append refuses at the retained
  * ceiling with a fault that names the variable; a bounded one just trims. Iteration is
  * bounded separately and MUCH lower (it runs in the scratch pool), so a long retained
- * list faults rather than folding the part it could reach — while the in-place readers,
+ * list faults rather than folding the portion it could reach — while the in-place readers,
  * which walk the elements where they lie, keep working past that bound. */
 void test_aggregate_ceilings() {
     FakeMesh mesh;
@@ -3089,11 +3089,11 @@ void test_aggregate_ceilings() {
     if (!CHECK(unbounded >= 0 && bounded >= 0)) return;
 
     RuntimeState state(program);
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto raise = [&](const char* event) {
         state.reset_scratch();
-        return run_event(program, state, widget, event, Value::nil());
+        return run_event(program, state, instance, event, Value::nil());
     };
 
     /* a bounded ring never faults: it just drops its oldest */
@@ -3119,7 +3119,7 @@ void test_aggregate_ceilings() {
     CHECK_EQ(state.values[total].data.num, static_cast<double>(kRetainedCeiling));
 
     /* iteration BUILDS, in the scratch pool, whose bound is the varr ceiling — so a
-       longer source faults instead of folding the part it could reach */
+       longer source faults instead of folding the portion it could reach */
     const RunResult clipped = raise("held");
     CHECK(clipped.faulted);
     CHECK(state.values[folded].data.num == 0.0);
@@ -3180,12 +3180,12 @@ void test_map_reduce() {
     CHECK(compiled.ok);
     const Program& program = compiled.program;
     RuntimeState state(program);
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     state.reset_scratch();
-    run_event(program, state, widget, "tap", Value::nil());
+    run_event(program, state, instance, "tap", Value::nil());
     state.reset_scratch();
-    run_event(program, state, widget, "press", Value::nil());
+    run_event(program, state, instance, "press", Value::nil());
     CHECK_EQ(state.values[named_cell(program, "total")].data.num, 60.0);
     /* SORTED KEYS, always: the fold visits them in one order and only one, which is what
        makes a replay byte-identical however the keys were written */
@@ -3248,10 +3248,10 @@ void test_map_replay() {
         CompileResult compiled = compile_document(document, builtin_registry(), mesh);
         CHECK(compiled.ok);
         RuntimeState state(compiled.program);
-        const uint64_t widget =
+        const uint64_t instance =
             json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
         state.reset_scratch();
-        run_event(compiled.program, state, widget, "tap", Value::nil());
+        run_event(compiled.program, state, instance, "tap", Value::nil());
         return map_dump(compiled.program, state, named_cell(compiled.program, "table"));
     };
     Document forwards = document_for({{"a", 1}, {"m", 2}, {"z", 3}});
@@ -3488,7 +3488,7 @@ void test_suspend_holds_text() {
                           steps::guard("delay", 5),
                           steps::set_var("out", "x"),
                       })}};
-    Json widget = Json{{"kind", "frame"}, {"type", "Button"}, {"name", "w"}, {"slots", Json::object()},
+    Json instance = Json{{"kind", "frame"}, {"type", "Button"}, {"name", "w"}, {"slots", Json::object()},
                        {"flows", Json::array({std::move(flow)})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
@@ -3497,7 +3497,7 @@ void test_suspend_holds_text() {
                      Json{{"name", "out"}, {"type", "str"}, {"init", ""}},
                  })},
                  {"pages", Json::array({Json{{"name", "P"},
-                                             {"children", Json::array({std::move(widget)})}}})}};
+                                             {"children", Json::array({std::move(instance)})}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -3508,9 +3508,9 @@ void test_suspend_holds_text() {
             std::printf("suspend compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
-    const uint64_t widget_id = only_widget(document);
+    const uint64_t node_id = only_instance(document);
 
-    RunResult run = run_event(compiled.program, state, widget_id, "press",
+    RunResult run = run_event(compiled.program, state, node_id, "press",
                               Value::boolean(true));
     CHECK(!run.faulted);
     if (!CHECK(!state.pending.empty() && state.pending[0].active)) return;
@@ -3528,7 +3528,7 @@ void test_suspend_holds_text() {
     CHECK_EQ(std::string(state.text(compiled.program, state.values[out])), "first");
 }
 
-/* A FUNCTION dep's poll cadence rides the widget's `poll` map (spec D1): absent, the
+/* A FUNCTION dep's poll cadence rides the instance's `poll` map (spec D1): absent, the
  * 2 Hz default stands; authored, the slot's own rate does. Junk in the map is read
  * tolerantly — the default stands, nothing throws. */
 void test_document_tolerance() {
@@ -3543,8 +3543,8 @@ void test_document_tolerance() {
     sensor.fields = {FieldDef{"value", Shape::Num}};
     FakeMesh mesh(std::vector<EntityDef>{status, sensor});
 
-    auto widget_polling = [&](Json poll) {
-        Json widget = Json{
+    auto instance_polling = [&](Json poll) {
+        Json instance = Json{
             {"kind", "frame"},
             {"type", "Readout"},
             {"name", "w"},
@@ -3553,28 +3553,28 @@ void test_document_tolerance() {
                 {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                 {"when_mode", "any"},
                 {"do", Json::array({steps::write_field("V", "sensor", "value",
-                                                       "widget.value")})}}})}};
-        if (!poll.is_null()) widget["poll"] = std::move(poll);
+                                                       "this.value")})}}})}};
+        if (!poll.is_null()) instance["poll"] = std::move(poll);
         Json root = {{"version", 1},
                      {"next_id", 1},
                      {"globals", Json::array()},
                      {"pages",
                       Json::array({Json{{"name", "P"},
-                                        {"children", Json::array({std::move(widget)})}}})}};
+                                        {"children", Json::array({std::move(instance)})}}})}};
         Document document;
         std::string err;
         CHECK_MSG(document.adopt(std::move(root), err), err);
         return compile_document(document, builtin_registry(), mesh);
     };
-    CompileResult unset = widget_polling(Json());
+    CompileResult unset = instance_polling(Json());
     CHECK(unset.program.slot_programs.size() == 1);
     CHECK(unset.program.slot_programs.empty() ||
           unset.program.slot_programs[0].poll_ms == 500);   /* the 2 Hz default */
-    CompileResult paced = widget_polling(Json{{"value", 20}});
+    CompileResult paced = instance_polling(Json{{"value", 20}});
     CHECK(paced.program.slot_programs.size() == 1);
     CHECK(paced.program.slot_programs.empty() ||
           paced.program.slot_programs[0].poll_ms == 50);
-    CompileResult junk = widget_polling(Json{{"value", "fast"}});
+    CompileResult junk = instance_polling(Json{{"value", "fast"}});
     CHECK(junk.program.slot_programs.size() == 1);
     CHECK(junk.program.slot_programs.empty() ||
           junk.program.slot_programs[0].poll_ms == 500);
@@ -3609,9 +3609,9 @@ void test_theme_tokens() {
 
     const uint64_t lamp = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     const uint64_t sw = json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
-    auto slot_initial = [&](uint64_t widget, const char* name) -> const Value* {
+    auto slot_initial = [&](uint64_t instance, const char* name) -> const Value* {
         for (const CellDef& cell : compiled.program.cells)
-            if (cell.kind == CellKind::Slot && cell.owner_widget == widget &&
+            if (cell.kind == CellKind::Slot && cell.owner_node == instance &&
                 cell.name == name)
                 return &cell.initial;
         return nullptr;
@@ -3644,23 +3644,23 @@ void test_theme_tokens() {
  * read one instant through the same localtime. */
 void test_clock() {
     FakeMesh mesh(std::vector<EntityDef>{});
-    Json widgets = Json::array();
-    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
+    Json instances = Json::array();
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
                            {"slots", Json{{"value", "time.now"}}}});
-    widgets.push_back(Json{
+    instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "b"},
         {"slots",
          Json{{"value", "time.hour * 10000 + time.minute * 100 + time.second"}}}});
-    widgets.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "c"},
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "c"},
                            {"slots", Json{{"text", "time.text"}}}});
-    widgets.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "d"},
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "d"},
                            {"slots", Json{{"text", "time.date"}}}});
-    widgets.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "e"},
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "e"},
                            {"slots", Json{{"value", "time.unix"}}}});
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
-                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(widgets)}}})}};
+                 {"pages", Json::array({Json{{"name", "P"}, {"children", std::move(instances)}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -3698,9 +3698,9 @@ void test_clock() {
     std::string fault;
     scheduler.tick(fault);
 
-    auto value_of = [&](int widget, const char* slot) -> const Value& {
+    auto value_of = [&](int instance, const char* slot) -> const Value& {
         static const Value nil = Value::nil();
-        const int cell = slot_cell_of(program, ids[widget], slot);
+        const int cell = slot_cell_of(program, ids[instance], slot);
         return cell >= 0 ? state.values[cell] : nil;
     };
     /* one tick in: one millisecond of program time */
@@ -3724,7 +3724,7 @@ void test_clock() {
     CHECK(value_of(0, "value").data.num == 0.003);
 
     /* bare `time` teaches its fields; an unknown field names itself */
-    Document bare = widget_document("Readout", Json{{"value", "time"}});
+    Document bare = instance_document("Readout", Json{{"value", "time"}});
     CompileResult refused = compile_document(bare, builtin_registry(), mesh);
     bool taught = false;
     for (const Diag& diag : refused.program.diagnostics)
@@ -3732,7 +3732,7 @@ void test_clock() {
             diag.message.find("time.now") != std::string::npos)
             taught = true;
     CHECK(taught);
-    Document typo = widget_document("Readout", Json{{"value", "time.hours"}});
+    Document typo = instance_document("Readout", Json{{"value", "time.hours"}});
     CompileResult unknown = compile_document(typo, builtin_registry(), mesh);
     bool named = false;
     for (const Diag& diag : unknown.program.diagnostics)
@@ -3806,8 +3806,8 @@ void test_icon() {
         if (cell.name == "glyph" || cell.name == "symbol")
             CHECK(cell.shape == Shape::Text);
     }
-    auto slot_text = [&](uint64_t widget) -> std::string {
-        const int cell = slot_cell_of(program, widget, "symbol");
+    auto slot_text = [&](uint64_t instance) -> std::string {
+        const int cell = slot_cell_of(program, instance, "symbol");
         if (cell < 0) return "<no cell>";
         return std::string(state.text(program, state.values[cell]));
     };

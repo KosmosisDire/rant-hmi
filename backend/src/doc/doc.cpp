@@ -59,14 +59,14 @@ void walk_from(Json& node, const std::function<void(Json&)>& visit) {
 
 /* Every INSTANCE on a page, wherever it nests, with the PAGE it belongs to (never the
  * frame above it) — page identity is what gates mesh polling and scopes a rename. */
-void collect_widgets(Json& page, Json& node, std::vector<Document::WidgetRef>& out) {
+void collect_instances(Json& page, Json& node, std::vector<Document::InstanceRef>& out) {
     auto it = node.find("children");
     if (it == node.end() || !it->is_array()) return;
     for (Json& child : *it) {
         auto type = child.find("type");
         if (type != child.end() && type->is_string() && !type->get<std::string>().empty())
             out.push_back({&page, &child});
-        collect_widgets(page, child, out);
+        collect_instances(page, child, out);
     }
 }
 
@@ -210,11 +210,11 @@ const Json* Document::node(uint64_t id) const {
     return e ? e->node : nullptr;
 }
 
-std::vector<Document::WidgetRef> Document::widgets() {
-    std::vector<WidgetRef> out;
+std::vector<Document::InstanceRef> Document::instances() {
+    std::vector<InstanceRef> out;
     auto pages = root.find("pages");
     if (pages == root.end() || !pages->is_array()) return out;
-    for (Json& page : *pages) collect_widgets(page, page, out);
+    for (Json& page : *pages) collect_instances(page, page, out);
     return out;
 }
 

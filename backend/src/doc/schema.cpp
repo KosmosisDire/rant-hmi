@@ -85,8 +85,8 @@ const std::vector<NodeSpec>& table() {
          * A FRAME WITH A `type` IS AN INSTANCE: it names a component, that component's
          * children are its subtree, and the instance's own `slots`, `flows` and
          * `locals` are how this one placement is wired. Those ride the frame variant
-         * rather than a "widget" kind of their own, because a widget was never a different
-         * kind of thing — only a frame someone had already made. */
+         * rather than an instance kind of their own, because an instance was never a
+         * different kind of thing — only a frame someone had already made. */
         NodeSpec node;
         node.kind = Kind::Node;
         node.name = "node";
@@ -216,7 +216,7 @@ const std::vector<NodeSpec>& table() {
             {"delay", {num("a", 0)}},
             {"tmr_start", {text("timer", "", Role::VarName)}},
             {"tmr_cancel", {text("timer", "", Role::VarName)}},
-            /* raise <event>(args): the step that SPEAKS as the widget — the event must
+            /* raise <event>(args): the step that SPEAKS as the instance — the event must
                be one the type DECLARES, and `args` maps each declared parameter's name
                to the expression that fills it */
             {"raise", {text("event"), object("args", Json::object())}},
@@ -281,8 +281,8 @@ const std::vector<NodeSpec>& table() {
         /* One declared property = one served SlotSpec row: the optional keys (editor,
          * variants, step/min/max) are served only where they say something, so a row
          * here round-trips to exactly the wire shape (spec 2.3). A prop row lives on the
-         * component (the widget's own vocabulary) or on any PART, whose path prefixes
-         * its address.
+         * component (the component's own vocabulary) or on any ELEMENT, whose path
+         * prefixes its address.
          *
          * `list` and `map` are ordinary property shapes: a declared list property is a
          * Dropdown's options and a Trend's history alike — visible state a flow appends

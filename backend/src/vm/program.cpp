@@ -112,7 +112,7 @@ const char* op_name(OpCode op) {
 std::string Program::disassembly() const {
     std::ostringstream out;
     for (const FlowProgram& flow : flows) {
-        out << "flow " << flow.flow_id << " widget " << flow.widget_id << " event "
+        out << "flow " << flow.flow_id << " node " << flow.node_id << " event "
             << flow.event << " worst " << flow.worst_steps << "\n";
         for (size_t i = 0; i < flow.code.size(); ++i) {
             const Instruction& ins = flow.code[i];

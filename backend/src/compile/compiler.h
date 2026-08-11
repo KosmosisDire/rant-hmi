@@ -11,7 +11,7 @@ struct CompileResult {
     bool ok = false;
 };
 
-CompileResult compile_document(const Document& document, const Json& widget_registry,
+CompileResult compile_document(const Document& document, const Json& component_registry,
                                const MeshPort& mesh);
 
 Shape shape_from_name(const std::string& name);

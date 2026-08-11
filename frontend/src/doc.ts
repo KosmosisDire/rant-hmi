@@ -61,7 +61,7 @@ export class DocStore {
     return this.doc ? this.doc.components ?? [] : [];
   }
 
-  /* ONE LOOKUP: a page's frame, a component's text leaf and a widget instance all come
+  /* ONE LOOKUP: a page's frame, a component's text leaf and an instance all come
      back through here, because they are the same kind of thing. */
   nodeAt(id: number): Node | null {
     const node = this.node(id);
@@ -69,8 +69,8 @@ export class DocStore {
   }
 
   /* the node only if it is an INSTANCE — a frame naming a component. What used to be
-     `widget()`, asked the way the model now answers it. */
-  widget(id: number): Node | null {
+     `instance()`, asked the way the model now answers it. */
+  instance(id: number): Node | null {
     const node = this.nodeAt(id);
     return isInstance(node) ? node : null;
   }
@@ -79,7 +79,7 @@ export class DocStore {
      is wrong — a feed, a flow step, a local — and every view that MARKS one marks the
      instance it belongs to, so each finding is walked up here. A global variable, or
      anything inside a component, belongs to no instance and walks off the top. */
-  owningWidget(id: number): number {
+  owningInstance(id: number): number {
     let at: Json = this.node(id);
     let node = id;
     while (at) {
@@ -94,7 +94,7 @@ export class DocStore {
 
   /* every instance on this page, wherever it nests: a page-level where-used scan (Data,
      Style) wants every one of them regardless of how they are grouped */
-  widgetsOn(page: Page): Node[] {
+  instancesOn(page: Page): Node[] {
     const out: Node[] = [];
     const walk = (children: Node[]) => {
       for (const node of children) {

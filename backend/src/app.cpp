@@ -286,7 +286,7 @@ Json App::live(bool full) const {
         const Value& value = state.values[i];
         const std::string key =
             cell.kind == CellKind::Slot
-                ? std::to_string(cell.owner_widget) + "." + cell.name
+                ? std::to_string(cell.owner_node) + "." + cell.name
                 : "v" + std::to_string(cell.node_id);
         /* AN AGGREGATE CELL RIDES THE DELTA LANE, not `values`. A ring re-sent whole
            every frame is the same bytes over and over for one appended sample, and at a
@@ -381,18 +381,18 @@ Json App::agg_entry(const CellDef& cell, const Value& value, bool full) const {
 
 void App::on_input(uint64_t session, const Json& frame) {
     if (!scheduler_) return;
-    const uint64_t widget = json_u64_or(field(frame, "widget_id"), 0);
+    const uint64_t node = json_u64_or(field(frame, "node"), 0);
     const uint64_t sequence = json_u64_or(field(frame, "seq"), 0);
     const std::string event = str_or(field(frame, "event"), "");
-    if (!widget || event.empty()) {
-        reject(session, "input needs widget_id and event");
+    if (!node || event.empty()) {
+        reject(session, "input needs node and event");
         return;
     }
     InputEvent input;
     input.session = session;
-    input.widget = widget;
+    input.node = node;
     input.event = event;
-    input.part = str_or(field(frame, "part"), "");
+    input.element = str_or(field(frame, "element"), "");
     input.value = input_value(field(frame, "value"));
     input.sequence = sequence;
     /* a string that is not a color is TEXT (a Dropdown's selected option); it rides
@@ -537,7 +537,7 @@ Json App::diagnostics() const {
                             {"message", diag.message},
                             {"where", diag.where}});
     };
-    /* component findings first: a broken component explains the widget findings that
+    /* component findings first: a broken component explains the instance findings that
      * usually follow it */
     for (const Diag& diag : component_diags_) row(diag);
     if (!scheduler_) return rows;

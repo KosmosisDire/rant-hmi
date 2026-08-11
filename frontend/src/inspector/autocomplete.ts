@@ -1,7 +1,7 @@
 /* Expression autocomplete, driven entirely by the SERVED language tables:
  * the backend exports the same builtin/method rows its parser compiles with, so what
  * this offers and what compiles can never disagree. Context-aware in the spec's order:
- * after `.` exactly the receiver shape's vocabulary; otherwise x, the widget's slots,
+ * after `.` exactly the receiver shape's vocabulary; otherwise x, the instance's slots,
  * variables in scope, then the general helpers. The tier filters the display-only
  * vocabulary out of wire positions, so the boundary is discovered rather than
  * explained.
@@ -192,7 +192,7 @@ function chainStart(text: string, at: number): number {
   return i;
 }
 
-/* walk one primary chain ("x.sort()[0]", "widget.value", "\"a,b\".split(\",\")") and
+/* walk one primary chain ("x.sort()[0]", "this.value", "\"a,b\".split(\",\")") and
  * report the shape it yields; null when it cannot be known here */
 function resolveChain(chain: string, ctx: Scope): Resolved | null {
   const lang = ctx.lang();
@@ -241,11 +241,11 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
       if (entry?.name === "keys") current = { shape: "list", elem: "text" };
     } else if (name === "x") {
       current = ctx.x?.() ?? null;
-    } else if (name === "widget" && chain[i] === ".") {
+    } else if (name === "this" && chain[i] === ".") {
       const m2 = /^\.[A-Za-z_][A-Za-z0-9_]*/.exec(chain.slice(i));
       if (!m2) return null;
       i += m2[0].length;
-      const row = ctx.names().find((n) => n.label === "widget" + m2[0]);
+      const row = ctx.names().find((n) => n.label === "this" + m2[0]);
       current = row?.shape ? { shape: row.shape, elem: row.elem } : null;
     } else {
       const row = ctx.names().find((n) => n.label === name);
@@ -513,13 +513,13 @@ export function attachPathAutocomplete(
  * side cannot set them. */
 export function localPaths(
   editor: Editor,
-  widget: Node | null,
+  instance: Node | null,
   flow: () => Flow,
   stepId: number,
   local: () => string,
 ) {
   return (): PathOption[] => {
-    const held = localAt(editor, widget, flow(), stepId, local());
+    const held = localAt(editor, instance, flow(), stepId, local());
     return (held?.fields ?? [])
       .filter((f) => f.shape !== "list" && f.shape !== "map")
       .map((f) => ({ path: f.path, shape: f.shape }));

@@ -25,7 +25,7 @@
 namespace hmi {
 
 /* the registry the app serves and compiles against: built-ins, shadowed and extended
- * by doc.components. Shape: {"version": 1, "types": [...]} exactly as served. */
+ * by doc.components. Shape: {"version": 1, "components": [...]} exactly as served. */
 Json derive_registry(const Document& document, std::vector<Diag>& diags);
 
 /* the registry derived from the built-ins alone (no document components): what the

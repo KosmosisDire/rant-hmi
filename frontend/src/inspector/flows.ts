@@ -24,7 +24,7 @@ import { makeFolds } from "../fold.js";
 import { iconMarkup, kindMark } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindText } from "../reconcile.js";
-import { EVENT_KINDS, Flow, Json, Op, Node, WidgetType, eventKind,
+import { EVENT_KINDS, Flow, Json, Op, Node, ComponentType, eventKind,
          signatureText } from "../types.js";
 import { localAt, scopeAt } from "./flowscope.js";
 import { refChip } from "./refchip.js";
@@ -95,17 +95,18 @@ function triggerText(trigger: Json): string {
   if (!trigger) return "?";
   if (trigger.kind === "timer") return "timer " + (trigger.var || "?") + " ends";
   if (trigger.kind === "every") return "every " + (trigger.ms ?? "?") + " ms";
-  const part = typeof trigger.part === "string" && trigger.part ? trigger.part + " " : "";
-  return part + pastTense(String(trigger.name || "?"));
+  const element =
+    typeof trigger.element === "string" && trigger.element ? trigger.element + " " : "";
+  return element + pastTense(String(trigger.name || "?"));
 }
 
-/* the armed parts of a served type's template: where its gestures ride, walked once per
+/* the armed elements of a component's template: where its gestures ride, walked once per
  * render — the trigger picker's offer list is exactly what can actually fire */
-function armedParts(type: WidgetType | null): { part: string; primitive: string }[] {
-  const out: { part: string; primitive: string }[] = [];
+function armedElements(type: ComponentType | null): { element: string; primitive: string }[] {
+  const out: { element: string; primitive: string }[] = [];
   const walk = (node: Json, path: string) => {
     const primitive = node?.interact?.primitive;
-    if (typeof primitive === "string" && primitive) out.push({ part: path, primitive });
+    if (typeof primitive === "string" && primitive) out.push({ element: path, primitive });
     for (const child of node?.children ?? [])
       walk(child, path ? path + "." + String(child.name ?? "") : String(child.name ?? ""));
   };
@@ -113,10 +114,10 @@ function armedParts(type: WidgetType | null): { part: string; primitive: string 
   return out;
 }
 
-/* the widget-level gesture vocabulary: the union of every armed part's family, in the
- * table's own order (tap leads) */
-function gestureEvents(type: WidgetType | null): string[] {
-  const primitives = new Set(armedParts(type).map((a) => a.primitive));
+/* the instance-level gesture vocabulary: the union of every armed element's family, in
+ * the table's own order (tap leads) */
+function gestureEvents(type: ComponentType | null): string[] {
+  const primitives = new Set(armedElements(type).map((a) => a.primitive));
   const out: string[] = [];
   for (const kind of EVENT_KINDS)
     if (kind.from.some((p) => primitives.has(p)) && !out.includes(kind.name))
@@ -138,7 +139,7 @@ function targets(flow: Flow): { kind: string; name: string }[] {
   for (const step of flow.do ?? []) {
     if (step.kind !== "assign") continue;
     if (sideOf(step.to) === "entity") push(step.to.kind ?? "V", step.to.name ?? "");
-    if (sideOf(step.to) === "slot") push("", "widget." + (step.to.slot ?? ""));
+    if (sideOf(step.to) === "slot") push("", "this." + (step.to.slot ?? ""));
   }
   if (out.length) return out;
   for (const step of flow.do ?? []) {
@@ -159,7 +160,7 @@ export function flowShape(flow: Flow): Json {
     when.map((t: Json) => t?.kind ?? "event").join("|"),
     first.kind ?? "event",
     first.name ?? "",
-    first.part ?? "",
+    first.element ?? "",
     Boolean(first.every_ms),
     targets(flow).map((t) => t.kind + ":" + t.name).join(","),
     (flow.do ?? []).map((step: Json) => [
@@ -187,7 +188,7 @@ export function flowShape(flow: Flow): Json {
   ];
 }
 
-export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, flow: Flow): HTMLElement {
+export function flowCard(editor: Editor, instance: Node, type: ComponentType | null, flow: Flow): HTMLElement {
   const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
   const open = opened.open(String(flow.id));
   const set = (key: string, value: Json) =>
@@ -257,9 +258,9 @@ export function flowCard(editor: Editor, widget: Node, type: WidgetType | null, 
 
   const body = el("div", { class: "card-body when-do" }, []);
   body.appendChild(el("span", { class: "row-label", text: "WHEN" }));
-  body.appendChild(whenGrid(editor, widget, type, flow, when, first, set));
+  body.appendChild(whenGrid(editor, instance, type, flow, when, first, set));
   body.appendChild(el("span", { class: "row-label", text: "DO" }));
-  body.appendChild(doList(editor, widget, type, flow));
+  body.appendChild(doList(editor, instance, type, flow));
   card.appendChild(body);
   card.appendChild(
     el("div", { class: "card-foot" }, [
@@ -301,8 +302,8 @@ function targetChip(flow: Flow, target: { kind: string; name: string }): HTMLEle
 
 function whenGrid(
   editor: Editor,
-  widget: Node,
-  type: WidgetType | null,
+  instance: Node,
+  type: ComponentType | null,
   flow: Flow,
   when: Json[],
   first: Json,
@@ -311,24 +312,24 @@ function whenGrid(
   const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
   const entries = (): Json[] => (Array.isArray(at().when) ? at().when : []);
   const head = (): Json => entries()[0] ?? first;
-  /* THE OFFER LIST: the type's own declared events lead (the control pair, shown as
-     signatures), then the gesture families its armed parts bring, then — inside a
-     component's behavior, where parts are OURS to name — each part's own channel */
-  const inBehavior = editor.store.components().some((c) => c.id === widget.id);
+  /* THE OFFER LIST: the component's own declared events lead (the control pair, shown
+     as signatures), then the gesture families its armed elements bring, then — inside a
+     component's behavior, where its elements are OURS to name — each element's channel */
+  const inBehavior = editor.store.components().some((c) => c.id === instance.id);
   const events: { value: string; label: string }[] = [
     ...(type?.events ?? []).map((e) => ({ value: e.name,
                                           label: signatureText(e.name, e.params) })),
     ...gestureEvents(type).map((name) => ({ value: name, label: pastTense(name) })),
   ];
   if (inBehavior)
-    for (const armed of armedParts(type)) {
-      if (!armed.part) continue;
+    for (const armed of armedElements(type)) {
+      if (!armed.element) continue;
       for (const kind of EVENT_KINDS)
         if (kind.from.includes(armed.primitive))
-          events.push({ value: "@part:" + armed.part + ":" + kind.name,
-                        label: armed.part + " " + pastTense(kind.name) });
+          events.push({ value: "@element:" + armed.element + ":" + kind.name,
+                        label: armed.element + " " + pastTense(kind.name) });
     }
-  const timers = variablesInScope(editor, widget).filter((v) => v.type === "timer");
+  const timers = variablesInScope(editor, instance).filter((v) => v.type === "timer");
   const setFirst = (patch: Json) => {
     const next = entries().slice();
     next[0] = { ...head(), ...patch };
@@ -340,7 +341,7 @@ function whenGrid(
     grid.appendChild(el("span", { class: "cell" }, cells));
   };
 
-  /* trigger: the widget's events in past tense, plus "timer ... ends" and "every ... ms"
+  /* trigger: the component's events in past tense, plus "timer ... ends" and "every ... ms"
      (the cadence trigger: how a sampler is authored — one append on a beat, no timer to
      start) */
   if (first.kind === "timer") {
@@ -363,19 +364,20 @@ function whenGrid(
         .concat(events, [{ value: "@timer", label: "timer ends" },
                          { value: "@every", label: "on a beat" }]),
       cadence ? "@every"
-              : head().part ? "@part:" + head().part + ":" + (head().name ?? "")
-                            : first.name ?? "",
+              : head().element
+                  ? "@element:" + head().element + ":" + (head().name ?? "")
+                  : first.name ?? "",
       (name) => {
         if (name === "@timer")
           setFirst({ kind: "timer", var: timers[0]?.name ?? "", name: undefined, ms: undefined });
         else if (name === "@every")
           setFirst({ kind: "every", ms: 100, name: undefined, var: undefined });
-        else if (name.startsWith("@part:")) {
-          const rest = name.slice(6);
+        else if (name.startsWith("@element:")) {
+          const rest = name.slice(9);
           const sep = rest.lastIndexOf(":");
           setFirst({ kind: "event", name: rest.slice(sep + 1),
-                     part: rest.slice(0, sep), ms: undefined, var: undefined });
-        } else setFirst({ kind: "event", name, part: undefined, ms: undefined,
+                     element: rest.slice(0, sep), ms: undefined, var: undefined });
+        } else setFirst({ kind: "event", name, element: undefined, ms: undefined,
                           var: undefined });
       },
       "trigger",
@@ -383,11 +385,12 @@ function whenGrid(
     bindChoice(flow.id + ":when.name", pickerOf(picker), () =>
       (entries()[0] ?? first).kind === "every"
         ? "@every"
-        : head().part ? "@part:" + head().part + ":" + (head().name ?? "")
-                      : head().name ?? "");
+        : head().element
+            ? "@element:" + head().element + ":" + (head().name ?? "")
+            : head().name ?? "");
     row("trigger", picker, diagIcon(editor.diagAt(flow.id)));
 
-    /* the beat: milliseconds, a number or a constant expression over the widget's own
+    /* the beat: milliseconds, a number or a constant expression over the instance's own
        slots ("1000 / rate" is how the Trend samples at its authored rate). The same box
        every expression field wears now — a plain number still rides RAW. */
     if (cadence) {
@@ -403,7 +406,7 @@ function whenGrid(
         placeholder: "expression",
         type: { shape: "num" },
         /* the WHEN row stands before any step, so its scope stops at the first one */
-        scope: flowScope(editor, widget, flow, (at().do ?? [])[0]?.id ?? 0),
+        scope: flowScope(editor, instance, flow, (at().do ?? [])[0]?.id ?? 0),
       });
       row("every", ms, el("span", { class: "op", text: "ms" }));
     }
@@ -462,7 +465,7 @@ function whenGrid(
       el("button", {
         class: "chip clickable ghost-chip",
         text: "+ condition",
-        onclick: (ev: MouseEvent) => alsoMenu(editor, widget, flow, timers, set, entries, ev),
+        onclick: (ev: MouseEvent) => alsoMenu(editor, instance, flow, timers, set, entries, ev),
       }));
   }
 
@@ -480,7 +483,7 @@ function whenGrid(
 
 function alsoMenu(
   editor: Editor,
-  widget: Node,
+  instance: Node,
   flow: Flow,
   timers: { name: string }[],
   set: (key: string, value: Json) => void,
@@ -492,11 +495,11 @@ function alsoMenu(
   /* the fresh-timer offer needs somewhere to declare it: a COMPONENT record holds no
      locals (its behavior compiles per instance, and a timer there would resolve against
      each instance's own), so the shortcut only stands where the host has the list */
-  if (!Array.isArray((widget as unknown as Json).locals)) {
+  if (!Array.isArray((instance as unknown as Json).locals)) {
     openMenu(ev.clientX, ev.clientY, "Also run when", items);
     return;
   }
-  const taken = new Set(variablesInScope(editor, widget).map((v) => v.name));
+  const taken = new Set(variablesInScope(editor, instance).map((v) => v.name));
   let n = 1;
   while (taken.has("t" + n)) n++;
   const fresh = "t" + n;
@@ -508,7 +511,7 @@ function alsoMenu(
       editor.apply([
         {
           op: "insert",
-          parent: widget.id,
+          parent: instance.id,
           list: "locals",
           node: { name: fresh, type: "timer", init: 1 },
         },
@@ -526,7 +529,7 @@ function alsoMenu(
 
 /* ---- the DO list: one directly-editable line per step ---- */
 
-function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flow): HTMLElement {
+function doList(editor: Editor, instance: Node, type: ComponentType | null, flow: Flow): HTMLElement {
   const list = el("div", { class: "do-list" }, []);
   const steps = flow.do ?? [];
 
@@ -557,7 +560,7 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
     );
 
   steps.forEach((step: Json, index: number) =>
-    list.appendChild(stepRow(editor, widget, type, flow, step, index,
+    list.appendChild(stepRow(editor, instance, type, flow, step, index,
                              String(index + (params.length ? 2 : 1)))),
   );
 
@@ -570,7 +573,7 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
         el("button", {
           class: "chip clickable ghost-chip",
           text: "+ step",
-          onclick: (ev: MouseEvent) => stepMenu(editor, widget, type, flow, ev),
+          onclick: (ev: MouseEvent) => stepMenu(editor, instance, type, flow, ev),
         }),
       ]),
     ]),
@@ -582,16 +585,16 @@ function doList(editor: Editor, widget: Node, type: WidgetType | null, flow: Flo
    own type, a slot's declared shape, or a struct value's aggregate FIELD (its derived
    cell takes the same verbs a list variable does). "" where nothing declares one (an
    entity, a temp declared by use, a scalar field of a struct). */
-function destShape(editor: Editor, widget: Node, type: WidgetType | null, flow: Flow,
+function destShape(editor: Editor, instance: Node, type: ComponentType | null, flow: Flow,
                    stepId: number, to: Json): string {
   if (typeof to?.slot === "string")
     return type?.slots.find((s) => s.name === to.slot)?.shape ?? "";
   if (typeof to?.local === "string" && !to.path) {
-    const declared = variablesInScope(editor, widget).find((v) => v.name === to.local);
+    const declared = variablesInScope(editor, instance).find((v) => v.name === to.local);
     return declared?.type === "list" || declared?.type === "map" ? declared.type : "";
   }
   if (typeof to?.local === "string" && to.path) {
-    const held = localAt(editor, widget, flow, stepId, String(to.local));
+    const held = localAt(editor, instance, flow, stepId, String(to.local));
     const field = (held?.fields ?? []).find((f) => f.path === to.path);
     return field?.shape === "list" || field?.shape === "map" ? field.shape : "";
   }
@@ -614,8 +617,8 @@ function entityAggField(editor: Editor, to: Json): { shape: string; elem?: strin
 
 function stepRow(
   editor: Editor,
-  widget: Node,
-  type: WidgetType | null,
+  instance: Node,
+  type: ComponentType | null,
   flow: Flow,
   step: Json,
   index: number,
@@ -630,7 +633,7 @@ function stepRow(
     grip(editor, step, index),
     el("span", { class: "row-num", text: number }),
     verb,
-    stepCell(editor, widget, type, flow, step),
+    stepCell(editor, instance, type, flow, step),
     el("span", { class: "do-tail" }, [
       /* a finding about this step sits on the step's own line, whichever
          field of it the compiler named */
@@ -651,8 +654,8 @@ const GUARD_KINDS = [
 
 function stepCell(
   editor: Editor,
-  widget: Node,
-  type: WidgetType | null,
+  instance: Node,
+  type: ComponentType | null,
   flow: Flow,
   step: Json,
 ): HTMLElement {
@@ -675,13 +678,13 @@ function stepCell(
       emptyMeans: "unset",
       placeholder: "expression",
       type: { shape },
-      scope: flowScope(editor, widget, flow, step.id),
+      scope: flowScope(editor, instance, flow, step.id),
     });
 
   if (step.kind === "assign") {
     const from = sideOf(step.from);
     const to = sideOf(step.to);
-    const scope = () => scopeAt(editor, widget, here(), step.id);
+    const scope = () => scopeAt(editor, instance, here(), step.id);
     /* the reset chip's re-pick: whatever is picked writes its EXPRESSION spelling —
        the tree is an insertion assistant into the one rvalue form, never a mode */
     const fromOpts: SourceTreeOptions = {
@@ -696,7 +699,7 @@ function stepCell(
       if (pick.family === "expr") set("from", { expr: pick.name });
       else if (pick.family === "local")
         set("from", { expr: pick.name + (pick.path ? "." + pick.path : "") });
-      else if (pick.family === "slot") set("from", { expr: "widget." + pick.name });
+      else if (pick.family === "slot") set("from", { expr: "this." + pick.name });
       else set("from", { expr: "@" + pick.name + (pick.path ? "." + pick.path : "") });
     };
     const setTo = (pick: SourcePick) => {
@@ -729,7 +732,7 @@ function stepCell(
         key: step.id + ":from",
         name: () => "default",
         title: "the target's own declared start; pick something else to change the source",
-        onPick: (word) => openSourceTree(word, editor, widget, fromOpts, setFrom),
+        onPick: (word) => openSourceTree(word, editor, instance, fromOpts, setFrom),
       }));
       cell.appendChild(el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     } else if (verbOf(step) !== "unforce") {
@@ -738,7 +741,7 @@ function stepCell(
       cell.appendChild(el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     }
 
-    cell.appendChild(sideChip(editor, widget, step.id + ":to", () => at().to ?? {},
+    cell.appendChild(sideChip(editor, instance, step.id + ":to", () => at().to ?? {},
                               flow, step.id, toOpts, setTo, "pick target"));
 
     /* mode exists only where there is something to choose: a topic cannot be forced */
@@ -754,14 +757,14 @@ function stepCell(
     }
 
     /* a LIST destination chooses replace, grow, or ONE ELEMENT by index: `keep` is how
-       many elements a grow keeps standing (a ring authors "widget.rate * widget.window"),
+       many elements a grow keeps standing (a ring authors "this.rate * this.window"),
        an index write addresses one position and doubles `key` as the index expression. A
        MAP destination writes one entry per run, keyed by `key` as text. Both read the
        DECLARED shape — a local's type, a slot's shape. An entity or a fresh temp offers
        neither UNLESS the target is a mesh field of its own: a mesh list takes only the
        element form (no mode to choose, since a whole-list write is not a thing there) and
        a mesh map field renders nothing — the compiler is the teacher there. */
-    const shape = destShape(editor, widget, type, here(), step.id, at().to);
+    const shape = destShape(editor, instance, type, here(), step.id, at().to);
     const indexKey = (): string => String(at().key ?? "");
     if (shape === "list") {
       const derived = () => (indexKey() !== "" ? "index" : String(at().mode ?? "write"));
@@ -829,7 +832,7 @@ function stepCell(
     return cell;
   }
 
-  /* raise <event>(<param>: <expression>): the step that SPEAKS as the widget. The
+  /* raise <event>(<param>: <expression>): the step that SPEAKS as the instance. The
      picker offers the type's declared events; each parameter gets its own expression
      field, named, so the call reads as the signature it fills. */
   if (step.kind === "raise") {
@@ -885,7 +888,7 @@ function stepCell(
   }
 
   if (step.kind === "tmr_start" || step.kind === "tmr_cancel") {
-    const timers = variablesInScope(editor, widget).filter((v) => v.type === "timer");
+    const timers = variablesInScope(editor, instance).filter((v) => v.type === "timer");
     const picker = selectField(
       timers.length ? timers.map((t) => ({ value: t.name })) : [{ value: "" }],
       String(step.timer ?? ""),
@@ -906,7 +909,7 @@ function stepCell(
  * typed — which is the principled boundary the value box stops at. */
 function sideChip(
   editor: Editor,
-  widget: Node,
+  instance: Node,
   key: string,
   read: () => Json,
   flow: Flow,
@@ -919,9 +922,9 @@ function sideChip(
     const form = sideOf(side);
     if (form === "entity") return side.kind || "?";
     if (form === "local") {
-      /* the scope mark: blue for the flow's own names and widget locals, violet for
+      /* the scope mark: blue for the flow's own names and instance locals, violet for
          a global, so the three storeys can never be confused */
-      const held = localAt(editor, widget, (editor.store.node(flow.id) as Flow) ?? flow,
+      const held = localAt(editor, instance, (editor.store.node(flow.id) as Flow) ?? flow,
                            stepId, String(side.local ?? ""));
       return held?.note === "global" ? "g" : "l";
     }
@@ -943,7 +946,7 @@ function sideChip(
     name: () => {
       const side = read();
       switch (sideOf(side)) {
-        case "slot": return "widget." + (side.slot || "?");
+        case "slot": return "this." + (side.slot || "?");
         case "local": return (side.local || placeholder) +
                              (side.local && side.path ? "." + side.path : "");
         case "entity": return (side.name || placeholder) + (side.path ? " > " + side.path : "");
@@ -964,7 +967,7 @@ function sideChip(
           return fields.find((f) => f.path === side.path)?.shape ?? "";
         }
         case "local": {
-          const held = localAt(editor, widget, (editor.store.node(flow.id) as Flow) ?? flow,
+          const held = localAt(editor, instance, (editor.store.node(flow.id) as Flow) ?? flow,
                                stepId, String(side.local ?? ""));
           if (!held) return "";
           if (!side.path) return held.type || held.shape;
@@ -976,7 +979,7 @@ function sideChip(
           return "";
       }
     },
-    onPick: (node) => openSourceTree(node, editor, widget, opts, onPick, read()),
+    onPick: (node) => openSourceTree(node, editor, instance, opts, onPick, read()),
   });
 }
 
@@ -1022,8 +1025,8 @@ function grip(editor: Editor, step: Json, index: number): HTMLElement {
  * the menu never asks — and the rvalue reads anywhere by naming it. */
 function stepMenu(
   editor: Editor,
-  widget: Node,
-  type: WidgetType | null,
+  instance: Node,
+  type: ComponentType | null,
   flow: Flow,
   ev: MouseEvent,
 ): void {
@@ -1038,7 +1041,7 @@ function stepMenu(
       (type?.events ?? []).find((e) => e.name === trigger.name)?.params ?? []
     : [];
   const continuous = triggerParams.some((p) => p.shape === "num");
-  void widget;
+  void instance;
 
   const items = [
     {
@@ -1079,7 +1082,7 @@ function stepMenu(
   openMenu(ev.clientX, ev.clientY, "Add step", items);
 }
 
-export function addFlowButton(editor: Editor, widget: Node, type: WidgetType | null,
+export function addFlowButton(editor: Editor, instance: Node, type: ComponentType | null,
                               list: string = "flows"): HTMLElement {
   /* an event-less type (a Trend) still takes behavior: a flow can trigger on a
      timer or a beat, so the new flow starts with NO trigger and the finding walks
@@ -1094,7 +1097,7 @@ export function addFlowButton(editor: Editor, widget: Node, type: WidgetType | n
       editor.apply([
         {
           op: "insert",
-          parent: widget.id,
+          parent: instance.id,
           list,
           node: {
             when: event ? [{ kind: "event", name: event }] : [],

@@ -426,12 +426,12 @@ bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& nam
     r.ops.push_back(Json{{"op", "rename"}, {"node", id}, {"name", name}});
     r.touched.push_back(id);
 
-    for (Document::WidgetRef wr : d.widgets()) {
-        Json& w = *wr.widget;
+    for (Document::InstanceRef ir : d.instances()) {
+        Json& w = *ir.instance;
         auto slots = w.find("slots");
         if (slots == w.end() || !slots->is_object()) continue;
-        /* `slots` mirrors the type's parts, so a part's colour sits one level in
-           (spec 2.3): the rewrite walks the nesting rather than the top keys */
+        /* `slots` mirrors the component's elements, so an element's colour sits one level
+           in (spec 2.3): the rewrite walks the nesting rather than the top keys */
         bool hit = false;
         std::function<void(Json&)> rewrite = [&](Json& level) {
             for (auto& item : level.items()) {
@@ -504,8 +504,8 @@ bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
 
     const Json no_locals = Json::array();
     if (global) {
-        for (Document::WidgetRef wr : d.widgets()) {
-            Json& w = *wr.widget;
+        for (Document::InstanceRef ir : d.instances()) {
+            Json& w = *ir.instance;
             auto lit = w.find("locals");
             const Json& locals = lit != w.end() ? *lit : no_locals;
             if (has_var(locals, from)) continue;   /* shadowed: its refs are not ours */
@@ -520,7 +520,7 @@ bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
         Json& w = *pe->node;
         const Json* globals = d.root.find("globals") == d.root.end() ? nullptr : &d.root["globals"];
         if (globals && has_var(*globals, name) && count_refs(Kind::Node, w, name) > 0) {
-            err = "'" + name + "' is a global this widget already uses";
+            err = "'" + name + "' is a global this instance already uses";
             return false;
         }
         rename_refs(Kind::Node, w, from, name, &edits);

@@ -19,17 +19,18 @@ struct RunResult {
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
                    Value arg) noexcept;
 
-/* Does a flow listening on `flow_part` hear an event raised from `part`? An empty
- * flow_part is the widget-level channel: the root's own events plus every BUBBLING
- * armed part's. A named flow_part hears exactly that part (a component's behavior). */
-bool part_reaches(const Program& program, uint64_t widget, const std::string& flow_part,
-                  const std::string& part) noexcept;
+/* Does a flow listening on `flow_element` hear an event raised from `element`? An empty
+ * flow_element is the instance-level channel: the root's own events plus every BUBBLING
+ * armed element's. A named flow_element hears exactly that element (a component's
+ * behavior). */
+bool element_reaches(const Program& program, uint64_t node, const std::string& flow_element,
+                     const std::string& element) noexcept;
 
-/* every flow of `widget_id` triggered on `event` from `part`, in program order —
+/* every flow of `node_id` triggered on `event` from `element`, in program order —
  * the test-facing single call; the scheduler's dispatch adds the queue semantics */
-RunResult run_event(const Program& program, RuntimeState& state, uint64_t widget_id,
+RunResult run_event(const Program& program, RuntimeState& state, uint64_t node_id,
                     const std::string& event, Value arg,
-                    const std::string& part = std::string()) noexcept;
+                    const std::string& element = std::string()) noexcept;
 
 /* one standing slot expression, re-evaluated into its cell; x is always Nil here */
 RunResult run_slot(const Program& program, const SlotProgram& slot,

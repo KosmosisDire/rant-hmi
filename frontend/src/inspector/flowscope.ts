@@ -46,12 +46,12 @@ export function typeFields(editor: Editor, name: string): MeshField[] {
   return editor.mesh.types.find((t) => t.name === name)?.fields ?? [];
 }
 
-/* the declared variables a widget's flows can name, before any move adds to them. A type
+/* the declared variables an instance's flows can name, before any move adds to them. A type
  * beyond the four scalars is a TypeRef: a struct root holds a struct of it,
  * and a dotted ref (`ValveCmd.mode`) holds that enum's value. */
-function declared(editor: Editor, widget: Node | null): LocalInfo[] {
-  const own = new Set((widget?.locals ?? []).map((v) => v.id));
-  return variablesInScope(editor, widget)
+function declared(editor: Editor, instance: Node | null): LocalInfo[] {
+  const own = new Set((instance?.locals ?? []).map((v) => v.id));
+  return variablesInScope(editor, instance)
     .filter((v) => v.type !== "timer")
     .map((v) => {
       const note = own.has(v.id) ? ("local" as const) : ("global" as const);
@@ -132,16 +132,16 @@ export interface FlowScope {
  * scope standing at that point. */
 export function scopeAt(
   editor: Editor,
-  widget: Node | null,
+  instance: Node | null,
   flow: Flow,
   stepId: number,
 ): FlowScope {
   const scope = new Map<string, LocalInfo>();
-  for (const variable of declared(editor, widget)) scope.set(variable.name, variable);
+  for (const variable of declared(editor, instance)) scope.set(variable.name, variable);
 
   /* the trigger's PARAMETER binds by name (an event is a function call and this flow is
      its body); x is the pipeline register and starts Nil until a step sets it */
-  const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
+  const type = editor.registry?.components.find((t) => t.name === instance?.type) ?? null;
   const trigger = (flow?.when ?? []).find((w: Json) => w?.kind === "event");
   if (trigger) {
     const name = String(trigger.name ?? "");
@@ -199,11 +199,11 @@ export function scopeAt(
 /* the struct local a row's destination names, resolved for its path picker */
 export function localAt(
   editor: Editor,
-  widget: Node | null,
+  instance: Node | null,
   flow: Flow,
   stepId: number,
   name: string,
 ): LocalInfo | null {
   if (!name) return null;
-  return scopeAt(editor, widget, flow, stepId).locals.find((l) => l.name === name) ?? null;
+  return scopeAt(editor, instance, flow, stepId).locals.find((l) => l.name === name) ?? null;
 }

@@ -400,7 +400,7 @@ struct Walk {
 
 /* EVERY addressed node can be switched off: the property is synthesized where the node
  * does not declare it, so "show the scale" is the scale's own `shown` rather than a
- * `show_scale` on the widget, and any node a user adds gets the same switch for free. A
+ * `show_scale` on the component, and any node a user adds gets the same switch for free. A
  * node that wants to start hidden simply declares `shown` itself with a default of false. */
 bool declares_shown(const Json& rows) {
     if (!rows.is_array()) return false;
@@ -506,7 +506,7 @@ Json compile_common(const Json& node, const std::string& kind, const Json& attrs
 /* pass two: one node row (doc form) -> one template node (wire form).
  *
  * `path` is this node's ADDRESS PREFIX: empty at the root (whose properties are the
- * widget's own, addressed bare), then the names of the nodes below it joined with dots.
+ * component's own, addressed bare), then the names of the nodes below it joined with dots.
  * The scope for that path says what a bare identifier means inside it. */
 Json compile_node(const Json& node, const std::string& path, const Walk& walk, Sink& sink) {
     const uint64_t node_id = id_of(node);
@@ -540,8 +540,8 @@ Json compile_node(const Json& node, const std::string& path, const Walk& walk, S
         Json wired{{"primitive", str_or(interact, "primitive", "press")},
                    {"params", compile_attrs(interact.value("params", Json::object()), scope,
                                             node_id, "interact.", sink)}};
-        /* the propagation topology is declared structure: a part whose gestures must
-           not ring the widget-level channel says so here, once */
+        /* the propagation topology is declared structure: an element whose gestures must
+           not ring the instance-level channel says so here, once */
         if (interact.contains("bubbles") && interact["bubbles"].is_boolean() &&
             !interact["bubbles"].get<bool>())
             wired["bubbles"] = false;
@@ -553,7 +553,7 @@ Json compile_node(const Json& node, const std::string& path, const Walk& walk, S
 /* A doc component's nodes, compiled a SECOND way: keyed by their own document ids, in
  * the same {attrs, anchors} rows a page node gets. The template (compile_node) serves an
  * instance's rendering, where nodes are addressed by name under an owner; this serves the
- * component CONTEXT — entering a widget — where the stage walks the doc tree it already
+ * component CONTEXT — entering a component — where the stage walks the doc tree it already
  * holds and pulls each node's programs by id, exactly as it does for a page. Same nodes,
  * same scopes, same programs; a second key, not a second compiler. */
 void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk,
@@ -612,7 +612,7 @@ Json slot_row(const Json& prop, const std::string& address) {
  * THE COMPONENT RECORD IS THE ROOT NODE: its `layout`, `attrs` and `interact` describe
  * the box an instance renders as, and its children are what stands inside it. So the
  * template this produces is one frame node built from the component itself — there is no
- * wrapper, and no "one root part" rule to remember. */
+ * wrapper, and no "one root element" rule to remember. */
 Json compile_component(const Json& component, Sink& sink) {
     const std::string name = str_or(component, "name", "");
 
@@ -736,7 +736,7 @@ Json derive(const Json& doc_components, std::vector<Diag>* diags) {
         }
     }
 
-    return Json{{"version", 1}, {"types", std::move(types)}};
+    return Json{{"version", 1}, {"components", std::move(types)}};
 }
 
 } // namespace

@@ -8,8 +8,8 @@
  * hierarchy the value box's browse popover draws — and names(), the flat list
  * autocomplete completes over, is a PROJECTION of that tree (projectNames). Neither
  * view is hand-maintained beside the other, which is what keeps the dropdown and the
- * tree from ever disagreeing: `widget.value` exists once, as a leaf inside the
- * `widget` folder, and the flat spelling is read off that leaf's `insert`.
+ * tree from ever disagreeing: `this.value` exists once, as a leaf inside the
+ * `this` folder, and the flat spelling is read off that leaf's `insert`.
  *
  * Factories live where knowledge lives: a call site picks its factory and hands the
  * Scope on. */
@@ -21,7 +21,7 @@ import { ComponentDef, Flow, Json, Lang, MeshEntity, MeshField, Node, Var } from
 import { scopeAt } from "./flowscope.js";
 
 export interface NameRow {
-  label: string;   /* what inserting places: "setpoint", "widget.value", "x" */
+  label: string;   /* what inserting places: "setpoint", "this.value", "x" */
   shape?: string;  /* its shape, when known: "num" "bool" "text" "list" ... */
   note?: string;   /* a short origin tag: "local", "global", "slot" */
   elem?: string;   /* aggregate names: the element shape */
@@ -103,7 +103,7 @@ export interface Scope {
      reusing "display"'s. "const" sees nothing live at all (a prop default). */
   tier: "display" | "wire" | "attr" | "const";
   lang(): Lang | null;
-  /* every other name legal here (widget.<slot>, variables, a flow's own locals) —
+  /* every other name legal here (this.<slot>, variables, a flow's own locals) —
      the flat projection of roots() */
   names(): NameRow[];
   /* the shape of x at this position, or null when unknown; a struct x carries its
@@ -116,9 +116,9 @@ export interface Scope {
   roots?(): BrowseRow[];
 }
 
-/* every variable a widget's flows can name: its own locals shadow the globals */
-export function variablesInScope(editor: Editor, widget: Node | null): Var[] {
-  const locals = widget?.locals ?? [];
+/* every variable an instance's flows can name: its own locals shadow the globals */
+export function variablesInScope(editor: Editor, instance: Node | null): Var[] {
+  const locals = instance?.locals ?? [];
   const shadowed = new Set(locals.map((v) => v.name));
   return locals.concat(editor.store.globals().filter((v) => !shadowed.has(v.name)));
 }
@@ -168,29 +168,29 @@ function timeRow(prefix: string): BrowseRow {
   };
 }
 
-/* ---- the hmi universe: this widget's names, structured ----
+/* ---- the hmi universe: this instance's names, structured ----
  *
- * `widget` is a folder over the slot leaves (a slot's canonical spelling is
- * widget.<name>); the variables bucket local/global, each a leaf (scalar, enum) or a
+ * `this` is a folder over the slot leaves (a slot's canonical spelling is
+ * this.<name>); the variables bucket local/global, each a leaf (scalar, enum) or a
  * pickable folder over its field leaves (struct by its type's table, timer by the
  * four timer fields). */
-function hmiRows(editor: Editor, widget: Node | null): BrowseRow[] {
+function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
   const rows: BrowseRow[] = [];
-  const type = editor.registry?.types.find((t) => t.name === widget?.type) ?? null;
+  const type = editor.registry?.components.find((t) => t.name === instance?.type) ?? null;
   const slots: BrowseRow[] = (type?.slots ?? []).map((slot) => ({
     key: "s:" + slot.name,
     label: slot.name,
     icon: "layers",
     shape: slot.shape === "enum" ? "text" : slot.shape,
-    insert: "widget." + slot.name,
+    insert: "this." + slot.name,
     flat: { note: "slot" },
   }));
   if (slots.length)
-    rows.push({ key: "hmi/widget", label: "widget", icon: "layers", children: slots });
+    rows.push({ key: "hmi/this", label: "this", icon: "layers", children: slots });
 
-  const locals = new Set((widget?.locals ?? []).map((v) => v.id));
+  const locals = new Set((instance?.locals ?? []).map((v) => v.id));
   const buckets: Record<"local" | "global", BrowseRow[]> = { local: [], global: [] };
-  for (const variable of variablesInScope(editor, widget)) {
+  for (const variable of variablesInScope(editor, instance)) {
     const note = locals.has(variable.id) ? ("local" as const) : ("global" as const);
     /* beyond timer and the scalars, a variable's type is a TypeRef: a dotted ref is
        an enum, a root name a struct carrying its field table */
@@ -226,9 +226,9 @@ function hmiRows(editor: Editor, widget: Node | null): BrowseRow[] {
   return rows;
 }
 
-/* the hmi root, or nothing when this widget has no names at all */
-function hmiRoot(editor: Editor, widget: Node | null): BrowseRow[] {
-  const rows = hmiRows(editor, widget);
+/* the hmi root, or nothing when this instance has no names at all */
+function hmiRoot(editor: Editor, instance: Node | null): BrowseRow[] {
+  const rows = hmiRows(editor, instance);
   return rows.length ? [{ key: "hmi", label: "hmi", icon: "folder", children: rows }] : [];
 }
 
@@ -313,16 +313,16 @@ function dartRoot(editor: Editor): BrowseRow[] {
 }
 
 /* the two standing roots most surfaces share */
-function slotRoots(editor: Editor, widget: Node | null): BrowseRow[] {
-  return hmiRoot(editor, widget).concat(dartRoot(editor));
+function slotRoots(editor: Editor, instance: Node | null): BrowseRow[] {
+  return hmiRoot(editor, instance).concat(dartRoot(editor));
 }
 
 /* ---- the factories: one per surface ---- */
 
-/* a widget-surface display-tier field: the standing vocabulary, no pipeline register,
+/* an instance-surface display-tier field: the standing vocabulary, no pipeline register,
  * no mesh */
-export function pageScope(editor: Editor, widget: Node | null): Scope {
-  const roots = () => hmiRoot(editor, widget);
+export function pageScope(editor: Editor, instance: Node | null): Scope {
+  const roots = () => hmiRoot(editor, instance);
   return {
     tier: "display",
     lang: () => editor.lang,
@@ -334,9 +334,9 @@ export function pageScope(editor: Editor, widget: Node | null): Scope {
 /* what x IS at one row of a flow: the pipeline register — Nil until a `set x = ...`
  * above this row fills it, retyped by each one. The event's own value arrives as a
  * named PARAMETER, never as x. */
-function flowX(editor: Editor, widget: Node | null, flow: () => Flow, stepId: number) {
+function flowX(editor: Editor, instance: Node | null, flow: () => Flow, stepId: number) {
   return (): { shape: string; elem?: string; fields?: MeshField[] } | null =>
-    scopeAt(editor, widget, flow(), stepId).x;
+    scopeAt(editor, instance, flow(), stepId).x;
 }
 
 /* One row of a flow: wire tier, x and the locals as the rows above this one leave them
@@ -351,9 +351,9 @@ function flowX(editor: Editor, widget: Node | null, flow: () => Flow, stepId: nu
  * another. That section's order is POSITIONAL (scopeAt's walk of the rows above),
  * not tree-shaped, so it is read off scopeAt directly — the same truth the "this
  * flow" subtree is built from. */
-export function flowScope(editor: Editor, widget: Node | null, flow: Flow, stepId: number): Scope {
+export function flowScope(editor: Editor, instance: Node | null, flow: Flow, stepId: number): Scope {
   const at = () => (editor.store.node(flow.id) as Flow | null) ?? flow;
-  const x = flowX(editor, widget, at, stepId);
+  const x = flowX(editor, instance, at, stepId);
   const flowRoot = (): BrowseRow[] => {
     const kids: BrowseRow[] = [];
     const held = x();
@@ -362,7 +362,7 @@ export function flowScope(editor: Editor, widget: Node | null, flow: Flow, stepI
                   flat: { skip: true } });
     /* the flow's OWN names: the event's parameter and the temporaries standing
        above this row (declared variables ride the hmi root already) */
-    for (const local of scopeAt(editor, widget, at(), stepId).locals) {
+    for (const local of scopeAt(editor, instance, at(), stepId).locals) {
       if (local.note !== "temporary" && local.note !== "event parameter") continue;
       kids.push({
         key: "flow/" + local.name, label: local.name, shape: local.shape,
@@ -387,9 +387,9 @@ export function flowScope(editor: Editor, widget: Node | null, flow: Flow, stepI
     tier: "wire",
     lang: () => editor.lang,
     names: () => {
-      const rows = projectNames(hmiRoot(editor, widget));
+      const rows = projectNames(hmiRoot(editor, instance));
       const declared = new Set(rows.map((r) => r.label));
-      for (const local of scopeAt(editor, widget, at(), stepId).locals) {
+      for (const local of scopeAt(editor, instance, at(), stepId).locals) {
         if (!declared.has(local.name))
           rows.push({
             label: local.name,
@@ -409,7 +409,7 @@ export function flowScope(editor: Editor, widget: Node | null, flow: Flow, stepI
       return rows.concat(projectNames(dartRoot(editor)));
     },
     x,
-    roots: () => flowRoot().concat(slotRoots(editor, widget)),
+    roots: () => flowRoot().concat(slotRoots(editor, instance)),
   };
 }
 
@@ -422,11 +422,11 @@ export function constScope(editor: Editor): Scope {
   };
 }
 
-/* ---- THE SLOT TIER: what a widget's slot expression may reference ----
+/* ---- THE SLOT TIER: what an instance's slot expression may reference ----
  *
  * Grounded in the compiler that reads them (compile_slot_program): the scope is the
- * widget's own — every variable in scope (struct fields dotted), every timer by field,
- * the widget's own slots as `widget.<name>` — PLUS every readable mesh entity bound
+ * instance's own — every variable in scope (struct fields dotted), every timer by field,
+ * the instance's own slots as `this.<name>` — PLUS every readable mesh entity bound
  * under its '@' spelling (bind_entities): `@name` where the entity reads as one field,
  * `@name.field` per field otherwise (a function binds its RESPONSE fields). `x` is
  * refused there (scope.no_x), so no x row exists. The tier is "display": that is the
@@ -436,8 +436,8 @@ export function constScope(editor: Editor): Scope {
  * color slot's WHOLE value (the authored-literal special case); inside a larger
  * expression the scalar parser refuses it. The picker writes whole values, so the
  * Tokens tab is honest here. */
-export function slotScope(editor: Editor, widget: Node | null): Scope {
-  const roots = () => slotRoots(editor, widget);
+export function slotScope(editor: Editor, instance: Node | null): Scope {
+  const roots = () => slotRoots(editor, instance);
   return {
     tier: "display",
     lang: () => editor.lang,
@@ -450,7 +450,7 @@ export function slotScope(editor: Editor, widget: Node | null): Scope {
 /* an OPTIONS slot's scope: the same universe plus the schema's enum types, offered as
  * `variants(Type.field)` — the list named through the schema so it can never drift
  * from it. Browse-only (flat-skipped): variants(...) is a call spelling, not a name. */
-export function optionsSlotScope(editor: Editor, widget: Node | null): Scope {
+export function optionsSlotScope(editor: Editor, instance: Node | null): Scope {
   const roots = () => {
     const enums: BrowseRow[] = [];
     for (const type of editor.mesh.types) {
@@ -465,7 +465,7 @@ export function optionsSlotScope(editor: Editor, widget: Node | null): Scope {
             insert: "variants(" + type.name + "." + field.path + ")",
           });
     }
-    const rest = slotRoots(editor, widget);
+    const rest = slotRoots(editor, instance);
     return enums.length
       ? [{ key: "enums", label: "enum types", icon: "folder", flat: { skip: true },
            children: enums }, ...rest]
@@ -483,7 +483,7 @@ export function optionsSlotScope(editor: Editor, widget: Node | null): Scope {
 /* ---- THE ATTR TIER: what a node's attr expressions may reference ----
  *
  * Grounded in the compiler that reads them (lang/template_expr.cpp): a bare name is a
- * property this part declares or inherits, a dotted one is another part's property by
+ * property this element declares or inherits, a dotted one is another element's property by
  * ADDRESS from the template root — and the served type's slot table IS that address
  * list, so it is what the universe offers. `state` and `repeat` are the view's own
  * inputs, read by field, legal on every node — folders over their field leaves. Theme
@@ -541,9 +541,9 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
   const comp = owningComponent(editor, node.id);
   if (!comp) return rows;
   /* the served slot table carries every property address in the component — bare for
-     the component's own, dotted for a part's — which is exactly the reference universe
+     the component's own, dotted for an element's — which is exactly the reference universe
      the template compiler resolves */
-  const type = editor.registry?.types.find((t) => t.name === comp.name) ?? null;
+  const type = editor.registry?.components.find((t) => t.name === comp.name) ?? null;
   for (const slot of type?.slots ?? [])
     rows.push({
       key: "attr/p:" + slot.name,

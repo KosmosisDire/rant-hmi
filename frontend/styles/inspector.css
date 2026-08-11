@@ -19,8 +19,8 @@
   white-space: nowrap;
 }
 
-/* the part-scoped head: widget › part; the widget's name is the way back */
-.inspector-head .part-back {
+/* the element-scoped head: instance › element; the instance's name is the way back */
+.inspector-head .element-back {
   padding: 0;
   border: 0;
   background: none;
@@ -30,15 +30,15 @@
   white-space: nowrap;
 }
 
-.inspector-head .part-back:hover {
+.inspector-head .element-back:hover {
   color: var(--acc-ink);
 }
 
-.inspector-head .part-sep {
+.inspector-head .element-sep {
   color: var(--dim);
 }
 
-.inspector-head .part-name {
+.inspector-head .element-name {
   font: 600 12.5px var(--mono);
   color: var(--ink);
   overflow: hidden;

@@ -1,4 +1,4 @@
-/* THE GESTURE PRIMITIVES: what a pointer does to a rendered widget outside edit mode.
+/* THE GESTURE PRIMITIVES: what a pointer does to a rendered instance outside edit mode.
  *
  * A view is a view and an input device. These handlers REPORT gestures — press, drag1d,
  * drag_radial, pick — and never decide behavior: every flow runs on the backend, once,
@@ -8,7 +8,7 @@
  * test names it.
  *
  * WHAT GOES ON THE WIRE: the CANONICAL gesture names with their fixed signatures, plus
- * WHICH PART raised them. press sends press / release / tap as bare moments (held and
+ * WHICH ELEMENT raised them. press sends press / release / tap as bare moments (held and
  * pressrelease are the backend's — it schedules the hold and derives the edge); the
  * drags send input(value) while moving and commit(value) at the end; pick sends open
  * and select(option). No rename table and no payload rule: a component maps gestures to
@@ -26,17 +26,17 @@
 import { el } from "./dom.js";
 import { Editor } from "./editor.js";
 import { attrText, run } from "./program.js";
-import { Interact, Json, Program, WidgetType } from "./types.js";
+import { Interact, Json, Program, ComponentType } from "./types.js";
 
 /* what one armed node needs from the stage that built it */
 export interface GestureSeat {
   editor: Editor;
-  /* the instance these gestures post as — inside an entered widget, the entered one */
+  /* the instance these gestures post as — inside an entered component, the entered one */
   owner: number;
-  /* WHICH ARMED PART this is: the template node's dotted name ("" = the root). Rides
+  /* WHICH ARMED ELEMENT this is: the template node's dotted name ("" = the root). Rides
      every post; the backend's compiled bubbling topology decides who hears it. */
-  part: string;
-  type: WidgetType | null;
+  element: string;
+  type: ComponentType | null;
   interact: Interact;
   /* the same cell reader the node's attrs ran over: params are compiled programs, so a
      min that is fed live maps the finger against the live number */
@@ -94,7 +94,7 @@ export function optionNames(value: Json): string[] {
  * signatures — no rename table, no payload rule. A moment (press, release, tap, open)
  * carries nothing; the drags carry the value, the picks the option. */
 function post(seat: GestureSeat, gesture: string, value?: Json): void {
-  seat.editor.input(seat.owner, gesture, value, seat.part);
+  seat.editor.input(seat.owner, gesture, value, seat.element);
 }
 
 /* ---- the shared arithmetic, exported pure so the suite pins the numbers ---- */

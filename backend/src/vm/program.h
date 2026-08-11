@@ -96,7 +96,7 @@ enum class CellKind : uint8_t { Global, Local, Slot, Temp };
 
 struct CellDef {
     CellKind kind = CellKind::Global;
-    uint64_t owner_widget = 0;
+    uint64_t owner_node = 0;
     uint64_t node_id = 0;
     std::string name;
     Shape shape = Shape::Unknown;
@@ -155,14 +155,15 @@ struct StructDef {
 };
 
 struct FlowProgram {
-    uint64_t widget_id = 0;
+    uint64_t node_id = 0;
     uint64_t flow_id = 0;
     std::string event;
-    /* the PART CHANNEL this trigger listens on: empty = the widget-level channel (the
-     * root's own gestures plus every bubbling part's), a template node's dotted name =
-     * that part alone. Only a component's behavior may qualify — parts are private
-     * anatomy, so an instance flow's trigger never names one. */
-    std::string part;
+    /* the ELEMENT CHANNEL this trigger listens on: empty = the instance-level channel
+     * (the root's own gestures plus every bubbling element's), a template node's dotted
+     * name = that element alone. Only a component's behavior may qualify — the
+     * elements inside a component are private anatomy, so an instance flow's trigger
+     * never names one. */
+    std::string element;
     uint32_t group = 0;
     uint32_t runtime_index = 0;
     uint32_t hold_ticks = 0;
@@ -179,7 +180,7 @@ struct FlowProgram {
 };
 
 struct TimerDef {
-    uint64_t owner_widget = 0;
+    uint64_t owner_node = 0;
     uint64_t node_id = 0;
     std::string name;
     std::string event;
@@ -196,25 +197,25 @@ struct StateSite {
     uint32_t slot = 0;
 };
 
-/* One RAISED event's identity: which widget speaks and what it says. A Raise
+/* One RAISED event's identity: which instance speaks and what it says. A Raise
  * instruction indexes this table; the scheduler dispatches the queued record after the
- * raising run halts, on the widget-level channel. */
+ * raising run halts, on the instance-level channel. */
 struct RaiseDef {
-    uint64_t widget_id = 0;
+    uint64_t node_id = 0;
     std::string event;
 };
 
-/* One ARMED PART of one widget: a template node carrying a gesture, and whether its
- * events also ring the widget-level channel. The propagation topology is STATIC data —
- * declared bubbles on the interact, compiled here, consulted at dispatch — never a
- * runtime stopPropagation. */
-struct ArmedPart {
-    uint64_t widget_id = 0;
-    std::string part;
+/* One ARMED ELEMENT of one instance: a template node carrying a gesture, and whether
+ * its events also ring the instance-level channel. The propagation topology is STATIC
+ * data — declared bubbles on the interact, compiled here, consulted at dispatch —
+ * never a runtime stopPropagation. */
+struct ArmedElement {
+    uint64_t node_id = 0;
+    std::string element;
     bool bubbles = true;
 };
 
-/* ONE SLOT'S STANDING EXPRESSION (spec D1): the compiled form of a widget slot whose
+/* ONE SLOT'S STANDING EXPRESSION (spec D1): the compiled form of an instance slot whose
  * authored value is a non-constant expression. Its deps are whatever the code READS —
  * recorded by scanning the instructions, so multi-source expressions (two topics in one
  * value) carry every source. Scheduling follows the deps:
@@ -224,11 +225,11 @@ struct ArmedPart {
  *   otherwise    entity deps only: the scheduler runs it when one of `dep_entities`
  *                delivers, and the cell stays UNKNOWN until the first arrival (the old
  *                fed-slot rule).
- * `poll_ms` is set when a dep is a mesh FUNCTION: the widget's `poll` map (default
+ * `poll_ms` is set when a dep is a mesh FUNCTION: the instance's `poll` map (default
  * 2 Hz) says how often the mesh asks; the response arrives like any delivery. */
 struct SlotProgram {
-    uint64_t widget_id = 0;    /* also the diag node: a slot finding pins to the widget */
-    uint64_t page_id = 0;      /* the page the owning widget sits on (poll gating) */
+    uint64_t node_id = 0;   /* also the diag node: a slot finding pins to the instance */
+    uint64_t page_id = 0;   /* the page the owning instance sits on (poll gating) */
     std::string slot;          /* the slot's address, the finding's `where` */
     uint32_t cell = 0;
     uint32_t poll_ms = 0;
@@ -291,7 +292,7 @@ struct Program {
     std::vector<FlowProgram> flows;
     std::vector<SlotProgram> slot_programs;
     std::vector<RaiseDef> raises;
-    std::vector<ArmedPart> armed_parts;
+    std::vector<ArmedElement> armed_elements;
     std::vector<TimerDef> timers;
     std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;

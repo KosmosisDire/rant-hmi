@@ -27,7 +27,7 @@ inline Json set_var(const std::string& name, const std::string& expression) {
                 {"to", {{"local", name}, {"path", ""}}}};
 }
 
-/* widget.<slot> = <expression> */
+/* this.<slot> = <expression> */
 inline Json set_slot(const std::string& slot, const std::string& expression) {
     return Json{{"kind", "assign"}, {"from", {{"expr", expression}}}, {"to", {{"slot", slot}}}};
 }
@@ -84,7 +84,7 @@ inline Json write_elem(const char* kind, const std::string& name, const std::str
 }
 
 /* a flow trigger that runs on its own clock: `ms` is a number or constant arithmetic
- * over the widget's slots */
+ * over the instance's slots */
 inline Json every(const Json& ms) {
     return Json{{"kind", "every"}, {"ms", ms}};
 }

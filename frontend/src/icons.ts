@@ -38,7 +38,7 @@ export const ICONS: Record<string, string> = {
   "kind-l": '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>',
   "kind-g": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
 
-  /* widget types, for the palette and the add menu */
+  /* components, for the palette and the add menu */
   Button: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M8 12h8"/>',
   Toggle: '<rect x="2" y="7" width="20" height="10" rx="5"/><circle cx="16" cy="12" r="3" fill="currentColor"/>',
   Slider: '<path d="M3 12h18"/><circle cx="14" cy="12" r="2" fill="currentColor"/>',
@@ -72,7 +72,7 @@ export const KIND_COLOR: Record<string, string> = {
   T: "#9a9a9f",
   F: "#4db6ac",
   S: "#46ae64",
-  /* HMI scopes: blue for this widget's own names, violet for the whole HMI's */
+  /* HMI scopes: blue for this instance's own names, violet for the whole HMI's */
   l: "#4e8ef7",
   g: "#a78bfa",
 };

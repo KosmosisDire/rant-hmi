@@ -44,27 +44,27 @@ export class App implements Editor {
   mesh: Mesh = { entities: [], types: [] };
   /* the served expression vocabulary: autocomplete reads exactly what compiles */
   lang: Lang | null = null;
-  /* the closed attr vocabulary, snapshot-only like `lang`: the part
+  /* the closed attr vocabulary, snapshot-only like `lang`: the element
      inspector's Attrs section lists exactly this, set or not */
   attrTable: AttrTable | null = null;
   /* the built-ins' editable document form, snapshot-only (it never changes at runtime):
      the Components tree browses it and a fork copies one entry into doc.components */
   builtins: BuiltinDef[] = [];
-  /* the component-edit selection; mutually exclusive with the widget selection */
+  /* the component-edit selection; mutually exclusive with the instance selection */
   componentSel: { component: number; node: number } | null = null;
   /* the built-in being browsed read-only: its name plus a child-index path into its
-     parts ("" = the component itself). Mutually exclusive with the other two. */
+     elements ("" = the component itself). Mutually exclusive with the other two. */
   builtinSel: { name: string; path: string } | null = null;
   live: Live | null = null;
   diagnostics: Diag[] = [];
   /* the standing aggregate cells, folded from every frame's `aggs` deltas (editor.ts):
      the wire carries what is new, this holds what there is */
   private aggs = new Map<string, AggEntry>();
-  /* the entered-widget stack (editor.ts): empty = editing the page itself. Never synced
+  /* the entered-component stack (editor.ts): empty = editing the page itself. Never synced
      and never persisted, like the selection it travels with. */
   contexts: StageContext[] = [];
   view: ViewState = {
-    mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {},
+    mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {},
     /* the theme preview mode is a local preference, like the sidebar widths */
     themeMode: localStorage.getItem("theme-mode") === "light" ? "light" : "dark",
   };
@@ -149,7 +149,7 @@ export class App implements Editor {
     return this.aggs.get(key) ?? null;
   }
 
-  /* THE EDITING ROOT: the page, or — inside an entered widget — the component shaped as
+  /* THE EDITING ROOT: the page, or — inside an entered instance — the component shaped as
      one (a ComponentDef is {id, name, children} too, and its children array is the LIVE
      array, so the drop plans splice what the document holds). Null while looking at an
      unforked built-in: its nodes are nobody's to edit. */
@@ -168,26 +168,26 @@ export class App implements Editor {
     return ctx ? { w: ctx.w, h: ctx.h } : { w: CANVAS_W, h: CANVAS_H };
   }
 
-  /* ENTER A WIDGET: the instance's component becomes the editing context — the same
+  /* ENTER A COMPONENT: the instance's component becomes the editing context — the same
      artboard editing on its own design frame, editing the COMPONENT (every instance
      follows) — previewed at this instance's rendered size, with this instance's data.
      An unforked built-in enters READ-ONLY (component 0): its nodes carry no ids until
      Override copies it into the document, and the context upgrades itself when that
      echo lands (settleContexts). */
-  enterWidget(id: number, path?: string): void {
-    const inst = this.store.widget(id);
+  enterComponent(id: number, path?: string): void {
+    const inst = this.store.instance(id);
     const type = inst?.type ?? "";
     if (!inst || !type) return;
     const comp = this.store.components().find((c) => c.name === type) ?? null;
     if (!comp && !this.builtins.some((b) => b?.name === type)) return;
     const box = this.canvasBox(id);
-    const spec = (this.registry?.types ?? []).find((t) => t.name === type);
+    const spec = (this.registry?.components ?? []).find((t) => t.name === type);
     const w = Math.max(44, Math.round(box?.w ?? spec?.design_w ?? 240));
     const h = Math.max(44, Math.round(box?.h ?? spec?.design_h ?? 120));
     this.contexts.push({ component: comp?.id ?? 0, builtin: comp ? "" : type,
                          from: id, w, h, w0: w, h0: h });
     this.view.selection = [];
-    this.view.part = "";
+    this.view.element = "";
     this.setHover(0);
     /* land selected on the internal node the author pointed at (a fenced tree row):
        the path is template names joined with dots, walked down the component's own
@@ -212,7 +212,7 @@ export class App implements Editor {
     const dropped = this.contexts[depth];
     this.contexts.length = depth;
     this.view.selection = dropped && this.store.nodeAt(dropped.from) ? [dropped.from] : [];
-    this.view.part = "";
+    this.view.element = "";
     this.setHover(0);
     this.queueSidebars();
   }
@@ -255,11 +255,11 @@ export class App implements Editor {
     return id ? this.store.nodeAt(id) : null;
   }
 
-  /* the selection only where it is an INSTANCE: `store.widget` is the same question asked
-     of one id, so the rule lives in exactly one place */
-  selectedWidget(): Node | null {
+  /* the selection only where it is an INSTANCE: `store.instance` is the same question
+     asked of one id, so the rule lives in exactly one place */
+  selectedInstance(): Node | null {
     const id = this.view.selection[0];
-    return id ? this.store.widget(id) : null;
+    return id ? this.store.instance(id) : null;
   }
 
   apply(ops: Op[]): void {
@@ -269,17 +269,17 @@ export class App implements Editor {
   /* one gesture event out. The sequence is per-session monotonic — the backend drops
      what arrives out of order, which is also what lets its fail-safe synthesize a
      release for a session that vanished mid-press. */
-  input(widget: number, event: string, value?: Json, part?: string): void {
-    this.conn.input(widget, event, value ?? null, this.inputSeq++, part ?? "");
+  input(node: number, event: string, value?: Json, element?: string): void {
+    this.conn.input(node, event, value ?? null, this.inputSeq++, element ?? "");
   }
 
   setPage(id: number): void {
     this.pageId = id;
-    /* a page switch is a change of subject: whatever widget was entered, the author
+    /* a page switch is a change of subject: whatever component was entered, the author
        asked for a different page, not that component on it */
     this.contexts = [];
     this.view.selection = [];
-    this.view.part = "";
+    this.view.element = "";
     this.conn.view(id, true);
     this.renderAll();
   }
@@ -294,13 +294,13 @@ export class App implements Editor {
   }
 
   /* land on a consumer named elsewhere (the Data workspace's where-used) */
-  reveal(widget: number): void {
-    const parent = this.store.parentOf(widget);
+  reveal(instance: number): void {
+    const parent = this.store.parentOf(instance);
     if (parent && typeof parent.id === "number" && this.page()?.id !== parent.id)
       this.setPage(parent.id);
-    /* the revealed widget lives on the page: whatever was entered steps aside */
+    /* the revealed instance lives on the page: whatever was entered steps aside */
     this.contexts = [];
-    this.select([widget]);
+    this.select([instance]);
     this.setWorkspace("content");
   }
 
@@ -309,7 +309,7 @@ export class App implements Editor {
      lose your place in Design every time you touched the artboard. */
   select(ids: number[]): void {
     this.view.selection = ids;
-    this.view.part = "";
+    this.view.element = "";
     this.queueSidebars();
   }
 
@@ -335,15 +335,15 @@ export class App implements Editor {
     previewArrangement(this.nodes.stage, this, node, plan);
   }
 
-  /* part selection: the widget is selected and the focus narrows to one named template
-     node; the inspector scopes to it */
-  selectPart(id: number, path: string): void {
+  /* element selection: the instance is selected and the focus narrows to one named
+     template node; the inspector scopes to it */
+  selectElement(id: number, path: string): void {
     this.view.selection = [id];
-    this.view.part = path;
+    this.view.element = path;
     this.queueSidebars();
   }
 
-  /* the Design workspace's selection: a component, or one part node inside it. The two
+  /* the Design workspace's selection: a component, or one element node inside it. The two
      component selections ARE exclusive of each other (one inspector, one subject); the
      page selection is untouched, since it belongs to another workspace. */
   selectComponent(component: number, node: number): void {
@@ -406,14 +406,14 @@ export class App implements Editor {
 
      IT IS OPERABLE FROM BIRTH. A component with no gesture and no events is a picture: an
      instance of it offers nothing to trigger a flow on, which reads as the editor refusing
-     to let a custom widget do anything at all. So it starts with the press gesture on its
+     to let a custom component do anything at all. So it starts with the press gesture on its
      root — which brings the whole press family with it, fixed signatures and all (the
      closed vocabulary in types.ts; nothing is declared). A drag or a pick is one change
      of the root's gesture away; the events section holds only what the component
      INVENTS and raises itself. */
   addComponent(): void {
     const taken = new Set<string>(this.store.components().map((c) => c.name));
-    for (const type of this.registry?.types ?? []) taken.add(type.name);
+    for (const type of this.registry?.components ?? []) taken.add(type.name);
     let name = "Custom1";
     for (let n = 1; taken.has(name); n++) name = "Custom" + n;
     const press = primitiveDef("press");
@@ -498,7 +498,7 @@ export class App implements Editor {
     this.pageId = page ? page.id : 0;
     this.conn.view(this.pageId, true);
     this.view.selection = this.view.selection.filter((id) => this.selectable(id));
-    if (!this.view.selection.length) this.view.part = "";
+    if (!this.view.selection.length) this.view.element = "";
     this.settleComponentSel();
     this.settleContexts();
     this.renderAll();
@@ -508,13 +508,13 @@ export class App implements Editor {
      one is selected from the Layers tree and edited in the inspector, so dropping it on
      the echo of its own edit would empty the inspector under the author's hands. */
   private selectable(id: number): boolean {
-    return Boolean(this.store.widget(id) ?? this.store.nodeAt(id));
+    return Boolean(this.store.instance(id) ?? this.store.nodeAt(id));
   }
 
   private onOps(version: number, ops: Op[]): void {
     this.store.apply(version, ops);
     this.view.selection = this.view.selection.filter((id) => this.selectable(id));
-    if (!this.view.selection.length) this.view.part = "";
+    if (!this.view.selection.length) this.view.element = "";
     if (!this.page()) this.pageId = this.store.pages()[0]?.id ?? 0;
     /* our "+ New page" echo names the issued id: switch to the fresh page */
     if (this.pendingPage)
@@ -549,7 +549,7 @@ export class App implements Editor {
         this.pendingComponent = null;
         this.componentSel = { component: held.id, node: held.id };
         this.view.selection = [];
-        this.view.part = "";
+        this.view.element = "";
       }
     }
     if (!this.componentSel) return;
@@ -559,18 +559,18 @@ export class App implements Editor {
   }
 
   /* Diagnostics arrive addressed to a document node, which may be a feed, a step or a
-   * variable. The Layers tree can only badge a WIDGET, so each finding is walked up to the
-   * widget that owns it; a global variable's finding belongs to no widget and stays in the
+   * variable. The Layers tree can only badge an INSTANCE, so each finding is walked up to the
+   * instance that owns it; a global variable's finding belongs to no instance and stays in the
    * list. */
   private onDiag(rows: Diag[], render = true): void {
     this.diagnostics = Array.isArray(rows) ? rows : [];
     this.view.faults = {};
     for (const row of this.diagnostics) {
-      const widget = this.store.owningWidget(row.node);
-      if (!widget) continue;
-      const worst = this.view.faults[widget];
+      const instance = this.store.owningInstance(row.node);
+      if (!instance) continue;
+      const worst = this.view.faults[instance];
       if (worst === "error" || (worst === "warning" && row.grade === "info")) continue;
-      this.view.faults[widget] = row.grade;
+      this.view.faults[instance] = row.grade;
     }
     const errors = this.diagnostics.filter((row) => row.grade === "error").length;
     const notes = this.diagnostics.length - errors;
@@ -583,19 +583,19 @@ export class App implements Editor {
     if (render) this.renderAll();
   }
 
-  /* the first thing worth looking at: select its widget and say what is wrong */
+  /* the first thing worth looking at: select its instance and say what is wrong */
   private showProblem(): void {
     const row =
       this.diagnostics.find((d) => d.grade === "error") ?? this.diagnostics[0] ?? null;
     if (!row) return;
-    const widget = this.store.owningWidget(row.node);
-    if (widget) this.select([widget]);
+    const instance = this.store.owningInstance(row.node);
+    if (instance) this.select([instance]);
     this.flash(row.message);
   }
 
-  /* every finding about this widget or anything inside it */
-  diagFor(widget: number): Diag[] {
-    return this.diagnostics.filter((row) => this.store.owningWidget(row.node) === widget);
+  /* every finding about this instance or anything inside it */
+  diagFor(instance: number): Diag[] {
+    return this.diagnostics.filter((row) => this.store.owningInstance(row.node) === instance);
   }
 
   diagAt(node: number, where?: string): Diag[] {
@@ -652,7 +652,7 @@ export class App implements Editor {
   private build(): void {
     clear(this.shellHost);
     const pill = el("span", { class: "pill connecting", title: "connecting" });
-    /* clicking a compile finding selects the widget it names */
+    /* clicking a compile finding selects the instance it names */
     const problems = el("button", { class: "problems", onclick: () => this.showProblem() });
     const left = el("aside", { class: "sidebar left" });
     const inspector = el("aside", { class: "sidebar right" });
@@ -692,7 +692,7 @@ export class App implements Editor {
       const data = el("main", { class: "workspace-data" }, [dataTree, dataDetail]);
       this.dataTreePanel = new Panel(dataTree);
       this.dataDetailPanel = new Panel(dataDetail);
-      /* Design: the component tree and the component/part inspector, either side of an
+      /* Design: the component tree and the component/element inspector, either side of an
          empty middle. The preview that used to stand between them was a second artboard
          with its own camera; it goes with the first one, and comes back as the multi-size
          gallery the rebuild plans. Authoring a component still works — the tree selects,
@@ -824,7 +824,7 @@ export class App implements Editor {
 
   /* The four interaction primitives live in gestures.ts now, on ordinary DOM events:
      the stage arms the node the served interact rides, the browser hit-tests, and this
-     shell's only part is `input()` above — a gesture is a report, never a decision. */
+     shell's only job is `input()` above — a gesture is a report, never a decision. */
 
   private onKey(ev: KeyboardEvent): void {
     const typing = (ev.target as HTMLElement)?.matches?.("input, select, textarea");
@@ -838,12 +838,12 @@ export class App implements Editor {
     }
     if (ev.key === "Escape") {
       closeMenu();
-      /* Escape steps out one level WITHIN the active workspace: in Design, part ->
-         component -> none; in Content, widget part -> widget -> selection -> the
-         entered widget's own context, one crumb at a time -> none. */
+      /* Escape steps out one level WITHIN the active workspace: in Design, element ->
+         component -> none; in Content, an instance's element -> the instance ->
+         selection -> the entered component's own context, one crumb at a time -> none. */
       if (this.workspace !== "design") {
-        if (this.view.part && this.view.selection.length)
-          this.selectPart(this.view.selection[0], "");
+        if (this.view.element && this.view.selection.length)
+          this.selectElement(this.view.selection[0], "");
         else if (this.view.selection.length) this.select([]);
         else if (this.contexts.length) this.exitTo(this.contexts.length - 1);
         return;
@@ -900,12 +900,12 @@ export class App implements Editor {
     const page = this.root();
     if (!page || this.view.mode !== "edit") return;
 
-    /* on a widget: its own verbs, acting on it — a right-click selects what it acts on */
-    const widget = at ? this.store.widget(at) : null;
-    if (widget) {
-      this.select([widget.id]);
-      openMenu(clientX, clientY, widget.type ?? "", [
-        { label: "Group", icon: "frame", run: () => this.group([widget.id]) },
+    /* on an instance: its own verbs, acting on it — a right-click selects what it acts on */
+    const instance = at ? this.store.instance(at) : null;
+    if (instance) {
+      this.select([instance.id]);
+      openMenu(clientX, clientY, instance.type ?? "", [
+        { label: "Group", icon: "frame", run: () => this.group([instance.id]) },
         { separator: true },
         { label: "Duplicate", icon: "copy", run: () => this.duplicate() },
         { label: "Delete", icon: "trash", danger: true, run: () => this.removeSelection() },
@@ -923,20 +923,20 @@ export class App implements Editor {
                  : node ? (this.store.parentOf(at)?.id ?? page.id)
                  : page.id;
     if (node) this.select([node.id]);
-    const types = this.registry?.types ?? [];
+    const types = this.registry?.components ?? [];
     openMenu(clientX, clientY, node?.name || node?.type || page.name, [
       {
-        label: "Add widget ▸",
+        label: "Add component ▸",
         icon: "layers",
         /* the type list is the same menu re-opened where it stands: a real flyout is a
            menu.ts feature and this milestone does not need one. The dismiss overlay is
            about to see this very click, so it is told to let one through. */
         run: () => {
           armSwallow();
-          openMenu(clientX, clientY, "Add widget", types.map((type) => ({
+          openMenu(clientX, clientY, "Add component", types.map((type) => ({
             label: type.name,
             icon: type.name,
-            run: () => this.addWidget(type.name, parent),
+            run: () => this.addInstance(type.name, parent),
           })));
         },
       },
@@ -1176,11 +1176,11 @@ export class App implements Editor {
     this.apply([{ op: "insert", parent, list: "children", node }]);
   }
 
-  /* A WIDGET IS A FRAME THAT NAMES A COMPONENT — there is no widget kind to ask for — so
+  /* AN INSTANCE IS A FRAME THAT NAMES A COMPONENT — there is no instance kind to ask for — so
      this inserts the same node `addBox` does, carrying a `type`, at the component's own
      NATURAL SIZE: the design frame it was authored against. */
-  private addWidget(type: string, parent: number): void {
-    const spec = (this.registry?.types ?? []).find((t) => t.name === type);
+  private addInstance(type: string, parent: number): void {
+    const spec = (this.registry?.components ?? []).find((t) => t.name === type);
     const w = Math.max(22, snapPx(spec?.design_w ?? 240));
     const h = Math.max(22, snapPx(spec?.design_h ?? 120));
     this.insertNode(parent, { kind: "frame", type, name: type }, w, h);
@@ -1199,14 +1199,14 @@ export class App implements Editor {
     this.insertNode(parent, { kind, name: kind }, size.w, size.h);
   }
 
-  /* duplicate every selected widget OR frame into its OWN parent, directly after it: a
+  /* duplicate every selected instance OR frame into its OWN parent, directly after it: a
      frame's child duplicates back into that frame, a page-level node back onto the page.
      The copy used to be nudged one cell down and right so it did not hide under its
      original; a list has no "under", so it simply follows. */
   private duplicate(): void {
     const ops: Op[] = [];
     for (const id of this.view.selection) {
-      const node = this.store.widget(id) ?? this.store.nodeAt(id);
+      const node = this.store.instance(id) ?? this.store.nodeAt(id);
       if (!node) continue;
       const parent = this.store.parentOf(id);
       if (!parent || typeof parent.id !== "number") continue;

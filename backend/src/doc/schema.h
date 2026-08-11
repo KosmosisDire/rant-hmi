@@ -23,13 +23,13 @@ uint64_t json_u64_or(const Json& value, uint64_t fallback);
  * node_spec() indexes the table by this enum, so the order here MUST match the order
  * the NodeSpecs are pushed in table(): append new kinds at the END of both.
  *
- * THERE IS ONE TREE. A page's frames, a component's internals and a widget instance were
+ * THERE IS ONE TREE. A page's frames, a component's internals and an instance were
  * three node kinds (Frame, Part, Widget) with three field models; they are now one `Node`
  * whose `kind` VARIANT says what it draws: frame | text | icon | path. A page holds
  * nodes, a frame holds nodes, a component holds nodes, and one inspector, one renderer
  * and one drag arithmetic serve all three because there is nothing left to tell apart.
  *
- * A WIDGET IS NOT A KIND. It is a frame with a `type`: it names a component, and that
+ * AN INSTANCE IS NOT A KIND. It is a frame with a `type`: it names a component, and that
  * component's children are its subtree — hidden on the page, entered to edit. The
  * component is the same frame, PRE-MADE and kept in the library instead of on a page,
  * and what earns it a record of its own is what it adds: declared properties, events and
@@ -55,9 +55,9 @@ enum class Role {
     Expr,        /* expression text: identifiers may name variables */
     Triggers,    /* the flow's `when` array: timer entries name variables */
     MoveRef,     /* a move's `from` / `to`: an expression, a local name, or {kind, name} */
-    SlotMap,     /* a widget's `slots` object: every STRING leaf is an expression (a
+    SlotMap,     /* an instance's `slots` object: every STRING leaf is an expression (a
                     number or bool is a degenerate literal), nested one object deep per
-                    part, so rename fan-out walks the leaves */
+                    element, so rename fan-out walks the leaves */
 };
 
 struct Prop {
@@ -76,7 +76,7 @@ struct Prop {
 
 /* One child list, holding exactly one kind. Every list is uniform now that a page, a
  * frame and a component all hold the SAME kind of child: the discriminator machinery
- * that let a `{"kind":"frame"}` and a `{"kind":"widget"}` share one array went with the
+ * that let a `{"kind":"frame"}` and an instance node share one array went with the
  * split it existed to paper over — `kind` is a variant of one NodeSpec, not a choice
  * between two. */
 struct ChildList {
@@ -86,7 +86,7 @@ struct ChildList {
 
 /* One variant of a node kind: the props AND the lists it adds on top of the common set.
  * A variant owns its lists because the variants differ in what they can HOLD, not only
- * in what they describe — a frame holds children, a widget holds its feeds and flows and
+ * in what they describe — a frame holds children, an instance holds its feeds and flows and
  * no children at all, a text leaf holds neither — and filling every node with every
  * other variant's empty arrays would make the document say things that are not true. */
 struct Variant {

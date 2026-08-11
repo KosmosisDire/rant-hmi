@@ -23,20 +23,20 @@ bool apply(Document& d, std::initializer_list<Json> ops, std::string& err) {
     return apply_ops(d, ops_of(ops), r, err);
 }
 
-/* The default page is a TREE of frames now, so a demo widget is found by its LABEL
+/* The default page is a TREE of frames now, so a demo instance is found by its LABEL
  * wherever it nests rather than by an index that every layout edit would move. */
-Json* widget_in(Json& node, const std::string& label) {
+Json* instance_in(Json& node, const std::string& label) {
     auto kids = node.find("children");
     if (kids == node.end() || !kids->is_array()) return nullptr;
     for (Json& child : *kids) {
         if (!child.value("type", "").empty() && child.value("name", "") == label)
             return &child;
-        if (Json* found = widget_in(child, label)) return found;
+        if (Json* found = instance_in(child, label)) return found;
     }
     return nullptr;
 }
 
-Json& labelled(Document& d, const char* label) { return *widget_in(d.root["pages"][0], label); }
+Json& labelled(Document& d, const char* label) { return *instance_in(d.root["pages"][0], label); }
 
 /* the frame the demo page names, wherever it nests */
 Json* frame_in(Json& node, const std::string& name) {
@@ -77,7 +77,7 @@ void test_defaults() {
     CHECK(d.version() == 1);
     CHECK(d.root["pages"].size() == 1);
     /* the page is an ARRANGEMENT ON THE ARTBOARD: the header band, the main pane and the
-       side panes each sit at their own place, and every widget lives inside one of them */
+       side panes each sit at their own place, and every instance lives inside one of them */
     CHECK(d.root["pages"][0]["children"].size() == 4);
     /* the artboard is a constant of the system (1408 x 792), not document data */
     CHECK(d.root.find("canvas") == d.root.end());
@@ -144,7 +144,7 @@ void test_round_trip() {
     CHECK(d.version() == 2);
     CHECK(labelled(d, "Head")["id"] == wid);
 
-    /* a new widget: the backend issues its id and reports it in the applied batch */
+    /* a new instance: the backend issues its id and reports it in the applied batch */
     const uint64_t page = id_of(d.root["pages"][0]);
     ApplyResult r;
     Json batch = Json::array({Json{{"op", "insert"},
@@ -211,7 +211,7 @@ void test_validation() {
     CHECK(!apply(d, {Json{{"op", "wat"}, {"node", wid}}}, err));
     CHECK(!apply(d, {Json{{"op", "insert"},
                           {"parent", wid},
-                          {"list", "widgets"},
+                          {"list", "instances"},
                           {"node", Json::object()}}},
                  err));
     CHECK_EQ(d.version(), before);   /* nothing was accepted */
@@ -256,7 +256,7 @@ void test_structure_ops() {
     CHECK(d.find(readout) == nullptr);
     CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", slider}}}, err), err);
     CHECK(d.find(slider) == nullptr);
-    CHECK(d.find(slider_flow) == nullptr);   /* the flow went with its widget */
+    CHECK(d.find(slider_flow) == nullptr);   /* the flow went with its instance */
     CHECK((*d.node(main_col))["children"].size() == 4);   /* 6 minus the two removed */
     CHECK(d.find(page_id) != nullptr);
 
@@ -326,16 +326,16 @@ void test_rename() {
                  err));
 
     /* a local shadowing the global keeps its own references */
-    const uint64_t widget = id_of(labelled(d, "Reset"));
+    const uint64_t instance = id_of(labelled(d, "Reset"));
     ApplyResult lr;
     Json local = Json::array({Json{{"op", "insert"},
-                                   {"parent", widget},
+                                   {"parent", instance},
                                    {"list", "locals"},
                                    {"node", {{"name", "flowRate"}, {"type", "f64"}}}}});
     CHECK_MSG(apply_ops(d, local, lr, err), err);
     ApplyResult br;
     Json shadowed = Json::array({Json{{"op", "rename"}, {"node", var_id}, {"name", "capture"}}});
-    /* the global renames fine: this widget shadows it, so it holds no reference to it */
+    /* the global renames fine: this instance shadows it, so it holds no reference to it */
     CHECK_MSG(apply_ops(d, shadowed, br, err), err);
     CHECK((*d.node(step))["from"]["expr"] == "flowRate * 2 + flowRate");   /* untouched: shadowed */
 }
@@ -458,7 +458,7 @@ void test_aggregate_move_props() {
     /* and they survive an edit through the ordinary op path */
     Document d = Document::make_default();
     std::string err;
-    const uint64_t reset = id_of(*widget_in(d.root["pages"][0], "Reset"));
+    const uint64_t reset = id_of(*instance_in(d.root["pages"][0], "Reset"));
     ApplyResult r;
     Json add = Json::array({Json{{"op", "insert"},
                                  {"parent", reset},
@@ -541,7 +541,7 @@ void test_tokens() {
     Json slots = labelled(d, "Title")["slots"];
     slots["text_color"] = "$accent";
     slots["surface"] = "#4e8ef7";
-    /* a PART's colour sits one level in (spec 2.3): the fan-out walks the nesting */
+    /* an ELEMENT's colour sits one level in (spec 2.3): the fan-out walks the nesting */
     slots["bar"] = Json{{"fill_color", "$accent"}};
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", wid}, {"key", "slots"},
                              {"value", slots}}},
@@ -555,7 +555,7 @@ void test_tokens() {
     CHECK(labelled(d, "Title")["slots"]["text_color"] == "$brand");
     CHECK(labelled(d, "Title")["slots"]["bar"]["fill_color"] == "$brand");
     CHECK(labelled(d, "Title")["slots"]["surface"] == "#4e8ef7");
-    /* the fan-out is echoed as ONE set_prop of the whole slots object per touched widget */
+    /* the fan-out is echoed as ONE set_prop of the whole slots object per touched instance */
     int set_props = 0;
     for (const Json& op : rr.ops)
         if (op["op"] == "set_prop") {
@@ -623,8 +623,8 @@ void test_frames() {
     Json& page = d.root["pages"][0];
     const uint64_t page_id = id_of(page);
 
-    /* insert a fresh frame with one widget child in ONE op: the backend issues every id
-       recursively, exactly like a component fork does over `parts` */
+    /* insert a fresh frame with one instance child in ONE op: the backend issues every id
+       recursively, exactly like a component fork does over its `children` */
     ApplyResult r;
     Json add = Json::array({Json{{"op", "insert"},
                                  {"parent", page_id},
@@ -643,8 +643,8 @@ void test_frames() {
     CHECK(frame["attrs"].is_object() && frame["attrs"].empty());
     CHECK(frame["name"] == "Fresh");
     CHECK(frame["children"].size() == 1);
-    const uint64_t widget_in_frame = id_of(frame["children"][0]);
-    const NodeEntry* we = d.find(widget_in_frame);
+    const uint64_t instance_in_frame = id_of(frame["children"][0]);
+    const NodeEntry* we = d.find(instance_in_frame);
     /* a frame's child is indexed under the FRAME, not the page: the frame is what holds
        it, so the frame must be its structural parent */
     CHECK(we && we->parent == frame_id && we->list == "children");
@@ -655,7 +655,7 @@ void test_frames() {
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", frame_id}, {"key", "layout"},
                           {"value", "col"}}}, err));
 
-    /* insert a SECOND widget straight into the frame: a nested insert, not a page one */
+    /* insert a SECOND instance straight into the frame: a nested insert, not a page one */
     ApplyResult r2;
     Json add2 = Json::array({Json{{"op", "insert"},
                                   {"parent", frame_id},
@@ -665,16 +665,16 @@ void test_frames() {
     CHECK((*d.node(frame_id))["children"].size() == 2);
 
     /* move within the heterogeneous list: reordering one of a frame's own children uses
-       the same generic op that reorders widgets at the page level */
+       the same generic op that reorders instances at the page level */
     const uint64_t second_child = id_of((*d.node(frame_id))["children"][1]);
     CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", second_child}, {"index", 0}}}, err), err);
     CHECK(id_of((*d.node(frame_id))["children"][0]) == second_child);
 
-    /* removing the frame takes its widgets with it (the recursive id collection walks
+    /* removing the frame takes its instances with it (the recursive id collection walks
        past frames the same way the compiler and refs.cpp do) */
     CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", frame_id}}}, err), err);
     CHECK(d.find(frame_id) == nullptr);
-    CHECK(d.find(widget_in_frame) == nullptr);
+    CHECK(d.find(instance_in_frame) == nullptr);
     CHECK(d.find(second_child) == nullptr);
 
     /* a node with no kind at all takes the default one rather than being refused: there
@@ -769,7 +769,7 @@ void test_reparent() {
     CHECK(d.root["pages"][0]["children"].size() == 4);   /* the page is frames again */
     const NodeEntry* pe = d.find(pump);
     CHECK(pe && pe->parent == lamps && pe->list == "children" && pe->index == 1);
-    /* the widget travelled whole: its label, slots and lists came with it */
+    /* the instance travelled whole: its label, slots and lists came with it */
     CHECK((*d.node(pump))["name"] == "Pump");
     CHECK((*d.node(pump))["slots"]["value"] == true);
 
@@ -876,7 +876,7 @@ void test_group() {
     CHECK((*d.node(frame_id))["attrs"]["h"] == "264");
 
     /* the echo is an insert of a childless box and then one addressed move per node, so a
-       client applying it mechanically never holds the same widget twice */
+       client applying it mechanically never holds the same instance twice */
     CHECK(r.ops.size() == 3);
     CHECK(r.ops[0]["op"] == "insert" && r.ops[0]["parent"] == main_col &&
           r.ops[0]["list"] == "children" && r.ops[0]["index"] == 1);
@@ -889,7 +889,7 @@ void test_group() {
           r.ops[1]["index"] == 0);
     CHECK(r.ops[2]["op"] == "move" && r.ops[2]["node"] == flow && r.ops[2]["index"] == 1);
 
-    /* one node groups too — a box around one widget, to surface or to move as one — and
+    /* one node groups too — a box around one instance, to surface or to move as one — and
        with no attrs sent the box simply arrives undressed */
     CHECK_MSG(apply(d, {Json{{"op", "group"}, {"nodes", Json::array({reset})}}}, err), err);
     const Json& after = (*d.node(main_col))["children"];
@@ -924,7 +924,7 @@ void test_component_design_frame() {
     Json add = Json::array({Json{{"op", "insert"},
                                  {"parent", kDocId},
                                  {"list", "components"},
-                                 {"node", {{"name", "Widget1"}}}}});
+                                 {"node", {{"name", "Comp1"}}}}});
     CHECK_MSG(apply_ops(d, add, r, err), err);
     const uint64_t comp_id = r.ops[0]["node"]["id"].get<uint64_t>();
     const Json& comp = *d.node(comp_id);

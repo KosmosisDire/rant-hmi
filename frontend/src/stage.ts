@@ -29,7 +29,7 @@
  * view node it is currently of, and the cells its appliers read. Three passes, and only
  * three:
  *
- *   FRESH — first paint, a page switch, stepping into or out of a widget. Keys change
+ *   FRESH — first paint, a page switch, stepping into or out of a component. Keys change
  *   wholesale there and the camera re-fits anyway, so the tree is built from nothing.
  *
  *   RECONCILE — the document version, the compile epoch, the mode or the artboard size
@@ -56,7 +56,7 @@ import { attrText, Cells, run } from "./program.js";
 import { operable, typeOf } from "./slots.js";
 import {
   Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, CompiledTransitionMap, Interact, isInstance,
-  Json, Node, Page, Program, TemplateNode, Token, WidgetType,
+  Json, Node, Page, Program, TemplateNode, Token, ComponentType,
 } from "./types.js";
 
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
@@ -171,9 +171,9 @@ interface StageState {
   handles: SVGSVGElement | null;
   cam: Camera;
   /* THE ARTBOARD'S OWN SIZE: the fixed canvas on a page, the context's preview box
-     inside an entered widget — what the camera fits and the gestures divide by */
+     inside an entered component — what the camera fits and the gestures divide by */
   art: { w: number; h: number };
-  /* which page or entered-widget chain the picture is of (preview size excluded): a
+  /* which page or entered-component chain the picture is of (preview size excluded): a
      step in or out builds FRESH and refits the camera, a preview resize does neither */
   ctxPath: string;
   /* the preview-resize grips on the artboard's edge, up only inside a context */
@@ -254,7 +254,7 @@ interface ViewNode {
   /* the instance this node's cells belong to, and the type it is rendering: an instance
      switches both for everything below it */
   owner: number;
-  type: WidgetType | null;
+  type: ComponentType | null;
   /* the address prefix inside the component ("" at its root): a slot's own address is
      this plus the node's name, which is exactly how the backend built the slot table */
   path: string;
@@ -268,9 +268,9 @@ interface ViewNode {
      instance box wearing its component root — carry one. An entered component's doc
      nodes hold interact as authored text and stay unarmed here. */
   interact: Interact | null;
-  /* the PART CHANNEL this node's gestures post on: its own dotted name chain from the
-     template root ("" = the root, i.e. the widget-level channel) */
-  part: string;
+  /* the ELEMENT CHANNEL this node's gestures post on: its own dotted name chain from the
+     template root ("" = the root, i.e. the instance-level channel) */
+  element: string;
   /* the node's compiled per-attr transitions ({attr: {ms, profile?}} as programs),
      merged into the element's native CSS `transition` by runAppliers; null = none */
   transitions: CompiledTransitionMap | null;
@@ -286,7 +286,7 @@ interface ViewNode {
  * is dressed and placed). There is no wrapper box and no second node, which is also why
  * nothing downstream has to know an instance from a frame. */
 function pageNode(editor: Editor, node: Node, owner = 0,
-                  type: WidgetType | null = null, frac = false): ViewNode {
+                  type: ComponentType | null = null, frac = false): ViewNode {
   const compiled = editor.nodeAttrs?.[String(node.id)];
   if (isInstance(node)) {
     const instType = typeOf(editor.registry, node.type ?? "");
@@ -308,7 +308,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
       owner: node.id,
       type: instType,
       path: "",
-      part: "",
+      element: "",
       frac,
       interact: root?.interact ?? null,
       transitions: Object.keys(transitions).length ? transitions : null,
@@ -326,7 +326,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     owner,
     type,
     path: "",
-    part: "",
+    element: "",
     frac,
     interact: null,
     transitions: compiled?.transitions ?? null,
@@ -334,10 +334,11 @@ function pageNode(editor: Editor, node: Node, owner = 0,
 }
 
 /* one node of a component's served template, under the instance whose cells it reads.
- * `path` is the SCOPE chain (ancestors, addressing); `part` is the node's OWN dotted
- * name from the root — the CHANNEL identity a gesture posts, "" for the root itself. */
-function templateNode(node: TemplateNode, owner: number, type: WidgetType | null,
-                      path: string, part = ""): ViewNode {
+ * `path` is the SCOPE chain (ancestors, addressing); `element` is the node's OWN dotted
+ * name from the root — the CHANNEL identity a gesture posts, "" for the root itself.
+ * They are DIFFERENT things: conflating them was a real bug. */
+function templateNode(node: TemplateNode, owner: number, type: ComponentType | null,
+                      path: string, element = ""): ViewNode {
   const name = node.name ?? "";
   return {
     id: 0,
@@ -349,11 +350,11 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
     closed: node.closed ?? false,
     children: (node.children ?? []).map((c) =>
       templateNode(c, owner, type, path ? path + "." + name : name,
-                   part ? part + "." + String(c.name ?? "") : String(c.name ?? ""))),
+                   element ? element + "." + String(c.name ?? "") : String(c.name ?? ""))),
     owner,
     type,
     path,
-    part,
+    element,
     frac: true,
     interact: node.interact ?? null,
     transitions: node.transitions ?? null,
@@ -361,7 +362,7 @@ function templateNode(node: TemplateNode, owner: number, type: WidgetType | null
 }
 
 /* THE ARTBOARD'S OWN NODE: what the .page element is dressed by and what hangs off it. On
- * a page that is the page's children in canvas px. Inside an ENTERED WIDGET it is the
+ * a page that is the page's children in canvas px. Inside an ENTERED COMPONENT it is the
  * component's design frame at the context's preview size, its children the component's
  * OWN nodes in fractions — the same nodes with their ids, which is what lets selection and
  * the gestures work on them — reading the entered instance's cells, so the component
@@ -372,7 +373,7 @@ function rootView(editor: Editor, page: Page | null): ViewNode {
   let kids: ViewNode[] = [];
   let rootAttrs: Attrs | null = null;
   let owner = 0;
-  let type: WidgetType | null = null;
+  let type: ComponentType | null = null;
   if (!ctx) {
     kids = (page?.children ?? []).map((c) => pageNode(editor, c));
   } else {
@@ -399,7 +400,7 @@ function rootView(editor: Editor, page: Page | null): ViewNode {
         : type?.template.transitions ?? null)
     : null;
   return { id: 0, instance: false, kind: "frame", name: "", attrs: rootAttrs ?? {},
-           anchors: [], closed: false, children: kids, owner, type, path: "", part: "",
+           anchors: [], closed: false, children: kids, owner, type, path: "", element: "",
            frac: true, interact: null, transitions: rootTransitions };
 }
 
@@ -752,10 +753,10 @@ function specProfile(state: StageState, program: Program | string | undefined,
 
 /* the DECLARED transition of one slot, off the served type — cached per type row,
    because this is asked on every slot read of every applier pass */
-const sweepSpecs = new WeakMap<WidgetType,
+const sweepSpecs = new WeakMap<ComponentType,
   Map<string, { ms: Program | number; profile?: Program | string }>>();
 
-function slotSweep(type: WidgetType | null,
+function slotSweep(type: ComponentType | null,
                    name: string): { ms: Program | number; profile?: Program | string } | null {
   if (!type) return null;
   let map = sweepSpecs.get(type);
@@ -930,8 +931,8 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
             sawCell(state, key, JSON.stringify(live ?? null));
             if (live !== undefined && live !== null) return live;
           }
-          const widget = editor.store.nodeAt(node.owner);
-          let at: Json = widget?.slots;
+          const instance = editor.store.nodeAt(node.owner);
+          let at: Json = instance?.slots;
           for (const segment of name.split(".")) {
             if (!at || typeof at !== "object" || Array.isArray(at)) { at = undefined; break; }
             at = at[segment];
@@ -967,7 +968,7 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
       /* this view's own gesture state (gestures.ts writes it outside edit mode). The
          read is RECORDED so a write patches exactly the pictures that bind it; in edit
          mode nothing writes, and it honestly reads false — never a pressed-looking
-         widget nobody is pressing. */
+         instance nobody is pressing. */
       case "state": {
         const value = editor.view.state?.[node.owner]?.[name] ?? false;
         sawCell(state, "state:" + node.owner + ":" + name, JSON.stringify(value));
@@ -1014,7 +1015,7 @@ function attrOf(node: ViewNode, name: string, cells: Cells): Json {
 
 /* A gesture's view-local look (state.pressed / dragging / open) lands here. The write is
  * free; the PATCH happens only where some rendered program actually read that cell —
- * which the pass recorded — so a widget that never binds its state costs nothing to
+ * which the pass recorded — so an instance that never binds its state costs nothing to
  * press. */
 function gestureStateWriter(state: StageState, editor: Editor) {
   return (owner: number, name: string, value: Json): void => {
@@ -1492,7 +1493,7 @@ function applyPath(path: SVGPathElement, node: ViewNode, cells: Cells): void {
  * gesture handlers gate on the mode at event time (gestures.ts).
  *
  * OUTSIDE EDIT MODE THE POINTER OPERATES THE MACHINE. An instance takes it only where a
- * gesture would RUN something (INERT PASS-THROUGH: a widget with no event-triggered flow
+ * gesture would RUN something (INERT PASS-THROUGH: an instance with no event-triggered flow
  * and no live default is a picture, and a picture must never swallow the press aimed at
  * what it overlays); a bare page node never takes it at all. pointer-events inherits, so
  * the instance root's answer covers its internals — and the gesture the component put on
@@ -1510,7 +1511,7 @@ function regime(el: HTMLElement, node: ViewNode, editor: Editor, cells: Cells): 
   else if (disabled) el.style.pointerEvents = "none";
   else if (node.instance)
     el.style.pointerEvents =
-      operable(editor.store.widget(node.id), node.type) ? "auto" : "none";
+      operable(editor.store.instance(node.id), node.type) ? "auto" : "none";
   else if (!node.owner) el.style.pointerEvents = "none";
   else el.style.pointerEvents = "";
 }
@@ -1545,7 +1546,7 @@ function createElement(node: ViewNode): { el: HTMLElement; path: SVGPathElement 
   else if (node.kind === "icon") el.className = "ink-icon";
   /* `.frame` MEANS "CAN HOLD A CHILD", and an instance cannot: what is inside it belongs
      to the component it names. The class is what every container search reads — the drop's
-     candidate hunt — so an instance wearing it would let a drop aim into a widget's
+     candidate hunt — so an instance wearing it would let a drop aim into a component's
      internals. It is a leaf here, which is exactly what it is to this page.
      NEVER ASSIGNED AGAIN: previewArrangement parks `carrying`/`drop-target` on these
      elements and positionRings toggles `gridded`, so everything after this is classList. */
@@ -1626,15 +1627,15 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
  *
  * DELIBERATE SCOPE CUT: which of the four primitives is armed is decided here, once. A
  * recompile that changes a node's PRIMITIVE takes effect at the next fresh build (a page
- * switch or stepping into the widget), not at the reconcile that delivered it. */
+ * switch or stepping into the component), not at the reconcile that delivered it. */
 function armSeat(state: StageState, editor: Editor, bind: Bind): void {
   const armed = bind.node.interact;
   if (!armed || !bind.node.owner) return;
   armInteract(bind.el, {
     editor,
     get owner() { return bind.node.owner; },
-    /* the node's OWN dotted name chain is the part identity the backend's channels use */
-    get part() { return bind.node.part; },
+    /* the node's OWN dotted name chain is the element identity the backend's channels use */
+    get element() { return bind.node.element; },
     get type() { return bind.node.type; },
     get interact() { return bind.node.interact ?? armed; },
     cells: (cell: string) => cellsFor(state, editor, bind.node, bind.repeat)(cell),
@@ -1831,7 +1832,7 @@ function forget(state: StageState): void {
   state.defs = null;
 }
 
-/* FIRST PAINT, a page switch, a step into or out of a widget: every key changes, so
+/* FIRST PAINT, a page switch, a step into or out of a component: every key changes, so
    nothing is worth keeping and the camera re-fits over the new picture anyway */
 function buildFresh(host: HTMLElement, editor: Editor, page: Page | null): void {
   const state = stateOf(host);
@@ -2136,7 +2137,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     return;
   }
 
-  /* the picture's own size, and the chain it is of: a step in or out of a widget builds
+  /* the picture's own size, and the chain it is of: a step in or out of a component builds
      fresh and refits the camera; a preview RESIZE deliberately does neither (the artboard
      grows under the author's pointer, and yanking the camera mid-drag would fight them) */
   state.art = ctx ? { w: ctx.w, h: ctx.h } : { w: CANVAS_W, h: CANVAS_H };
@@ -2225,13 +2226,13 @@ function wire(host: HTMLElement, editor: Editor): void {
     if (!held || editor.view.mode !== "edit" || ev.button !== 0) return;
     /* past the slop it was a drag, and manipulate.ts owns what a drag selects */
     if (Math.abs(ev.clientX - held.x) > 4 || Math.abs(ev.clientY - held.y) > 4) return;
-    /* ENTER A WIDGET: two clicks on one instance within the tree rows' own window */
+    /* ENTER A COMPONENT: two clicks on one instance within the tree rows' own window */
     const again = held.id !== 0 && held.id === last.id && ev.timeStamp - last.at < 450 &&
                   Math.abs(ev.clientX - last.x) < 6 && Math.abs(ev.clientY - last.y) < 6;
     last = again ? { id: 0, x: 0, y: 0, at: 0 }
                  : { id: held.id, x: ev.clientX, y: ev.clientY, at: ev.timeStamp };
-    if (again && editor.store.widget(held.id)) {
-      editor.enterWidget(held.id);
+    if (again && editor.store.instance(held.id)) {
+      editor.enterComponent(held.id);
       return;
     }
     editor.select(held.id ? [held.id] : []);

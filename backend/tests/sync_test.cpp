@@ -109,22 +109,22 @@ void write_statics() {
     write_file_atomic(std::string(kStatics) + "/index.html", "<h1>hmi</h1>\n", err);
 }
 
-/* The default page is a tree of frames, so a demo widget is found by its LABEL wherever
+/* The default page is a tree of frames, so a demo instance is found by its LABEL wherever
  * it nests. `label` is the document's own field and an edit below renames one, so each
- * lookup names the label the widget carries AT THAT POINT. */
-const Json* widget_in(const Json& node, const std::string& label) {
+ * lookup names the label the instance carries AT THAT POINT. */
+const Json* instance_in(const Json& node, const std::string& label) {
     auto kids = node.find("children");
     if (kids == node.end() || !kids->is_array()) return nullptr;
     for (const Json& child : *kids) {
         if (!child.value("type", "").empty() && child.value("name", "") == label)
             return &child;
-        if (const Json* found = widget_in(child, label)) return found;
+        if (const Json* found = instance_in(child, label)) return found;
     }
     return nullptr;
 }
 
-Json widget_of(const Json& doc, const char* label) {
-    const Json* found = widget_in(doc["pages"][0], label);
+Json instance_of(const Json& doc, const char* label) {
+    const Json* found = instance_in(doc["pages"][0], label);
     return found ? *found : Json::object();
 }
 
@@ -169,18 +169,19 @@ int main() {
     CHECK((*welcome)["proto"] == kProto);
     /* the number itself, pinned: the frontend bumps in lockstep, and a silent drift here
        is a client that talks a frame shape this backend no longer sends
-       (14: THE LOG — the snapshot carries the `log` backlog, a `log` frame appends
-       live entries, and the `notify` step broadcasts a notification to every session) */
-    CHECK(kProto == 14);
+       (15: ONE VOCABULARY — the registry serves `components` rather than `types`, an
+       `input` frame carries {node, ..., element} where widget_id/part stood, a flow
+       trigger's channel key is `element`, and `instance.<slot>` is spelled `this.<slot>`) */
+    CHECK(kProto == 15);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
     CHECK((*snapshot)["doc"]["pages"][0]["children"].size() == 4);
-    CHECK((*snapshot)["registry"]["types"].size() == 12);
+    CHECK((*snapshot)["registry"]["components"].size() == 12);
     CHECK((*snapshot)["live"]["values"].is_object());
     /* Compile findings ride the snapshot. They are produced once, at startup, so a view
      * that joins later has no other frame to learn them from and would sit looking at a
-     * dead widget with nothing to explain it. */
+     * dead instance with nothing to explain it. */
     CHECK((*snapshot)["diag"]["compile"].is_array());
 
     /* every PAGE node's compiled attrs ride the snapshot beside the registry: the document
@@ -188,7 +189,7 @@ int main() {
      * renderer needs both to draw a page and a component through one path */
     CHECK((*snapshot)["node_attrs"].is_object());
     {
-        const Json& header = widget_of((*snapshot)["doc"], "Title");
+        const Json& header = instance_of((*snapshot)["doc"], "Title");
         CHECK(header.is_object());
     }
 
@@ -198,7 +199,7 @@ int main() {
        whole — generation, the absolute index its window starts at, its length now, and
        the elements — which is the baseline every later delta counts from. */
     {
-        const Json mode = widget_of((*snapshot)["doc"], "Mode");
+        const Json mode = instance_of((*snapshot)["doc"], "Mode");
         const std::string key = std::to_string(json_u64_or(mode["id"], 0)) + ".options";
         const Json& aggs = (*snapshot)["live"]["aggs"];
         CHECK(!(*snapshot)["live"]["values"].contains(key));
@@ -221,7 +222,7 @@ int main() {
     CHECK(!(*snapshot)["builtins"][0].contains("id"));
 
     /* every template attribute arrives as a compiled program */
-    const Json& button = (*snapshot)["registry"]["types"][0];
+    const Json& button = (*snapshot)["registry"]["components"][0];
     CHECK(button["name"] == "Button");
     CHECK(button["slots"].size() > 8);   /* base slots composed in */
     CHECK(button["template"]["children"][0]["attrs"]["text"]["code"][0]["op"] == "LOAD");
@@ -234,11 +235,11 @@ int main() {
     a.take();
 
     const uint64_t version = app.document().version();
-    const uint64_t widget = widget_of(app.document().root, "Title")["id"].get<uint64_t>();
+    const uint64_t instance = instance_of(app.document().root, "Title")["id"].get<uint64_t>();
     b.send(Json{{"type", "apply_ops"},
                 {"base_version", version},
                 {"ops", Json::array({Json{{"op", "set_prop"},
-                                          {"node", widget},
+                                          {"node", instance},
                                           {"key", "name"},
                                           {"value", "Renamed"}}})}});
     frames = pump(app, a, 1);
@@ -249,7 +250,7 @@ int main() {
         CHECK((*echo)["ops"][0]["value"] == "Renamed");
         CHECK((*echo)["origin_session"] != 0);
     }
-    CHECK(widget_of(app.document().root, "Renamed")["id"] == widget);
+    CHECK(instance_of(app.document().root, "Renamed")["id"] == instance);
     b.take();
 
     /* an insert comes back with the id the backend issued */
@@ -275,7 +276,7 @@ int main() {
     a.send(Json{{"type", "apply_ops"},
                 {"base_version", app.document().version()},
                 {"ops", Json::array({Json{{"op", "set_prop"},
-                                          {"node", widget},
+                                          {"node", instance},
                                           {"key", "nope"},
                                           {"value", 1}}})}});
     frames = pump(app, a, 2);
@@ -288,7 +289,7 @@ int main() {
     a.send(Json{{"type", "apply_ops"},
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
-                                          {"node", widget},
+                                          {"node", instance},
                                           {"key", "name"},
                                           {"value", "first"}}})}});
     frames = pump(app, a, 1);
@@ -298,14 +299,14 @@ int main() {
     a.send(Json{{"type", "apply_ops"},
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
-                                          {"node", widget},
+                                          {"node", instance},
                                           {"key", "name"},
                                           {"value", "second"}}})}});
     frames = pump(app, a, 2);
     CHECK_MSG(frame_of(frames, "reject") != nullptr, "same node, stale base: expected a reject");
     a.take();
 
-    const uint64_t other = widget_of(app.document().root, "Pump")["id"].get<uint64_t>();
+    const uint64_t other = instance_of(app.document().root, "Pump")["id"].get<uint64_t>();
     a.send(Json{{"type", "apply_ops"},
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
@@ -337,7 +338,7 @@ int main() {
     CHECK(frame_of(frames, "snapshot") != nullptr);
 
     /* stage 4: an input runs once in the backend and the live cell reaches the view */
-    const Json reset = widget_of(app.document().root, "Reset");
+    const Json reset = instance_of(app.document().root, "Reset");
     const uint64_t reset_id = reset["id"].get<uint64_t>();
     const uint64_t reset_step = reset["flows"][0]["do"][0]["id"].get<uint64_t>();
     uint64_t flow_var = 0;
@@ -354,7 +355,7 @@ int main() {
     CHECK(frame_of(frames, "ops_applied") != nullptr);
     a.take();
     a.send(Json{{"type", "input"},
-                {"widget_id", reset_id},
+                {"node", reset_id},
                 {"event", "press"},
                 {"value", true},
                 {"seq", 1}});
@@ -378,10 +379,10 @@ int main() {
      * the last frame left off at. That cursor is why a 4096-sample window costs one
      * element a frame instead of four thousand. */
     {
-        const Json history_widget = widget_of(app.document().root, "History");
+        const Json history_instance = instance_of(app.document().root, "History");
         const std::string ring =
-            std::to_string(json_u64_or(history_widget["id"], 0)) + ".history";
-        const Json mode = widget_of(app.document().root, "Mode");
+            std::to_string(json_u64_or(history_instance["id"], 0)) + ".history";
+        const Json mode = instance_of(app.document().root, "Mode");
         const std::string options =
             std::to_string(json_u64_or(mode["id"], 0)) + ".options";
         a.take();
@@ -419,7 +420,7 @@ int main() {
      * that happens to differ: editing the Selector's authored options reseeds its cell
      * at the recompile, so the next frame carries the list whole under a new gen. */
     {
-        const Json mode = widget_of(app.document().root, "Mode");
+        const Json mode = instance_of(app.document().root, "Mode");
         const uint64_t mode_id = json_u64_or(mode["id"], 0);
         const std::string options = std::to_string(mode_id) + ".options";
         a.take();
@@ -455,10 +456,10 @@ int main() {
         CHECK_MSG(reseeded, "an edited authored list should arrive whole under a new gen");
     }
 
-    /* Widget types are document data (spec 2.3): inserting a component re-derives the
+    /* Components are document data (spec 2.3): inserting a component re-derives the
        served registry, and ops_applied does not carry it, so the backend follows the
        echo with a fresh snapshot for every client. A bad template expression is a
-       finding on the PART node, named by the attr, and the component still serves
+       finding on the ELEMENT node, named by the attr, and the component still serves
        (minus the broken attr). */
     a.take();
     b.take();
@@ -487,8 +488,8 @@ int main() {
     CHECK_MSG(echo != nullptr, "component insert: expected the op echo");
     CHECK_MSG(pushed != nullptr, "component insert: expected a pushed snapshot");
     if (echo && pushed) {
-        CHECK((*pushed)["registry"]["types"].size() == 13);
-        const Json& lamp = (*pushed)["registry"]["types"][12];
+        CHECK((*pushed)["registry"]["components"].size() == 13);
+        const Json& lamp = (*pushed)["registry"]["components"][12];
         CHECK(lamp["name"] == "Lamp");
         /* the good attr compiled to a view program; the bad one is not served */
         const Json& lamp_part = lamp["template"]["children"][0];
@@ -513,7 +514,7 @@ int main() {
     Document saved;
     CHECK_MSG(Document::from_file(kDocPath, saved, err), err);
     CHECK(saved.version() == app.document().version());
-    CHECK(widget_of(saved.root, "first")["id"] == widget);
+    CHECK(instance_of(saved.root, "first")["id"] == instance);
 
     /* CRASH REGRESSION: a peer that vanishes with no close handshake makes a later
        broadcast's send FAIL, and ix closes that socket synchronously INSIDE the send,
@@ -561,7 +562,7 @@ int main() {
             a.send(Json{{"type", "apply_ops"},
                         {"base_version", app.document().version()},
                         {"ops", Json::array({Json{{"op", "set_prop"},
-                                                  {"node", widget},
+                                                  {"node", instance},
                                                   {"key", "name"},
                                                   {"value", "alive " + std::to_string(i)}}})}});
             frames = pump(app, a, 1);

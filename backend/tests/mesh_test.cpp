@@ -48,9 +48,9 @@ template <class F> bool run_until(Scheduler& sched, F done, int limit_ms = 8000)
     return false;
 }
 
-int cell_of(const Program& program, uint64_t widget, const char* slot) {
+int cell_of(const Program& program, uint64_t instance, const char* slot) {
     for (uint32_t i = 0; i < program.cells.size(); ++i)
-        if (program.cells[i].kind == CellKind::Slot && program.cells[i].owner_widget == widget &&
+        if (program.cells[i].kind == CellKind::Slot && program.cells[i].owner_node == instance &&
             program.cells[i].name == slot)
             return static_cast<int>(i);
     return -1;
@@ -324,7 +324,7 @@ int main() {
     }
 
     /* ---- the document: slot expressions over every kind, flows back out ---- */
-    Json level_widget = {
+    Json level_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Level"},
@@ -350,34 +350,34 @@ int main() {
                  })}},
         })},
     };
-    Json label_widget = {
+    Json label_instance = {
         {"kind", "frame"},
         {"type", "Label"},
         {"name", "Tag"},
         {"slots", Json{{"text", "@tank_level.label"}}},
     };
-    Json speed_widget = {
+    Json speed_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Speed"},
         {"slots", Json{{"value", "@belt.speed"}}},
     };
-    Json temp_widget = {
+    Json temp_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Temp"},
         /* a FUNCTION source: the response field reads like any other, the cadence
-           rides the widget's poll map (spec D1) */
+           rides the instance's poll map (spec D1) */
         {"slots", Json{{"value", "@status.temp"}}},
         {"poll", Json{{"value", 20}}},
     };
-    Json alarm_widget = {
+    Json alarm_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Alarm"},
         {"slots", Json{{"value", "@alarm.code"}}},
     };
-    Json hist_widget = {
+    Json hist_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Hist"},
@@ -390,7 +390,7 @@ int main() {
     };
 
     /* a BARE-TYPED topic: the anonymous value IS the entity, read bare */
-    Json pressure_widget = {
+    Json pressure_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Pressure"},
@@ -399,7 +399,7 @@ int main() {
 
     /* the toggle-off-the-plant idiom: read the value, gate on it, force / unforce.
      * Deliberately NO slot expression references `suction` anywhere in this document. */
-    Json suction_widget = {
+    Json suction_instance = {
         {"kind", "frame"},
         {"type", "Button"},
         {"name", "Suction"},
@@ -429,7 +429,7 @@ int main() {
         })},
     };
 
-    Json gauge_widget = {
+    Json gauge_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "Gauge"},
@@ -438,7 +438,7 @@ int main() {
 
     /* WRITE-ONLY: no expression anywhere reads @setpoint, so only the flow_writes
      * stamp gives it a standing accessor */
-    Json setpoint_widget = {
+    Json setpoint_instance = {
         {"kind", "frame"},
         {"type", "Button"},
         {"name", "Setpoint"},
@@ -456,13 +456,13 @@ int main() {
         {"next_id", 1},
         {"globals", Json::array()},
         {"pages", Json::array({Json{{"name", "Main"},
-                                    {"children", Json::array({level_widget, label_widget,
-                                                              speed_widget, temp_widget,
-                                                              alarm_widget, hist_widget,
-                                                              suction_widget,
-                                                              pressure_widget,
-                                                              gauge_widget,
-                                                              setpoint_widget})}}})},
+                                    {"children", Json::array({level_instance, label_instance,
+                                                              speed_instance, temp_instance,
+                                                              alarm_instance, hist_instance,
+                                                              suction_instance,
+                                                              pressure_instance,
+                                                              gauge_instance,
+                                                              setpoint_instance})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -873,14 +873,14 @@ int main() {
                     std::printf("cycle diags %s: [%s] %s\n", when, diag.code.c_str(),
                                 diag.message.c_str());
         };
-        /* wait for one widget's cell to reach a value, refreshing/recompiling at
+        /* wait for one instance's cell to reach a value, refreshing/recompiling at
          * control-plane pace and pumping the publisher, exactly as the live app runs */
-        auto wait_cell = [&](uint64_t widget, const char* slot, double want, int rounds,
+        auto wait_cell = [&](uint64_t instance, const char* slot, double want, int rounds,
                              std::function<void()> pump) {
             for (int i = 0; i < rounds; ++i) {
                 if (mesh.refresh()) recompile();
                 if (pump) pump();
-                const int cell = cell_of(cur->program(), widget, slot);
+                const int cell = cell_of(cur->program(), instance, slot);
                 if (run_until(*cur, [&] { return num_at(*cur, cell) == want; }, 100))
                     return true;
             }
@@ -924,7 +924,7 @@ int main() {
             return dart::detail::dart_get_f64(data, schema.raw(), "setting") == want;
         };
         uint64_t cy_seq = 1;
-        /* tap the dial widget until its write lands at the owner (a human re-taps;
+        /* tap the dial instance until its write lands at the owner (a human re-taps;
          * each round is one tap, not a blind retry of a dropped effect) */
         auto write_dial = [&](const dart::Schema& schema, int rounds) {
             for (int i = 0; i < rounds; ++i) {

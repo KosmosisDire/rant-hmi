@@ -1,6 +1,6 @@
 /* The variable card: collapsed it is the name and what the variable reads right NOW, which
  * is what a variable is looked at for; open it adds the settings behind that value (TYPE,
- * INIT, KEEP). Global and widget-local cards are the same card; only the scope note differs
+ * INIT, KEEP). Global and instance-local cards are the same card; only the scope note differs
  *. It folds like a feed or a flow card, same caret and same click.
  *
  * A variable's TYPE is any TypeRef from the mesh besides the four scalars: the
@@ -65,7 +65,7 @@ export function varCard(editor: Editor, variable: Var, scope: "global" | "local"
   const head = el("div", { class: "card-head" }, [
     caret,
     kindMark(scope === "local" ? "l" : "g",
-             scope === "local" ? "Only visible to this widget" : "Lives in the HMI"),
+             scope === "local" ? "Only visible to this instance" : "Lives in the HMI"),
     name,
     now,
     diagIcon(open ? editor.diagAt(variable.id)

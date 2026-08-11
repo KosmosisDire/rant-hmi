@@ -11,7 +11,7 @@ namespace hmi {
 
 struct InputEvent {
     uint64_t session = 0;
-    uint64_t widget = 0;
+    uint64_t node = 0;
     std::string event;
     Value value = Value::nil();
     uint64_t sequence = 0;
@@ -19,10 +19,10 @@ struct InputEvent {
        across the queue, so it rides beside and is homed into the run's input text slot
        at dispatch */
     std::string text;
-    /* which ARMED PART of the widget raised it: the template node's dotted name, empty
-       for the root's own gesture. Dispatch consults the compiled bubbling topology.
+    /* which ARMED ELEMENT of the instance raised it: the template node's dotted name,
+       empty for the root's own gesture. Dispatch consults the compiled bubbling topology.
        (Last on purpose: the positional prefix above predates it.) */
-    std::string part;
+    std::string element;
 };
 
 class Scheduler final : private MeshSink {
@@ -41,8 +41,8 @@ class Scheduler final : private MeshSink {
   private:
     struct Pressed {
         uint64_t session = 0;
-        uint64_t widget = 0;
-        std::string part;
+        uint64_t node = 0;
+        std::string element;
     };
 
     struct Hold {
@@ -58,7 +58,7 @@ class Scheduler final : private MeshSink {
     };
 
     bool accept_sequence(uint64_t session, uint64_t sequence);
-    void dispatch(uint64_t widget, const std::string& part, const std::string& event,
+    void dispatch(uint64_t node, const std::string& element, const std::string& event,
                   Value arg);
     void run_one(uint32_t flow, Value value);
     /* dispatch every event the runs so far RAISED, in order; a raise during the drain

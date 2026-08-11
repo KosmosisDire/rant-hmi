@@ -1,8 +1,8 @@
 /* THE picker: every place a feed or a flow names ANYTHING - a mesh entity, an HMI
- * variable, a flow temporary, one of this widget's own slots - picks it from ONE
+ * variable, a flow temporary, one of this instance's own slots - picks it from ONE
  * hierarchical tree, rendered like a folder listing (the explorer's idiom). Two roots:
- * `hmi` (this widget's names: the flow's locals in scope, then the variables, then the
- * widget's own slots, then a fresh name) and `dart` (the reflected mesh, foldered by the
+ * `hmi` (this instance's names: the flow's locals in scope, then the variables, then the
+ * instance's own slots, then a fresh name) and `dart` (the reflected mesh, foldered by the
  * / segments of entity names). Picking a node carries its family, kind, name, field path
  * AND value type in one act, so the user never states where a thing lives: the pick
  * already knows, and the caller maps it onto the document's key-discriminated side forms.
@@ -23,7 +23,7 @@ import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
 export interface SourcePick {
   /* which side FORM the pick maps to: a mesh entity, a local/variable (by name), one of
-     this widget's own slots, or the expression escape */
+     this instance's own slots, or the expression escape */
   family: "entity" | "local" | "slot" | "expr";
   kind: string;   /* V T F S on the mesh, L for a variable or local, "" otherwise */
   name: string;   /* entity/variable name; the slot's name; the expression's text */
@@ -51,7 +51,7 @@ export interface SourceTreeOptions {
      When present it REPLACES the plain variable listing, because it already contains the
      declared variables and adds what the flow itself has made. */
   scope?: FlowScope;
-  /* this widget's own slots (a move destination); the specs come from the registry */
+  /* this instance's own slots (a move destination); the specs come from the registry */
   slots?: SlotSpec[];
   /* offer "+ new name" (a temporary, declared by being used) */
   newName?: boolean;
@@ -162,13 +162,13 @@ function varFields(editor: Editor, type: string): MeshField[] {
 /* what a src/path pair resolves to, for the type chips outside the tree */
 export function resolveShape(
   editor: Editor,
-  widget: Node | null,
+  instance: Node | null,
   ref: { kind?: string; name?: string } | undefined,
   path: string | undefined,
 ): string {
   if (!ref?.name) return "";
   if (ref.kind === "L") {
-    const local = (widget?.locals ?? []).find((v) => v.name === ref.name);
+    const local = (instance?.locals ?? []).find((v) => v.name === ref.name);
     const found = local ?? editor.store.globals().find((v) => v.name === ref.name);
     if (!found) return "";
     if (!path)
@@ -189,7 +189,7 @@ function leaf_name(name: string): string {
   return at < 0 ? name : name.slice(at + 1);
 }
 
-function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions,
+function build_rows(editor: Editor, instance: Node | null, opts: SourceTreeOptions,
                     filter: string): Row[] {
   const rows: Row[] = [];
   const match = (text: string) => !filter || text.toLowerCase().includes(filter);
@@ -209,8 +209,8 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
       pick: { family: "expr", kind: "", name: "x", path: "", shape: "" },
     });
 
-  /* ---- hmi: the names this widget owns. The flow's OWN names (x, its temporaries)
-     and the widget's slots sit at the hmi level; the declared variables split into
+  /* ---- hmi: the names this instance owns. The flow's OWN names (x, its temporaries)
+     and the instance's slots sit at the hmi level; the declared variables split into
      `local` and `global` folders, which is where they are declared too. ---- */
   if (opts.hmi) {
     if (!searching) rows.push({ depth: 0, key: "hmi", label: "hmi", expandable: true });
@@ -294,8 +294,8 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
           type: varFields(editor, variable.type).length ? variable.type : undefined,
           fields: varFields(editor, variable.type),
         });
-        for (const variable of widget?.locals ?? []) buckets.local.push(named(variable));
-        const shadowed = new Set((widget?.locals ?? []).map((v) => v.name));
+        for (const variable of instance?.locals ?? []) buckets.local.push(named(variable));
+        const shadowed = new Set((instance?.locals ?? []).map((v) => v.name));
         for (const variable of editor.store.globals())
           if (!shadowed.has(variable.name)) buckets.global.push(named(variable));
       }
@@ -311,9 +311,9 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
                     searching ? depth0 : depth0 + 1, scope === "local" ? "l" : "g");
       }
 
-      /* the widget's own slots: a move destination, named the way expressions read them */
+      /* the instance's own slots: a move destination, named the way expressions read them */
       for (const spec of opts.slots ?? []) {
-        const label = "widget." + spec.name;
+        const label = "this." + spec.name;
         if (!match(label)) continue;
         rows.push({
           depth: depth0,
@@ -414,7 +414,7 @@ function build_rows(editor: Editor, widget: Node | null, opts: SourceTreeOptions
 export function openSourceTree(
   anchor: HTMLElement,
   editor: Editor,
-  widget: Node | null,
+  instance: Node | null,
   opts: SourceTreeOptions,
   onPick: (pick: SourcePick) => void,
   current?: Json,
@@ -437,7 +437,7 @@ export function openSourceTree(
     expanded,
     defaultIcon: "folder",
     rows: (filter) =>
-      build_rows(editor, widget, opts, filter).map((row) => {
+      build_rows(editor, instance, opts, filter).map((row) => {
         const pick = row.pick;
         return {
           depth: row.depth,

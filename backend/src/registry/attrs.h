@@ -6,7 +6,7 @@
  * has typed anything.
  *
  * EVERY FIELD IS AN EXPRESSION and they all live here: what used to be a frame's typed
- * `gap` prop and a part's `attrs` entry are one thing now (doc/schema.h). A literal is a
+ * `gap` prop and an element's `attrs` entry are one thing now (doc/schema.h). A literal is a
  * degenerate expression, which is what lets direct manipulation write a CONSTANT into the
  * same field an expression could occupy.
  *
@@ -16,7 +16,7 @@
  *   MEASUREMENT — a child of a FREE frame places itself: x/y/w/h are fractions of the
  *                 containing box, `origin_x`/`origin_y` name the node's own reference
  *                 point, and `rotate` turns it about that same point.
- * Fractions rather than pixels because a widget is not a picture at one size: a handle at
+ * Fractions rather than pixels because a component is not a picture at one size: a handle at
  * `value.mapRange(min, max, 0, 1)` is right at every box the page ever gives it, and that
  * is tier-2 adaptivity falling out of the coordinate system instead of being bolted on.
  *

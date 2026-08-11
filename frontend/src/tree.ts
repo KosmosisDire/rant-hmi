@@ -11,7 +11,7 @@ import { makeFolds } from "./fold.js";
 import { iconMarkup } from "./icons.js";
 
 export interface Fold {
-  /* is this row open? `dflt` is what an untouched key means (part boxes open, widgets
+  /* is this row open? `dflt` is what an untouched key means (element boxes open, instances
      and components closed) */
   open(key: string, dflt: boolean): boolean;
   toggle(key: string, dflt: boolean, then: () => void): void;
@@ -66,10 +66,10 @@ export function treeRow(
   );
 }
 
-/* draw-kind glyphs: one mono mark per node kind / box direction / part draw, shared by
+/* draw-kind glyphs: one mono mark per node kind / box direction / element draw, shared by
    both trees. `frame` and `rect` wear the same box mark — one is the node kind, the other
    the draw it stands for. */
-export const PART_GLYPH: Record<string, string> = {
+export const KIND_GLYPH: Record<string, string> = {
   row: "→", col: "↓", stack: "▤", auto: "⇆",
   frame: "▭", rect: "▭", bar: "▮", text: "T", icon: "✦",
   arc: "◠", needle: "↗", plot: "∿", path: "◇", code: "λ",

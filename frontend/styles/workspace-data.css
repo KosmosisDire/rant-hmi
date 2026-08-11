@@ -156,7 +156,7 @@
   white-space: nowrap;
 }
 
-/* one consumer, clickable: it lands the author on the widget that uses this thing */
+/* one consumer, clickable: it lands the author on the instance that uses this thing */
 .used-row {
   display: flex;
   align-items: center;

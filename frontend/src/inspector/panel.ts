@@ -19,13 +19,13 @@ import { diagIcon, Editor, section } from "../editor.js";
 import { makeFolds } from "../fold.js";
 import { ICONS, iconMarkup } from "../icons.js";
 import { openMenu } from "../menu.js";
-import { ownedSlots, partIndex, slotLeaf } from "../parts.js";
+import { ownedSlots, elementIndex, slotLeaf } from "../elements.js";
 import { bindField, bindFlag, bindText } from "../reconcile.js";
 import { authoredSlot, boundSlots, eachAuthoredSlot, ownSlot, slotCell, slotExpression,
          slotText, spellSlotText, typeOf, withSlot, withoutSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
 import { ComponentDef, isInstance, Json, Node, PropDef, SlotSpec, TemplateNode,
-         WidgetType } from "../types.js";
+         ComponentType } from "../types.js";
 
 import { ChainCase, chainClean, printChain, scanChain } from "./cases.js";
 import { attrsSection, attrsShape, chassisRow, componentViewShape, interactSection,
@@ -92,7 +92,7 @@ function flattenPage(children: Node[]): Node[] {
 export function leftShape(editor: Editor): string {
   const root = editor.root();
   const nodes = flattenPage(root?.children ?? []);
-  const widgets = nodes.filter(isInstance);
+  const instances = nodes.filter(isInstance);
   return JSON.stringify({
     /* the CURRENT page's tree only: pages live in the topbar selector */
     page: editor.page()?.id ?? 0,
@@ -105,10 +105,10 @@ export function leftShape(editor: Editor): string {
     nodes: nodes.map((n) => [n.id, n.kind, n.type || n.name]),
     /* the tree highlights the selection and lists rows per expansion state */
     selection: editor.view.selection,
-    part: editor.view.part,
+    element: editor.view.element,
     /* a switched-off node wears a different icon and a dimmed row, so which ones are
        hidden decides what the rows ARE */
-    hidden: widgets.flatMap((w) => {
+    hidden: instances.flatMap((w) => {
       const type = typeOf(editor.registry, w.type ?? "");
       return (type?.slots ?? [])
         .filter((s) => s.name.endsWith(".shown") && authoredSlot(w, type, s.name) === false)
@@ -119,7 +119,7 @@ export function leftShape(editor: Editor): string {
        (a component edited, a built-in forked) is new rows */
     registry: editor.registry?.version ?? 0,
     /* findings pin icons on rows and cards, so their coming and going is structure */
-    wdiag: widgets.flatMap((w) =>
+    wdiag: instances.flatMap((w) =>
       editor.diagFor(w.id).map((d) => w.id + ":" + d.code + ":" + d.message),
     ),
   });
@@ -128,7 +128,7 @@ export function leftShape(editor: Editor): string {
 /* ---- the breadcrumb strip: where the editor is standing ----
  *
  * Always over the tree: the page's name alone on a page, then one crumb per entered
- * widget. Every crumb but the last steps back OUT to that level. Inside a component the
+ * component. Every crumb but the last steps back OUT to that level. Inside a component the
  * strip also carries the honesty line — the edit is to the COMPONENT, and every instance
  * follows — or, over an unforked built-in, the read-only notice and the Override verb.
  * The preview size reads here too, with a reset back to the entered instance's box. */
@@ -221,7 +221,7 @@ function hoverable(editor: Editor, row: HTMLElement, id: number): HTMLElement {
  *
  * AN INSTANCE'S SUBTREE IS SHOWN — the component's own nodes, from the served template —
  * but it is not THIS page's to touch: the rows are dimmed, they select the instance
- * rather than themselves, and editing them means entering the widget's own context
+ * rather than themselves, and editing them means entering the component's own context
  * (which edits every placement at once, and will say so). Showing the whole tree while
  * fencing the selection is the difference between hiding structure and protecting it. */
 function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
@@ -233,7 +233,7 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
     : [];
   const open = layerOpen(editor, node.id);
   const current =
-    editor.view.selection.indexOf(node.id) >= 0 && (!editor.view.part || !instance);
+    editor.view.selection.indexOf(node.id) >= 0 && (!editor.view.element || !instance);
   const label = el("span", { class: "layer-label" });
   bindText(node.id + ":label.layer", label, () => {
     const at = editor.store.nodeAt(node.id) ?? node;
@@ -242,7 +242,7 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
   const row = hoverable(editor, treeRow(
     key,
     depth,
-    (instance ? "widget" : node.kind) + (current ? " current" : ""),
+    (instance ? "instance" : node.kind) + (current ? " current" : ""),
     kids.length || template.length
       ? { open, toggle: () => toggleLayer(editor, node.id) }
       : null,
@@ -263,7 +263,7 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
 
 /* a component-internal row: real structure, not this page's. It carries no node id — the
  * component owns these — so it selects the INSTANCE, drags nowhere, and wears `.tpl` to
- * say it is being looked at rather than held. Double-clicking one ENTERS the widget and
+ * say it is being looked at rather than held. Double-clicking one ENTERS the component and
  * lands selected on this very node (armTree below): the fence is an invitation, not only
  * a refusal. The row's KEY carries the whole name path for exactly that. */
 function templateRows(editor: Editor, instanceId: number, node: TemplateNode,
@@ -392,7 +392,7 @@ function armTree(tree: HTMLElement, editor: Editor): void {
     if (at?.closest?.(".layer-caret")) return;   /* the caret owns folding */
     const keyed = at?.closest?.("[data-key]") as HTMLElement | null;
 
-    /* ENTER A WIDGET on a double press: an instance row from itself, a fenced `.tpl`
+    /* ENTER A COMPONENT on a double press: an instance row from itself, a fenced `.tpl`
        row from its key — `t<instance>.<name path>` — landing selected on that very
        node. The click that follows is eaten (`swallow`): it would land on whichever
        row the fresh context tree put under the pointer. */
@@ -411,7 +411,7 @@ function armTree(tree: HTMLElement, editor: Editor): void {
       if (inst) {
         lastPress = { key: "", time: 0, x: 0, y: 0 };
         swallow = true;
-        editor.enterWidget(inst, fenced ? fenced[2] : undefined);
+        editor.enterComponent(inst, fenced ? fenced[2] : undefined);
         return;
       }
     }
@@ -596,19 +596,20 @@ function end(): void {
   window.removeEventListener("keydown", onKey);
 }
 
-/* PART ROWS have left this tree. Layers is page composition — which frames and widgets
-   sit where — and a widget's internals belong to the component that defines them, which
-   is the Design workspace's tree, not this one. The per-part eye that hid one went with
-   them; per-instance part visibility comes back as an instance-inspector concern, since
+/* ELEMENT ROWS have left this tree. Layers is page composition — which frames and
+   instances sit where — and a component's internals belong to the component that defines
+   them, which is the Design workspace's tree, not this one. The per-element eye that hid
+   one went with them; per-instance element visibility comes back as an
+   instance-inspector concern, since
    that is what it always was: an override on one placement, not a fact about the page.
 
 /* ---- inspector ---- */
 
-/* the selected part, but only when this type can actually name it; anything else (a
- * stale path, an unknown type) falls back to the widget view */
-function selectedPart(editor: Editor, type: WidgetType | null): string {
-  const path = editor.view.part;
-  return path && type && partIndex(type).byPath.has(path) ? path : "";
+/* the selected element, but only when this component can actually name it; anything else
+ * (a stale path, an unknown component) falls back to the instance view */
+function selectedElement(editor: Editor, type: ComponentType | null): string {
+  const path = editor.view.element;
+  return path && type && elementIndex(type).byPath.has(path) ? path : "";
 }
 
 /* The CONTENT inspector, routed by WHAT THE NODE IS rather than by which of three kinds
@@ -618,7 +619,7 @@ export function inspectorShape(editor: Editor): string {
   const node = editor.selectedNode();
   const ctx = editor.contexts[editor.contexts.length - 1];
   if (!node && ctx) {
-    /* nothing selected inside an entered widget: the inspector stands on the
+    /* nothing selected inside an entered component: the inspector stands on the
        COMPONENT itself — its events, properties, behavior and design frame */
     const comp = ctx.component
       ? (editor.store.node(ctx.component) as ComponentDef | null) : null;
@@ -637,29 +638,29 @@ export function inspectorShape(editor: Editor): string {
         .concat((node.props ?? []).flatMap((p) =>
           editor.diagNode(p.id).map((d) => p.id + ":" + d.code + ":" + d.message))),
     });
-  const widget = node;
-  const type = typeOf(editor.registry, widget.type ?? "");
-  const fed = boundSlots(widget);
+  const instance = node;
+  const type = typeOf(editor.registry, instance.type ?? "");
+  const fed = boundSlots(instance);
   const template = JSON.stringify(type?.template ?? null);
   return JSON.stringify({
-    id: widget.id,
-    type: widget.type,
-    part: selectedPart(editor, type),
+    id: instance.id,
+    type: instance.type,
+    element: selectedElement(editor, type),
     slots: (type?.slots ?? []).map((s) => [
       s.name, s.shape, s.group, s.editor ?? "", (s.variants ?? []).join("|"),
     ]),
     fed: Array.from(fed).sort(),
     /* which affordances a slot row carries (the cases disclosure, its open rows, the
        poll button) follows the authored text, so it is structure */
-    slotsig: slotRowSig(editor, widget),
+    slotsig: slotRowSig(editor, instance),
     align: template.includes("slot:align"),
     textScale: template.includes("slot:text_scale"),
     /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
        genuinely structural; it is a boolean, and it moves only when an aspect is authored */
-    aspect: String(authoredSlot(widget, type, "aspect") ?? "") !== "",
-    flows: (widget.flows ?? []).map(flowShape),
-    locals: (widget.locals ?? []).map(varShape),
-    diag: editor.diagFor(widget.id).map((d) => d.node + ":" + d.code + ":" + d.message),
+    aspect: String(authoredSlot(instance, type, "aspect") ?? "") !== "",
+    flows: (instance.flows ?? []).map(flowShape),
+    locals: (instance.locals ?? []).map(varShape),
+    diag: editor.diagFor(instance.id).map((d) => d.node + ":" + d.code + ":" + d.message),
   });
 }
 
@@ -670,9 +671,9 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     renderNodeInspector(host, editor, node);
     return;
   }
-  const widget = node;
-  if (!widget) {
-    /* inside an entered widget, nothing selected IS a selection: the component. The
+  const instance = node;
+  if (!instance) {
+    /* inside an entered component, nothing selected IS a selection: the component. The
        very views the Design workspace edits it with, so the two places cannot drift. */
     const ctx = editor.contexts[editor.contexts.length - 1];
     const comp = ctx?.component
@@ -689,53 +690,53 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     );
     host.appendChild(
       el("div", { class: "inspector-body" }, [
-        el("p", { class: "empty", text: "pick a widget on the page" }),
+        el("p", { class: "empty", text: "pick an element on the page" }),
       ]),
     );
     return;
   }
 
-  const at = () => editor.store.widget(widget.id) ?? widget;
-  const type = typeOf(editor.registry, widget.type ?? "");
-  const part = selectedPart(editor, type);
-  if (part && type) {
-    renderPartInspector(host, editor, widget, type, part);
+  const at = () => editor.store.instance(instance.id) ?? instance;
+  const type = typeOf(editor.registry, instance.type ?? "");
+  const element = selectedElement(editor, type);
+  if (element && type) {
+    renderElementInspector(host, editor, instance, type, element);
     return;
   }
-  const fed = boundSlots(widget);
-  /* ONLY the widget's own properties: what a part declares is edited by
-     selecting that part, and appears nowhere else. This is the whole point of parts
+  const fed = boundSlots(instance);
+  /* ONLY the component's own properties: what an element declares is edited by
+     selecting that element, and appears nowhere else. This is the whole point of elements
      owning properties — a Slider's inspector is its value, its range and its frame,
      not every colour of every shape inside it. */
   const own = ownedSlots(type, "");
   const valueSlots = own.filter((s) => s.group === "value");
   const otherSlots = own.filter((s) => s.group !== "value");
-  /* ONE scope for every slot row: a slot expression's universe is the widget's, not
+  /* ONE scope for every slot row: a slot expression's universe is the instance's, not
      the row's; the options slot alone adds the schema's enum types to its browse */
-  const scope = slotScope(editor, widget);
+  const scope = slotScope(editor, instance);
   const rowsFor = (spec: SlotSpec) =>
-    slotRows(editor, widget, spec,
-             spec.editor === "enum-type" ? optionsSlotScope(editor, widget) : scope);
+    slotRows(editor, instance, spec,
+             spec.editor === "enum-type" ? optionsSlotScope(editor, instance) : scope);
 
   const label = commitInput(
-    widget.name,
-    (text) => editor.apply([{ op: "set_prop", node: widget.id, key: "label", value: text }]),
-    { class: "field title", title: "the widget's label" },
+    instance.name,
+    (text) => editor.apply([{ op: "set_prop", node: instance.id, key: "label", value: text }]),
+    { class: "field title", title: "the instance's label" },
   );
-  bindField(widget.id + ":label", label, () => at().name ?? "");
+  bindField(instance.id + ":label", label, () => at().name ?? "");
   host.appendChild(
     el("div", { class: "inspector-head" }, [
       label,
-      /* a finding that names the widget itself and no field within it (an unknown type,
+      /* a finding that names the instance itself and no field within it (an unknown type,
          say) has no better row to sit on than the head */
-      diagIcon(editor.diagAt(widget.id)),
+      diagIcon(editor.diagAt(instance.id)),
     ]),
   );
 
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
-  /* 1. Data in, and ONLY where the type takes values: what a widget consumes is its
+  /* 1. Data in, and ONLY where the component takes values: what an instance consumes is its
    *    value-group slots, so a Button (which consumes nothing) shows no such section.
    *    Every value is an expression box; a literal is just a short expression. */
   if (valueSlots.length)
@@ -750,23 +751,23 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
    *    toggles) are the control working as expected, not authored behavior, so they are
    *    not listed; authoring a flow on the same slot takes over automatically. */
   body.append(
-    ...section("behavior", "Behavior", String((widget.flows ?? []).length), () => [
-      ...(widget.flows ?? []).map((flow) => flowCard(editor, widget, type, flow)),
-      (widget.flows ?? []).length
+    ...section("behavior", "Behavior", String((instance.flows ?? []).length), () => [
+      ...(instance.flows ?? []).map((flow) => flowCard(editor, instance, type, flow)),
+      (instance.flows ?? []).length
         ? null
         : el("p", { class: "empty", text: "no behavior yet" }),
-      addFlowButton(editor, widget, type),
+      addFlowButton(editor, instance, type),
     ]),
   );
 
   /* 3. Local variables */
   body.append(
-    ...section("locals", "Local Variables", String((widget.locals ?? []).length), () => [
-      ...(widget.locals ?? []).map((variable) => varCard(editor, variable, "local")),
+    ...section("locals", "Local Variables", String((instance.locals ?? []).length), () => [
+      ...(instance.locals ?? []).map((variable) => varCard(editor, variable, "local")),
       el("button", {
         class: "dashed-btn",
         text: "+ Variable",
-        onclick: () => newVariable(editor, widget.id, "locals", widget.locals ?? []),
+        onclick: () => newVariable(editor, instance.id, "locals", instance.locals ?? []),
       }),
     ]),
   );
@@ -797,7 +798,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
       otherSlots.filter((s) => s.group === "frame").flatMap(rowsFor),
     ),
   );
-  body.append(...attrsSection(editor, widget));
+  body.append(...attrsSection(editor, instance));
 }
 
 /* the canonical property order (see the Appearance section): clusters of related names,
@@ -824,35 +825,35 @@ const SLOT_ORDER = [
 ];
 
 /* ranked by the property's own name, not its address: `bar.fill_color` sorts as
-   fill_color, so one part's rows read in the same order as any other's */
+   fill_color, so one element's rows read in the same order as any other's */
 function slotRank(address: string): number {
   const at = SLOT_ORDER.indexOf(slotLeaf(address));
   return at < 0 ? SLOT_ORDER.length : at;
 }
 
-/* The part-scoped inspector: the head reads widget › part (the widget's name is the way
- * back), and ONE section lists exactly the properties THIS part owns — not its
- * children's, which have their own rows in the tree, and not the widget's, which are
+/* The element-scoped inspector: the head reads instance › element (the instance's name
+ * is the way back), and ONE section lists exactly the properties THIS element owns — not
+ * its children's, which have their own rows in the tree, and not the component's, which are
  * one click up. Ownership is exclusive, so every property is editable in exactly one
- * place. Behavior, variables and placement belong to the widget view. */
-function renderPartInspector(
+ * place. Behavior, variables and placement belong to the instance view. */
+function renderElementInspector(
   host: HTMLElement,
   editor: Editor,
-  widget: Node,
-  type: WidgetType,
+  instance: Node,
+  type: ComponentType,
   path: string,
 ): void {
-  const node = partIndex(type).byPath.get(path)!;
+  const node = elementIndex(type).byPath.get(path)!;
   const back = el("button", {
-    class: "part-back",
-    title: "back to the widget",
-    onclick: () => editor.select([widget.id]),
+    class: "element-back",
+    title: "back to the instance",
+    onclick: () => editor.select([instance.id]),
   });
-  bindText(widget.id + ":label.part", back, () => {
-    const at = editor.store.widget(widget.id);
+  bindText(instance.id + ":label.element", back, () => {
+    const at = editor.store.instance(instance.id);
     return at ? at.name || at.type || "" : "";
   });
-  /* the whole path, not just the leaf: parts nest now (a knob's dot lives under its
+  /* the whole path, not just the leaf: elements nest now (a knob's dot lives under its
      face), and "Knob › dot" would say nothing about where that dot actually is. Every
      ancestor is a step BACK to itself, so the head navigates as well as it reads. */
   const segments = path.split(".");
@@ -860,15 +861,15 @@ function renderPartInspector(
   segments.forEach((name, i) => {
     const upto = segments.slice(0, i + 1).join(".");
     const last = i === segments.length - 1;
-    crumbs.push(el("span", { class: "part-sep", text: "›" }));
+    crumbs.push(el("span", { class: "element-sep", text: "›" }));
     crumbs.push(
       last
-        ? el("span", { class: "part-name", text: name, title: path })
+        ? el("span", { class: "element-name", text: name, title: path })
         : el("button", {
-            class: "part-back",
+            class: "element-back",
             text: name,
             title: upto,
-            onclick: () => editor.selectPart(widget.id, upto),
+            onclick: () => editor.selectElement(instance.id, upto),
           }),
     );
   });
@@ -876,20 +877,20 @@ function renderPartInspector(
 
   const specs = ownedSlots(type, path)
     .sort((a, b) => slotRank(a.name) - slotRank(b.name));
-  const scope = slotScope(editor, widget);
+  const scope = slotScope(editor, instance);
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
   body.append(
-    ...section("part", node.name, String(specs.length), () =>
+    ...section("element", node.name, String(specs.length), () =>
       specs.length
         ? specs.flatMap((spec) =>
-            slotRows(editor, widget, spec,
-                     spec.editor === "enum-type" ? optionsSlotScope(editor, widget) : scope))
+            slotRows(editor, instance, spec,
+                     spec.editor === "enum-type" ? optionsSlotScope(editor, instance) : scope))
         : [el("p", {
             class: "empty",
             text: node.children.length
-              ? "this part lays its children out; their properties are on them"
-              : "this part has no properties of its own",
+              ? "this element lays its children out; their properties are on them"
+              : "this element has no properties of its own",
           })],
     ),
   );
@@ -926,9 +927,9 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
   );
   /* inside a component a node OWNS things a page node never does: the properties it
      declares (addressed under its name path) and the gesture it carries. The very
-     sections the Design part view builds — same node, same rows. */
+     sections the Design element view builds — same node, same rows. */
   if (editor.contexts.length)
-    body.append(...propsSection(editor, node.id, "part-props",
+    body.append(...propsSection(editor, node.id, "element-props",
                                 () => (at().props ?? []) as PropDef[],
                                 "no properties of its own"));
   body.append(...attrsSection(editor, node));
@@ -948,8 +949,8 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
  * open editor's rows exist per branch — so it rides the shape through slotRowSig. */
 const caseFolds = makeFolds();
 
-function caseKey(widgetId: number, slot: string): string {
-  return widgetId + ":" + slot;
+function caseKey(instanceId: number, slot: string): string {
+  return instanceId + ":" + slot;
 }
 
 /* Does this expression read a mesh FUNCTION — is a poll cadence worth offering? A
@@ -978,15 +979,15 @@ function casesArm(value: Json): "chain" | "wrap" | "" {
 
 /* the slot affordances as SHAPE data: the disclosure kind, its branch count, its open
  * bit, and whether the poll button stands — all of it decides which rows exist */
-function slotRowSig(editor: Editor, widget: Node): string {
+function slotRowSig(editor: Editor, instance: Node): string {
   const rows: string[] = [];
-  eachAuthoredSlot(widget, (address, value) => {
+  eachAuthoredSlot(instance, (address, value) => {
     if (typeof value !== "string" || !value.trim()) return;
     const arm = casesArm(value);
     const chain = arm === "chain" ? chainClean(value) : null;
     rows.push(address + ":" + arm + ":" + (chain ? chain.cases.length : 0) + ":" +
               (referencesFunction(editor, value) ? "p" : "") + ":" +
-              (caseFolds.open(caseKey(widget.id, address)) ? "o" : ""));
+              (caseFolds.open(caseKey(instance.id, address)) ? "o" : ""));
   });
   return rows.join("|");
 }
@@ -1014,24 +1015,24 @@ function slotBoxType(spec: SlotSpec): BoxType {
 /* one slot's row (and its open cases editor, when one stands) */
 function slotRows(
   editor: Editor,
-  widget: Node,
+  instance: Node,
   spec: SlotSpec,
   scope: Scope,
 ): HTMLElement[] {
-  const at = () => editor.store.widget(widget.id) ?? widget;
+  const at = () => editor.store.instance(instance.id) ?? instance;
   const text = () => slotText(ownSlot(at(), spec.name));
   const commitText = (raw: string) => {
-    /* the address is the path into the instance's own nesting: a part's value is
-       written under the part, beside nothing else the widget holds. Empty unsets. */
+    /* the address is the path into the instance's own nesting: an element's value is
+       written under it, beside nothing else the instance holds. Empty unsets. */
     const slots = raw.trim() === ""
       ? withoutSlot(at().slots, spec.name)
       : withSlot(at().slots, spec.name, spellSlotText(spec.shape, raw));
-    editor.apply([{ op: "set_prop", node: widget.id, key: "slots", value: slots }]);
+    editor.apply([{ op: "set_prop", node: instance.id, key: "slots", value: slots }]);
   };
   const boxType = slotBoxType(spec);
 
   const arm = casesArm(ownSlot(at(), spec.name));
-  const folded = caseKey(widget.id, spec.name);
+  const folded = caseKey(instance.id, spec.name);
   const open = arm !== "" && caseFolds.open(folded);
   let casesChip: HTMLElement | null = null;
   if (arm !== "") {
@@ -1047,7 +1048,7 @@ function slotRows(
   /* the chips and the diag mark ride INSIDE the box (BoxSpec.trail): they are
      metadata about the value, and the box is where the value lives */
   const box = valueBox({
-    key: slotCell(widget, spec.name),
+    key: slotCell(instance, spec.name),
     read: text,
     commit: commitText,
     emptyMeans: "default",
@@ -1055,8 +1056,8 @@ function slotRows(
     title: spec.name + ": " + spec.shape,
     type: boxType,
     scope,
-    trail: [casesChip, pollChip(editor, widget, spec),
-            diagIcon(editor.diagAt(widget.id, spec.name))],
+    trail: [casesChip, pollChip(editor, instance, spec),
+            diagIcon(editor.diagAt(instance.id, spec.name))],
   });
 
   const row = chassisRow({
@@ -1068,31 +1069,31 @@ function slotRows(
      props-vs-attrs question); the class keeps them tellable apart */
   row.classList.add("slot-row");
   const rows = [row];
-  if (open) rows.push(casesEditor(widget, spec, scope, boxType, text, commitText));
+  if (open) rows.push(casesEditor(instance, spec, scope, boxType, text, commitText));
   return rows;
 }
 
 /* THE POLL SETTINGS, on exactly the rows whose expression reads a mesh function: the
- * menu-field popover with one HZ value box writing widget.poll[slot] — metadata beside
+ * menu-field popover with one HZ value box writing the instance's poll[slot] — metadata beside
  * the slot, as transitions ride attrs. Empty deletes the key; 2 Hz is the standing
  * default the placeholder shows. */
-function pollChip(editor: Editor, widget: Node, spec: SlotSpec): HTMLElement | null {
-  const authored = ownSlot(widget, spec.name);
+function pollChip(editor: Editor, instance: Node, spec: SlotSpec): HTMLElement | null {
+  const authored = ownSlot(instance, spec.name);
   if (typeof authored !== "string" || !referencesFunction(editor, authored)) return null;
-  const at = () => editor.store.widget(widget.id) ?? widget;
+  const at = () => editor.store.instance(instance.id) ?? instance;
   const hzOf = () => ((at().poll ?? {}) as Record<string, number>)[spec.name];
   const chip = iconButton("timer",
     "poll: how often the function this slot reads is called, in Hz (empty = 2)", () => {
       const rect = chip.getBoundingClientRect();
       const box = valueBox({
-        key: widget.id + ":poll." + spec.name,
+        key: instance.id + ":poll." + spec.name,
         read: () => (hzOf() === undefined ? "" : String(hzOf())),
         commit: (raw) => {
           const next = { ...((at().poll ?? {}) as Record<string, number>) };
           const hz = Number(raw.trim());
           if (!raw.trim() || !Number.isFinite(hz) || hz <= 0) delete next[spec.name];
           else next[spec.name] = hz;
-          editor.apply([{ op: "set_prop", node: widget.id, key: "poll", value: next }]);
+          editor.apply([{ op: "set_prop", node: instance.id, key: "poll", value: next }]);
         },
         emptyMeans: "default",
         placeholder: "2",
@@ -1107,7 +1108,7 @@ function pollChip(editor: Editor, widget: Node, spec: SlotSpec): HTMLElement | n
     });
   chip.classList.add("poll-chip");
   if (hzOf() !== undefined) chip.classList.add("on");
-  bindFlag(widget.id + ":poll." + spec.name + ".on", chip, "on",
+  bindFlag(instance.id + ":poll." + spec.name + ".on", chip, "on",
            () => hzOf() !== undefined);
   return chip;
 }
@@ -1118,7 +1119,7 @@ function pollChip(editor: Editor, widget: Node, spec: SlotSpec): HTMLElement | n
  * re-parses the authored text and writes back the exact chain shape; a plain
  * expression shows its ELSE row alone, and + Case wraps it as the chain's else. */
 function casesEditor(
-  widget: Node,
+  instance: Node,
   spec: SlotSpec,
   scope: Scope,
   boxType: BoxType,
@@ -1134,7 +1135,7 @@ function casesEditor(
     mutate(chain);
     commitText(chain.cases.length ? printChain(chain) : chain.last.trim());
   };
-  const key = slotCell(widget, spec.name);
+  const key = slotCell(instance, spec.name);
   const count = chainNow()?.cases.length ?? 0;
 
   const caseBox = (i: number, side: "when" | "then") =>

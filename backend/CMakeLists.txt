@@ -112,7 +112,7 @@ endforeach()
 
 # The view's pure half (boot and sync, document mirror, attribute interpreter, sidebar
 # reconciliation) is checked headlessly against a real backend; it needs `node build.mjs`
-# to have run. What a widget LOOKS like is not checked here: that is a browser's
+# to have run. What a component LOOKS like is not checked here: that is a browser's
 # computation, so it belongs to a Playwright drive.
 find_program(NODE_EXE node)
 if(NODE_EXE AND EXISTS "${HMI_ROOT}/frontend/dist/main.js")

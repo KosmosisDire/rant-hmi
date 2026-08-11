@@ -30,24 +30,25 @@ namespace hmi {
  * above lang/ back inside it. Identical aliases may coexist. */
 using Json = nlohmann::json;
 
-/* What identifiers mean inside ONE PART's attrs.
+/* What identifiers mean inside ONE ELEMENT's attrs.
  *
- * A BARE name is a property this part declares, or inherits from an enclosing one, and
- * it resolves to that property's ADDRESS — the declaring part's path plus the name
- * (spec 2.3). So `fill_color` inside the `bar` part loads the cell `slot:bar.fill_color`,
- * and the same word under a different part means a different cell. A component's own
- * properties declare at the top, where the path is empty and the address is the name.
+ * A BARE name is a property this element declares, or inherits from an enclosing one,
+ * and it resolves to that property's ADDRESS — the declaring element's path plus the
+ * name (spec 2.3). So `fill_color` inside the `bar` element loads the cell
+ * `slot:bar.fill_color`, and the same word under a different element means a different
+ * cell. A component's own properties declare at the top, where the path is empty and the
+ * address is the name.
  *
  * A DOTTED name is an ADDRESS, read from the template root: `arc.thickness` is the
  * thickness the arc owns, wherever it is read from. This is what lets a property live
- * on the part it AFFECTS rather than on the lowest part that happens to enclose every
+ * on the element it AFFECTS rather than on the lowest one that happens to enclose every
  * reader — a knob's face sizes itself from `arc.thickness` and the arc still owns it.
  *
- * The lexical chain is FLATTENED as the compiler descends (one map per part, nearest
+ * The lexical chain is FLATTENED as the compiler descends (one map per element, nearest
  * declaration already resolved); `addresses` is the whole component's table, which is
- * why attrs compile in a second pass, after every part's properties are known. */
+ * why attrs compile in a second pass, after every element's properties are known. */
 struct TemplateScope {
-    /* property name -> its slot address, in declaration order per part */
+    /* property name -> its slot address, in declaration order per element */
     std::vector<std::pair<std::string, std::string>> props;
     /* every property address in the component, for dotted reads */
     std::shared_ptr<const std::set<std::string>> addresses;
@@ -71,7 +72,7 @@ struct TemplateScope {
         return found ? *found : name;
     }
 
-    /* the enclosing scope plus one part's own declarations: a name declared here
+    /* the enclosing scope plus one element's own declarations: a name declared here
      * REPLACES the inherited one in place, keeping the outer position */
     TemplateScope extend(const std::string& path,
                          const std::vector<std::string>& own) const {

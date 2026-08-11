@@ -1,15 +1,15 @@
 /* The Design workspace: where a component is pulled apart and modified.
  *
  * This is the SECOND hierarchy in the editor, and it is deliberately not in the Layers
- * sidebar. Layers is page composition — how widget instances are grouped and laid out on
+ * sidebar. Layers is page composition — how instances are grouped and laid out on
  * a page — and a component instance is a leaf there. What is inside a component is a
  * different tree with a different lifetime (it belongs to the TYPE, not to the page), so
  * it gets its own workspace rather than a second section under the page's own tree.
  *
- * Three columns: the component list on the left, the component/part inspector on the
+ * Three columns: the component list on the left, the component/element inspector on the
  * right, and BETWEEN THEM AN EMPTY STAGE. The preview that stood there was a second
  * artboard driven by the SVG renderer, with a camera of its own; both are gone, and with
- * them the part addressing that translated a click on the glass into a selection. This
+ * them the element addressing that translated a click on the glass into a selection. This
  * module is now the two side columns and nothing else. Authoring a component still works
  * end to end — the tree selects, the inspector edits — it just cannot be watched while it
  * happens, until the DOM preview lands and defines its own addressing. */
@@ -21,7 +21,7 @@ import { ICONS, iconMarkup } from "../icons.js";
 import { componentInspectorShape, renderComponentInspector } from "../inspector/components.js";
 import { MenuItem, openMenu } from "../menu.js";
 import { bindText } from "../reconcile.js";
-import { makeFold, PART_GLYPH, treeRow } from "../tree.js";
+import { makeFold, KIND_GLYPH, treeRow } from "../tree.js";
 import { ComponentDef, Json } from "../types.js";
 
 /* the component tree's own expansion state, independent of the Layers tree's */
@@ -33,9 +33,9 @@ function toggle(editor: Editor, key: string, dflt: boolean): void {
 
 /* a doc component's node tree as structure (names are bound values; ids, kinds and
  * nesting decide which rows exist) */
-function docPartShape(part: Json): Json {
-  return [part?.id, part?.kind, part?.dir ?? "",
-          ((part?.children ?? []) as Json[]).map(docPartShape)];
+function docElementShape(element: Json): Json {
+  return [element?.id, element?.kind, element?.dir ?? "",
+          ((element?.children ?? []) as Json[]).map(docElementShape)];
 }
 
 /* every finding under a component subtree, flattened: they pin marks on tree rows */
@@ -47,12 +47,12 @@ function componentDiagShape(editor: Editor, comp: ComponentDef): string[] {
   };
   add(comp.id);
   for (const prop of comp.props ?? []) add(prop.id);
-  const walk = (part: Json): void => {
-    if (typeof part?.id === "number") add(part.id);
-    for (const prop of (part?.props ?? []) as Json[]) add(prop.id);
-    for (const child of (part?.children ?? []) as Json[]) walk(child);
+  const walk = (element: Json): void => {
+    if (typeof element?.id === "number") add(element.id);
+    for (const prop of (element?.props ?? []) as Json[]) add(prop.id);
+    for (const child of (element?.children ?? []) as Json[]) walk(child);
   };
-  for (const part of comp.children ?? []) walk(part);
+  for (const element of comp.children ?? []) walk(element);
   return out;
 }
 
@@ -62,7 +62,7 @@ export function designShape(editor: Editor): string {
   const builtinNames = new Set(editor.builtins.map((b: Json) => b?.name));
   return JSON.stringify({
     components: comps.map((c) => [c.id, builtinNames.has(c.name),
-                                  (c.children ?? []).map(docPartShape)]),
+                                  (c.children ?? []).map(docElementShape)]),
     builtins: editor.builtins.map((b: Json) => b?.name).filter((n: Json) => !shadowed.has(n)),
     sel: editor.componentSel ? [editor.componentSel.component, editor.componentSel.node] : null,
     builtinSel: editor.builtinSel ? [editor.builtinSel.name, editor.builtinSel.path] : null,
@@ -93,8 +93,8 @@ export function renderDesignTree(host: HTMLElement, editor: Editor): void {
   );
 }
 
-/* the inspector column: exactly the component/part views, which already route between a
-   doc component, one of its part nodes, and a browsed built-in */
+/* the inspector column: exactly the component/element views, which already route between
+   a doc component, one of its element nodes, and a browsed built-in */
 export function renderDesignInspector(host: HTMLElement, editor: Editor): void {
   if (componentInspectorShape(editor)) {
     renderComponentInspector(host, editor);
@@ -160,7 +160,7 @@ function docComponentMenu(editor: Editor, comp: ComponentDef, shadows: boolean):
 function docComponentRows(editor: Editor, comp: ComponentDef, shadows: boolean): HTMLElement[] {
   const key = "c" + comp.id;
   const open = fold.open(key, false);
-  const parts = comp.children ?? [];
+  const elements = comp.children ?? [];
   const label = el("span", { class: "layer-label" + (shadows ? " shadows" : "") });
   bindText(comp.id + ":name.layer", label, () =>
     (editor.store.node(comp.id) as Json)?.name ?? "");
@@ -168,7 +168,7 @@ function docComponentRows(editor: Editor, comp: ComponentDef, shadows: boolean):
     key,
     0,
     "component" + (editor.componentSel?.node === comp.id ? " current" : ""),
-    parts.length ? { open, toggle: () => toggle(editor, key, false) } : null,
+    elements.length ? { open, toggle: () => toggle(editor, key, false) } : null,
     [
       el("span", {
         class: "icon-mark layer-glyph",
@@ -185,31 +185,31 @@ function docComponentRows(editor: Editor, comp: ComponentDef, shadows: boolean):
     shadows ? "overrides built-in" : comp.name,
   );
   const rows = [row];
-  if (open) for (const part of parts) rows.push(...docPartTreeRows(editor, comp, part, 1));
+  if (open) for (const element of elements) rows.push(...docElementTreeRows(editor, comp, element, 1));
   return rows;
 }
 
-function docPartTreeRows(editor: Editor, comp: ComponentDef, part: Json, depth: number): HTMLElement[] {
-  const key = "c" + comp.id + "/" + part.id;
+function docElementTreeRows(editor: Editor, comp: ComponentDef, element: Json, depth: number): HTMLElement[] {
+  const key = "c" + comp.id + "/" + element.id;
   const open = fold.open(key, true);
-  const children = (part.children ?? []) as Json[];
-  const glyph = PART_GLYPH[part.kind] ?? "·";
+  const children = (element.children ?? []) as Json[];
+  const glyph = KIND_GLYPH[element.kind] ?? "·";
   const label = el("span", { class: "layer-label" });
-  bindText(part.id + ":name.layer", label, () =>
-    (editor.store.node(part.id) as Json)?.name ?? "");
+  bindText(element.id + ":name.layer", label, () =>
+    (editor.store.node(element.id) as Json)?.name ?? "");
   const row = treeRow(
     key,
     depth,
-    "part" + (editor.componentSel?.node === part.id ? " current" : ""),
+    "element" + (editor.componentSel?.node === element.id ? " current" : ""),
     children.length ? { open, toggle: () => toggle(editor, key, true) } : null,
     [el("span", { class: "icon-mark layer-glyph draw", text: glyph }), label,
-     diagIcon(editor.diagNode(part.id))],
-    () => editor.selectComponent(comp.id, part.id),
-    part.name + " (" + part.kind + ")",
+     diagIcon(editor.diagNode(element.id))],
+    () => editor.selectComponent(comp.id, element.id),
+    element.name + " (" + element.kind + ")",
   );
   const rows = [row];
   if (open)
-    for (const child of children) rows.push(...docPartTreeRows(editor, comp, child, depth + 1));
+    for (const child of children) rows.push(...docElementTreeRows(editor, comp, child, depth + 1));
   return rows;
 }
 
@@ -228,18 +228,18 @@ function builtinComponentMenu(editor: Editor, name: string): MenuItem[] {
 /* A built-in row SELECTS, exactly as a doc component's does; what differs is only what
  * the inspector then shows (the definition, read-only) and how the row is addressed:
  * a built-in is not in the document, so there is no node id to name it by and the
- * address is its name plus a CHILD-INDEX path into its parts. */
+ * address is its name plus a CHILD-INDEX path into its elements. */
 function builtinComponentRows(editor: Editor, comp: Json): HTMLElement[] {
   const name = String(comp?.name ?? "");
   const key = "b:" + name;
   const open = fold.open(key, false);
-  const parts = Array.isArray(comp?.children) ? (comp.children as Json[]) : [];
+  const elements = Array.isArray(comp?.children) ? (comp.children as Json[]) : [];
   const current = editor.builtinSel?.name === name && !editor.builtinSel.path;
   const row = treeRow(
     key,
     0,
     "component builtin" + (current ? " current" : ""),
-    parts.length ? { open, toggle: () => toggle(editor, key, false) } : null,
+    elements.length ? { open, toggle: () => toggle(editor, key, false) } : null,
     [
       el("span", {
         class: "icon-mark layer-glyph",
@@ -253,36 +253,36 @@ function builtinComponentRows(editor: Editor, comp: Json): HTMLElement[] {
   );
   const rows = [row];
   if (open)
-    parts.forEach((part, i) => rows.push(...builtinPartRows(editor, name, String(i), part, 1)));
+    elements.forEach((element, i) => rows.push(...builtinElementRows(editor, name, String(i), element, 1)));
   return rows;
 }
 
-function builtinPartRows(
+function builtinElementRows(
   editor: Editor,
   comp: string,
   path: string,
-  part: Json,
+  element: Json,
   depth: number,
 ): HTMLElement[] {
-  const name = String(part?.name ?? "");
+  const name = String(element?.name ?? "");
   const key = "b:" + comp + "/" + path;
   const open = fold.open(key, true);
-  const children = Array.isArray(part?.children) ? (part.children as Json[]) : [];
-  const glyph = PART_GLYPH[part?.kind] ?? "·";
+  const children = Array.isArray(element?.children) ? (element.children as Json[]) : [];
+  const glyph = KIND_GLYPH[element?.kind] ?? "·";
   const current = editor.builtinSel?.name === comp && editor.builtinSel.path === path;
   const row = treeRow(
     key,
     depth,
-    "part builtin" + (current ? " current" : ""),
+    "element builtin" + (current ? " current" : ""),
     children.length ? { open, toggle: () => toggle(editor, key, true) } : null,
     [el("span", { class: "icon-mark layer-glyph draw", text: glyph }),
      el("span", { class: "layer-label", text: name || "(unnamed)" })],
     () => editor.selectBuiltin(comp, path),
-    name + " (" + part?.kind + ", read-only)",
+    name + " (" + element?.kind + ", read-only)",
   );
   const rows = [row];
   if (open)
     children.forEach((child, i) =>
-      rows.push(...builtinPartRows(editor, comp, path + "." + i, child, depth + 1)));
+      rows.push(...builtinElementRows(editor, comp, path + "." + i, child, depth + 1)));
   return rows;
 }

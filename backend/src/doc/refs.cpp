@@ -112,9 +112,9 @@ void visit_site(Role role, Json& value, const std::string& from, const std::stri
             if (value.contains("kind")) visit_site(Role::EntityRef, value, from, to, hits);
             return;
         }
-        /* a widget's `slots` object: every STRING leaf is an expression (numbers and
-           bools are degenerate literals with nothing to rename); the nesting is a
-           part's own object, walked the same way */
+        /* an instance's `slots` object: every STRING leaf is an expression (numbers and
+           bools are degenerate literals with nothing to rename); the nesting is an
+           element's own object, walked the same way */
         case Role::SlotMap: {
             if (!value.is_object()) return;
             for (auto& item : value.items()) {

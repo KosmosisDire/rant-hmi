@@ -10,7 +10,7 @@
  *
  * HONESTY RULE: a mesh entity has no broadcast value of its own — what exists is what
  * feeds deliver into slot cells. So the only live values shown for an entity are the
- * fed cells of its consumers, labeled by the widget.slot they arrive through. */
+ * fed cells of its consumers, labeled by the instance and slot they arrive through. */
 
 import { clear, el } from "../dom.js";
 import { cellText, Editor } from "../editor.js";
@@ -29,7 +29,7 @@ let revision = 0;
 let filter = "";
 let selection = "";
 
-/* the data selection is its own axis: it never touches the canvas/widget selection */
+/* the data selection is its own axis: it never touches the canvas selection */
 export function dataSelect(key: string): void {
   selection = key;
 }
@@ -53,16 +53,16 @@ function select(editor: Editor, key: string): void {
 function refShape(editor: Editor): Json[] {
   const out: Json[] = [];
   for (const page of editor.store.pages())
-    for (const widget of editor.store.widgetsOn(page)) {
-      eachAuthoredSlot(widget, (address, value) => {
-        if (slotExpression(value)) out.push(["s", widget.id, address, value]);
+    for (const instance of editor.store.instancesOn(page)) {
+      eachAuthoredSlot(instance, (address, value) => {
+        if (slotExpression(value)) out.push(["s", instance.id, address, value]);
       });
-      for (const flow of widget.flows ?? []) {
+      for (const flow of instance.flows ?? []) {
         for (const step of flow.do ?? [])
           if (step.kind === "assign")
-            out.push(["m", widget.id, step.id, step.from ?? null, step.to ?? null]);
+            out.push(["m", instance.id, step.id, step.from ?? null, step.to ?? null]);
           else if (step.kind === "tmr_start" || step.kind === "tmr_cancel")
-            out.push(["t", widget.id, step.id, step.kind, step.timer ?? ""]);
+            out.push(["t", instance.id, step.id, step.kind, step.timer ?? ""]);
       }
     }
   return out;
@@ -344,35 +344,35 @@ export function renderDataTree(host: HTMLElement, editor: Editor): void {
 /* ---- where-used: the document's structural references, never an expression scan ---- */
 
 interface SlotUse {
-  widget: Node;
+  instance: Node;
   slot: string;
   text: string;
 }
 
 interface FlowUse {
-  widget: Node;
+  instance: Node;
   text: string;
 }
 
-function widgetLabel(widget: Node): string {
-  return widget.name || widget.type || widget.kind;
+function instanceLabel(instance: Node): string {
+  return instance.name || instance.type || instance.kind;
 }
 
-function eachWidget(editor: Editor, visit: (widget: Node) => void): void {
+function eachInstance(editor: Editor, visit: (instance: Node) => void): void {
   for (const page of editor.store.pages())
-    for (const widget of editor.store.widgetsOn(page)) visit(widget);
+    for (const instance of editor.store.instancesOn(page)) visit(instance);
 }
 
 /* every bound slot whose EXPRESSION references the wanted name: with feeds gone the
  * reference lives in the text, so this is an honest lexical scan (word-bounded, the
  * scan refs.cpp's rename fan-out runs server-side) until phase 4's scope machinery */
 function slotUses(editor: Editor,
-                  wants: (text: string, widget: Node) => boolean): SlotUse[] {
+                  wants: (text: string, instance: Node) => boolean): SlotUse[] {
   const out: SlotUse[] = [];
-  eachWidget(editor, (widget) => {
-    eachAuthoredSlot(widget, (address, value) => {
-      if (slotExpression(value) && wants(String(value), widget))
-        out.push({ widget, slot: address, text: String(value) });
+  eachInstance(editor, (instance) => {
+    eachAuthoredSlot(instance, (address, value) => {
+      if (slotExpression(value) && wants(String(value), instance))
+        out.push({ instance, slot: address, text: String(value) });
     });
   });
   return out;
@@ -403,21 +403,21 @@ function referencesName(text: string, name: string): boolean {
   return false;
 }
 
-function flowUses(editor: Editor, wants: (step: Json, widget: Node) => boolean): FlowUse[] {
+function flowUses(editor: Editor, wants: (step: Json, instance: Node) => boolean): FlowUse[] {
   const out: FlowUse[] = [];
-  eachWidget(editor, (widget) => {
-    for (const flow of widget.flows ?? [])
+  eachInstance(editor, (instance) => {
+    for (const flow of instance.flows ?? [])
       for (const step of flow.do ?? [])
-        if (wants(step, widget))
-          out.push({ widget, text: widgetLabel(widget) + " flow: " + verbOf(step) });
+        if (wants(step, instance))
+          out.push({ instance, text: instanceLabel(instance) + " flow: " + verbOf(step) });
   });
   return out;
 }
 
-/* a widget whose OWN local carries the name shadows the global: its references are
+/* an instance whose OWN local carries the name shadows the global: its references are
  * to the local, so they never count as uses of the global */
-function shadows(widget: Node, name: string): boolean {
-  return (widget.locals ?? []).some((v) => v.name === name);
+function shadows(instance: Node, name: string): boolean {
+  return (instance.locals ?? []).some((v) => v.name === name);
 }
 
 function sideNames(side: Json, name: string): boolean {
@@ -425,22 +425,22 @@ function sideNames(side: Json, name: string): boolean {
 }
 
 /* one clickable consumer row: landing on the consumer is the point of the listing */
-function usedRow(editor: Editor, widget: Node, cells: (HTMLElement | null)[]): HTMLElement {
-  const row = el("button", { class: "used-row", title: "go to " + widgetLabel(widget) }, cells);
-  row.addEventListener("click", () => editor.reveal(widget.id));
+function usedRow(editor: Editor, instance: Node, cells: (HTMLElement | null)[]): HTMLElement {
+  const row = el("button", { class: "used-row", title: "go to " + instanceLabel(instance) }, cells);
+  row.addEventListener("click", () => editor.reveal(instance.id));
   return row;
 }
 
 function slotUseRow(editor: Editor, use: SlotUse): HTMLElement {
-  const cell = use.widget.id + "." + use.slot;
+  const cell = use.instance.id + "." + use.slot;
   const live = el("span", {
     class: "data-live",
-    title: "live value via " + widgetLabel(use.widget) + "." + use.slot +
+    title: "live value via " + instanceLabel(use.instance) + "." + use.slot +
            " (the entity itself broadcasts no value)",
   });
   bindText("data:used:" + cell, live, () => cellText(editor, cell));
-  return usedRow(editor, use.widget, [
-    el("span", { class: "used-name", text: widgetLabel(use.widget) + "." + use.slot }),
+  return usedRow(editor, use.instance, [
+    el("span", { class: "used-name", text: instanceLabel(use.instance) + "." + use.slot }),
     el("span", { class: "op", text: "←" }),
     el("span", { class: "used-path", text: use.text }),
     live,
@@ -448,7 +448,7 @@ function slotUseRow(editor: Editor, use: SlotUse): HTMLElement {
 }
 
 function flowUseRow(editor: Editor, use: FlowUse): HTMLElement {
-  return usedRow(editor, use.widget, [el("span", { class: "used-name", text: use.text })]);
+  return usedRow(editor, use.instance, [el("span", { class: "used-name", text: use.text })]);
 }
 
 function whereUsed(host: HTMLElement, rows: HTMLElement[]): void {
@@ -526,10 +526,10 @@ function varDetail(host: HTMLElement, editor: Editor, id: number): void {
   host.appendChild(varCard(editor, variable, "global"));
 
   const name = variable.name;
-  const slots = slotUses(editor, (text, widget) =>
-    !shadows(widget, name) && referencesName(text, name));
-  const flows = flowUses(editor, (step, widget) => {
-    if (shadows(widget, name)) return false;
+  const slots = slotUses(editor, (text, instance) =>
+    !shadows(instance, name) && referencesName(text, name));
+  const flows = flowUses(editor, (step, instance) => {
+    if (shadows(instance, name)) return false;
     /* an assignment reads through its rvalue EXPRESSION and writes a structural target */
     if (step.kind === "assign")
       return sideNames(step.to, name) ||

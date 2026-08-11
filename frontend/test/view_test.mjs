@@ -3,7 +3,7 @@
  * reconcilers, which get a DOM small enough to run in-process (dom_shim.mjs).
  *
  * It no longer RENDERS anything. The SVG template renderer this file was named for is
- * being removed: pages and component internals both become DOM, so what a widget looks
+ * being removed: pages and component internals both become DOM, so what an instance looks
  * like stops being a string this process can assert on and becomes a layout only a
  * browser computes. Every such check left with the code it pinned; verifying appearance
  * is now a Playwright drive's job. What survives here is everything that was never about
@@ -129,10 +129,10 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 14, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 15, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
-check(snapshot.registry.types.length === 12, "twelve widget types");
+check(snapshot.registry.components.length === 12, "twelve components");
 /* the built-ins' editable document form rides beside the derived registry */
 check(Array.isArray(snapshot.builtins) && snapshot.builtins.length === 12,
       "the snapshot serves the twelve built-ins' document form");
@@ -150,23 +150,23 @@ check(Array.isArray(snapshot.attr_table?.perKind?.text) &&
 check(Array.isArray(snapshot.builtins[0]?.children) && !snapshot.builtins[0]?.template,
       "a served built-in is doc-form: children with expression text, no compiled template");
 /* EVERY PAGE NODE'S ATTRS ARE COMPILED TOO: the same programs a component's are, which is
-   what lets one renderer draw a page and a widget's internals */
+   what lets one renderer draw a page and an instance's internals */
 const headerNode = snapshot.doc.pages[0].children[0];
 check(snapshot.node_attrs?.[String(headerNode.id)]?.attrs?.surface?.code?.[0]?.op === "LOAD",
       "a page node's own attrs arrive compiled, keyed by node id");
 const interactionOf = (node) =>
   node?.interact ?? (node?.children ?? []).map(interactionOf).find(Boolean) ?? null;
 check(
-  interactionOf(snapshot.registry.types.find((type) => type.name === "Slider")?.template)?.primitive ===
+  interactionOf(snapshot.registry.components.find((type) => type.name === "Slider")?.template)?.primitive ===
     "drag1d",
   "the slider exposes the generic drag primitive",
 );
 
 const store = new DocStore();
 store.load(snapshot.doc);
-const view = { mode: "edit", selection: [], part: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
+const view = { mode: "edit", selection: [], element: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
 const page = store.pages()[0];
-const slider = store.widgetsOn(page).find((w) => w.type === "Slider");
+const slider = store.instancesOn(page).find((w) => w.type === "Slider");
 
 /* ---- boxes: the page is an ARRANGEMENT ON THE ARTBOARD — the header band, the main
    pane and the side panes each at their own place in canvas px, on the 22px grid. What
@@ -192,7 +192,7 @@ const statusFrame = frameNamed(page, "Status group");
 check(statusFrame !== null, "the default document seeds a demo frame");
 check(
   statusFrame.children.length === 2 && statusFrame.children.every((c) => c.type),
-  "the frame groups two instances — a widget is a frame that names a component",
+  "the frame groups two instances — an instance is a frame that names a component",
 );
 
 const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
@@ -206,7 +206,7 @@ const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
     store, registry: snapshot.registry, view,
     page: () => page,
     contexts: [], root: () => page, artboard: () => ({ w: 1408, h: 792 }),
-    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     diagFor: () => [], diagAt: () => [], diagNode: () => [],
     select: () => undefined, selectPart: () => undefined,
     refresh: () => draw(),
@@ -288,7 +288,7 @@ ws.send(
 const second = await next("ops_applied");
 store.apply(second.version, second.ops);
 
-/* ---- a doc component's nodes compile into node_attrs too: THE ENTERED WIDGET's other
+/* ---- a doc component's nodes compile into node_attrs too: THE ENTERED INSTANCE's other
    half. Same programs the served template carries, keyed by the nodes' own document ids,
    which is what lets the stage render a component context through the page's own path.
    The insert changes the registry, so a fresh snapshot follows the echo; its node_attrs
@@ -323,7 +323,7 @@ const pillBody = pill.children[0];
 check((refreshed.node_attrs?.[String(pill.id)]?.attrs?.surface?.code?.length ?? 0) > 0,
       "a doc component's ROOT compiles into node_attrs under its own id");
 check(refreshed.node_attrs?.[String(pillBody.id)]?.attrs?.left?.code?.[0]?.op === "CONST",
-      "and its internal nodes too: an entered widget renders through the page's path");
+      "and its internal nodes too: an entered instance renders through the page's path");
 check(refreshed.node_attrs?.[String(pillBody.children[0].id)]?.attrs?.text?.code?.[0]?.op
         === "LOAD",
       "a prop reference compiles to the same cell load the template serves");
@@ -358,10 +358,10 @@ const editor = {
   contexts: [],
   root() { return this.page(); },
   artboard: () => ({ w: 1408, h: 792 }),
-  enterWidget: () => undefined,
+  enterComponent: () => undefined,
   exitTo: () => undefined,
   resizePreview: () => undefined,
-  selectedNode: () => store.nodeAt(readout.id), selectedWidget: () => store.widget(readout.id),
+  selectedNode: () => store.nodeAt(readout.id), selectedInstance: () => store.instance(readout.id),
   apply: () => undefined,
   setPage: () => undefined,
   select: () => undefined,
@@ -396,7 +396,7 @@ const slotRowIn = (host, name) =>
   host.querySelectorAll(".attr-row.slot-row")
     .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
 const slotInput = (name) => slotRowIn(sidebar, name)?.querySelector("input") ?? null;
-const slotsNow = () => store.widget(readout.id).slots ?? {};
+const slotsNow = () => store.instance(readout.id).slots ?? {};
 const echoSlot = (name, value) =>
   echo([{ op: "set_prop", node: readout.id, key: "slots",
           value: { ...slotsNow(), [name]: value } }]);
@@ -442,10 +442,10 @@ check(valueInput.value === "5.5", "an unfed slot's field follows the document, g
       slot cells (phase 4a): a slot holding a non-literal expression shows exactly like
       an attr holding one — the icon dims for gestures. The seeded Readout "Flow"
       binds `value` to flow.round(1). */
-const fedWidget = store.widgetsOn(store.pages()[0]).find(
+const fedInstance = store.instancesOn(store.pages()[0]).find(
   (w) => typeof (w.slots ?? {}).value === "string" && w.type === "Readout");
 const fedPanel = new Panel(new Element("aside"));
-const fedEditor = { ...editor, selectedNode: () => store.nodeAt(fedWidget.id), selectedWidget: () => store.widget(fedWidget.id) };
+const fedEditor = { ...editor, selectedNode: () => store.nodeAt(fedInstance.id), selectedInstance: () => store.instance(fedInstance.id) };
 const drawFed = () =>
   fedPanel.render(inspectorShape(fedEditor), (host) => renderInspector(host, fedEditor));
 fedEditor.live = { epoch: 3, values: {} };
@@ -458,7 +458,7 @@ check(fedRow.querySelector(".vb-icon").classList.contains("vb-dim"),
 const fedInput = fedRow.querySelector("input");
 check(fedInput.value === "flow.round(1)",
       "a bound slot's box shows the authored expression, got " + fedInput.value);
-fedEditor.live = { epoch: 4, values: { [fedWidget.id + ".value"]: 4.25 } };
+fedEditor.live = { epoch: 4, values: { [fedInstance.id + ".value"]: 4.25 } };
 drawFed();
 check(fedRow.querySelector("input") === fedInput,
       "a live frame does not rebuild a bound slot's box");
@@ -659,19 +659,19 @@ check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is
    when it does not. Both are served as data: the type's `behavior` flows, and the compile
    findings the snapshot carries. */
 
-const toggleType = snapshot.registry.types.find((type) => type.name === "Toggle");
+const toggleType = snapshot.registry.components.find((type) => type.name === "Toggle");
 check(
   (toggleType.behavior ?? []).length === 1,
   "the Toggle ships one default flow, got " + (toggleType.behavior ?? []).length,
 );
 check(
   toggleType.behavior[0].do[1].to?.slot === "value",
-  "and it writes the widget's own slot, not a variable",
+  "and it writes the instance's own slot, not a variable",
 );
 /* the toggle's LOGIC is visible behavior now: propose the inverse, echo it, SPEAK it —
    no derivation machinery, no x smuggling */
 check(
-  toggleType.behavior[0].do[0].from?.expr === "!widget.value",
+  toggleType.behavior[0].do[0].from?.expr === "!this.value",
   "the Toggle's inverse is stated in its behavior, got " +
     toggleType.behavior[0].do[0].from?.expr,
 );
@@ -687,7 +687,7 @@ check(
     toggleType.events[0].params?.[0]?.shape === "bool",
   "a discrete control declares exactly changed(value) — gesture events are never rows",
 );
-const sliderEvents = snapshot.registry.types.find((t) => t.name === "Slider").events;
+const sliderEvents = snapshot.registry.components.find((t) => t.name === "Slider").events;
 check(
   sliderEvents.map((e) => e.name).join(",") === "changing,changed" &&
     sliderEvents.every((e) => e.params?.[0]?.name === "value" &&
@@ -696,16 +696,16 @@ check(
     sliderEvents.map((e) => e.name).join(","),
 );
 check(
-  (snapshot.registry.types.find((t) => t.name === "Button").behavior ?? []).length === 0,
+  (snapshot.registry.components.find((t) => t.name === "Button").behavior ?? []).length === 0,
   "a Button owns no value, so it ships no default",
 );
 check(Array.isArray(snapshot.diag?.compile), "the snapshot carries the compile findings");
 
 /* the type's defaults are the control working as expected, so the inspector does not
    list them: the Behavior section holds only what this instance authors */
-const toggle = store.widgetsOn(store.pages()[0]).find((w) => w.type === "Toggle");
+const toggle = store.instancesOn(store.pages()[0]).find((w) => w.type === "Toggle");
 const togglePanel = new Panel(new Element("aside"));
-const toggleEditor = { ...editor, selectedNode: () => store.nodeAt(toggle.id), selectedWidget: () => store.widget(toggle.id) };
+const toggleEditor = { ...editor, selectedNode: () => store.nodeAt(toggle.id), selectedInstance: () => store.instance(toggle.id) };
 togglePanel.render(inspectorShape(toggleEditor), (host) => renderInspector(host, toggleEditor));
 check(
   togglePanel.host.querySelectorAll(".default-flow").length === 0,
@@ -735,7 +735,7 @@ check(livePanel.host.querySelectorAll(".value-cell.driven").length === 0 &&
         livePanel.host.querySelectorAll(".value-cell.bound").length === 0,
       "the bound/driven cell states are gone — the box's own states replace them");
 check(
-  store.widget(toggle.id).slots.value === true,
+  store.instance(toggle.id).slots.value === true,
   "while the document still holds the value the runtime started from",
 );
 
@@ -743,9 +743,9 @@ check(
    value, so its field shows the document and typing into it is never fought */
 
 /* a finding lands as a mark on the row it names, not in a list: one addressed to the
-   widget itself sits on the head, one narrowed to a slot sits on that slot's label */
+   instance itself sits on the head, one narrowed to a slot sits on that slot's label */
 const findingRows = [
-  { node: toggle.id, grade: "error", code: "widget_type", message: "unknown type" },
+  { node: toggle.id, grade: "error", code: "component_type", message: "unknown type" },
   { node: toggle.id, grade: "error", code: "value_shape", message: "slot 'value' is bool", where: "value" },
 ];
 const findingEditor = {
@@ -764,7 +764,7 @@ check(
 const findingHead = findingPanel.host.querySelector(".inspector-head");
 check(
   findingHead !== null && findingHead.querySelectorAll(".diag-dot.error").length === 1,
-  "a widget-level error marks the inspector head",
+  "an instance-level error marks the inspector head",
 );
 /* the dot OUTSIDE any box: it renders in the head, wears the .icon-btn square
    (dress only) and still opens its popover on hover */
@@ -787,12 +787,12 @@ check(
 
 /* a finding inside a flow is addressed to the STEP, so it traces to the exact line; a
    collapsed card cannot show that line yet, so its head carries the rollup */
-const reset = store.widgetsOn(store.pages()[0]).find((w) => w.name === "Reset");
+const reset = store.instancesOn(store.pages()[0]).find((w) => w.name === "Reset");
 const stepId = reset.flows[0].do[0].id;
 const stepRows = [{ node: stepId, grade: "error", code: "expression", message: "unknown name" }];
 const stepEditor = {
   ...editor,
-  selectedNode: () => store.nodeAt(reset.id), selectedWidget: () => store.widget(reset.id),
+  selectedNode: () => store.nodeAt(reset.id), selectedInstance: () => store.instance(reset.id),
   diagFor: () => stepRows,
   diagAt: (node, where) =>
     stepRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
@@ -806,16 +806,16 @@ check(
   "a step-level error rolls up on the collapsed flow card",
 );
 
-/* a slot expression's finding pins to the WIDGET's slot row: node = the widget,
+/* a slot expression's finding pins to the INSTANCE's slot row: node = the instance,
    `where` = the slot address, and the row's label wears the dot */
-const readoutW = store.widgetsOn(store.pages()[0]).find((w) => w.type === "Readout");
+const readoutW = store.instancesOn(store.pages()[0]).find((w) => w.type === "Readout");
 const feedRows = [
   { node: readoutW.id, grade: "error", code: "expression",
     message: "unknown name 'flow'", where: "value" },
 ];
 const feedEditor = {
   ...editor,
-  selectedNode: () => store.nodeAt(readoutW.id), selectedWidget: () => store.widget(readoutW.id),
+  selectedNode: () => store.nodeAt(readoutW.id), selectedInstance: () => store.instance(readoutW.id),
   diagFor: () => feedRows,
   diagAt: (node, where) =>
     feedRows.filter((d) => d.node === node && (d.where ?? "") === (where ?? "")),
@@ -830,21 +830,21 @@ check(
   "a slot expression finding marks the slot's own row",
 );
 
-/* ...and the finding already NAMES the widget, so the Layers badge walk holds with no
+/* ...and the finding already NAMES the instance, so the Layers badge walk holds with no
    feed node between them */
 check(
   leftShape({
     ...editor,
-    diagFor: (w) => feedRows.filter((d) => store.owningWidget(d.node) === w),
+    diagFor: (w) => feedRows.filter((d) => store.owningInstance(d.node) === w),
   }).includes(readoutW.id + ":expression:"),
-  "a slot finding attributes to its widget, so the Layers row badge exists",
+  "a slot finding attributes to its instance, so the Layers row badge exists",
 );
 
-/* ---- the Layers tree, part selection and the part-scoped inspector ----
-   The left sidebar's tree lists the CURRENT page's widgets and each widget's named
-   template parts from the REGISTRY type (all of them, rendered or not); pages live in
-   the topbar selector, not here. Selecting a part scopes the inspector to exactly the
-   slots the part's subtree consumes, and the overlay rings the part where the last
+/* ---- the Layers tree, element selection and the element-scoped inspector ----
+   The left sidebar's tree lists the CURRENT page's instances and each instance's named
+   template elements from the REGISTRY type (all of them, rendered or not); pages live in
+   the topbar selector, not here. Selecting an element scopes the inspector to exactly the
+   slots the element's subtree consumes, and the overlay rings the element where the last
    render put it. */
 
 const left = new Element("aside");
@@ -863,67 +863,67 @@ const designRow = (key) =>
 
 drawLeft();
 check(rowByKey("n" + toggle.id) === null,
-      "the tree starts shut, so a nested widget has no row of its own yet");
+      "the tree starts shut, so a nested instance has no row of its own yet");
 /* SELECTING one is how it is reached: an untouched row holding the selection starts open,
    all the way down, which is what makes clicking a node on the stage show it here */
 view.selection = [toggle.id];
 drawLeft();
 const toggleRow = rowByKey("n" + toggle.id);
-check(toggleRow !== null, "the Layers tree lists the current page's widgets");
+check(toggleRow !== null, "the Layers tree lists the current page's instances");
 check(left.querySelectorAll(".layer-row.page").length === 0, "the Layers tree has no page rows");
 check(rowByKey("p" + page.id) === null, "not even the current page's");
-/* a widget row is a LEAF here now: its parts belong to the component that defines them,
+/* an instance row is a LEAF here now: its elements belong to the component that defines them,
    so they are listed by the Design tree and no longer expand out of this one */
 check(rowByKey("n" + toggle.id + "/pill.knob") === null,
-      "a widget's parts are not listed in the Layers tree");
-check(rowByKey("n" + slider.id + "/scale") === null, "not even a part hidden by `show`");
+      "an instance's elements are not listed in the Layers tree");
+check(rowByKey("n" + slider.id + "/scale") === null, "not even an element hidden by `show`");
 
-/* a selected part scopes the inspector: widget › part head, ONE section, and only the
-   properties that part OWNS — not its siblings', not its children's, not the widget's */
-const toggleEditor2 = { ...editor, selectedNode: () => store.nodeAt(toggle.id), selectedWidget: () => store.widget(toggle.id) };
+/* a selected element scopes the inspector: instance › element head, ONE section, and only the
+   properties that element OWNS — not its siblings', not its children's, not the instance's */
+const toggleEditor2 = { ...editor, selectedNode: () => store.nodeAt(toggle.id), selectedInstance: () => store.instance(toggle.id) };
 view.selection = [toggle.id];
-view.part = "pill.knob";
-const widgetShape = (() => { view.part = ""; const s = inspectorShape(toggleEditor2); view.part = "pill.knob"; return s; })();
-check(inspectorShape(toggleEditor2) !== widgetShape, "the selected part moves the inspector's shape");
-const partPanel = new Panel(new Element("aside"));
-partPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
-const partLabels = partPanel.host.querySelectorAll(".attr-row.slot-row")
+view.element = "pill.knob";
+const instanceShape = (() => { view.element = ""; const s = inspectorShape(toggleEditor2); view.element = "pill.knob"; return s; })();
+check(inspectorShape(toggleEditor2) !== instanceShape, "the selected element moves the inspector's shape");
+const elementPanel = new Panel(new Element("aside"));
+elementPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
+const elementLabels = elementPanel.host.querySelectorAll(".attr-row.slot-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(partLabels.includes("handle_color"),
-      "the part view lists the property that part owns");
-check(!partLabels.includes("fill_color") && !partLabels.includes("track_color"),
-      "and not its siblings' slots, got " + partLabels.join(","));
-check(partPanel.host.querySelector(".geom-grid") === null,
-      "the part view carries no Panel/placement section");
-check(partPanel.host.querySelector(".part-name")?.textContent === "knob",
-      "the head names the part");
+check(elementLabels.includes("handle_color"),
+      "the element view lists the property that element owns");
+check(!elementLabels.includes("fill_color") && !elementLabels.includes("track_color"),
+      "and not its siblings' slots, got " + elementLabels.join(","));
+check(elementPanel.host.querySelector(".geom-grid") === null,
+      "the element view carries no Panel/placement section");
+check(elementPanel.host.querySelector(".element-name")?.textContent === "knob",
+      "the head names the element");
 
-/* ...and the WIDGET view is the other half of the same rule: a property a part owns is
-   editable there and NOWHERE else, so the widget's own inspector holds only its own
+/* ...and the INSTANCE view is the other half of the same rule: a property an element owns is
+   editable there and NOWHERE else, so the instance's own inspector holds only its own
    (its value, its frame, its placement) */
-view.part = "";
-const widgetPanel = new Panel(new Element("aside"));
-widgetPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
-const widgetLabels = widgetPanel.host.querySelectorAll(".attr-row.slot-row")
+view.element = "";
+const instancePanel = new Panel(new Element("aside"));
+instancePanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
+const instanceLabels = instancePanel.host.querySelectorAll(".attr-row.slot-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(!widgetLabels.includes("handle_color") && !widgetLabels.includes("fill_color"),
-      "the widget view shows no property a part owns, got " + widgetLabels.join(","));
-check(widgetLabels.includes("surface"), "and keeps the widget's own frame slots");
+check(!instanceLabels.includes("handle_color") && !instanceLabels.includes("fill_color"),
+      "the instance view shows no property an element owns, got " + instanceLabels.join(","));
+check(instanceLabels.includes("surface"), "and keeps the instance's own frame slots");
 /* PLACE IS NOT A SLOT and not a prop: an instance is a node, so its box on the artboard
    is the same attr row a plain box gets, through the same commit */
-const widgetAttrNames = widgetPanel.host.querySelectorAll(".attr-row")
+const instanceAttrNames = instancePanel.host.querySelectorAll(".attr-row")
   .filter((row) => !row.classList.contains("slot-row"))
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(widgetAttrNames.includes("left") && widgetAttrNames.includes("w"),
-      "the widget view places the instance, got " + widgetAttrNames.join(","));
+check(instanceAttrNames.includes("left") && instanceAttrNames.includes("w"),
+      "the instance view places the instance, got " + instanceAttrNames.join(","));
 {
-  /* EVERY part carries its own `shown` switch, so a part is turned off by selecting it
-     — and the edit writes NESTED, under the part that owns it. The switch is the bool
-     box now: committing `false` stores the raw bool at the part's address. */
-  check(partLabels.includes("shown"), "a part can be switched off from its own view");
+  /* EVERY element carries its own `shown` switch, so an element is turned off by selecting it
+     — and the edit writes NESTED, under the element that owns it. The switch is the bool
+     box now: committing `false` stores the raw bool at the element's address. */
+  check(elementLabels.includes("shown"), "an element can be switched off from its own view");
   const applied = [];
   const nested = { ...toggleEditor2, apply: (ops) => applied.push(...ops) };
-  view.part = "pill.knob";
+  view.element = "pill.knob";
   const editPanel = new Panel(new Element("aside"));
   editPanel.render(inspectorShape(nested), (host) => renderInspector(host, nested));
   const shownRow = slotRowIn(editPanel.host, "shown");
@@ -933,21 +933,21 @@ check(widgetAttrNames.includes("left") && widgetAttrNames.includes("w"),
   fire(shownInput, "change");
   const slotOp = applied.find((op) => op.key === "slots");
   check(slotOp && slotOp.value?.pill?.knob?.shown === false,
-        "a part's edit writes nested under its part, got " + JSON.stringify(slotOp?.value));
+        "an element's edit writes nested under its element, got " + JSON.stringify(slotOp?.value));
   check(slotOp && slotOp.value.shown === undefined,
-        "and never at the widget's top level");
-  view.part = "";
+        "and never at the instance's top level");
+  view.element = "";
 }
 
 view.selection = [];
-view.part = "";
+view.element = "";
 
 /* ---- the Components section: browse built-ins, edit doc components ----
-   Below Layers, the left sidebar lists the document's components (their PART trees,
+   Below Layers, the left sidebar lists the document's components (their ELEMENT trees,
    real doc nodes) and then the built-ins not shadowed by one, browsable from the
-   served doc form and carrying a fork affordance. Selecting a part node scopes the
+   served doc form and carrying a fork affordance. Selecting an element node scopes the
    inspector to that node's attrs, and a component compile finding (addressed to the
-   part node, where = the attr) pins to the attr's own row. */
+   element node, where = the attr) pins to the attr's own row. */
 
 /* the Components tree moved OUT of the left sidebar and into the Design workspace:
    Layers is page composition, a component's internals belong to the type */
@@ -965,7 +965,7 @@ check(builtinToggleRow.className.includes("builtin"), "and is marked read-only")
 fire(builtinToggleRow.children[0], "click");
 drawDesign();
 /* a built-in is not in the document, so its rows are addressed by name + CHILD-INDEX
-   path ("0" is the root part, "0.0.0" the track inside its pill) rather than node id */
+   path ("0" is the root element, "0.0.0" the track inside its pill) rather than node id */
 /* THE COMPONENT IS THE ROOT NODE, so index 0 is its first CHILD (the pill), not a
    wrapper box standing in for the component itself */
 check(designRow("b:Toggle/0") !== null,
@@ -979,14 +979,14 @@ editor.selectBuiltin = (name, path) => browsed.push(name + ":" + path);
 fire(designRow("b:Toggle/0.0"), "click");
 fire(designRow("b:Toggle"), "click");
 check(browsed.join(" ") === "Toggle:0.0 Toggle:",
-      "a built-in row browses it by name and part path, got " + JSON.stringify(browsed));
+      "a built-in row browses it by name and element path, got " + JSON.stringify(browsed));
 
-/* the inspector then shows that part's definition, read-only: no field commits, and
+/* the inspector then shows that element's definition, read-only: no field commits, and
    the ADDRESS row says what its properties are called from the outside (spec 2.3) */
 const trackEditor = {
   ...editor,
   selectedNode: () => null,
-  selectedWidget: () => null,
+  selectedInstance: () => null,
   /* the pill: index 0 of the component's own children, since the component IS the root */
   builtinSel: { name: "Toggle", path: "0" },
 };
@@ -1062,14 +1062,14 @@ check(lampRow.querySelector(".badge.shadow") === null,
       "a component that shadows nothing carries no override tag");
 fire(lampRow.children[0], "click");
 drawDesign();
-check(designRow("c9200/9210") !== null, "an expanded component lists its part nodes");
+check(designRow("c9200/9210") !== null, "an expanded component lists its element nodes");
 check(designRow("c9200/9211") !== null, "nested nodes too (frames default open)");
 
 /* selecting the component edits the TYPE: name field and the properties table */
 const lampEditor = {
   ...editor,
   selectedNode: () => null,
-  selectedWidget: () => null,
+  selectedInstance: () => null,
   componentSel: { component: 9200, node: 9200 },
 };
 const lampPanel = new Panel(new Element("aside"));
@@ -1083,13 +1083,13 @@ check(
   "the properties table lists the PropDef rows",
 );
 
-/* selecting a part edits its attrs: the CLOSED vocabulary (spec 2.3) lists every attr
+/* selecting an element edits its attrs: the CLOSED vocabulary (spec 2.3) lists every attr
    the "text" kind declares — own attrs first, then the common set — set or not, not
-   just the one this "label" part happens to author */
+   just the one this "label" element happens to author */
 const labelEditor = { ...lampEditor, componentSel: { component: 9200, node: 9211 } };
 const labelPanel = new Panel(new Element("aside"));
 check(designInspectorShape(labelEditor) !== designInspectorShape(lampEditor),
-      "the selected part node moves the inspector's shape");
+      "the selected element node moves the inspector's shape");
 labelPanel.render(designInspectorShape(labelEditor), (host) => renderDesignInspector(host, labelEditor));
 /* EVERY attr the kind declares, and exactly ONE of the two placement vocabularies: the
    parent decides which, so offering both would be offering a field that does nothing half
@@ -1101,7 +1101,7 @@ const ARRANGED = ["grow", "min"];
 const textVocabCount = editor.attrTable.perKind.text.length +
   editor.attrTable.common.filter((a) => !ARRANGED.includes(a.name)).length;
 check(attrRows.length === textVocabCount,
-      "the part view lists the kind's attrs and the placement half that applies, got " +
+      "the element view lists the kind's attrs and the placement half that applies, got " +
         attrRows.length + " expected " + textVocabCount);
 const attrNamed = (rows, name) =>
   rows.find((row) => row.querySelector(".attr-name")?.textContent === name);
@@ -1177,7 +1177,7 @@ check(labelPanel.host.querySelectorAll(".dashed-btn")
         "a stray coming and going moves the inspector's shape");
 }
 
-/* THERE IS NO OPEN KIND ANY MORE: `code` parts are gone, so every attr on every node is
+/* THERE IS NO OPEN KIND ANY MORE: `code` elements are gone, so every attr on every node is
    checked against the one table. What the document carries that the vocabulary does NOT
    name still gets a row of its own — visible and removable, never an error with nowhere
    to land. */
@@ -1197,7 +1197,7 @@ store.apply(store.version() + 1, [
   { op: "set_prop", node: 9211, key: "attrs", value: { text: "'hi'" } },
 ]);
 
-/* a component finding is addressed to the part node, where = the attr: it pins to
+/* a component finding is addressed to the element node, where = the attr: it pins to
    that attr's own row, exactly as the backend's template_expr diags arrive */
 const attrDiagRows = [
   { node: 9211, grade: "error", code: "template_expr", message: "unknown name 'nope'",
@@ -1359,7 +1359,7 @@ check(pageSelectShape(editor) !== pageSelBefore, "a new page moves the selector'
    The tree browses the reflected mesh (foldered by / segments), the globals and the
    type table; the detail pane answers what a thing is and where the DOCUMENT uses it.
    A mesh entity has no broadcast value: the only live values shown are the fed cells
-   of its consumers, labeled by the widget.slot they arrive through. */
+   of its consumers, labeled by the instance and slot they arrive through. */
 
 const flowVar = store.globals().find((v) => v.name === "flow");
 const meshEditor = {
@@ -1417,7 +1417,7 @@ check(dataDetailPanel.host.querySelector(".detail-name")?.textContent === "plant
 const entityUses = dataDetailPanel.host.querySelectorAll(".used-row");
 check(entityUses.length === 1, "where-used finds the one bound consumer, got " + entityUses.length);
 check(entityUses[0].textContent.includes("Pump.value"),
-      "and names it by widget.slot, got " + entityUses[0].textContent);
+      "and names it by instance and slot, got " + entityUses[0].textContent);
 meshEditor.live = {
   epoch: 10,
   values: { ["v" + flowVar.id]: 3.25, [toggle.id + ".value"]: true },
@@ -1495,7 +1495,7 @@ const stageAttrs = {
 };
 
 const stageHost = new Element("section");
-const stageView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+const stageView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
 const stageEditor = {
   store: stageStore,
   registry: snapshot.registry,
@@ -1507,7 +1507,7 @@ const stageEditor = {
   root() { return this.page(); },
   artboard() { const c = this.contexts[this.contexts.length - 1];
                return c ? { w: c.w, h: c.h } : { w: 1408, h: 792 }; },
-  enterWidget: () => undefined,
+  enterComponent: () => undefined,
   exitTo: () => undefined,
   resizePreview: () => undefined,
   select: (ids) => { stageView.selection = ids; },
@@ -1526,7 +1526,7 @@ const deck = stageNode("frame", 902);
 check(row !== null && deck !== null, "each box is a div carrying its own id");
 check(row.parentElement === stagePage && deck.parentElement === stagePage,
       "the page's boxes are its own children");
-check(stageNode("leaf", 903)?.parentElement === row, "and a box's widgets nest inside it");
+check(stageNode("leaf", 903)?.parentElement === row, "and a box's instances nest inside it");
 /* A PAGE NODE IS CANVAS PX: what is written is what renders, relative to its parent */
 check(row.style.position === "absolute" && row.style.left === "22px" &&
         row.style.top === "22px" && row.style.width === "440px" &&
@@ -1600,7 +1600,7 @@ check(label.style.right === "" && label.style.minWidth === "" &&
    The applier is written, never cleared, for exactly that reason — "" hands the answer
    back to the cascade. Nothing here is layout: an unclipped box is placed identically. */
 check(row.style.overflow === "visible" && stageNode("leaf", 903).style.overflow === "visible",
-      "absent = the box does not clip: a frame AND a widget both let children overflow");
+      "absent = the box does not clip: a frame AND an instance both let children overflow");
 const boxBefore = [row.style.left, row.style.top, row.style.width, row.style.height];
 stageAttrs["901"].attrs.clip = prog(true);
 stageEditor.live = { epoch: 3, values: {} };
@@ -1829,7 +1829,7 @@ check(stageNode("frame", 901) === heldAgain &&
   document.removeEventListener ??= () => undefined;
 
   const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
-  /* pressed ? green : blue — the view-local gesture state, bound the way a real widget
+  /* pressed ? green : blue — the view-local gesture state, bound the way a real instance
      binds it, so a press has something to move */
   const pressedTint = { code: [{ op: "LOAD", cell: "state:pressed" },
                                { op: "CONST", v: "#00ff00" }, { op: "CONST", v: "#0000ff" },
@@ -1867,15 +1867,15 @@ check(stageNode("frame", 901) === heldAgain &&
     "520": { attrs: { left: prog(484), top: prog(11), w: prog(220), h: prog(110) } },
   };
   const rHost = new Element("section");
-  const rView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const rView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
   const rEditor = {
-    store: rStore, registry: { version: 1, types: [rigType] }, nodeAttrs: rAttrs,
+    store: rStore, registry: { version: 1, components: [rigType] }, nodeAttrs: rAttrs,
     live: { epoch: 1, values: {} }, view: rView,
     page: () => rStore.pages()[0],
     contexts: [],
     root() { return this.page(); },
     artboard: () => ({ w: 1408, h: 792 }),
-    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     select: () => undefined, input: () => undefined,
   };
   const draw = () => renderStage(rHost, rEditor);
@@ -1983,7 +1983,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "in edit mode the knob takes the pointer as a picture does, unpressed");
   fire(knob, "pointerdown", { button: 0, clientX: 4, clientY: 4 });
   check(knob.style.background === "#0000ff" && !rView.state[511]?.pressed,
-        "and a press there is NOT the widget's: edit mode gates it at event time");
+        "and a press there is NOT the instance's: edit mode gates it at event time");
   rView.mode = "test";
   draw();
   check(rNode(511) === rig && rig.children[4] === knob && rHost.querySelector(".page") === rPage,
@@ -2047,16 +2047,16 @@ check(stageNode("frame", 901) === heldAgain &&
                       surface: prog("#333333") } },
     "711": { attrs: { left: prog(11), top: prog(200), w: prog(220), h: prog(110) } },
   };
-  const tView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const tView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
   const tHost = new Element("section");
   const tEditor = {
-    store: tStore, registry: { version: 1, types: [sweepType] }, nodeAttrs: tAttrs,
+    store: tStore, registry: { version: 1, components: [sweepType] }, nodeAttrs: tAttrs,
     live: { epoch: 1, values: {} }, view: tView,
     page: () => tStore.pages()[0],
     contexts: [],
     root() { return this.page(); },
     artboard: () => ({ w: 1408, h: 792 }),
-    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     select: () => undefined, input: () => undefined,
   };
   let tnow = 1000;
@@ -2145,7 +2145,7 @@ check(stageNode("frame", 901) === heldAgain &&
   /* TRUE NIL SNAPS: a slot with no value anywhere renders UNKNOWN at once -- nothing
      invents frames toward (or from) a value nobody produced. A NEW type row, because
      the sweep table is cached per served type object (as a snapshot would deliver). */
-  tEditor.registry = { version: 2, types: [{
+  tEditor.registry = { version: 2, components: [{
     ...sweepType,
     slots: [...sweepType.slots,
             { name: "raw", shape: "num", group: "value", smooth: 200, profile: "linear" }],
@@ -2191,16 +2191,16 @@ check(stageNode("frame", 901) === heldAgain &&
                       left: { code: [{ op: "LOAD", cell: "time:now" },
                                      { op: "CONST", v: 100 }, { op: "MUL" }] } } },
   };
-  const kView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const kView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
   const kHost = new Element("section");
   const kEditor = {
-    store: kStore, registry: { version: 1, types: [] }, nodeAttrs: kAttrs,
+    store: kStore, registry: { version: 1, components: [] }, nodeAttrs: kAttrs,
     live: { epoch: 1, values: {} }, view: kView,
     page: () => kStore.pages()[0],
     contexts: [],
     root() { return this.page(); },
     artboard: () => ({ w: 1408, h: 792 }),
-    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     select: () => undefined, input: () => undefined,
   };
   let know = 2000;
@@ -2252,7 +2252,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const frameEditor = {
     ...editor,
     selectedNode: () => store.nodeAt(group.id),
-    selectedWidget: () => null,
+    selectedInstance: () => null,
     apply: (ops) => applied.push(...ops),
   };
   const framePanel = new Panel(new Element("aside"));
@@ -2294,7 +2294,7 @@ check(stageNode("frame", 901) === heldAgain &&
    A move echo always carries the whole placement (node, parent, list, index), so the mirror
    has ONE path for a reorder, a reparent and a page shuffle alike. Everything below the
    mirror block is arrange.ts, which is pure on purpose: a browser decides where the rows
-   ARE, but which parent and which index a drop means is arithmetic, and it is the part that
+   ARE, but which parent and which index a drop means is arithmetic, and it is the element that
    makes tree dragging feel right or maddening. */
 {
   const leaf = (id, name) => ({ id, kind: "frame", type: "Label", name,
@@ -2322,7 +2322,7 @@ check(stageNode("frame", 901) === heldAgain &&
   check(moveStore.parentOf(711)?.id === 720, "and the mirror re-indexes it under its new parent");
   /* what the shell's selectable() filter reads after every echo: a selected node that only
      MOVED must still resolve, or the inspector empties under the author's hands */
-  check(Boolean(moveStore.widget(711) ?? moveStore.nodeAt(711)),
+  check(Boolean(moveStore.instance(711) ?? moveStore.nodeAt(711)),
         "a selected node survives its own reparent echo");
 
   moveStore.apply(3, [{ op: "move", node: 700, parent: 0, list: "pages", index: 1 }]);
@@ -2333,7 +2333,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "and an echo with no parent at all reorders where the node already is");
 
   /* the group echo: an insert of a childless box, then one addressed move per node, so
-     the mirror never holds the same widget in two places */
+     the mirror never holds the same instance in two places */
   moveStore.apply(5, [
     { op: "insert", parent: 700, list: "children", index: 0,
       node: frame(750, "Group", []) },
@@ -2383,7 +2383,7 @@ check(stageNode("frame", 901) === heldAgain &&
   check(at(721, 721, "after") === "none", "the only child of a frame, dropped after itself");
   check(at(999, 710, "into") === "none", "an id the page does not hold plans nothing");
   check(at(730, 999, "into") === "none", "and neither does a target it does not hold");
-  check(at(730, 711, "into") === "none", "a widget row has no inside to drop into");
+  check(at(730, 711, "into") === "none", "an instance row has no inside to drop into");
 
   /* the empty room under the last row: the end of the page */
   const end = dropAtPageEnd(tree, 711);
@@ -2395,7 +2395,7 @@ check(stageNode("frame", 901) === heldAgain &&
           dropZone(true, 0.8) === "after",
         "a frame row means INSIDE through its middle, and a gap at either edge");
   check(dropZone(false, 0.4) === "before" && dropZone(false, 0.6) === "after",
-        "a widget row has no middle: it splits at the halfway mark");
+        "an instance row has no middle: it splits at the halfway mark");
 
   /* settle(), reached with a container and an index: the same legality and the same
      erase-first shift however a drop was aimed */
@@ -2574,7 +2574,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "a written fraction holds at most 4 decimals, got " + fmtFraction(0.123456789));
 }
 
-/* ---- ENTER A WIDGET: the strip, the context tree AND the context inspector ----
+/* ---- ENTER A INSTANCE: the strip, the context tree AND the context inspector ----
    Inside a component the left sidebar's strip names the trail and says the edit is to
    the COMPONENT; the tree lists the component's own nodes as REAL rows (they carry ids,
    so everything works on them), while an unforked built-in's rows stay fenced. The
@@ -2619,7 +2619,7 @@ check(stageNode("frame", 901) === heldAgain &&
   ctxPanel.render(leftShape(ctxEditor), (host) => renderLeftSidebar(host, ctxEditor));
   const strip = ctxPanel.host.querySelector(".context-strip");
   check(strip !== null && strip.className.includes("on"),
-        "inside a widget the breadcrumb strip turns on");
+        "inside an instance the breadcrumb strip turns on");
   const crumbs = ctxPanel.host.querySelectorAll(".crumb");
   check(crumbs.length === 2 && crumbs[1].textContent === "Bulb" &&
           crumbs[1].className.includes("current"),
@@ -2664,7 +2664,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const insEditor = {
     ...ctxEditor,
     selectedNode: () => (sel[0] ? store.nodeAt(sel[0]) : null),
-    selectedWidget: () => (sel[0] ? store.widget(sel[0]) : null),
+    selectedInstance: () => (sel[0] ? store.instance(sel[0]) : null),
   };
   const compPanel = new Panel(new Element("aside"));
   compPanel.render(inspectorShape(insEditor), (host) => renderInspector(host, insEditor));
@@ -2676,7 +2676,7 @@ check(stageNode("frame", 901) === heldAgain &&
 
   /* ---- THE EVENTS A COMPONENT DECLARES ----
      function SIGNATURES its behavior raises with the `raise` step; the gesture family
-     (tap, press, ...) never appears here — the primitive on a part brings it. Bulb
+     (tap, press, ...) never appears here — the primitive on an element brings it. Bulb
      declares none yet, which costs nothing: its press gesture already speaks. */
   check(compPanel.host.textContent.includes("no declared events"),
         "a component with no events says what that costs");
@@ -2733,7 +2733,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "the primitive is picked, not read: none plus the four");
 
   /* the built-in context: the shipped definition, read-only, Override one click away */
-  const roIns = { ...roEditor, selectedNode: () => null, selectedWidget: () => null };
+  const roIns = { ...roEditor, selectedNode: () => null, selectedInstance: () => null };
   const roPanel2 = new Panel(new Element("aside"));
   roPanel2.render(inspectorShape(roIns), (host) => renderInspector(host, roIns));
   check(roPanel2.host.querySelector(".head-tag")?.textContent === "built-in",
@@ -2743,7 +2743,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "with Override one click away there too");
 }
 
-/* ---- ENTER A WIDGET on the stage: the component's own artboard (stage.ts) ----
+/* ---- ENTER A INSTANCE on the stage: the component's own artboard (stage.ts) ----
    The artboard becomes the context's preview box, the design frame wears the component
    root's dressing, and the component's nodes render carrying their ids, placed in
    FRACTIONS of their parent — resizing the preview re-solves them. */
@@ -2771,7 +2771,7 @@ check(stageNode("frame", 901) === heldAgain &&
     "951": { attrs: { left: prog2(0.25), top: prog2(0.25), w: prog2(0.5), h: prog2(0.5) } },
   };
   const ctxHost = new Element("section");
-  const ctxView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const ctxView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
   const ctxStage = {
     store: ctxStore, registry: snapshot.registry, nodeAttrs: ctxAttrs,
     live: { epoch: 1, values: {} }, view: ctxView,
@@ -2788,14 +2788,14 @@ check(stageNode("frame", 901) === heldAgain &&
       const c = this.contexts[this.contexts.length - 1];
       return c ? { w: c.w, h: c.h } : { w: 1408, h: 792 };
     },
-    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     select: () => undefined,
   };
   renderStage(ctxHost, ctxStage);
   const ctxPage = ctxHost.querySelector(".page");
   check(ctxPage !== null && ctxPage.style.width === "440px" &&
           ctxPage.style.height === "220px",
-        "an entered widget's artboard is the context's preview box");
+        "an entered instance's artboard is the context's preview box");
   check(ctxPage.style.background === "#333333",
         "the design frame wears the component root's own dressing");
   const body = ctxHost.querySelectorAll(".frame")
@@ -2916,9 +2916,9 @@ check(stageNode("frame", 901) === heldAgain &&
   };
   const aggStore = new Map();
   const plotHost = new Element("section");
-  const plotView = { mode: "edit", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const plotView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
   const plotEditor = {
-    store: plotStore, registry: { version: 1, types: [plotType] },
+    store: plotStore, registry: { version: 1, components: [plotType] },
     nodeAttrs: { 971: { attrs: {} } },
     live: { epoch: 1, values: {} }, view: plotView,
     agg: (key) => aggStore.get(key) ?? null,
@@ -2926,7 +2926,7 @@ check(stageNode("frame", 901) === heldAgain &&
     contexts: [],
     root() { return this.page(); },
     artboard: () => ({ w: 1408, h: 792 }),
-    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     select: () => undefined,
   };
   const drawPlot = () => renderStage(plotHost, plotEditor);
@@ -3017,8 +3017,8 @@ check(stageNode("frame", 901) === heldAgain &&
   check(sweepFraction(170, -135, 270) === 1 && sweepFraction(-170, -135, 270) === 0,
         "a bearing in the dead arc belongs to the NEARER end, never wrapped");
 
-  const toggleType = snapshot.registry.types.find((t) => t.name === "Toggle");
-  const panelType = snapshot.registry.types.find((t) => t.name === "Panel");
+  const toggleType = snapshot.registry.components.find((t) => t.name === "Toggle");
+  const panelType = snapshot.registry.components.find((t) => t.name === "Panel");
   const inst = (type, extra) => ({ id: 1, kind: "frame", type, name: "w", attrs: {},
                                    slots: {}, locals: [], flows: [], ...extra });
   check(operable(inst("Toggle"), toggleType) === true,
@@ -3030,7 +3030,7 @@ check(stageNode("frame", 901) === heldAgain &&
   check(operable(inst("Panel", { flows: [{ when: [{ kind: "event", name: "tap" }],
                                            when_mode: "first", do: [] }] }),
                  panelType) === true,
-        "an authored flow on an event makes any widget operable");
+        "an authored flow on an event makes any instance operable");
 
   const tStore = new DocStore();
   tStore.load({
@@ -3050,7 +3050,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const boxOf = (x, y, w, h) =>
     ({ attrs: { left: prog3(x), top: prog3(y), w: prog3(w), h: prog3(h) } });
   const tHost = new Element("section");
-  const tView = { mode: "test", selection: [], part: "", hover: 0, state: {}, faults: {} };
+  const tView = { mode: "test", selection: [], element: "", hover: 0, state: {}, faults: {} };
   const tEditor = {
     store: tStore, registry: snapshot.registry,
     nodeAttrs: { 961: boxOf(22, 22, 220, 110), 962: boxOf(264, 22, 132, 66),
@@ -3061,7 +3061,7 @@ check(stageNode("frame", 901) === heldAgain &&
     contexts: [],
     root() { return this.page(); },
     artboard: () => ({ w: 1408, h: 792 }),
-    enterWidget: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
     select: () => undefined, input: () => undefined,
   };
   renderStage(tHost, tEditor);
@@ -3166,7 +3166,7 @@ check(stageNode("frame", 901) === heldAgain &&
     ...editor,
     componentSel: { component: 9700, node: 9711 },
     selectedNode: () => null,
-    selectedWidget: () => null,
+    selectedInstance: () => null,
     /* commits land in the mirror too, so a later field reads what an earlier one wrote */
     apply: (ops) => {
       vbOps.push(...ops);
@@ -3269,7 +3269,7 @@ check(stageNode("frame", 901) === heldAgain &&
    box speaks the document encoding directly (raw number/bool literals, strings as
    expressions), enum picks write the QUOTED variant spelling, a top-level ?: chain
    grows the cases disclosure below its row, and a slot reading a mesh FUNCTION gets
-   the poll settings writing widget.poll[slot]. */
+   the poll settings writing the instance's poll[slot]. */
 {
   const meshFor4a = {
     entities: [
@@ -3295,7 +3295,7 @@ check(stageNode("frame", 901) === heldAgain &&
     ...editor,
     mesh: meshFor4a,
     selectedNode: () => store.nodeAt(9800),
-    selectedWidget: () => store.widget(9800),
+    selectedInstance: () => store.instance(9800),
     apply: (ops) => {
       ops4a.push(...ops);
       store.apply(store.version() + 1, ops);
@@ -3310,7 +3310,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const echo4a = (name, value) =>
     store.apply(store.version() + 1, [{
       op: "set_prop", node: 9800, key: "slots",
-      value: { ...(store.widget(9800).slots ?? {}), [name]: value } }]);
+      value: { ...(store.instance(9800).slots ?? {}), [name]: value } }]);
   const lastSlots = () => ops4a.findLast((o) => o.key === "slots");
   draw4a();
 
@@ -3437,7 +3437,7 @@ check(stageNode("frame", 901) === heldAgain &&
   fire(pollField, "change");
   const pollOp = ops4a.findLast((o) => o.key === "poll");
   check(pollOp && pollOp.value?.value === 5,
-        "the rate lands in widget.poll under the slot, got " +
+        "the rate lands in the instance's poll under the slot, got " +
           JSON.stringify(pollOp?.value));
   typeInto(pollField, "");
   fire(pollField, "change");
@@ -3446,7 +3446,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "and an empty rate deletes the key, got " + JSON.stringify(pollClear?.value));
 
   /* THE BROWSE TREE grows hierarchy for slot scope: the tree is the ONE universe now
-     and names() its flat projection — the widget's slots NEST under a `widget`
+     and names() its flat projection — the instance's slots NEST under a `instance`
      folder, struct and timer variables fold over their field leaves, entities fold
      by the / segments of their names, and every pick INSERTS a canonical spelling.
      The options slot's browse adds the schema's enum types. */
@@ -3470,16 +3470,16 @@ check(stageNode("frame", 901) === heldAgain &&
       .find((r) => r.textContent.startsWith(label)) ?? null;
   check(streeRow4a("hmi") !== null && streeRow4a("dart") !== null,
         "the slot scope browses as the two-root source tree");
-  /* the widget folder: slots are ITS leaves, never flat rows at the hmi level */
-  check(streeRow4a("widget.value") === null,
-        "no flat widget.<slot> row stands at the top level");
-  const widgetFolder = streeRow4a("widget");
-  check(widgetFolder !== null, "the widget folder stands under hmi");
-  fire(widgetFolder, "click", { detail: 0 });
+  /* the `this` folder: slots are ITS leaves, never flat rows at the hmi level */
+  check(streeRow4a("this.value") === null,
+        "no flat this.<slot> row stands at the top level");
+  const thisFolder = streeRow4a("this");
+  check(thisFolder !== null, "the `this` folder stands under hmi");
+  fire(thisFolder, "click", { detail: 0 });
   check(streeRow4a("value") !== null, "and opens into its slot leaves");
   fire(streeRow4a("value"), "click", { detail: 0 });
-  check(boxInput4a.value === "widget.value",
-        "picking a slot leaf inserts its widget.<slot> spelling, got " +
+  check(boxInput4a.value === "this.value",
+        "picking a slot leaf inserts its this.<slot> spelling, got " +
           boxInput4a.value);
   check(!vbrowse.className.includes("on"), "and the pick closes the popover");
 
@@ -3539,10 +3539,10 @@ check(stageNode("frame", 901) === heldAgain &&
      in reflection order */
   {
     const { slotScope } = await import(mod("inspector/scope.js"));
-    const names4a = slotScope(editor4a, store.widget(9800)).names();
+    const names4a = slotScope(editor4a, store.instance(9800)).names();
     const byLabel = (label) => names4a.find((n) => n.label === label) ?? null;
-    check(byLabel("widget.value")?.note === "slot",
-          "names() projects the slot leaf back to its flat widget.value row");
+    check(byLabel("this.value")?.note === "slot",
+          "names() projects the slot leaf back to its flat this.value row");
     const valveRow4a = byLabel("valve");
     check(valveRow4a?.shape === "struct" && valveRow4a?.note === "local" &&
           valveRow4a?.fields?.length === 1 && valveRow4a.fields[0].path === "mode",
@@ -3599,7 +3599,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const editor4b = {
     ...editor,
     selectedNode: () => store.nodeAt(9900),
-    selectedWidget: () => store.widget(9900),
+    selectedInstance: () => store.instance(9900),
     apply: (ops) => {
       ops4b.push(...ops);
       store.apply(store.version() + 1, ops);
@@ -3677,22 +3677,22 @@ check(stageNode("frame", 901) === heldAgain &&
         "a flow box's browse leads with the flow's own names");
   check(flat4b("value") !== null,
         "the trigger's parameter stands under it");
-  /* the widget folder nests the slots here too (left open by the slot-tier leg —
+  /* the `this` folder nests the slots here too (left open by the slot-tier leg —
      the fold state is shared across boxes); the slot leaf is the LAST row labelled
      `value`, behind the flow's parameter of the same name */
-  check(flat4b("widget.value") === null,
-        "no flat widget.<slot> row in a flow browse either");
-  check(flat4b("widget") !== null, "the widget folder frames the slots");
+  check(flat4b("this.value") === null,
+        "no flat this.<slot> row in a flow browse either");
+  check(flat4b("this") !== null, "the `this` folder frames the slots");
   const slotLeaf4b = vb4b.querySelectorAll(".stree-row")
     .filter((r) => r.textContent.startsWith("value"))
     .at(-1) ?? null;
   fire(slotLeaf4b, "click", { detail: 0 });
-  check(fromInput.value === "widget.value",
+  check(fromInput.value === "this.value",
         "picking the slot leaf inserts the canonical spelling, got " + fromInput.value);
   check(!vb4b.className.includes("on"), "and the pick closes the popover");
   fire(fromInput, "change");
   const fromOp = ops4b.findLast((o) => o.node === 9903 && o.key === "from");
-  check(fromOp?.value?.expr === "widget.value",
+  check(fromOp?.value?.expr === "this.value",
         "committing writes the expression side form, got " + JSON.stringify(fromOp?.value));
 
   /* THE ENTITY ROOTS IN A FLOW: with a mesh reflected, the same rvalue box browses
@@ -3819,7 +3819,7 @@ check(stageNode("frame", 901) === heldAgain &&
     ...editor,
     componentSel: { component: 9930, node: 9930 },
     selectedNode: () => null,
-    selectedWidget: () => null,
+    selectedInstance: () => null,
     apply: (ops) => {
       swOps.push(...ops);
       store.apply(store.version() + 1, ops);
@@ -3880,7 +3880,7 @@ check(stageNode("frame", 901) === heldAgain &&
   document.activeElement = null;
 }
 
-/* What used to close this file -- the repeat/path round trip and the code-part escape
+/* What used to close this file -- the repeat/path round trip and the code-element escape
    hatch, both proved by rendering a backend-compiled component to SVG, plus trend
    smoothing out of template.ts -- went with the SVG renderer. Those are real behaviours
    and they will need re-pinning against the DOM once components render as HTML. */

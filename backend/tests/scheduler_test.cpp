@@ -169,7 +169,7 @@ uint32_t count_cell(const Program& program) {
 /* one named cell of one owner (0 = a global), by index; -1 when nothing declares it */
 int cell_of(const Program& program, uint64_t owner, const std::string& name) {
     for (uint32_t i = 0; i < program.cells.size(); ++i)
-        if (program.cells[i].owner_widget == owner && program.cells[i].name == name)
+        if (program.cells[i].owner_node == owner && program.cells[i].name == name)
             return static_cast<int>(i);
     return -1;
 }
@@ -186,7 +186,7 @@ void test_timing() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t cell = count_cell(scheduler.program());
@@ -200,7 +200,7 @@ void test_timing() {
     CHECK(idle_ok);
     CHECK(after_idle == before_idle);
 
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(scheduler.state().timers[0].running);
     tick(scheduler, 2);
@@ -208,22 +208,22 @@ void test_timing() {
     tick(scheduler, 3);
     CHECK(scheduler.state().values[cell].data.num == 1200);
 
-    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 2});
+    scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 2});
     tick(scheduler, 1);
     CHECK(!scheduler.state().timers[0].running);
     const double released = scheduler.state().values[cell].data.num;
     tick(scheduler, 8);
     CHECK(scheduler.state().values[cell].data.num == released);
 
-    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 3});
+    scheduler.post(InputEvent{1, instance, "tap", Value::boolean(true), 3});
     tick(scheduler, 1);
-    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 4});
+    scheduler.post(InputEvent{1, instance, "tap", Value::boolean(true), 4});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == released);
     tick(scheduler, 2);
     CHECK(scheduler.state().values[cell].data.num == released + 5);
 
-    scheduler.post(InputEvent{2, widget, "press", Value::boolean(true), 1});
+    scheduler.post(InputEvent{2, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     scheduler.release_session(2);
     tick(scheduler, 1);
@@ -235,23 +235,23 @@ void test_filters() {
     FakeMesh mesh;
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(compiled.ok);
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t cell = count_cell(scheduler.program());
 
-    scheduler.post(InputEvent{1, widget, "input", Value::number(0), 1});
+    scheduler.post(InputEvent{1, instance, "input", Value::number(0), 1});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == 11);
-    scheduler.post(InputEvent{1, widget, "input", Value::number(2), 2});
+    scheduler.post(InputEvent{1, instance, "input", Value::number(2), 2});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == 11);
     tick(scheduler, 1);
-    scheduler.post(InputEvent{1, widget, "input", Value::number(6), 3});
+    scheduler.post(InputEvent{1, instance, "input", Value::number(6), 3});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == 22);
 
-    scheduler.post(InputEvent{1, widget, "commit", Value::number(6), 4});
+    scheduler.post(InputEvent{1, instance, "commit", Value::number(6), 4});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == 22);
     tick(scheduler, 2);
@@ -263,30 +263,30 @@ void test_first_of_rearm() {
     FakeMesh mesh;
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     CHECK(compiled.ok);
-    const uint64_t widget =
+    const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint32_t cell = count_cell(scheduler.program());
 
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
-    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 2});
+    scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 2});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == 1);
     tick(scheduler, 5);
     CHECK(scheduler.state().values[cell].data.num == 1);
 
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 3});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 3});
     tick(scheduler, 1);
     tick(scheduler, 3);
     CHECK(scheduler.state().values[cell].data.num == 2);
-    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 4});
+    scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 4});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == 2);
 
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 5});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 5});
     tick(scheduler, 1);
-    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 6});
+    scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 6});
     tick(scheduler, 1);
     CHECK(scheduler.state().values[cell].data.num == 3);
 }
@@ -325,9 +325,9 @@ void test_scheduler_speaks() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
-    const int slot_found = cell_of(scheduler.program(), widget, "value");
+    const int slot_found = cell_of(scheduler.program(), instance, "value");
     if (!CHECK(slot_found >= 0)) return;
     const uint32_t slot = static_cast<uint32_t>(slot_found);
 
@@ -338,9 +338,9 @@ void test_scheduler_speaks() {
     /* the tap: the behavior's local echo stands down (the expression owns `value`) but the
        raise beside it still speaks — the SCHEDULER drains changed(true) into the
        authored write-back, all inside one tick */
-    scheduler.post(InputEvent{1, widget, "press", Value::nil(), 1});
-    scheduler.post(InputEvent{1, widget, "release", Value::nil(), 2});
-    scheduler.post(InputEvent{1, widget, "tap", Value::nil(), 3});
+    scheduler.post(InputEvent{1, instance, "press", Value::nil(), 1});
+    scheduler.post(InputEvent{1, instance, "release", Value::nil(), 2});
+    scheduler.post(InputEvent{1, instance, "tap", Value::nil(), 3});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 1);
     CHECK(mesh.transcript()[0] == "write V:switch.on=true");
@@ -351,9 +351,9 @@ void test_scheduler_speaks() {
     CHECK(scheduler.state().values[slot].data.boolean == true);
 
     /* the next tap proposes against the SHOWN value: changed(false) goes out */
-    scheduler.post(InputEvent{1, widget, "press", Value::nil(), 4});
-    scheduler.post(InputEvent{1, widget, "release", Value::nil(), 5});
-    scheduler.post(InputEvent{1, widget, "tap", Value::nil(), 6});
+    scheduler.post(InputEvent{1, instance, "press", Value::nil(), 4});
+    scheduler.post(InputEvent{1, instance, "release", Value::nil(), 5});
+    scheduler.post(InputEvent{1, instance, "tap", Value::nil(), 6});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 2);
     CHECK(mesh.transcript()[1] == "write V:switch.on=false");
@@ -386,7 +386,7 @@ void test_held_nullary() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     uint32_t state_cell = UINT32_MAX;
     for (uint32_t i = 0; i < scheduler.program().cells.size(); ++i)
@@ -394,27 +394,27 @@ void test_held_nullary() {
     CHECK(state_cell != UINT32_MAX);
 
     /* a press shorter than the hold commits nothing */
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 2);
-    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 2});
+    scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 2});
     tick(scheduler, 8);
     CHECK(scheduler.state().values[state_cell].data.boolean == false);
 
     /* held past the threshold commits the press-time proposal (!false = true) */
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 3});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 3});
     tick(scheduler, 8);
     CHECK(scheduler.state().values[state_cell].data.boolean == true);
-    scheduler.post(InputEvent{1, widget, "release", Value::boolean(false), 4});
+    scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 4});
     tick(scheduler, 1);
 
     /* the second hold proposes against the new shown value: it writes FALSE */
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 5});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 5});
     tick(scheduler, 8);
     CHECK(scheduler.state().values[state_cell].data.boolean == false);
 }
 
 /* TIMER FIELDS in expressions: `blink.running` / `.remaining` / `.duration` read the
- * timer table (in seconds), so a binding can color a widget off a running timer; the
+ * timer table (in seconds), so a binding can color an instance off a running timer; the
  * computed bindings re-run every tick, so a readout tracks the countdown live. */
 Json timer_read_root(const std::string& surface_xf) {
     Json button = {
@@ -429,7 +429,7 @@ Json timer_read_root(const std::string& surface_xf) {
     Json readout = {
         {"kind", "frame"},
         {"type", "Readout"},
-        /* the timer reads by field, named directly — a part's slot nests under it */
+        /* the timer reads by field, named directly — an element's slot nests under it */
         {"slots", Json{{"value", "blink.remaining * 1000"},
                        {"reading", Json{{"decimals", "blink.duration * 1000"},
                                         /* the fraction finished, 0..1, with no
@@ -465,14 +465,14 @@ void test_timer_reads() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
     const uint64_t readout_id =
         json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
     const uint64_t toggle_id =
         json_u64_or(document.root["pages"][0]["children"][2]["id"], 0);
     const uint32_t surface =
-        static_cast<uint32_t>(cell_of(scheduler.program(), widget, "surface"));
+        static_cast<uint32_t>(cell_of(scheduler.program(), instance, "surface"));
     const uint32_t remaining =
         static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "value"));
     const uint32_t duration =
@@ -490,7 +490,7 @@ void test_timer_reads() {
     CHECK(scheduler.state().values[progress].data.num == 1);
     CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
 
-    scheduler.post(InputEvent{1, widget, "press", Value::boolean(true), 1});
+    scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(scheduler.state().timers[0].running);
     CHECK(scheduler.state().values[surface].data.rgba == 0x00ff00ffu);
@@ -512,10 +512,10 @@ void test_timer_reads() {
 
     /* a BARE timer has no scalar to be, an unknown field is named, and x means
        nothing in a slot expression at all */
-    auto refuses = [&](uint32_t widget_index, const char* slot, const std::string& xf,
+    auto refuses = [&](uint32_t instance_index, const char* slot, const std::string& xf,
                        const char* needle) {
         Json root = timer_read_root("blink.running.pick(#00ff00, #102030)");
-        root["pages"][0]["children"][widget_index]["slots"][slot] = xf;
+        root["pages"][0]["children"][instance_index]["slots"][slot] = xf;
         Document bad;
         std::string adopt_error;
         CHECK_MSG(bad.adopt(std::move(root), adopt_error), adopt_error);
@@ -595,24 +595,24 @@ void test_flow_entity_read() {
     CHECK(compiled.program.entities[0].flow_reads);
     CHECK(!compiled.program.entities[1].flow_reads);
 
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
 
     /* before any arrival the mirror is unknown: both gates close, nothing sends */
-    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 1});
+    scheduler.post(InputEvent{1, instance, "tap", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(mesh.transcript().empty());
 
     /* the plant reports false: the tap forces true (and only that; no unforce) */
     mesh.push_update(EntityKind::Variable, "suction", {Value::boolean(false)});
-    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 2});
+    scheduler.post(InputEvent{1, instance, "tap", Value::boolean(true), 2});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 1);
     CHECK_MSG(mesh.transcript()[0] == "force V:suction.value=true", mesh.transcript()[0]);
 
     /* the forced value echoes back true: the next tap unforces */
     mesh.push_update(EntityKind::Variable, "suction", {Value::boolean(true)});
-    scheduler.post(InputEvent{1, widget, "tap", Value::boolean(true), 3});
+    scheduler.post(InputEvent{1, instance, "tap", Value::boolean(true), 3});
     tick(scheduler, 1);
     CHECK(mesh.transcript().size() == 2);
     CHECK_MSG(mesh.transcript()[1] == "unforce V:suction", mesh.transcript()[1]);
@@ -730,9 +730,9 @@ void test_trend_samples() {
         if (flow.cadence_ticks) cadence = flow.cadence_ticks;
     CHECK(cadence == 10);
 
-    const uint64_t widget = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
-    const int history = cell_of(scheduler.program(), widget, "history");
+    const int history = cell_of(scheduler.program(), instance, "history");
     if (!CHECK(history >= 0)) return;
     const uint32_t slot = scheduler.program().cells[history].list_slot;
 
