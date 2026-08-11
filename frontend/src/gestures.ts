@@ -17,7 +17,11 @@
  * FAIL-SAFE BY CONSTRUCTION: every gesture's listeners live on the window (a live
  * rebuild replaces the element mid-gesture and must not take the pointer with it), and
  * pointercancel, window blur and a hidden tab all end a gesture through the same door a
- * pointerup does. */
+ * pointerup does.
+ *
+ * MULTI-TOUCH: a panel is pressed with more than one finger. Every gesture belongs to
+ * the ONE pointer that opened it and ends only when THAT pointer ends, so controls held
+ * at the same time are independent — see `during`. */
 
 import { el } from "./dom.js";
 import { Editor } from "./editor.js";
@@ -123,8 +127,17 @@ export function sweepFraction(deg: number, start: number, sweep: number): number
 /* ---- one gesture's lifetime ---- */
 
 /* window listeners for the life of one gesture, removed together at whichever end
- * comes: pointerup, pointercancel, blur, or the tab going hidden (the fail-safe) */
+ * comes: pointerup, pointercancel, blur, or the tab going hidden (the fail-safe).
+ *
+ * ONE GESTURE IS ONE POINTER. The listeners are on the window — a live rebuild replaces
+ * the element mid-gesture and must not take the pointer with it — so on a touch panel
+ * every live gesture sees EVERY pointer's moves and ups. Two fingers on two buttons, and
+ * the first finger to lift would end both. So a lifetime remembers the pointer that
+ * opened it and hears only that one: the other controls are somebody else's gesture and
+ * stay down until their own finger lifts. Blur and a hidden tab carry no pointer and
+ * still end everything, which is what fail-safe means. */
 function during(
+  pointer: number,
   onMove: ((ev: PointerEvent) => void) | null,
   onEnd: (cancelled: boolean) => void,
 ): void {
@@ -132,20 +145,28 @@ function during(
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", cancel);
-    window.removeEventListener("blur", cancel);
+    window.removeEventListener("blur", lost);
     document.removeEventListener("visibilitychange", hidden);
     onEnd(cancelled);
   };
-  const move = (ev: PointerEvent) => onMove?.(ev);
-  const up = () => finish(false);
-  const cancel = () => finish(true);
+  const mine = (ev: PointerEvent) => ev.pointerId === pointer;
+  const move = (ev: PointerEvent) => {
+    if (mine(ev)) onMove?.(ev);
+  };
+  const up = (ev: PointerEvent) => {
+    if (mine(ev)) finish(false);
+  };
+  const cancel = (ev: PointerEvent) => {
+    if (mine(ev)) finish(true);
+  };
+  const lost = () => finish(true);
   const hidden = () => {
     if (document.visibilityState === "hidden") finish(true);
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
   window.addEventListener("pointercancel", cancel);
-  window.addEventListener("blur", cancel);
+  window.addEventListener("blur", lost);
   document.addEventListener("visibilitychange", hidden);
 }
 
@@ -185,22 +206,26 @@ function pump(first: number, send: (value: number) => void): {
 /* ---- the four primitives ---- */
 
 function armPress(node: HTMLElement, seat: GestureSeat): void {
+  let live = false;
   node.addEventListener("pointerdown", (ev) => {
-    if (editing(seat) || ev.button !== 0) return;
+    if (editing(seat) || ev.button !== 0 || live) return;
     /* the DEEPEST armed node wins, the stage's own one-target rule */
     ev.stopPropagation();
     const holdMs = num(param(seat, "hold_ms"), 600);
     const down = { x: ev.clientX, y: ev.clientY, at: performance.now() };
     let moved = false;
+    live = true;
     seat.setState(seat.owner, "pressed", true);
     post(seat, "press");
     during(
+      ev.pointerId,
       (mv) => {
         if (Math.abs(mv.clientX - down.x) > TAP_SLOP ||
             Math.abs(mv.clientY - down.y) > TAP_SLOP)
           moved = true;
       },
       (cancelled) => {
+        live = false;
         seat.setState(seat.owner, "pressed", false);
         post(seat, "release");
         /* the tap arrives AFTER the release, from the view: a short, still press that
@@ -214,8 +239,9 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
 }
 
 function armDrag1d(node: HTMLElement, seat: GestureSeat): void {
+  let live = false;
   node.addEventListener("pointerdown", (ev) => {
-    if (editing(seat) || ev.button !== 0) return;
+    if (editing(seat) || ev.button !== 0 || live) return;
     ev.stopPropagation();
     ev.preventDefault();
     const box = node.getBoundingClientRect();
@@ -228,14 +254,17 @@ function armDrag1d(node: HTMLElement, seat: GestureSeat): void {
       steppedValue(
         axis === "x" ? (x - box.left) / box.width : 1 - (y - box.top) / box.height,
         min, max, step);
+    live = true;
     seat.setState(seat.owner, "dragging", true);
     /* click-jump: the fill comes to the finger, then follows it */
     const first = valueAt(ev.clientX, ev.clientY);
     post(seat, "input", first);
     const feed = pump(first, (value) => post(seat, "input", value));
     during(
+      ev.pointerId,
       (mv) => feed.push(valueAt(mv.clientX, mv.clientY)),
       () => {
+        live = false;
         seat.setState(seat.owner, "dragging", false);
         /* a cancelled drag settles too: input already moved the value, and a commit of
            where it stands is the honest end — never a snap back the author cannot see */
@@ -246,8 +275,9 @@ function armDrag1d(node: HTMLElement, seat: GestureSeat): void {
 }
 
 function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
+  let live = false;
   node.addEventListener("pointerdown", (ev) => {
-    if (editing(seat) || ev.button !== 0) return;
+    if (editing(seat) || ev.button !== 0 || live) return;
     ev.stopPropagation();
     ev.preventDefault();
     const box = node.getBoundingClientRect();
@@ -275,6 +305,7 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
     const min = num(param(seat, "min"), 0);
     const max = num(param(seat, "max"), 100);
     const step = num(param(seat, "step"), 0);
+    live = true;
     seat.setState(seat.owner, "dragging", true);
 
     if (selects) {
@@ -288,8 +319,12 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
       };
       if (radial) pick(fracAt(ev.clientX, ev.clientY));
       during(
+        ev.pointerId,
         (mv) => pick(fracAt(mv.clientX, mv.clientY)),
-        () => seat.setState(seat.owner, "dragging", false),
+        () => {
+          live = false;
+          seat.setState(seat.owner, "dragging", false);
+        },
       );
       return;
     }
@@ -301,8 +336,10 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
     if (radial) post(seat, "input", first);
     const feed = pump(first, (value) => post(seat, "input", value));
     during(
+      ev.pointerId,
       (mv) => feed.push(steppedValue(fracAt(mv.clientX, mv.clientY), min, max, step)),
       () => {
+        live = false;
         seat.setState(seat.owner, "dragging", false);
         post(seat, "commit", feed.settle());
       },
