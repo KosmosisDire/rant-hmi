@@ -1167,7 +1167,7 @@ class Parser {
             }
             fail(fielded ? "'" + name + "' is a whole message; pick a field (" + name +
                                ".<field>)"
-                         : "unknown entity '" + name + "'");
+                         : "unknown entity '" + name + "'" + scope_.unknown_help);
             return Shape::Unknown;
         }
         if (token_.kind != TokenKind::Ident) {
@@ -1325,7 +1325,7 @@ class Parser {
             fail("'widget' is spelled 'this' now: a slot reads as this.<slot>");
             return Shape::Unknown;
         }
-        fail("unknown name '" + name + "'");
+        fail("unknown name '" + name + "'" + scope_.unknown_help);
         return Shape::Unknown;
     }
 

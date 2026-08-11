@@ -510,6 +510,11 @@ export interface NodeAttrs {
   anchors?: CompiledAnchor[];
   /* the node's compiled transitions, served beside its compiled attrs */
   transitions?: CompiledTransitionMap;
+  /* the element's OWN gesture, compiled — served for PAGE elements only, which is what
+     lets a frame drawn on the page be pressed without first becoming a component. A doc
+     component's nodes are served under their own ids too (the context editor reads them)
+     but deliberately without this: an entered component's elements stay unarmed. */
+  interact?: Interact;
 }
 
 export interface ComponentType {

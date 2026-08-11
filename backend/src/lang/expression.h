@@ -41,6 +41,11 @@ struct ExpressionScope {
     uint32_t x_timer = UINT32_MAX;
     std::unordered_map<std::string, Binding> names;
     std::unordered_map<std::string, Binding> qualified;
+    /* WHY A NAME IS NOT HERE, in the caller's words: appended to every unknown-name and
+     * unknown-entity refusal. A deliberately narrow scope (a component's insides, which
+     * see their own properties and nothing of the page) is not a typo, and the author
+     * needs the way in — not a shorter list. Empty = the plain refusal. */
+    std::string unknown_help;
 };
 
 struct ExpressionResult {

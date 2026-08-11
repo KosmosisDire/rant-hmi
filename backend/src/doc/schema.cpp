@@ -105,7 +105,14 @@ const std::vector<NodeSpec>& table() {
                Rendering only: the value the attr computes is never eased. */
             object("transitions", Json::object()),
         };
-        node.lists = {{"props", Kind::PropDef}};
+        /* WHAT AN ELEMENT DECLARES, whatever kind it is: the properties it owns, the
+           variables it holds and the behavior it runs. None of the three is a fact about
+           being a BOX — a text readout wanting a local counter and a flow to fill it is
+           the same want a frame has — so they are common lists, and only `children` (the
+           one thing a leaf genuinely cannot hold) rides the frame variant. */
+        node.lists = {{"props", Kind::PropDef},
+                      {"locals", Kind::Var},
+                      {"flows", Kind::Flow}};
         node.variants = {
             /* A FRAME IS A BOX, and a box is all a frame is: it can hold children (that
                is grouping), and it can wear a surface (that is a pane). There is no
@@ -132,9 +139,7 @@ const std::vector<NodeSpec>& table() {
                  asked for. Absent = 2 Hz. */
               object("poll", Json::object()),
               object("interact", nullptr)},
-             {{"children", Kind::Node},
-              {"locals", Kind::Var},
-              {"flows", Kind::Flow}}},
+             {{"children", Kind::Node}}},
             {"text", {}, {}},
             {"icon", {}, {}},
             /* THE INK: ordered anchors whose every coordinate is expression text, plus
@@ -273,6 +278,11 @@ const std::vector<NodeSpec>& table() {
             /* the component record IS its root node, transitions included */
             object("transitions", Json::object()),
         };
+        /* NO `locals` HERE YET. A component's own variables would need ONE SET PER
+           INSTANCE (two placements are two machines), and a per-instance variable has no
+           cell key on the wire — `v<id>` is the variable's document id, which every
+           instance would share. That is a wire decision, not a schema line, so the list
+           stays unspelled until it is made rather than sitting here as dead data. */
         component.lists = {{"props", Kind::PropDef},
                            {"children", Kind::Node},
                            {"behavior", Kind::Flow}};

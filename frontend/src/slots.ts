@@ -137,21 +137,22 @@ export function boundSlots(instance: Node): Set<string> {
   return out;
 }
 
-/* Would a gesture on this instance DO anything? An authored flow on an event answers yes.
- * So does the type's default behavior — but only where a slot that default writes is
- * NOT fed: a fed control is a pure view of the machine and the compiler drops its
- * default, so pressing it runs nothing. Outside edit mode an instance that answers no is
- * INERT PASS-THROUGH (the stage gives it pointer-events none): a picture must never
- * swallow the press aimed at what it overlays. */
-export function operable(instance: Node | null, type: ComponentType | null): boolean {
-  if (!instance) return false;
+/* Would a gesture on this ELEMENT do anything? An authored flow on an event answers yes —
+ * which is the whole answer for a plain element carrying its own gesture (`type` null).
+ * For an instance the component's default behavior counts too, but only where a slot that
+ * default writes is NOT fed: a fed control is a pure view of the machine and the compiler
+ * drops its default, so pressing it runs nothing. Outside edit mode an element that
+ * answers no is INERT PASS-THROUGH (the stage gives it pointer-events none): a picture
+ * must never swallow the press aimed at what it overlays. */
+export function operable(element: Node | null, type: ComponentType | null): boolean {
+  if (!element) return false;
   /* a trigger with a name and no kind IS an event — the backend reads it the same
-     tolerant way, and the two must agree or an instance goes inert while its flow runs */
+     tolerant way, and the two must agree or an element goes inert while its flow runs */
   const onEvent = (flow: Json) =>
     ((flow?.when ?? []) as Json[]).some((t: Json) =>
       t?.kind === "event" || (!t?.kind && typeof t?.name === "string" && t.name));
-  if ((instance.flows ?? []).some(onEvent)) return true;
-  const fed = boundSlots(instance);
+  if ((element.flows ?? []).some(onEvent)) return true;
+  const fed = boundSlots(element);
   for (const flow of (type?.behavior ?? []) as Json[]) {
     if (!onEvent(flow)) continue;
     for (const step of (flow?.do ?? []) as Json[])

@@ -101,8 +101,14 @@ function triggerText(trigger: Json): string {
 }
 
 /* the armed elements of a component's template: where its gestures ride, walked once per
- * render — the trigger picker's offer list is exactly what can actually fire */
-function armedElements(type: ComponentType | null): { element: string; primitive: string }[] {
+ * render — the trigger picker's offer list is exactly what can actually fire.
+ *
+ * A PLAIN ELEMENT ANSWERS FOR ITSELF: it has no template under it, so its own `interact`
+ * is the whole list and it rides the same "" channel a component root does. The compiler
+ * reads it the same way (collect_armed with descend off), so the picker and the refusal
+ * can never disagree about what a press on this element would do. */
+function armedElements(type: ComponentType | null,
+                       element: Node | null = null): { element: string; primitive: string }[] {
   const out: { element: string; primitive: string }[] = [];
   const walk = (node: Json, path: string) => {
     const primitive = node?.interact?.primitive;
@@ -110,14 +116,19 @@ function armedElements(type: ComponentType | null): { element: string; primitive
     for (const child of node?.children ?? [])
       walk(child, path ? path + "." + String(child.name ?? "") : String(child.name ?? ""));
   };
-  if (type?.template) walk(type.template, "");
+  if (type?.template) {
+    walk(type.template, "");
+    return out;
+  }
+  const own = (element as Json | null)?.interact?.primitive;
+  if (typeof own === "string" && own) out.push({ element: "", primitive: own });
   return out;
 }
 
-/* the instance-level gesture vocabulary: the union of every armed element's family, in
+/* the element-level gesture vocabulary: the union of every armed element's family, in
  * the table's own order (tap leads) */
-function gestureEvents(type: ComponentType | null): string[] {
-  const primitives = new Set(armedElements(type).map((a) => a.primitive));
+function gestureEvents(type: ComponentType | null, element: Node | null = null): string[] {
+  const primitives = new Set(armedElements(type, element).map((a) => a.primitive));
   const out: string[] = [];
   for (const kind of EVENT_KINDS)
     if (kind.from.some((p) => primitives.has(p)) && !out.includes(kind.name))
@@ -319,10 +330,11 @@ function whenGrid(
   const events: { value: string; label: string }[] = [
     ...(type?.events ?? []).map((e) => ({ value: e.name,
                                           label: signatureText(e.name, e.params) })),
-    ...gestureEvents(type).map((name) => ({ value: name, label: pastTense(name) })),
+    ...gestureEvents(type, instance).map((name) => ({ value: name,
+                                                      label: pastTense(name) })),
   ];
   if (inBehavior)
-    for (const armed of armedElements(type)) {
+    for (const armed of armedElements(type, instance)) {
       if (!armed.element) continue;
       for (const kind of EVENT_KINDS)
         if (kind.from.includes(armed.primitive))

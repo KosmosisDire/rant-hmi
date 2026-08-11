@@ -116,11 +116,48 @@ export interface Scope {
   roots?(): BrowseRow[];
 }
 
-/* every variable an instance's flows can name: its own locals shadow the globals */
-export function variablesInScope(editor: Editor, instance: Node | null): Var[] {
-  const locals = instance?.locals ?? [];
-  const shadowed = new Set(locals.map((v) => v.name));
-  return locals.concat(editor.store.globals().filter((v) => !shadowed.has(v.name)));
+/* ---- WHERE AN ELEMENT SITS decides what it can name (the backend's scope_for, mirrored)
+ *
+ * On a page: this element's own locals, then every enclosing element's from the inside
+ * out, then the globals — nearest declaration wins. Inside a COMPONENT: nothing. A
+ * component sees its own properties and no page name at all, so that it works wherever it
+ * is placed; the compiler refuses the rest with a message that teaches the way in. */
+export function variablesInScope(editor: Editor, element: Node | null): Var[] {
+  if (element && inComponent(editor, element.id)) return declaredLocals(editor, element.id);
+  const out: Var[] = [];
+  const shadowed = new Set<string>();
+  const take = (vars: Var[]) => {
+    for (const variable of vars) {
+      if (shadowed.has(variable.name)) continue;
+      shadowed.add(variable.name);
+      out.push(variable);
+    }
+  };
+  for (let at: Json | null = element as Json | null; at && typeof at.id === "number";
+       at = editor.store.parentOf(at.id))
+    take(((at as Node).locals ?? []) as Var[]);
+  take(editor.store.globals());
+  return out;
+}
+
+/* the locals this element declares, and only those. Read off the raw record, not
+ * nodeAt: a COMPONENT holds locals too and carries no `kind`. */
+function declaredLocals(editor: Editor, id: number): Var[] {
+  const locals = (editor.store.node(id) as Json | null)?.locals;
+  return Array.isArray(locals) ? (locals as unknown as Var[]) : [];
+}
+
+/* is this element inside a component definition rather than on a page? The walk up ends
+ * at a component record or at the page — the same question owningComponent answers, kept
+ * separate because the callers that ask this do not want the component itself. */
+export function inComponent(editor: Editor, id: number): boolean {
+  return owningComponent(editor, id) !== null;
+}
+
+/* WHICH LOCALS BELONG TO THIS ELEMENT ALONE — what the inspector's Local Variables
+ * section edits. Every element owns its own list; the scope above is what READS them. */
+export function ownLocals(editor: Editor, id: number): Var[] {
+  return declaredLocals(editor, id);
 }
 
 const VAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
@@ -188,10 +225,16 @@ function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
   if (slots.length)
     rows.push({ key: "hmi/this", label: "this", icon: "layers", children: slots });
 
-  const locals = new Set((instance?.locals ?? []).map((v) => v.id));
-  const buckets: Record<"local" | "global", BrowseRow[]> = { local: [], global: [] };
+  /* the three places a name can come from, foldered in the order they shadow: what this
+     element declares, what an element ABOVE it declares, and the document's globals */
+  const own = new Set((instance?.locals ?? []).map((v) => v.id));
+  const globals = new Set(editor.store.globals().map((v) => v.id));
+  const buckets: Record<"local" | "outer" | "global", BrowseRow[]> =
+    { local: [], outer: [], global: [] };
   for (const variable of variablesInScope(editor, instance)) {
-    const note = locals.has(variable.id) ? ("local" as const) : ("global" as const);
+    const note = own.has(variable.id) ? ("local" as const)
+               : globals.has(variable.id) ? ("global" as const)
+               : ("outer" as const);
     /* beyond timer and the scalars, a variable's type is a TypeRef: a dotted ref is
        an enum, a root name a struct carrying its field table */
     const scalar = VAR_SHAPE[variable.type];
@@ -203,7 +246,7 @@ function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
     buckets[note].push({
       key: "v:" + variable.name,
       label: variable.name,
-      kind: note === "local" ? "l" : "g",
+      kind: note === "global" ? "g" : "l",
       shape: variable.type === "timer" ? "timer" : scalar ?? (isEnum ? "enum" : "struct"),
       insert: variable.name,
       flat: { note },
@@ -216,9 +259,11 @@ function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
       })),
     });
   }
-  for (const scope of ["local", "global"] as const)
+  const FOLDER: Record<"local" | "outer" | "global", string> =
+    { local: "local", outer: "enclosing", global: "global" };
+  for (const scope of ["local", "outer", "global"] as const)
     if (buckets[scope].length)
-      rows.push({ key: "hmi/" + scope, label: scope, icon: "folder",
+      rows.push({ key: "hmi/" + scope, label: FOLDER[scope], icon: "folder",
                   children: buckets[scope] });
   /* the clock stands in every scalar scope (scope_for binds it last), so the hmi
      universe always offers it */
@@ -312,9 +357,14 @@ function dartRoot(editor: Editor): BrowseRow[] {
   return rows.length ? [{ key: "dart", label: "dart", icon: "folder", children: rows }] : [];
 }
 
-/* the two standing roots most surfaces share */
-function slotRoots(editor: Editor, instance: Node | null): BrowseRow[] {
-  return hmiRoot(editor, instance).concat(dartRoot(editor));
+/* the standing roots a surface shares — and the ONE place isolation shows in the UI: a
+ * surface INSIDE a component offers no dart universe at all, because nothing in there may
+ * name the mesh. The compiler refuses it either way; not offering it is how the rule
+ * teaches before the refusal has to. */
+function slotRoots(editor: Editor, element: Node | null): BrowseRow[] {
+  const rows = hmiRoot(editor, element);
+  if (element && inComponent(editor, element.id)) return rows;
+  return rows.concat(dartRoot(editor));
 }
 
 /* ---- the factories: one per surface ---- */
@@ -506,12 +556,17 @@ const REPEAT_FIELDS: MeshField[] = [
   { path: "fraction", shape: "num" },
 ];
 
-/* the component whose tree holds this node, or null for a page's node */
+/* the component whose tree holds this node, or null for a page's node.
+ *
+ * Matched by IDENTITY, not by id: this now decides what a whole surface may reference, so
+ * "is this record the component" must be the actual record and not a number that happens
+ * to agree with one. */
 function owningComponent(editor: Editor, id: number): ComponentDef | null {
   const comps = editor.store.components();
   let at: Json | null = editor.store.node(id);
   while (at && typeof at.id === "number") {
-    const comp = comps.find((c) => c.id === at.id);
+    const here = at;
+    const comp = comps.find((c) => (c as unknown as Json) === here);
     if (comp) return comp;
     at = editor.store.parentOf(at.id);
   }

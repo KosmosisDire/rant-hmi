@@ -503,6 +503,27 @@ Json compile_common(const Json& node, const std::string& kind, const Json& attrs
     return out;
 }
 
+/* ONE GESTURE DECLARATION, compiled: the primitive, its params as view programs over the
+ * node's own scope, and the propagation topology. Null where the node carries none.
+ *
+ * The same function serves a component's template nodes and a PAGE's elements — an
+ * element that carries a gesture carries it wherever it sits, and a frame drawn on the
+ * page should not have to become a component before it can be pressed. */
+Json compile_interact(const Json& node, const TemplateScope& scope, uint64_t node_id,
+                      Sink& sink) {
+    const Json& interact = node.value("interact", Json());
+    if (!interact.is_object()) return Json();
+    Json wired{{"primitive", str_or(interact, "primitive", "press")},
+               {"params", compile_attrs(interact.value("params", Json::object()), scope,
+                                        node_id, "interact.", sink)}};
+    /* the propagation topology is declared structure: an element whose gestures must
+       not ring the instance-level channel says so here, once */
+    if (interact.contains("bubbles") && interact["bubbles"].is_boolean() &&
+        !interact["bubbles"].get<bool>())
+        wired["bubbles"] = false;
+    return wired;
+}
+
 /* pass two: one node row (doc form) -> one template node (wire form).
  *
  * `path` is this node's ADDRESS PREFIX: empty at the root (whose properties are the
@@ -535,18 +556,8 @@ Json compile_node(const Json& node, const std::string& path, const Walk& walk, S
             !child_name.empty() && walk.scopes.count(named) ? named : path;
         out["children"].push_back(compile_node(child, child_path, walk, sink));
     }
-    const Json& interact = node.value("interact", Json());
-    if (interact.is_object()) {
-        Json wired{{"primitive", str_or(interact, "primitive", "press")},
-                   {"params", compile_attrs(interact.value("params", Json::object()), scope,
-                                            node_id, "interact.", sink)}};
-        /* the propagation topology is declared structure: an element whose gestures must
-           not ring the instance-level channel says so here, once */
-        if (interact.contains("bubbles") && interact["bubbles"].is_boolean() &&
-            !interact["bubbles"].get<bool>())
-            wired["bubbles"] = false;
-        out["interact"] = std::move(wired);
-    }
+    Json interact = compile_interact(node, scope, node_id, sink);
+    if (!interact.is_null()) out["interact"] = std::move(interact);
     return out;
 }
 
@@ -773,6 +784,12 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags) {
         if (kind == "path")
             row["anchors"] =
                 compile_anchors(node.value("anchors", Json::array()), scope, id, sink);
+        /* A PAGE ELEMENT'S OWN GESTURE, served so the view can arm it. Only here: a doc
+           COMPONENT's nodes are compiled below under their own ids for the context
+           editor, and arming those would post gestures the backend has no channel for —
+           an entered component's elements are deliberately unarmed. */
+        Json interact = compile_interact(node, scope, id, sink);
+        if (!interact.is_null()) row["interact"] = std::move(interact);
         out[std::to_string(id)] = std::move(row);
         for (const Json& child : array_or_empty(node, "children")) walk(child);
     };

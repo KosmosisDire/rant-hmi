@@ -108,6 +108,9 @@ interface Bind {
   shadowId: string;
   /* what kind of element this IS: a key whose node changed kind cannot reuse it */
   shape: string;
+  /* has a gesture seat been fitted? The listeners outlive every reconcile, so this is
+     what keeps a re-arm (an element that GAINS an interact) from doubling them. */
+  armed: boolean;
   /* the pass that last ran these appliers: what keeps one live frame from running a
      bind twice when both its own cell and its parent's child list moved */
   pass: number;
@@ -254,6 +257,11 @@ interface ViewNode {
   /* the instance this node's cells belong to, and the type it is rendering: an instance
      switches both for everything below it */
   owner: number;
+  /* WHOSE GESTURE AND WHOSE `state` THIS IS — the owner where one encloses this node, its
+     own id where nothing does (an element on a page). Different from `owner` because a
+     page element holds no cells but does hold a press: conflating them made every bare
+     element claim the pointer and broke inert pass-through. */
+  channel: number;
   type: ComponentType | null;
   /* the address prefix inside the component ("" at its root): a slot's own address is
      this plus the node's name, which is exactly how the backend built the slot table */
@@ -306,6 +314,7 @@ function pageNode(editor: Editor, node: Node, owner = 0,
       closed: root?.closed ?? false,
       children: root?.children ?? [],
       owner: node.id,
+      channel: node.id,
       type: instType,
       path: "",
       element: "",
@@ -324,11 +333,16 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     closed: node.closed ?? false,
     children: (node.children ?? []).map((c) => pageNode(editor, c, owner, type, frac)),
     owner,
+    /* AN ELEMENT ON A PAGE SPEAKS FOR ITSELF: nothing encloses it that holds cells, so its
+       gestures post as itself and its `state` is its own. Inside a component's context the
+       entered instance is the channel — that is whose cells these nodes read and whose
+       press they are part of. */
+    channel: owner || node.id,
     type,
     path: "",
     element: "",
     frac,
-    interact: null,
+    interact: compiled?.interact ?? null,
     transitions: compiled?.transitions ?? null,
   };
 }
@@ -352,6 +366,7 @@ function templateNode(node: TemplateNode, owner: number, type: ComponentType | n
       templateNode(c, owner, type, path ? path + "." + name : name,
                    element ? element + "." + String(c.name ?? "") : String(c.name ?? ""))),
     owner,
+    channel: owner,
     type,
     path,
     element,
@@ -400,7 +415,8 @@ function rootView(editor: Editor, page: Page | null): ViewNode {
         : type?.template.transitions ?? null)
     : null;
   return { id: 0, instance: false, kind: "frame", name: "", attrs: rootAttrs ?? {},
-           anchors: [], closed: false, children: kids, owner, type, path: "", element: "",
+           anchors: [], closed: false, children: kids, owner, channel: owner, type,
+           path: "", element: "",
            frac: true, interact: null, transitions: rootTransitions };
 }
 
@@ -970,8 +986,8 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
          mode nothing writes, and it honestly reads false — never a pressed-looking
          instance nobody is pressing. */
       case "state": {
-        const value = editor.view.state?.[node.owner]?.[name] ?? false;
-        sawCell(state, "state:" + node.owner + ":" + name, JSON.stringify(value));
+        const value = editor.view.state?.[node.channel]?.[name] ?? false;
+        sawCell(state, "state:" + node.channel + ":" + name, JSON.stringify(value));
         return value;
       }
       case "repeat": {
@@ -1512,6 +1528,11 @@ function regime(el: HTMLElement, node: ViewNode, editor: Editor, cells: Cells): 
   else if (node.instance)
     el.style.pointerEvents =
       operable(editor.store.instance(node.id), node.type) ? "auto" : "none";
+  /* a PAGE ELEMENT that carries its own gesture takes the pointer on the same terms an
+     instance does: something has to run, or it stays inert and presses pass through */
+  else if (!node.owner && node.id && node.interact)
+    el.style.pointerEvents =
+      operable(editor.store.nodeAt(node.id), null) ? "auto" : "none";
   else if (!node.owner) el.style.pointerEvents = "none";
   else el.style.pointerEvents = "";
 }
@@ -1630,10 +1651,13 @@ function runAppliers(state: StageState, editor: Editor, bind: Bind): void {
  * switch or stepping into the component), not at the reconcile that delivered it. */
 function armSeat(state: StageState, editor: Editor, bind: Bind): void {
   const armed = bind.node.interact;
-  if (!armed || !bind.node.owner) return;
+  /* ONCE PER ELEMENT: the listener outlives every reconcile, so arming again would
+     double every gesture it reports */
+  if (!armed || !bind.node.channel || bind.armed) return;
+  bind.armed = true;
   armInteract(bind.el, {
     editor,
-    get owner() { return bind.node.owner; },
+    get owner() { return bind.node.channel; },
     /* the node's OWN dotted name chain is the element identity the backend's channels use */
     get element() { return bind.node.element; },
     get type() { return bind.node.type; },
@@ -1755,6 +1779,13 @@ function reconcileChildren(state: StageState, editor: Editor, parent: Bind,
       bind.repeat = entry.repeat;
       insertAt(parentEl, bind.el, at);
       runAppliers(state, editor, bind);
+      /* AN ELEMENT THAT GAINS A GESTURE ARMS AT ONCE. The scope cut below is about
+         SWAPPING one primitive for another mid-life; going from nothing to something is
+         not that, and making it wait for a fresh build would mean "give this element a
+         gesture" quietly did nothing until the page was switched. The node is inserted
+         and its compiled interact arrives on the snapshot that follows, which is a
+         reconcile — exactly this path. */
+      armSeat(state, editor, bind);
       if (entry.node.kind === "frame")
         reconcileChildren(state, editor, bind, entry.node.children, entry.repeat);
     } else {
@@ -1777,7 +1808,7 @@ function createBind(state: StageState, entry: Desired, parent: Bind | null): Bin
   const bind: Bind = {
     key: entry.key, el: made.el, node: entry.node, parent, repeat: entry.repeat,
     deps: new Set(), kidDeps: new Set(), kidKeys: [], path: made.path, iconSig: "",
-    shadowId: "", shape: shapeOf(entry.node), pass: 0,
+    shadowId: "", shape: shapeOf(entry.node), pass: 0, armed: false,
   };
   state.binds.set(entry.key, bind);
   return bind;
@@ -1844,7 +1875,7 @@ function buildFresh(host: HTMLElement, editor: Editor, page: Page | null): void 
   const root: Bind = {
     key: ROOT_KEY, el, node: rootView(editor, page), parent: null, repeat: null,
     deps: new Set(), kidDeps: new Set(), kidKeys: [], path: null, iconSig: "",
-    shadowId: "", shape: "root", pass: 0,
+    shadowId: "", shape: "root", pass: 0, armed: false,
   };
   state.binds.set(ROOT_KEY, root);
   state.root = root;

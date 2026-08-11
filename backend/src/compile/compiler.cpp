@@ -178,11 +178,25 @@ struct ArmedInfo {
     bool bubbles = true;
 };
 
+/* what a refusal inside a component adds, so the narrow scope reads as a design and not
+ * as a missing name. Appended to every unknown-name refusal there. */
+constexpr const char* kIsolatedHelp =
+    " — a component sees its own properties and nothing of the page it sits on, so that "
+    "it works wherever it is placed. Declare a property here and let each instance's own "
+    "value bring the variable or the mesh field in";
+
+/* ONE RECORD PER ELEMENT ON A PAGE — every node in the tree, not only the ones naming a
+ * component. What an element declares (locals, timers, flows) it declares wherever it
+ * sits, and `parent` is what makes that a SCOPE: names resolve up the chain to the page
+ * and then to the globals, nearest declaration winning. `type` and `slots` are filled
+ * only where the element places a component. */
 struct ElementInfo {
     uint64_t id = 0;
     uint64_t page = 0;
     const Json* node = nullptr;
     const Json* type = nullptr;
+    /* index into elements_ of the enclosing element, UINT32_MAX at the page */
+    uint32_t parent = UINT32_MAX;
     std::unordered_map<std::string, uint32_t> locals;
     std::unordered_map<std::string, uint32_t> slots;
     std::unordered_map<std::string, uint32_t> timers;
@@ -564,26 +578,28 @@ class Compiler {
         if (pages == document_.root.end() || !pages->is_array()) return;
         for (const Json& page : *pages) {
             const uint64_t page_id = id_of(page);
-            /* A page is one tree of nodes nesting to any depth; the ones carrying cells are
-             * the INSTANCES — a frame with a `type` — so this walks the whole tree and
-             * compiles at those. `info.page` is always the PAGE's id, never a frame's:
-             * page identity is what gates mesh polling, so an instance three frames deep
-             * must still resolve to its page. */
-            std::function<void(const Json&)> walk_children = [&](const Json& node) {
+            /* A page is one tree of elements nesting to any depth, and EVERY ONE of them
+             * gets a record: what an element declares does not depend on whether it
+             * happens to name a component. The walk is pre-order and pushes before it
+             * descends, so `elements_` is in document order (which is the order the
+             * scheduler runs flows in) and a child's `parent` index always exists.
+             * `info.page` is always the PAGE's id, never an enclosing frame's: page
+             * identity is what gates mesh polling, so an element three frames deep must
+             * still resolve to its page. */
+            std::function<void(const Json&, uint32_t)> walk_children =
+                [&](const Json& node, uint32_t parent) {
                 auto children = node.find("children");
                 if (children == node.end() || !children->is_array()) return;
                 for (const Json& instance : *children) {
                     const std::string type_name = instance.value("type", "");
-                    /* pre-order, so cells and flows are built in document order — which is
-                       the order the scheduler runs them in */
-                    if (type_name.empty()) { walk_children(instance); continue; }
 
                     ElementInfo info;
                     info.id = id_of(instance);
                     info.page = page_id;
                     info.node = &instance;
-                    info.type = type_named(type_name);
-                    if (!info.type)
+                    info.parent = parent;
+                    info.type = type_name.empty() ? nullptr : type_named(type_name);
+                    if (!type_name.empty() && !info.type)
                         diag(info.id, "component_type",
                              "component '" + type_name + "' is not registered");
 
@@ -672,10 +688,14 @@ class Compiler {
                                     info.id, name, expr_text, info.slots[name], slot});
                         }
                     }
+                    const uint32_t index = static_cast<uint32_t>(elements_.size());
                     elements_.push_back(std::move(info));
+                    /* an INSTANCE's children are its component's, not the document's:
+                       the subtree under one is empty, and descending is a no-op */
+                    walk_children(instance, index);
                 }
             };
-            walk_children(page);
+            walk_children(page, UINT32_MAX);
         }
     }
 
@@ -1278,20 +1298,62 @@ class Compiler {
                 Binding{kClockFields[i].shape, OpCode::ClockRead, i, 0};
     }
 
+    /* the elements enclosing this one, OUTERMOST FIRST — the page's own children at the
+     * front, this element last. Binding in this order is what makes the scope lexical:
+     * a nearer declaration simply overwrites the name it shadows. */
+    std::vector<const ElementInfo*> lexical_chain(const ElementInfo& element) const {
+        std::vector<const ElementInfo*> chain;
+        for (const ElementInfo* at = &element; at;
+             at = at->parent == UINT32_MAX ? nullptr : &elements_[at->parent])
+            chain.push_back(at);
+        std::reverse(chain.begin(), chain.end());
+        return chain;
+    }
+
+    /* WHAT A NAME MEANS AT ONE ELEMENT ON A PAGE (spec: one scope, resolved by position).
+     * Widest first so the nearer declaration wins: the globals, then every enclosing
+     * element's locals from the page inward, then this element's own, then the clock
+     * (reserved), then `this.<prop>` for the component this element places.
+     *
+     * A component's insides do NOT come through here — see behavior_scope_for. */
     ExpressionScope scope_for(const ElementInfo& element, Shape x_shape) {
         ExpressionScope scope;
         scope.x_shape = x_shape;
         for (const auto& item : globals_) bind_variable(scope, item.first, item.second);
-        for (const auto& item : element.locals) bind_variable(scope, item.first, item.second);
         for (const auto& item : global_timers_) bind_timer(scope, item.first, item.second);
-        for (const auto& item : element.timers) bind_timer(scope, item.first, item.second);
+        for (const ElementInfo* at : lexical_chain(element)) {
+            for (const auto& item : at->locals) bind_variable(scope, item.first, item.second);
+            for (const auto& item : at->timers) bind_timer(scope, item.first, item.second);
+        }
         bind_clock(scope);
+        bind_own_props(scope, element);
+        return scope;
+    }
+
+    /* WHAT A NAME MEANS INSIDE A COMPONENT — its own properties, its own locals, the
+     * clock, and NOTHING ELSE. A component is a part someone can place anywhere: reaching
+     * a global or a mesh entity from inside one would make it a part that only works on
+     * the page it was written for. Data enters through properties (whose VALUES are
+     * authored on the instance, in the page's own full scope) and leaves through events.
+     * The refusal that enforces this teaches the way in — see isolated_name_help. */
+    ExpressionScope behavior_scope_for(const ElementInfo& element, Shape x_shape) {
+        ExpressionScope scope;
+        scope.x_shape = x_shape;
+        /* deliberately no locals and no timers: the instance's are the PAGE's, and the
+           component's own are declared on the component (they arrive with per-instance
+           component locals; until then a component's behavior holds no variables) */
+        bind_clock(scope);
+        bind_own_props(scope, element);
+        return scope;
+    }
+
+    /* `this.<prop>` — the properties of the component this element places, by address */
+    void bind_own_props(ExpressionScope& scope, const ElementInfo& element) {
         for (const auto& item : element.slots) {
             const CellDef& cell = program_.cells[item.second];
             scope.qualified["this." + item.first] =
                 Binding{cell.shape, OpCode::Load, item.second, 0};
         }
-        return scope;
     }
 
     /* `agg_ok` says the DESTINATION is a declared HMI aggregate (a list/map variable or
@@ -1328,15 +1390,25 @@ class Compiler {
      * and the runtime's bubbling topology read one compiled truth */
     void build_armed_elements() {
         for (ElementInfo& element : elements_) {
-            if (!element.type) continue;
-            auto tmpl = element.type->find("template");
-            if (tmpl == element.type->end() || !tmpl->is_object()) continue;
-            collect_armed(*tmpl, "", element, /*root=*/true);
+            if (element.type) {
+                auto tmpl = element.type->find("template");
+                if (tmpl == element.type->end() || !tmpl->is_object()) continue;
+                collect_armed(*tmpl, "", element, /*root=*/true);
+                continue;
+            }
+            /* A PLAIN ELEMENT CARRIES ITS OWN GESTURE. There is no template under it, so
+               its `interact` is the whole story and it rides the element's own channel —
+               the same "" path a component root's does. This is what lets a frame drawn
+               on the page have behavior without being made into a component first. */
+            collect_armed(*element.node, "", element, /*root=*/true, /*descend=*/false);
         }
     }
 
+    /* `descend` walks a COMPONENT TEMPLATE, whose nodes are this instance's anatomy. A
+     * page element's children are elements in their own right, with their own records and
+     * their own channels, so its walk stops at itself. */
     void collect_armed(const Json& node, const std::string& path, ElementInfo& element,
-                       bool root) {
+                       bool root, bool descend = true) {
         auto interact = node.find("interact");
         if (interact != node.end() && interact->is_object() &&
             !str_or(*interact, "primitive", "").empty()) {
@@ -1352,6 +1424,7 @@ class Compiler {
                     ArmedElement{element.id, path, info.bubbles});
         }
         (void)root;
+        if (!descend) return;
         auto children = node.find("children");
         if (children == node.end() || !children->is_array()) return;
         for (const Json& child : *children) {
@@ -1378,10 +1451,15 @@ class Compiler {
             }
             if (!available) {
                 diag(flow, "event",
-                     channel.empty()
+                     !channel.empty()
+                         ? "element '" + channel + "' does not raise '" + event + "'"
+                     : element.type
                          ? "no element of this component raises '" + event +
                                "'; give an element the gesture that raises it"
-                         : "element '" + channel + "' does not raise '" + event + "'",
+                         /* a plain element answers for itself: its own gesture is the
+                            only thing that could raise this, and it has none yet */
+                         : "this element raises no '" + event +
+                               "'; give it a gesture and the whole family comes with it",
                      DiagGrade::Error);
                 return false;
             }
@@ -1414,7 +1492,10 @@ class Compiler {
                 }
                 return true;
             }
-        diag(flow, "event", "this component has no event '" + event + "'");
+        diag(flow, "event",
+             element.type ? "this component has no event '" + event + "'"
+                          : "an element raises the gestures its own `interact` brings; '" +
+                                event + "' is a component's declared event");
         return false;
     }
 
@@ -1631,10 +1712,25 @@ class Compiler {
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
 
+    /* A TIMER RESOLVES THE WAY EVERY OTHER NAME DOES: this element's own, then the
+     * enclosing elements' from the inside out, then the globals. `tmr_start blink` from a
+     * child of the element that declared `blink` has to mean the same timer the child's
+     * expressions read as `blink.running`, or the two halves of one variable would
+     * disagree about which one it is. */
     int resolve_timer(const ElementInfo& element, const std::string& name,
-                      uint64_t node) {
-        auto local = element.timers.find(name);
-        if (local != element.timers.end()) return static_cast<int>(local->second);
+                      uint64_t node, bool in_component = false) {
+        /* inside a component NOTHING of the page is in scope, timers included: a
+           component that could start the page's timer would not be portable either */
+        if (in_component) {
+            diag(node, "timer",
+                 "timer '" + name + "' is unresolved" + std::string(kIsolatedHelp));
+            return -1;
+        }
+        const std::vector<const ElementInfo*> chain = lexical_chain(element);
+        for (auto at = chain.rbegin(); at != chain.rend(); ++at) {
+            auto local = (*at)->timers.find(name);
+            if (local != (*at)->timers.end()) return static_cast<int>(local->second);
+        }
         auto global = global_timers_.find(name);
         if (global != global_timers_.end()) return static_cast<int>(global->second);
         diag(node, "timer", "timer '" + name + "' is unresolved");
@@ -2615,12 +2711,16 @@ class Compiler {
      * control still speaks `changed` while standing down its local echo. */
     bool compile_steps(const ElementInfo& element, const Json& flow_node, FlowProgram& flow,
                        const EventParam* param = nullptr,
-                       const std::unordered_map<std::string, std::string>* claimed = nullptr) {
-        ExpressionScope scope = scope_for(element, Shape::Unknown);
+                       const std::unordered_map<std::string, std::string>* claimed = nullptr,
+                       bool in_component = false) {
+        ExpressionScope scope = in_component ? behavior_scope_for(element, Shape::Unknown)
+                                             : scope_for(element, Shape::Unknown);
         /* the mesh, under its '@' spellings: a flow's rvalue or guard reads an entity
            by naming it, exactly as a slot expression does (same binding, same VM read
-           off the last-value cache / the aggregate mirrors) */
-        bind_entities(scope);
+           off the last-value cache / the aggregate mirrors). A component's behavior gets
+           none of it — see behavior_scope_for. */
+        if (in_component) scope.unknown_help = kIsolatedHelp;
+        else bind_entities(scope);
         if (param)
             scope.names[param->name] = Binding{param->shape, OpCode::LoadArg, 0, 0};
         FlowLocals locals;
@@ -2676,7 +2776,8 @@ class Compiler {
                 ins.c = fault_site(step_id, "suspend", "suspension state is invalid");
                 flow.code.push_back(ins);
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
-                const int timer = resolve_timer(element, str_or(step, "timer", ""), step_id);
+                const int timer =
+                    resolve_timer(element, str_or(step, "timer", ""), step_id, in_component);
                 if (timer < 0) return false;
                 Instruction ins;
                 ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
@@ -2865,7 +2966,7 @@ class Compiler {
                             std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
                     }
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
-                                       &claimed))
+                                       &claimed, /*in_component=*/true))
                         continue;
                     program_.layout.stack_values =
                         std::max(program_.layout.stack_values, flow.max_stack);

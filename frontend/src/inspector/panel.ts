@@ -24,8 +24,8 @@ import { bindField, bindFlag, bindText } from "../reconcile.js";
 import { authoredSlot, boundSlots, eachAuthoredSlot, ownSlot, slotCell, slotExpression,
          slotText, spellSlotText, typeOf, withSlot, withoutSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
-import { ComponentDef, isInstance, Json, Node, PropDef, SlotSpec, TemplateNode,
-         ComponentType } from "../types.js";
+import { ComponentDef, Flow, isInstance, Json, Node, PropDef, SlotSpec, TemplateNode,
+         Var, ComponentType } from "../types.js";
 
 import { ChainCase, chainClean, printChain, scanChain } from "./cases.js";
 import { attrsSection, attrsShape, chassisRow, componentViewShape, interactSection,
@@ -632,8 +632,12 @@ export function inspectorShape(editor: Editor): string {
       node: node.id,
       kind: node.kind,
       attrs: attrsShape(editor, node),
-      /* inside a context the node's own declarations get sections of their own */
+      /* what this element declares: its properties only inside a component (a page
+         element has no port for them), its gesture and its behavior anywhere */
       own: ctx ? ownedShape(node) : null,
+      interact: ownedShape(node).interact,
+      flows: (node.flows ?? []).map(flowShape),
+      locals: (node.locals ?? []).map(varShape),
       diag: editor.diagNode(node.id).map((d) => (d.where ?? "") + ":" + d.code + ":" + d.message)
         .concat((node.props ?? []).flatMap((p) =>
           editor.diagNode(p.id).map((d) => p.id + ":" + d.code + ":" + d.message))),
@@ -925,15 +929,42 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
   body.append(
     ...section("node", "Node", null, () => [el("div", { class: "prop-grid" }, kindRow)]),
   );
-  /* inside a component a node OWNS things a page node never does: the properties it
-     declares (addressed under its name path) and the gesture it carries. The very
-     sections the Design element view builds — same node, same rows. */
+  /* inside a component an element OWNS properties a page element has no port for: they
+     are addressed under its name path and an instance fills them. The very section the
+     Design element view builds — same node, same rows. */
   if (editor.contexts.length)
     body.append(...propsSection(editor, node.id, "element-props",
                                 () => (at().props ?? []) as PropDef[],
                                 "no properties of its own"));
+
+  /* EVERY ELEMENT AUTHORS BEHAVIOR AND HOLDS VARIABLES. What an element declares is not
+     a fact about being a box or about naming a component — the same two sections an
+     instance shows, on the same lists, through the same cards. The gesture it triggers on
+     is its own `interact`, which is why the gesture picker sits right beside them. */
+  body.append(
+    ...section("behavior", "Behavior", String((at().flows ?? []).length), () => [
+      ...((at().flows ?? []) as Flow[]).map((flow) => flowCard(editor, at(), null, flow)),
+      (at().flows ?? []).length
+        ? null
+        : el("p", { class: "empty", text: "no behavior yet" }),
+      addFlowButton(editor, at(), null),
+    ]),
+  );
+  body.append(
+    ...section("locals", "Local Variables", String((at().locals ?? []).length), () => [
+      ...((at().locals ?? []) as Var[]).map((variable) => varCard(editor, variable, "local")),
+      el("button", {
+        class: "dashed-btn",
+        text: "+ Variable",
+        onclick: () => newVariable(editor, node.id, "locals", at().locals ?? []),
+      }),
+    ]),
+  );
   body.append(...attrsSection(editor, node));
-  if (editor.contexts.length) body.append(...interactSection(editor, node));
+  /* the gesture an element carries: authored inside a component (where an instance
+     serves it) and on a page alike, since a page element's own interact is compiled,
+     served and armed the same way */
+  body.append(...interactSection(editor, node));
 }
 
 /* ---- SLOT ROWS: chassis + value box (phase 4a) ----
