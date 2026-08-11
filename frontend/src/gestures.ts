@@ -47,8 +47,10 @@ export interface GestureSeat {
      min that is fed live maps the finger against the live number */
   cells: (cell: string) => Json;
   /* the view-local gesture look (state.pressed / dragging / open): the stage owns the
-     write so it repaints exactly when a consumed cell moved, and never otherwise */
-  setState: (owner: number, name: string, value: Json) => void;
+     write so it repaints exactly when a consumed cell moved, and never otherwise — and
+     WHOSE look it is, since a repeated control's copies are as separate as two controls
+     are. The stage decides that from the live bind; a gesture only says what happened. */
+  setState: (name: string, value: Json) => void;
 }
 
 /* pointer travel a tap tolerates before it is a drag that happens to end quickly */
@@ -220,7 +222,7 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
     const down = { x: ev.clientX, y: ev.clientY, at: performance.now() };
     let moved = false;
     live = true;
-    seat.setState(seat.owner, "pressed", true);
+    seat.setState("pressed", true);
     post(seat, "press");
     during(
       ev.pointerId,
@@ -231,7 +233,7 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
       },
       (cancelled) => {
         live = false;
-        seat.setState(seat.owner, "pressed", false);
+        seat.setState("pressed", false);
         post(seat, "release");
         /* the tap arrives AFTER the release, from the view: a short, still press that
            ended on its own. Past hold_ms it was a hold — the backend already fired
@@ -260,7 +262,7 @@ function armDrag1d(node: HTMLElement, seat: GestureSeat): void {
         axis === "x" ? (x - box.left) / box.width : 1 - (y - box.top) / box.height,
         min, max, step);
     live = true;
-    seat.setState(seat.owner, "dragging", true);
+    seat.setState("dragging", true);
     /* click-jump: the fill comes to the finger, then follows it */
     const first = valueAt(ev.clientX, ev.clientY);
     post(seat, "input", first);
@@ -270,7 +272,7 @@ function armDrag1d(node: HTMLElement, seat: GestureSeat): void {
       (mv) => feed.push(valueAt(mv.clientX, mv.clientY)),
       () => {
         live = false;
-        seat.setState(seat.owner, "dragging", false);
+        seat.setState("dragging", false);
         /* a cancelled drag settles too: input already moved the value, and a commit of
            where it stands is the honest end — never a snap back the author cannot see */
         post(seat, "commit", feed.settle());
@@ -311,7 +313,7 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
     const max = num(param(seat, "max"), 100);
     const step = num(param(seat, "step"), 0);
     live = true;
-    seat.setState(seat.owner, "dragging", true);
+    seat.setState("dragging", true);
 
     if (selects) {
       let held = "";
@@ -328,7 +330,7 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
         (mv) => pick(fracAt(mv.clientX, mv.clientY)),
         () => {
           live = false;
-          seat.setState(seat.owner, "dragging", false);
+          seat.setState("dragging", false);
         },
       );
       return;
@@ -345,7 +347,7 @@ function armDragRadial(node: HTMLElement, seat: GestureSeat): void {
       (mv) => feed.push(steppedValue(fracAt(mv.clientX, mv.clientY), min, max, step)),
       () => {
         live = false;
-        seat.setState(seat.owner, "dragging", false);
+        seat.setState("dragging", false);
         post(seat, "commit", feed.settle());
       },
     );
@@ -366,7 +368,7 @@ function armPick(node: HTMLElement, seat: GestureSeat): void {
       return;
     }
     post(seat, "open");
-    seat.setState(seat.owner, "open", true);
+    seat.setState("open", true);
     const names = optionNames(param(seat, "options"));
     const at = node.getBoundingClientRect();
     const tray = el("div", { class: "pick-tray", "data-input": "scroll" },
@@ -393,7 +395,7 @@ function armPick(node: HTMLElement, seat: GestureSeat): void {
       tray.remove();
       window.removeEventListener("pointerdown", away, true);
       window.removeEventListener("keydown", key);
-      seat.setState(seat.owner, "open", false);
+      seat.setState("open", false);
     };
     standing = close;
     /* capture, so a press that opens something else still closes this first */

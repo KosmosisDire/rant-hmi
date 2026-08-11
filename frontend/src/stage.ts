@@ -56,7 +56,7 @@ import { attrText, Cells, run } from "./program.js";
 import { operable, typeOf } from "./slots.js";
 import {
   Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, CompiledTransitionMap, Interact, isInstance,
-  Json, Node, Page, Program, TemplateNode, Token, ComponentType,
+  Json, Node, Page, Program, RepeatCopy, TemplateNode, Token, ComponentType,
 } from "./types.js";
 
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
@@ -89,7 +89,7 @@ interface Bind {
      this node and the artboard to keep its offset still (`turnOf` below). */
   parent: Bind | null;
   /* the enclosing repeat copy this element is, or null outside a repeat */
-  repeat: { index: number; count: number } | null;
+  repeat: RepeatCopy | null;
   /* the cells the APPLIERS read: a live frame moving one of these re-runs them */
   deps: Set<string>;
   /* the cells the CHILD LIST read (the children's `show` and `repeat`): a live frame
@@ -935,7 +935,7 @@ function liveCell(state: StageState, editor: Editor, key: string): Json {
  * the cell the runtime publishes, else what this placement authors, else the type's
  * default, which is the whole of what makes a bound surface a working lamp. */
 function cellsFor(state: StageState, editor: Editor, node: ViewNode,
-                  repeat: { index: number; count: number } | null): Cells {
+                  repeat: RepeatCopy | null): Cells {
   /* NAMED, because it reads through itself: a slot's declared sweep evaluates its ms
      and profile programs over these same cells (specValue's guard keeps those reads
      un-eased, which is also what makes the recursion bottom out) */
@@ -1011,8 +1011,9 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
          mode nothing writes, and it honestly reads false — never a pressed-looking
          instance nobody is pressing. */
       case "state": {
-        const value = editor.view.state?.[node.channel]?.[name] ?? false;
-        sawCell(state, "state:" + node.channel + ":" + name, JSON.stringify(value));
+        const seat = stateSeat(node, repeat);
+        const value = editor.view.state?.[seat]?.[name] ?? false;
+        sawCell(state, "state:" + seat + ":" + name, JSON.stringify(value));
         return value;
       }
       case "repeat": {
@@ -1054,16 +1055,31 @@ function attrOf(node: ViewNode, name: string, cells: Cells): Json {
   return program ? run(program, cells) : undefined;
 }
 
+/* WHOSE LOOK THIS IS. The CHANNEL groups an instance's own anatomy — the knob presses and
+ * the lamp lights, because they are one control seen twice — and the COPY separates the
+ * pictures of a repeated one, which are as separate as two controls. Keying on the channel
+ * alone lit every copy of a repeated Toggle from one press. `@index` is the same spelling
+ * the reconcile keys copies by, so one convention describes both halves.
+ *
+ * Nested repeats are NOT addressed here, deliberately: `repeat` is one slot in every tier
+ * (a copy inside a copy already has only its innermost index to be), so this is exactly as
+ * precise as the language it serves. */
+function stateSeat(node: ViewNode, repeat: RepeatCopy | null): string {
+  return repeat ? node.channel + "@" + repeat.index : String(node.channel);
+}
+
 /* A gesture's view-local look (state.pressed / dragging / open) lands here. The write is
  * free; the PATCH happens only where some rendered program actually read that cell —
  * which the pass recorded — so an instance that never binds its state costs nothing to
- * press. */
-function gestureStateWriter(state: StageState, editor: Editor) {
-  return (owner: number, name: string, value: Json): void => {
-    const bucket = (editor.view.state[owner] ??= {});
+ * press. The seat is computed at WRITE time off the live bind: a reconcile moves a copy's
+ * index under a listener that was armed once and outlives it. */
+function gestureStateWriter(state: StageState, editor: Editor, bind: Bind) {
+  return (name: string, value: Json): void => {
+    const seat = stateSeat(bind.node, bind.repeat);
+    const bucket = (editor.view.state[seat] ??= {});
     if (bucket[name] === value) return;
     bucket[name] = value;
-    state.flushState("state:" + owner + ":" + name);
+    state.flushState("state:" + seat + ":" + name);
   };
 }
 
@@ -1691,7 +1707,7 @@ function armSeat(state: StageState, editor: Editor, bind: Bind): void {
     get type() { return bind.node.type; },
     get interact() { return bind.node.interact ?? armed; },
     cells: (cell: string) => cellsFor(state, editor, bind.node, bind.repeat)(cell),
-    setState: gestureStateWriter(state, editor),
+    setState: gestureStateWriter(state, editor, bind),
   });
 }
 
@@ -1737,14 +1753,14 @@ function sweepBind(state: StageState, key: string): void {
 interface Desired {
   key: string;
   node: ViewNode;
-  repeat: { index: number; count: number } | null;
+  repeat: RepeatCopy | null;
 }
 
 /* is this copy emitted at all? `show` false hides the node AND everything under it, and
    it is not emitted — the honest reading of "not shown". It is the PARENT's question,
    because what it decides is which children exist. */
 function visible(state: StageState, editor: Editor, node: ViewNode,
-                 repeat: { index: number; count: number } | null): boolean {
+                 repeat: RepeatCopy | null): boolean {
   if (!node.attrs?.show) return true;
   const show = attrOf(node, "show", cellsFor(state, editor, node, repeat));
   return show === undefined || truthy(show);
@@ -1752,7 +1768,7 @@ function visible(state: StageState, editor: Editor, node: ViewNode,
 
 function reconcileChildren(state: StageState, editor: Editor, parent: Bind,
                            children: ViewNode[],
-                           outer: { index: number; count: number } | null): void {
+                           outer: RepeatCopy | null): void {
   /* WHAT THE CHILD LIST READS is recorded against the parent: a `repeat` count or a
      `show` fed by a live cell reconciles this one parent when it moves, and nothing else
      on the page hears about it. STRUCTURAL: which elements exist is decided over TRUE

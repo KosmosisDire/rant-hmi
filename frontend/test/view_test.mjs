@@ -1898,10 +1898,12 @@ check(stageNode("frame", 901) === heldAgain &&
         interact: { primitive: "press", params: {} } },
       { kind: "frame", name: "knob", attrs: { surface: pressedTint },
         interact: { primitive: "press", params: {}, emits: { tap: "tap" } } },
-      /* repeated AND pressable: every copy is armed, and which one spoke is the only
-         thing that tells them apart on the wire */
+      /* repeated AND pressable, and painting its OWN press: every copy is armed, which
+         one spoke is the only thing that tells them apart on the wire, and the look each
+         one wears is the only thing that tells them apart on screen */
       { kind: "frame", name: "tick", attrs: { repeat: cell("slot:count"),
-                                              left: cell("repeat:frac") },
+                                              left: cell("repeat:frac"),
+                                              surface: pressedTint },
         interact: { primitive: "press", params: {} } },
     ] },
   };
@@ -2074,12 +2076,29 @@ check(stageNode("frame", 901) === heldAgain &&
   check(posted[1]?.element === "tail" && posted[1].repeat == null,
         "while an element outside a repeat carries none: absence is how the wire says " +
         "'not in a repeat', got " + JSON.stringify(posted[1]));
+
+  /* AND THE LOOK IS THE PRESSED COPY'S ALONE. The view-local `state:` cells key on the
+     channel PLUS the copy, so one finger lights one picture — keyed on the channel alone,
+     every copy of a repeated control lit together. */
+  const tint = () => kids().slice(5).map((n) => n.style.background);
+  check(tint().join(",") === "#0000ff,#00ff00,#0000ff",
+        "one press lights exactly the copy that was pressed, got " + tint().join(","));
+  /* the whole of an INSTANCE's anatomy still shares one seat: the knob's own press (a
+     different element of the same channel) is what the tail is painting */
+  check(knob.style.background === "#00ff00",
+        "while an instance's own anatomy shares one seat, got " + knob.style.background);
+
   /* the count moves under listeners armed once — the NEXT press reports the new run */
   feed({ "511.tint": "#ff0000", "511.count": 5 });
+  check(tint().join(",") === "#0000ff,#00ff00,#0000ff,#0000ff,#0000ff",
+        "growing the run does not spread a press to the copies that arrived, got " +
+          tint().join(","));
   fire(kids()[7], "pointerdown", { button: 0, clientX: 4, clientY: 4 });
   check(posted[2]?.repeat?.index === 2 && posted[2]?.repeat?.count === 5,
         "a copy that outlived a count change reports its NEW run, got " +
           JSON.stringify(posted[2]?.repeat));
+  check(tint().join(",") === "#0000ff,#00ff00,#00ff00,#0000ff,#0000ff",
+        "and two copies held down are two lit pictures, got " + tint().join(","));
   rView.mode = "edit";
   draw();
 }

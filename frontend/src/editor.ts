@@ -27,11 +27,14 @@ export interface ViewState {
   element: string;
   selection: number[];
   hover: number;
-  /* per-instance interaction state, the "state:" half of the cell space an attr program
+  /* per-SEAT interaction state, the "state:" half of the cell space an attr program
      reads (state.pressed / dragging / open / hover): view-local, written by the gesture
      primitives (gestures.ts) outside edit mode, never synced — a pressed LOOK is this
-     view's own; the pressed CONSEQUENCE comes back as a live cell like any other. */
-  state: Record<number, Record<string, Json>>;
+     view's own; the pressed CONSEQUENCE comes back as a live cell like any other.
+     A seat is the channel, plus `@<index>` where the element is one copy of a `repeat`:
+     the copies of a repeated control are as separate as two controls are, and the whole
+     of an instance's anatomy shares one seat because it is one control seen twice. */
+  state: Record<string, Record<string, Json>>;
   faults: Record<number, string>;               /* worst compile grade, per instance */
   /* which side of every theme token this view paints: a local preview
      preference, persisted per browser, never synced */
