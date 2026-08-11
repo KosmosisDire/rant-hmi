@@ -628,9 +628,9 @@ bool DartMesh::refresh() {
     /* an entity that came back with a NEW type: retire the rec's typed handles and
      * codec now, so the recompile this refresh triggers re-subscribes with the new
      * schema (ensure_rec refills from `folded`, ensure_consumption recreates the
-     * handles; the vendored Topic ctor parks a re-typed name's old channel Inactive).
-     * The Rec object itself stays: service-thread handler captures remain valid, and
-     * the old handlers go silent because their old-typed channels match nothing. */
+     * handles; Topic::retire releases the name — the ctor refuses a live same-name
+     * create under a different schema). The Rec object itself stays: service-thread
+     * handler captures remain valid, and the old handlers went with their channels. */
     for (const auto& item : fold) {
         auto it = impl_->recs.find(item.first);
         if (it == impl_->recs.end()) continue;
@@ -640,7 +640,7 @@ bool DartMesh::refresh() {
             (rec.rsp_schema.hash != 0 && rec.rsp_schema.hash != item.second.rsp_schema_hash);
         if (!retyped) continue;
         impl_->log("entity re-typed, re-subscribing with the new schema", item.first);
-        if (rec.topic) rec.topic->set_role(dart::Role::Inactive);
+        if (rec.topic) rec.topic->retire();
         rec.topic.reset();
         rec.topic_pub = false;
         impl_->retire_rec_patterns(rec);
