@@ -128,6 +128,13 @@ enum class OpCode : uint8_t {
      * a run can never see the second flip under it. The two TEXT fields render into the
      * fixed slot `b` reserved at compile, like any text-producing site. */
     ClockRead,
+    /* push REPEAT FIELD `a` (0 = index, 1 = count, 2 = fraction) of the copy the running
+     * event arrived on, or Nil where no copy is behind this run. A repeated element is
+     * ONE element the backend holds one set of cells for, so the copy is an index that
+     * rides the input frame rather than storage — which is what makes
+     * `@arr[repeat.index] = x` write the pressed copy's own element. Shaped exactly like
+     * ClockRead: a field read off the state with no operand of its own. */
+    RepeatRead,
     /* NOTIFY every connected view (`b`: 1 = pop an explicit ms duration first, 0 =
      * the view derives one from the message's length; `c`: the fault site). Pops the
      * message, renders it as str() renders any scalar, and queues a NoticeRecord the

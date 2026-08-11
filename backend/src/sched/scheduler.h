@@ -23,6 +23,11 @@ struct InputEvent {
        empty for the root's own gesture. Dispatch consults the compiled bubbling topology.
        (Last on purpose: the positional prefix above predates it.) */
     std::string element;
+    /* and WHICH COPY of a `repeat` the pointer was on. The view draws N copies of one
+       element off one set of cells, so this is the only place the copy exists at all —
+       the flow reads it as `repeat.index`, and `@arr[repeat.index] = x` is what it is
+       for. Not live outside a repeat. */
+    RepeatSeat repeat;
 };
 
 class Scheduler final : private MeshSink {
@@ -43,6 +48,7 @@ class Scheduler final : private MeshSink {
         uint64_t session = 0;
         uint64_t node = 0;
         std::string element;
+        RepeatSeat copy;
     };
 
     struct Hold {
@@ -50,6 +56,10 @@ class Scheduler final : private MeshSink {
         uint32_t flow = 0;
         uint64_t next_tick = 0;
         uint32_t repeat = 0;
+        /* the copy the press landed on: `held` fires later, but it fires for the copy a
+           finger is still holding down (`repeat` above is the re-fire cadence — an older
+           spelling of a different word) */
+        RepeatSeat copy;
     };
 
     struct SessionSequence {
@@ -58,8 +68,10 @@ class Scheduler final : private MeshSink {
     };
 
     bool accept_sequence(uint64_t session, uint64_t sequence);
+    /* `copy` is which repeat copy raised it, seeded on the state for the whole run (and
+       for anything it raises) — default-constructed where nothing drove it from a copy */
     void dispatch(uint64_t node, const std::string& element, const std::string& event,
-                  Value arg);
+                  Value arg, RepeatSeat copy = RepeatSeat{});
     void run_one(uint32_t flow, Value value);
     /* dispatch every event the runs so far RAISED, in order; a raise during the drain
        joins the same queue, bounded by the raise buffer's own capacity */

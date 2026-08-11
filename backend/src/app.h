@@ -57,8 +57,13 @@ namespace hmi {
  * program gains two cell kinds, `var:<id>` (loaded from the variable's own `v<id>` live
  * value) and `mesh:<entity>[.<field>]`, and a live frame carries the read mesh fields
  * beside the cells — scalars in `values`, aggregates on the `aggs` lane. A COMPONENT's
- * attrs still see neither: isolation is what the scope does not carry */
-constexpr int kProto = 16;
+ * attrs still see neither: isolation is what the scope does not carry;
+ * 17: THE COPY RIDES THE EVENT — an `input` frame from inside a `repeat` carries
+ * `repeat: {index, count}`, absent outside one. A repeated element is ONE element with
+ * one set of cells, so the copy is not runtime storage: it arrives with the gesture and
+ * an event-triggered flow reads it as `repeat.index` / `.count` / `.fraction`, which is
+ * what makes `@arr[repeat.index] = x` write the copy that was pressed */
+constexpr int kProto = 17;
 
 struct AppOptions {
     ServerOptions server;

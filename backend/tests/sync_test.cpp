@@ -177,8 +177,10 @@ int main() {
        trigger's channel key is `element`, and `instance.<slot>` is spelled `this.<slot>`;
        16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — a page element's attrs name the
        variables in scope and the mesh, so a view program carries `var:<id>` and
-       `mesh:<entity>[.<field>]` cells and a live frame carries the read mesh fields) */
-    CHECK(kProto == 16);
+       `mesh:<entity>[.<field>]` cells and a live frame carries the read mesh fields;
+       17: THE COPY RIDES THE EVENT — an `input` frame raised inside a `repeat` carries
+       `repeat: {index, count}`, and carries the key only where there is a copy) */
+    CHECK(kProto == 17);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */

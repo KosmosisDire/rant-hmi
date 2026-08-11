@@ -1291,6 +1291,18 @@ class Parser {
                 return load_binding(found->second);
         }
 
+        /* A WORD THIS SURFACE REFUSES BY NAME, with the whole message in the caller's
+           words because only the caller knows why the word is real and this is the wrong
+           place for it. After the ordinary scope has had its say — a variable actually
+           called `repeat` is still that author's variable — and before the qualified
+           walk, so the reason survives instead of degrading into "unknown field
+           'repeat.index'". The dots are not consumed: the word is refused whole. */
+        if (found == scope_.names.end())
+            if (auto no = scope_.refused.find(name); no != scope_.refused.end()) {
+                fail(no->second);
+                return Shape::Unknown;
+            }
+
         std::string qualified = name;
         while (token_.kind == TokenKind::Dot) {
             advance();

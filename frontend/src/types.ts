@@ -3,14 +3,19 @@
 
 export type Json = any;
 
-/* 16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — a PAGE element's attrs name the
+/* 17: THE COPY RIDES THE EVENT — an `input` frame raised from inside a `repeat` carries
+ * `repeat: {index, count}`, and carries the key at all only when there IS a copy. The
+ * backend holds one set of cells for a repeated element however many times this view
+ * drew it, so the copy exists nowhere but on the event: a flow reads it as
+ * `repeat.index` / `.count` / `.fraction` and writes the pressed copy's own element.
+ * (16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — a PAGE element's attrs name the
  * variables in their lexical scope and the mesh, exactly as a flow on that element does.
  * A served view program carries two more cell kinds, `var:<id>` (read from the
  * variable's own `v<id>` live value) and `mesh:<entity>[.<field>]`, and a live frame
  * carries the mesh fields the attrs read beside the cells — scalars in `values`,
  * aggregates on the `aggs` lane. A COMPONENT's attrs still name neither: isolation is
  * what the scope does not carry.
- * (15: ONE VOCABULARY — COMPONENT (a definition in the library), INSTANCE (a node
+ * 15: ONE VOCABULARY — COMPONENT (a definition in the library), INSTANCE (a node
  * placing one) and ELEMENT (any node in the tree, including one named inside a
  * component). The registry serves `components`, not `types`; an `input` frame carries
  * {node, event, value, seq, element} where `widget_id` and `part` stood; a flow
@@ -18,7 +23,15 @@ export type Json = any;
  * spelled `this.<slot>` in both tiers.
  * 14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
  * the step kind `notify` broadcasts a notification to every session.) */
-export const PROTO = 16;
+export const PROTO = 17;
+
+/* WHICH COPY of a `repeat` a gesture came from, as it rides the wire and as the renderer
+ * holds it. One shape in one place: the stage's binds, the gesture seat and the `input`
+ * frame all name the same two numbers. */
+export interface RepeatCopy {
+  index: number;
+  count: number;
+}
 
 /* one line of the log: what a mesh node said on @dart/log/<level>, or what a notify
  * step spoke (level "notify", node "hmi"). `ms` rides only where the author set an

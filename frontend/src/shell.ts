@@ -24,7 +24,7 @@ import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
 import { Panel } from "./reconcile.js";
 import { previewArrangement, renderStage, stageScale } from "./stage.js";
-import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry, primitiveDef } from "./types.js";
+import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry, RepeatCopy, primitiveDef } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
 import { dataShape, renderDataDetail, renderDataTree } from "./workspaces/data.js";
 import { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } from "./workspaces/design.js";
@@ -269,8 +269,10 @@ export class App implements Editor {
   /* one gesture event out. The sequence is per-session monotonic — the backend drops
      what arrives out of order, which is also what lets its fail-safe synthesize a
      release for a session that vanished mid-press. */
-  input(node: number, event: string, value?: Json, element?: string): void {
-    this.conn.input(node, event, value ?? null, this.inputSeq++, element ?? "");
+  input(node: number, event: string, value?: Json, element?: string,
+        repeat?: RepeatCopy | null): void {
+    this.conn.input(node, event, value ?? null, this.inputSeq++, element ?? "",
+                    repeat ?? null);
   }
 
   setPage(id: number): void {

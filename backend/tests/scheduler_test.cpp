@@ -756,6 +756,189 @@ void test_trend_samples() {
     CHECK(scheduler.state().lists[slot].total > 100);
 }
 
+/* ---- THE COPY RIDES THE EVENT (proto 17) ----
+ *
+ * A repeated element is ONE element with ONE set of cells, however many pictures the view
+ * drew of it. So the copy is not runtime storage and there is nothing to look it up in:
+ * it arrives with the gesture, stands on the state for that dispatch, and is what makes
+ * `slots[repeat.index] = ...` write the copy the finger was actually on. */
+
+InputEvent on_copy(uint64_t node, const char* event, uint64_t seq, uint32_t index,
+                   uint32_t count) {
+    InputEvent input;
+    input.session = 1;
+    input.node = node;
+    input.event = event;
+    input.sequence = seq;
+    /* count 0 = the frame carried no `repeat` key at all: not inside a repeat */
+    if (count) input.repeat = RepeatSeat{true, index, count};
+    return input;
+}
+
+double element_at(const RuntimeState& state, int cell, uint32_t at) {
+    const AggView view = state.aggregate(state.values[cell]);
+    if (at >= view.count || view.data[at].tag != ValueTag::Num) return -1.0;
+    return view.data[at].data.num;
+}
+
+Document repeat_document() {
+    Json button = {
+        {"kind", "frame"},
+        {"type", "Button"},
+        /* five pictures of this one element — the backend never counts them; the attr is
+           the VIEW's instruction and is here only so the document is the real thing */
+        {"attrs", Json{{"repeat", "5"}}},
+        {"flows",
+         Json::array({
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                  {"when_mode", "any"},
+                  {"do",
+                   Json::array({
+                       steps::set_var("mark", "repeat.fraction"),
+                       steps::set_var("span", "repeat.count"),
+                       steps::set_index("slots", "repeat.index", "100 + repeat.index"),
+                   })}},
+             Json{{"when", Json::array({Json{{"kind", "event"},
+                                             {"name", "held"},
+                                             {"hold_ms", 2}}})},
+                  {"when_mode", "any"},
+                  {"do", Json::array({steps::set_var("heldAt", "repeat.index")})}},
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "release"}}})},
+                  {"when_mode", "any"},
+                  {"do",
+                   Json::array({
+                       steps::guard("delay", 6),
+                       steps::set_var("late", "repeat.index"),
+                   })}},
+         })},
+    };
+    Json root = {
+        {"version", 1},
+        {"next_id", 1},
+        {"globals",
+         Json::array({
+             Json{{"name", "slots"}, {"type", "list"}, {"elem", "f64"},
+                  {"init", Json::array({0, 0, 0, 0, 0})}},
+             Json{{"name", "mark"}, {"type", "f64"}, {"init", 0}},
+             Json{{"name", "span"}, {"type", "f64"}, {"init", 0}},
+             Json{{"name", "heldAt"}, {"type", "f64"}, {"init", 0}},
+             Json{{"name", "late"}, {"type", "f64"}, {"init", 0}},
+         })},
+        {"pages",
+         Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    return document;
+}
+
+void test_repeat_copy() {
+    Document document = repeat_document();
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t instance =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    const int slots = cell_of(program, 0, "slots");
+    const int mark = cell_of(program, 0, "mark");
+    const int span = cell_of(program, 0, "span");
+    const int held_at = cell_of(program, 0, "heldAt");
+    const int late = cell_of(program, 0, "late");
+    if (!CHECK(slots >= 0 && mark >= 0 && span >= 0 && held_at >= 0 && late >= 0)) return;
+
+    /* THE THIRD COPY OF FIVE: its own element moves and no other one does — which is the
+       whole point, and the thing a single backend cell could never have expressed */
+    scheduler.post(on_copy(instance, "tap", 1, 2, 5));
+    tick(scheduler, 1);
+    CHECK(element_at(scheduler.state(), slots, 2) == 102);
+    CHECK(element_at(scheduler.state(), slots, 0) == 0);
+    CHECK(element_at(scheduler.state(), slots, 4) == 0);
+    /* the fraction is the view's own arithmetic asked from the other side: 0 at the
+       first copy, 1 at the last */
+    CHECK(scheduler.state().values[mark].data.num == 0.5);
+    CHECK(scheduler.state().values[span].data.num == 5);
+
+    scheduler.post(on_copy(instance, "tap", 2, 0, 5));
+    tick(scheduler, 1);
+    CHECK(element_at(scheduler.state(), slots, 0) == 100);
+    CHECK(scheduler.state().values[mark].data.num == 0);
+
+    scheduler.post(on_copy(instance, "tap", 3, 4, 5));
+    tick(scheduler, 1);
+    CHECK(element_at(scheduler.state(), slots, 4) == 104);
+    CHECK(scheduler.state().values[mark].data.num == 1);
+    /* three taps on three copies, three elements: nothing overwrote anything */
+    CHECK(element_at(scheduler.state(), slots, 2) == 102);
+
+    /* NO COPY BEHIND THE EVENT reads Nil, not a zero that would pass for the first copy,
+       and the element write that needed an index FAULTS rather than landing somewhere */
+    const uint32_t faults = scheduler.state().fault_count;
+    scheduler.post(on_copy(instance, "tap", 4, 0, 0));
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[mark].tag == ValueTag::Nil);
+    CHECK(scheduler.state().fault_count > faults);
+    CHECK(element_at(scheduler.state(), slots, 0) == 100);
+
+    /* A HELD FIRES LATER, BUT FIRES FOR THE COPY THE FINGER WENT DOWN ON — proved by
+       tapping a DIFFERENT copy in the tick the hold comes due, which is dispatched first */
+    scheduler.post(on_copy(instance, "press", 5, 3, 5));
+    tick(scheduler, 1);
+    scheduler.post(on_copy(instance, "tap", 6, 0, 5));
+    tick(scheduler, 4);
+    CHECK(scheduler.state().values[held_at].data.num == 3);
+
+    /* AND A RUN THAT PARKS IN A DELAY WAKES AS ITS OWN COPY. The pending record carries
+       the seat exactly as it carries the event parameter — so ANOTHER COPY IS TAPPED
+       while this one sleeps, and the delayed write still lands on the copy that was
+       released. Without that, the parked run would wake as whatever ran last. */
+    scheduler.post(on_copy(instance, "release", 7, 1, 5));
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[late].data.num == 0);
+    scheduler.post(on_copy(instance, "tap", 8, 4, 5));
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[late].data.num == 0);
+    tick(scheduler, 8);
+    CHECK(scheduler.state().values[late].data.num == 1);
+}
+
+/* A CADENCE HAS NO COPY, and the refusal says so at compile: `every` fires for the
+ * ELEMENT, so reading Nil into an element write would fault a step away from the reason. */
+void test_repeat_refused_without_an_event() {
+    FakeMesh mesh;
+    Json button = {
+        {"kind", "frame"},
+        {"type", "Button"},
+        {"flows",
+         Json::array({Json{{"when", Json::array({steps::every(50)})},
+                           {"do", Json::array({steps::set_var("mark", "repeat.index")})}}})},
+    };
+    Json root = {
+        {"version", 1},
+        {"next_id", 1},
+        {"globals", Json::array({Json{{"name", "mark"}, {"type", "f64"}, {"init", 0}}})},
+        {"pages",
+         Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK(!compiled.ok);
+    bool taught = false;
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.message.find("no copy behind an `every` trigger") != std::string::npos)
+            taught = true;
+    if (!CHECK(taught))
+        for (const Diag& diag : compiled.program.diagnostics)
+            std::printf("cadence repeat: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+}
+
 } // namespace
 
 int main() {
@@ -768,5 +951,7 @@ int main() {
     test_flow_entity_read();
     test_cadence_flows();
     test_trend_samples();
+    test_repeat_copy();
+    test_repeat_refused_without_an_event();
     return check::summary("scheduler_test");
 }

@@ -129,7 +129,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 16, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 17, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.components.length === 12, "twelve components");
@@ -1893,11 +1893,16 @@ check(stageNode("frame", 901) === heldAgain &&
       { kind: "text", name: "read", attrs: { text: cell("slot:tint") } },
       { kind: "frame", name: "gate", attrs: { show: cell("slot:on"),
                                               surface: prog("#111111") } },
-      { kind: "frame", name: "tail", attrs: { surface: prog("#222222") } },
+      /* pressable and NOT repeated: the control case for what a copy-less post carries */
+      { kind: "frame", name: "tail", attrs: { surface: prog("#222222") },
+        interact: { primitive: "press", params: {} } },
       { kind: "frame", name: "knob", attrs: { surface: pressedTint },
         interact: { primitive: "press", params: {}, emits: { tap: "tap" } } },
+      /* repeated AND pressable: every copy is armed, and which one spoke is the only
+         thing that tells them apart on the wire */
       { kind: "frame", name: "tick", attrs: { repeat: cell("slot:count"),
-                                              left: cell("repeat:frac") } },
+                                              left: cell("repeat:frac") },
+        interact: { primitive: "press", params: {} } },
     ] },
   };
   const rStore = new DocStore();
@@ -2049,6 +2054,34 @@ check(stageNode("frame", 901) === heldAgain &&
   draw();
   check(rNode(511) === rig && !rNode(510).style.pointerEvents,
         "flipping back is a patch too: same elements, the regime taken off");
+
+  /* THE COPY RIDES THE EVENT (proto 17). The backend holds ONE set of cells for a
+     repeated element however many pictures this view drew, so which copy was pressed
+     exists nowhere but on the gesture — and the seat reads it at POST time off the live
+     bind, never off what it was armed with, because a reconcile moves a copy's index
+     under a listener that outlives it. */
+  const posted = [];
+  rEditor.input = (node, event, value, element, repeat) =>
+    posted.push({ node, event, element, repeat });
+  rView.mode = "test";
+  draw();
+  fire(kids()[6], "pointerdown", { button: 0, clientX: 4, clientY: 4 });
+  check(posted.length === 1 && posted[0].event === "press" && posted[0].element === "tick",
+        "a press on a repeat copy posts as that element, got " + JSON.stringify(posted));
+  check(posted[0].repeat?.index === 1 && posted[0].repeat?.count === 3,
+        "and carries WHICH COPY it was, got " + JSON.stringify(posted[0].repeat));
+  fire(tail, "pointerdown", { button: 0, clientX: 4, clientY: 4 });
+  check(posted[1]?.element === "tail" && posted[1].repeat == null,
+        "while an element outside a repeat carries none: absence is how the wire says " +
+        "'not in a repeat', got " + JSON.stringify(posted[1]));
+  /* the count moves under listeners armed once — the NEXT press reports the new run */
+  feed({ "511.tint": "#ff0000", "511.count": 5 });
+  fire(kids()[7], "pointerdown", { button: 0, clientX: 4, clientY: 4 });
+  check(posted[2]?.repeat?.index === 2 && posted[2]?.repeat?.count === 5,
+        "a copy that outlived a count change reports its NEW run, got " +
+          JSON.stringify(posted[2]?.repeat));
+  rView.mode = "edit";
+  draw();
 }
 
 /* ---- TRANSITIONS: the view eases what it draws ----

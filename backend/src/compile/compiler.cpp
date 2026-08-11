@@ -1314,6 +1314,26 @@ class Compiler {
                 Binding{kClockFields[i].shape, OpCode::ClockRead, i, 0};
     }
 
+    /* WHICH COPY OF A `repeat` RAISED THIS: the same three fields the view answers, off
+     * the copy that rides the input frame. Bound only where an event can carry one — see
+     * refuse_repeat for the other half. Reserved like `time`, by landing last: no
+     * variable can shadow it. */
+    void bind_repeat(ExpressionScope& scope) {
+        scope.qualified["repeat.index"] = Binding{Shape::Num, OpCode::RepeatRead, 0, 0};
+        scope.qualified["repeat.count"] = Binding{Shape::Num, OpCode::RepeatRead, 1, 0};
+        scope.qualified["repeat.fraction"] = Binding{Shape::Num, OpCode::RepeatRead, 2, 0};
+    }
+
+    /* A CADENCE HAS NO COPY. `every` and a timer fire for the ELEMENT — one element, one
+     * set of cells, however many times the view drew it — so there is no copy to be, and
+     * a run reading Nil here would fault somewhere downstream with the reason a step
+     * removed. Refused by name, saying which triggers do carry one. */
+    void refuse_repeat(ExpressionScope& scope, const std::string& what) {
+        scope.refused["repeat"] =
+            "there is no copy behind " + what + ": `repeat` names the copy an EVENT "
+            "arrived on, so it reads in a flow some event triggers";
+    }
+
     /* the elements enclosing this one, OUTERMOST FIRST — the page's own children at the
      * front, this element last. Binding in this order is what makes the scope lexical:
      * a nearer declaration simply overwrites the name it shadows. */
@@ -2728,9 +2748,13 @@ class Compiler {
     bool compile_steps(const ElementInfo& element, const Json& flow_node, FlowProgram& flow,
                        const EventParam* param = nullptr,
                        const std::unordered_map<std::string, std::string>* claimed = nullptr,
-                       bool in_component = false) {
+                       bool in_component = false, const std::string& copyless = "") {
         ExpressionScope scope = in_component ? behavior_scope_for(element, Shape::Unknown)
                                              : scope_for(element, Shape::Unknown);
+        /* `repeat` reads where an EVENT drove the run and carried the copy with it, and
+           is refused by name where the trigger is a clock */
+        if (copyless.empty()) bind_repeat(scope);
+        else refuse_repeat(scope, copyless);
         /* the mesh, under its '@' spellings: a flow's rvalue or guard reads an entity
            by naming it, exactly as a slot expression does (same binding, same VM read
            off the last-value cache / the aggregate mirrors). A component's behavior gets
@@ -2857,14 +2881,18 @@ class Compiler {
                         triggers.size() > 1 && node.value("when_mode", "first") == "first";
                     EventParam param;
                     bool has_param = false;
+                    /* empty = this trigger carries a copy; otherwise the clock it is */
+                    std::string copyless;
                     if (trigger.value("kind", "") == "timer") {
                         const std::string name = trigger.value("var", "");
                         const int timer = resolve_timer(element, name, flow_id);
                         if (timer < 0) continue;
                         flow.event = program_.timers[timer].event;
                         program_.timers[timer].rearm_groups.push_back(group);
+                        copyless = "a timer";
                     } else if (trigger.value("kind", "") == "every") {
                         if (!cadence_trigger(element, trigger, flow_id, flow)) continue;
+                        copyless = "an `every` trigger";
                     } else {
                         flow.event = trigger.value("name", "");
                         /* A COMPONENT'S ELEMENTS ARE PRIVATE ANATOMY: an instance flow's
@@ -2890,7 +2918,8 @@ class Compiler {
                                 ? static_cast<uint32_t>(std::max(0.0, every.get<double>()))
                                 : 0;
                     }
-                    if (!compile_steps(element, node, flow, has_param ? &param : nullptr)) {
+                    if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
+                                       nullptr, /*in_component=*/false, copyless)) {
                         const std::string message = "flow could not be compiled";
                         flow.code.clear();
                         Instruction fault;
@@ -2969,8 +2998,10 @@ class Compiler {
                     flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
                     EventParam param;
                     bool has_param = false;
+                    std::string copyless;
                     if (trigger.value("kind", "") == "every") {
                         if (!cadence_trigger(element, trigger, element.id, flow)) continue;
+                        copyless = "an `every` trigger";
                     } else {
                         flow.event = trigger.value("name", "");
                         /* behavior is the ONE place a trigger may name an element channel */
@@ -2982,7 +3013,7 @@ class Compiler {
                             std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
                     }
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
-                                       &claimed, /*in_component=*/true))
+                                       &claimed, /*in_component=*/true, copyless))
                         continue;
                     program_.layout.stack_values =
                         std::max(program_.layout.stack_values, flow.max_stack);

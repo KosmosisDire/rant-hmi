@@ -187,6 +187,15 @@ const TIME_FIELDS: MeshField[] = [
   { path: "date", shape: "text" },
 ];
 
+/* WHICH COPY of a `repeat` — read by field on both tiers that can answer: an attr, which
+ * is evaluated per copy, and a flow AN EVENT TRIGGERED, which is handed the copy that
+ * raised it. One list, because it is one fact. */
+const REPEAT_FIELDS: MeshField[] = [
+  { path: "index", shape: "num" },
+  { path: "count", shape: "num" },
+  { path: "fraction", shape: "num" },
+];
+
 /* the standing `time` folder: not itself pickable (time reads by field), its leaves
  * inserting the dotted spellings */
 function timeRow(prefix: string): BrowseRow {
@@ -211,7 +220,8 @@ function timeRow(prefix: string): BrowseRow {
  * this.<name>); the variables bucket local/global, each a leaf (scalar, enum) or a
  * pickable folder over its field leaves (struct by its type's table, timer by the
  * four timer fields). */
-function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
+function hmiRows(editor: Editor, instance: Node | null,
+                 extra: BrowseRow[] = []): BrowseRow[] {
   const rows: BrowseRow[] = [];
   const type = editor.registry?.components.find((t) => t.name === instance?.type) ?? null;
   const slots: BrowseRow[] = (type?.slots ?? []).map((slot) => ({
@@ -227,8 +237,11 @@ function hmiRows(editor: Editor, instance: Node | null): BrowseRow[] {
 
   rows.push(...variableRows(editor, instance, "hmi"));
   /* the clock stands in every scalar scope (scope_for binds it last), so the hmi
-     universe always offers it */
+     universe always offers it. `extra` is what only SOME surfaces bind — `repeat` on a
+     flow an event can trigger — and it sits here rather than beside the roots because a
+     reserved view input is part of the hmi universe wherever it is legal at all. */
   rows.push(timeRow("hmi"));
+  rows.push(...extra);
   return rows;
 }
 
@@ -283,8 +296,9 @@ function variableRows(editor: Editor, element: Node | null, prefix: string,
 }
 
 /* the hmi root, or nothing when this instance has no names at all */
-function hmiRoot(editor: Editor, instance: Node | null): BrowseRow[] {
-  const rows = hmiRows(editor, instance);
+function hmiRoot(editor: Editor, instance: Node | null,
+                 extra: BrowseRow[] = []): BrowseRow[] {
+  const rows = hmiRows(editor, instance, extra);
   return rows.length ? [{ key: "hmi", label: "hmi", icon: "folder", children: rows }] : [];
 }
 
@@ -371,9 +385,11 @@ function dartRoot(editor: Editor): BrowseRow[] {
 /* the standing roots a surface shares — and the ONE place isolation shows in the UI: a
  * surface INSIDE a component offers no dart universe at all, because nothing in there may
  * name the mesh. The compiler refuses it either way; not offering it is how the rule
- * teaches before the refusal has to. */
-function slotRoots(editor: Editor, element: Node | null): BrowseRow[] {
-  const rows = hmiRoot(editor, element);
+ * teaches before the refusal has to. `extra` is what one surface binds on top of the
+ * shared universe (a flow's `repeat`). */
+function slotRoots(editor: Editor, element: Node | null,
+                   extra: BrowseRow[] = []): BrowseRow[] {
+  const rows = hmiRoot(editor, element, extra);
   if (element && inComponent(editor, element.id)) return rows;
   return rows.concat(dartRoot(editor));
 }
@@ -390,6 +406,31 @@ export function pageScope(editor: Editor, instance: Node | null): Scope {
     names: () => projectNames(roots()),
     roots,
   };
+}
+
+/* WHICH COPY THIS FLOW RUNS FOR, offered only where the flow can have one. `repeat` names
+ * the copy an EVENT arrived on: a cadence or a timer fires for the element itself, so the
+ * backend refuses the word there. A flow compiles its steps ONCE PER TRIGGER, so a clock
+ * trigger anywhere in the list means one of those compiles has no copy — and the row is
+ * offered only when every trigger carries one, which is exactly what the compiler will
+ * accept. Not offering it is how the rule teaches before the refusal has to. */
+function repeatRow(flow: Flow | null): BrowseRow[] {
+  const when = (flow?.when ?? []) as Json[];
+  if (!when.length) return [];
+  if (when.some((t) => t?.kind === "every" || t?.kind === "timer")) return [];
+  return [{
+    key: "hmi/repeat",
+    label: "repeat",
+    icon: "copy",
+    children: REPEAT_FIELDS.map((field) => ({
+      key: "hmi/repeat." + field.path,
+      label: field.path,
+      shape: field.shape,
+      insert: "repeat." + field.path,
+      field,
+      flat: { note: "copy" },
+    })),
+  }];
 }
 
 /* what x IS at one row of a flow: the pipeline register — Nil until a `set x = ...`
@@ -448,7 +489,7 @@ export function flowScope(editor: Editor, instance: Node | null, flow: Flow, ste
     tier: "wire",
     lang: () => editor.lang,
     names: () => {
-      const rows = projectNames(hmiRoot(editor, instance));
+      const rows = projectNames(hmiRoot(editor, instance, repeatRow(at())));
       const declared = new Set(rows.map((r) => r.label));
       for (const local of scopeAt(editor, instance, at(), stepId).locals) {
         if (!declared.has(local.name))
@@ -470,7 +511,7 @@ export function flowScope(editor: Editor, instance: Node | null, flow: Flow, ste
       return rows.concat(projectNames(dartRoot(editor)));
     },
     x,
-    roots: () => flowRoot().concat(slotRoots(editor, instance)),
+    roots: () => flowRoot().concat(slotRoots(editor, instance, repeatRow(at()))),
   };
 }
 
@@ -561,12 +602,6 @@ const STATE_FIELDS: MeshField[] = [
   { path: "dragging", shape: "bool" },
   { path: "open", shape: "bool" },
   { path: "hover", shape: "bool" },
-];
-
-const REPEAT_FIELDS: MeshField[] = [
-  { path: "index", shape: "num" },
-  { path: "count", shape: "num" },
-  { path: "fraction", shape: "num" },
 ];
 
 /* the component whose tree holds this node, or null for a page's node.

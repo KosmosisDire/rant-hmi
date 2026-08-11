@@ -11,7 +11,7 @@ import { el } from "./dom.js";
 import { makeFolds } from "./fold.js";
 import { iconMarkup } from "./icons.js";
 import { placeBox } from "./popover.js";
-import { AggFrame, AttrTable, BuiltinDef, Diag, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry } from "./types.js";
+import { AggFrame, AttrTable, BuiltinDef, Diag, Json, Lang, Live, Mesh, Node, NodeAttrs, Op, Page, Registry, RepeatCopy } from "./types.js";
 
 export type Mode = "edit" | "test" | "operate";
 
@@ -200,9 +200,12 @@ export interface Editor {
   apply(ops: Op[]): void;
   /* post one gesture event (sequenced per session): the view reports what the pointer
      did — the canonical gesture name, its fixed payload (nothing for a moment like
-     tap), and WHICH ELEMENT raised it — and the backend runs every flow it reaches,
-     identically for every view, which is the product's own rule. */
-  input(node: number, event: string, value?: Json, element?: string): void;
+     tap), WHICH ELEMENT raised it, and WHICH COPY of a `repeat` it was on — and the
+     backend runs every flow it reaches, identically for every view, which is the
+     product's own rule. The copy is null outside a repeat, and the whole reason it
+     travels: the backend draws no pictures, so the copy exists only on the event. */
+  input(node: number, event: string, value?: Json, element?: string,
+        repeat?: RepeatCopy | null): void;
   setPage(id: number): void;
   /* insert a fresh page and switch to it once the echo issues its id (the topbar page
      selector's "+ New page") */

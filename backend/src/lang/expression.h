@@ -46,6 +46,13 @@ struct ExpressionScope {
      * see their own properties and nothing of the page) is not a typo, and the author
      * needs the way in — not a shorter list. Empty = the plain refusal. */
     std::string unknown_help;
+    /* WORDS THAT MEAN SOMETHING IN THE LANGUAGE BUT NOTHING HERE, each with the reason
+     * (`repeat` in a flow no copy can trigger). "Unknown name" would send the author
+     * hunting for a typo in a word that is spelled right; the whole message is the
+     * caller's, because only the caller knows why this surface is the wrong one. A name
+     * the scope really BINDS still wins — a variable called `repeat` is that author's
+     * variable — so this answers only where nothing else does. */
+    std::unordered_map<std::string, std::string> refused;
 };
 
 struct ExpressionResult {

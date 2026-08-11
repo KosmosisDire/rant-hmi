@@ -5,7 +5,7 @@
  * Anti-desync rules (PLAN.md) live here: a version that is not last + 1 is a GAP, and a
  * gap discards state and asks for a snapshot rather than patching around the hole. */
 
-import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Live, LogEntry, Mesh, NodeAttrs, Op, PROTO, Registry } from "./types.js";
+import { AttrTable, BuiltinDef, Diag, Doc, Json, Lang, Live, LogEntry, Mesh, NodeAttrs, Op, PROTO, Registry, RepeatCopy } from "./types.js";
 
 export interface Handlers {
   /* the snapshot carries diagnostics too: they are computed at compile time, which is
@@ -108,8 +108,14 @@ export class Connection {
     this.send({ type: "view", page_id, visible });
   }
 
-  input(node: number, event: string, value: Json, seq: number, element = ""): void {
-    this.send({ type: "input", node, event, value, seq, element });
+  /* `repeat` rides only where the gesture came from inside one: the key's ABSENCE is how
+     the backend hears "no copy", which is also what a flow reading `repeat.index` off a
+     plain element gets — Nil, not a zero that would pass for the first copy */
+  input(node: number, event: string, value: Json, seq: number, element = "",
+        repeat: RepeatCopy | null = null): void {
+    const frame: Json = { type: "input", node, event, value, seq, element };
+    if (repeat) frame.repeat = { index: repeat.index, count: repeat.count };
+    this.send(frame);
   }
 
   private send(frame: Json): void {

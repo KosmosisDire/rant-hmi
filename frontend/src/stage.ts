@@ -1685,6 +1685,9 @@ function armSeat(state: StageState, editor: Editor, bind: Bind): void {
     get owner() { return bind.node.channel; },
     /* the node's OWN dotted name chain is the element identity the backend's channels use */
     get element() { return bind.node.element; },
+    /* LIVE, like everything else on this seat: `bind.repeat` is rewritten by every
+       reconcile, and the listener was armed once and outlives all of them */
+    get repeat() { return bind.repeat; },
     get type() { return bind.node.type; },
     get interact() { return bind.node.interact ?? armed; },
     cells: (cell: string) => cellsFor(state, editor, bind.node, bind.repeat)(cell),

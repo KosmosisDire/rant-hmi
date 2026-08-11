@@ -1278,6 +1278,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 };
                 pending.x = hold_text(x);
                 pending.arg = hold_text(state.args[0]);
+                pending.repeat = state.repeat;
                 /* only TEMPORARIES snapshot: a declared struct variable is stable
                  * storage, and restoring it at resume would roll back writes that
                  * landed while this run was parked */
@@ -1572,6 +1573,28 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     : field == ClockField::Hour    ? parts.tm_hour
                     : field == ClockField::Minute  ? parts.tm_min
                                                    : parts.tm_sec;
+                if (!push(Value::number(number))) fail(ins.c);
+                break;
+            }
+            /* WHICH COPY: the index the event arrived on, the copy count beside it, and
+             * the fraction of the way through (0 at the first, 1 at the last — the same
+             * arithmetic the view's `repeat:` cells do, because it is the same question
+             * asked from the other side). No copy behind this run reads Nil rather than
+             * a zero that would look like the first copy. */
+            case OpCode::RepeatRead: {
+                if (!state.repeat.live) {
+                    if (!push(Value::nil())) fail(ins.c);
+                    break;
+                }
+                const uint32_t index = state.repeat.index;
+                const uint32_t count = state.repeat.count;
+                const double number =
+                    ins.a == 0 ? static_cast<double>(index)
+                    : ins.a == 1
+                        ? static_cast<double>(count)
+                        : (count > 1 ? static_cast<double>(index) /
+                                           static_cast<double>(count - 1)
+                                     : 0.0);
                 if (!push(Value::number(number))) fail(ins.c);
                 break;
             }
@@ -1964,6 +1987,7 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     const uint32_t pc = pending.resume_pc;
     const Value x = pending.x;
     state.args[0] = pending.arg;
+    state.repeat = pending.repeat;
     pending.active = false;
     const FlowProgram& flow = program.flows[flow_index];
     return run_code(program, flow.code, &flow, state, x, pc);

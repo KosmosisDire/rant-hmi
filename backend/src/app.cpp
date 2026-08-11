@@ -435,6 +435,20 @@ void App::on_input(uint64_t session, const Json& frame) {
     input.element = str_or(field(frame, "element"), "");
     input.value = input_value(field(frame, "value"));
     input.sequence = sequence;
+    /* WHICH COPY OF A `repeat` the pointer was on. Absent is the honest spelling of "not
+       inside a repeat" — the key rides only where there is one, exactly as a Nil cell's
+       key is omitted. A row that does not describe a real copy is no copy at all rather
+       than an index the flows would write somewhere with. */
+    const Json copy = field(frame, "repeat");
+    if (copy.is_object()) {
+        const uint64_t index = json_u64_or(field(copy, "index"), 0);
+        const uint64_t count = json_u64_or(field(copy, "count"), 0);
+        if (count > 0 && index < count) {
+            input.repeat.live = true;
+            input.repeat.index = static_cast<uint32_t>(index);
+            input.repeat.count = static_cast<uint32_t>(count);
+        }
+    }
     /* a string that is not a color is TEXT (a Dropdown's selected option); it rides
        beside the Value and the scheduler homes it into the run's input slot */
     const Json raw = field(frame, "value");

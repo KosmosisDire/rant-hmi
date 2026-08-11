@@ -123,6 +123,18 @@ struct TimerState {
     uint32_t remaining = 0;
 };
 
+/* WHICH COPY OF A `repeat` A RUN BELONGS TO. A repeated element is ONE element the view
+ * draws N times, so the backend keeps one set of cells and the copy is not a runtime
+ * instance — it is an INDEX, and it arrives with the event the copy raised. `live` false
+ * is an honest "there is no copy behind this run": a cadence or a timer fires for the
+ * element, not for a copy of it, and RepeatRead answers Nil exactly as the view's
+ * `repeat:` cells do outside a repeat. */
+struct RepeatSeat {
+    bool live = false;
+    uint32_t index = 0;
+    uint32_t count = 0;
+};
+
 struct PendingState {
     bool active = false;
     uint64_t wake_tick = 0;
@@ -131,6 +143,9 @@ struct PendingState {
     Value x = Value::nil();
     /* the event parameter the parked run arrived with, restored at resume */
     Value arg = Value::nil();
+    /* and which copy it arrived on: a run that parks in a debounce must wake as the same
+       copy it was pressed on, or the delay would silently move the write elsewhere */
+    RepeatSeat repeat;
     /* every struct slot, by value, so a run that parks mid-message re-enters with its
      * own storage and nothing dangles when the scratch resets (spec 5.6) */
     std::vector<StructState> structs;
@@ -196,6 +211,10 @@ class RuntimeState {
      * lambda body, which is why this is state rather than a run_code register. One
      * slot: the vocabulary is one parameter per event (enforced at compile). */
     Value args[1] = {Value::nil()};
+    /* THE COPY THIS RUN IS: seeded by whoever drove the run (an input event carries one,
+     * a cadence does not), read by RepeatRead. A raise inherits it untouched, which is
+     * right — an event raised from a copy's own run is that copy speaking. */
+    RepeatSeat repeat;
     /* raised events queued during a run, dispatched by the scheduler AFTER it halts */
     std::vector<RaisedRecord> raised;
     uint32_t raised_count = 0;

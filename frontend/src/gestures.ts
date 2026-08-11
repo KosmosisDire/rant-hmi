@@ -26,7 +26,7 @@
 import { el } from "./dom.js";
 import { Editor } from "./editor.js";
 import { attrText, run } from "./program.js";
-import { Interact, Json, Program, ComponentType } from "./types.js";
+import { Interact, Json, Program, ComponentType, RepeatCopy } from "./types.js";
 
 /* what one armed node needs from the stage that built it */
 export interface GestureSeat {
@@ -36,6 +36,11 @@ export interface GestureSeat {
   /* WHICH ARMED ELEMENT this is: the template node's dotted name ("" = the root). Rides
      every post; the backend's compiled bubbling topology decides who hears it. */
   element: string;
+  /* WHICH COPY of a `repeat` was under the finger, or null outside one. The backend has
+     one element here however many copies this view drew, so this is the only place the
+     copy exists — read at POST time, not at arming: a reconcile moves a copy's index
+     under a listener that outlives it. */
+  repeat: RepeatCopy | null;
   type: ComponentType | null;
   interact: Interact;
   /* the same cell reader the node's attrs ran over: params are compiled programs, so a
@@ -94,7 +99,7 @@ export function optionNames(value: Json): string[] {
  * signatures — no rename table, no payload rule. A moment (press, release, tap, open)
  * carries nothing; the drags carry the value, the picks the option. */
 function post(seat: GestureSeat, gesture: string, value?: Json): void {
-  seat.editor.input(seat.owner, gesture, value, seat.element);
+  seat.editor.input(seat.owner, gesture, value, seat.element, seat.repeat);
 }
 
 /* ---- the shared arithmetic, exported pure so the suite pins the numbers ---- */
