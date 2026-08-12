@@ -32,6 +32,13 @@ constexpr uint32_t kSplitCeiling = 256;
  * what a cell KEEPS across ticks, which is a history ring's whole point. A keep-less
  * append that would cross it refuses loudly rather than growing forever. */
 constexpr uint32_t kRetainedCeiling = 4096;
+/* A NESTED cell's leaf arena holds every row's elements together, and a row that outgrows
+ * its extent relocates rather than shifting every row after it — so the arena carries the
+ * holes those relocations leave until a compaction collects them. The LIVE budget is
+ * kRetainedCeiling exactly as a flat cell's is (one cell, one ceiling, however it is
+ * shaped); this is only how much room the holes are allowed to take before the arena is
+ * compacted instead of grown. */
+constexpr uint32_t kLeafCeiling = kRetainedCeiling * 2;
 
 enum class OpCode : uint8_t {
     Const,

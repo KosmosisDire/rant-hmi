@@ -89,6 +89,19 @@ Value Value::retained_map(uint32_t slot, uint32_t pairs) {
     return out;
 }
 
+Value Value::retained_row(uint32_t slot, uint32_t start, uint32_t count, ValueTag elem,
+                          bool pairs) {
+    Value out = pairs ? Value::map(slot, count) : Value::list(slot, count, elem);
+    out.flags |= kRetainedAgg | kSubAgg;
+    /* the count already occupies the payload's low half; the start joins it above rather
+     * than taking a field of its own, because a row needs three numbers and a Value has
+     * room for two */
+    out.data.integer =
+        static_cast<int64_t>((static_cast<uint64_t>(start) << 32) |
+                             static_cast<uint64_t>(count));
+    return out;
+}
+
 Value Value::structure(uint32_t slot, uint16_t type) {
     Value out{};
     out.tag = ValueTag::Struct;
@@ -118,6 +131,20 @@ ValueTag list_elem_tag(const Value& value) {
 
 bool value_retained(const Value& value) {
     return (value.flags & kRetainedAgg) != 0;
+}
+
+bool value_row(const Value& value) {
+    return (value.flags & kSubAgg) != 0;
+}
+
+uint32_t agg_count(const Value& value) {
+    return static_cast<uint32_t>(static_cast<uint64_t>(value.data.integer) & 0xffffffffu);
+}
+
+uint32_t agg_start(const Value& value) {
+    return value_row(value)
+               ? static_cast<uint32_t>(static_cast<uint64_t>(value.data.integer) >> 32)
+               : 0u;
 }
 
 bool value_truth(const Value& value) {

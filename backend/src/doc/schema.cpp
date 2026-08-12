@@ -169,8 +169,13 @@ const std::vector<NodeSpec>& table() {
             /* a list's or map's DECLARED ELEMENT type (a map's value type; keys are
              * text): one of the scalar type names, "" = undeclared (any scalar). The
              * compiler checks it where it can see and the runtime enforces it on every
-             * aggregate write; on a scalar variable it is inert. */
+             * aggregate write; on a scalar variable it is inert.
+             *
+             * `list` or `map` here is the NESTED declaration: every element is a ROW, and
+             * `leaf` says what the rows hold. Nesting is ONE level and is declared, never
+             * inferred — which is what keeps every bound below a compile-time constant. */
             text("elem", ""),
+            text("leaf", ""),
             any("init", 0),
             boolean("persist", false),
         };

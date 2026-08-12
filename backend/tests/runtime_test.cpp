@@ -2460,6 +2460,251 @@ void test_aggregate_variables() {
     CHECK_EQ(map_dump(restated, edited, table), "a=1,aa=6,zz=tail");
 }
 
+/* ---- nested aggregates ---- */
+
+/* one ROW, rendered as its author would read it */
+std::string row_text(const Program& program, const RuntimeState& state, const Value& row) {
+    if (row.tag != ValueTag::List && row.tag != ValueTag::Map) return "?";
+    const AggView view = state.aggregate(row);
+    const bool pairs = row.tag == ValueTag::Map;
+    std::string out;
+    char buffer[64];
+    for (uint32_t i = 0; i < view.count; ++i) {
+        if (i) out += ",";
+        if (pairs) {
+            out += state.text(program, view.data[i * 2]);
+            out += "=";
+        }
+        const Value& held = view.data[pairs ? i * 2 + 1 : i];
+        switch (held.tag) {
+            case ValueTag::Num:
+                std::snprintf(buffer, sizeof buffer, "%.15g", held.data.num);
+                out += buffer;
+                break;
+            case ValueTag::Text: out += state.text(program, held); break;
+            case ValueTag::Nil: out += "?"; break;
+            default: out += "!"; break;
+        }
+    }
+    return out;
+}
+
+/* a NESTED cell, rows separated by | so the check reads as the whole picture */
+std::string nested_dump(const Program& program, const RuntimeState& state, int cell) {
+    const Value& value = state.values[cell];
+    if (value.tag != ValueTag::List && value.tag != ValueTag::Map) return "<not nested>";
+    const AggView view = state.aggregate(value);
+    const bool pairs = value.tag == ValueTag::Map;
+    std::string out;
+    for (uint32_t i = 0; i < view.count; ++i) {
+        if (i) out += "|";
+        if (pairs) {
+            out += state.text(program, view.data[i * 2]);
+            out += ":";
+        }
+        out += "[" + row_text(program, state, view.data[pairs ? i * 2 + 1 : i]) + "]";
+    }
+    return out;
+}
+
+/* A CELL MAY HOLD ROWS, one declared level deep. `elem: list|map` says every element is a
+ * row and `leaf` says what the rows hold; the rows live together in the slot's leaf arena
+ * and each outer entry is the sub-aggregate value naming its extent. Every verb the flat
+ * cell has keeps its meaning one level down — append grows, keep trims the front, an
+ * element write edits in place and moves the generation — and there is no second level to
+ * declare, which is what keeps the copy, the compare and the encode at a fixed depth. */
+void test_nested_aggregates() {
+    FakeMesh mesh;
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows",
+         Json::array({
+             /* APPEND A ROW: the element is an ordinary list literal, and the keep window
+                counts ROWS exactly as it counts scalars on a flat ring */
+             flow_on("tap", {steps::append_var("grid", "[7, 8]", "3")}),
+             /* an element write REPLACES a whole row in place */
+             flow_on("press", {steps::set_index("grid", "0", "[9]")}),
+             /* and a keyed write does the same one entry of a nested map */
+             flow_on("release", {steps::set_key("byName", "'c'", "[5, 6]")}),
+             /* UNKNOWN still erases a map's key, rows and all — and the UNKNOWN has to
+                be row-shaped now, because the destination's element is a row: a missing
+                key reads Nil and is the spelling nearest to hand */
+             flow_on("held", {steps::set_key("byName", "'a'", "byName['nope']")}),
+         })},
+    };
+    Json root = {
+        {"version", 1},
+        {"next_id", 1},
+        {"globals",
+         Json::array({
+             Json{{"name", "grid"},
+                  {"type", "list"},
+                  {"elem", "list"},
+                  {"leaf", "f64"},
+                  {"init", Json::array({Json::array({1, 2}), Json::array({3})})}},
+             Json{{"name", "byName"},
+                  {"type", "map"},
+                  {"elem", "list"},
+                  {"leaf", "f64"},
+                  {"init", Json{{"b", Json::array({4})}, {"a", Json::array({1, 2})}}}},
+             Json{{"name", "rows"},
+                  {"type", "list"},
+                  {"elem", "map"},
+                  {"leaf", "str"},
+                  {"init", Json::array({Json{{"k", "v"}}})}},
+         })},
+        {"pages",
+         Json::array({Json{{"name", "P"}, {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("nested compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+    const int grid = named_cell(program, "grid");
+    const int by_name = named_cell(program, "byName");
+    const int rows = named_cell(program, "rows");
+    if (!CHECK(grid >= 0 && by_name >= 0 && rows >= 0)) return;
+    CHECK(program.cells[grid].elem == Shape::List);
+    CHECK(program.cells[grid].leaf == Shape::Num);
+    CHECK(program.cells[rows].elem == Shape::Map);
+    /* a nested start rides `row_init`, one run per row; a nested MAP keeps its keys in
+       `list_init` interleaved, so the document's sorted order lands unchanged */
+    CHECK(program.cells[grid].row_init.size() == 2);
+    CHECK(program.cells[grid].list_init.empty());
+    CHECK(program.cells[by_name].row_init.size() == 2);
+    CHECK(program.cells[by_name].list_init.size() == 4);
+
+    RuntimeState state(program);
+    const uint32_t grid_slot = program.cells[grid].list_slot;
+    CHECK_EQ(nested_dump(program, state, grid), "[1,2]|[3]");
+    CHECK_EQ(nested_dump(program, state, by_name), "a:[1,2]|b:[4]");
+    CHECK_EQ(nested_dump(program, state, rows), "[k=v]");
+    CHECK(state.lists[grid_slot].gen == 0 && state.lists[grid_slot].nested());
+
+    const uint64_t instance =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    auto raise = [&](const char* event) {
+        state.reset_scratch();
+        run_event(program, state, instance, event, Value::nil());
+    };
+
+    /* a row appends whole, and the keep window trims ROWS off the front */
+    raise("tap");
+    CHECK_EQ(nested_dump(program, state, grid), "[1,2]|[3]|[7,8]");
+    raise("tap");
+    CHECK_EQ(nested_dump(program, state, grid), "[3]|[7,8]|[7,8]");
+    CHECK(state.lists[grid_slot].total == 4 && state.lists[grid_slot].count == 3);
+
+    /* an element write replaces one row and leaves the rest standing */
+    raise("press");
+    CHECK_EQ(nested_dump(program, state, grid), "[9]|[7,8]|[7,8]");
+
+    /* the map's keyed writes reach rows the same way */
+    raise("release");
+    CHECK_EQ(nested_dump(program, state, by_name), "a:[1,2]|b:[4]|c:[5,6]");
+    raise("held");
+    CHECK_EQ(nested_dump(program, state, by_name), "b:[4]|c:[5,6]");
+
+    /* INSIDE A ROW. A leaf append grows that row alone; a leaf write edits one position
+       and moves the generation, because the aggs lane has no in-place-edit vocabulary. */
+    const uint32_t before = state.lists[grid_slot].gen;
+    CHECK(state.append_leaf(program, grid, Value::number(1), Value::number(42),
+                            Value::nil()));
+    CHECK_EQ(nested_dump(program, state, grid), "[9]|[7,8,42]|[7,8]");
+    CHECK(state.lists[grid_slot].gen == before + 1);
+    CHECK(state.store_leaf(program, grid, Value::number(1), Value::number(0),
+                           Value::number(5)));
+    CHECK_EQ(nested_dump(program, state, grid), "[9]|[5,8,42]|[7,8]");
+    /* a write past the row's end EDITS nothing: a row grows by its own append */
+    CHECK(!state.store_leaf(program, grid, Value::number(1), Value::number(9),
+                            Value::number(1)));
+    /* and neither verb reaches a row that is not there */
+    CHECK(!state.append_leaf(program, grid, Value::number(7), Value::number(1),
+                             Value::nil()));
+
+    /* A ROW'S OWN KEEP trims its front, and a row that has reached its width stops
+       growing its extent: the arena settles instead of climbing forever */
+    for (int i = 0; i < 300; ++i)
+        CHECK(state.append_leaf(program, grid, Value::number(2), Value::number(i),
+                                Value::number(4)));
+    CHECK_EQ(row_text(program, state, state.aggregate(state.values[grid]).data[2]),
+             "296,297,298,299");
+    CHECK(state.lists[grid_slot].leaves.size() <= kLeafCeiling);
+
+    /* a MAP ROW upserts by key inside its own extent, Nil erasing as it does above */
+    state.texts[state.mesh_scratch].set("z");
+    state.texts[state.input_scratch].set("zz");
+    CHECK(state.store_leaf(program, rows, Value::number(0),
+                           Value::text(state.mesh_scratch),
+                           Value::text(state.input_scratch)));
+    CHECK_EQ(nested_dump(program, state, rows), "[k=v,z=zz]");
+    state.texts[state.mesh_scratch].set("k");
+    CHECK(state.store_leaf(program, rows, Value::number(0),
+                           Value::text(state.mesh_scratch), Value::nil()));
+    CHECK_EQ(nested_dump(program, state, rows), "[z=zz]");
+
+    /* A SCALAR IS NOT A ROW: a nested cell's declared element is what it says it is, and
+       the runtime refuses what the compiler could not see */
+    CHECK(!state.append_list(program, grid, Value::number(1), Value::nil()));
+    /* nor is a row a leaf: there is no third level to write into */
+    CHECK(!state.store_leaf(program, grid, Value::number(0), Value::number(0),
+                            state.values[grid]));
+
+    /* CLEARED releases the arena with the entries: an extent nothing names is hole, and a
+       cell still counting the cleared rows as live would refuse the next append for room
+       it is holding */
+    RuntimeState blank(program);
+    CHECK(blank.store(program, grid, Value::nil()));
+    CHECK(blank.lists[grid_slot].leaf_live == 0 && blank.lists[grid_slot].row_cap.empty());
+    CHECK(blank.append_list(program, grid, Value::list(0, 0, ValueTag::Nil), Value::nil()));
+    CHECK_EQ(nested_dump(program, blank, grid), "[]");
+
+    /* a recompile carries the rows by value into the new run's own arena */
+    RuntimeState migrated = migrate_state(program, state, program);
+    CHECK_EQ(nested_dump(program, migrated, grid), "[9]|[5,8,42]|[296,297,298,299]");
+    CHECK_EQ(nested_dump(program, migrated, by_name), "b:[4]|c:[5,6]");
+    CHECK_EQ(nested_dump(program, migrated, rows), "[z=zz]");
+    CHECK(migrated.lists[grid_slot].gen == state.lists[grid_slot].gen + 1);
+}
+
+/* the declarations a nested cell REFUSES, each teaching the spelling that works */
+void test_nested_refusals() {
+    FakeMesh mesh;
+    Json root = {
+        {"version", 1},
+        {"next_id", 1},
+        {"globals",
+         Json::array({
+             /* one level, ever: a leaf cannot itself be a row */
+             Json{{"name", "deep"}, {"type", "list"}, {"elem", "list"}, {"leaf", "list"}},
+             /* a leaf type says what ROWS hold, so it needs rows to have been declared */
+             Json{{"name", "flat"}, {"type", "list"}, {"elem", "f64"}, {"leaf", "f64"}},
+             /* a scalar where a row was declared is the finding, not a promotion */
+             Json{{"name", "mixed"},
+                  {"type", "list"},
+                  {"elem", "list"},
+                  {"leaf", "f64"},
+                  {"init", Json::array({Json::array({1}), 2})}},
+         })},
+        {"pages", Json::array({Json{{"name", "P"}, {"children", Json::array()}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK(!compiled.ok);
+    std::string found;
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error) found += diag.message + "\n";
+    CHECK(found.find("nesting is") != std::string::npos);
+    CHECK(found.find("declare its elements list or map first") != std::string::npos);
+    CHECK(found.find("rows are declared lists") != std::string::npos);
+}
+
 /* AN ELEMENT WRITE ADDRESSES ONE POSITION. `list[i] = v` edits in place — it never
  * grows (growth is append's verb), a miss is a fault, an unchanged element is silent to
  * the wire, and a changed one is a discontinuity (the aggs lane speaks appends, so the
@@ -3875,6 +4120,8 @@ int main() {
     RUN(test_reduce);
     RUN(test_list_cells);
     RUN(test_aggregate_variables);
+    RUN(test_nested_aggregates);
+    RUN(test_nested_refusals);
     RUN(test_indexed_writes);
     RUN(test_struct_agg_fields);
     RUN(test_aggregate_expressions);

@@ -29,14 +29,12 @@ std::string_view initial_text(const Program& program, const CellDef& cell) {
 
 /* the authored LIST two cells start from, compared by content: each program interns its
  * own texts, so the constants behind them can never be compared by ref */
-bool same_list_init(const Program& old_program, const CellDef& before,
-                    const Program& new_program, const CellDef& after) {
-    if (before.has_list != after.has_list ||
-        before.list_init.size() != after.list_init.size())
-        return false;
-    for (size_t i = 0; i < before.list_init.size(); ++i) {
-        const Value& was = before.list_init[i];
-        const Value& now = after.list_init[i];
+bool same_run(const Program& old_program, const std::vector<Value>& before,
+              const Program& new_program, const std::vector<Value>& after) {
+    if (before.size() != after.size()) return false;
+    for (size_t i = 0; i < before.size(); ++i) {
+        const Value& was = before[i];
+        const Value& now = after[i];
         if (was.tag != now.tag) return false;
         if (was.tag == ValueTag::Text) {
             if (constant_text(old_program, was) != constant_text(new_program, now))
@@ -46,6 +44,37 @@ bool same_list_init(const Program& old_program, const CellDef& before,
         }
     }
     return true;
+}
+
+bool same_list_init(const Program& old_program, const CellDef& before,
+                    const Program& new_program, const CellDef& after) {
+    if (before.has_list != after.has_list) return false;
+    if (!same_run(old_program, before.list_init, new_program, after.list_init)) return false;
+    /* the authored ROWS are part of the same start: an edit to one of them moved what the
+       slot reads exactly as an edit to a flat element does */
+    if (before.row_init.size() != after.row_init.size()) return false;
+    for (size_t row = 0; row < before.row_init.size(); ++row)
+        if (!same_run(old_program, before.row_init[row], new_program, after.row_init[row]))
+            return false;
+    return true;
+}
+
+/* does one element FIT a cell's DECLARED element shape? Unknown = undeclared (any scalar
+ * goes, the untyped list this always was), and Nil always fits — a gap is a value here as
+ * everywhere. Icon-typed declarations lower to Text, so the scalar cases cover every
+ * declarable one; List and Map are the NESTED declaration, where the element is a row and
+ * only a row will do. */
+bool elem_fits(Shape elem, ValueTag tag) noexcept {
+    if (elem == Shape::Unknown || tag == ValueTag::Nil) return true;
+    switch (elem) {
+        case Shape::Num: return tag == ValueTag::Num;
+        case Shape::Bool: return tag == ValueTag::Bool;
+        case Shape::Text: return tag == ValueTag::Text;
+        case Shape::Color: return tag == ValueTag::Color;
+        case Shape::List: return tag == ValueTag::List;
+        case Shape::Map: return tag == ValueTag::Map;
+        default: return true;
+    }
 }
 
 /* Did the DOCUMENT move what this cell reads, such that carrying the old run forward would
@@ -187,11 +216,25 @@ RuntimeState::RuntimeState(const Program& program) {
             lists.emplace_back();
         }
     }
+    /* EVERY aggregate cell tells its slot what shape it is, authored start or not: the
+       storage has to be able to say on its own whether it is nested, because a recompile
+       hands migrate the NEW cell table beside the OLD state and the slot being written is
+       the only thing in reach that knows */
+    for (const CellDef& cell : program.cells) {
+        if (cell.shape != Shape::List && cell.shape != Shape::Map) continue;
+        if (cell.list_slot >= lists.size()) continue;
+        lists[cell.list_slot].elem = cell.elem;
+        lists[cell.list_slot].leaf = cell.leaf;
+    }
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
         if (!cell.has_list) continue;
         if (cell.shape != Shape::List && cell.shape != Shape::Map) continue;
         const bool pairs = cell.shape == Shape::Map;
+        if (cell.list_slot < lists.size() && lists[cell.list_slot].nested()) {
+            seed_nested(program, i, cell);
+            continue;
+        }
         const uint32_t count = static_cast<uint32_t>(cell.list_init.size());
         hold_list(program, *this, i, cell.list_slot, cell.list_init.data(),
                   pairs ? count / 2 : count, pairs);
@@ -326,11 +369,22 @@ std::string_view RuntimeState::text(const Program& program, const Value& value) 
 }
 
 AggView RuntimeState::aggregate(const Value& value) const noexcept {
-    const uint32_t count = static_cast<uint32_t>(value.data.integer);
+    const uint32_t count = agg_count(value);
     if (value_retained(value) &&
         (value.tag == ValueTag::List || value.tag == ValueTag::Map)) {
-        if (value.ref >= lists.size() || count > lists[value.ref].count) return {};
-        return {lists[value.ref].elems.data(), count};
+        if (value.ref >= lists.size()) return {};
+        const ListState& held = lists[value.ref];
+        /* ONE ROW of a nested cell: its entries are in the slot's LEAF arena at the start
+           the value carries, not among the slot's outer entries */
+        if (value_row(value)) {
+            const uint32_t start = agg_start(value);
+            const uint64_t span = static_cast<uint64_t>(count) *
+                                  (value.tag == ValueTag::Map ? 2u : 1u);
+            if (static_cast<uint64_t>(start) + span > held.leaves.size()) return {};
+            return {held.leaves.data() + start, count};
+        }
+        if (count > held.count) return {};
+        return {held.elems.data(), count};
     }
     const uint32_t need = value.tag == ValueTag::Map ? count * 2 : count;
     if (value.ref > elems.size() || need > elems.size() - value.ref) return {};
@@ -365,6 +419,264 @@ void RuntimeState::move_entry(ListState& held, uint32_t dst, uint32_t src) noexc
     held.elems[dst] = value;
 }
 
+uint32_t RuntimeState::leaf_text(ListState& held, uint32_t at) noexcept {
+    if (at >= kLeafCeiling) return UINT32_MAX;
+    while (held.leaf_texts.size() <= at) {
+        held.leaf_texts.push_back(static_cast<uint32_t>(texts.size()));
+        texts.emplace_back(kDefaultTextCap);
+    }
+    return held.leaf_texts[at];
+}
+
+void RuntimeState::move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept {
+    if (dst == src || src >= held.leaves.size() || dst >= held.leaves.size()) return;
+    Value value = held.leaves[src];
+    if (value.tag == ValueTag::Text) {
+        const uint32_t slot = leaf_text(held, dst);
+        if (slot != UINT32_MAX && value.ref < texts.size()) {
+            texts[slot].set(texts[value.ref].view());
+            value = Value::text(slot);
+        }
+    }
+    held.leaves[dst] = value;
+}
+
+namespace {
+
+/* where a row's own entry sits among the outer ones: a nested map keeps its keys
+ * interleaved exactly as a flat one does, so the row rides beside its key */
+inline uint32_t row_at(uint32_t row, bool pairs) noexcept { return pairs ? row * 2 + 1 : row; }
+
+/* leaf POSITIONS one row occupies for `count` entries (a map row interleaves) */
+inline uint32_t row_span(uint32_t count, bool row_pairs) noexcept {
+    return row_pairs ? count * 2 : count;
+}
+
+/* Collect the holes relocation leaves behind: slide every live extent down onto a running
+ * cursor and re-point its row at where it landed. The extents are walked in START order,
+ * never row order — a relocated row sits at the tail while later rows still sit below it,
+ * and sliding out of order would write over an extent that has not been read yet. */
+void compact_leaves(RuntimeState& state, ListState& held, bool pairs) noexcept {
+    std::vector<uint32_t> order;
+    order.reserve(held.count);
+    for (uint32_t row = 0; row < held.count; ++row) {
+        const Value& entry = held.elems[row_at(row, pairs)];
+        if (entry.tag == ValueTag::List || entry.tag == ValueTag::Map) order.push_back(row);
+    }
+    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+        return agg_start(held.elems[row_at(a, pairs)]) <
+               agg_start(held.elems[row_at(b, pairs)]);
+    });
+    uint32_t cursor = 0;
+    for (uint32_t row : order) {
+        Value& entry = held.elems[row_at(row, pairs)];
+        const uint32_t start = agg_start(entry);
+        const uint32_t count = agg_count(entry);
+        const bool row_pairs = entry.tag == ValueTag::Map;
+        const uint32_t used = row_span(count, row_pairs);
+        if (start != cursor)
+            for (uint32_t i = 0; i < used; ++i) state.move_leaf(held, cursor + i, start + i);
+        entry = Value::retained_row(entry.ref, cursor, count, list_elem_tag(entry), row_pairs);
+        cursor += row < held.row_cap.size() ? held.row_cap[row] : used;
+    }
+    held.leaf_used = cursor;
+    held.leaf_live = cursor;
+}
+
+/* Make room for `want` ENTRIES in row `row` and answer where its entries now start. A row
+ * still inside its capacity does not move at all — which is what makes an append into a
+ * settled row free — and one that has outgrown it is relocated whole to the tail with its
+ * capacity doubled, paying its own length rather than every later row's. */
+uint32_t reserve_row(RuntimeState& state, ListState& held, uint32_t row, bool pairs,
+                     uint32_t want) noexcept {
+    if (row >= held.count || row >= held.row_cap.size()) return UINT32_MAX;
+    const bool row_pairs = held.elems[row_at(row, pairs)].tag == ValueTag::Map;
+    const uint32_t need = row_span(want, row_pairs);
+    const uint32_t was = held.row_cap[row];
+    if (need <= was) return agg_start(held.elems[row_at(row, pairs)]);
+    /* the live budget is leaf POSITIONS across every row, so one ceiling covers a nested
+       cell exactly as it covers a flat one */
+    if (held.leaf_live - was + need > kRetainedCeiling) return UINT32_MAX;
+    uint32_t cap = was ? was * 2 : 4;
+    while (cap < need) cap *= 2;
+    if (cap > kRetainedCeiling) cap = kRetainedCeiling;
+    if (held.leaf_used + cap > kLeafCeiling) {
+        compact_leaves(state, held, pairs);
+        if (held.leaf_used + cap > kLeafCeiling) return UINT32_MAX;
+    }
+    Value& entry = held.elems[row_at(row, pairs)];
+    const uint32_t start = agg_start(entry);
+    const uint32_t used = row_span(agg_count(entry), row_pairs);
+    const uint32_t dst = held.leaf_used;
+    if (held.leaves.size() < dst + cap) held.leaves.resize(dst + cap, Value::nil());
+    for (uint32_t i = 0; i < used; ++i) state.move_leaf(held, dst + i, start + i);
+    held.leaf_used = dst + cap;
+    held.leaf_live = held.leaf_live - was + cap;
+    held.row_cap[row] = cap;
+    entry = Value::retained_row(entry.ref, dst, agg_count(entry), list_elem_tag(entry),
+                                row_pairs);
+    return dst;
+}
+
+/* give up a row's extent: the capacity becomes hole and the entry stops naming it */
+void release_row(ListState& held, uint32_t row, bool pairs) noexcept {
+    if (row >= held.row_cap.size()) return;
+    held.leaf_live -= held.row_cap[row];
+    held.row_cap[row] = 0;
+    if (row_at(row, pairs) < held.elems.size())
+        held.elems[row_at(row, pairs)] = Value::nil();
+}
+
+/* WHICH ROW an outer address names: a nested list is addressed by number index, a nested
+ * map by text key, each exactly as the cell itself is. UINT32_MAX where the address is the
+ * wrong kind or names no row — a row is grown by writing the OUTER entry, never by
+ * reaching into a position that is not there. */
+uint32_t find_row(const Program& program, const RuntimeState& state, const ListState& held,
+                  bool pairs, const Value& outer) noexcept {
+    if (pairs) {
+        if (outer.tag != ValueTag::Text) return UINT32_MAX;
+        const std::string_view wanted = state.text(program, outer);
+        for (uint32_t row = 0; row < held.count; ++row)
+            if (state.text(program, held.elems[row * 2]) == wanted) return row;
+        return UINT32_MAX;
+    }
+    if (outer.tag != ValueTag::Num || !(outer.data.num >= 0.0)) return UINT32_MAX;
+    const uint32_t at = static_cast<uint32_t>(outer.data.num);
+    return at < held.count ? at : UINT32_MAX;
+}
+
+/* the window `keep` asks a ring to hold, or UINT32_MAX where it asks for none: floored,
+ * at least one, never past the ceiling — NaN lands on one beside the negatives */
+uint32_t keep_window(const Value& keep) noexcept {
+    if (keep.tag != ValueTag::Num) return UINT32_MAX;
+    double wanted = std::floor(keep.data.num);
+    if (!(wanted >= 1.0)) wanted = 1.0;
+    if (wanted > static_cast<double>(kRetainedCeiling)) wanted = kRetainedCeiling;
+    return static_cast<uint32_t>(wanted);
+}
+
+/* Trim a LIST cell's window to `window` entries from the FRONT, which is the whole of what
+ * `keep` does. A nested cell gives up the dropped rows' extents on the way past — a
+ * released extent is the arena's only notice that a row has gone. */
+void trim_front(RuntimeState& state, ListState& held, uint32_t window) noexcept {
+    if (window == UINT32_MAX || held.count <= window) return;
+    const uint32_t drop = held.count - window;
+    if (held.nested()) {
+        for (uint32_t row = 0; row < drop; ++row) release_row(held, row, false);
+        held.row_cap.erase(held.row_cap.begin(), held.row_cap.begin() + drop);
+    }
+    for (uint32_t i = 0; i + drop < held.count; ++i) state.move_entry(held, i, i + drop);
+    held.count = window;
+}
+
+/* Copy ONE row's entries into the arena at row `row`, text and all.
+ *
+ * The extent always lands at the TAIL. A whole-row store is not the hot path — an append
+ * into a settled row is, and that one does not move anything — and taking fresh ground is
+ * what lets this read its source while it writes: nothing it is copying FROM can be the
+ * ground it is copying ONTO. The row's old extent becomes hole for the next compaction.
+ *
+ * The source may live anywhere the caller can name — the run's scratch pool, another
+ * cell's arena, the state being retired at a recompile — so text resolves through the
+ * PAIR it came from. A source inside THIS arena is the one thing that cannot be handled
+ * here and is staged through the scratch pool before it arrives (stage_row).
+ *
+ * A map row is re-sorted by key for the reason the outer map is: deterministic iteration
+ * is what keeps a replay byte-identical. */
+bool place_row(RuntimeState& state, const Program& source_program, const RuntimeState& source,
+               ListState& held, uint32_t list_slot, uint32_t row, bool pairs,
+               const Value* data, uint32_t count, bool row_pairs, Shape leaf) noexcept {
+    if (row >= held.row_cap.size() || row_at(row, pairs) >= held.elems.size()) return false;
+    if (count > kRetainedCeiling || (!data && count)) return false;
+    const uint32_t span = row_span(count, row_pairs);
+    /* a declared leaf shape is a promise this level keeps too: one foreign element refuses
+       the whole row, exactly as it refuses a whole flat store. A map row's KEYS are text
+       by construction; its values are what the check walks. */
+    for (uint32_t i = row_pairs ? 1u : 0u; i < span; i += row_pairs ? 2u : 1u)
+        if (!elem_fits(leaf, data[i].tag)) return false;
+    const uint32_t was = held.row_cap[row];
+    if (held.leaf_live - was + span > kRetainedCeiling) return false;
+    if (held.leaf_used + span > kLeafCeiling) {
+        compact_leaves(state, held, pairs);
+        if (held.leaf_used + span > kLeafCeiling) return false;
+    }
+    const uint32_t dst = held.leaf_used;
+    if (held.leaves.size() < dst + span) held.leaves.resize(dst + span, Value::nil());
+    for (uint32_t i = 0; i < span; ++i) held.leaves[dst + i] = data[i];
+    if (row_pairs)
+        for (uint32_t i = 1; i < count; ++i) {
+            const Value key = held.leaves[dst + i * 2];
+            const Value value = held.leaves[dst + i * 2 + 1];
+            const std::string_view text_key = source.text(source_program, key);
+            uint32_t j = i;
+            while (j > 0 &&
+                   text_key < source.text(source_program, held.leaves[dst + (j - 1) * 2])) {
+                held.leaves[dst + j * 2] = held.leaves[dst + (j - 1) * 2];
+                held.leaves[dst + j * 2 + 1] = held.leaves[dst + (j - 1) * 2 + 1];
+                --j;
+            }
+            held.leaves[dst + j * 2] = key;
+            held.leaves[dst + j * 2 + 1] = value;
+        }
+    for (uint32_t i = 0; i < span; ++i) {
+        if (held.leaves[dst + i].tag != ValueTag::Text) continue;
+        const uint32_t slot = state.leaf_text(held, dst + i);
+        if (slot == UINT32_MAX) return false;
+        /* a slot index only means the same storage when the source IS this run: across
+           two states the same number names two different buffers, so the copy stands */
+        if (&source != &state || held.leaves[dst + i].ref != slot)
+            state.texts[slot].set(source.text(source_program, held.leaves[dst + i]));
+        held.leaves[dst + i] = Value::text(slot);
+    }
+    held.leaf_used = dst + span;
+    held.leaf_live = held.leaf_live - was + span;
+    held.row_cap[row] = span;
+    ValueTag tag = ValueTag::Nil;
+    bool uniform = count != 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const ValueTag here = held.leaves[dst + row_span(i, row_pairs) +
+                                          (row_pairs ? 1u : 0u)].tag;
+        if (i == 0) tag = here;
+        else if (here != tag) uniform = false;
+    }
+    held.elems[row_at(row, pairs)] =
+        Value::retained_row(list_slot, dst, count, uniform ? tag : ValueTag::Nil, row_pairs);
+    return true;
+}
+
+/* A row taken from the very cell being written (`grid[0] = grid[1]`), copied into the
+ * run's scratch pool first. Nothing else can be said honestly about such a source: the
+ * write is free to relocate extents and re-home text inside this arena, and a view into
+ * it taken beforehand would be describing storage that has since moved. */
+Value stage_row(RuntimeState& state, const Program& program, const Value& value) noexcept {
+    const AggView view = state.aggregate(value);
+    const bool row_pairs = value.tag == ValueTag::Map;
+    const uint32_t span = row_span(view.count, row_pairs);
+    const uint32_t at = state.alloc_elems(span);
+    if (at == UINT32_MAX) return Value::nil();
+    for (uint32_t i = 0; i < span; ++i) {
+        Value entry = view.data[i];
+        if (entry.tag == ValueTag::Text) {
+            const uint32_t slot = state.alloc_elem_text();
+            if (slot == UINT32_MAX) return Value::nil();
+            state.texts[slot].set(state.text(program, entry));
+            entry = Value::text(slot);
+        }
+        state.elems[at + i] = entry;
+    }
+    return row_pairs ? Value::map(at, view.count)
+                     : Value::list(at, view.count, list_elem_tag(value));
+}
+
+/* the same staging, applied only where it is needed: a source that names THIS slot */
+Value settled_row(RuntimeState& state, const Program& program, uint32_t list_slot,
+                  const Value& value) noexcept {
+    if (!value_retained(value) || value.ref != list_slot) return value;
+    return stage_row(state, program, value);
+}
+
+} // namespace
+
 /* the Value a cell holds for its retained slot: the element tag is only meaningful when
  * every element agrees, which is what an aggregate reader checks before trusting it */
 static Value retained_value(const ListState& held, uint32_t list_slot, bool pairs) {
@@ -391,6 +703,18 @@ bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& 
     const uint32_t span = pairs ? count * 2 : count;
     if (held.elems.size() < span) held.elems.resize(span, Value::nil());
     for (uint32_t i = 0; i < span; ++i) held.elems[i] = data[i];
+    /* A ROW OF THIS VERY SLOT is copied into the scratch pool before the arena below is
+       disturbed (`grid = [grid[1], grid[0]]`): the placement writes at the arena's tail
+       and may compact it, and a source inside the ground being written cannot be read
+       honestly. Only a store made by THIS run can be in that position — another state's
+       slot index names another state's storage. */
+    if (held.nested() && &source == this)
+        for (uint32_t row = 0; row < count; ++row) {
+            Value& entry = held.elems[row_at(row, pairs)];
+            if (!value_retained(entry) || entry.ref != list_slot) continue;
+            entry = stage_row(*this, source_program, entry);
+            if (entry.tag == ValueTag::Nil) return false;
+        }
     /* A MAP arrives in whatever order its source built it (a mesh delivery is arrival
        order), and a retained map is SORTED BY KEY: insertion sort over the pairs, in
        place, before any text is re-homed — the values still point at the source's own
@@ -421,12 +745,77 @@ bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& 
         held.elems[i] = Value::text(slot);
     }
     held.count = count;
+    /* THE ROWS, where the cell declares any. A whole store replaces every one of them, so
+       the arena starts over: every old extent goes at once and the placements below lay
+       the new ones down from the bottom. The leaf TEXT slots stay allocated and are
+       reused by position, exactly as the outer entries' are. */
+    if (held.nested()) {
+        held.leaf_used = 0;
+        held.leaf_live = 0;
+        held.row_cap.assign(count, 0);
+        for (uint32_t row = 0; row < count; ++row) {
+            const Value entry = held.elems[row_at(row, pairs)];
+            if (entry.tag != ValueTag::List && entry.tag != ValueTag::Map) {
+                /* an UNKNOWN row is a value like any other gap: the entry reads Nil and
+                   holds no extent. Anything that is not an aggregate at all refuses. */
+                held.elems[row_at(row, pairs)] = Value::nil();
+                if (entry.tag != ValueTag::Nil) return false;
+                continue;
+            }
+            if (held.row_pairs() != (entry.tag == ValueTag::Map)) return false;
+            const AggView view = source.aggregate(entry);
+            if (!place_row(*this, source_program, source, held, list_slot, row, pairs,
+                           view.data, view.count, held.row_pairs(), held.leaf))
+                return false;
+        }
+    }
     /* a whole store is a DISCONTINUITY: the wire cannot describe it as appends, so the
        generation moves and the append cursor restarts at what is now there */
     ++held.gen;
     held.total = count;
     values[cell_index] = retained_value(held, list_slot, pairs);
     return true;
+}
+
+void RuntimeState::seed_nested(const Program& program, uint32_t cell_index,
+                               const CellDef& cell) noexcept {
+    if (cell.list_slot >= lists.size() || cell_index >= values.size()) return;
+    ListState& held = lists[cell.list_slot];
+    const bool pairs = cell.shape == Shape::Map;
+    const bool row_pairs = cell.elem == Shape::Map;
+    uint32_t count = static_cast<uint32_t>(cell.row_init.size());
+    if (count > kRetainedCeiling) count = kRetainedCeiling;
+    const uint32_t span = pairs ? count * 2 : count;
+    if (held.elems.size() < span) held.elems.resize(span, Value::nil());
+    for (uint32_t i = 0; i < span; ++i) held.elems[i] = Value::nil();
+    held.leaf_used = 0;
+    held.leaf_live = 0;
+    held.row_cap.assign(count, 0);
+    held.count = count;
+    for (uint32_t row = 0; row < count; ++row) {
+        /* a nested map's KEYS ride `list_init` interleaved exactly as a flat map's do, so
+           the document's own sorted order lands unchanged and the value beside each key is
+           the row placed below */
+        if (pairs) {
+            const uint32_t key_at = row * 2;
+            const Value key =
+                key_at < cell.list_init.size() ? cell.list_init[key_at] : Value::nil();
+            const uint32_t slot = list_text(held, key_at);
+            if (slot == UINT32_MAX) break;
+            texts[slot].set(text(program, key));
+            held.elems[key_at] = Value::text(slot);
+        }
+        const std::vector<Value>& elements = cell.row_init[row];
+        const uint32_t entries =
+            static_cast<uint32_t>(elements.size()) / (row_pairs ? 2u : 1u);
+        place_row(*this, program, *this, held, cell.list_slot, row, pairs, elements.data(),
+                  entries, row_pairs, cell.leaf);
+    }
+    /* a fresh run's baseline is generation ZERO: there is nothing here to be
+       discontinuous from */
+    held.gen = 0;
+    held.total = count;
+    values[cell_index] = retained_value(held, cell.list_slot, pairs);
 }
 
 Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
@@ -485,38 +874,27 @@ Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
                  : Value::retained_list(list_slot, count, elem);
 }
 
-/* does one element FIT a cell's DECLARED element shape? Unknown = undeclared (any
- * scalar goes, the untyped list this always was), and Nil always fits — a gap is a
- * value here as everywhere. Icon-typed declarations lower to Text, so the four cases
- * cover every declarable element type. */
-static bool elem_fits(Shape elem, ValueTag tag) noexcept {
-    if (elem == Shape::Unknown || tag == ValueTag::Nil) return true;
-    switch (elem) {
-        case Shape::Num: return tag == ValueTag::Num;
-        case Shape::Bool: return tag == ValueTag::Bool;
-        case Shape::Text: return tag == ValueTag::Text;
-        case Shape::Color: return tag == ValueTag::Color;
-        default: return true;
-    }
-}
-
 bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Value value,
                                const Value& keep) noexcept {
     if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
     if (cell.shape != Shape::List || cell.list_slot >= lists.size()) return false;
-    /* nested aggregates do not exist: an append takes ONE element, and a list of lists
-       has no representation anywhere else in the system either */
-    if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
-        value.tag == ValueTag::Struct)
-        return false;
+    /* a struct is not an element on any tier: it has no wire form here and no leaf shape
+       could describe it */
+    if (value.tag == ValueTag::Struct) return false;
     /* a declared element type is a promise the runtime keeps: what the compiler could
-       not see (x, a mesh read) is refused here, loudly, at the write */
+       not see (x, a mesh read) is refused here, loudly, at the write. A NESTED cell
+       declares list or map, so its append takes a whole ROW and nothing else — and an
+       undeclared cell still takes only scalars, because a row with no declared shape
+       would be a nesting nobody wrote down. */
     if (!elem_fits(cell.elem, value.tag)) return false;
     ListState& held = lists[cell.list_slot];
+    if (!held.nested() && (value.tag == ValueTag::List || value.tag == ValueTag::Map))
+        return false;
     /* the runaway case: with nothing bounding the ring, the ceiling is the only answer,
        and it refuses rather than silently dropping the oldest sample */
     if (keep.tag != ValueTag::Num && held.count >= kRetainedCeiling) return false;
+    if (held.nested()) return append_row(program, cell_index, value, keep);
     /* the element tag is a HINT and it is tracked, not recomputed: a ring appends every
        tick, and rescanning four thousand elements for a fact one comparison settles is
        exactly the per-tick cost this tier does not pay. Mixed reads as Nil, which is
@@ -538,17 +916,49 @@ bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Valu
     else held.elems.push_back(value);
     ++held.count;
     ++held.total;
-    if (keep.tag == ValueTag::Num) {
-        double wanted = std::floor(keep.data.num);
-        if (!(wanted >= 1.0)) wanted = 1.0;   /* NaN lands here too */
-        if (wanted > static_cast<double>(kRetainedCeiling)) wanted = kRetainedCeiling;
-        const uint32_t window = static_cast<uint32_t>(wanted);
-        if (held.count > window) {
-            const uint32_t drop = held.count - window;
-            for (uint32_t i = 0; i + drop < held.count; ++i) move_entry(held, i, i + drop);
-            held.count = window;
+    trim_front(*this, held, keep_window(keep));
+    values[cell_index] = Value::retained_list(
+        cell.list_slot, held.count, was == value.tag ? was : ValueTag::Nil);
+    return true;
+}
+
+/* APPEND ONE ROW to a nested list cell. The outer entry is grown exactly as a scalar
+ * append grows one — an entry, a capacity, a cursor — and the row's own elements are laid
+ * into the arena beside every other row's. A Nil row appends as a Nil entry with no extent
+ * at all, which is the same gap a Nil scalar leaves and reads the same way. */
+bool RuntimeState::append_row(const Program& program, uint32_t cell_index, Value value,
+                              const Value& keep) noexcept {
+    const CellDef& cell = program.cells[cell_index];
+    ListState& held = lists[cell.list_slot];
+    if (value.tag != ValueTag::Nil && held.row_pairs() != (value.tag == ValueTag::Map))
+        return false;
+    /* a row of THIS slot is staged before the arena can move under it */
+    if (value_retained(value) && value.ref == cell.list_slot) {
+        value = stage_row(*this, program, value);
+        if (value.tag == ValueTag::Nil) return false;
+    }
+    const Value& current = values[cell_index];
+    const ValueTag was = current.tag == ValueTag::List && held.count
+                             ? list_elem_tag(current)
+                             : value.tag;
+    const uint32_t row = held.count;
+    if (held.elems.size() <= row) held.elems.resize(row + 1, Value::nil());
+    held.elems[row] = Value::nil();
+    held.row_cap.resize(row + 1, 0);
+    ++held.count;
+    if (value.tag != ValueTag::Nil) {
+        const AggView view = aggregate(value);
+        if (!place_row(*this, program, *this, held, cell.list_slot, row, false, view.data,
+                       view.count, held.row_pairs(), held.leaf)) {
+            /* the entry never happened: an arena that could not take the row must not
+               leave a row behind that names nothing */
+            --held.count;
+            held.row_cap.resize(row);
+            return false;
         }
     }
+    ++held.total;
+    trim_front(*this, held, keep_window(keep));
     values[cell_index] = Value::retained_list(
         cell.list_slot, held.count, was == value.tag ? was : ValueTag::Nil);
     return true;
@@ -560,12 +970,21 @@ bool RuntimeState::store_key(const Program& program, uint32_t cell_index, const 
     const CellDef& cell = program.cells[cell_index];
     if (cell.shape != Shape::Map || cell.list_slot >= lists.size()) return false;
     if (key.tag != ValueTag::Text) return false;
-    if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
-        value.tag == ValueTag::Struct)
-        return false;
-    /* Nil ERASES below, so it passes; anything else must fit the declared value shape */
+    if (value.tag == ValueTag::Struct) return false;
+    /* Nil ERASES below, so it passes; anything else must fit the declared value shape —
+       which is a whole ROW where the cell declares a nested one */
     if (!elem_fits(cell.elem, value.tag)) return false;
     ListState& held = lists[cell.list_slot];
+    if (!held.nested() && (value.tag == ValueTag::List || value.tag == ValueTag::Map))
+        return false;
+    if (held.nested() && value.tag != ValueTag::Nil) {
+        if (held.row_pairs() != (value.tag == ValueTag::Map)) return false;
+        /* a row of THIS slot is staged before the arena can move under it */
+        if (value_retained(value) && value.ref == cell.list_slot) {
+            value = stage_row(*this, program, value);
+            if (value.tag == ValueTag::Nil) return false;
+        }
+    }
     /* the key is copied out before anything below can grow `texts` and move the slot it
        was resolved from; a key is one text value, so one buffer is the whole cost */
     char buffer[kDefaultTextCap];
@@ -587,6 +1006,12 @@ bool RuntimeState::store_key(const Program& program, uint32_t cell_index, const 
        be spelled. Erasing a key that is not there is not a failure, it is already done. */
     if (value.tag == ValueTag::Nil) {
         if (!found) return true;
+        /* the erased key's row goes with it: an extent nothing names is a hole, and the
+           arena has no other way to hear that it was let go */
+        if (held.nested()) {
+            release_row(held, at, true);
+            held.row_cap.erase(held.row_cap.begin() + at);
+        }
         for (uint32_t p = at * 2; p + 2 < held.count * 2; ++p) move_entry(held, p, p + 2);
         --held.count;
         ++held.total;
@@ -602,10 +1027,25 @@ bool RuntimeState::store_key(const Program& program, uint32_t cell_index, const 
         if (held.elems.size() < span) held.elems.resize(span, Value::nil());
         for (uint32_t p = span; p-- > at * 2 + 2;) move_entry(held, p, p - 2);
         ++held.count;
+        /* the shifted-up copy at the new pair still names the row BELOW it; the entry is
+           blank until the placement writes it, and its capacity starts at nothing */
+        if (held.nested()) {
+            held.elems[at * 2 + 1] = Value::nil();
+            held.row_cap.insert(held.row_cap.begin() + at, 0);
+        }
         const uint32_t slot = list_text(held, at * 2);
         if (slot == UINT32_MAX) return false;
         texts[slot].set(wanted);
         held.elems[at * 2] = Value::text(slot);
+    }
+    if (held.nested()) {
+        const AggView view = aggregate(value);
+        if (!place_row(*this, program, *this, held, cell.list_slot, at, true, view.data,
+                       view.count, held.row_pairs(), held.leaf))
+            return false;
+        ++held.total;
+        values[cell_index] = Value::retained_map(cell.list_slot, held.count);
+        return true;
     }
     if (value.tag == ValueTag::Text) {
         const uint32_t slot = list_text(held, at * 2 + 1);
@@ -634,6 +1074,21 @@ static bool same_element(const Program& program, const RuntimeState& state,
             return a.data.integer == b.data.integer && a.type_id == b.type_id;
         case ValueTag::Color: return a.data.rgba == b.data.rgba;
         case ValueTag::Text: return state.text(program, a) == state.text(program, b);
+        case ValueTag::List:
+        case ValueTag::Map: {
+            /* TWO ROWS are the same when the wire would serialise them the same. The walk
+               goes exactly one level, because there is exactly one level: a row holds
+               scalars, so the recursion below bottoms out on the cases above. */
+            const AggView left = state.aggregate(a);
+            const AggView right = state.aggregate(b);
+            if (left.count != right.count || (!left.data && left.count) ||
+                (!right.data && right.count))
+                return false;
+            const uint32_t span = a.tag == ValueTag::Map ? left.count * 2 : left.count;
+            for (uint32_t i = 0; i < span; ++i)
+                if (!same_element(program, state, left.data[i], right.data[i])) return false;
+            return true;
+        }
         default: return false;
     }
 }
@@ -663,13 +1118,21 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
                 held.count = 0;
                 ++held.gen;
                 held.total = 0;
+                /* the rows go with the entries: an extent nothing names is hole, and an
+                   arena still counting the cleared rows as live would refuse the next
+                   append for room it is actually holding */
+                held.row_cap.clear();
+                held.leaf_used = 0;
+                held.leaf_live = 0;
             }
             values[cell_index] = Value::nil();
             return true;
         }
         /* a cell fed from its own value: the copy would read the slot it is writing, so
-           there is nothing to do and everything to get wrong */
-        if (value_retained(value) && value.ref == cell.list_slot) {
+           there is nothing to do and everything to get wrong. A ROW of the same slot is
+           NOT that — `grid = grid[0]` is a real (and refused) reshape, not a no-op — so
+           the shortcut is the whole cell's alone. */
+        if (value_retained(value) && !value_row(value) && value.ref == cell.list_slot) {
             values[cell_index] = value;
             return true;
         }
@@ -719,11 +1182,14 @@ bool RuntimeState::store_index(const Program& program, uint32_t cell_index,
     const CellDef& cell = program.cells[cell_index];
     if (cell.shape != Shape::List || cell.list_slot >= lists.size()) return false;
     if (index.tag != ValueTag::Num) return false;
-    if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
-        value.tag == ValueTag::Struct)
-        return false;
+    if (value.tag == ValueTag::Struct) return false;
     if (!elem_fits(cell.elem, value.tag)) return false;
     ListState& held = lists[cell.list_slot];
+    if (!held.nested() && (value.tag == ValueTag::List || value.tag == ValueTag::Map))
+        return false;
+    if (held.nested() && value.tag != ValueTag::Nil &&
+        held.row_pairs() != (value.tag == ValueTag::Map))
+        return false;
     /* the index truncates the way an `x[i]` read does; NaN and negatives land in the
        first refusal, a position past the window in the second — an element write EDITS
        what is there, it never grows the list (growth is Append's verb) */
@@ -733,6 +1199,25 @@ bool RuntimeState::store_index(const Program& program, uint32_t cell_index,
     if (at >= held.count) return false;
     /* an unchanged element is no write at all: the wire stays silent */
     if (same_element(program, *this, held.elems[at], value)) return true;
+    if (held.nested()) {
+        /* a row of THIS slot is staged before the arena can move under it */
+        if (value_retained(value) && value.ref == cell.list_slot) {
+            value = stage_row(*this, program, value);
+            if (value.tag == ValueTag::Nil) return false;
+        }
+        if (value.tag == ValueTag::Nil) {
+            release_row(held, at, false);
+        } else {
+            const AggView view = aggregate(value);
+            if (!place_row(*this, program, *this, held, cell.list_slot, at, false,
+                           view.data, view.count, held.row_pairs(), held.leaf))
+                return false;
+        }
+        ++held.gen;
+        held.total = held.count;
+        values[cell_index] = retained_value(held, cell.list_slot, false);
+        return true;
+    }
     if (value.tag == ValueTag::Text) {
         const uint32_t slot = list_text(held, at);
         if (slot == UINT32_MAX) return false;
@@ -745,6 +1230,149 @@ bool RuntimeState::store_index(const Program& program, uint32_t cell_index,
     ++held.gen;
     held.total = held.count;
     values[cell_index] = retained_value(held, cell.list_slot, false);
+    return true;
+}
+
+bool RuntimeState::append_leaf(const Program& program, uint32_t cell_index,
+                               const Value& outer, Value value, const Value& keep) noexcept {
+    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    const CellDef& cell = program.cells[cell_index];
+    if (cell.list_slot >= lists.size()) return false;
+    ListState& held = lists[cell.list_slot];
+    /* only a LIST row grows by appending — a map row grows by being written a new key,
+       which is store_leaf's verb, exactly as it is one level up */
+    if (!held.nested() || held.row_pairs()) return false;
+    if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
+        value.tag == ValueTag::Struct)
+        return false;
+    if (!elem_fits(held.leaf, value.tag)) return false;
+    const bool pairs = cell.shape == Shape::Map;
+    const uint32_t row = find_row(program, *this, held, pairs, outer);
+    if (row == UINT32_MAX) return false;
+    /* an UNKNOWN row is not a list to append to: it is a gap, and growing one would be
+       inventing the list it stands for */
+    if (held.elems[row_at(row, pairs)].tag != ValueTag::List) return false;
+    const uint32_t count = agg_count(held.elems[row_at(row, pairs)]);
+    const ValueTag was = count ? list_elem_tag(held.elems[row_at(row, pairs)]) : value.tag;
+    if (keep.tag != ValueTag::Num && count >= kRetainedCeiling) return false;
+    const uint32_t start = reserve_row(*this, held, row, pairs, count + 1);
+    if (start == UINT32_MAX) return false;
+    if (value.tag == ValueTag::Text) {
+        const uint32_t slot = leaf_text(held, start + count);
+        if (slot == UINT32_MAX) return false;
+        if (value.ref != slot) texts[slot].set(text(program, value));
+        value = Value::text(slot);
+    }
+    held.leaves[start + count] = value;
+    uint32_t now = count + 1;
+    const uint32_t window = keep_window(keep);
+    if (window != UINT32_MAX && now > window) {
+        const uint32_t drop = now - window;
+        for (uint32_t i = 0; i + drop < now; ++i) move_leaf(held, start + i, start + i + drop);
+        now = window;
+    }
+    held.elems[row_at(row, pairs)] = Value::retained_row(
+        cell.list_slot, start, now, was == value.tag ? was : ValueTag::Nil, false);
+    ++held.gen;
+    held.total = held.count;
+    values[cell_index] = retained_value(held, cell.list_slot, pairs);
+    return true;
+}
+
+bool RuntimeState::store_leaf(const Program& program, uint32_t cell_index, const Value& outer,
+                              const Value& inner, Value value) noexcept {
+    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    const CellDef& cell = program.cells[cell_index];
+    if (cell.list_slot >= lists.size()) return false;
+    ListState& held = lists[cell.list_slot];
+    if (!held.nested()) return false;
+    /* the bottom of the nesting is scalars: there is no third level for this to address */
+    if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
+        value.tag == ValueTag::Struct)
+        return false;
+    if (!elem_fits(held.leaf, value.tag)) return false;
+    const bool pairs = cell.shape == Shape::Map;
+    const uint32_t row = find_row(program, *this, held, pairs, outer);
+    if (row == UINT32_MAX) return false;
+    const uint32_t entry_at = row_at(row, pairs);
+    const uint32_t count = agg_count(held.elems[entry_at]);
+    const uint32_t start = agg_start(held.elems[entry_at]);
+
+    if (held.elems[entry_at].tag == ValueTag::List) {
+        if (inner.tag != ValueTag::Num || !(inner.data.num >= 0.0)) return false;
+        const uint32_t at = static_cast<uint32_t>(inner.data.num);
+        /* a leaf write EDITS what is there; a row grows by its own append, never by a
+           write past its end */
+        if (at >= count) return false;
+        if (same_element(program, *this, held.leaves[start + at], value)) return true;
+        const ValueTag was = list_elem_tag(held.elems[entry_at]);
+        if (value.tag == ValueTag::Text) {
+            const uint32_t slot = leaf_text(held, start + at);
+            if (slot == UINT32_MAX) return false;
+            if (value.ref != slot) texts[slot].set(text(program, value));
+            value = Value::text(slot);
+        }
+        held.leaves[start + at] = value;
+        held.elems[entry_at] = Value::retained_row(
+            cell.list_slot, start, count, was == value.tag ? was : ValueTag::Nil, false);
+    } else if (held.elems[entry_at].tag == ValueTag::Map) {
+        /* a MAP row upserts by key inside its own extent, by the rules the outer map
+           keeps among its entries: sorted position, Nil erases, a new key shifts the
+           pairs above it up */
+        if (inner.tag != ValueTag::Text) return false;
+        char buffer[kDefaultTextCap];
+        const std::string_view source = text(program, inner);
+        const size_t length = std::min(source.size(), sizeof(buffer));
+        if (length) std::memcpy(buffer, source.data(), length);
+        const std::string_view wanted(buffer, length);
+        uint32_t at = 0;
+        bool found = false;
+        while (at < count) {
+            const std::string_view here = text(program, held.leaves[start + at * 2]);
+            if (here == wanted) { found = true; break; }
+            if (wanted < here) break;
+            ++at;
+        }
+        if (value.tag == ValueTag::Nil) {
+            if (!found) return true;
+            for (uint32_t p = at * 2; p + 2 < count * 2; ++p)
+                move_leaf(held, start + p, start + p + 2);
+            held.elems[entry_at] =
+                Value::retained_row(cell.list_slot, start, count - 1, ValueTag::Nil, true);
+        } else {
+            uint32_t base = start;
+            uint32_t now = count;
+            if (!found) {
+                if (count >= kRetainedCeiling) return false;
+                base = reserve_row(*this, held, row, pairs, count + 1);
+                if (base == UINT32_MAX) return false;
+                for (uint32_t p = (count + 1) * 2; p-- > at * 2 + 2;)
+                    move_leaf(held, base + p, base + p - 2);
+                const uint32_t slot = leaf_text(held, base + at * 2);
+                if (slot == UINT32_MAX) return false;
+                texts[slot].set(wanted);
+                held.leaves[base + at * 2] = Value::text(slot);
+                now = count + 1;
+            }
+            if (value.tag == ValueTag::Text) {
+                const uint32_t slot = leaf_text(held, base + at * 2 + 1);
+                if (slot == UINT32_MAX) return false;
+                if (value.ref != slot) texts[slot].set(text(program, value));
+                value = Value::text(slot);
+            }
+            held.leaves[base + at * 2 + 1] = value;
+            held.elems[entry_at] =
+                Value::retained_row(cell.list_slot, base, now, ValueTag::Nil, true);
+        }
+    } else {
+        /* an UNKNOWN row holds no position to write: the gap is the answer */
+        return false;
+    }
+    /* the aggs lane speaks appends and whole pictures, never an in-place edit — one level
+       down changes nothing about that */
+    ++held.gen;
+    held.total = held.count;
+    values[cell_index] = retained_value(held, cell.list_slot, pairs);
     return true;
 }
 
@@ -864,8 +1492,10 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                seeded rather than the value the old run had reached */
             if (authored_moved(old_program, old_program.cells[o], new_program, wanted)) break;
             /* an element-type change is a retype: the buffer resets to its fresh seed
-               exactly as a scalar variable resets on a type change */
+               exactly as a scalar variable resets on a type change. The LEAF shape counts
+               the same way — a list of numbers is not a list of text, at either depth */
             if (wanted.elem != old_program.cells[o].elem) break;
+            if (wanted.leaf != old_program.cells[o].leaf) break;
             const Value& value = old_state.values[o];
             if (wanted.shape == Shape::Text && value.tag == ValueTag::Text) {
                 if (wanted.text_slot < next.texts.size()) {
@@ -882,8 +1512,15 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                 const ValueTag holds = pairs ? ValueTag::Map : ValueTag::List;
                 if (value.tag != holds) {
                     next.values[n] = Value::nil();
-                    if (wanted.list_slot < next.lists.size())
-                        next.lists[wanted.list_slot].count = 0;
+                    if (wanted.list_slot < next.lists.size()) {
+                        ListState& blank = next.lists[wanted.list_slot];
+                        blank.count = 0;
+                        /* the rows go with the entries: an arena nothing names is hole,
+                           and the seed it was born with is no longer what it holds */
+                        blank.leaf_used = 0;
+                        blank.leaf_live = 0;
+                        blank.row_cap.clear();
+                    }
                 } else {
                     const AggView view = old_state.aggregate(value);
                     next.hold_list(old_program, old_state, n, wanted.list_slot, view.data,

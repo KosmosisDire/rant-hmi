@@ -470,6 +470,8 @@ class Compiler {
             const uint32_t cell = add_cell(kind, owner, id_of(var), name, shape, Json(),
                                            var.value("persist", false));
             program_.cells[cell].elem = declared_elem(var, name);
+            program_.cells[cell].leaf =
+                declared_leaf(var, name, program_.cells[cell].elem);
             aggregate_var_initial(var, shape, cell);
             return cell;
         }
@@ -1048,6 +1050,11 @@ class Compiler {
             else
                 value = Json();
         }
+        const Shape elem = program_.cells[cell].elem;
+        if (elem == Shape::List || elem == Shape::Map) {
+            nested_var_initial(site, shape, elem, cell, value);
+            return;
+        }
         if (!value.is_null()) {
             if (pairs && value.is_object()) map_entries(site, value, out);
             else if (!pairs && value.is_array()) list_elements(site, value, out);
@@ -1055,7 +1062,6 @@ class Compiler {
         }
         /* a declared element type holds from the very start: one foreign element in
            the authored literal is a finding and the buffer starts empty instead */
-        const Shape elem = program_.cells[cell].elem;
         if (elem != Shape::Unknown) {
             const size_t stride = pairs ? 2 : 1;
             for (size_t i = pairs ? 1 : 0; i < out.size(); i += stride) {
@@ -1070,6 +1076,87 @@ class Compiler {
         }
         program_.cells[cell].has_list = true;
         program_.cells[cell].list_init = std::move(out);
+    }
+
+    /* A NESTED VARIABLE'S START: the same JSON one level deeper, and one level only.
+     * Every member of the outer container has to BE the declared row shape — a scalar
+     * where a row was declared is the finding, never a silent promotion — and every member
+     * of a row has to be a scalar, because there is no third level to hold anything else.
+     *
+     * A nested MAP keeps its KEYS in `list_init`, interleaved with a Nil where the value
+     * would sit, so the pairs stay in the order nlohmann already sorted them into and the
+     * runtime's own map layout needs no special case. The rows go beside them, one per
+     * entry, in `row_init`. */
+    void nested_var_initial(const AggSite& outer_site, Shape shape, Shape elem,
+                            uint32_t cell, const Json& value) {
+        const bool pairs = shape == Shape::Map;
+        const bool row_pairs = elem == Shape::Map;
+        AggSite site = outer_site;
+        site.teach = std::string("Write its start as ") +
+                     (pairs ? "an object of " : "a list of ") +
+                     (row_pairs ? "objects ({\"a\": {\"x\": 1}})" : "lists ([[1, 2], [3]])") +
+                     ", or leave it empty";
+        std::vector<Value> keys;
+        std::vector<std::vector<Value>> rows;
+        bool ok = true;
+        auto take_row = [&](const Json& item) {
+            std::vector<Value> row;
+            if (row_pairs && !item.is_object())
+                return refuse_agg(site, "a row is " + json_brief(item) +
+                                            ", and its rows are declared maps");
+            if (!row_pairs && !item.is_array())
+                return refuse_agg(site, "a row is " + json_brief(item) +
+                                            ", and its rows are declared lists");
+            if (row_pairs ? !map_entries(site, item, row) : !list_elements(site, item, row))
+                return false;
+            /* a declared leaf type holds from the very start, exactly as a flat cell's
+               declared element type does */
+            const Shape leaf = program_.cells[cell].leaf;
+            if (leaf != Shape::Unknown)
+                for (size_t i = row_pairs ? 1 : 0; i < row.size(); i += row_pairs ? 2 : 1) {
+                    const Shape held = value_shape(row[i]);
+                    if (held == leaf || held == Shape::Nil) continue;
+                    return refuse_agg(site, "its rows hold " +
+                                                std::string(shape_name(leaf)) +
+                                                ", and the start holds a " +
+                                                shape_name(held));
+                }
+            rows.push_back(std::move(row));
+            return true;
+        };
+        if (!value.is_null()) {
+            if (pairs && value.is_object()) {
+                for (auto it = value.begin(); ok && it != value.end(); ++it) {
+                    keys.push_back(Value::text(program_.add_text(it.key())));
+                    keys.push_back(Value::nil());
+                    ok = take_row(*it);
+                }
+            } else if (!pairs && value.is_array()) {
+                for (const Json& item : value) {
+                    ok = take_row(item);
+                    if (!ok) break;
+                }
+            } else {
+                ok = refuse_agg(site, "its start is " + json_brief(value));
+            }
+        }
+        /* the outer count takes the same authored-literal bound a flat one does: a longer
+           start is a finding rather than a truncation nobody sees */
+        if (ok && rows.size() > kVarrCeiling) {
+            diag(site.node, "value_shape",
+                 site.subject + ": " + std::to_string(rows.size()) +
+                     " rows were authored, and an authored literal holds at most " +
+                     std::to_string(kVarrCeiling),
+                 DiagGrade::Error, site.where);
+            ok = false;
+        }
+        if (!ok) {
+            keys.clear();
+            rows.clear();
+        }
+        program_.cells[cell].has_list = true;
+        program_.cells[cell].list_init = std::move(keys);
+        program_.cells[cell].row_init = std::move(rows);
     }
 
     /* a value outside a slot's declared variant set is a typo, not a new option */
@@ -1097,10 +1184,42 @@ class Compiler {
         const Shape shape = var_shape(text);
         if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text)
             return shape;
+        /* list or map here declares a NESTED cell: every element is a row, and `leaf`
+           says what the rows hold */
+        if (shape == Shape::List || shape == Shape::Map) return shape;
         diag(id_of(var), "value_shape",
              "variable '" + name + "': '" + text +
-                 "' is not an element type; elements are f64, bool, str or icon",
+                 "' is not an element type; elements are f64, bool, str or icon, or list "
+                 "or map for rows",
              DiagGrade::Error, "elem");
+        return Shape::Unknown;
+    }
+
+    /* THE LEAF TYPE of a nested list or map: what its ROWS hold. It is read only where
+     * `elem` declares a row, and only a scalar can be spelled — nesting is ONE level by
+     * construction, so there is nothing below a row for a third name to describe. */
+    Shape declared_leaf(const Json& var, const std::string& name, Shape elem) {
+        const std::string text = trimmed(var.value("leaf", ""));
+        if (text.empty()) return Shape::Unknown;
+        if (elem != Shape::List && elem != Shape::Map) {
+            diag(id_of(var), "value_shape",
+                 "variable '" + name +
+                     "': a leaf type says what the ROWS hold, and this variable's elements "
+                     "are " +
+                     (elem == Shape::Unknown ? std::string("undeclared")
+                                             : std::string(shape_name(elem))) +
+                     "; declare its elements list or map first",
+                 DiagGrade::Error, "leaf");
+            return Shape::Unknown;
+        }
+        const Shape shape = var_shape(text);
+        if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text)
+            return shape;
+        diag(id_of(var), "value_shape",
+             "variable '" + name + "': '" + text +
+                 "' is not a leaf type; a row holds f64, bool, str or icon — nesting is "
+                 "one level, so there is nothing below a row to be a list of",
+             DiagGrade::Error, "leaf");
         return Shape::Unknown;
     }
 
@@ -1921,8 +2040,11 @@ class Compiler {
         if (def.elem != Shape::Unknown) {
             /* the declared element type is the destination's shape: same coercions,
                same refusals a same-shaped scalar destination gets (an enum appends to
-               a text list as its variant name) */
-            if (!push_typed(element, step, flow, scope, from, def.elem, 0))
+               a text list as its variant name). A NESTED destination declares a row, and
+               the one-scalar rule steps aside for exactly that shape, as it does wherever
+               a declared HMI aggregate is the destination. */
+            const bool row = def.elem == Shape::List || def.elem == Shape::Map;
+            if (!push_typed(element, step, flow, scope, from, def.elem, 0, row))
                 return false;
         } else {
             Shape produced = Shape::Unknown;

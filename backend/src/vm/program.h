@@ -108,8 +108,13 @@ struct CellDef {
     Shape shape = Shape::Unknown;
     /* list/map cells: the DECLARED element shape (a map's VALUE shape; keys are text).
      * Unknown = undeclared, any scalar — every aggregate write enforces a declared one,
-     * so a typed list cannot drift into holding mixed elements. */
+     * so a typed list cannot drift into holding mixed elements. List or Map here is the
+     * one NESTED case: every element is a row, and `leaf` is what the rows hold. */
     Shape elem = Shape::Unknown;
+    /* NESTED cells only: the shape a ROW's own elements are declared to be. Nesting stops
+     * here by construction — there is no third level to name, which is what keeps every
+     * copy, compare and encode below a fixed depth. */
+    Shape leaf = Shape::Unknown;
     Value initial = Value::nil();
     bool persistent = false;
     uint32_t text_slot = UINT32_MAX;
@@ -130,6 +135,11 @@ struct CellDef {
     uint32_t list_slot = UINT32_MAX;
     bool has_list = false;
     std::vector<Value> list_init;
+    /* NESTED cells only: one authored ROW per entry. A nested MAP still keeps its KEYS in
+     * `list_init` — interleaved with a Nil where the value would be, so the pairs stay
+     * sorted together by the one comparison every other path already uses — and the row
+     * beside each key is `row_init[pair]`. A nested LIST leaves `list_init` empty. */
+    std::vector<std::vector<Value>> row_init;
     /* a DERIVED FIELD CELL: this aggregate cell IS the storage of one aggregate field
      * of a struct cell ("jogCmd.v") — field_of names that struct cell, field_index the
      * field. Derived cells are bound in scope under the dotted name, take every

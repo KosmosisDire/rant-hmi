@@ -54,6 +54,37 @@ struct ListState {
     uint64_t total = 0;
     std::vector<Value> elems;
     std::vector<uint32_t> texts;
+
+    /* ---- NESTED cells only (the cell declares `elem` list or map) ----
+     *
+     * Nesting is ONE declared level, so a row holds scalars and nothing below it can hold
+     * anything. Every row's elements live together in this one LEAF ARENA and the row's
+     * entry in `elems` is the sub-aggregate Value naming its start and length — no child
+     * ListState, no slot allocator, no lifetime to get wrong.
+     *
+     * Extents are NOT in row order. A row that outgrows its capacity is relocated whole
+     * to the tail and leaves a HOLE behind, which is what keeps growing one row off the
+     * cost of every other row; `leaf_live` (the capacity actually reachable) against
+     * `leaf_used` (the tail cursor) is how a compaction knows when the holes are worth
+     * collecting. `leaf_texts` homes leaf text per POSITION exactly as `texts` does for
+     * the outer entries, so a relocation carries text with it (move_leaf). */
+    std::vector<Value> leaves;
+    std::vector<uint32_t> leaf_texts;
+    /* the extent reserved for each ROW (a map's PAIR index), which is what an append
+     * writes into without moving anything */
+    std::vector<uint32_t> row_cap;
+    uint32_t leaf_used = 0;
+    uint32_t leaf_live = 0;
+    /* The DECLARED element and leaf shapes, copied from the cell at construction. An
+     * aggregate `elem` is what makes this slot nested, and the storage has to be able to
+     * say so on its own: a recompile hands migrate the NEW cell table and the OLD state,
+     * so the slot being written is the only thing in reach that knows its own shape. A
+     * mesh mirror declares neither and is never nested. */
+    Shape elem = Shape::Unknown;
+    Shape leaf = Shape::Unknown;
+
+    bool nested() const noexcept { return elem == Shape::List || elem == Shape::Map; }
+    bool row_pairs() const noexcept { return elem == Shape::Map; }
 };
 
 /* a bounds-checked window into an aggregate's elements; `count` is ENTRIES (a map's
@@ -241,13 +272,23 @@ class RuntimeState {
     bool hold_list(const Program& source_program, const RuntimeState& source,
                    uint32_t cell, uint32_t list_slot, const Value* data,
                    uint32_t count, bool pairs = false) noexcept;
-    /* Append ONE element to a list cell. An aggregate element is refused (nested
-     * aggregates do not exist) and so is an append that would cross kRetainedCeiling
-     * with no keep to bound it; both return false so the caller can fault loudly. A Nil
-     * value APPENDS: a gap is a value, and a ring that silently skipped its unknown
-     * samples would draw a lie. `keep`, when it is a number, trims the FRONT afterwards. */
+    /* the same start, for a cell whose elements are ROWS: the authored rows live on the
+     * cell as `row_init` rather than in one flat run, because a run of scalars is exactly
+     * what a nested literal is not */
+    void seed_nested(const Program& program, uint32_t cell, const CellDef& def) noexcept;
+    /* Append ONE element to a list cell — a scalar, or a whole ROW where the cell
+     * declares a list/map element. An element the cell's declared shape does not fit is
+     * refused, and so is an append that would cross kRetainedCeiling with no keep to
+     * bound it; both return false so the caller can fault loudly. A Nil value APPENDS: a
+     * gap is a value, and a ring that silently skipped its unknown samples would draw a
+     * lie. `keep`, when it is a number, trims the FRONT afterwards. */
     bool append_list(const Program& program, uint32_t cell, Value value,
                      const Value& keep) noexcept;
+    /* the same append where the cell declares a nested element: the value is a whole ROW,
+     * laid into the slot's leaf arena beside every other row's. Reached through
+     * append_list, which is where the shape is decided. */
+    bool append_row(const Program& program, uint32_t cell, Value value,
+                    const Value& keep) noexcept;
     /* Write ONE key of a map cell, at its sorted position. A Nil value ERASES the key
      * (an absent key is already erased, which is not a failure). A non-text key, an
      * aggregate value, or a NEW key past the ceiling all return false: a map has no
@@ -262,6 +303,22 @@ class RuntimeState {
      * because the aggs lane has no in-place-edit vocabulary. */
     bool store_index(const Program& program, uint32_t cell, const Value& index,
                      Value value) noexcept;
+    /* ---- INSIDE one row of a nested cell ----
+     *
+     * `outer` addresses the row the way the cell itself is addressed — a number index
+     * into a nested list, a text key into a nested map — and the verbs below are the row's
+     * own append and element write. Both refuse on a cell that is not nested, on a row
+     * that is not there (a row is grown by writing the OUTER entry, never by reaching
+     * into a position that does not exist), and on an aggregate value (a row holds
+     * scalars: nesting is one level and this is already the bottom of it).
+     *
+     * A leaf edit is a DISCONTINUITY like every other in-place edit here: the aggs lane
+     * has no vocabulary for "element 3 of row 2 moved", so the generation bumps and the
+     * cell goes out whole on the next publish. */
+    bool append_leaf(const Program& program, uint32_t cell, const Value& outer, Value value,
+                     const Value& keep) noexcept;
+    bool store_leaf(const Program& program, uint32_t cell, const Value& outer,
+                    const Value& inner, Value value) noexcept;
     /* One delivered aggregate field into its mirror slot: `data` is the delivery's
      * element run (a map's pairs interleaved, arrival order), `elem_texts[k]` the text
      * behind data[k] where that element is text. Bounds to the field's own bound and
@@ -272,9 +329,13 @@ class RuntimeState {
                           bool pairs, ValueTag elem, uint32_t bound) noexcept;
     /* the text slot backing element `at` of a retained aggregate, allocated on first use */
     uint32_t list_text(ListState& held, uint32_t at) noexcept;
+    /* the same, for position `at` of a nested slot's LEAF arena */
+    uint32_t leaf_text(ListState& held, uint32_t at) noexcept;
     /* move one entry within a retained slot, its text following it into the destination
      * position's own slot: what a trim and a keyed insert are both built out of */
     void move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept;
+    /* the same move, within the leaf arena */
+    void move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept;
 
     /* aggregate scratch: reset before seeding a run's x, allocate during the run.
      * alloc_elems returns the pool offset or UINT32_MAX when the layout bound is hit;

@@ -1121,6 +1121,13 @@ class Parser {
                 return Shape::Unknown;
             }
             advance();
+            /* the literal's elements land in the run's scratch pool, so the site has to
+               reserve them like every other list-producing site does — a program whose
+               ONLY aggregate is a literal reserved nothing at all before this, and its
+               MakeList failed at the allocation with the stack already unwound (the
+               append below it then read a stale slot and refused something nobody
+               wrote). No text slots: MakeList copies element Values as they stand. */
+            sink_.reserve_elems(count, 0);
             emit(OpCode::MakeList, 0, count);
             if (count) depth_ -= count - 1; /* the elements collapse into one list */
             else pushed();

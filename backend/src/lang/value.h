@@ -34,8 +34,15 @@ constexpr uint32_t kConstantRef = 0x80000000u;
  * in a cell's RETAINED storage, and `ref` is the retained slot rather than a pool
  * offset. A cell must be able to hold a list across ticks, and the scratch pool resets
  * every run, so the two storages have to be told apart by the value itself. Every reader
- * of the element tag MASKS rather than comparing the whole byte. */
+ * of the element tag MASKS rather than comparing the whole byte.
+ *
+ * kSubAgg names the third storage: ONE ROW of a nested retained cell. `ref` is still the
+ * retained slot, but the entries live in that slot's LEAF arena rather than its outer
+ * entries, starting at the offset packed into the high half of the payload. A row is
+ * never a slot of its own — nesting is one declared level, so a row has no rows, and
+ * giving each one its own ListState would buy nothing but a lifetime problem. */
 constexpr uint8_t kElemTagMask = 0x0fu;
+constexpr uint8_t kSubAgg = 0x40u;
 constexpr uint8_t kRetainedAgg = 0x80u;
 
 struct Value {
@@ -69,6 +76,11 @@ struct Value {
     static Value map(uint32_t offset, uint32_t count);
     /* the same map, held in retained slot `slot` instead of the run's pool */
     static Value retained_map(uint32_t slot, uint32_t pairs);
+    /* ONE ROW of a nested retained cell: `slot`'s leaf arena, `count` entries from
+     * `start`. The start rides the payload's high half, so the low half stays the count
+     * every existing reader already takes it for. */
+    static Value retained_row(uint32_t slot, uint32_t start, uint32_t count, ValueTag elem,
+                              bool pairs);
     /* a struct lives in one of the run's struct slots: ref = the slot, type_id = its
      * entry in the type table. Message buffers, struct-valued locals and a struct read
      * off the mesh are all this one representation (spec 5.2). */
@@ -81,6 +93,12 @@ Shape value_shape(const Value& value);
 /* a list's element tag, with the storage bit masked off */
 ValueTag list_elem_tag(const Value& value);
 bool value_retained(const Value& value);
+/* is this aggregate ONE ROW of a nested retained cell (its entries in the slot's leaf
+ * arena) rather than the cell's own outer entries? */
+bool value_row(const Value& value);
+/* an aggregate's entry count (a map's PAIRS) and, for a row, where its entries start */
+uint32_t agg_count(const Value& value);
+uint32_t agg_start(const Value& value);
 bool value_truth(const Value& value);
 bool value_same_scalar(const Value& a, const Value& b);
 uint32_t parse_color(std::string_view text, bool& ok);
