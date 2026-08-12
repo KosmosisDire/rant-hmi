@@ -95,11 +95,16 @@ export function elementIndex(type: ComponentType): ElementIndex {
   return index;
 }
 
-/* the specs an element owns, in declaration order; the component's own for "" */
+/* THE INPUTS an element owns, in declaration order; the component's own for "".
+ *
+ * PUBLIC ONLY, and this is the one place that rule is kept: the registry serves a
+ * component's private variables too (their cells, addresses and scope entries are real,
+ * and its own pictures read them), but they are not part of its interface and an instance
+ * has no business seeing them. Every inspector row an instance shows comes through here. */
 export function ownedSlots(type: ComponentType | null, path: string): SlotSpec[] {
   if (!type) return [];
   const node = elementIndex(type).byPath.get(path);
   if (!node) return [];
   const want = new Set(node.slots);
-  return (type.slots ?? []).filter((spec) => want.has(spec.name));
+  return (type.slots ?? []).filter((spec) => want.has(spec.name) && spec.public !== false);
 }

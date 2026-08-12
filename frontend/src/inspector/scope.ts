@@ -17,7 +17,8 @@
 import { TokenAccess } from "../colorpicker.js";
 import { Editor } from "../editor.js";
 import { resolveColor } from "../slots.js";
-import { ComponentDef, Flow, Json, Lang, MeshEntity, MeshField, Node, Var } from "../types.js";
+import { ComponentDef, Flow, Json, Lang, MeshEntity, MeshField, Node,
+         SCALAR_TYPES, Var } from "../types.js";
 import { scopeAt } from "./flowscope.js";
 
 export interface NameRow {
@@ -25,6 +26,7 @@ export interface NameRow {
   shape?: string;  /* its shape, when known: "num" "bool" "text" "list" ... */
   note?: string;   /* a short origin tag: "local", "global", "slot" */
   elem?: string;   /* aggregate names: the element shape */
+  leaf?: string;   /* nested aggregates: what one ROW holds */
   fields?: MeshField[];   /* struct names: the field table behind the dot */
 }
 
@@ -108,7 +110,7 @@ export interface Scope {
   names(): NameRow[];
   /* the shape of x at this position, or null when unknown; a struct x carries its
      field table so the dot offers FIELDS, not methods */
-  x?(): { shape: string; elem?: string; fields?: MeshField[] } | null;
+  x?(): { shape: string; elem?: string; leaf?: string; fields?: MeshField[] } | null;
   /* color tokens, only where they are legal */
   tokens?(): TokenAccess | null;
   /* the browse tree — the STRUCTURED universe names() projects flat. Absent only
@@ -160,7 +162,9 @@ export function ownLocals(editor: Editor, id: number): Var[] {
   return declaredLocals(editor, id);
 }
 
-const VAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
+/* a scalar variable's shape IS its type; anything else is a timer, an aggregate or a
+   TypeRef (see SCALAR_TYPES in types.ts) */
+const scalarShape = (type: string) => (SCALAR_TYPES.has(type) ? type : undefined);
 
 /* a timer reads by field: what the dot offers on one */
 const TIMER_FIELDS: MeshField[] = [
@@ -263,7 +267,7 @@ function variableRows(editor: Editor, element: Node | null, prefix: string,
                : ("outer" as const);
     /* beyond timer and the scalars, a variable's type is a TypeRef: a dotted ref is
        an enum, a root name a struct carrying its field table */
-    const scalar = VAR_SHAPE[variable.type];
+    const scalar = scalarShape(variable.type);
     const isEnum = !scalar && variable.type !== "timer" && variable.type.includes(".");
     const fields =
       variable.type === "timer" ? TIMER_FIELDS
@@ -437,7 +441,8 @@ function repeatRow(flow: Flow | null): BrowseRow[] {
  * above this row fills it, retyped by each one. The event's own value arrives as a
  * named PARAMETER, never as x. */
 function flowX(editor: Editor, instance: Node | null, flow: () => Flow, stepId: number) {
-  return (): { shape: string; elem?: string; fields?: MeshField[] } | null =>
+  return (): { shape: string; elem?: string; leaf?: string;
+               fields?: MeshField[] } | null =>
     scopeAt(editor, instance, flow(), stepId).x;
 }
 
@@ -497,6 +502,7 @@ export function flowScope(editor: Editor, instance: Node | null, flow: Flow, ste
             label: local.name,
             shape: local.shape,
             elem: local.elem,
+            leaf: local.leaf,
             note: local.note,
             fields: local.fields,
           });
@@ -628,9 +634,8 @@ function owningComponent(editor: Editor, id: number): ComponentDef | null {
  * rides the wire already. */
 function displayReadable(variable: Var): boolean {
   if (variable.type === "timer") return false;
-  return VAR_SHAPE[variable.type] !== undefined || variable.type === "list" ||
-         variable.type === "map" || variable.type === "icon" ||
-         variable.type.includes(".");
+  return SCALAR_TYPES.has(variable.type) || variable.type === "list" ||
+         variable.type === "map" || variable.type.includes(".");
 }
 
 function attrRoots(editor: Editor, node: Node): BrowseRow[] {

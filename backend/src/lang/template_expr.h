@@ -44,9 +44,9 @@ using Json = nlohmann::json;
 struct TemplateVar {
     std::string name;
     uint64_t id = 0;
-    /* the declared type, verbatim ("f64" "bool" "str" "icon" "list" "map" "timer", or a
-     * TypeRef). Carried so a shape with NO display-tier reading is refused by name
-     * rather than compiled into a cell that reads Nil forever. */
+    /* the declared type, verbatim ("num" "bool" "text" "color" "icon" "list" "map"
+     * "timer", or a TypeRef). Carried so a type with NO display-tier reading is refused
+     * by name rather than compiled into a cell that reads Nil forever. */
     std::string type;
 };
 

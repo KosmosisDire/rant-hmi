@@ -331,7 +331,7 @@ void test_rename() {
     Json local = Json::array({Json{{"op", "insert"},
                                    {"parent", instance},
                                    {"list", "locals"},
-                                   {"node", {{"name", "flowRate"}, {"type", "f64"}}}}});
+                                   {"node", {{"name", "flowRate"}, {"type", "num"}}}}});
     CHECK_MSG(apply_ops(d, local, lr, err), err);
     ApplyResult br;
     Json shadowed = Json::array({Json{{"op", "rename"}, {"node", var_id}, {"name", "capture"}}});
@@ -375,7 +375,7 @@ void test_rename_scope() {
         {"op", "insert"}, {"parent", zone}, {"list", "children"},
         {"node", {{"kind", "frame"}, {"name", "Shadow"},
                   {"attrs", {{"w", "flow"}}},
-                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "f64"}}})}}}}});
+                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "num"}}})}}}}});
     CHECK_MSG(apply_ops(d, shadow_op, sr, err), err);
     const uint64_t shadow = sr.ops[0]["node"]["id"].get<uint64_t>();
 
@@ -388,13 +388,14 @@ void test_rename_scope() {
     CHECK_MSG(apply_ops(d, ink_op, pr, err), err);
     const uint64_t ink = pr.ops[0]["node"]["id"].get<uint64_t>();
 
-    /* a COMPONENT whose own property is called `flow`: a page's variable rename must
+    /* a COMPONENT whose own variable is called `flow`: a page's variable rename must
        not touch it, because nothing inside a component can name a page's variable */
     ApplyResult cr;
     Json comp_op = Json::array({Json{
         {"op", "insert"}, {"parent", 0}, {"list", "components"},
         {"node", {{"name", "Sealed"}, {"attrs", {{"w", "flow"}}},
-                  {"props", Json::array({Json{{"name", "flow"}, {"shape", "num"}}})}}}}});
+                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "num"},
+                                               {"public", true}}})}}}}});
     CHECK_MSG(apply_ops(d, comp_op, cr, err), err);
     const uint64_t sealed = cr.ops[0]["node"]["id"].get<uint64_t>();
 
@@ -423,7 +424,7 @@ void test_rename_scope() {
         {"op", "insert"}, {"parent", zone}, {"list", "children"},
         {"node", {{"kind", "frame"}, {"name", "Deep"},
                   {"attrs", {{"w", "rate"}}},
-                  {"locals", Json::array({Json{{"name", "speed"}, {"type", "f64"}}})}}}}});
+                  {"locals", Json::array({Json{{"name", "speed"}, {"type", "num"}}})}}}}});
     CHECK_MSG(apply_ops(d, deep_op, dr, err), err);
     const uint64_t deep = dr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(!apply(d, {Json{{"op", "rename"}, {"node", var_id}, {"name", "speed"}}}, err));
@@ -435,7 +436,7 @@ void test_rename_scope() {
     ApplyResult lr;
     Json local_op = Json::array({Json{
         {"op", "insert"}, {"parent", zone}, {"list", "locals"},
-        {"node", {{"name", "hits"}, {"type", "f64"}}}}});
+        {"node", {{"name", "hits"}, {"type", "num"}}}}});
     CHECK_MSG(apply_ops(d, local_op, lr, err), err);
     const uint64_t hits = lr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", zone}, {"key", "attrs"},
@@ -444,7 +445,7 @@ void test_rename_scope() {
     Json kid_op = Json::array({Json{
         {"op", "insert"}, {"parent", shadow}, {"list", "children"},
         {"node", {{"kind", "frame"}, {"name", "Kid"}, {"attrs", {{"w", "hits"}}},
-                  {"locals", Json::array({Json{{"name", "hits"}, {"type", "f64"}}})}}}}});
+                  {"locals", Json::array({Json{{"name", "hits"}, {"type", "num"}}})}}}}});
     CHECK_MSG(apply_ops(d, kid_op, kr, err), err);
     const uint64_t kid = kr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", hits}, {"name", "taps"}}}, err), err);
@@ -486,7 +487,7 @@ void test_retype() {
 
     /* and back: a bool becomes a number again, so nothing is stuck in the wrong shape */
     CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
-                                    {"value", "f64"}}}),
+                                    {"value", "num"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == 1.0);
 
@@ -521,7 +522,7 @@ void test_retype() {
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == Json::object());
     CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
-                                    {"value", "f64"}}}),
+                                    {"value", "num"}}}),
                     r, err));
     /* nothing about a map is a number, so the number's own default stands */
     CHECK(global_named(d, "setpoint")->at("init") == 0.0);
@@ -595,22 +596,32 @@ void test_aggregate_move_props() {
     CHECK(d.node(moved)->at("key") == "");
 }
 
-/* PROP SHAPES: the served vocabulary a component declares its properties in. `series`
- * is gone with the sampling ring; `list` and `map` took its place, and a declared list
- * property is exactly what a Trend's history now is. */
-void test_prop_shapes() {
-    const Prop* shape = find_prop(node_spec(Kind::PropDef), "", "shape");
-    if (!CHECK(shape != nullptr)) return;
-    bool has_list = false, has_map = false, has_series = false;
-    for (const std::string& variant : shape->variants) {
-        if (variant == "list") has_list = true;
-        if (variant == "map") has_map = true;
-        if (variant == "series") has_series = true;
-    }
-    CHECK(has_list && has_map);
-    CHECK(!has_series);
-    /* and the `history` flag went with it: a past is state, not a flag on a slot */
-    CHECK(find_prop(node_spec(Kind::PropDef), "", "history") == nullptr);
+/* THE ONE DECLARATION VOCABULARY. A property is a public variable, so the types a
+ * component declares its interface in are the types a page's variable is declared in:
+ * `list` and `map` (a Trend's history is one), `color` (which used to be a property SHAPE
+ * and nothing a variable could hold), and no `f64`/`str` spelling of num/text. `series`
+ * went with the sampling ring, and `enum` is a `text` carrying variants. */
+void test_var_types() {
+    const Prop* type = find_prop(node_spec(Kind::Var), "", "type");
+    if (!CHECK(type != nullptr)) return;
+    const auto names = [&](const char* want) {
+        for (const std::string& v : type->variants)
+            if (v == want) return true;
+        return false;
+    };
+    CHECK(names("num") && names("text") && names("color"));
+    CHECK(names("list") && names("map") && names("timer"));
+    CHECK(!names("f64") && !names("str"));
+    CHECK(!names("series") && !names("enum"));
+    /* the interface fields PropDef used to own now live on the variable itself */
+    for (const char* key : {"public", "group", "editor", "variants", "min", "max",
+                            "step", "smooth", "profile"})
+        CHECK(find_prop(node_spec(Kind::Var), "", key) != nullptr);
+    /* and a component holds its variables in the SAME list every element does */
+    bool has_locals = false;
+    for (const ChildList& list : node_spec(Kind::Component).lists)
+        if (list.key == "locals" && list.kind == Kind::Var) has_locals = true;
+    CHECK(has_locals);
 }
 
 /* Theme tokens (spec 2.10): the seeded set, generic ops over the Token kind, and the
@@ -1076,7 +1087,7 @@ int main() {
     test_expr_rewrite();
     test_retype();
     test_aggregate_move_props();
-    test_prop_shapes();
+    test_var_types();
     test_tokens();
     test_component_design_frame();
     return check::summary("doc_test");

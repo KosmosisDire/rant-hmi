@@ -521,8 +521,8 @@ void test_builtins_compile_clean() {
     CHECK(track["anchors"][1].contains("arc"));
     CHECK(ops_of(track["anchors"][0]["x"]).find("SIN") != std::string::npos);
 
-    /* PropDef extras round-trip: fine steps, bounds, editors — and an address that says
-       which node owns what */
+    /* the interface EXTRAS round-trip: fine steps, bounds, editors — and an address that
+       says which element owns what */
     const Json& knob = registry["components"][3];
     bool thickness = false, arc_color = false;
     for (const Json& slot : knob["slots"]) {
@@ -534,7 +534,9 @@ void test_builtins_compile_clean() {
         }
         if (slot.value("name", "") == "dial.arc.fill_color") {
             arc_color = true;
-            CHECK(slot["editor"] == "color");
+            /* the SHAPE says colour now, so the editor hint that merely repeated it is
+               gone: a redundant word is not served */
+            CHECK(slot["shape"] == "color" && !slot.contains("editor"));
         }
     }
     CHECK(thickness && arc_color);
@@ -551,11 +553,11 @@ Document component_document() {
         {"events", Json::array({Json{{"name", "reading"},
                                      {"params", Json::array({Json{{"name", "level"},
                                                                   {"shape", "num"}}})}}})},
-        {"props", Json::array({
-            Json{{"id", 101}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
-                 {"group", "value"}},
-            Json{{"id", 102}, {"name", "fill_color"}, {"shape", "color"},
-                 {"default", "$accent"}, {"group", "appearance"}, {"editor", "color"}},
+        {"locals", Json::array({
+            Json{{"id", 101}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+                 {"group", "value"}, {"public", true}},
+            Json{{"id", 102}, {"name", "fill_color"}, {"type", "color"},
+                 {"init", "$accent"}, {"group", "appearance"}, {"public", true}},
         })},
         /* THE COMPONENT IS THE ROOT FRAME: its own attrs describe the box an
            instance renders as, and its children are what stands inside it */
@@ -570,9 +572,9 @@ Document component_document() {
     Json shadow = {
         {"id", 200},
         {"name", "Toggle"},
-        {"props", Json::array({
-            Json{{"id", 201}, {"name", "value"}, {"shape", "bool"}, {"default", false},
-                 {"group", "value"}},
+        {"locals", Json::array({
+            Json{{"id", 201}, {"name", "value"}, {"type", "bool"}, {"init", false},
+                 {"group", "value"}, {"public", true}},
         })},
         {"events", Json::array({Json{{"name", "changed"},
                                      {"params", Json::array({Json{{"name", "value"},
@@ -666,43 +668,46 @@ void test_doc_components() {
     CHECK(compiled.program.raises.size() == 1);  /* and it SPEAKS changed(value) */
 }
 
-/* NODES OWN PROPERTIES: a property declared on a node is addressed under that node's
- * path, is in scope for that node and everything under it and nowhere else, and an
+/* ELEMENTS OWN VARIABLES: one declared on an element is addressed under that element's
+ * path, is in scope for that element and everything under it and nowhere else, and an
  * instance stores its value nested the same way. */
 void test_part_properties() {
     Json comp = {
         {"id", 400},
         {"name", "Dial"},
         /* the component's own: read anywhere, addressed bare */
-        {"props", Json::array({
-            Json{{"id", 401}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
-                 {"group", "value"}},
+        {"locals", Json::array({
+            Json{{"id", 401}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+                 {"group", "value"}, {"public", true}},
         })},
         {"children", Json::array({
             Json{{"id", 420}, {"kind", "frame"}, {"name", "gauge"},
                  /* declared on the frame, so BOTH its children read it */
-                 {"props", Json::array({Json{{"id", 421}, {"name", "shade"},
-                                             {"shape", "color"},
-                                             {"default", "$track"},
-                                             {"group", "appearance"}}})},
+                 {"locals", Json::array({Json{{"id", 421}, {"name", "shade"},
+                                              {"type", "color"},
+                                              {"init", "$track"},
+                                              {"group", "appearance"},
+                                              {"public", true}}})},
                  {"attrs", Json::object()},
                  {"children", Json::array({
                      Json{{"id", 430}, {"kind", "frame"}, {"name", "arc"},
-                          {"props", Json::array({Json{{"id", 431},
-                                                      {"name", "fill_color"},
-                                                      {"shape", "color"},
-                                                      {"default", "$accent"},
-                                                      {"group", "appearance"}}})},
+                          {"locals", Json::array({Json{{"id", 431},
+                                                       {"name", "fill_color"},
+                                                       {"type", "color"},
+                                                       {"init", "$accent"},
+                                                       {"group", "appearance"},
+                                                       {"public", true}}})},
                           {"attrs", Json{{"surface", "fill_color"},
                                          {"border", "shade"},
                                          {"w", "value"}}}},
-                     /* the SAME name on a sibling is a different property */
+                     /* the SAME name on a sibling is a different variable */
                      Json{{"id", 440}, {"kind", "frame"}, {"name", "dot"},
-                          {"props", Json::array({Json{{"id", 441},
-                                                      {"name", "fill_color"},
-                                                      {"shape", "color"},
-                                                      {"default", "$handle"},
-                                                      {"group", "appearance"}}})},
+                          {"locals", Json::array({Json{{"id", 441},
+                                                       {"name", "fill_color"},
+                                                       {"type", "color"},
+                                                       {"init", "$handle"},
+                                                       {"group", "appearance"},
+                                                       {"public", true}}})},
                           {"attrs", Json{{"surface", "fill_color"}}}},
                  })}},
         })},
@@ -776,15 +781,15 @@ void test_part_properties() {
     CHECK(cell_named("value") != nullptr);
 }
 
-/* the rules that keep an address unambiguous: a name a node cannot carry ONCE IT HAS TO
- * CARRY ONE, a property beside a node of the same name, and a property with nowhere to
- * live. A name that addresses nothing is a label and is held to none of this. */
+/* the rules that keep an address unambiguous: a name an element cannot carry ONCE IT HAS
+ * TO CARRY ONE, a variable beside an element of the same name, and a variable with
+ * nowhere to live. A name that addresses nothing is a label and is held to none of this. */
 void test_part_property_rules() {
-    auto findings = [](Json children, Json props) {
+    auto findings = [](Json children, Json vars) {
         Json root = {
             {"version", 1}, {"next_id", 900},
             {"components", Json::array({Json{{"id", 500}, {"name", "Bad"},
-                                             {"props", std::move(props)},
+                                             {"locals", std::move(vars)},
                                              {"children", std::move(children)}}})},
             {"pages", Json::array()},
         };
@@ -797,14 +802,15 @@ void test_part_property_rules() {
         for (const Diag& d : diags) codes += (codes.empty() ? "" : ",") + d.code;
         return codes;
     };
-    auto node_named = [](const char* name, Json props) {
+    auto node_named = [](const char* name, Json vars) {
         return Json{{"id", 511}, {"kind", "frame"}, {"name", name},
-                    {"props", std::move(props)}, {"attrs", Json::object()}};
+                    {"locals", std::move(vars)}, {"attrs", Json::object()}};
     };
-    /* one `tint` property row; every node in a document carries its own id */
+    /* one `tint` variable row; every node in a document carries its own id */
     auto tint = [](int id) {
-        return Json::array({Json{{"id", id}, {"name", "tint"}, {"shape", "color"},
-                                 {"default", "#000000"}, {"group", "appearance"}}});
+        return Json::array({Json{{"id", id}, {"name", "tint"}, {"type", "color"},
+                                 {"init", "#000000"}, {"group", "appearance"},
+                                 {"public", true}}});
     };
 
     /* A NAME IS A LABEL UNTIL SOMETHING NEEDS AN ADDRESS: a hyphen is fine on a node that
@@ -814,17 +820,17 @@ void test_part_property_rules() {
              std::string(""));
     CHECK_EQ(findings(Json::array({node_named("head-in", tint(521))}), Json::array()),
              std::string("node_name"));
-    /* a node beside a property of the same name has nowhere to store its values. ONE
-       mistake, ONE finding: the name is what is wrong, so the properties under it are not
+    /* an element beside a variable of the same name has nowhere to store its values. ONE
+       mistake, ONE finding: the name is what is wrong, so the variables under it are not
        reported again for being unreachable */
     CHECK_EQ(findings(Json::array({node_named("tint", tint(521))}), tint(520)),
              std::string("node_name"));
-    /* an unnamed node cannot own anything */
+    /* an unnamed element cannot own anything */
     CHECK_EQ(findings(Json::array({node_named("", tint(520))}), Json::array()),
-             std::string("prop_name"));
-    /* shadowing an enclosing property is legal and says so */
+             std::string("var_name"));
+    /* shadowing an enclosing variable is legal and says so */
     CHECK_EQ(findings(Json::array({node_named("dot", tint(521))}), tint(520)),
-             std::string("prop_shadow"));
+             std::string("var_shadow"));
 }
 
 /* an empty component (just created in the editor) serves a blank body, not an error */
@@ -948,7 +954,7 @@ void test_page_universe() {
     Json root = {
         {"version", 1}, {"next_id", 900},
         {"globals", Json::array({
-            Json{{"id", 500}, {"name", "setpoint"}, {"type", "f64"}, {"init", 4}},
+            Json{{"id", 500}, {"name", "setpoint"}, {"type", "num"}, {"init", 4}},
             Json{{"id", 501}, {"name", "ticker"}, {"type", "timer"}},
             Json{{"id", 502}, {"name", "spec"}, {"type", "Motor"}}})},
         /* a component whose attrs try for the page and are refused */
@@ -962,7 +968,7 @@ void test_page_universe() {
             {"children", Json::array({
                 Json{{"id", 110}, {"kind", "frame"}, {"name", "outer"},
                      {"locals", Json::array({Json{{"id", 510}, {"name", "hits"},
-                                                  {"type", "f64"}}})},
+                                                  {"type", "num"}}})},
                      {"attrs", Json{{"w", "hits * 10"}, {"opacity", "@cage/motor.speed"}}},
                      {"children", Json::array({
                          Json{{"id", 111}, {"kind", "frame"}, {"name", "kid"},
@@ -971,7 +977,7 @@ void test_page_universe() {
                                              {"h", "@cage/sensor"}}}},
                          Json{{"id", 112}, {"kind", "frame"}, {"name", "shadow"},
                               {"locals", Json::array({Json{{"id", 511}, {"name", "hits"},
-                                                           {"type", "f64"}}})},
+                                                           {"type", "num"}}})},
                               {"attrs", Json{{"w", "hits"}}}}})}},
                 /* outside that subtree: the local is not in scope, and neither is a
                    field the motor does not have */
@@ -1107,9 +1113,9 @@ void test_per_copy_slots() {
     Json root = {
         {"version", 1}, {"next_id", 900},
         {"globals", Json::array({
-            Json{{"id", 500}, {"name", "readings"}, {"type", "list"}, {"elem", "f64"},
+            Json{{"id", 500}, {"name", "readings"}, {"type", "list"}, {"elem", "num"},
                  {"init", Json::array({10, 20, 30})}},
-            Json{{"id", 501}, {"name", "seen"}, {"type", "f64"}, {"init", 0}}})},
+            Json{{"id", 501}, {"name", "seen"}, {"type", "num"}, {"init", 0}}})},
         {"pages", Json::array({Json{
             {"id", 100}, {"name", "Main"},
             {"children", Json::array({
@@ -1225,16 +1231,17 @@ void test_transitions() {
      * nothing draws */
     Json comp = {
         {"id", 800}, {"name", "Sweep"},
-        {"props", Json::array({
-            Json{{"id", 801}, {"name", "value"}, {"shape", "num"}, {"default", 0.0},
-                 {"group", "value"}, {"smooth", 400.0}, {"profile", "ease-out"}},
-            Json{{"id", 804}, {"name", "rate"}, {"shape", "num"}, {"default", 1.0},
-                 {"group", "config"}, {"smooth", 250.0}},
+        {"locals", Json::array({
+            Json{{"id", 801}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+                 {"group", "value"}, {"public", true}, {"smooth", 400.0},
+                 {"profile", "ease-out"}},
+            Json{{"id", 804}, {"name", "rate"}, {"type", "num"}, {"init", 1.0},
+                 {"group", "config"}, {"public", true}, {"smooth", 250.0}},
             /* the sweep's time is an EXPRESSION over the component's own scope */
-            Json{{"id", 805}, {"name", "speed"}, {"shape", "num"}, {"default", 0.0},
-                 {"group", "value"}, {"smooth", "1000 / rate"}},
-            Json{{"id", 803}, {"name", "label"}, {"shape", "text"}, {"default", "hi"},
-                 {"group", "config"}},
+            Json{{"id", 805}, {"name", "speed"}, {"type", "num"}, {"init", 0.0},
+                 {"group", "value"}, {"public", true}, {"smooth", "1000 / rate"}},
+            Json{{"id", 803}, {"name", "label"}, {"type", "text"}, {"init", "hi"},
+                 {"group", "config"}, {"public", true}},
         })},
         {"transitions", Json{{"surface", Json{{"ms", 300.0}}}}},
         {"children", Json::array({
@@ -1353,13 +1360,14 @@ void test_transitions() {
             {"version", 1}, {"next_id", 900},
             {"components", Json::array({Json{
                 {"id", 820}, {"name", "BadSweep"},
-                {"props", Json::array({
-                    Json{{"id", 821}, {"name", "a"}, {"shape", "num"}, {"default", 0.0},
-                         {"group", "value"}, {"smooth", -20.0}},
-                    Json{{"id", 822}, {"name", "b"}, {"shape", "num"}, {"default", 0.0},
-                         {"group", "value"}, {"smooth", 100.0}, {"profile", "bounce"}},
-                    Json{{"id", 823}, {"name", "c"}, {"shape", "color"},
-                         {"default", "#fff"}, {"group", "appearance"},
+                {"locals", Json::array({
+                    Json{{"id", 821}, {"name", "a"}, {"type", "num"}, {"init", 0.0},
+                         {"group", "value"}, {"public", true}, {"smooth", -20.0}},
+                    Json{{"id", 822}, {"name", "b"}, {"type", "num"}, {"init", 0.0},
+                         {"group", "value"}, {"public", true}, {"smooth", 100.0},
+                         {"profile", "bounce"}},
+                    Json{{"id", 823}, {"name", "c"}, {"type", "color"},
+                         {"init", "#fff"}, {"group", "appearance"}, {"public", true},
                          {"smooth", 100.0}},
                 })}}})},
             {"pages", Json::array()},
@@ -1370,7 +1378,7 @@ void test_transitions() {
         std::vector<Diag> diags2;
         Json registry2 = derive_registry(document2, diags2);
         CHECK_EQ(diags2.size(), size_t(3));
-        for (const Diag& d : diags2) CHECK_EQ(d.code, std::string("prop_smooth"));
+        for (const Diag& d : diags2) CHECK_EQ(d.code, std::string("var_smooth"));
         const Json& slots = registry2["components"][12]["slots"];
         CHECK(!slots[0].contains("smooth"));
         /* the ms was legal, the profile was not: the sweep serves, the profile does not */

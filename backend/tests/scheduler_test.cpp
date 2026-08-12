@@ -70,7 +70,7 @@ Document timed_document() {
         {"next_id", 1},
         {"globals",
          Json::array({
-             Json{{"name", "count"}, {"type", "f64"}, {"init", 0}},
+             Json{{"name", "count"}, {"type", "num"}, {"init", 0}},
              Json{{"name", "watchdog"}, {"type", "timer"}, {"init", 0.005}},
          })},
         {"pages",
@@ -114,7 +114,7 @@ Document filter_document() {
     Json root = {
         {"version", 1},
         {"next_id", 1},
-        {"globals", Json::array({Json{{"name", "count"}, {"type", "f64"}, {"init", 0}}})},
+        {"globals", Json::array({Json{{"name", "count"}, {"type", "num"}, {"init", 0}}})},
         {"pages", Json::array({Json{{"name", "Main"}, {"children", Json::array({slider})}}})},
     };
     Document document;
@@ -149,7 +149,7 @@ Document first_document() {
         {"next_id", 1},
         {"globals",
          Json::array({
-             Json{{"name", "count"}, {"type", "f64"}, {"init", 0}},
+             Json{{"name", "count"}, {"type", "num"}, {"init", 0}},
              Json{{"name", "window"}, {"type", "timer"}, {"init", 0.003}},
          })},
         {"pages", Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})},
@@ -640,7 +640,7 @@ void test_cadence_flows() {
                  {"next_id", 1},
                  {"globals",
                   Json::array({
-                      Json{{"name", "level"}, {"type", "f64"}, {"init", 7.0}},
+                      Json{{"name", "level"}, {"type", "num"}, {"init", 7.0}},
                       Json{{"name", "fast"}, {"type", "list"}},
                       Json{{"name", "slow"}, {"type", "list"}},
                   })},
@@ -817,12 +817,12 @@ Document repeat_document() {
         {"next_id", 1},
         {"globals",
          Json::array({
-             Json{{"name", "slots"}, {"type", "list"}, {"elem", "f64"},
+             Json{{"name", "slots"}, {"type", "list"}, {"elem", "num"},
                   {"init", Json::array({0, 0, 0, 0, 0})}},
-             Json{{"name", "mark"}, {"type", "f64"}, {"init", 0}},
-             Json{{"name", "span"}, {"type", "f64"}, {"init", 0}},
-             Json{{"name", "heldAt"}, {"type", "f64"}, {"init", 0}},
-             Json{{"name", "late"}, {"type", "f64"}, {"init", 0}},
+             Json{{"name", "mark"}, {"type", "num"}, {"init", 0}},
+             Json{{"name", "span"}, {"type", "num"}, {"init", 0}},
+             Json{{"name", "heldAt"}, {"type", "num"}, {"init", 0}},
+             Json{{"name", "late"}, {"type", "num"}, {"init", 0}},
          })},
         {"pages",
          Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})},
@@ -920,7 +920,7 @@ void test_repeat_refused_without_an_event() {
     Json root = {
         {"version", 1},
         {"next_id", 1},
-        {"globals", Json::array({Json{{"name", "mark"}, {"type", "f64"}, {"init", 0}}})},
+        {"globals", Json::array({Json{{"name", "mark"}, {"type", "num"}, {"init", 0}}})},
         {"pages",
          Json::array({Json{{"name", "Main"}, {"children", Json::array({button})}}})},
     };

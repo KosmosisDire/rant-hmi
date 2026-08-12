@@ -62,8 +62,15 @@ namespace hmi {
  * `repeat: {index, count}`, absent outside one. A repeated element is ONE element with
  * one set of cells, so the copy is not runtime storage: it arrives with the gesture and
  * an event-triggered flow reads it as `repeat.index` / `.count` / `.fraction`, which is
- * what makes `@arr[repeat.index] = x` write the copy that was pressed */
-constexpr int kProto = 17;
+ * what makes `@arr[repeat.index] = x` write the copy that was pressed;
+ * 18: A PROPERTY IS A PUBLIC VARIABLE — the `props` list and the PropDef row are gone
+ * from the document. A component declares `locals` like every other element, and a
+ * variable marked `public` is what an instance fills in; a private one is the
+ * component's own storage, served (its cell and address are real) but never offered.
+ * `type` and `shape` are ONE vocabulary now — `f64`/`str` are spelled `num`/`text`,
+ * `color` is a variable type, and a `text` with `variants` is what `enum` was — so a
+ * served row carries {shape, default, public, elem?} where a PropDef's did */
+constexpr int kProto = 18;
 
 struct AppOptions {
     ServerOptions server;

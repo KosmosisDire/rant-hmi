@@ -11,7 +11,8 @@
  * vocabulary and be believed. */
 
 import { Editor } from "../editor.js";
-import { eventKind, Flow, Json, MeshEntity, MeshField, Node } from "../types.js";
+import { eventKind, Flow, Json, MeshEntity, MeshField, Node,
+         SCALAR_TYPES } from "../types.js";
 /* scope.ts also imports scopeAt from here: a cycle on paper, but both edges are
  * function calls deferred past load, so neither module reads the other while loading */
 import { variablesInScope } from "./scope.js";
@@ -20,7 +21,9 @@ export interface LocalInfo {
   name: string;
   /* "num" | "bool" | "text" | "struct" | ... ; "" when it could not be inferred */
   shape: string;
+  /* aggregates: the element shape, and — where the elements are ROWS — what a row holds */
   elem?: string;
+  leaf?: string;
   /* struct locals: the type name (may be "" for an unnamed root) and its field table */
   type?: string;
   fields?: MeshField[];
@@ -28,7 +31,8 @@ export interface LocalInfo {
   note: "temporary" | "local" | "global" | "event parameter";
 }
 
-const VAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
+/* a scalar variable's shape IS its type now (SCALAR_TYPES in types.ts) */
+const scalarShape = (type: string) => (SCALAR_TYPES.has(type) ? type : undefined);
 
 export function entityOf(editor: Editor, ref: Json): MeshEntity | null {
   if (!ref || !ref.kind || !ref.name) return null;
@@ -55,10 +59,11 @@ function declared(editor: Editor, instance: Node | null): LocalInfo[] {
     .filter((v) => v.type !== "timer")
     .map((v) => {
       const note = own.has(v.id) ? ("local" as const) : ("global" as const);
-      const scalar = VAR_SHAPE[v.type];
+      const scalar = scalarShape(v.type);
       if (scalar) return { name: v.name, shape: scalar, note };
       if (v.type === "list" || v.type === "map")
-        return { name: v.name, shape: v.type, elem: v.elem || undefined, note };
+        return { name: v.name, shape: v.type, elem: v.elem || undefined,
+                 leaf: v.leaf || undefined, note };
       if (v.type.includes(".")) return { name: v.name, shape: "enum", type: v.type, note };
       return {
         name: v.name,
@@ -80,7 +85,8 @@ function sourceShape(
   editor: Editor,
   from: Json,
   scope: Map<string, LocalInfo>,
-): { shape: string; elem?: string; type?: string; fields?: MeshField[] } | null {
+): { shape: string; elem?: string; leaf?: string; type?: string;
+     fields?: MeshField[] } | null {
   if (!from || typeof from !== "object") return null;
   if (typeof from.expr !== "string") return null;
   const text = from.expr.trim();
@@ -125,7 +131,7 @@ export interface FlowScope {
   locals: LocalInfo[];
   /* what `x` holds at this row, or null when it could not be inferred; a struct x
      carries its field table so completion offers fields */
-  x: { shape: string; elem?: string; fields?: MeshField[] } | null;
+  x: { shape: string; elem?: string; leaf?: string; fields?: MeshField[] } | null;
 }
 
 /* Walk the DO list down to `stepId` (or to the end when it names no step) and report the
@@ -161,7 +167,8 @@ export function scopeAt(
 
     if (to.local === "x" && !to.path) {
       x = produced
-        ? { shape: produced.shape, elem: produced.elem, fields: produced.fields }
+        ? { shape: produced.shape, elem: produced.elem, leaf: produced.leaf,
+            fields: produced.fields }
         : null;
       continue;
     }
@@ -183,6 +190,7 @@ export function scopeAt(
       name: to.local,
       shape: produced.shape,
       elem: produced.elem,
+      leaf: produced.leaf,
       type: produced.type,
       fields: produced.fields,
       note: "temporary",

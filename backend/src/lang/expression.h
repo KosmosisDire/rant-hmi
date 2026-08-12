@@ -61,14 +61,16 @@ struct ExpressionResult {
     uint32_t max_stack = 0;
 };
 
-/* `wanted` is the destination's declared shape, when the caller knows one. The wire
- * tier's one-scalar rule reads it: an aggregate RESULT is legal exactly where the
- * destination declares that aggregate shape (a list variable, a list slot), and
- * refused everywhere else — a machine write is still one scalar. */
+/* `allow_agg` says the DESTINATION is an HMI aggregate — a list/map variable or slot,
+ * or one element of one — so an aggregate RESULT is legal here and the CALLER checks
+ * the shape, against what that destination declares it holds. Everywhere else the wire
+ * tier's one-scalar rule stands: a machine write is one scalar. The flag rather than a
+ * shape, because the caller's check is the better one: it can name the destination, what
+ * one element of it is, and the declaration that would accept what the author wrote. */
 bool compile_expression(const std::string& text, ExprTier tier,
                         const ExpressionScope& scope, EmitSink& sink,
                         std::vector<Instruction>& code, ExpressionResult& result,
-                        std::string& error, Shape wanted = Shape::Unknown);
+                        std::string& error, bool allow_agg = false);
 
 /* The language, as data (spec 3.7 / "everything is data"): one row per builtin and
  * method, straight from the tables the parser compiles with, so autocomplete can

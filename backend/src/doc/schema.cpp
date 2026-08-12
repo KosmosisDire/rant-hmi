@@ -105,13 +105,19 @@ const std::vector<NodeSpec>& table() {
                Rendering only: the value the attr computes is never eased. */
             object("transitions", Json::object(), Role::Transitions),
         };
-        /* WHAT AN ELEMENT DECLARES, whatever kind it is: the properties it owns, the
-           variables it holds and the behavior it runs. None of the three is a fact about
-           being a BOX — a text readout wanting a local counter and a flow to fill it is
-           the same want a frame has — so they are common lists, and only `children` (the
-           one thing a leaf genuinely cannot hold) rides the frame variant. */
-        node.lists = {{"props", Kind::PropDef},
-                      {"locals", Kind::Var},
+        /* WHAT AN ELEMENT DECLARES, whatever kind it is: the variables it holds and the
+           behavior it runs. Neither is a fact about being a BOX — a text readout wanting a
+           counter and a flow to fill it is the same want a frame has — so they are common
+           lists, and only `children` (the one thing a leaf genuinely cannot hold) rides the
+           frame variant.
+
+           THERE IS NO `props` LIST, and its absence IS the property model: a component's
+           inputs are ordinary variables marked `public`. Which of the two a variable here
+           becomes is decided by WHERE THE ELEMENT LIVES rather than by how it is declared —
+           on a page an element exists once and its variable is one cell, while inside a
+           component the element is placed many times and its variable is one cell PER
+           PLACEMENT, addressed under the element's name. */
+        node.lists = {{"locals", Kind::Var},
                       {"flows", Kind::Flow}};
         node.variants = {
             /* A FRAME IS A BOX, and a box is all a frame is: it can hold children (that
@@ -162,10 +168,11 @@ const std::vector<NodeSpec>& table() {
              * resolves the name. */
             /* `icon` is a scalar too: the value is the glyph's NAME (ordinary text at
              * runtime); the declared type is what earns it the icon-grid editor */
-            text_retyping("type", "f64",
-                          {"f64", "bool", "str", "icon", "timer", "list", "map"}, "init",
-                          {Json(0.0), Json(false), Json(""), Json(""), Json(1.0),
-                           Json::array(), Json::object()}),
+            text_retyping("type", "num",
+                          {"num", "bool", "text", "color", "icon", "timer", "list", "map"},
+                          "init",
+                          {Json(0.0), Json(false), Json(""), Json("#ffffff"), Json(""),
+                           Json(1.0), Json::array(), Json::object()}),
             /* a list's or map's DECLARED ELEMENT type (a map's value type; keys are
              * text): one of the scalar type names, "" = undeclared (any scalar). The
              * compiler checks it where it can see and the runtime enforces it on every
@@ -178,6 +185,47 @@ const std::vector<NodeSpec>& table() {
             text("leaf", ""),
             any("init", 0),
             boolean("persist", false),
+            /* ---- WHAT MAKES A VARIABLE AN INPUT ----
+             *
+             * A variable declared inside a COMPONENT is that component's own storage, one
+             * cell per placement. `public` is the whole of what used to be a separate
+             * property: it says this variable is part of the component's interface, so
+             * every instance shows it in the inspector and may give it a value of its own
+             * (an expression there feeds it; the `init` below is what it starts as
+             * otherwise). A private one is the component's business and nothing else's.
+             *
+             * On a PAGE element there is nothing to be public TO — the element is placed
+             * once and is its own placement — so the flag and every field under it sit
+             * inert, exactly as `elem` does on a scalar. */
+            boolean("public", false),
+            /* which section of the instance inspector this input lands in: what the
+               control IS (value), how it looks (appearance), how it is set up (config),
+               or the pane around it (frame) */
+            enumer("group", {"value", "appearance", "config", "frame"}, "appearance"),
+            /* an editor the SHAPE alone would not have chosen: "align" for the 3x3 text
+               grid, "enum-type" for the chip that writes variants(Type.field). Empty =
+               let the type pick, which is the answer nearly everywhere now that `color`
+               is a type rather than a hint. */
+            text("editor", ""),
+            /* A CONSTRAINED TEXT: with variants, a `str` input is picked from a list
+               instead of typed — which is all "enum" ever meant here (the vocabulary is
+               the author's words, not the mesh's; a mesh enum is a TypeRef in `type`).
+               One mechanism, shared with the attr table, instead of a shape of its own. */
+            array("variants"),
+            /* how a NUMBER input is edited: the caret's grain and the bounds that turn
+               the field into a slider. Advisory — nothing enforces them at runtime, since
+               a feed may still deliver anything. */
+            num("step", nullptr),
+            num("min", nullptr),
+            num("max", nullptr),
+            /* THE DECLARED TRANSITION: every rendered read of this variable eases over
+               `smooth` milliseconds along `profile`, so one declaration sweeps the needle,
+               the arc and the readout together. Both are EXPRESSIONS over the declaring
+               element's scope (a number and a bare easing name are the degenerate
+               literals), which is why `smooth` takes either shape. Rendering only:
+               behavior, feeds, the wire and gestures always read the true value. */
+            any("smooth", nullptr),
+            text("profile", ""),
         };
         t.push_back(var);
 
@@ -283,48 +331,22 @@ const std::vector<NodeSpec>& table() {
             /* the component record IS its root node, transitions included */
             object("transitions", Json::object(), Role::Transitions),
         };
-        /* NO `locals` HERE YET. A component's own variables would need ONE SET PER
-           INSTANCE (two placements are two machines), and a per-instance variable has no
-           cell key on the wire — `v<id>` is the variable's document id, which every
-           instance would share. That is a wire decision, not a schema line, so the list
-           stays unspelled until it is made rather than sitting here as dead data. */
-        component.lists = {{"props", Kind::PropDef},
+        /* `locals` ARE THE COMPONENT'S VARIABLES, and the ones marked `public` are the
+           vocabulary an instance fills in — what a separate `props` list used to be. The
+           old objection here was the wire key: a per-instance variable cannot be published
+           under `v<id>`, the document id every placement would share. It never needed to
+           be. A component's variable is addressed the way a component's property always
+           was — by the PLACEMENT plus the name (`<instance id>.<address>`) — so two
+           instances are two cells with no third spelling invented for it. */
+        component.lists = {{"locals", Kind::Var},
                            {"children", Kind::Node},
                            {"behavior", Kind::Flow}};
         t.push_back(component);
 
-        /* One declared property = one served SlotSpec row: the optional keys (editor,
-         * variants, step/min/max) are served only where they say something, so a row
-         * here round-trips to exactly the wire shape (spec 2.3). A prop row lives on the
-         * component (the component's own vocabulary) or on any ELEMENT, whose path
-         * prefixes its address.
-         *
-         * `list` and `map` are ordinary property shapes: a declared list property is a
-         * Dropdown's options and a Trend's history alike — visible state a flow appends
-         * to, not a privileged ring nothing could point at. */
-        NodeSpec prop;
-        prop.kind = Kind::PropDef;
-        prop.name = "prop";
-        prop.props = {
-            text("name"),
-            enumer("shape", {"num", "bool", "text", "color", "icon", "enum", "list", "map"},
-                   "num"),
-            any("default", 0.0),
-            enumer("group", {"value", "appearance", "config", "frame"}, "appearance"),
-            text("editor", ""),
-            array("variants"),
-            num("step", nullptr),
-            num("min", nullptr),
-            num("max", nullptr),
-            /* THE DECLARED TRANSITION: every rendered read of this slot eases over
-               `smooth` milliseconds along `profile`. Both are EXPRESSIONS over the
-               declaring node's scope (a number and a bare easing name are the
-               degenerate literals), so `smooth` takes either shape. Rendering only:
-               behavior, feeds, the wire and gestures always read the true value. */
-            any("smooth", nullptr),
-            text("profile", ""),
-        };
-        t.push_back(prop);
+        /* THERE IS NO PROPERTY SPEC HERE ANY MORE. A component's interface is its public
+         * variables, so the row that declared a property and the row that declares a
+         * variable became the one `var` spec above — which is why `public`, `group`,
+         * `editor`, `variants` and the number bounds live there. */
 
         return t;
     }();

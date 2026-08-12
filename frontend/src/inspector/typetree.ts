@@ -25,21 +25,27 @@ import { resolveTypeRef, variantNames } from "../slots.js";
 export { resolveTypeRef, variantNames };
 
 export interface TypeTreeOptions {
-  scalars?: boolean;   /* offer f64 / bool / str / timer */
+  scalars?: boolean;   /* offer num / bool / text / color / icon / timer / list / map */
+  /* a component's variable is storage PER PLACEMENT, and a timer has no per-placement
+     form — so the one surface that cannot offer it says so here */
+  timers?: boolean;
   structs?: boolean;   /* offer struct roots */
   enums?: boolean;     /* offer enum fields as Root.path picks */
 }
 
 export interface TypePick {
-  ref: string;                          /* what the document stores: "f64", "ValveCmd",
+  ref: string;                          /* what the document stores: "num", "ValveCmd",
                                            "ValveCmd.mode" */
   kind: "scalar" | "struct" | "enum";
 }
 
 const SCALARS = [
-  { ref: "f64", label: "number" },
+  { ref: "num", label: "number" },
   { ref: "bool", label: "bool" },
-  { ref: "str", label: "text" },
+  { ref: "text", label: "text" },
+  /* a colour is a scalar like any other; it was only ever a property SHAPE because
+     properties used to be a separate kind of row */
+  { ref: "color", label: "color" },
   /* an icon variable holds a glyph NAME (text at runtime); the declared type is
      what earns its editors the icon grid */
   { ref: "icon", label: "icon" },
@@ -92,7 +98,7 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
       rows.push({ depth: 0, key: "hmi", label: "hmi", icon: "folder", expandable: true });
     if (openOr("hmi"))
       for (const scalar of SCALARS)
-        if (match(scalar.label))
+        if (match(scalar.label) && (scalar.ref !== "timer" || opts.timers !== false))
           rows.push({
             depth: depth0,
             key: "sc:" + scalar.ref,

@@ -57,9 +57,9 @@ struct Sink {
  * refusal inside a component, in the same words the scalar tier uses for the same rule
  * (compile/compiler.cpp) — one rule, said once, wherever the author meets it. */
 constexpr const char* kIsolatedHelp =
-    " — a component sees its own properties and nothing of the page it sits on, so that "
-    "it works wherever it is placed. Declare a property here and let each instance's own "
-    "value bring the variable or the mesh field in";
+    " — a component sees its own variables and nothing of the page it sits on, so that "
+    "it works wherever it is placed. Declare a public variable here and let each "
+    "instance's own value bring the page's variable or the mesh field in";
 
 /* A name is read as a BARE IDENTIFIER in expressions and joined with dots into slot
  * addresses (`bar.fill_color`), so a name carrying an address takes letters, digits and
@@ -72,12 +72,12 @@ bool identifier(const std::string& name) {
     return true;
 }
 
-/* Does anything in this subtree declare a property? That is exactly when a node's name
- * has to be an ADDRESS rather than a label: an address exists to reach a property, so a
+/* Does anything in this subtree declare a variable? That is exactly when a node's name
+ * has to be an ADDRESS rather than a label: an address exists to reach a variable, so a
  * node with none under it is free to be called "Status group". This is what lets one
  * `name` field serve a page's labels and a component's addressing with no second rule. */
 bool needs_address(const Json& node) {
-    if (!array_or_empty(node, "props").empty()) return true;
+    if (!array_or_empty(node, "locals").empty()) return true;
     for (const Json& child : array_or_empty(node, "children"))
         if (child.is_object() && needs_address(child)) return true;
     return false;
@@ -135,7 +135,7 @@ void take_vars(const Json& rows, std::vector<TemplateVar>& out) {
         if (!var.is_object()) continue;
         const std::string name = str_or(var, "name", "");
         if (name.empty() || !identifier(name)) continue;
-        out.push_back(TemplateVar{name, id_of(var), str_or(var, "type", "f64")});
+        out.push_back(TemplateVar{name, id_of(var), str_or(var, "type", "num")});
     }
 }
 
@@ -342,95 +342,160 @@ Json compile_anchors(const Json& anchors, const TemplateScope& scope, uint64_t n
     return out;
 }
 
-Json slot_row(const Json& prop, const std::string& address);
+Json var_row(const Json& var, const std::string& address);
 
-/* a property's DECLARED SWEEP, stashed in pass one and compiled in pass two — its ms
+/* a variable's DECLARED SWEEP, stashed in pass one and compiled in pass two — its ms
  * and profile are expressions over the declaring node's scope, which is not complete
- * until every property in the component is known */
+ * until every variable in the component is known */
 struct SweepRow {
     std::string address;
     std::string path;
     Json ms;
     std::string profile;
-    uint64_t prop_id = 0;
+    uint64_t var_id = 0;
 };
 
-/* The properties one node declares: each becomes a served slot addressed under this
- * node's path, and each enters the scope its attrs and its children's attrs read. Returns
- * the names, in declaration order, for the caller to extend the scope with; the slot rows
- * go straight into the component's table.
+/* ---- THE TYPE A COMPONENT'S VARIABLE MAY HAVE ----
+ *
+ * A component's variable is storage PER PLACEMENT, addressed by the instance and the
+ * name. Two declared types have no per-placement form yet: a `timer` is identified by its
+ * own document id (every instance would arm the same one) and a mesh TypeRef needs struct
+ * cells a slot address cannot reach. Both are refused here rather than quietly compiled
+ * into a cell that reads UNKNOWN forever — and a page element, which is its own placement,
+ * still takes either. */
+bool component_type_ok(const std::string& type) {
+    return type == "num" || type == "bool" || type == "text" || type == "color" ||
+           type == "icon" || type == "list" || type == "map";
+}
+
+/* what one ELEMENT of a declared list or map may be. Checked HERE, on the row that
+ * declares it, so a mistake gets one finding rather than one per placement and the
+ * document compiler can take the served string at its word. */
+bool elem_type_ok(const std::string& type) {
+    return type == "num" || type == "bool" || type == "text" || type == "icon";
+}
+
+/* A VARIABLE'S TYPE AS EVERY READER OF THE SERVED ROW SEES IT — the same word it was
+ * declared with, because a variable's `type` and a served row's `shape` are one
+ * vocabulary now.
+ *
+ * The ONE translation left: a `text` WITH VARIANTS is served as "enum", a picked-from-a-
+ * list text, which is all the old `enum` shape ever meant. The vocabulary is the author's
+ * own words — a mesh enum is a TypeRef, and those do not come this way. */
+std::string served_shape(const Json& var) {
+    const std::string type = str_or(var, "type", "num");
+    if (type != "text") return type;
+    auto variants = var.find("variants");
+    const bool picked = variants != var.end() && variants->is_array() && !variants->empty();
+    return picked ? "enum" : "text";
+}
+
+/* The variables one node declares: each becomes a served row addressed under this node's
+ * path, and each enters the scope its attrs and its children's attrs read. Returns the
+ * names, in declaration order, for the caller to extend the scope with; the rows go
+ * straight into the component's table.
+ *
+ * PUBLIC OR NOT, A VARIABLE COMES THROUGH HERE. Both kinds are per-placement storage the
+ * component's own pictures read, so both need an address, a scope entry and a cell; what
+ * `public` decides is only whether an INSTANCE sees it — one flag on the served row,
+ * honoured by the inspector that shows it and by the compiler that lets a placement
+ * override it.
  *
  * A node with no path (an unnamed one) has nowhere to hang an address, so declaring there
  * is refused rather than quietly folded into the parent's namespace. */
-std::vector<std::string> collect_props(const Json& rows, const std::string& path,
-                                       bool addressable, const TemplateScope& outer,
-                                       Json& slots, std::vector<SweepRow>& sweeps,
-                                       Sink& sink, bool quiet = false) {
+std::vector<std::string> collect_vars(const Json& rows, const std::string& path,
+                                      bool addressable, const TemplateScope& outer,
+                                      Json& slots, std::vector<SweepRow>& sweeps,
+                                      Sink& sink, bool quiet = false) {
     std::vector<std::string> names;
     if (!rows.is_array()) return names;
     std::set<std::string> here;
-    for (const Json& prop : rows) {
-        if (!prop.is_object()) continue;
-        const std::string name = str_or(prop, "name", "");
+    for (const Json& var : rows) {
+        if (!var.is_object()) continue;
+        const std::string name = str_or(var, "name", "");
         if (name.empty()) {
-            sink.report(id_of(prop), "prop_name", "this property has no name", "name");
+            sink.report(id_of(var), "var_name", "this variable has no name", "name");
             continue;
         }
         if (!identifier(name)) {
-            sink.report(id_of(prop), "prop_name",
-                        "'" + name + "' cannot name a property: expressions read it as a "
+            sink.report(id_of(var), "var_name",
+                        "'" + name + "' cannot name a variable: expressions read it as a "
                         "bare name, so it takes letters, digits and underscores",
                         "name");
             continue;
         }
         if (!here.insert(name).second) {
-            sink.report(id_of(prop), "prop_name",
-                        "two properties here are both named '" + name + "'", "name");
+            sink.report(id_of(var), "var_name",
+                        "two variables here are both named '" + name + "'", "name");
             continue;
         }
         if (!addressable) {
             /* quiet where the NODE's own name was already reported: one mistake, one
                finding — the row that says "this name cannot address" covers it */
             if (!quiet)
-                sink.report(id_of(prop), "prop_name",
-                            "name this node before giving it properties: a property is "
-                            "addressed under the node that owns it",
+                sink.report(id_of(var), "var_name",
+                            "name this element before giving it variables: a component's "
+                            "variable is addressed under the element that owns it",
                             "name");
             continue;
         }
+        const std::string type = str_or(var, "type", "num");
+        if (!component_type_ok(type)) {
+            sink.report(id_of(var), "var_type",
+                        "a component's variable cannot be '" + type +
+                            "': it is storage per placement, and a timer or a mesh type "
+                            "has no per-placement form here. A page element takes either",
+                        "type");
+            continue;
+        }
+        const bool aggregate = type == "list" || type == "map";
+        const std::string elem = str_or(var, "elem", "");
+        const std::string leaf = str_or(var, "leaf", "");
+        const bool rows_of = elem == "list" || elem == "map";
+        if (aggregate && !elem.empty() && !elem_type_ok(elem) && !rows_of)
+            sink.report(id_of(var), "var_type",
+                        "'" + elem + "' is not an element type: elements are f64, bool, "
+                        "str or icon, or list or map for rows",
+                        "elem");
+        else if (aggregate && !leaf.empty() && (!rows_of || !elem_type_ok(leaf)))
+            sink.report(id_of(var), "var_type",
+                        rows_of ? "'" + leaf + "' is not a leaf type: a row holds f64, "
+                                  "bool, str or icon"
+                                : "a leaf type says what the ROWS hold; declare this "
+                                  "variable's elements list or map first",
+                        "leaf");
         /* an inherited name still resolves — to THIS one, from here down — but a
-           property whose meaning changes with depth is a mistake worth saying out loud.
+           variable whose meaning changes with depth is a mistake worth saying out loud.
            `shown` is the exception and by design: every node has its own, so inside a
            node the bare word always means that node's own switch. */
         if (const std::string* above = name == "shown" ? nullptr : outer.find(name))
-            sink.report(id_of(prop), "prop_shadow",
+            sink.report(id_of(var), "var_shadow",
                         "'" + name + "' is already in scope here as '" + *above +
-                            "'; the node's own wins below this point",
+                            "'; the element's own wins below this point",
                         "name");
-        /* THE TRANSITION ON A PROPERTY: every rendered read of this slot eases toward
-         * the true value — one declaration, and the needle, the arc and the readout all
-         * sweep together. The VALUE never eases: behavior, the wire and gestures read
-         * truth. NUMBERS ONLY (the view tweens a number; a colour cross-fades on the
-         * attribute that draws it); the ms/profile are EXPRESSIONS over the declaring
-         * node's scope, so they are stashed here and compiled in pass two, once every
-         * property is known. */
-        auto smooth = prop.find("smooth");
-        const bool sweeps_at_all = smooth != prop.end() &&
+        /* THE TRANSITION ON A VARIABLE: every rendered read of it eases toward the true
+         * value — one declaration, and the needle, the arc and the readout all sweep
+         * together. The VALUE never eases: behavior, the wire and gestures read truth.
+         * NUMBERS ONLY (the view tweens a number; a colour cross-fades on the attribute
+         * that draws it); the ms/profile are EXPRESSIONS over the declaring node's scope,
+         * so they are stashed here and compiled in pass two, once every name is known. */
+        auto smooth = var.find("smooth");
+        const bool sweeps_at_all = smooth != var.end() &&
             ((smooth->is_number() && smooth->get<double>() != 0) ||
              (smooth->is_string() && !smooth->get<std::string>().empty()));
         if (sweeps_at_all) {
-            if (str_or(prop, "shape", "num") != std::string("num"))
-                sink.report(id_of(prop), "prop_smooth",
-                            "only a number property sweeps; a colour cross-fades on "
-                            "the attribute that draws it (its transition button)",
+            if (type != "num")
+                sink.report(id_of(var), "var_smooth",
+                            "only a number sweeps; a colour cross-fades on the attribute "
+                            "that draws it (its transition button)",
                             "smooth");
             else
                 sweeps.push_back(SweepRow{path.empty() ? name : path + "." + name, path,
-                                          *smooth, str_or(prop, "profile", ""),
-                                          id_of(prop)});
+                                          *smooth, str_or(var, "profile", ""),
+                                          id_of(var)});
         }
         names.push_back(name);
-        slots.push_back(slot_row(prop, path.empty() ? name : path + "." + name));
+        slots.push_back(var_row(var, path.empty() ? name : path + "." + name));
     }
     return names;
 }
@@ -443,34 +508,37 @@ struct Walk {
     std::shared_ptr<std::set<std::string>> addresses =
         std::make_shared<std::set<std::string>>();
     std::map<std::string, TemplateScope> scopes;
-    /* declared property sweeps, compiled after the scopes exist (pass two) */
+    /* declared variable sweeps, compiled after the scopes exist (pass two) */
     std::vector<SweepRow> sweeps;
 };
 
-/* EVERY addressed node can be switched off: the property is synthesized where the node
+/* EVERY addressed node can be switched off: the variable is synthesized where the node
  * does not declare it, so "show the scale" is the scale's own `shown` rather than a
  * `show_scale` on the component, and any node a user adds gets the same switch for free. A
  * node that wants to start hidden simply declares `shown` itself with a default of false. */
 bool declares_shown(const Json& rows) {
     if (!rows.is_array()) return false;
-    for (const Json& prop : rows)
-        if (prop.is_object() && str_or(prop, "name", "") == "shown") return true;
+    for (const Json& var : rows)
+        if (var.is_object() && str_or(var, "name", "") == "shown") return true;
     return false;
 }
 
-/* pass one: the properties, their addresses and each node's scope */
+/* pass one: the variables, their addresses and each node's scope */
 void collect_tree(const Json& node, const std::string& path, bool addressable,
                   const TemplateScope& outer, Walk& walk, Sink& sink, bool quiet = false) {
-    const Json& rows = node.value("props", Json::array());
+    const Json& rows = node.value("locals", Json::array());
     std::vector<std::string> names =
-        collect_props(rows, path, addressable, outer, walk.slots, walk.sweeps, sink,
-                      quiet);
+        collect_vars(rows, path, addressable, outer, walk.slots, walk.sweeps, sink,
+                     quiet);
     if (addressable && !path.empty() && !declares_shown(rows)) {
         names.push_back("shown");
         walk.slots.push_back(Json{{"name", path + ".shown"},
                                   {"shape", "bool"},
                                   {"default", true},
-                                  {"group", "config"}});
+                                  {"group", "config"},
+                                  /* the switch is the instance's to throw, so the one
+                                     variable nobody declared is public like the rest */
+                                  {"public", true}});
     }
     for (const std::string& name : names)
         walk.addresses->insert(path.empty() ? name : path + "." + name);
@@ -478,7 +546,7 @@ void collect_tree(const Json& node, const std::string& path, bool addressable,
     const TemplateScope scope = outer.extend(path, names);
     walk.scopes[path] = scope;
 
-    /* the property names stored AT this level (this node's own, plus the component's
+    /* the variable names stored AT this level (this node's own, plus the component's
        where this is the root): what a child's name would collide with */
     std::set<std::string> level_names;
     for (const auto& entry : scope.props)
@@ -489,27 +557,27 @@ void collect_tree(const Json& node, const std::string& path, bool addressable,
     for (const Json& child : node.value("children", Json::array())) {
         if (!child.is_object()) continue;
         const std::string child_name = str_or(child, "name", "");
-        /* A NAME IS ONLY AN ADDRESS WHERE SOMETHING NEEDS ONE. A node with no properties
+        /* A NAME IS ONLY AN ADDRESS WHERE SOMETHING NEEDS ONE. A node with no variables
            anywhere under it is a LABEL — "Status group" is a fine name for a pane, and two
            panes may share one — while a node something must reach is held to the
            identifier rule, to a unique name among its siblings, and to not colliding with
-           a property stored beside it. One `name` field, two jobs, and which job it is
+           a variable stored beside it. One `name` field, two jobs, and which job it is
            doing is a fact about the tree rather than a mode anyone has to set. */
         const bool wants = needs_address(child);
         /* an instance's `slots` nests a node's values under its name, beside the values of
-           the properties declared here, so the two share one namespace */
+           the variables declared here, so the two share one namespace */
         const bool taken = level_names.count(child_name) != 0;
         const bool repeats = !sibling_names.insert(child_name).second;
         bool ok = !child_name.empty() && identifier(child_name) && !taken && !repeats;
         /* reported only where the address was actually needed: a label breaks nothing */
         if (!ok && wants && !child_name.empty()) {
             const std::string why =
-                taken ? "'" + child_name + "' is already a property here; a node and a "
-                                           "property beside it cannot share a name"
+                taken ? "'" + child_name + "' is already a variable here; an element and "
+                                           "a variable beside it cannot share a name"
                 : repeats ? "two siblings are both named '" + child_name +
                                 "'; addresses need unique names"
-                          : "'" + child_name + "' cannot name this node: its name joins "
-                            "the addresses of the properties under it, so it takes "
+                          : "'" + child_name + "' cannot name this element: its name joins "
+                            "the addresses of the variables under it, so it takes "
                             "letters, digits and underscores";
             sink.report(id_of(child), "node_name", why, "name");
         }
@@ -521,7 +589,7 @@ void collect_tree(const Json& node, const std::string& path, bool addressable,
     }
 }
 
-/* A node's `show` attr, with its own `shown` property folded in: the property is the
+/* A node's `show` attr, with its own `shown` variable folded in: the variable is the
  * switch, the attr is whatever the type computes, and the node draws when both hold.
  * The view needs no new opcode — `pick` is the conditional it already runs. */
 Json shown_attrs(const Json& attrs, const std::string& path, const Walk& walk) {
@@ -575,7 +643,7 @@ Json compile_interact(const Json& node, const TemplateScope& scope, uint64_t nod
 
 /* pass two: one node row (doc form) -> one template node (wire form).
  *
- * `path` is this node's ADDRESS PREFIX: empty at the root (whose properties are the
+ * `path` is this node's ADDRESS PREFIX: empty at the root (whose variables are the
  * component's own, addressed bare), then the names of the nodes below it joined with dots.
  * The scope for that path says what a bare identifier means inside it. */
 Json compile_node(const Json& node, const std::string& path, const Walk& walk, Sink& sink) {
@@ -643,23 +711,41 @@ void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk
     }
 }
 
-/* One PropDef row (document or built-in data alike) -> the served SlotSpec shape.
- * `address` is the name the rest of the system uses: bare for a component-level property,
- * prefixed by the owning node's path for one a node declares. name/shape/default/group
- * are always present; the optional keys are served only when they say something. */
-Json slot_row(const Json& prop, const std::string& address) {
+/* One declared VARIABLE (document or built-in data alike) -> the served row every other
+ * tier reads it through. `address` is the name the rest of the system uses: bare for one
+ * the component itself declares, prefixed by the owning element's path otherwise.
+ *
+ * The document says `type` and `init`; the served row says `shape` and `default`, because
+ * what a placement, an editor and a view program need to know is the SHAPE of the value,
+ * not which word declared it. name/shape/default/group/public are always present; the
+ * optional keys are served only when they say something. */
+Json var_row(const Json& var, const std::string& address) {
     Json out{{"name", address},
-             {"shape", str_or(prop, "shape", "num")},
-             {"default", prop.contains("default") ? prop["default"] : Json()},
-             {"group", str_or(prop, "group", "appearance")}};
-    const std::string editor = str_or(prop, "editor", "");
+             {"shape", served_shape(var)},
+             {"default", var.contains("init") ? var["init"] : Json()},
+             {"group", str_or(var, "group", "appearance")},
+             /* IS THIS PART OF THE COMPONENT'S INTERFACE? A private variable is served
+                all the same — its cell, its address and its scope entry are needed
+                whether or not an instance may see it — and this is the one bit that
+                says so. */
+             {"public", var.value("public", false)}};
+    const std::string editor = str_or(var, "editor", "");
     if (!editor.empty()) out["editor"] = editor;
-    auto variants = prop.find("variants");
-    if (variants != prop.end() && variants->is_array() && !variants->empty())
+    auto variants = var.find("variants");
+    if (variants != var.end() && variants->is_array() && !variants->empty())
         out["variants"] = *variants;
+    /* a list's or map's DECLARED ELEMENT type, enforced on every write exactly as it is
+       for a page's variable — a component's list never had one to declare before. Served
+       only where the type has elements at all, and already checked by collect_vars. */
+    if (out["shape"] == "list" || out["shape"] == "map") {
+        const std::string elem = str_or(var, "elem", "");
+        if (!elem.empty()) out["elem"] = elem;
+        const std::string leaf = str_or(var, "leaf", "");
+        if (!leaf.empty()) out["leaf"] = leaf;
+    }
     for (const char* key : {"step", "min", "max"}) {
-        auto it = prop.find(key);
-        if (it != prop.end() && it->is_number()) out[key] = *it;
+        auto it = var.find(key);
+        if (it != var.end() && it->is_number()) out[key] = *it;
     }
     /* the declared transition is NOT served here: its ms/profile are expressions over
        the declaring node's scope, compiled in pass two (compile_component) and attached
@@ -676,12 +762,13 @@ Json slot_row(const Json& prop, const std::string& address) {
 Json compile_component(const Json& component, Sink& sink) {
     const std::string name = str_or(component, "name", "");
 
-    /* The component's own properties are the INSTANCE's vocabulary: the value it carries,
-     * its range, how it is dressed. They address bare, and they are what the inspector
-     * shows while the instance itself is selected; a node's own are collected as the tree
-     * is walked.
+    /* The component's own PUBLIC variables are the INSTANCE's vocabulary: the value it
+     * carries, its range, how it is dressed. They address bare, and they are what the
+     * inspector shows while the instance itself is selected; an element's own are
+     * collected as the tree is walked. A private one comes through the same walk and
+     * differs only in who may see it.
      *
-     * TWO PASSES over the nodes, because a dotted read may name a property declared
+     * TWO PASSES over the nodes, because a dotted read may name a variable declared
      * anywhere in the component — including on a node compiled later. Pass one learns
      * every address, pass two compiles every attr against them. */
     Walk walk;
@@ -690,11 +777,11 @@ Json compile_component(const Json& component, Sink& sink) {
     /* no vars, no mesh, and a refusal that says why: the isolation rule, enforced by
        what the scope simply does not carry */
     root.unknown_help = kIsolatedHelp;
-    /* the root carries no path segment: its properties are the instance's own, so the
+    /* the root carries no path segment: its variables are the instance's own, so the
        addresses a document already names stay bare */
     collect_tree(component, "", true, root, walk, sink);
 
-    /* PASS TWO FOR THE DECLARED SWEEPS: every scope exists now, so a property's ms and
+    /* PASS TWO FOR THE DECLARED SWEEPS: every scope exists now, so a variable's ms and
      * profile compile like any other field of its node — "1000 / rate" is a duration.
      * A refused time drops the sweep; a refused profile drops only the profile. */
     for (const SweepRow& sweep : walk.sweeps) {
@@ -704,14 +791,14 @@ Json compile_component(const Json& component, Sink& sink) {
         Json ms_program;
         std::string error;
         if (!compile_transition_time(sweep.ms, scope, ms_program, error)) {
-            sink.report(sweep.prop_id, "prop_smooth", error, "smooth");
+            sink.report(sweep.var_id, "var_smooth", error, "smooth");
             continue;
         }
         Json prof_program;
         bool has_profile = false;
         const bool prof_ok = compile_transition_profile(sweep.profile, scope,
                                                         prof_program, has_profile, error);
-        if (!prof_ok) sink.report(sweep.prop_id, "prop_smooth", error, "profile");
+        if (!prof_ok) sink.report(sweep.var_id, "var_smooth", error, "profile");
         for (Json& slot : walk.slots) {
             if (slot.value("name", "") != sweep.address) continue;
             slot["smooth"] = std::move(ms_program);

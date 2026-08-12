@@ -263,8 +263,8 @@ Document Document::make_default() {
     j["next_id"] = 1;
     j["globals"] = Json::array({
         Json{{"name", "pumpOn"}, {"type", "bool"}, {"init", false}},
-        Json{{"name", "setpoint"}, {"type", "f64"}, {"init", 42.0}, {"persist", true}},
-        Json{{"name", "flow"}, {"type", "f64"}, {"init", 0.0}},
+        Json{{"name", "setpoint"}, {"type", "num"}, {"init", 42.0}, {"persist", true}},
+        Json{{"name", "flow"}, {"type", "num"}, {"init", 0.0}},
         Json{{"name", "blink"}, {"type", "timer"}, {"init", 1.0}},
     });
 

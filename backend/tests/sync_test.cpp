@@ -180,7 +180,7 @@ int main() {
        `mesh:<entity>[.<field>]` cells and a live frame carries the read mesh fields;
        17: THE COPY RIDES THE EVENT — an `input` frame raised inside a `repeat` carries
        `repeat: {index, count}`, and carries the key only where there is a copy) */
-    CHECK(kProto == 17);
+    CHECK(kProto == 18);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
@@ -424,6 +424,81 @@ int main() {
         CHECK_MSG(continuous, "the delta cursor skipped or repeated elements");
     }
 
+    /* A ROW RIDES WHOLE INSIDE ITS ELEMENT. A cell whose `elem` declares list or map
+     * holds ROWS, and the wire carries each one as the aggregate it is — an array, or an
+     * object where the row is a map. A row published as a scalar's null is a plot that
+     * draws nothing and says nothing about why, which is exactly what it was. */
+    {
+        a.take();
+        a.send(Json{{"type", "apply_ops"},
+                    {"base_version", app.document().version()},
+                    {"ops", Json::array({
+                         Json{{"op", "insert"},
+                              {"parent", 0},
+                              {"list", "globals"},
+                              {"node", Json{{"name", "grid"},
+                                            {"type", "list"},
+                                            {"elem", "list"},
+                                            {"leaf", "num"},
+                                            {"init", Json::array({Json::array({1, 2}),
+                                                                  Json::array({3})})}}}},
+                         Json{{"op", "insert"},
+                              {"parent", 0},
+                              {"list", "globals"},
+                              {"node", Json{{"name", "byName"},
+                                            {"type", "map"},
+                                            {"elem", "list"},
+                                            {"leaf", "num"},
+                                            {"init", Json{{"a", Json::array({4, 5})}}}}}},
+                     })}});
+        frames = pump(app, a, 2);
+        const Json* inserted = frame_of(frames, "ops_applied");
+        CHECK(inserted != nullptr);
+        uint64_t grid_id = 0, map_id = 0;
+        if (inserted) {
+            grid_id = json_u64_or((*inserted)["ops"][0]["node"]["id"], 0);
+            map_id = json_u64_or((*inserted)["ops"][1]["node"]["id"], 0);
+        }
+        CHECK(grid_id != 0 && map_id != 0);
+        const std::string grid = "v" + std::to_string(grid_id);
+        const std::string by_name = "v" + std::to_string(map_id);
+        Json rows, keyed;
+        /* the aggs lane is a DELTA lane: a new cell rides the first frame after the
+           recompile and is absent from every one after it, so the frames the apply
+           already pumped count as much as the ones the wait collects */
+        auto scan = [&](const std::vector<Json>& seen) {
+            for (const Json& frame : seen) {
+                const std::string type = frame.value("type", std::string());
+                const Json* aggs = nullptr;
+                if (type == "live" && frame.contains("aggs")) aggs = &frame["aggs"];
+                else if (type == "snapshot" && frame.contains("live") &&
+                         frame["live"].contains("aggs"))
+                    aggs = &frame["live"]["aggs"];
+                if (!aggs || !aggs->is_object()) continue;
+                if (aggs->contains(grid)) rows = (*aggs)[grid];
+                if (aggs->contains(by_name)) keyed = (*aggs)[by_name];
+            }
+        };
+        scan(frames);
+        const auto stop =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
+        while (rows.is_null() && std::chrono::steady_clock::now() < stop) {
+            app.poll();
+            scan(a.take());
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK_MSG(!rows.is_null(), "a nested cell never reached the wire at all");
+        if (!rows.is_null()) {
+            CHECK(rows["len"] == 2);
+            CHECK_MSG(rows["values"] == Json::array({Json::array({1, 2}),
+                                                     Json::array({3})}),
+                      "a row must ride as the list it is, not as a scalar's null");
+        }
+        /* and a row inside a MAP cell, which goes whole on any change */
+        CHECK_MSG(!keyed.is_null() && keyed["values"]["a"] == Json::array({4, 5}),
+                  "a map's rows ride the same way its scalars do");
+    }
+
     /* A WHOLE STORE MOVES THE GENERATION, and a client sees that rather than a length
      * that happens to differ: editing the Selector's authored options reseeds its cell
      * at the recompile, so the next frame carries the list whole under a new gen. */
@@ -481,10 +556,11 @@ int main() {
              {"list", "components"},
              {"node",
               Json{{"name", "Lamp"},
-                   {"props", Json::array({Json{{"name", "tint"},
-                                               {"shape", "color"},
-                                               {"default", "#ff0000"},
-                                               {"group", "appearance"}}})},
+                   {"locals", Json::array({Json{{"name", "tint"},
+                                                {"type", "color"},
+                                                {"init", "#ff0000"},
+                                                {"group", "appearance"},
+                                                {"public", true}}})},
                    {"children",
                     Json::array({Json{{"kind", "frame"},
                                       {"name", "lamp"},

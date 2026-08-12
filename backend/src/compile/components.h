@@ -1,8 +1,9 @@
 /* The node compiler. Component definitions are document data, and the served registry is
- * a COMPILE PRODUCT derived from them: a component is props (PropDef rows), children (a
- * node tree whose attrs are expression text), events and behavior, and this module lowers
- * it to the wire form the views and the document compiler consume — {name, slots, events,
- * template, behavior} with every attr a compiled view program.
+ * a COMPILE PRODUCT derived from them: a component is variables (`locals`, the public
+ * ones being its interface), children (a node tree whose attrs are expression text),
+ * events and behavior, and this module lowers it to the wire form the views and the
+ * document compiler consume — {name, slots, events, template, behavior} with every attr a
+ * compiled view program.
  *
  * The SAME machinery compiles a page (compile_page_attrs): a page's nodes are the same
  * nodes, so their attrs are lowered by the same compiler into the same programs. What

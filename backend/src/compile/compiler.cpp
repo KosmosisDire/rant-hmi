@@ -475,9 +475,14 @@ class Compiler {
             aggregate_var_initial(var, shape, cell);
             return cell;
         }
-        if (shape != Shape::Unknown)
-            return add_cell(kind, owner, id_of(var), name, shape, var.value("init", Json()),
+        if (shape != Shape::Unknown) {
+            Json init = var.contains("init") ? var["init"] : Json();
+            /* a colour variable names a theme token the same way every other authored
+               colour does — one spelling for "$accent", wherever a colour is written */
+            if (shape == Shape::Color) init = resolve_token(id_of(var), "init", init);
+            return add_cell(kind, owner, id_of(var), name, shape, init,
                             var.value("persist", false));
+        }
         const int type_id = find_type_ref(type_text);
         if (type_id < 0) {
             diag(id_of(var), "unresolved_type",
@@ -625,14 +630,23 @@ class Compiler {
                             const Shape shape = slot_shape(slot);
                             const bool aggregate =
                                 shape == Shape::List || shape == Shape::Map;
-                            /* the type's DEFAULT is a raw literal (the registry's own
+                            /* PUBLIC IS WHAT A PLACEMENT MAY SET. A component's private
+                               variable is its own business: it gets a cell here like any
+                               other (the pictures inside read it), but a value authored
+                               against it on the instance is not consulted — encapsulation
+                               is a rule the compiler keeps, not one the inspector merely
+                               declines to offer. */
+                            const bool is_public = slot.value("public", false);
+                            /* the declared DEFAULT is a raw literal (the component's own
                                spelling); only an AUTHORED value speaks the expression
                                encoding (spec D1) */
                             Json initial = slot.value("default", Json());
                             std::string expr_text;
-                            /* the slot's NAME is its address: an element's property is
+                            /* the row's NAME is its address: an element's variable is
                                stored nested under it, so the lookup walks the dots */
-                            if (const Json* override = authored_slot(authored, name)) {
+                            const Json* override =
+                                is_public ? authored_slot(authored, name) : nullptr;
+                            if (override) {
                                 if (override->is_string()) {
                                     const std::string text =
                                         trimmed(override->get<std::string>());
@@ -679,6 +693,15 @@ class Compiler {
                                 add_cell(CellKind::Slot, info.id, info.id, name, shape,
                                          aggregate || !expr_text.empty() ? Json() : initial,
                                          false);
+                            /* A COMPONENT'S LIST DECLARES ITS ELEMENTS like any other
+                               variable does; the served string was already checked where
+                               it was declared, so a name that means nothing here simply
+                               leaves the elements undeclared. */
+                            if (aggregate) {
+                                CellDef& cell = program_.cells[info.slots[name]];
+                                cell.elem = var_shape(slot.value("elem", ""));
+                                cell.leaf = var_shape(slot.value("leaf", ""));
+                            }
                             if (has_list) {
                                 program_.cells[info.slots[name]].has_list = true;
                                 program_.cells[info.slots[name]].list_init =
@@ -859,14 +882,10 @@ class Compiler {
         return Json("#00000000");
     }
 
-    /* A registry slot declared `enum` is CONSTRAINED TEXT: its values are the variant NAMES
-     * the author picks and the template draws ("center"), so the cell holds the name. The
-     * VM's Enum shape means something else, a mesh field's backing integer (spec 2.2), and
-     * conflating them left every enum slot holding Nil. `icon` is the same species: the
-     * declared shape drives the editor (the icon grid), the value is the glyph's NAME. */
+    /* the shape one served row holds — the same question `var_shape` answers, asked with
+       the row's own spelling of it */
     Shape slot_shape(const Json& slot) const {
-        const std::string name = slot.value("shape", "");
-        return name == "enum" || name == "icon" ? Shape::Text : shape_from_name(name);
+        return var_shape(slot.value("shape", ""));
     }
 
     /* WHERE an authored aggregate is being read, so one set of parsers can serve a slot
@@ -1223,19 +1242,19 @@ class Compiler {
         return Shape::Unknown;
     }
 
+    /* A DECLARED TYPE -> the shape its cell holds. ONE TABLE, because a variable's `type`
+     * and a served row's `shape` are one vocabulary now — the props/vars split is what
+     * used to make them two, and `f64`/`str` were the last words only one of them spoke.
+     *
+     * `icon` and `enum` are CONSTRAINED TEXT: the cell holds the glyph's name or the
+     * variant's name, and the declared word only earns the editor. The VM's Shape::Enum
+     * means something else entirely — a mesh field's backing integer (spec 2.2) — and
+     * conflating them left every enum reading Nil. `timer` is the one type a component
+     * cannot have, refused where it is declared rather than here. */
     Shape var_shape(const std::string& type) const {
-        if (type == "f64") return Shape::Num;
-        if (type == "bool") return Shape::Bool;
-        if (type == "str") return Shape::Text;
-        /* an icon VARIABLE holds the glyph's name: the declared type drives the
-           editor (the icon grid), the runtime cell is ordinary text */
-        if (type == "icon") return Shape::Text;
+        if (type == "icon" || type == "enum") return Shape::Text;
         if (type == "timer") return Shape::Timer;
-        /* an aggregate is an ORDINARY variable type now: a list is what a flow appends
-           a history into, a map what it writes by key */
-        if (type == "list") return Shape::List;
-        if (type == "map") return Shape::Map;
-        return Shape::Unknown;
+        return shape_from_name(type);
     }
 
     ElementInfo* element_info(uint64_t id) {
@@ -1530,8 +1549,7 @@ class Compiler {
         ExpressionResult result;
         std::string error;
         ProgramEmit emit(program_);
-        if (!compile_expression(text, tier, scope, emit, code, result, error,
-                                agg_ok ? expected : Shape::Unknown)) {
+        if (!compile_expression(text, tier, scope, emit, code, result, error, agg_ok)) {
             diag(node, "expression", error, DiagGrade::Error, where);
             return false;
         }
@@ -1953,9 +1971,9 @@ class Compiler {
                                       keep, key);
             /* a LIST or MAP slot takes a whole aggregate here: this is an HMI cell,
                not a machine, so the one-scalar rule steps aside for exactly its shape */
-            return push_typed(element, step, flow, scope, from,
-                              program_.cells[found->second].shape, 0,
-                              /*agg_ok=*/true) &&
+            const Shape shape = program_.cells[found->second].shape;
+            return push_typed(element, step, flow, scope, from, shape, 0,
+                              aggregate_shape(shape)) &&
                    emit_store(flow, step_id, found->second);
         }
 
@@ -2005,17 +2023,75 @@ class Compiler {
         return false;
     }
 
+    /* is this destination an HMI aggregate — the one kind of place a wire expression may
+     * yield a whole list or map into? */
+    static bool aggregate_shape(Shape shape) {
+        return shape == Shape::List || shape == Shape::Map;
+    }
+
+    /* WHAT ONE ELEMENT OF THIS CELL IS, in the words it was declared with: "num", or
+     * "list of num" where the elements are rows. Empty where the declaration says
+     * nothing, which is a fact the refusal below has to speak about rather than hide. */
+    std::string element_label(const CellDef& def) const {
+        if (def.elem == Shape::Unknown) return std::string();
+        std::string text = shape_name(def.elem);
+        if ((def.elem == Shape::List || def.elem == Shape::Map) &&
+            def.leaf != Shape::Unknown)
+            text += " of " + std::string(shape_name(def.leaf));
+        return text;
+    }
+
+    /* Does what the expression yields fit ONE ELEMENT of this cell? Unknown is what a
+     * shape the compiler cannot see reads as and Nil is the erase, so both pass — the
+     * runtime is the backstop for those. With the elements UNDECLARED every scalar fits
+     * and no aggregate does: a cell that never said its elements are rows has nowhere to
+     * put one. */
+    static bool element_fits(const CellDef& def, Shape produced) {
+        if (produced == Shape::Unknown || produced == Shape::Nil) return true;
+        if (def.elem == Shape::Unknown)
+            return produced != Shape::List && produced != Shape::Map &&
+                   produced != Shape::Struct;
+        return produced == def.elem;
+    }
+
+    /* the refusal in the destination's own terms: what the list holds, what this
+     * expression yields, and the declaration that would take it */
+    std::string element_refusal(const CellDef& def, Shape produced, bool appends) const {
+        const std::string verb = appends ? "an append" : "an element write";
+        const std::string yields = "; this expression yields " +
+                                   std::string(produced == Shape::Enum ? "an " : "a ") +
+                                   shape_name(produced);
+        const std::string label = element_label(def);
+        if (label.empty()) {
+            std::string out = "'" + def.name + "' does not say what its elements are, so " +
+                              verb + " takes one scalar" + yields;
+            if (produced == Shape::List || produced == Shape::Map)
+                out += ". Declare its elements " + std::string(shape_name(produced)) +
+                       " (the variable's OF row) to make every element a row";
+            return out;
+        }
+        std::string out = "'" + def.name + "' holds " + label + " elements" + yields;
+        const bool rows = def.elem == Shape::List || def.elem == Shape::Map;
+        const bool agg = produced == Shape::List || produced == Shape::Map;
+        if (rows && !agg)
+            out += ". A row is an aggregate itself — [a, b] for a list of them";
+        else if (!rows && agg)
+            out += ". Declare its elements " + std::string(shape_name(produced)) +
+                   " (the variable's OF row) to hold rows";
+        return out;
+    }
+
     /* APPEND, KEYED or INDEXED WRITE into an aggregate cell. All push the ELEMENT
      * first and the bound (keep) or the address (key / index) after it, because the VM
      * pops what was pushed last: one instruction shape, three verbs. The address rides
      * the step's one `key` field either way — a map addresses an entry by text key, a
      * list a position by number index.
      *
-     * The source is a SCALAR either way. A list into an append would be asking to
-     * replace the list, which is what an ordinary write already is, and a nested
-     * aggregate has no representation at all — so both are refused where the shape can
-     * be seen at compile time. A DECLARED element type compiles the element toward it,
-     * so a wrong-shaped element teaches here rather than faulting at the write. */
+     * THE SOURCE IS ONE ELEMENT, and what one element IS is the destination's own
+     * declaration: a scalar where the elements are scalars, a whole row where they are
+     * declared list or map. So the element is compiled with the one-scalar rule stood
+     * down and TYPE CHECKED here (element_fits), where the refusal can name the list,
+     * what it holds and the declaration that would take what the author wrote. */
     bool aggregate_assign(const ElementInfo& element, const Json& step, FlowProgram& flow,
                         ExpressionScope& scope, uint32_t cell, bool appends,
                         const std::string& keep, const std::string& key) {
@@ -2037,28 +2113,31 @@ class Compiler {
             return false;
         }
         const bool indexed = !appends && def.shape == Shape::List;
-        if (def.elem != Shape::Unknown) {
-            /* the declared element type is the destination's shape: same coercions,
-               same refusals a same-shaped scalar destination gets (an enum appends to
-               a text list as its variant name). A NESTED destination declares a row, and
-               the one-scalar rule steps aside for exactly that shape, as it does wherever
-               a declared HMI aggregate is the destination. */
-            const bool row = def.elem == Shape::List || def.elem == Shape::Map;
-            if (!push_typed(element, step, flow, scope, from, def.elem, 0, row))
-                return false;
-        } else {
-            Shape produced = Shape::Unknown;
-            if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced))
-                return false;
-            if (produced == Shape::List || produced == Shape::Map ||
-                produced == Shape::Struct) {
-                diag(step_id, "shape",
-                     appends ? "append takes one element; to replace the list write it whole"
-                             : "an element write takes one scalar; a whole aggregate is "
-                               "not an element",
-                     DiagGrade::Error, "from");
-                return false;
-            }
+        /* THE ELEMENT'S TYPE, checked against what this destination declares ONE
+         * ELEMENT to be. The one-scalar rule cannot see that declaration, so it steps
+         * aside here (agg_ok) and the check lives where the refusal can name the list,
+         * say what it holds, and teach the declaration that would take what the author
+         * is holding — an author appending a row wants to hear about `elem`, not to be
+         * told that a wire value is one scalar. */
+        Shape produced = Shape::Unknown;
+        if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced,
+                         /*agg_ok=*/true))
+            return false;
+        /* an enum element writes into a text list as its variant name, the same
+           coercion a text destination gets anywhere else */
+        if (def.elem == Shape::Text && produced == Shape::Enum) {
+            Instruction name;
+            name.op = OpCode::Method;
+            name.a = program_.layout.text_slots++;
+            name.b = 0;
+            name.small = static_cast<uint16_t>(MethodId::EnumName);
+            flow.code.push_back(name);
+            produced = Shape::Text;
+        }
+        if (!element_fits(def, produced)) {
+            diag(step_id, "shape", element_refusal(def, produced, appends),
+                 DiagGrade::Error, "from");
+            return false;
         }
         if (appends) {
             /* the bound is compiled ON TOP of the element already on the stack, so its
@@ -2453,7 +2532,7 @@ class Compiler {
            LIST or MAP variable takes a whole aggregate — an HMI cell, not a machine. */
         if (cell != UINT32_MAX) {
             if (!push_typed(element, step, flow, scope, from, wanted,
-                            program_.cells[cell].type_id, /*agg_ok=*/true))
+                            program_.cells[cell].type_id, aggregate_shape(wanted)))
                 return false;
             return emit_store(flow, step_id, cell);
         }

@@ -31,7 +31,7 @@ import { designInspectorShape, designShape, renderDesignInspector, renderDesignT
 import { renderStyleWorkspace, styleShape } from "./workspaces/style.js";
 
 const SIDEBAR_MIN = 200;
-const SIDEBAR_MAX = 800;
+const SIDEBAR_MAX = 1200;
 
 export class App implements Editor {
   store = new DocStore();
@@ -427,7 +427,11 @@ export class App implements Editor {
         list: "components",
         node: {
           name,
-          props: [{ name: "text", shape: "text", default: "new", group: "appearance" }],
+          /* one public variable so a fresh component has something to fill in from the
+             moment it is placed — a private one would leave the instance inspector blank
+             and the model unexplained */
+          locals: [{ name: "text", type: "text", init: "new", group: "appearance",
+                     public: true }],
           /* no declared events: the press gesture on the root brings the whole family
              (tap, press, release, pressrelease, held) — events here are only what the
              component INVENTS and raises itself */

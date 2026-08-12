@@ -44,8 +44,8 @@ std::string no_display_reading(const std::string& name, const std::string& type)
     if (type == "timer")
         return "'" + name + "' is a timer, and a timer reads by field, which an attr has "
                "no encoding for: carry what the picture needs in a variable of its own";
-    if (type.empty() || type == "f64" || type == "bool" || type == "str" ||
-        type == "icon" || type == "list" || type == "map" ||
+    if (type.empty() || type == "num" || type == "bool" || type == "text" ||
+        type == "color" || type == "icon" || type == "list" || type == "map" ||
         type.find('.') != std::string::npos)
         return "";
     return "'" + name + "' is a whole " + type + " message, and an attr reads one value: "

@@ -46,10 +46,10 @@ function componentDiagShape(editor: Editor, comp: ComponentDef): string[] {
       out.push(id + ":" + (d.where ?? "") + ":" + d.code + ":" + d.message);
   };
   add(comp.id);
-  for (const prop of comp.props ?? []) add(prop.id);
+  for (const variable of comp.locals ?? []) add(variable.id);
   const walk = (element: Json): void => {
     if (typeof element?.id === "number") add(element.id);
-    for (const prop of (element?.props ?? []) as Json[]) add(prop.id);
+    for (const variable of (element?.locals ?? []) as Json[]) add(variable.id);
     for (const child of (element?.children ?? []) as Json[]) walk(child);
   };
   for (const element of comp.children ?? []) walk(element);

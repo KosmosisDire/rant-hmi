@@ -32,10 +32,13 @@ uint64_t json_u64_or(const Json& value, uint64_t fallback);
  * AN INSTANCE IS NOT A KIND. It is a frame with a `type`: it names a component, and that
  * component's children are its subtree — hidden on the page, entered to edit. The
  * component is the same frame, PRE-MADE and kept in the library instead of on a page,
- * and what earns it a record of its own is what it adds: declared properties, events and
- * behavior. So Page and Component are the two documents-of-nodes (a screen and a
- * template), neither a child of anything, and everything inside either one is a Node. */
-enum class Kind { Doc, Page, Node, Var, Flow, Step, Token, Component, PropDef };
+ * and what earns it a record of its own is what it adds: variables, events and behavior.
+ * So Page and Component are the two documents-of-nodes (a screen and a template), neither
+ * a child of anything, and everything inside either one is a Node.
+ *
+ * THERE IS NO PropDef KIND. A component's interface is the variables it declares `public`,
+ * so a property is a `Var` and nothing else — one row shape, one editor, one rename path. */
+enum class Kind { Doc, Page, Node, Var, Flow, Step, Token, Component };
 
 enum class PropType {
     Text,    /* string */

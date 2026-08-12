@@ -129,7 +129,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 17, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 18, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.components.length === 12, "twelve components");
@@ -300,7 +300,7 @@ ws.send(JSON.stringify({
     op: "insert", parent: 0, list: "components",
     node: {
       name: "Pill",
-      props: [{ name: "text", shape: "text", default: "go", group: "appearance" }],
+      locals: [{ name: "text", type: "text", init: "go", group: "appearance", public: true }],
       attrs: { surface: "'#222222'" },
       children: [
         { kind: "frame", name: "body",
@@ -474,7 +474,7 @@ echo([
     op: "insert",
     parent: readout.id,
     list: "locals",
-    node: { id: 9001, name: "tmp", type: "f64", init: 0, persist: false },
+    node: { id: 9001, name: "tmp", type: "num", init: 0, persist: false },
   },
 ]);
 const rebuiltLabel = sidebar.querySelector(".inspector-head").children[0];
@@ -492,7 +492,7 @@ echo([
     op: "insert",
     parent: readout.id,
     list: "locals",
-    node: { id: 9002, name: "tmp2", type: "f64", init: 0, persist: false },
+    node: { id: 9002, name: "tmp2", type: "num", init: 0, persist: false },
   },
 ]);
 check(slotInput("border_w") !== heightField, "the second insert rebuilt the inspector");
@@ -513,7 +513,7 @@ echo([
     op: "insert",
     parent: readout.id,
     list: "locals",
-    node: { id: 9003, name: "tmp3", type: "f64", init: 0, persist: false },
+    node: { id: 9003, name: "tmp3", type: "num", init: 0, persist: false },
   },
 ]);
 check(slotInput("radius") !== focusedWidth, "the mixed batch rebuilt the inspector");
@@ -567,6 +567,21 @@ check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is
   check(vm(lit("abc"), { op: "LENGTH" }) === 3, "LENGTH counts a string's characters");
   check(vm(...three, { op: "LENGTH" }) === 3, "and a list's elements");
   check(vm(lit(5), { op: "LENGTH" }) === null, "a number has no length: Nil");
+
+  /* A ROW IS AN ORDINARY ELEMENT. A nested cell arrives with its rows whole inside the
+     `values` array (backend/src/app.cpp, wire_element), so reading one is INDEX twice and
+     counting one is LENGTH on what the first INDEX gave back — a multi-series plot is
+     `history[i][series]` and nothing else. */
+  const rows = [lit([1, 2]), lit([3]), { op: "MAKE_LIST", n: 2 }];
+  check(vm(...rows, lit(0), { op: "INDEX" }, lit(1), { op: "INDEX" }) === 2,
+        "indexing a row reaches the leaf");
+  check(vm(...rows, lit(0), { op: "INDEX" }, { op: "LENGTH" }) === 2,
+        "and LENGTH over a row counts its leaves — the series count a repeat reads");
+  check(vm(...rows, lit(1), { op: "INDEX" }, lit(1), { op: "INDEX" }) === null,
+        "a leaf a shorter row does not have is Nil, not a wrap into the next row");
+  const keyed = [lit({ a: 1 }), { op: "MAKE_LIST", n: 1 }];
+  check(vm(...keyed, lit(0), { op: "INDEX" }, lit("a"), { op: "INDEX" }) === 1,
+        "a MAP row reads by key the same way");
 
   const names = [lit("a"), lit("b"), { op: "MAKE_LIST", n: 2 }];
   check(vm(...names, lit("b"), { op: "INDEX_OF" }) === 1, "INDEX_OF finds the first match");
@@ -1032,8 +1047,9 @@ store.apply(store.version() + 1, [
       id: 9200,
       name: "Lamp",
       events: [{ name: "tap", x: "bool" }],
-      props: [
-        { id: 9201, name: "tint", shape: "color", default: "#ff0000", group: "appearance" },
+      locals: [
+        { id: 9201, name: "tint", type: "color", init: "#ff0000", group: "appearance",
+          public: true },
       ],
       /* the component IS the root frame: its own layout and attrs, holding its children */
       layout: "free",
@@ -1065,7 +1081,7 @@ drawDesign();
 check(designRow("c9200/9210") !== null, "an expanded component lists its element nodes");
 check(designRow("c9200/9211") !== null, "nested nodes too (frames default open)");
 
-/* selecting the component edits the TYPE: name field and the properties table */
+/* selecting the component edits the TYPE: name field and the variables it declares */
 const lampEditor = {
   ...editor,
   selectedNode: () => null,
@@ -1076,12 +1092,16 @@ const lampPanel = new Panel(new Element("aside"));
 lampPanel.render(designInspectorShape(lampEditor), (host) => renderDesignInspector(host, lampEditor));
 check(lampPanel.host.querySelector(".inspector-head").children[0].value === "Lamp",
       "a selected component's head edits its name");
+/* ONE CARD PER VARIABLE, and a public one says so on its head: a property is not a row
+   of its own kind any more, it is a variable the component offers */
+const lampCards = lampPanel.host.querySelectorAll(".card");
 check(
-  lampPanel.host.querySelectorAll(".propdef").length === 1 &&
-    lampPanel.host.querySelectorAll(".propdef")[0].querySelectorAll("input")
-      .some((i) => i.value === "tint"),
-  "the properties table lists the PropDef rows",
+  lampCards.length === 1 &&
+    lampCards[0].querySelectorAll("input").some((i) => i.value === "tint"),
+  "the component's variables are listed as cards",
 );
+check(lampCards[0].textContent.includes("input"),
+      "and a public one is marked as the instance's input");
 
 /* selecting an element edits its attrs: the CLOSED vocabulary (spec 2.3) lists every attr
    the "text" kind declares — own attrs first, then the common set — set or not, not
@@ -1273,7 +1293,7 @@ store.apply(store.version() + 1, [
       id: 9300,
       name: "Knob 2",
       events: [],
-      props: [],
+      locals: [],
       parts: [{ id: 9301, kind: "box", name: "body", dir: "stack", attrs: {},
                 interact: null, children: [] }],
       behavior: [],
@@ -2807,11 +2827,11 @@ check(stageNode("frame", 901) === heldAgain &&
      plus one instance of it on the page to have entered through */
   store.apply(store.version() + 1, [
     { op: "insert", parent: 0, list: "components",
-      node: { id: 9800, name: "Bulb", events: [], props: [], attrs: {},
+      node: { id: 9800, name: "Bulb", events: [], locals: [], attrs: {},
               children: [
                 { id: 9810, kind: "frame", name: "body", attrs: {},
-                  props: [{ id: 9812, name: "glow_color", shape: "color",
-                            default: "#ff0000", group: "appearance" }],
+                  locals: [{ id: 9812, name: "glow_color", type: "color", public: true,
+                             init: "#ff0000", group: "appearance" }],
                   interact: { primitive: "press", params: { hold_ms: "600" },
                               emits: { tap: "tap" } },
                   children: [{ id: 9811, kind: "text", name: "label",
@@ -2880,7 +2900,8 @@ check(stageNode("frame", 901) === heldAgain &&
   /* ---- the RIGHT sidebar inside a context ----
      Nothing selected stands the inspector on the COMPONENT itself — the Design
      workspace's own editable view — and a selected internal node gains the sections a
-     page node never shows: the properties it declares and the interact it carries. */
+     page node never shows: the interact it carries, and variables that can be made
+     PUBLIC (a page element has no placement to offer one to). */
   const sel = [];
   const insEditor = {
     ...ctxEditor,
@@ -2892,8 +2913,8 @@ check(stageNode("frame", 901) === heldAgain &&
   check(compPanel.host.querySelector(".head-tag")?.textContent === "component",
         "nothing selected inside a context stands the inspector on the component");
   check(compPanel.host.querySelectorAll(".dashed-btn")
-          .some((b) => b.textContent === "+ Property"),
-        "and the component's properties are declared right there");
+          .some((b) => b.textContent === "+ Variable"),
+        "and the component's variables are declared right there");
 
   /* ---- THE EVENTS A COMPONENT DECLARES ----
      function SIGNATURES its behavior raises with the `raise` step; the gesture family
@@ -2936,10 +2957,10 @@ check(stageNode("frame", 901) === heldAgain &&
   check(nodeShape.includes("glow_color") === false && nodeShape.includes("9812"),
         "a selected node's own declarations ride the inspector's shape");
   compPanel.render(nodeShape, (host) => renderInspector(host, insEditor));
-  check(compPanel.host.querySelector(".propdef") !== null &&
+  check(compPanel.host.querySelector(".card") !== null &&
           compPanel.host.querySelectorAll(".dashed-btn")
-            .some((b) => b.textContent === "+ Property"),
-        "a component's node declares and edits its properties from the content view");
+            .some((b) => b.textContent === "+ Variable"),
+        "a component's element declares and edits its variables from the content view");
   check(compPanel.host.textContent.includes("GESTURE") &&
           compPanel.host.textContent.includes("hold_ms") &&
           compPanel.host.textContent.includes("pressrelease (down)"),
@@ -2973,7 +2994,7 @@ check(stageNode("frame", 901) === heldAgain &&
   ctxStore.load({
     version: 1, next_id: 999, globals: [], tokens: [],
     components: [
-      { id: 950, name: "Chip", events: [], props: [],
+      { id: 950, name: "Chip", events: [], locals: [],
         attrs: { surface: "'#333333'" },
         children: [{ id: 951, kind: "frame", name: "body",
                      attrs: { left: "0.25", top: "0.25", w: "0.5", h: "0.5" } }],
@@ -3374,7 +3395,7 @@ check(stageNode("frame", 901) === heldAgain &&
                         removeEventListener: () => undefined };
   store.apply(store.version() + 1, [
     { op: "insert", parent: 0, list: "components", node: {
-      id: 9700, name: "VbComp", events: [], props: [], attrs: {},
+      id: 9700, name: "VbComp", events: [], locals: [], attrs: {},
       children: [
         { id: 9711, kind: "text", name: "cap",
           attrs: { text: "'go'", size: "14", color: "#ff0000", align: "'center'",
@@ -4005,7 +4026,7 @@ check(stageNode("frame", 901) === heldAgain &&
   /* the vars TYPE chip is the same builder, opening the TYPE tree */
   store.apply(store.version() + 1, [
     { op: "insert", parent: 9900, list: "locals",
-      node: { id: 9940, name: "t1", type: "f64", init: 0, persist: false } },
+      node: { id: 9940, name: "t1", type: "num", init: 0, persist: false } },
   ]);
   draw4b();
   const varHead = panel4b.host.querySelectorAll(".card-head")
@@ -4024,14 +4045,16 @@ check(stageNode("frame", 901) === heldAgain &&
   closeTypeTree();
   document.activeElement = null;
 
-  /* ---- the SWEEP popover: a num PropDef's smooth/profile behind the same motion
-     button the attr rows wear — the inline SWEEP row is gone, and so is speed ---- */
+  /* ---- the SWEEP popover: a num INPUT's smooth/profile behind the same motion button
+     the attr rows wear — the inline SWEEP row is gone, and so is speed. The chip lives
+     in the variable card's own body now, so the card is opened to reach it ---- */
   store.apply(store.version() + 1, [
     { op: "insert", parent: 0, list: "components", node: {
       id: 9930, name: "Sweep4b", events: [],
-      props: [
-        { id: 9931, name: "rate", shape: "num", default: 1, group: "value" },
-        { id: 9932, name: "tint", shape: "color", default: "#123456", group: "appearance" },
+      locals: [
+        { id: 9931, name: "rate", type: "num", init: 1, group: "value", public: true },
+        { id: 9932, name: "tint", type: "color", init: "#123456", group: "appearance",
+          public: true },
       ],
       attrs: {}, children: [], behavior: [] } },
   ]);
@@ -4051,14 +4074,23 @@ check(stageNode("frame", 901) === heldAgain &&
     swPanel.render(designInspectorShape(swEditor),
                    (host) => renderDesignInspector(host, swEditor));
   drawSw();
-  const propRowNamed = (name) =>
-    swPanel.host.querySelectorAll(".propdef")
+  const varCardNamed = (name) =>
+    swPanel.host.querySelectorAll(".card")
       .find((r) => r.querySelectorAll("input").some((i) => i.value === name)) ?? null;
+  /* a card is folded until it is asked for — the same caret every card wears */
+  const openCard = (name) => {
+    const card = varCardNamed(name);
+    if (card && !card.className.includes("open")) {
+      fire(card.querySelector(".card-head"), "click");
+      drawSw();
+    }
+    return varCardNamed(name);
+  };
   check(!swPanel.host.textContent.includes("SWEEP MS"),
-        "the inline SWEEP row is gone from the propdef");
-  const sweepBtn = propRowNamed("rate")?.querySelector(".transition-chip") ?? null;
-  check(sweepBtn !== null, "a num property wears the motion button instead");
-  check(propRowNamed("tint")?.querySelector(".transition-chip") === null,
+        "the inline SWEEP row is gone from the variable card");
+  const sweepBtn = openCard("rate")?.querySelector(".transition-chip") ?? null;
+  check(sweepBtn !== null, "a num input wears the motion button instead");
+  check(openCard("tint")?.querySelector(".transition-chip") === null,
         "a colour one does not — it cross-fades on the attr that draws it");
   check(!sweepBtn.classList.contains("on"), "unlit while no sweep stands");
 
@@ -4085,9 +4117,12 @@ check(stageNode("frame", 901) === heldAgain &&
         "an expression rides as text — the compiler is the teacher");
   closeMenu();
   drawSw();
-  check(sweepBtn.classList.contains("on"), "the button lights while a sweep stands");
+  /* the card rebuilt around it, so the chip is re-read rather than held across the draw */
+  const litBtn = openCard("rate")?.querySelector(".transition-chip") ?? null;
+  check(litBtn !== null && litBtn.classList.contains("on"),
+        "the button lights while a sweep stands");
 
-  fire(sweepBtn, "click");
+  fire(litBtn, "click");
   const removeRow = menu4b.querySelectorAll("button")
     .find((b) => (b.innerHTML ?? "").includes("remove the sweep"));
   check(removeRow !== undefined, "a standing sweep offers its removal");
@@ -4099,6 +4134,56 @@ check(stageNode("frame", 901) === heldAgain &&
   drawSw();
   check(!sweepBtn.classList.contains("on"), "and the light goes out");
   document.activeElement = null;
+
+  /* ---- A LIST OF ROWS: the OF picker offers list and map beside the scalars, and
+     picking one brings the ROWS OF picker that says what a row holds. Nesting is one
+     level, so that second picker offers scalars only, and stepping OF back to a scalar
+     clears the leaf in the SAME apply — a row type cannot outlive the row. ---- */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: 9930, list: "locals", node: {
+      id: 9933, name: "grid", type: "list", init: null, persist: false } },
+  ]);
+  drawSw();
+  const ofPicker = (name, label) => {
+    const card = openCard(name);
+    const labels = card.querySelectorAll(".row-label");
+    const at = labels.findIndex((r) => (r.textContent ?? "") === label);
+    return at < 0 ? null : card.querySelectorAll("select")[
+      labels.slice(0, at).filter((r) => ["OF", "ROWS OF"].includes(r.textContent ?? ""))
+        .length];
+  };
+  const ofSel = ofPicker("grid", "OF");
+  check(ofSel !== null &&
+          ofSel.children.map((o) => o.value).join(",") ===
+            ",num,bool,text,icon,list,map",
+        "OF offers the scalars and then list/map — elements that are ROWS");
+  check(ofPicker("grid", "ROWS OF") === null,
+        "a list of scalars has no leaf to declare");
+  ofSel.value = "list";
+  fire(ofSel, "change");
+  drawSw();
+  const rowsSel = ofPicker("grid", "ROWS OF");
+  check(rowsSel !== null &&
+          rowsSel.children.map((o) => o.value).join(",") ===
+            ",num,bool,text,icon",
+        "elements that are rows bring ROWS OF, scalars only — nesting is one level");
+  rowsSel.value = "num";
+  fire(rowsSel, "change");
+  check(swOps.findLast((o) => o.key === "leaf")?.value === "num",
+        "and it writes the leaf type");
+  const { aggLabel } = await import(mod("types.js"));
+  check(aggLabel("list", "list", "num") === "list of list of number",
+        "which reads as a list of list of number wherever a variable names its shape");
+  const backToScalar = ofPicker("grid", "OF");
+  backToScalar.value = "text";
+  fire(backToScalar, "change");
+  const stepped = swOps.slice(-2);
+  check(stepped[0]?.key === "elem" && stepped[0].value === "text" &&
+        stepped[1]?.key === "leaf" && stepped[1].value === "",
+        "stepping back to a scalar element clears the leaf in the same apply, got " +
+          JSON.stringify(stepped));
+  drawSw();
+  check(ofPicker("grid", "ROWS OF") === null, "and the row disappears with it");
 }
 
 /* What used to close this file -- the repeat/path round trip and the code-element escape

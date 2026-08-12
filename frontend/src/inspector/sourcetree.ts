@@ -16,7 +16,8 @@ import { Editor } from "../editor.js";
 import { iconMarkup } from "../icons.js";
 import { makeShell, placeBox, Shell } from "../popover.js";
 import { scrollToCurrent, streeTree } from "../streerows.js";
-import { aggLabel, Json, MeshEntity, MeshField, SlotSpec, Var, Node } from "../types.js";
+import { aggLabel, Json, MeshEntity, MeshField, SCALAR_TYPES, SlotSpec, Var,
+         Node } from "../types.js";
 import { FlowScope } from "./flowscope.js";
 import { EntityFolder, foldEntities } from "./scope.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
@@ -146,16 +147,16 @@ function fieldsOf(entity: MeshEntity, write: boolean): MeshField[] {
   return write ? entity.fields : entity.returns ?? [];
 }
 
-const SCALAR_SHAPE: Record<string, string> = { f64: "num", bool: "bool", str: "text" };
-
+/* a variable's shape IS its declared type: one vocabulary since a property became a
+   public variable (SCALAR_TYPES in types.ts) */
 function varShape(type: string): string {
-  return SCALAR_SHAPE[type] ?? type;
+  return type;
 }
 
 /* a variable's struct fields, when its type names a struct ROOT; a dotted
  * TypeRef is an enum and holds no fields */
 function varFields(editor: Editor, type: string): MeshField[] {
-  if (!type || SCALAR_SHAPE[type] || type === "timer" || type.includes(".")) return [];
+  if (!type || SCALAR_TYPES.has(type) || type === "timer" || type.includes(".")) return [];
   return editor.mesh.types.find((t) => t.name === type)?.fields ?? [];
 }
 
@@ -173,7 +174,7 @@ export function resolveShape(
     if (!found) return "";
     if (!path)
       return found.type === "list" || found.type === "map"
-        ? aggLabel(found.type, found.elem) : varShape(found.type);
+        ? aggLabel(found.type, found.elem, found.leaf) : varShape(found.type);
     return varFields(editor, found.type).find((f) => f.path === path)?.shape ?? "";
   }
   const entity = editor.mesh.entities.find((e) => e.kind === ref.kind && e.name === ref.name);
@@ -278,7 +279,7 @@ function build_rows(editor: Editor, instance: Node | null, opts: SourceTreeOptio
         for (const local of opts.scope.locals) {
           const row = { name: local.name,
                         shape: local.shape === "list" || local.shape === "map"
-                          ? aggLabel(local.shape, local.elem) : local.shape,
+                          ? aggLabel(local.shape, local.elem, local.leaf) : local.shape,
                         type: local.type, fields: local.fields ?? [] };
           /* the trigger's parameter and the flow's temporaries both belong to THIS
              flow's own vocabulary, listed at the top beside x */
@@ -290,7 +291,8 @@ function build_rows(editor: Editor, instance: Node | null, opts: SourceTreeOptio
         const named = (variable: Var): NamedVar => ({
           name: variable.name,
           shape: variable.type === "list" || variable.type === "map"
-            ? aggLabel(variable.type, variable.elem) : varShape(variable.type),
+            ? aggLabel(variable.type, variable.elem, variable.leaf)
+            : varShape(variable.type),
           type: varFields(editor, variable.type).length ? variable.type : undefined,
           fields: varFields(editor, variable.type),
         });

@@ -167,6 +167,8 @@ function render(input: HTMLInputElement): void {
 interface Resolved {
   shape: string;
   elem?: string;
+  /* nested aggregates: what one ROW holds, so indexing a row resolves one level down */
+  leaf?: string;
   fields?: MeshField[];   /* struct receivers: what the dot reaches */
 }
 
@@ -246,11 +248,12 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
       if (!m2) return null;
       i += m2[0].length;
       const row = ctx.names().find((n) => n.label === "this" + m2[0]);
-      current = row?.shape ? { shape: row.shape, elem: row.elem } : null;
+      current = row?.shape ? { shape: row.shape, elem: row.elem, leaf: row.leaf } : null;
     } else {
       const row = ctx.names().find((n) => n.label === name);
-      current = row?.shape ? { shape: row.shape, elem: row.elem, fields: row.fields }
-                           : null;
+      current = row?.shape
+        ? { shape: row.shape, elem: row.elem, leaf: row.leaf, fields: row.fields }
+        : null;
     }
   }
 
@@ -258,7 +261,8 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
   while (current && i < chain.length) {
     if (chain[i] === "[") {
       skipBalanced("[", "]");
-      current = current.elem ? { shape: current.elem } : null;
+      /* indexing a NESTED aggregate lands on a row, which is an aggregate of the leaf */
+      current = current.elem ? { shape: current.elem, elem: current.leaf } : null;
       continue;
     }
     if (chain[i] !== ".") return current;
@@ -302,13 +306,14 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
     );
     if (!entry) return null;
     if (entry.result === "elem") {
-      current = current.elem ? { shape: current.elem } : null;
+      current = current.elem ? { shape: current.elem, elem: current.leaf } : null;
     } else if (entry.result === "list") {
-      const elem =
-        method === "split" || method === "keys"
-          ? "text"
-          : current.elem;   /* sort/reverse/slice/values keep the element shape */
-      current = { shape: "list", elem };
+      /* sort/reverse/slice/values keep the element shape (and its rows); split and keys
+         build a fresh list of text */
+      const kept = method !== "split" && method !== "keys";
+      current = { shape: "list",
+                  elem: kept ? current.elem : "text",
+                  leaf: kept ? current.leaf : undefined };
     } else if (entry.result === "any") {
       current = null;
     } else {

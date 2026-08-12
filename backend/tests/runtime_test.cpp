@@ -63,8 +63,8 @@ Document runtime_document() {
         {"next_id", 1},
         {"globals",
          Json::array({
-             Json{{"name", "setpoint"}, {"type", "f64"}, {"init", 10.0}, {"persist", true}},
-             Json{{"name", "note"}, {"type", "str"}, {"init", "ready"}},
+             Json{{"name", "setpoint"}, {"type", "num"}, {"init", 10.0}, {"persist", true}},
+             Json{{"name", "note"}, {"type", "text"}, {"init", "ready"}},
          })},
         {"pages", Json::array()},
     };
@@ -1288,8 +1288,9 @@ void test_events_are_calls() {
        cell itself stays the feed's. */
     Json onoff = {
         {"id", 700}, {"name", "OnOff"},
-        {"props", Json::array({Json{{"id", 701}, {"name", "value"}, {"shape", "bool"},
-                                    {"default", false}, {"group", "value"}}})},
+        {"locals", Json::array({Json{{"id", 701}, {"name", "value"}, {"type", "bool"},
+                                     {"init", false}, {"group", "value"},
+                                     {"public", true}}})},
         {"events", Json::array({Json{{"name", "changed"},
                                      {"params", Json::array({Json{{"name", "value"},
                                                                   {"shape", "bool"}}})}}})},
@@ -1409,7 +1410,7 @@ void test_colors() {
              {"border", "hsv(n, 1, 1)"}},
         Json{{"locals", Json::array({
                   Json{{"name", "on"}, {"type", "bool"}, {"init", false}},
-                  Json{{"name", "n"}, {"type", "f64"}, {"init", 0}},
+                  Json{{"name", "n"}, {"type", "num"}, {"init", 0}},
               })}});
     CompileResult compiled = compile_document(document, builtin_registry(), mesh);
     for (const Diag& diag : compiled.program.diagnostics)
@@ -2358,8 +2359,8 @@ void test_aggregate_variables() {
                  {"next_id", 1},
                  {"globals",
                   Json::array({
-                      Json{{"name", "n"}, {"type", "f64"}, {"init", 1}},
-                      Json{{"name", "note"}, {"type", "str"}, {"init", "b"}},
+                      Json{{"name", "n"}, {"type", "num"}, {"init", 1}},
+                      Json{{"name", "note"}, {"type", "text"}, {"init", "b"}},
                       Json{{"name", "log"}, {"type", "list"}},
                       Json{{"name", "words"}, {"type", "list"}},
                       Json{{"name", "table"},
@@ -2540,17 +2541,17 @@ void test_nested_aggregates() {
              Json{{"name", "grid"},
                   {"type", "list"},
                   {"elem", "list"},
-                  {"leaf", "f64"},
+                  {"leaf", "num"},
                   {"init", Json::array({Json::array({1, 2}), Json::array({3})})}},
              Json{{"name", "byName"},
                   {"type", "map"},
                   {"elem", "list"},
-                  {"leaf", "f64"},
+                  {"leaf", "num"},
                   {"init", Json{{"b", Json::array({4})}, {"a", Json::array({1, 2})}}}},
              Json{{"name", "rows"},
                   {"type", "list"},
                   {"elem", "map"},
-                  {"leaf", "str"},
+                  {"leaf", "text"},
                   {"init", Json::array({Json{{"k", "v"}}})}},
          })},
         {"pages",
@@ -2683,12 +2684,12 @@ void test_nested_refusals() {
              /* one level, ever: a leaf cannot itself be a row */
              Json{{"name", "deep"}, {"type", "list"}, {"elem", "list"}, {"leaf", "list"}},
              /* a leaf type says what ROWS hold, so it needs rows to have been declared */
-             Json{{"name", "flat"}, {"type", "list"}, {"elem", "f64"}, {"leaf", "f64"}},
+             Json{{"name", "flat"}, {"type", "list"}, {"elem", "num"}, {"leaf", "num"}},
              /* a scalar where a row was declared is the finding, not a promotion */
              Json{{"name", "mixed"},
                   {"type", "list"},
                   {"elem", "list"},
-                  {"leaf", "f64"},
+                  {"leaf", "num"},
                   {"init", Json::array({Json::array({1}), 2})}},
          })},
         {"pages", Json::array({Json{{"name", "P"}, {"children", Json::array()}}})}};
@@ -2751,9 +2752,9 @@ void test_indexed_writes() {
                   Json::array({
                       Json{{"name", "buf"}, {"type", "list"},
                            {"init", Json::array({10, 20, 30})}},
-                      Json{{"name", "words"}, {"type", "list"}, {"elem", "str"},
+                      Json{{"name", "words"}, {"type", "list"}, {"elem", "text"},
                            {"init", Json::array({"a", "b"})}},
-                      Json{{"name", "nums"}, {"type", "list"}, {"elem", "f64"},
+                      Json{{"name", "nums"}, {"type", "list"}, {"elem", "num"},
                            {"init", Json::array({1, 2})}},
                   })},
                  {"pages",
@@ -2908,10 +2909,10 @@ void test_struct_agg_fields() {
                  {"globals",
                   Json::array({
                       Json{{"name", "jogCmd"}, {"type", "Jog"}},
-                      Json{{"name", "src"}, {"type", "list"}, {"elem", "f64"},
+                      Json{{"name", "src"}, {"type", "list"}, {"elem", "num"},
                            {"init", Json::array({1, 2, 3})}},
                       Json{{"name", "readback"}, {"type", "list"}},
-                      Json{{"name", "second"}, {"type", "f64"}},
+                      Json{{"name", "second"}, {"type", "num"}},
                   })},
                  {"pages",
                   Json::array({Json{{"name", "P"},
@@ -3078,7 +3079,7 @@ void test_bare_topic_scalars() {
     };
     Json bad_root = {{"version", 1},
                      {"next_id", 1},
-                     {"globals", Json::array({Json{{"name", "n"}, {"type", "f64"},
+                     {"globals", Json::array({Json{{"name", "n"}, {"type", "num"},
                                                    {"init", 0}}})},
                      {"pages", Json::array({Json{{"name", "P"},
                                                  {"children", Json::array({bad_button})}}})}};
@@ -3114,8 +3115,8 @@ void test_assign_expression_reads_mesh() {
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals",
-                  Json::array({Json{{"name", "total"}, {"type", "f64"}, {"init", 0}},
-                               Json{{"name", "hits"}, {"type", "f64"}, {"init", 0}}})},
+                  Json::array({Json{{"name", "total"}, {"type", "num"}, {"init", 0}},
+                               Json{{"name", "hits"}, {"type", "num"}, {"init", 0}}})},
                  {"pages", Json::array({Json{{"name", "P"},
                                              {"children", Json::array({button})}}})}};
     Document document;
@@ -3269,7 +3270,7 @@ void test_aggregate_expressions() {
                           Json::array({
                               Json{{"name", "src"}, {"type", "list"},
                                    {"init", Json::array({1, 2, 3})}},
-                              Json{{"name", "n"}, {"type", "f64"}, {"init", 0}},
+                              Json{{"name", "n"}, {"type", "num"}, {"init", 0}},
                           })},
                          {"pages",
                           Json::array({Json{{"name", "P"},
@@ -3315,8 +3316,8 @@ void test_aggregate_ceilings() {
                   Json::array({
                       Json{{"name", "unbounded"}, {"type", "list"}},
                       Json{{"name", "bounded"}, {"type", "list"}},
-                      Json{{"name", "total"}, {"type", "f64"}, {"init", 0}},
-                      Json{{"name", "folded"}, {"type", "f64"}, {"init", 0}},
+                      Json{{"name", "total"}, {"type", "num"}, {"init", 0}},
+                      Json{{"name", "folded"}, {"type", "num"}, {"init", 0}},
                   })},
                  {"pages",
                   Json::array({Json{{"name", "P"},
@@ -3405,11 +3406,11 @@ void test_map_reduce() {
                       Json{{"name", "table"},
                            {"type", "map"},
                            {"init", Json{{"b", 20}, {"a", 10}, {"c", 30}}}},
-                      Json{{"name", "total"}, {"type", "f64"}, {"init", 0}},
-                      Json{{"name", "ordered"}, {"type", "f64"}, {"init", 0}},
-                      Json{{"name", "keyed"}, {"type", "f64"}, {"init", 0}},
-                      Json{{"name", "pairs"}, {"type", "f64"}, {"init", 0}},
-                      Json{{"name", "looked_up"}, {"type", "f64"}, {"init", 0}},
+                      Json{{"name", "total"}, {"type", "num"}, {"init", 0}},
+                      Json{{"name", "ordered"}, {"type", "num"}, {"init", 0}},
+                      Json{{"name", "keyed"}, {"type", "num"}, {"init", 0}},
+                      Json{{"name", "pairs"}, {"type", "num"}, {"init", 0}},
+                      Json{{"name", "looked_up"}, {"type", "num"}, {"init", 0}},
                   })},
                  {"pages",
                   Json::array({Json{{"name", "P"},
@@ -3534,8 +3535,12 @@ void test_aggregate_refusals() {
                       Json::array({
                           Json{{"name", "log"}, {"type", "list"}},
                           Json{{"name", "table"}, {"type", "map"}},
-                          Json{{"name", "n"}, {"type", "f64"}, {"init", 0}},
-                          Json{{"name", "typed"}, {"type", "list"}, {"elem", "f64"}},
+                          Json{{"name", "n"}, {"type", "num"}, {"init", 0}},
+                          Json{{"name", "typed"}, {"type", "list"}, {"elem", "num"}},
+                          Json{{"name", "rows"},
+                               {"type", "list"},
+                               {"elem", "list"},
+                               {"leaf", "num"}},
                           Json{{"name", "m"}, {"type", "Plant"}},
                       })},
                      {"pages",
@@ -3566,7 +3571,7 @@ void test_aggregate_refusals() {
                                        {"from", {{"expr", "1"}}},
                                        {"to", {{"local", "m"}, {"path", "names"}}},
                                        {"key", "0"}}}),
-                  "wants text"));
+                  "holds text elements; this expression yields a num"));
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", {{"local", "m"}, {"path", "speed"}}},
@@ -3584,17 +3589,28 @@ void test_aggregate_refusals() {
                                        {"mode", "append"},
                                        {"key", "'k'"}}}),
                   "not both"));
-    /* one element per append: replacing a list is an ordinary write. A mesh list field
-       is an expression read now (`@plant.names`), so the wire tier's own scalar rule
-       refuses it before the append-specific check ever sees it. */
+    /* ONE ELEMENT PER APPEND, and what one element IS is the destination's own
+       declaration — so a whole aggregate against an undeclared list is a TYPE CHECK that
+       names the list and the declaration that would take a row, not the wire tier's
+       one-scalar rule (which cannot see either). Both spellings of a list land there. */
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "@plant.names"}}},
                                        {"to", {{"local", "log"}}},
                                        {"mode", "append"},
                                        {"keep", "3"}}}),
-                  "a wire value is one scalar"));
+                  "'log' does not say what its elements are"));
     CHECK(refuses(flow_on("tap", {steps::append_var("log", "[1, 2]", "3")}),
-                  "a wire value is one scalar"));
+                  "Declare its elements list (the variable's OF row)"));
+    /* a DECLARED element type is the check: a list is not a number, and the refusal says
+       so in the list's own terms rather than reciting the rule */
+    CHECK(refuses(flow_on("tap", {steps::append_var("typed", "[1, 2]", "3")}),
+                  "'typed' holds num elements; this expression yields a list"));
+    /* and the same check the other way round: a cell whose elements are ROWS refuses a
+       scalar, teaching how a row is spelled */
+    CHECK(refuses(flow_on("tap", {steps::append_var("rows", "1", "3")}),
+                  "'rows' holds list of num elements; this expression yields a num"));
+    CHECK(refuses(flow_on("tap", {steps::append_var("rows", "table", "3")}),
+                  "'rows' holds list of num elements; this expression yields a map"));
     /* a mesh entity takes no append; its array fields take one ELEMENT at an index,
        which must be present, a number, and never forced — and a scalar field takes
        no index at all */
@@ -3644,7 +3660,7 @@ void test_aggregate_refusals() {
     };
     CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "banana"}},
                       "not an element type"));
-    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "f64"},
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "num"},
                            {"init", Json::array({1, "a"})}},
                       "elements are declared num"));
 }
@@ -3738,8 +3754,8 @@ void test_suspend_holds_text() {
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array({
-                     Json{{"name", "note"}, {"type", "str"}, {"init", "first"}},
-                     Json{{"name", "out"}, {"type", "str"}, {"init", ""}},
+                     Json{{"name", "note"}, {"type", "text"}, {"init", "first"}},
+                     Json{{"name", "out"}, {"type", "text"}, {"init", ""}},
                  })},
                  {"pages", Json::array({Json{{"name", "P"},
                                              {"children", Json::array({std::move(instance)})}}})}};
@@ -3993,8 +4009,9 @@ void test_icon() {
     FakeMesh mesh(std::vector<EntityDef>{});
     Json badge = {
         {"id", 800}, {"name", "Badge"},
-        {"props", Json::array({Json{{"id", 801}, {"name", "symbol"}, {"shape", "icon"},
-                                    {"default", "gauge"}, {"group", "appearance"}}})},
+        {"locals", Json::array({Json{{"id", 801}, {"name", "symbol"}, {"type", "icon"},
+                                     {"init", "gauge"}, {"group", "appearance"},
+                                     {"public", true}}})},
         {"events", Json::array()},
         {"children", Json::array()},
         {"behavior", Json::array()},
@@ -4024,7 +4041,7 @@ void test_icon() {
     CHECK(doc.adopt(std::move(root), err));
     /* the schema kept both declarations rather than clamping them away */
     CHECK_EQ(doc.root["globals"][0]["type"].get<std::string>(), "icon");
-    CHECK_EQ(doc.root["components"][0]["props"][0]["shape"].get<std::string>(), "icon");
+    CHECK_EQ(doc.root["components"][0]["locals"][0]["type"].get<std::string>(), "icon");
 
     std::vector<Diag> derive_diags;
     Json derived = derive_registry(doc, derive_diags);
@@ -4065,9 +4082,9 @@ void test_icon() {
         {"version", 1}, {"next_id", 2000},
         {"components", Json::array({Json{
             {"id", 800}, {"name", "Badge"},
-            {"props", Json::array({Json{{"id", 801}, {"name", "symbol"},
-                                        {"shape", "icon"}, {"default", "gauge"},
-                                        {"group", "appearance"}}})},
+            {"locals", Json::array({Json{{"id", 801}, {"name", "symbol"},
+                                         {"type", "icon"}, {"init", "gauge"},
+                                         {"group", "appearance"}, {"public", true}}})},
             {"events", Json::array()}, {"children", Json::array()},
             {"behavior", Json::array()}}})},
         {"globals", Json::array()},

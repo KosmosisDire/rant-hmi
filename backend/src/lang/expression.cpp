@@ -1545,7 +1545,7 @@ const std::vector<LangRow>& language_reference() {
 bool compile_expression(const std::string& text, ExprTier tier,
                         const ExpressionScope& scope, EmitSink& sink,
                         std::vector<Instruction>& code, ExpressionResult& result,
-                        std::string& error, Shape wanted) {
+                        std::string& error, bool allow_agg) {
     const size_t start = code.size();
     Parser parser(text, tier, scope, sink, code, error);
     if (!parser.parse(result)) {
@@ -1554,18 +1554,16 @@ bool compile_expression(const std::string& text, ExprTier tier,
     }
     /* a MACHINE write is always one scalar (spec 6): aggregates may appear
      * mid-expression (max over a list), never as what goes to the mesh. But a wire
-     * expression whose DESTINATION declares the aggregate shape — a list variable, a
-     * list slot — is building state, not a machine value, so it passes exactly there
-     * (the entity paths never pass an aggregate `wanted`). */
-    if (tier == ExprTier::Wire &&
-        (result.shape == Shape::List || result.shape == Shape::Map) &&
-        result.shape != wanted) {
+     * expression whose DESTINATION is an HMI aggregate — a list variable, a list slot,
+     * one element of either — is building state, not a machine value, so it passes
+     * exactly there and the caller types it (the entity paths never allow one). */
+    if (tier == ExprTier::Wire && !allow_agg &&
+        (result.shape == Shape::List || result.shape == Shape::Map)) {
         error = "a wire value is one scalar; this expression yields a " +
                 std::string(shape_name(result.shape)) +
-                (wanted == Shape::Unknown
-                     ? ". A list or map result may only be written whole into a "
-                       "variable or slot declared with that shape"
-                     : "");
+                ". A list or map result may only be written whole into a variable or "
+                "slot declared with that shape, or appended to one whose ELEMENTS are "
+                "declared that shape";
         code.resize(start);
         return false;
     }

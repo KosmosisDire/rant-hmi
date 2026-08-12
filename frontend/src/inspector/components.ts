@@ -20,14 +20,13 @@ import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
 import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
-import { AttrDef, ComponentDef, EventSpec, Json, Node, PRIMITIVES, PropDef,
-         SlotSpec, TransitionMap, eventKind, primitiveDef, signatureText } from "../types.js";
+import { AttrDef, ComponentDef, EventSpec, Json, Node, PRIMITIVES,
+         SlotSpec, TransitionMap, Var, eventKind, primitiveDef,
+         signatureText } from "../types.js";
 import { valueEditor } from "./editors.js";
 import { attrScope, Scope } from "./scope.js";
 import { BoxType, valueBox } from "./valuebox.js";
-
-const PROP_SHAPES = ["num", "bool", "text", "color", "icon", "enum", "list", "map"];
-const PROP_GROUPS = ["value", "appearance", "config", "frame"];
+import { newVariable, varCard, varShape } from "./vars.js";
 /* the shapes an event's PARAMETER may carry. A list or a map is not one (an event
    passes a value, never a history) and `enum` needs a type to name its variants, which
    a signature has nowhere to put — the enum's own text name is what travels. */
@@ -166,27 +165,33 @@ function literalText(value: Json): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-function builtinPropRow(prop: Json, prefix: string): HTMLElement {
-  const name = String(prop?.name ?? "");
+/* a shipped component's declaration, read-only: the same variable row the editable card
+   shows, flattened to text because nothing here can be changed until it is Overridden */
+function builtinVarRow(variable: Json, prefix: string): HTMLElement {
+  const name = String(variable?.name ?? "");
   return el("div", { class: "propdef" }, [
     el("div", { class: "row" }, [
       el("span", { class: "value-static grow", text: name,
                    title: "addressed " + (prefix ? prefix + "." + name : name) }),
-      el("span", { class: "kw", text: String(prop?.shape ?? "num") }),
+      variable?.public
+        ? el("span", { class: "badge", text: "input",
+                       title: "every instance shows this and may set it" })
+        : null,
+      el("span", { class: "kw", text: String(variable?.type ?? "num") }),
     ]),
     el("div", { class: "row" }, [
-      el("span", { class: "row-label", text: "DEFAULT" }),
-      el("span", { class: "value-static grow", text: literalText(prop?.default) }),
-      el("span", { class: "row-label", text: "GROUP" }),
-      el("span", { class: "kw", text: String(prop?.group ?? "appearance") }),
+      el("span", { class: "row-label", text: "INIT" }),
+      el("span", { class: "value-static grow", text: literalText(variable?.init) }),
+      el("span", { class: "row-label", text: "SHOWN IN" }),
+      el("span", { class: "kw", text: String(variable?.group ?? "appearance") }),
     ]),
   ]);
 }
 
-function builtinPropsSection(props: Json[], prefix: string, empty: string): HTMLElement[] {
-  return section("builtin-props", "Properties", String(props.length), () => [
-    ...props.map((prop) => builtinPropRow(prop, prefix)),
-    props.length ? null : el("p", { class: "empty", text: empty }),
+function builtinVarsSection(vars: Json[], prefix: string, empty: string): HTMLElement[] {
+  return section("builtin-vars", "Variables", String(vars.length), () => [
+    ...vars.map((variable) => builtinVarRow(variable, prefix)),
+    vars.length ? null : el("p", { class: "empty", text: empty }),
   ]);
 }
 
@@ -228,11 +233,12 @@ function renderBuiltinComponentView(host: HTMLElement, editor: Editor, at: Built
     ]),
   );
 
-  /* the COMPONENT's own properties: what an instance shows while the component itself
-     is selected. An element's are on that element, which is what the tree is for. */
+  /* the COMPONENT's own variables: the public ones are what an instance shows while the
+     component itself is selected. An element's are on that element, which is what the
+     tree is for. */
   body.append(
-    ...builtinPropsSection((at.comp?.props ?? []) as Json[], "",
-                           "no properties of its own"),
+    ...builtinVarsSection((at.comp?.locals ?? []) as Json[], "",
+                          "no variables of its own"),
   );
 
   const flows = (Array.isArray(at.comp?.behavior) ? at.comp.behavior : []) as Json[];
@@ -289,8 +295,8 @@ function renderBuiltinElementView(host: HTMLElement, editor: Editor, at: Builtin
   );
 
   body.append(
-    ...builtinPropsSection((element?.props ?? []) as Json[], at.address,
-                           "no properties of its own"),
+    ...builtinVarsSection((element?.locals ?? []) as Json[], at.address,
+                          "no variables of its own"),
   );
 
   /* the closed vocabulary: every attr this KIND declares, own first then common, with the
@@ -352,14 +358,13 @@ function diagShape(editor: Editor, id: number): string[] {
   return editor.diagNode(id).map((d) => id + ":" + (d.where ?? "") + ":" + d.code + ":" + d.message);
 }
 
-/* What a node OWNS beyond its attrs — the properties it declares and the interact it
- * carries — as shape data: the rows exist per prop and per param, so every inspector
+/* What a node OWNS beyond its attrs — the variables it declares and the interact it
+ * carries — as shape data: the rows exist per variable and per param, so every inspector
  * whose render builds those sections carries this in its shape string. */
 export function ownedShape(node: Json): Json {
   const interact = node?.interact as Json;
   return {
-    props: ((node?.props ?? []) as PropDef[]).map((p) =>
-      [p.id, p.shape, p.group, (p.variants ?? []).join("|"), p.editor ?? ""]),
+    locals: ((node?.locals ?? []) as Var[]).map(varShape),
     interact: interact && typeof interact === "object"
       ? { primitive: interact.primitive ?? "press",
           params: Object.keys(interact.params ?? {}),
@@ -374,8 +379,7 @@ export function ownedShape(node: Json): Json {
 export function componentViewShape(editor: Editor, comp: ComponentDef): string {
   return JSON.stringify({
     comp: comp.id,
-    props: (comp.props ?? []).map((p) => [p.id, p.shape, p.group,
-                                          (p.variants ?? []).join("|"), p.editor ?? ""]),
+    locals: (comp.locals ?? []).map(varShape),
     /* an event's NAME is its row's identity (there is no id to bind by); the signature
        rides the shape so a parameter added or dropped rebuilds its row */
     events: (comp.events ?? []).map((e) =>
@@ -387,7 +391,7 @@ export function componentViewShape(editor: Editor, comp: ComponentDef): string {
        way an instance's flow list does */
     behavior: (comp.behavior ?? []).map(flowShape),
     diag: diagShape(editor, comp.id)
-      .concat((comp.props ?? []).flatMap((p) => diagShape(editor, p.id))),
+      .concat((comp.locals ?? []).flatMap((v) => diagShape(editor, v.id))),
   });
 }
 
@@ -417,7 +421,7 @@ export function componentInspectorShape(editor: Editor): string | null {
       index: siblings.findIndex((node: Json) => node?.id === element.id),
       count: siblings.length,
       diag: diagShape(editor, element.id).concat(
-        ((element as Json).props ?? []).flatMap((p: PropDef) => diagShape(editor, p.id))),
+        ((element.locals ?? []) as Var[]).flatMap((v) => diagShape(editor, v.id))),
     });
   }
   return componentViewShape(editor, comp);
@@ -474,13 +478,12 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
    *    sentence: the gesture is what RAISES the events above. */
   body.append(...interactSection(editor, comp as unknown as Node, "the component's own box"));
 
-  /* 3. Properties: one PropDef row per served slot. The name, shape, default and
-   *    group are the whole slot spec an instance sees. These are the COMPONENT's own —
-   *    what an instance shows while the component itself is selected; a property that
+  /* 3. Variables: the component's own storage, and the PUBLIC ones are its interface —
+   *    what an instance shows while the component itself is selected. A variable that
    *    belongs to one element is declared on that element. */
   body.append(
-    ...propsSection(editor, comp.id, "comp-props", () => at().props ?? [],
-                    "no properties yet"),
+    ...componentVarsSection(editor, comp.id, "comp-vars", () => at().locals ?? [],
+                            "no variables yet"),
   );
 
   /* 4. Behavior: the type's DEFAULT flows, edited with the same card an instance's
@@ -610,158 +613,28 @@ function eventRow(
   ]);
 }
 
-/* The properties one owner declares — a component (its own vocabulary) or an
- * element (what that element paints). One section, three callers (the Design component
- * and element views, and the Content node inspector inside an entered context), because the
- * row is the same thing in every place and so is the rule: a property is declared
- * where it is read. */
-export function propsSection(
+/* THE VARIABLES ONE OWNER DECLARES — a component (its own vocabulary) or an element
+ * inside one (what that element paints). This is where properties used to have a section
+ * of their own; there is one list now, and `public` on a card is what used to be the
+ * difference between the two. Three callers (the Design component and element views, and
+ * the Content node inspector inside an entered context), because the card is the same
+ * thing in every place and so is the rule: a variable is declared where it is read. */
+export function componentVarsSection(
   editor: Editor,
   ownerId: number,
   key: string,
-  propsAt: () => PropDef[],
+  varsAt: () => Var[],
   empty: string,
 ): HTMLElement[] {
-  const props = propsAt();
-  return section(key, "Properties", String(props.length), () => [
-    ...props.map((prop) => propRow(editor, ownerId, prop)),
-    props.length ? null : el("p", { class: "empty", text: empty }),
+  const vars = varsAt();
+  return section(key, "Variables", String(vars.length), () => [
+    ...vars.map((variable) => varCard(editor, variable, "component", ownerId)),
+    vars.length ? null : el("p", { class: "empty", text: empty }),
     el("button", {
       class: "dashed-btn",
-      text: "+ Property",
-      onclick: () => {
-        const taken = new Set(propsAt().map((p) => p.name));
-        let fresh = "prop1";
-        for (let n = 1; taken.has(fresh); n++) fresh = "prop" + n;
-        editor.apply([{ op: "insert", parent: ownerId, list: "props", node: { name: fresh } }]);
-      },
+      text: "+ Variable",
+      onclick: () => newVariable(editor, ownerId, "locals", varsAt()),
     }),
-  ]);
-}
-
-function propRow(editor: Editor, ownerId: number, prop: PropDef): HTMLElement {
-  const at = () => (editor.store.node(prop.id) as PropDef | null) ?? prop;
-  const name = commitInput(
-    prop.name,
-    (text) => {
-      if (text) editor.apply([{ op: "set_prop", node: prop.id, key: "name", value: text }]);
-    },
-    { class: "field grow" },
-  );
-  bindField(prop.id + ":name", name, () => at().name ?? "");
-
-  const shape = selectField(PROP_SHAPES.map((v) => ({ value: v })), prop.shape, (v) =>
-    editor.apply([{ op: "set_prop", node: prop.id, key: "shape", value: v }]),
-  );
-  bindChoice(prop.id + ":shape", pickerOf(shape), () => at().shape ?? "num");
-
-  const group = selectField(PROP_GROUPS.map((v) => ({ value: v })), prop.group, (v) =>
-    editor.apply([{ op: "set_prop", node: prop.id, key: "group", value: v }]),
-  );
-  bindChoice(prop.id + ":group", pickerOf(group), () => at().group ?? "appearance");
-
-  /* the same editor an instance's slot row uses, driving the DEFAULT value */
-  const spec = {
-    name: prop.name,
-    shape: prop.shape,
-    default: prop.default,
-    group: prop.group,
-    variants: prop.variants ?? [],
-    ...(prop.editor ? { editor: prop.editor } : {}),
-  } as SlotSpec;
-  const dflt = valueEditor(
-    spec,
-    prop.shape,
-    prop.id + ":default",
-    () => at().default,
-    (v) => editor.apply([{ op: "set_prop", node: prop.id, key: "default", value: v }]),
-    false,
-    editor,
-  );
-
-  /* THE DECLARED TRANSITION, number properties only: rendered reads of this slot sweep
-     toward the true value over this time — the needle, the arc and the readout all
-     together — while behavior, gestures and the wire keep reading truth. `smooth` and
-     `profile` are EXPRESSIONS over the DECLARING node's scope (the SweepRow pass
-     compiles them at that node's own TemplateScope, exactly the universe attrScope
-     serves); a plain number / bare easing name is the literal. Edited in the same
-     motion popover the attr rows wear: the timer button, MS and EASE value boxes, lit
-     while a sweep stands. */
-  const shownSweep = (v: number | string | null | undefined) =>
-    typeof v === "number" ? (v > 0 ? String(v) : "") : (v ?? "");
-  const sweeping = () => {
-    const held = (at() as PropDef).smooth;
-    return typeof held === "number" ? held > 0 : Boolean(held);
-  };
-  const sweep = iconButton("timer", "sweep: rendered reads of this property ease toward "
-                                    + "a new value (the value itself is never eased)", () => {
-    const rect = sweep.getBoundingClientRect();
-    const held = sweeping();
-    const scope = attrScope(editor, (editor.store.node(ownerId) ?? { id: ownerId }) as Node);
-    const ms = valueBox({
-      key: prop.id + ":smooth",
-      read: () => shownSweep((at() as PropDef).smooth),
-      commit: (text) => {
-        const trimmed = text.trim();
-        const folded = Number(trimmed);
-        editor.apply([{ op: "set_prop", node: prop.id, key: "smooth",
-                        value: !trimmed ? 0
-                             : Number.isFinite(folded) ? folded : trimmed }]);
-      },
-      emptyMeans: "unset",
-      placeholder: "none",
-      title: "milliseconds — a number or an expression over this component; "
-             + "empty = none",
-      type: { shape: "num" },
-      scope,
-    });
-    const profile = valueBox({
-      key: prop.id + ":profile",
-      read: () => at().profile || "",
-      commit: (text) => editor.apply([{ op: "set_prop", node: prop.id, key: "profile",
-                                        value: text.trim() }]),
-      emptyMeans: "unset",
-      placeholder: "ease",
-      title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
-             + "yielding one",
-      type: { shape: "text" },
-      scope,
-    });
-    openMenu(rect.left, rect.bottom + 4, "sweep " + at().name, [
-      { node: el("div", { class: "menu-field" },
-                 [el("span", { class: "row-label", text: "MS" }), ms]) },
-      { node: el("div", { class: "menu-field" },
-                 [el("span", { class: "row-label", text: "EASE" }), profile]) },
-      ...(held ? [{ label: "remove the sweep", icon: "trash", run: () =>
-          editor.apply([{ op: "set_prop", node: prop.id, key: "smooth", value: 0 },
-                        { op: "set_prop", node: prop.id, key: "profile", value: "" }]) }]
-               : []),
-    ]);
-  });
-  sweep.classList.add("transition-chip");
-  if (sweeping()) sweep.classList.add("on");
-  bindFlag(prop.id + ":sweep.on", sweep, "on", sweeping);
-  const sweepDiag = editor.diagAt(prop.id, "smooth");
-
-  return el("div", { class: "propdef" }, [
-    el("div", { class: "row" }, [
-      name,
-      shape,
-      iconButton("trash", "remove this property", () =>
-        editor.apply([{ op: "remove", node: prop.id }]),
-      ),
-      diagIcon(editor.diagAt(prop.id, "name")),
-    ]),
-    el("div", { class: "row" }, [
-      el("span", { class: "row-label", text: "DEFAULT" }),
-      dflt,
-      el("span", { class: "row-label", text: "GROUP" }),
-      group,
-      /* the sweep is a NUMBER property's affordance; its findings land here either
-         way (an authored smooth on a non-num shape is exactly such a finding) */
-      prop.shape === "num" ? sweep : null,
-      diagIcon(sweepDiag.length ? sweepDiag : editor.diagAt(prop.id, "profile")),
-    ]),
   ]);
 }
 
@@ -838,12 +711,13 @@ function renderElementView(host: HTMLElement, editor: Editor, comp: ComponentDef
     ]),
   );
 
-  /* the properties this element OWNS: an instance edits them only while this
-   * element is selected, they are stored under its path, and this element's expressions —
-   * and its children's — are the only ones that can read them */
+  /* the variables this element OWNS: a public one is edited by an instance only while
+   * this element is selected, they are stored under its path, and this element's
+   * expressions — and its children's — are the only ones that can read them */
   body.append(
-    ...propsSection(editor, element.id, "element-props", () => (at() as Json).props ?? [],
-                    "no properties of its own"),
+    ...componentVarsSection(editor, element.id, "element-vars",
+                            () => (at().locals ?? []) as Var[],
+                            "no variables of its own"),
   );
 
   body.append(...attrsSection(editor, element));

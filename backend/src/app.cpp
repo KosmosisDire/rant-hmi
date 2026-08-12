@@ -256,8 +256,8 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
 /* One SCALAR cell value as the wire sees it: numbers and booleans as themselves, text
  * resolved through the run's slots, a color as its hex, an enum as its variant NAME (the
  * vocabulary the author picked it by; a value outside it shows its integer). Null for
- * anything that is not a scalar, which is how an element of a list reads when it is not
- * one either. */
+ * anything that is not a scalar — an aggregate rides as an aggregate (wire_element), and
+ * a value that is neither is a gap. */
 static Json wire_scalar(const Program& program, const RuntimeState& state,
                         const Value& value) {
     switch (value.tag) {
@@ -273,6 +273,33 @@ static Json wire_scalar(const Program& program, const RuntimeState& state,
         }
         default: return Json();
     }
+}
+
+/* ONE ELEMENT of an aggregate cell as the wire sees it. A scalar is itself; a ROW — the
+ * element of a cell whose `elem` declares list or map — is the aggregate it is: a JSON
+ * array, or an object where the row is a map. The recursion stops after exactly one step
+ * because nesting is one declared level, so a row holds leaves and nothing else.
+ *
+ * A row rides WHOLE inside its element rather than on a delta lane of its own. That is
+ * not a shortcut: a leaf edit or a leaf append moves the CELL's generation (there is no
+ * in-place-edit vocabulary on the aggs lane), and a moved generation already resends the
+ * whole window — so a per-row delta would have nothing left to save. */
+static Json wire_element(const Program& program, const RuntimeState& state,
+                         const Value& value) {
+    if (value.tag != ValueTag::List && value.tag != ValueTag::Map)
+        return wire_scalar(program, state, value);
+    const AggView row = state.aggregate(value);
+    if (value.tag == ValueTag::Map) {
+        Json entries = Json::object();
+        for (uint32_t i = 0; i < row.count; ++i)
+            entries[std::string(state.text(program, row.data[i * 2]))] =
+                wire_scalar(program, state, row.data[i * 2 + 1]);
+        return entries;
+    }
+    Json items = Json::array();
+    for (uint32_t i = 0; i < row.count; ++i)
+        items.push_back(wire_scalar(program, state, row.data[i]));
+    return items;
 }
 
 Json App::live(bool full) const {
@@ -375,6 +402,9 @@ Json App::live(bool full) const {
  *                                                     them, then trims its front to L)
  *   {"gen": G, "map": true, "values": {k: v, ...}}    a map, whole
  *
+ * An element is a scalar, or — where the cell's `elem` declares one — a whole ROW, which
+ * rides as the aggregate it is (wire_element): [..] for a list row, {k: v} for a map row.
+ *
  * `from` and the cursor count APPENDS EVER and never rewind on a trim, so the client can
  * tell "three new samples" from "a different list that happens to be the same length".
  * When the generation moves — a whole store, a clear, a recompile — the frame carries the
@@ -398,7 +428,7 @@ Json App::agg_entry(uint32_t list_slot, Shape shape, const Value& value, bool fu
         Json entries = Json::object();
         for (uint32_t k = 0; k < view.count; ++k)
             entries[std::string(state.text(program, view.data[k * 2]))] =
-                wire_scalar(program, state, view.data[k * 2 + 1]);
+                wire_element(program, state, view.data[k * 2 + 1]);
         return Json{{"gen", held.gen}, {"map", true}, {"values", std::move(entries)}};
     }
 
@@ -411,8 +441,8 @@ Json App::agg_entry(uint32_t list_slot, Shape shape, const Value& value, bool fu
         from = cursor.total;
     Json items = Json::array();
     for (uint64_t at = from; at < held.total; ++at)
-        items.push_back(wire_scalar(program, state,
-                                    view.data[static_cast<uint32_t>(at - oldest)]));
+        items.push_back(wire_element(program, state,
+                                     view.data[static_cast<uint32_t>(at - oldest)]));
     return Json{{"gen", held.gen},
                 {"from", from},
                 {"len", view.count},

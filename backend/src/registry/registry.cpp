@@ -62,9 +62,9 @@ Json path(const char* name, Json attrs, Json anchors, bool closed = true) {
                 {"anchors", std::move(anchors)}, {"closed", closed}};
 }
 
-/* A node OWNS properties: they are addressed under its path (`bar.fill_color`), stored
+/* A node OWNS variables: they are addressed under its path (`bar.fill_color`), stored
  * nested in an instance's slots, edited while that node is selected, and read by its own
- * expressions and its children's. The line between a component-level property and a
+ * expressions and its children's. The line between a component-level variable and a
  * node's is where it is READ:
  *
  *   the COMPONENT owns what the control IS: the value it carries, its range, how it is
@@ -73,8 +73,8 @@ Json path(const char* name, Json attrs, Json anchors, bool closed = true) {
  *   a NODE owns what it PAINTS: its colours, its own corner radius, the text it draws.
  *   Nothing else can read them, which is why they can stop crowding the instance's
  *   inspector. */
-Json owns(Json node, Json props) {
-    node["props"] = std::move(props);
+Json owns(Json node, Json locals) {
+    node["locals"] = std::move(locals);
     return node;
 }
 
@@ -127,13 +127,19 @@ Json sector(const Str& a0, const Str& a1, const Str& r_out, const Str& r_in) {
     });
 }
 
-/* ---- interface tables (document PropDef form) ---- */
+/* ---- interface tables (document `var` rows: a component's PUBLIC variables) ----
+ *
+ * A built-in declares its interface the way any authored component does — variables
+ * marked public. There is no property row and no second vocabulary: `type` here is the
+ * same word a page's variable is declared with. */
 
-Json slot(const char* name, const char* shape, Json def, const char* group,
+Json slot(const char* name, const char* type, Json def, const char* group,
           const char* editor = nullptr) {
-    Json s = Json{{"name", name}, {"shape", shape}, {"default", std::move(def)},
-                  {"group", group}};
-    if (editor) s["editor"] = editor;
+    Json s = Json{{"name", name}, {"type", type}, {"init", std::move(def)},
+                  {"group", group}, {"public", true}};
+    /* an editor that only repeats the type says nothing: a colour earns its swatch by
+       BEING a colour now, not by asking for one */
+    if (editor && std::string(editor) != type) s["editor"] = editor;
     return s;
 }
 
@@ -153,10 +159,12 @@ Json range(Json s, double lo, double hi) {
     return s;
 }
 
-/* an enum slot carries its variants, so the inspector generates the picker from data */
+/* A PICKED TEXT: an ordinary text variable that carries its own vocabulary, so the
+ * inspector generates the picker from data. There is no `enum` type — a text with
+ * variants IS the enum, which is the same rule the attr table has always used. */
 Json slot_enum(const char* name, std::vector<std::string> variants, const char* def,
                const char* group, const char* editor = nullptr) {
-    Json s = slot(name, "enum", def, group, editor);
+    Json s = slot(name, "text", def, group, editor);
     s["variants"] = variants;
     return s;
 }
@@ -306,7 +314,7 @@ Json compose_slots(Json base, std::initializer_list<Json> own) {
     return slots;
 }
 
-/* ONE COMPONENT = one pre-made frame: its own props, events and behavior, plus the
+/* ONE COMPONENT = one pre-made frame: its own variables, events and behavior, plus the
  * attrs and children of the box an instance renders as. There is no wrapper node and no
  * "one root element" rule — the component record IS the root.
  *
@@ -315,10 +323,10 @@ Json compose_slots(Json base, std::initializer_list<Json> own) {
  * at. It is not a coordinate space — the internals place themselves in FRACTIONS of
  * their parent, which is what lets one authoring render honestly at every box an
  * instance is given (a component is scalable by nature; the page is the static thing). */
-Json component(const char* name, int design_w, int design_h, Json props, Json events,
+Json component(const char* name, int design_w, int design_h, Json locals, Json events,
                Json attrs, Json children, Json behavior = Json::array(),
                Json interact = nullptr) {
-    Json out = Json{{"name", name}, {"props", std::move(props)},
+    Json out = Json{{"name", name}, {"locals", std::move(locals)},
                     {"events", std::move(events)},
                     {"design_w", design_w}, {"design_h", design_h},
                     {"attrs", std::move(attrs)}, {"children", std::move(children)},

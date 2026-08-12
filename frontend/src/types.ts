@@ -3,7 +3,13 @@
 
 export type Json = any;
 
-/* 17: THE COPY RIDES THE EVENT — an `input` frame raised from inside a `repeat` carries
+/* 18: A PROPERTY IS A PUBLIC VARIABLE — the `props` list and the PropDef row left the
+ * document. A component declares `locals` like every other element, and `public` on one
+ * is what an instance fills in; a private one is served (its cell and address are real,
+ * and the component's own pictures read it) but never offered. `type` and `shape` are one
+ * vocabulary now — `num`/`text` where `f64`/`str` stood, `color` a real type, and a
+ * `text` carrying `variants` is what `enum` was.
+ * (17: THE COPY RIDES THE EVENT — an `input` frame raised from inside a `repeat` carries
  * `repeat: {index, count}`, and carries the key at all only when there IS a copy. The
  * backend holds one set of cells for a repeated element however many times this view
  * drew it, so the copy exists nowhere but on the event: a flow reads it as
@@ -23,7 +29,7 @@ export type Json = any;
  * spelled `this.<slot>` in both tiers.
  * 14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
  * the step kind `notify` broadcasts a notification to every session.) */
-export const PROTO = 17;
+export const PROTO = 18;
 
 /* WHICH COPY of a `repeat` a gesture came from, as it rides the wire and as the renderer
  * holds it. One shape in one place: the stage's binds, the gesture seat and the `input`
@@ -172,29 +178,69 @@ export interface AttrTable {
 
 /* ---- document ---- */
 
+/* ---- A VARIABLE, AND THEREFORE A PROPERTY ----
+ *
+ * There is no separate property row. A variable declared inside a COMPONENT is that
+ * component's storage, one cell per placement; marking it `public` makes it part of the
+ * component's interface, so every instance shows it in the inspector and may give it a
+ * value of its own. That is the whole of the model — on a page there is nothing to be
+ * public to, so the flag and the fields under it sit inert there. */
 export interface Var {
   id: number;
   name: string;
-  /* "f64" | "bool" | "str" | "icon" | "timer" | "list" | "map", or any TypeRef from
-     the mesh */
+  /* "num" | "bool" | "text" | "color" | "icon" | "timer" | "list" | "map", or any
+     TypeRef from the mesh. ONE vocabulary with the served `shape`: a variable's type
+     and a slot's shape were the last two words for the same idea. */
   type: string;
   init: Json;
   persist: boolean;
-  /* list/map only — the declared element type ("" = any scalar) */
+  /* list/map only — the declared element type ("" = any scalar). `list` or `map` here
+     declares a NESTED variable: every element is a ROW, and `leaf` is what one row holds.
+     Nesting is ONE level by construction, so there is nothing below a row to name. */
   elem?: string;
+  leaf?: string;
+  /* is this part of the component's interface? Inert on a page element. */
+  public?: boolean;
+  /* which inspector section a public one lands in */
+  group?: "value" | "appearance" | "config" | "frame";
+  /* an editor the type alone would not have chosen ("align", "enum-type") */
+  editor?: string;
+  /* a `text` variable with variants is PICKED from them — which is all the old `enum`
+     shape ever meant, and the same rule the attr table uses */
+  variants?: string[];
+  step?: number | null;   /* num: the caret's grain */
+  min?: number | null;    /* num: bounds turn the field into a slider beside it */
+  max?: number | null;
+  /* THE DECLARED TRANSITION, num only: every rendered read eases over `smooth` ms along
+     `profile`. Both are EXPRESSIONS over the declaring element's scope (a number / bare
+     easing name is the degenerate literal). Rendering only — behavior, feeds, the wire
+     and gestures always read the true value. 0 / "" = none. */
+  smooth?: number | string | null;
+  profile?: string;
 }
 
 /* what a scalar variable type is CALLED in the UI. A type outside this table is a TypeRef
    from the mesh, which names itself — so a miss here is also the struct test. */
 export const SCALAR_LABEL: Record<string, string> = {
-  f64: "number", bool: "bool", str: "text", icon: "icon", timer: "timer",
-  list: "list", map: "map",
+  num: "number", bool: "bool", text: "text", color: "color", icon: "icon",
+  timer: "timer", list: "list", map: "map",
 };
 
+/* THE TYPES WHOSE WORD IS THEIR SHAPE — one value, loadable in one cell, editable by one
+   control. This is what the three hand-copied {f64:"num", str:"text"} tables became once
+   a variable's type and a slot's shape stopped being two vocabularies. `timer`, `list`
+   and `map` are named in SCALAR_LABEL but are not here: that table is about what a type
+   is CALLED, this one about what it IS. */
+export const SCALAR_TYPES = new Set(["num", "bool", "text", "color", "icon"]);
+
 /* what a list's or map's declared element type reads as in a picker row:
-   "list of number"; bare "list" when the elements are undeclared */
-export function aggLabel(type: string, elem?: string): string {
-  return elem ? type + " of " + (SCALAR_LABEL[elem] ?? elem) : type;
+   "list of number"; "list of list of number" where the elements are ROWS; bare "list"
+   when the elements are undeclared */
+export function aggLabel(type: string, elem?: string, leaf?: string): string {
+  if (!elem) return type;
+  const of = elem === "list" || elem === "map" ? aggLabel(elem, leaf)
+                                               : SCALAR_LABEL[elem] ?? elem;
+  return type + " of " + of;
 }
 
 /* a theme token: a named color role with one value per theme mode; a
@@ -248,7 +294,6 @@ export interface Node {
   attrs: Record<string, string>;   /* attr -> expression text */
   /* per-attr transitions, metadata beside the attrs (see TransitionMap) */
   transitions?: TransitionMap;
-  props?: PropDef[];
   /* frame only */
   type?: string;                   /* "" = a plain frame; a component name = an instance */
   /* per-instance slot values, NESTED like the component's own nodes: a top-level property
@@ -286,37 +331,18 @@ export function isInstance(node: Node | null | undefined): boolean {
 
 /* ---- components: a frame someone already made ----
  *
- * The document form the backend compiles into the served registry: a PropDef row
- * round-trips to a SlotSpec, a node's attrs hold EXPRESSION TEXT (compiled to view
+ * The document form the backend compiles into the served registry: a `public` variable
+ * row round-trips to a SlotSpec, a node's attrs hold EXPRESSION TEXT (compiled to view
  * programs server-side), and a component with a built-in's name shadows it. The record IS
  * the root node — its `layout`, `attrs` and `interact` describe the box an instance
  * renders as — so there is no wrapper between a type and its content. */
-
-export interface PropDef {
-  id: number;
-  name: string;
-  shape: "num" | "bool" | "text" | "color" | "icon" | "enum" | "list" | "map";
-  default: Json;
-  group: "value" | "appearance" | "config" | "frame";
-  editor: string;
-  variants: string[];
-  step: number | null;
-  min: number | null;
-  max: number | null;
-  /* THE DECLARED TRANSITION, num-shaped properties only: every rendered read of this
-     slot eases over `smooth` ms along `profile`. Both are EXPRESSIONS over the
-     declaring node's scope (a number / bare easing name is the degenerate literal).
-     Rendering only — behavior, feeds, the wire and gestures always read the true
-     value. 0 / "" = none. */
-  smooth: number | string | null;
-  profile: string;
-}
 
 export interface ComponentDef {
   id: number;
   name: string;
   events: EventSpec[];
-  props: PropDef[];
+  /* the component's own variables; the public ones are what an instance fills in */
+  locals: Var[];
   /* the ROOT BOX: the same fields the frame variant carries, because the record IS
      the root node */
   attrs: Record<string, string>;
@@ -362,14 +388,25 @@ export type Instr = {
   body?: Instr[];
 };
 
+/* ONE OF A COMPONENT'S VARIABLES, as the registry serves it. The document declares
+   `type` and `init`; this says `shape` and `default`, because what a placement, an editor
+   and a view program need is the SHAPE of the value rather than the word that declared
+   it — and the two vocabularies are the same words now, `text` with variants being served
+   as "enum". Private variables are served too (their cells and addresses are real); only
+   `public` decides whether an instance may see one. */
 export interface SlotSpec {
-  /* the slot's ADDRESS: a component-level property is a bare name, an element's is its
+  /* the slot's ADDRESS: a component-level variable is a bare name, an element's is its
      owning element's path plus the name (`bar.fill_color`). It is what a feed's `slot`, a move's
      destination, a live cell key and an instance's nesting all use. */
   name: string;
   shape: string;
   default: Json;
   group: "value" | "appearance" | "config" | "frame";
+  /* part of the component's interface? A private one is drawn from but never offered. */
+  public?: boolean;
+  /* list/map: the declared element type, and for a nested one what its rows hold */
+  elem?: string;
+  leaf?: string;
   editor?: string;
   variants?: string[]; /* enum slots carry their own picker */
   step?: number;       /* num slots: the caret step (fractions step fine, not by 1) */
