@@ -1227,6 +1227,65 @@ function clipOf(node: ViewNode, cells: Cells): {
   return { authored: true, on, radius: on ? num(value) : null };
 }
 
+/* ---- A BOX THAT SCROLLS ITS CHILDREN ----
+ *
+ * WHICH AXES `scroll` OPENS, and nothing about the bar (that is `scrollbar`'s half, below).
+ * Absent, Nil or false is a box that does not scroll — Nil counts as absent for the same
+ * reason it does in `clip`: an unknown must not invent a picture. A bare `true` is the
+ * VERTICAL case, because a list of rows is what asks for this; a word the vocabulary does
+ * not know falls the same way rather than rendering nothing, exactly as a text's `align`
+ * does with its own. */
+function scrollOf(node: ViewNode, cells: Cells):
+  { axes: string; x: boolean; y: boolean } | null {
+  const value = attrOf(node, "scroll", cells);
+  if (value === undefined || value === null || !truthy(value)) return null;
+  const word = (attrText(value) ?? "").trim().toLowerCase();
+  const x = word === "x" || word === "both";
+  const y = !x || word === "both";
+  return { axes: x ? (y ? "both" : "x") : "y", x, y };
+}
+
+/* THE BAR — the one part of the picture no applier can write directly: a scrollbar is drawn
+ * by pseudo-elements (::-webkit-scrollbar and friends) that no element's style attribute
+ * can reach. So the VALUES still come from the attrs, as custom properties the box's own
+ * pseudo-elements inherit, and stage.css holds the mechanism they feed. `data-scroll` marks
+ * the box for those rules, for the touch allowance (input-floor.css grants a scroll box the
+ * pan its axis needs) and for the wheel, which asks the elements under the pointer whether
+ * one of them takes it.
+ *
+ * TOTAL, like every applier: a box that stopped scrolling loses the attribute, the
+ * properties AND its scroll offsets — an offset on an axis that no longer scrolls is a
+ * displaced picture with nothing left to put it back (overflow: hidden keeps whatever
+ * scrollTop it was left holding). */
+function scrollbar(el: HTMLElement, node: ViewNode, cells: Cells,
+                   scroll: { axes: string; x: boolean; y: boolean } | null): void {
+  const setVar = (name: string, value: string | null) => {
+    if (value === null) el.style.removeProperty(name);
+    else el.style.setProperty(name, value);
+  };
+  if (!scroll) {
+    el.removeAttribute("data-scroll");
+    el.removeAttribute("data-scrollbar");
+    setVar("--sb-w", null);
+    setVar("--sb-thumb", null);
+    setVar("--sb-track", null);
+  } else {
+    el.setAttribute("data-scroll", scroll.axes);
+    const bar = attrOf(node, "scrollbar", cells);
+    /* absent (or Nil) = drawn, the default the served table shows: a bar is how a box says
+       it has more to show, and losing it to an unknown would be losing that sentence */
+    if (bar === undefined || bar === null || truthy(bar)) el.removeAttribute("data-scrollbar");
+    else el.setAttribute("data-scrollbar", "off");
+    setVar("--sb-w", (num(attrOf(node, "scrollbar_w", cells)) ?? 8) + "px");
+    const thumb = attrOf(node, "scrollbar_color", cells);
+    setVar("--sb-thumb", paints(thumb) ? cssColor(thumb) : null);
+    const track = attrOf(node, "scrollbar_track", cells);
+    setVar("--sb-track", paints(track) ? cssColor(track) : null);
+  }
+  if (!scroll?.x && el.scrollLeft) el.scrollLeft = 0;
+  if (!scroll?.y && el.scrollTop) el.scrollTop = 0;
+}
+
 /* ---- THE SHADOW: one authored intent, three mechanisms ----
  *
  * The author writes a PICTURE — a colour, an offset, a softness, in or out — and the view
@@ -1403,11 +1462,22 @@ function dress(el: HTMLElement, node: ViewNode, cells: Cells,
     : "";
   const radius = num(attrOf(node, "radius", cells));
   const clip = clipOf(node, cells);
+  const scroll = scrollOf(node, cells);
   /* WRITTEN, never cleared: "" would hand the answer back to the stylesheet, and a
      stylesheet that clipped boxes is exactly what made this attr do nothing. A box that
      does not clip lets its children paint outside it and is otherwise untouched — nothing
-     here is layout, so nothing moves. */
-  el.style.overflow = clip.on ? "hidden" : "visible";
+     here is layout, so nothing moves.
+     A SCROLLING AXIS IS A WINDOW onto the content, so it clips whatever `clip` said and
+     hands the strip past its edge to the browser instead. The other axis clips too where
+     one of them scrolls: `visible` beside a scrolling axis is not a picture CSS has (the
+     browser turns it into a second scrollbar), and a box asking to scroll one way has not
+     asked to spill the other. Two values are x then y, one serves both. */
+  const rest = clip.on ? "hidden" : "visible";
+  const overflowX = scroll ? (scroll.x ? "auto" : "hidden") : rest;
+  const overflowY = scroll ? (scroll.y ? "auto" : "hidden") : rest;
+  el.style.overflow =
+    overflowX === overflowY ? overflowX : overflowX + " " + overflowY;
+  scrollbar(el, node, cells, scroll);
   el.style.borderRadius = clip.radius !== null && clip.radius > 0 ? clip.radius + "px"
                         : radius !== null ? radius + "px" : "";
   /* A BOX CASTS box-shadow: it follows the radius set just above, takes a spread and does
@@ -1576,6 +1646,13 @@ function regime(el: HTMLElement, node: ViewNode, editor: Editor, cells: Cells): 
   el.classList.toggle("disabled", disabled);
   if (editor.view.mode === "edit") el.style.pointerEvents = "";
   else if (disabled) el.style.pointerEvents = "none";
+  /* A BOX THAT SCROLLS HAS SOMETHING TO DO WITH THE POINTER, which is the whole test every
+     other line here applies: the wheel and a touch drag are aimed at the element the browser
+     hit-tested, so an inert box would hand its own scroll to whatever is behind it. This
+     wins over inert pass-through AND over an enclosing instance's answer — pointer-events
+     is inherited, and a child may take back what its parent gave up, so a scrolling node
+     inside a picture-only widget still scrolls. */
+  else if (scrollOf(node, cells)) el.style.pointerEvents = "auto";
   else if (node.instance)
     el.style.pointerEvents =
       operable(editor.store.instance(node.id), node.type) ? "auto" : "none";
@@ -2279,6 +2356,37 @@ export function idUnder(target: EventTarget | null): number {
   return at ? Number(at.getAttribute("data-id")) : 0;
 }
 
+/* IS THIS WHEEL A SCROLL BOX'S RATHER THAN THE CAMERA'S? The boxes `scroll` opened are
+ * marked `data-scroll` with their axes (the scrollbar applier), so this asks the elements
+ * between the pointer and the pane, deepest first — no getComputedStyle anywhere: the
+ * answer is ours and it is written down.
+ *
+ * ONLY WHILE IT CAN STILL MOVE that way. At the end of a list the wheel goes back to the
+ * camera, which is what a nested scroller does everywhere else (the browser calls it
+ * chaining; here the outer scroller is a camera, so it has to be asked in JS). A box that
+ * scrolls ONLY sideways takes a plain vertical wheel too — a mouse with one wheel must be
+ * able to reach a horizontal list, and that is the mapping the browser itself makes. */
+function wheelScrolls(host: HTMLElement, ev: WheelEvent): boolean {
+  /* a fractional scrollHeight (a scaled box, a sub-pixel row) must not read as room */
+  const SLACK = 1;
+  for (let el = ev.target as HTMLElement | null; el && el !== host; el = el.parentElement) {
+    const axes = el.getAttribute?.("data-scroll");
+    if (!axes) continue;
+    const scrollsY = axes === "y" || axes === "both";
+    const scrollsX = axes === "x" || axes === "both";
+    if (scrollsY && ev.deltaY &&
+        (ev.deltaY > 0 ? el.scrollTop + el.clientHeight < el.scrollHeight - SLACK
+                       : el.scrollTop > 0))
+      return true;
+    const across = scrollsX ? (ev.deltaX || (scrollsY ? 0 : ev.deltaY)) : 0;
+    if (across &&
+        (across > 0 ? el.scrollLeft + el.clientWidth < el.scrollWidth - SLACK
+                    : el.scrollLeft > 0))
+      return true;
+  }
+  return false;
+}
+
 /* Listeners are attached once per host. A click SELECTS whatever the hit test named — an
  * instance from its own pixels, a frame from ITS own pixels (its padding, the gap between
  * its children, its empty room). No kind is special-cased: the hover ring has already
@@ -2368,6 +2476,12 @@ function wire(host: HTMLElement, editor: Editor): void {
   host.addEventListener("wheel", (ev) => {
     const state2 = stateOf(host);
     const cam = state2.cam;
+    /* A SCROLL BOX UNDER THE POINTER TAKES THE WHEEL FIRST, wherever the page operates:
+       the thing under the pointer scrolling is what a wheel means everywhere else, and
+       cancelling the default here is what would stop it. In EDIT mode the wheel stays the
+       camera's — scrolling is an interaction, and interactions belong to the modes that
+       operate (gestures.ts draws that same line on the four primitives). */
+    if (editor.view.mode !== "edit" && wheelScrolls(host, ev)) return;
     ev.preventDefault();
     if (ev.ctrlKey) {
       const at = host.getBoundingClientRect();

@@ -1685,6 +1685,61 @@ check(stageNode("leaf", 904).style.overflow === "visible",
       "clip:false on the instance stops its box clipping");
 delete stageAttrs["904"].attrs.clip;
 
+/* ---- A BOX THAT SCROLLS ITS CHILDREN ----
+   `scroll` opens the axes and the browser does the scrolling; `scrollbar` and its three
+   companions dress the bar it draws, through custom properties, because a scrollbar is
+   pseudo-element drawing no inline style can reach (stage.css holds that mechanism). A
+   scrolling axis CLIPS — it is a window onto the content — and the marker attribute is what
+   the touch allowance and the wheel read, so it is as total as the styles. */
+stageAttrs["901"].attrs.scroll = prog("y");
+stageEditor.live = { epoch: 71, values: {} };
+drawStage();
+check(row.style.overflow === "hidden auto",
+      "scroll: y scrolls the box down its content and clips across, got '" +
+        row.style.overflow + "'");
+check(row.getAttribute("data-scroll") === "y",
+      "and marks the box with the axes it opened — what the wheel and the touch floor read");
+check(row.style["--sb-w"] === "8px",
+      "the bar's thickness carries the served default, got '" + row.style["--sb-w"] + "'");
+check(row.style["--sb-thumb"] === undefined && row.style["--sb-track"] === undefined,
+      "with no colours authored the stylesheet's own neutral bar stands");
+stageAttrs["901"].attrs.scrollbar_w = prog(14);
+stageAttrs["901"].attrs.scrollbar_color = prog("$accent");
+stageAttrs["901"].attrs.scrollbar_track = prog("#00000022");
+stageEditor.live = { epoch: 72, values: {} };
+drawStage();
+check(row.style["--sb-w"] === "14px" && row.style["--sb-thumb"] === "var(--t-accent)" &&
+        row.style["--sb-track"] === "#00000022",
+      "a themed bar rides the attrs: thickness, thumb (a $token like any colour) and track");
+stageAttrs["901"].attrs.scrollbar = prog(false);
+stageEditor.live = { epoch: 73, values: {} };
+drawStage();
+check(row.getAttribute("data-scrollbar") === "off" && row.style.overflow === "hidden auto",
+      "scrollbar: false hides the bar and the box still scrolls");
+stageAttrs["901"].attrs.scroll = prog("both");
+stageEditor.live = { epoch: 74, values: {} };
+drawStage();
+check(row.style.overflow === "auto",
+      "`both` scrolls either way, got '" + row.style.overflow + "'");
+stageAttrs["901"].attrs.scroll = prog("x");
+stageEditor.live = { epoch: 75, values: {} };
+drawStage();
+check(row.style.overflow === "auto hidden", "`x` scrolls across and clips down");
+/* AN OFFSET AN AXIS NO LONGER SCROLLS is a displaced picture with nothing left to put it
+   back: an overflow: hidden box keeps whatever scrollTop it was left holding. */
+row.scrollTop = 40;
+delete stageAttrs["901"].attrs.scroll;
+delete stageAttrs["901"].attrs.scrollbar;
+delete stageAttrs["901"].attrs.scrollbar_w;
+delete stageAttrs["901"].attrs.scrollbar_color;
+delete stageAttrs["901"].attrs.scrollbar_track;
+stageEditor.live = { epoch: 76, values: {} };
+drawStage();
+check(row.style.overflow === "visible" && row.getAttribute("data-scroll") === null &&
+        row.getAttribute("data-scrollbar") === null && row.style["--sb-w"] === undefined,
+      "the attr leaving takes the overflow, the marker and the bar's properties with it");
+check(row.scrollTop === 0, "and the offset it was left holding, which nothing could scroll back");
+
 /* AN ORIGIN ON A STRETCHED AXIS IS A PIVOT AND NOTHING ELSE. Both edges are pinned, so
    there is no placement point to shift back from — and shifting anyway put every built-in
    needle half a dial up and to the left, which only the blanket clip above ever hid. */

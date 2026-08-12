@@ -51,6 +51,70 @@
   box-sizing: border-box;
 }
 
+/* ---------- a box that scrolls its children ---------- */
+
+/* THE ONE PART OF THE PICTURE AN APPLIER CANNOT WRITE. `scroll` (registry/attrs.h) makes a
+   frame a real scroll container and stage.ts writes the overflow inline like every other
+   answer — but a scrollbar is drawn by PSEUDO-ELEMENTS, and no element's style attribute can
+   reach one. So the values still come from the attrs, as custom properties on the box that
+   its own pseudo-elements inherit (`--sb-w` from scrollbar_w, `--sb-thumb` from
+   scrollbar_color, `--sb-track` from scrollbar_track), and these rules are only the
+   mechanism they feed. Scoped to `[data-scroll]` so a box that does not scroll is not
+   pulled into custom-scrollbar drawing by a rule it can never use.
+
+   THE FALLBACKS ARE THE DEFAULT LOOK: a neutral grey that reads on a pale surface and a dark
+   one (the same reason the grid lines above are 128,128,128), no groove at all, and a pill —
+   what the attr notes promise when the colours are absent. */
+
+/* AND FIRST, THE OPT-IN. There are two scrollbar mechanisms and an element gets exactly one:
+   name `scrollbar-width` or `scrollbar-color` and the engine draws the STANDARD bar, ignoring
+   every ::-webkit-scrollbar rule — which is what base.css does for the whole app chrome
+   (`* { scrollbar-width: thin }`), and it reached in here too. The artboard is not chrome: an
+   authored thickness, a token thumb and a pill are the picture, and only the pseudo-elements
+   can draw them. So a scroll box hands both standard properties back to `auto`, which is the
+   one state that says "use the custom drawing", and the rules below are then its. (Engines
+   with no ::-webkit-scrollbar at all fall back to their platform bar, dressed by neither —
+   this app's chrome already leans on the same pseudo-elements.) */
+[data-scroll] {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+[data-scroll]::-webkit-scrollbar {
+  width: var(--sb-w, 8px);
+  height: var(--sb-w, 8px);
+}
+
+[data-scroll]::-webkit-scrollbar-track,
+[data-scroll]::-webkit-scrollbar-corner {
+  background: var(--sb-track, transparent);
+}
+
+[data-scroll]::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb, rgba(128, 128, 128, 0.55));
+  border-radius: 99px;
+  /* base.css rings the chrome's thumb in the sidebar's own colour: not this bar's picture */
+  border: 0;
+}
+
+/* the thumb under the pointer, lifted off its own colour rather than off a second attr:
+   a bar that answers the pointer is worth one line, not a row in the vocabulary */
+[data-scroll]::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--sb-thumb, rgba(128, 128, 128, 0.55)), white 22%);
+}
+
+/* THE BAR HIDDEN, THE BOX STILL SCROLLING (`scrollbar: false`): both spellings, and AFTER the
+   opt-in above — same specificity, so this order is what lets `none` beat the `auto` that
+   turned the custom drawing on. Either mechanism hides it, which is the point: whichever one
+   an engine answers to, a bar that shows where the author hid it is a wrong picture. */
+[data-scrollbar="off"] {
+  scrollbar-width: none;
+}
+
+[data-scrollbar="off"]::-webkit-scrollbar {
+  display: none;
+}
+
 /* ---------- the ink ----------
  *
  * Three leaves, and between them everything that is not a box: type, a glyph, an outline.

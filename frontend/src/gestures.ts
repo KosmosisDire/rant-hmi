@@ -407,6 +407,15 @@ function armPick(node: HTMLElement, seat: GestureSeat): void {
 /* ---- the one entry the stage calls ---- */
 
 export function armInteract(node: HTMLElement, seat: GestureSeat): void {
+  /* A DRAG OWNS THE FINGER, said inline because a `scroll` box hands the pan its axis needs
+     to its whole subtree (styles/input-floor.css — touch-action is read from the element the
+     touch STARTED on), and a dial inside a scrolling list must still turn rather than scroll
+     the list under it. A press or a pick does not move, so it leaves the pan alone: a list
+     of buttons stays scrollable by dragging one of them, and the press that drag cancels
+     never taps. Outside a scroll box the input floor already refuses every native gesture,
+     so this changes nothing there. */
+  if (seat.interact.primitive === "drag1d" || seat.interact.primitive === "drag_radial")
+    node.style.touchAction = "none";
   switch (seat.interact.primitive) {
     case "press": return armPress(node, seat);
     case "drag1d": return armDrag1d(node, seat);

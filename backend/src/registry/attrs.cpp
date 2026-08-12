@@ -25,6 +25,14 @@ AttrDef def_variants(const char* name, Json value, const char* note,
     return AttrDef{name, "text", std::move(value), note, css, std::move(variants)};
 }
 
+/* constrained text whose ABSENCE is a state of its own, so there is no default to show:
+ * "not set" is not one of the words, and the variants are what it may say when it says
+ * anything at all */
+AttrDef no_def_variants(const char* name, const char* note,
+                        std::vector<std::string> variants, const char* css = "") {
+    return AttrDef{name, "text", nullptr, note, css, std::move(variants)};
+}
+
 /* ---- the common set: honoured on any node, whatever it draws ---- */
 const std::vector<AttrDef>& common_attrs_table() {
     static const std::vector<AttrDef> table = {
@@ -140,6 +148,38 @@ const std::vector<AttrDef>& frame_attrs() {
         def("border_w", "num", 1.0, "border width in canvas px", "border-width"),
         def("radius", "num", 0.0, "corner radius in canvas px (border-radius)",
             "border-radius"),
+
+        /* ---- A BOX THAT SCROLLS ITS CHILDREN ----
+           A FRAME'S ALONE, for the reason `interact` is: only a box holds children, and
+           children placed past its edge are the whole of what there is to scroll to. The
+           browser does the scrolling and draws the bar; these rows say which axes and what
+           the bar looks like, and the renderer writes plain CSS (stage.ts dress). */
+        no_def_variants("scroll",
+               "absent = the box does not scroll, and `clip` alone decides whether what "
+               "hangs over its edge still draws. `y` scrolls it vertically — a list of "
+               "rows, which is what a `repeat` past the bottom edge is — `x` horizontally, "
+               "`both` on either axis; a bare `true` reads as `y`. A SCROLLING AXIS CLIPS: "
+               "scrolling is a window onto content, so there is nothing left for `clip` to "
+               "say about that axis beyond a corner radius. What there is to scroll TO is "
+               "children placed past the edge — a child with nothing said about an axis "
+               "stretches to the box and overflows nothing. The wheel and a touch drag "
+               "scroll it wherever the page OPERATES; in edit mode the wheel stays the "
+               "camera's, the way a gesture stays the editor's",
+               {"y", "x", "both"}),
+        def("scrollbar", "bool", true,
+            "true draws the bar the browser gives each scrolling axis, dressed by "
+            "scrollbar_w / scrollbar_color / scrollbar_track; false hides it and the box "
+            "still scrolls, by wheel and by touch. Hiding it hands its strip back to the "
+            "content, which is the one thing about a bar that IS layout"),
+        def("scrollbar_w", "num", 8.0,
+            "the bar's thickness in canvas px, on whichever edges scroll"),
+        no_def("scrollbar_color", "color",
+               "absent = a neutral grey that reads on a pale surface and a dark one; a "
+               "colour paints the THUMB — the part that moves, and the part a pointer "
+               "grabs. It wears the bar's own pill shape either way"),
+        no_def("scrollbar_track", "color",
+               "absent = the groove behind the thumb is not painted at all, so the box's "
+               "own surface shows through it; a colour paints it"),
         /* box-shadow's fourth length, and a box's alone: the filter that shadows ink has
            no such knob, and a row that quietly did nothing on three of the four kinds
            would be worse than a row that lives where it works. */

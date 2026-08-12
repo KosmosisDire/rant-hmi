@@ -43,6 +43,31 @@ textarea,
   overscroll-behavior: contain;
 }
 
+/* Whitelist 1b: the ARTBOARD's own scroll boxes — the `scroll` attr, which stage.ts marks
+   with data-scroll carrying the axes it opened. The axis is AUTHORED there, so the allowance
+   is per axis rather than the blanket pan-y above, and the subtree needs it for the same
+   reason whitelist 1's does: touch-action is read from the element the touch STARTED on, and
+   everything inside one of these boxes is content it scrolls. A control that owns its own
+   drag says so inline (gestures.ts arms the two dragging primitives with touch-action none),
+   which outranks every rule here. */
+[data-scroll="y"],
+[data-scroll="y"] * {
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+
+[data-scroll="x"],
+[data-scroll="x"] * {
+  touch-action: pan-x;
+  overscroll-behavior: contain;
+}
+
+[data-scroll="both"],
+[data-scroll="both"] * {
+  touch-action: pan-x pan-y;
+  overscroll-behavior: contain;
+}
+
 /* Whitelist 2: text entry. A caret with no selection, no callout and no paste is not a text
    field, so these keep the native behaviour; input.ts allows their context menu too, for a
    real right click only. */

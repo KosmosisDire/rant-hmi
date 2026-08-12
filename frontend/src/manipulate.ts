@@ -149,16 +149,23 @@ function measure(host: HTMLElement, editor: Editor, id: number):
   if (!pel) return null;
   const pat = pel.getBoundingClientRect();
   const at = el.getBoundingClientRect();
+  /* A SCROLLED PARENT MOVED ITS CHILDREN AND NOT ITSELF (the `scroll` attr): the rects say
+     where the child is on the SCREEN, and what the document holds is where it sits in the
+     content — the two differ by exactly the offset. So the read adds it back, and the grid
+     `base` takes it off the parent's origin, which keeps the snap on the rendered picture.
+     Zero on every box that does not scroll, which is every box until one says so. */
+  const sl = pel.scrollLeft || 0;
+  const st = pel.scrollTop || 0;
   const base = {
-    x: (pat.left - pageAt.left) / k + pel.clientLeft,
-    y: (pat.top - pageAt.top) / k + pel.clientTop,
+    x: (pat.left - pageAt.left) / k + pel.clientLeft - sl,
+    y: (pat.top - pageAt.top) / k + pel.clientTop - st,
   };
   const frac = editor.contexts.length > 0;
   const scale = frac ? { x: pel.clientWidth, y: pel.clientHeight } : { x: 1, y: 1 };
   if (frac && !(scale.x > 0 && scale.y > 0)) return null;
   const box = freeBoxOf(editor.store.nodeAt(id), {
-    left: (at.left - pat.left) / k - pel.clientLeft,
-    top: (at.top - pat.top) / k - pel.clientTop,
+    left: (at.left - pat.left) / k - pel.clientLeft + sl,
+    top: (at.top - pat.top) / k - pel.clientTop + st,
     w: at.width / k,
     h: at.height / k,
   }, scale, { w: pel.clientWidth, h: pel.clientHeight });
