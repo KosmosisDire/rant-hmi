@@ -802,6 +802,58 @@ Json derive(const Json& doc_components, std::vector<Diag>* diags) {
     return Json{{"version", 1}, {"components", std::move(types)}};
 }
 
+/* ---- THE PLACEMENT RULE, applied to one placement ----
+ *
+ * Every other slot expression on this instance becomes a STANDING BACKEND PROGRAM with one
+ * published cell. That cell is exactly what a per-copy expression cannot have: the backend
+ * holds one of it and this view draws N pictures, so `readings[repeat.index]` has one value
+ * per picture and none at all for the wire to carry. Such an expression is compiled HERE,
+ * against the same page scope the instance's attrs read, and served in its own row.
+ *
+ * The address is recorded whether or not the compile succeeded: the record says "this slot
+ * is per copy", which is a fact about the text, and the wire compiler has to skip it either
+ * way — otherwise one mistake would be reported twice, once by each tier, and the second
+ * report would name `repeat` as an unknown word. */
+Json compile_per_copy_slots(const Json& node, const Json* registry,
+                            const TemplateScope& scope, uint64_t id, Sink& sink,
+                            std::set<std::string>* per_copy) {
+    Json out = Json::object();
+    if (!registry || !per_copy) return out;
+    const std::string type = str_or(node, "type", "");
+    if (type.empty()) return out;
+    auto slots = node.find("slots");
+    if (slots == node.end() || !slots->is_object()) return out;
+    /* found through find(), never through value(): value() hands back a COPY, and a
+       pointer into one is a pointer into a temporary that dies at the semicolon */
+    auto components = registry->find("components");
+    if (components == registry->end() || !components->is_array()) return out;
+    const Json* component = nullptr;
+    for (const Json& row : *components)
+        if (row.is_object() && row.value("name", "") == type) {
+            component = &row;
+            break;
+        }
+    if (!component) return out;
+    /* THE COMPONENT'S OWN SLOT LIST is what is walked, not the authored keys, because
+       that is the list the wire compiler walks: the two must consider the same slots or
+       one of them would build a program the other did not skip. */
+    for (const Json& slot : component->value("slots", Json::array())) {
+        const std::string name = slot.value("name", "");
+        const Json* authored = authored_slot(*slots, name);
+        if (!authored || !authored->is_string()) continue;
+        const std::string text = authored->get<std::string>();
+        if (!per_copy_expression(text)) continue;
+        per_copy->insert(std::to_string(id) + "\n" + name);
+        TemplateExprResult compiled = compile_template_expr(text, scope);
+        if (!compiled.ok) {
+            sink.report(id, "template_expr", compiled.error, name);
+            continue;
+        }
+        out[name] = std::move(compiled.program);
+    }
+    return out;
+}
+
 } // namespace
 
 Json derive_registry(const Document& document, std::vector<Diag>& diags) {
@@ -814,9 +866,27 @@ const Json& builtin_registry() {
     return built;
 }
 
+const Json* authored_slot(const Json& slots, const std::string& address) {
+    const Json* at = &slots;
+    size_t from = 0;
+    while (from <= address.size()) {
+        if (!at->is_object()) return nullptr;
+        const size_t dot = address.find('.', from);
+        const std::string segment = address.substr(
+            from, dot == std::string::npos ? std::string::npos : dot - from);
+        auto found = at->find(segment);
+        if (found == at->end()) return nullptr;
+        at = &*found;
+        if (dot == std::string::npos) return at;
+        from = dot + 1;
+    }
+    return nullptr;
+}
+
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh,
-                        std::set<std::string>* attr_reads) {
+                        std::set<std::string>* attr_reads, const Json* registry,
+                        std::set<std::string>* per_copy) {
     Json out = Json::object();
     Sink sink;
     sink.diags = &diags;
@@ -855,6 +925,11 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
            an entered component's elements are deliberately unarmed. */
         Json interact = compile_interact(node, scope, id, sink);
         if (!interact.is_null()) row["interact"] = std::move(interact);
+        /* THE PER-COPY PROPERTIES of a placement, if any: compiled over this element's
+           own scope, exactly as its attrs were, because a slot's value is authored where
+           the instance stands and reads what anything else there reads */
+        Json slots = compile_per_copy_slots(node, registry, scope, id, sink, per_copy);
+        if (!slots.empty()) row["slots"] = std::move(slots);
         out[std::to_string(id)] = std::move(row);
         for (const Json& child : array_or_empty(node, "children")) walk(child, scope);
     };

@@ -535,6 +535,12 @@ export interface NodeAttrs {
      component's nodes are served under their own ids too (the context editor reads them)
      but deliberately without this: an entered component's elements stay unarmed. */
   interact?: Interact;
+  /* THE PROPERTIES THIS PLACEMENT EVALUATES PER COPY, by slot name. Their expressions
+     name the view's own `state` or `repeat`, so the backend has no single value to
+     publish — it built no standing program at all — and this view runs the program once
+     per copy over that copy's own cells. Absent on every instance that has none, which
+     is nearly all of them. */
+  slots?: Record<string, Program>;
 }
 
 export interface ComponentType {

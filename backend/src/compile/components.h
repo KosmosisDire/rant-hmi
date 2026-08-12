@@ -47,8 +47,25 @@ const Json& builtin_registry();
  * `attr_reads` as "<entity>\n<path>": the document compiler stamps those entities so the
  * mesh consumes them and the live frame carries their mirrors. Both are optional so a
  * test can compile a page's attrs with no mesh at all. */
+/* `registry` and `per_copy` are the other half of that seam, and they are THE PLACEMENT
+ * RULE (lang/template_expr.h per_copy_expression): a slot expression that names the view's
+ * own inputs is compiled here into a view program served in the instance's row under
+ * `slots`, and its "<node id>\n<slot>" address is recorded so the document compiler builds
+ * no standing program for it and refuses a flow that tries to read it. The registry is
+ * what says which slots a placement HAS; without both, no slot is per copy and every
+ * expression stays a standing program, which is what a test with no registry wants. */
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh = nullptr,
-                        std::set<std::string>* attr_reads = nullptr);
+                        std::set<std::string>* attr_reads = nullptr,
+                        const Json* registry = nullptr,
+                        std::set<std::string>* per_copy = nullptr);
+
+/* An instance's authored value for one slot ADDRESS (spec 2.3). An instance's `slots`
+ * object mirrors the component's elements: a component-level slot is a key, an element's
+ * slot a key inside an object named for it, so "bar.fill_color" walks two levels. Null
+ * when nothing is authored there (the type's default stands) — including when the path
+ * runs into a non-object, which is a stale value, not a value. Shared, because the two
+ * compilers have to walk one address the same way. */
+const Json* authored_slot(const Json& slots, const std::string& address);
 
 } // namespace hmi

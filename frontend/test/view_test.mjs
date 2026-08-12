@@ -2103,6 +2103,70 @@ check(stageNode("frame", 901) === heldAgain &&
   draw();
 }
 
+/* ---- THE PLACEMENT RULE: a per-copy property is evaluated HERE ----
+   Every other slot expression is a standing backend program with one published cell. An
+   expression naming `state` or `repeat` cannot be: the backend keeps one cell where this
+   view draws N pictures. So the backend serves the PROGRAM with the instance's own row
+   instead, and the renderer runs it once per copy, over that copy's cells. Nothing about
+   the served template changes — the component still reads `slot:value` and does not know
+   which side of the wire the number came from. */
+{
+  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  const pcType = {
+    name: "Cellule", design_w: 120, design_h: 40, events: [],
+    slots: [{ name: "value", shape: "num", default: 0 }],
+    template: { kind: "frame", name: "", attrs: {}, children: [
+      { kind: "text", name: "face", attrs: { text: cell("slot:value") } },
+    ] },
+  };
+  const pStore = new DocStore();
+  pStore.load({
+    version: 1, next_id: 999, globals: [], tokens: [], components: [],
+    pages: [{ id: 700, name: "P", children: [
+      { id: 710, kind: "frame", type: "Cellule", name: "each",
+        attrs: {}, slots: {}, locals: [], feeds: [], flows: [] },
+    ] }],
+  });
+  /* the instance's own row: its attrs, and the property the backend handed back */
+  const pAttrs = {
+    "710": {
+      attrs: { left: prog(11), top: prog(11), w: prog(120), h: prog(40),
+               repeat: prog(3) },
+      slots: { value: { code: [{ op: "LOAD", cell: "repeat:index" },
+                               { op: "CONST", v: 100 }, { op: "MUL" }] } },
+    },
+  };
+  const pView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const pEditor = {
+    store: pStore, registry: { version: 1, components: [pcType] }, nodeAttrs: pAttrs,
+    /* the cell the standing program WOULD have published, deliberately holding a value:
+       a per-copy property has no standing program, so this must not be what is drawn */
+    live: { epoch: 1, values: { "710.value": 999 } }, view: pView,
+    page: () => pStore.pages()[0],
+    contexts: [],
+    root() { return this.page(); },
+    artboard: () => ({ w: 1408, h: 792 }),
+    enterComponent: () => undefined, exitTo: () => undefined, resizePreview: () => undefined,
+    select: () => undefined, input: () => undefined,
+  };
+  const pHost = new Element("section");
+  renderStage(pHost, pEditor);
+  const faces = () => pHost.querySelectorAll("[data-id]")
+    .filter((n) => n.getAttribute("data-id") === "710")
+    .map((n) => n.children[0]?.textContent ?? "");
+  check(faces().length === 3, "three copies of the instance, got " + faces().length);
+  check(faces().join(",") === "0,100,200",
+        "each copy evaluates the property for ITSELF, got " + faces().join(","));
+  check(!faces().includes("999"),
+        "and the cell the wire would have carried is not what is drawn: there is no " +
+        "standing program behind a per-copy property, got " + faces().join(","));
+
+  /* the served template did not change: the component reads `slot:value` exactly as it
+     does for an ordinary property, so a component never knows which tier answered */
+  check(pcType.template.children[0].attrs.text.code[0].cell === "slot:value",
+        "the component still reads slot:value — the tier is the compiler's business");
+}
+
 /* ---- TRANSITIONS: the view eases what it draws ----
    The true value is never eased anywhere -- behavior, the wire and gestures read truth --
    so what these pin is the RENDERING contract, in its two halves: an ATTRIBUTE transition

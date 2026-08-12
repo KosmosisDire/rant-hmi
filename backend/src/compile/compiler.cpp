@@ -1,5 +1,7 @@
 #include "compiler.h"
 
+/* for authored_slot(): one instance-slot address walked one way by both compilers */
+#include "compile/components.h"
 #include "lang/expression.h"
 
 #include <algorithm>
@@ -33,27 +35,6 @@ std::string str_or(const Json& node, const char* key, const char* fallback) {
     return it != node.end() && it->is_string() ? it->get<std::string>() : fallback;
 }
 
-/* An instance's authored value for one slot ADDRESS (spec 2.3). An instance's `slots`
- * object mirrors the component's elements: a component-level slot is a key, an element's
- * slot a key inside an object named for it, so "bar.fill_color" walks two levels. Null when
- * nothing is authored there (the type's default stands) — including when the path runs
- * into a non-object, which is a stale value, not a value. */
-const Json* authored_slot(const Json& slots, const std::string& address) {
-    const Json* at = &slots;
-    size_t from = 0;
-    while (from <= address.size()) {
-        if (!at->is_object()) return nullptr;
-        const size_t dot = address.find('.', from);
-        const std::string segment = address.substr(
-            from, dot == std::string::npos ? std::string::npos : dot - from);
-        auto found = at->find(segment);
-        if (found == at->end()) return nullptr;
-        at = &*found;
-        if (dot == std::string::npos) return at;
-        from = dot + 1;
-    }
-    return nullptr;
-}
 
 bool entity_kind(const std::string& text, EntityKind& out) {
     if (text == "V") out = EntityKind::Variable;
@@ -243,8 +224,10 @@ bool gesture_from(const std::string& event, const std::string& primitive) {
 class Compiler {
   public:
     Compiler(const Document& document, const Json& registry, const MeshPort& mesh,
-             const std::set<std::string>* attr_reads = nullptr)
-        : document_(document), registry_(registry), mesh_(mesh), attr_reads_(attr_reads) {
+             const std::set<std::string>* attr_reads = nullptr,
+             const std::set<std::string>* per_copy_slots = nullptr)
+        : document_(document), registry_(registry), mesh_(mesh), attr_reads_(attr_reads),
+          per_copy_slots_(per_copy_slots) {
         program_.document_version = document.version();
         program_.add_text("");
         /* The theme tokens (spec 2.10), name -> DARK value: the backend has no view and
@@ -699,7 +682,12 @@ class Compiler {
                                 program_.cells[info.slots[name]].list_init =
                                     std::move(list_init);
                             }
-                            if (!expr_text.empty())
+                            /* A PER-COPY SLOT HAS NO STANDING PROGRAM. The display tier
+                               compiled it into a view program the renderer runs once per
+                               copy; the cell still exists (it is the slot's declared
+                               storage and the migration keys on it) and simply stays
+                               UNKNOWN, because there is no one value for it to hold. */
+                            if (!expr_text.empty() && !per_copy_slot(info.id, name))
                                 pending_slots_.push_back(PendingSlot{
                                     info.id, name, expr_text, info.slots[name], slot});
                         }
@@ -1383,9 +1371,29 @@ class Compiler {
         return scope;
     }
 
-    /* `this.<prop>` — the properties of the component this element places, by address */
+    /* did the display tier take this slot over? (THE PLACEMENT RULE — its expression names
+       `state` or `repeat`, so it is evaluated per copy in the view) */
+    bool per_copy_slot(uint64_t node, const std::string& name) const {
+        return per_copy_slots_ &&
+               per_copy_slots_->count(std::to_string(node) + "\n" + name) > 0;
+    }
+
+    /* `this.<prop>` — the properties of the component this element places, by address.
+     *
+     * A PER-COPY ONE IS REFUSED BY NAME instead of bound. Its cell exists but nothing
+     * writes it: the value differs per picture and the backend keeps one of it. Binding it
+     * anyway would read UNKNOWN forever — the exact silent wrongness the refusals exist to
+     * prevent — so the word is refused with what the author can do instead. */
     void bind_own_props(ExpressionScope& scope, const ElementInfo& element) {
         for (const auto& item : element.slots) {
+            if (per_copy_slot(element.id, item.first)) {
+                scope.refused["this." + item.first] =
+                    "'" + item.first + "' is evaluated PER COPY here — its expression "
+                    "names the view's own `state` or `repeat`, so it has one value per "
+                    "picture and none for a flow to read; name what it reads from "
+                    "directly, or drop `state`/`repeat` out of the property's expression";
+                continue;
+            }
             const CellDef& cell = program_.cells[item.second];
             scope.qualified["this." + item.first] =
                 Binding{cell.shape, OpCode::Load, item.second, 0};
@@ -3040,6 +3048,9 @@ class Compiler {
     /* what the DISPLAY tier read of the mesh ("<entity>\n<path>"), gathered by the attr
        compiler before this one ran (app.cpp) */
     const std::set<std::string>* attr_reads_ = nullptr;
+    /* and which slots it TOOK OVER ("<node id>\n<slot>"): a per-copy expression has one
+       value per picture, so no standing program is built and no flow may read the cell */
+    const std::set<std::string>* per_copy_slots_ = nullptr;
 };
 
 } // namespace
@@ -3058,8 +3069,9 @@ Shape shape_from_name(const std::string& name) {
 
 CompileResult compile_document(const Document& document, const Json& component_registry,
                                const MeshPort& mesh,
-                               const std::set<std::string>* attr_reads) {
-    return Compiler(document, component_registry, mesh, attr_reads).run();
+                               const std::set<std::string>* attr_reads,
+                               const std::set<std::string>* per_copy_slots) {
+    return Compiler(document, component_registry, mesh, attr_reads, per_copy_slots).run();
 }
 
 } // namespace hmi

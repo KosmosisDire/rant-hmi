@@ -468,10 +468,11 @@ void App::compile_runtime() {
      * published like any other read, and this is the one seam where the two compilers
      * meet. A page's expressions see the mesh; a component's deliberately do not. */
     attr_entity_reads_.clear();
+    per_copy_slots_.clear();
     node_attrs_ = compile_page_attrs(doc_, component_diags_, &mesh_->reflection(),
-                                     &attr_entity_reads_);
+                                     &attr_entity_reads_, &registry_, &per_copy_slots_);
     CompileResult compiled =
-        compile_document(doc_, registry_, *mesh_, &attr_entity_reads_);
+        compile_document(doc_, registry_, *mesh_, &attr_entity_reads_, &per_copy_slots_);
     auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);
     if (scheduler_)
         next->state() = migrate_state(scheduler_->program(), scheduler_->state(),

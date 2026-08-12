@@ -1314,6 +1314,14 @@ class Parser {
             advance();
             auto q = scope_.qualified.find(qualified);
             if (q != scope_.qualified.end()) return load_binding(q->second);
+            /* refused AT THIS DEPTH — `this.<slot>` for a property the display tier
+               evaluates per copy. Checked here rather than after the walk because a slot
+               address may itself carry dots ("bar.fill_color"), and because "unknown
+               field" would send the author hunting a typo in a name spelled right. */
+            if (auto no = scope_.refused.find(qualified); no != scope_.refused.end()) {
+                fail(no->second);
+                return Shape::Unknown;
+            }
         }
         if (qualified != name) {
             /* THE PREFIX MOVED: an instance's own slot is `this.<slot>` in both tiers.

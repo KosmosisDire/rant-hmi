@@ -1087,6 +1087,125 @@ void test_page_universe() {
     CHECK_EQ(mesh_cell("cage/motor", "speed"), std::string("mesh:cage/motor.speed"));
 }
 
+/* THE PLACEMENT RULE: where a slot expression is EVALUATED is a compiler decision.
+ *
+ * Every authored slot expression has always become a standing backend program with one
+ * published cell. That is exactly what an expression naming `state` or `repeat` cannot
+ * have — the backend keeps one cell where the view draws N pictures — so such an
+ * expression is compiled into a VIEW program served with the instance, no standing program
+ * is built for it, and a flow that tries to read the cell is refused by name. The author
+ * writes the expression; nobody chooses the tier. */
+void test_per_copy_slots() {
+    /* the one question both compilers ask, and the reasons it is not a text search */
+    CHECK(per_copy_expression("readings[repeat.index]"));
+    CHECK(per_copy_expression("state.pressed ? 1 : 0"));
+    CHECK(!per_copy_expression("readings[0]"));
+    /* a STRING is not code, and a FIELD is somebody's property */
+    CHECK(!per_copy_expression("'repeat is a word'"));
+    CHECK(!per_copy_expression("bar.repeat + row.state"));
+
+    Json root = {
+        {"version", 1}, {"next_id", 900},
+        {"globals", Json::array({
+            Json{{"id", 500}, {"name", "readings"}, {"type", "list"}, {"elem", "f64"},
+                 {"init", Json::array({10, 20, 30})}},
+            Json{{"id", 501}, {"name", "seen"}, {"type", "f64"}, {"init", 0}}})},
+        {"pages", Json::array({Json{
+            {"id", 100}, {"name", "Main"},
+            {"children", Json::array({
+                /* PER COPY: three pictures of one Readout, each showing its own element */
+                Json{{"id", 110}, {"kind", "frame"}, {"type", "Readout"}, {"name", "each"},
+                     {"attrs", Json{{"repeat", "3"}}},
+                     {"slots", Json{{"value", "readings[repeat.index]"}}}},
+                /* THE ORDINARY CASE, unchanged: one value, one standing program */
+                Json{{"id", 120}, {"kind", "frame"}, {"type", "Readout"}, {"name", "one"},
+                     {"slots", Json{{"value", "readings[0] * 2"}}}},
+                /* and a flow that tries to read the per-copy one */
+                Json{{"id", 130}, {"kind", "frame"}, {"type", "Readout"}, {"name", "peek"},
+                     {"slots", Json{{"value", "readings[repeat.index]"}}},
+                     {"flows", Json::array({Json{
+                         {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                         {"when_mode", "first"},
+                         {"do", Json::array({Json{
+                             {"kind", "assign"},
+                             {"from", Json{{"expr", "this.value"}}},
+                             {"to", Json{{"local", "seen"}, {"path", ""}}}}})}}})}}})}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+
+    std::vector<Diag> diags;
+    std::set<std::string> reads;
+    std::set<std::string> per_copy;
+    Json rows = compile_page_attrs(document, diags, nullptr, &reads, &builtin_registry(),
+                                   &per_copy);
+
+    /* THE PROGRAM IS SERVED WITH THE INSTANCE, beside its attrs: same row, same
+       interpreter, and the copy it is evaluated for is the one the renderer is drawing */
+    CHECK(rows["110"].contains("slots"));
+    const std::string served = ops_of(rows["110"]["slots"]["value"]);
+    CHECK(served.find("LOAD(var:500)") != std::string::npos);
+    CHECK(served.find("LOAD(repeat:index)") != std::string::npos);
+    /* an ordinary slot expression is NOT served here: it still has one value, and one
+       cell is the cheapest way to say a value */
+    CHECK(!rows["120"].contains("slots"));
+    CHECK_EQ(per_copy.size(), size_t(2));
+    CHECK(per_copy.count(std::string("110\nvalue")) == 1);
+    CHECK(per_copy.count(std::string("130\nvalue")) == 1);
+    CHECK(per_copy.count(std::string("120\nvalue")) == 0);
+    /* the display tier's own compile, so its own findings: nothing wrong here */
+    for (const Diag& d : diags) CHECK_MSG(false, d.message);
+
+    /* AND A PER-COPY EXPRESSION THAT DOES NOT COMPILE is refused ONCE, by the tier that
+       owns it — the wire tier must not pile "unknown name 'repeat'" on top of it */
+    Json broken = document.root;
+    broken["pages"][0]["children"][1]["slots"]["value"] = "readings[repeat.nope]";
+    Document bad_doc;
+    std::string bad_error;
+    CHECK_MSG(bad_doc.adopt(std::move(broken), bad_error), bad_error);
+    std::vector<Diag> bad_diags;
+    std::set<std::string> bad_per_copy;
+    compile_page_attrs(bad_doc, bad_diags, nullptr, nullptr, &builtin_registry(),
+                       &bad_per_copy);
+    size_t named = 0;
+    for (const Diag& d : bad_diags)
+        if (d.node_id == 120 && d.where == "value") ++named;
+    CHECK_EQ(named, size_t(1));
+    /* recorded even though it did not compile: "this slot is per copy" is a fact about
+       the text, and the wire tier has to skip it either way */
+    CHECK(bad_per_copy.count(std::string("120\nvalue")) == 1);
+
+    /* AND THE WIRE TIER BUILDS NO STANDING PROGRAM FOR IT. Exactly one survives — the
+       ordinary instance's — so a per-copy slot costs the backend nothing at all. */
+    FakeMesh mesh;
+    CompileResult compiled =
+        compile_document(document, builtin_registry(), mesh, &reads, &per_copy);
+    uint64_t standing_for = 0;
+    size_t standing = 0;
+    for (const SlotProgram& sp : compiled.program.slot_programs)
+        if (sp.slot == "value") { ++standing; standing_for = sp.node_id; }
+    CHECK_EQ(standing, size_t(1));
+    CHECK_EQ(standing_for, uint64_t(120));
+
+    /* A FLOW CANNOT READ ONE, and the refusal says why rather than handing back the
+       UNKNOWN the cell would honestly hold forever */
+    /* pinned to the STEP that spoke the name, as every expression finding is */
+    size_t refusals = 0;
+    const Diag* read = nullptr;
+    for (const Diag& d : compiled.program.diagnostics)
+        if (d.message.find("evaluated PER COPY") != std::string::npos) {
+            ++refusals;
+            read = &d;
+        }
+    CHECK_EQ(refusals, size_t(1));
+    if (read) {
+        CHECK(read->message.find("none for a flow to read") != std::string::npos);
+        CHECK_EQ(read->code, std::string("expression"));
+    }
+    CHECK(!compiled.ok);
+}
+
 /* TRANSITIONS ARE RENDERING: a transition is METADATA on the field, never part of any
  * expression. The language redirects the old spelling by name; the node-level
  * `transitions` map is checked against the attr table's css column and passed through
@@ -1294,6 +1413,7 @@ int main() {
     test_empty_component();
     test_attr_vocabulary();
     test_page_universe();
+    test_per_copy_slots();
     test_transitions();
     return check::summary("component_test");
 }

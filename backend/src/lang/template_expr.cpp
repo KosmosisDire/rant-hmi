@@ -871,4 +871,23 @@ bool easing_profile(const std::string& name) {
     return false;
 }
 
+/* Does this text name one of the VIEW'S OWN INPUTS? The parser reserves `state` and
+ * `repeat` ahead of every scope (parse_primary above), so a bare identifier spelling
+ * either of them is that input and can be nothing else — which is what makes reading it
+ * off the token stream exact rather than a guess. The lexer is the parser's own, so a
+ * string literal is a String token and never scanned, and `after_dot` skips a field
+ * access: `bar.state` is somebody's property. */
+bool per_copy_expression(const std::string& text) {
+    Lexer lexer(text);
+    bool after_dot = false;
+    for (Token token = lexer.next(); token.kind != TokenKind::End;
+         token = lexer.next()) {
+        if (token.kind == TokenKind::Ident && !after_dot &&
+            (token.text == "state" || token.text == "repeat"))
+            return true;
+        after_dot = token.kind == TokenKind::Dot;
+    }
+    return false;
+}
+
 } // namespace hmi

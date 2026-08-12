@@ -947,6 +947,12 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
       case "slot": {
         if (!node.owner) return null;
         const key = node.owner + "." + name;
+        /* A PER-COPY PROPERTY (THE PLACEMENT RULE). Its expression named `state` or
+           `repeat`, so the backend built no standing program and published no cell — it
+           served the program here instead, and this view runs it over THIS copy's cells.
+           Through `read`, so everything the expression can name resolves exactly as it
+           does in an attr, and every cell it touches is recorded against this element. */
+        const perCopy = editor.nodeAttrs?.[String(node.owner)]?.slots?.[name];
         /* an aggregate cell (a list, a map, a history ring) lives in the standing
            copies, not in `values`: the wire sends deltas and the shell folds them
            (editor.ts). What is RECORDED is the copy's version — comparing thousands
@@ -972,7 +978,7 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
           if (at !== undefined) return at;
           return node.type?.slots.find((s) => s.name === name)?.default ?? null;
         };
-        const out = resolve();
+        const out = perCopy ? run(perCopy, read) : resolve();
         /* THE PROPERTY'S DECLARED TRANSITION, applied to what an APPLIER pass reads —
            and only there: a structural pass (which elements exist) and a gesture's seat
            (recording null) always see the true value. The mark above records TRUTH, so
@@ -981,13 +987,17 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
         if (state.recording && !state.recording.structural) {
           const spec = slotSweep(node.type, name);
           if (spec) {
+            /* ONE SWEEP PER VALUE. A shared slot is one published cell every copy draws,
+               so one tween is right; a PER-COPY one is a different number per picture and
+               needs a tween of its own, or five copies would fight over one flight. */
+            const flight = "c:" + key + (perCopy && repeat ? "@" + repeat.index : "");
             const ms = specMs(state, spec.ms, read);
             if (ms === null) {
               /* the duration came out wrong: no sweep, and none left standing */
-              state.tweens.delete("c:" + key);
+              state.tweens.delete(flight);
               return out;
             }
-            return tweenTo(state, "c:" + key, out, ms,
+            return tweenTo(state, flight, out, ms,
                            specProfile(state, spec.profile, read), key);
           }
         }
