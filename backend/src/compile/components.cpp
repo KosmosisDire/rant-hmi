@@ -372,7 +372,8 @@ bool component_type_ok(const std::string& type) {
  * declares it, so a mistake gets one finding rather than one per placement and the
  * document compiler can take the served string at its word. */
 bool elem_type_ok(const std::string& type) {
-    return type == "num" || type == "bool" || type == "text" || type == "icon";
+    return type == "num" || type == "bool" || type == "text" || type == "color" ||
+           type == "icon";
 }
 
 /* A VARIABLE'S TYPE AS EVERY READER OF THE SERVED ROW SEES IT — the same word it was
@@ -454,13 +455,13 @@ std::vector<std::string> collect_vars(const Json& rows, const std::string& path,
         const bool rows_of = elem == "list" || elem == "map";
         if (aggregate && !elem.empty() && !elem_type_ok(elem) && !rows_of)
             sink.report(id_of(var), "var_type",
-                        "'" + elem + "' is not an element type: elements are f64, bool, "
-                        "str or icon, or list or map for rows",
+                        "'" + elem + "' is not an element type: elements are num, bool, "
+                        "text, color or icon, or list or map for rows",
                         "elem");
         else if (aggregate && !leaf.empty() && (!rows_of || !elem_type_ok(leaf)))
             sink.report(id_of(var), "var_type",
-                        rows_of ? "'" + leaf + "' is not a leaf type: a row holds f64, "
-                                  "bool, str or icon"
+                        rows_of ? "'" + leaf + "' is not a leaf type: a row holds num, "
+                                  "bool, text, color or icon"
                                 : "a leaf type says what the ROWS hold; declare this "
                                   "variable's elements list or map first",
                         "leaf");

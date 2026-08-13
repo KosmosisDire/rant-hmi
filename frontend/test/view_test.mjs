@@ -646,11 +646,15 @@ check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is
   check(vm(...three, { op: "ITERATE", mode: "WAT", body: [arg(0)] }) === null,
         "and a mode this view does not know fails as UNKNOWN");
 
-  /* the loop is BOUNDED: the view's ring holds more samples than the scalar tier's 512
-     ceiling, so it has a ceiling of its own and stops there rather than hanging a frame */
+  /* the loop is BOUNDED, but by a FRAME's worth of work rather than by a cell's length: a
+     retained list is bounded in bytes now, so a long history walks in full and only a
+     picture no screen could draw stops short */
   const long = vm(lit(Array.from({ length: 5000 }, (_, i) => i)), over("MAP", [arg(0)]));
-  check(Array.isArray(long) && long.length === 4096,
-        "ITERATE walks at most 4096 elements, got " + (long ?? []).length);
+  check(Array.isArray(long) && long.length === 5000,
+        "a five-thousand-sample history maps whole, got " + (long ?? []).length);
+  const huge = vm(lit(Array.from({ length: 70000 }, (_, i) => i)), over("MAP", [arg(0)]));
+  check(Array.isArray(huge) && huge.length === 65536,
+        "and the frame budget still stops somewhere, got " + (huge ?? []).length);
 
   /* A MAP takes the same vocabulary where it has an honest answer: LENGTH counts its
      pairs, INDEX looks a text key up, and REDUCE walks (acc, key, value) per SORTED key
@@ -4155,7 +4159,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const ofSel = ofPicker("grid", "OF");
   check(ofSel !== null &&
           ofSel.children.map((o) => o.value).join(",") ===
-            ",num,bool,text,icon,list,map",
+            ",num,bool,text,color,icon,list,map",
         "OF offers the scalars and then list/map — elements that are ROWS");
   check(ofPicker("grid", "ROWS OF") === null,
         "a list of scalars has no leaf to declare");
@@ -4165,7 +4169,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const rowsSel = ofPicker("grid", "ROWS OF");
   check(rowsSel !== null &&
           rowsSel.children.map((o) => o.value).join(",") ===
-            ",num,bool,text,icon",
+            ",num,bool,text,color,icon",
         "elements that are rows bring ROWS OF, scalars only — nesting is one level");
   rowsSel.value = "num";
   fire(rowsSel, "change");

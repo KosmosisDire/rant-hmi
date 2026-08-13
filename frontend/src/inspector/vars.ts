@@ -406,7 +406,7 @@ const GROUPS = ["value", "appearance", "config", "frame"];
 const ELEM_TYPES = [
   { value: "", label: "anything" }, { value: "num", label: "number" },
   { value: "bool", label: "bool" }, { value: "text", label: "text" },
-  { value: "icon", label: "icon" },
+  { value: "color", label: "color" }, { value: "icon", label: "icon" },
 ];
 
 /* THE DECLARED SWEEP, number inputs only: rendered reads of this variable ease toward the

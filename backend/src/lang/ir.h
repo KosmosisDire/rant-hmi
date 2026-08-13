@@ -25,20 +25,28 @@ namespace hmi {
  * split can yield at most one piece per input byte */
 constexpr uint32_t kVarrCeiling = 512;
 constexpr uint32_t kSplitCeiling = 256;
-/* THE system ceiling on a RETAINED aggregate cell: how many elements a list variable or
- * a list slot may hold at once (pairs, for a map). It is larger than kVarrCeiling
- * because the two bound different things — kVarrCeiling bounds what one RUN builds in
- * the scratch pool (a mesh delivery, an expression site's worst case), and this bounds
- * what a cell KEEPS across ticks, which is a history ring's whole point. A keep-less
- * append that would cross it refuses loudly rather than growing forever. */
-constexpr uint32_t kRetainedCeiling = 4096;
-/* A NESTED cell's leaf arena holds every row's elements together, and a row that outgrows
- * its extent relocates rather than shifting every row after it — so the arena carries the
- * holes those relocations leave until a compaction collects them. The LIVE budget is
- * kRetainedCeiling exactly as a flat cell's is (one cell, one ceiling, however it is
- * shaped); this is only how much room the holes are allowed to take before the arena is
- * compacted instead of grown. */
-constexpr uint32_t kLeafCeiling = kRetainedCeiling * 2;
+/* the widest ARRAY FIELD one mesh delivery may carry into the run's scratch pool. A
+ * schema's own bound decides the size the pool is built for; this only clamps a bound big
+ * enough to be a mistake, because the pool is preallocated per run and a retained cell's
+ * budget (kBufferBytes below) says nothing about what one delivery should cost. */
+constexpr uint32_t kDeliveryCeiling = 4096;
+/* THE ONE LIMIT ON WHAT A CELL KEEPS ACROSS TICKS: a retained buffer's BYTES.
+ *
+ * Not a count. A count was a number rather than a bound, and counting made a list of ROWS
+ * hold ceiling/width of them — which is not what "a list of 4096" means to anyone who
+ * declared one. What actually has to be bounded is memory, so that is what is bounded;
+ * how many elements that buys is arithmetic over the element's own cost (buffer_capacity
+ * in state.h), and a text element costs its text slot as well as its Value.
+ *
+ * EVERY BUFFER GETS ITS OWN. A nested cell's rows are elements of the outer buffer and
+ * their leaves live in an arena of its own, so the two never spend each other's room: a
+ * list declared to hold 4096 rows holds 4096 rows, however wide a row is.
+ *
+ * The limit still exists, and it is why a keep-less append that would grow forever stays
+ * a loud diagnostic instead of an out-of-memory. kVarrCeiling below is a different thing
+ * and stays small: it bounds what one RUN builds in the scratch pool, which is rebuilt
+ * every run, not kept. */
+constexpr uint64_t kBufferBytes = 100ull * 1024 * 1024;
 
 enum class OpCode : uint8_t {
     Const,

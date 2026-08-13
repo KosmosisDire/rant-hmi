@@ -2304,6 +2304,7 @@ std::string list_dump(const Program& program, const RuntimeState& state, int cel
                 out += buffer;
                 break;
             case ValueTag::Text: out += state.text(program, view.data[i]); break;
+            case ValueTag::Color: out += format_color(view.data[i].data.rgba); break;
             case ValueTag::Nil: out += "?"; break;
             default: out += "!"; break;
         }
@@ -2324,6 +2325,7 @@ std::string map_dump(const Program& program, const RuntimeState& state, int cell
         out += "=";
         const Value& held = view.data[i * 2 + 1];
         if (held.tag == ValueTag::Text) out += state.text(program, held);
+        else if (held.tag == ValueTag::Color) out += format_color(held.data.rgba);
         else if (held.tag == ValueTag::Num) {
             std::snprintf(buffer, sizeof buffer, "%.15g", held.data.num);
             out += buffer;
@@ -2635,7 +2637,7 @@ void test_nested_aggregates() {
                                 Value::number(4)));
     CHECK_EQ(row_text(program, state, state.aggregate(state.values[grid]).data[2]),
              "296,297,298,299");
-    CHECK(state.lists[grid_slot].leaves.size() <= kLeafCeiling);
+    CHECK(state.lists[grid_slot].leaves.size() <= buffer_capacity(Shape::Num));
 
     /* a MAP ROW upserts by key inside its own extent, Nil erasing as it does above */
     state.texts[state.mesh_scratch].set("z");
@@ -2671,6 +2673,108 @@ void test_nested_aggregates() {
     CHECK_EQ(nested_dump(program, migrated, by_name), "b:[4]|c:[5,6]");
     CHECK_EQ(nested_dump(program, migrated, rows), "[z=zz]");
     CHECK(migrated.lists[grid_slot].gen == state.lists[grid_slot].gen + 1);
+}
+
+/* A NESTED RING RUNS FOREVER. A sampler appends a row on a cadence and a keep window
+ * trims the front, so the live extent settles at (window * row width) and stays there —
+ * the arena's holes are what climb, and a compaction is what collects them. This is the
+ * shape every multi-series trend has, so it runs long enough to compact many times over. */
+void test_nested_ring() {
+    FakeMesh mesh;
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows", Json::array({flow_on("tap",
+                                       {steps::append_var("grid", "sample", "470")})})},
+    };
+    Json root = {
+        {"version", 1},
+        {"next_id", 1},
+        {"globals",
+         Json::array({
+             Json{{"name", "grid"}, {"type", "list"}, {"elem", "list"}, {"leaf", "num"}},
+             Json{{"name", "sample"},
+                  {"type", "list"},
+                  {"elem", "num"},
+                  {"init", Json::array({1, 2})}},
+         })},
+        {"pages",
+         Json::array({Json{{"name", "P"}, {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CHECK(compiled.ok);
+    const Program& program = compiled.program;
+    const int grid = named_cell(program, "grid");
+    if (!CHECK(grid >= 0)) return;
+    RuntimeState state(program);
+    const uint64_t instance =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    const uint32_t slot = program.cells[grid].list_slot;
+    int faulted_at = -1;
+    for (int i = 0; i < 20000 && faulted_at < 0; ++i) {
+        state.reset_scratch();
+        if (run_event(program, state, instance, "tap", Value::nil()).faulted) faulted_at = i;
+    }
+    CHECK_MSG(faulted_at < 0,
+              "a bounded nested ring faulted at append " + std::to_string(faulted_at));
+    CHECK(state.lists[slot].count == 470);
+    /* the live extent is the window, not the history: 470 rows of two leaves */
+    CHECK_EQ(state.lists[slot].leaf_live, 940u);
+    CHECK(state.lists[slot].leaf_used <= buffer_capacity(Shape::Num));
+    CHECK_EQ(row_text(program, state, state.aggregate(state.values[grid]).data[0]), "1,2");
+
+    /* A WIDE ROW COSTS THE LIST NOTHING. `keep` counts ROWS and a row's leaves live in an
+     * arena with a budget of its own, so a window of W rows holds W rows however wide one
+     * is — six series on a 940-sample window is 940 rows and 5640 leaves, and neither
+     * number is spent against the other. (This is the shape that used to stop at row 682,
+     * when the two shared one 4096 between them.) */
+    {
+        Json wide = {
+            {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+            {"flows", Json::array({flow_on("tap",
+                                           {steps::append_var("grid", "sample", "940")})})},
+        };
+        Json wide_root = {
+            {"version", 1},
+            {"next_id", 1},
+            {"globals",
+             Json::array({
+                 Json{{"name", "grid"}, {"type", "list"}, {"elem", "list"},
+                      {"leaf", "num"}},
+                 Json{{"name", "sample"},
+                      {"type", "list"},
+                      {"elem", "num"},
+                      {"init", Json::array({1, 2, 3, 4, 5, 6})}},
+             })},
+            {"pages",
+             Json::array({Json{{"name", "P"}, {"children", Json::array({wide})}}})}};
+        Document doc2;
+        std::string err2;
+        CHECK(doc2.adopt(std::move(wide_root), err2));
+        CompileResult built = compile_document(doc2, builtin_registry(), mesh);
+        CHECK(built.ok);
+        const int cell = named_cell(built.program, "grid");
+        if (!CHECK(cell >= 0)) return;
+        RuntimeState wide_state(built.program);
+        const uint64_t at = json_u64_or(doc2.root["pages"][0]["children"][0]["id"], 0);
+        const uint32_t wide_slot = built.program.cells[cell].list_slot;
+        int stopped = -1;
+        for (int i = 0; i < 5000 && stopped < 0; ++i) {
+            wide_state.reset_scratch();
+            if (run_event(built.program, wide_state, at, "tap", Value::nil()).faulted)
+                stopped = i;
+        }
+        CHECK_MSG(stopped < 0, "a six-wide ring faulted at row " + std::to_string(stopped));
+        CHECK_EQ(wide_state.lists[wide_slot].count, 940u);
+        CHECK_EQ(wide_state.lists[wide_slot].leaf_live, 940u * 6u);
+        /* the arena collects its holes as it goes rather than growing with the history:
+           5000 appends of a six-wide row is 30000 leaves written and 5640 still live */
+        CHECK(wide_state.lists[wide_slot].leaf_used < 940u * 6u * 3u);
+        CHECK_EQ(row_text(built.program, wide_state,
+                          wide_state.aggregate(wide_state.values[cell]).data[0]),
+                 "1,2,3,4,5,6");
+    }
 }
 
 /* the declarations a nested cell REFUSES, each teaching the spelling that works */
@@ -3346,12 +3450,15 @@ void test_aggregate_ceilings() {
     for (int i = 0; i < 40; ++i) CHECK(!raise("press").faulted);
     CHECK(state.lists[program.cells[bounded].list_slot].count == 8);
 
-    /* an unbounded one fills to the ceiling and then REFUSES, loudly */
-    for (uint32_t i = 0; i < kRetainedCeiling; ++i) raise("tap");
-    CHECK(state.lists[program.cells[unbounded].list_slot].count == kRetainedCeiling);
+    /* an unbounded one fills its BUFFER and then REFUSES, loudly. The bound is bytes, so
+       what it holds is however many elements those bytes buy — an untyped list is charged
+       as text, because that is what it may turn out to hold. */
+    const uint32_t fits = buffer_capacity(Shape::Unknown);
+    for (uint32_t i = 0; i < fits; ++i) raise("tap");
+    CHECK(state.lists[program.cells[unbounded].list_slot].count == fits);
     const RunResult over = raise("tap");
     CHECK(over.faulted);
-    CHECK(state.lists[program.cells[unbounded].list_slot].count == kRetainedCeiling);
+    CHECK(state.lists[program.cells[unbounded].list_slot].count == fits);
     /* the finding names the variable and the way out of it */
     std::string named;
     for (uint32_t i = 0; i < state.faults.size(); ++i)
@@ -3360,9 +3467,9 @@ void test_aggregate_ceilings() {
     CHECK(named.find("'unbounded'") != std::string::npos);
     CHECK(named.find("keep") != std::string::npos);
 
-    /* the IN-PLACE readers walk the elements where they lie, so they work at 4096 */
+    /* the IN-PLACE readers walk the elements where they lie, so they work at any length */
     CHECK(!raise("release").faulted);
-    CHECK_EQ(state.values[total].data.num, static_cast<double>(kRetainedCeiling));
+    CHECK_EQ(state.values[total].data.num, static_cast<double>(fits));
 
     /* iteration BUILDS, in the scratch pool, whose bound is the varr ceiling — so a
        longer source faults instead of folding the portion it could reach */
@@ -3663,6 +3770,98 @@ void test_aggregate_refusals() {
     CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "num"},
                            {"init", Json::array({1, "a"})}},
                       "elements are declared num"));
+    /* a COLOR element's members are strings, so the refusal cannot be the shape one —
+       it has to end on the spellings that would have worked */
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "color"},
+                           {"init", Json::array({"#ff0000", "sort of red"})}},
+                      "is not a color"));
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "map"}, {"elem", "color"},
+                           {"init", Json{{"k", "#gg0000"}}}},
+                      "is not a color"));
+    /* a member that is not a string at all was never a colour SPELLING, so it lands on
+       the ordinary declared-element refusal rather than on the colour teaching */
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "map"}, {"elem", "color"},
+                           {"init", Json{{"k", 3}}}},
+                      "elements are declared color, and the start holds a num"));
+}
+
+/* A COLOR IS AN ELEMENT TYPE. It was a variable type everywhere a scalar could go, but
+ * the two compile-time element tables never learned the word while the runtime's own
+ * elem_fits already knew it — so a list of colours was refused by the declaration and by
+ * nothing else. What is PARTICULAR to colour is the spelling: JSON has no colour literal,
+ * so the members of an authored start are strings, and the DECLARATION is what says a
+ * string here means a colour. Hex and "$token" both, exactly as a scalar colour reads. */
+void test_color_element_variables() {
+    FakeMesh mesh;
+    Json button = {
+        {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+        {"flows",
+         Json::array({
+             flow_on("tap", {steps::append_var("swatches", "#0000ff", "4")}),
+             flow_on("press", {steps::set_index("swatches", "0", "#ffffff")}),
+             flow_on("pressrelease", {steps::set_key("byName", "'cold'", "#00ccff")}),
+         })}};
+    Json root = {
+        {"version", 1},
+        {"next_id", 1},
+        {"tokens", Json::array({Json{{"name", "accent"}, {"dark", "#334455"},
+                                     {"light", "#ffffff"}}})},
+        {"globals",
+         Json::array({
+             Json{{"name", "swatches"}, {"type", "list"}, {"elem", "color"},
+                  {"init", Json::array({"#ff0000", "#00ff0080", "$accent"})}},
+             Json{{"name", "byName"}, {"type", "map"}, {"elem", "color"},
+                  {"init", Json{{"warn", "#ffaa00"}}}},
+             Json{{"name", "ramps"}, {"type", "list"}, {"elem", "list"},
+                  {"leaf", "color"},
+                  {"init", Json::array({Json::array({"#000000", "#ffffff"})})}},
+         })},
+        {"pages",
+         Json::array({Json{{"name", "P"}, {"children", Json::array({button})}}})}};
+    Document document;
+    std::string err;
+    CHECK(document.adopt(std::move(root), err));
+    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    for (const Diag& diag : compiled.program.diagnostics)
+        if (diag.grade == DiagGrade::Error)
+            std::printf("color element compile: [%s] %s\n", diag.code.c_str(),
+                        diag.message.c_str());
+    if (!CHECK(compiled.ok)) return;
+
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const Program& program = scheduler.program();
+    const int swatches = named_cell(program, "swatches");
+    const int by_name = named_cell(program, "byName");
+    const int ramps = named_cell(program, "ramps");
+    if (!CHECK(swatches >= 0 && by_name >= 0 && ramps >= 0)) return;
+    /* the declaration landed, at both depths */
+    CHECK(program.cells[swatches].elem == Shape::Color);
+    CHECK(program.cells[by_name].elem == Shape::Color);
+    CHECK(program.cells[ramps].elem == Shape::List);
+    CHECK(program.cells[ramps].leaf == Shape::Color);
+
+    std::string fault;
+    scheduler.tick(fault);
+    const RuntimeState& state = scheduler.state();
+    /* the authored start is COLOURS, not the strings it was written as — alpha kept
+       where it was spelled, and "$accent" resolved to the token's dark value */
+    CHECK_EQ(list_dump(program, state, swatches), "#ff0000,#00ff0080,#334455");
+    CHECK_EQ(map_dump(program, state, by_name), "warn=#ffaa00");
+
+    const uint64_t instance =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    uint32_t seq = 0;
+    auto press = [&](const char* event) {
+        scheduler.post(InputEvent{1, instance, event, Value::nil(), ++seq});
+        scheduler.tick(fault);
+    };
+    /* and the two verbs carry colours the same way, a hex literal being wire-legal */
+    press("tap");
+    CHECK_EQ(list_dump(program, state, swatches), "#ff0000,#00ff0080,#334455,#0000ff");
+    press("press");
+    CHECK_EQ(list_dump(program, state, swatches), "#ffffff,#00ff0080,#334455,#0000ff");
+    press("pressrelease");
+    CHECK_EQ(map_dump(program, state, by_name), "cold=#00ccff,warn=#ffaa00");
 }
 
 /* variants(<TypeRef>): the options ARE the mesh enum's vocabulary, in declaration
@@ -4138,6 +4337,7 @@ int main() {
     RUN(test_list_cells);
     RUN(test_aggregate_variables);
     RUN(test_nested_aggregates);
+    RUN(test_nested_ring);
     RUN(test_nested_refusals);
     RUN(test_indexed_writes);
     RUN(test_struct_agg_fields);
@@ -4146,6 +4346,7 @@ int main() {
     RUN(test_map_reduce);
     RUN(test_map_replay);
     RUN(test_aggregate_refusals);
+    RUN(test_color_element_variables);
     RUN(test_variant_options);
     RUN(test_suspend_holds_text);
     RUN(test_document_tolerance);

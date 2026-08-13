@@ -681,25 +681,31 @@ class Compiler {
                             /* an AGGREGATE slot's authored value has its own accepted
                                spellings and lands in the cell's constant run, not in
                                the scalar initial, which stays Nil */
+                            /* A COMPONENT'S LIST DECLARES ITS ELEMENTS like any other
+                               variable does; the served string was already checked where
+                               it was declared, so a name that means nothing here simply
+                               leaves the elements undeclared. Read BEFORE the start is
+                               parsed, because a declared element type is what decides
+                               how the authored spelling reads — a `color` list's members
+                               are hex strings, not text. */
+                            const Shape slot_elem =
+                                aggregate ? var_shape(slot.value("elem", "")) : Shape::Unknown;
                             std::vector<Value> list_init;
                             const bool has_list =
                                 expr_text.empty() &&
                                 (shape == Shape::List
-                                     ? list_slot_initial(info.id, name, initial, list_init)
+                                     ? list_slot_initial(info.id, name, initial, list_init,
+                                                         slot_elem)
                                      : shape == Shape::Map &&
                                            map_slot_initial(info.id, name, initial,
-                                                            list_init));
+                                                            list_init, slot_elem));
                             info.slots[name] =
                                 add_cell(CellKind::Slot, info.id, info.id, name, shape,
                                          aggregate || !expr_text.empty() ? Json() : initial,
                                          false);
-                            /* A COMPONENT'S LIST DECLARES ITS ELEMENTS like any other
-                               variable does; the served string was already checked where
-                               it was declared, so a name that means nothing here simply
-                               leaves the elements undeclared. */
                             if (aggregate) {
                                 CellDef& cell = program_.cells[info.slots[name]];
-                                cell.elem = var_shape(slot.value("elem", ""));
+                                cell.elem = slot_elem;
                                 cell.leaf = var_shape(slot.value("leaf", ""));
                             }
                             if (has_list) {
@@ -920,7 +926,7 @@ class Compiler {
      * Returns whether an initial was authored at all; the elements land in `out`, text
      * among them as constant-pool refs. */
     bool list_slot_initial(uint64_t node_id, const std::string& slot, const Json& value,
-                           std::vector<Value>& out) {
+                           std::vector<Value>& out, Shape elem = Shape::Unknown) {
         const AggSite site{node_id, "slot '" + slot + "' is a list", slot,
                            "Write the options as a list ([\"Off\", \"Low\", \"High\"]) "
                            "or as variants(Type.field), naming an enum in the mesh. To "
@@ -950,18 +956,18 @@ class Compiler {
                 return refuse_agg(site, "'" + text +
                                             "' is neither a list nor a variants() "
                                             "reference");
-            return list_elements(site, parsed, out);
+            return list_elements(site, parsed, out, elem);
         }
         if (!value.is_array())
             return refuse_agg(site, "its value is " + json_brief(value));
-        return list_elements(site, value, out);
+        return list_elements(site, value, out, elem);
     }
 
     /* THE AUTHORED VALUE OF A MAP SLOT: an object of scalars, or the text of one. The
      * same two spellings a list slot takes, for the same reason — an inspector field
      * commits a string and the document keeps what it was given. */
     bool map_slot_initial(uint64_t node_id, const std::string& slot, const Json& value,
-                          std::vector<Value>& out) {
+                          std::vector<Value>& out, Shape elem = Shape::Unknown) {
         const AggSite site{node_id, "slot '" + slot + "' is a map", slot,
                            "Write it as an object of scalars ({\"a\": 1, \"b\": 2})"};
         Json object = value;
@@ -973,27 +979,52 @@ class Compiler {
         if (object.is_null()) return false;
         if (!object.is_object())
             return refuse_agg(site, "its value is " + json_brief(value));
-        return map_entries(site, object, out);
+        return map_entries(site, object, out, elem);
     }
 
-    bool list_elements(const AggSite& site, const Json& array, std::vector<Value>& out) {
+    bool list_elements(const AggSite& site, const Json& array, std::vector<Value>& out,
+                       Shape elem = Shape::Unknown) {
         for (const Json& item : array) {
             Value element = Value::nil();
-            if (!scalar_element(item, element)) {
+            if (!scalar_element(site, elem, item, element)) {
                 out.clear();
-                return refuse_agg(site, "the element " + json_brief(item) +
-                                            " is not a string, a number or a boolean");
+                return refuse_agg(site, "the element " + json_brief(item) + " is not " +
+                                            element_spelling(elem));
             }
             out.push_back(element);
         }
         return list_within_bounds(site, out);
     }
 
+    /* what an authored member is allowed to LOOK LIKE, so a refusal ends on the spelling
+       that would have worked rather than on the general rule */
+    static const char* element_spelling(Shape elem) {
+        return elem == Shape::Color ? "a color (\"#rrggbb\", \"#rrggbbaa\" or \"$token\")"
+                                    : "a string, a number or a boolean";
+    }
+
     /* ONE MEMBER of an authored aggregate: the three JSON scalars, as themselves. A
      * nested array or object is refused by the caller — nested aggregates do not exist
-     * anywhere in this system, so an authored one would be a shape nothing can hold. */
-    bool scalar_element(const Json& item, Value& out) {
-        if (item.is_string()) out = Value::text(program_.add_text(item.get<std::string>()));
+     * anywhere in this system, so an authored one would be a shape nothing can hold.
+     *
+     * A declared COLOR element is the one place the JSON spelling and the stored value
+     * differ: a color is written as a string everywhere in this document (there is no
+     * JSON colour literal), so the declaration is what says a string here means a colour.
+     * It takes the same two spellings a scalar colour slot does — a hex literal or a
+     * "$token" reference — and resolve_token warns about a stale name exactly once,
+     * against the field the author is looking at. */
+    bool scalar_element(const AggSite& site, Shape elem, const Json& item, Value& out) {
+        if (item.is_string()) {
+            if (elem == Shape::Color) {
+                const Json resolved = resolve_token(site.node, site.where, item);
+                bool ok = false;
+                const uint32_t rgba = parse_color(resolved.get<std::string>(), ok);
+                if (!ok) return false;
+                out = Value::color(rgba);
+                return true;
+            }
+            out = Value::text(program_.add_text(item.get<std::string>()));
+        }
         else if (item.is_number()) out = Value::number(item.get<double>());
         else if (item.is_boolean()) out = Value::boolean(item.get<bool>());
         else return false;
@@ -1018,15 +1049,15 @@ class Compiler {
      * the order a retained map holds them in, so the pairs land interleaved and already
      * in place. A non-scalar member names itself in the finding — an aggregate inside an
      * aggregate has no representation anywhere in this system. */
-    bool map_entries(const AggSite& site, const Json& object, std::vector<Value>& out) {
+    bool map_entries(const AggSite& site, const Json& object, std::vector<Value>& out,
+                     Shape elem = Shape::Unknown) {
         for (auto it = object.begin(); it != object.end(); ++it) {
             Value value = Value::nil();
-            if (!it->is_null() && !scalar_element(*it, value)) {
+            if (!it->is_null() && !scalar_element(site, elem, *it, value)) {
                 out.clear();
                 return refuse_agg(site, "the member '" + it.key() + "' is " +
-                                            json_brief(*it) +
-                                            ", which is not a string, a number or a "
-                                            "boolean");
+                                            json_brief(*it) + ", which is not " +
+                                            element_spelling(elem));
             }
             out.push_back(Value::text(program_.add_text(it.key())));
             out.push_back(value);
@@ -1075,8 +1106,8 @@ class Compiler {
             return;
         }
         if (!value.is_null()) {
-            if (pairs && value.is_object()) map_entries(site, value, out);
-            else if (!pairs && value.is_array()) list_elements(site, value, out);
+            if (pairs && value.is_object()) map_entries(site, value, out, elem);
+            else if (!pairs && value.is_array()) list_elements(site, value, out, elem);
             else refuse_agg(site, "its start is " + json_brief(value));
         }
         /* a declared element type holds from the very start: one foreign element in
@@ -1126,11 +1157,12 @@ class Compiler {
             if (!row_pairs && !item.is_array())
                 return refuse_agg(site, "a row is " + json_brief(item) +
                                             ", and its rows are declared lists");
-            if (row_pairs ? !map_entries(site, item, row) : !list_elements(site, item, row))
+            const Shape leaf = program_.cells[cell].leaf;
+            if (row_pairs ? !map_entries(site, item, row, leaf)
+                          : !list_elements(site, item, row, leaf))
                 return false;
             /* a declared leaf type holds from the very start, exactly as a flat cell's
                declared element type does */
-            const Shape leaf = program_.cells[cell].leaf;
             if (leaf != Shape::Unknown)
                 for (size_t i = row_pairs ? 1 : 0; i < row.size(); i += row_pairs ? 2 : 1) {
                     const Shape held = value_shape(row[i]);
@@ -1201,15 +1233,16 @@ class Compiler {
         const std::string text = trimmed(var.value("elem", ""));
         if (text.empty()) return Shape::Unknown;
         const Shape shape = var_shape(text);
-        if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text)
+        if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text ||
+            shape == Shape::Color)
             return shape;
         /* list or map here declares a NESTED cell: every element is a row, and `leaf`
            says what the rows hold */
         if (shape == Shape::List || shape == Shape::Map) return shape;
         diag(id_of(var), "value_shape",
              "variable '" + name + "': '" + text +
-                 "' is not an element type; elements are f64, bool, str or icon, or list "
-                 "or map for rows",
+                 "' is not an element type; elements are num, bool, text, color or icon, "
+                 "or list or map for rows",
              DiagGrade::Error, "elem");
         return Shape::Unknown;
     }
@@ -1232,12 +1265,13 @@ class Compiler {
             return Shape::Unknown;
         }
         const Shape shape = var_shape(text);
-        if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text)
+        if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text ||
+            shape == Shape::Color)
             return shape;
         diag(id_of(var), "value_shape",
              "variable '" + name + "': '" + text +
-                 "' is not a leaf type; a row holds f64, bool, str or icon — nesting is "
-                 "one level, so there is nothing below a row to be a list of",
+                 "' is not a leaf type; a row holds num, bool, text, color or icon — "
+                 "nesting is one level, so there is nothing below a row to be a list of",
              DiagGrade::Error, "leaf");
         return Shape::Unknown;
     }
@@ -2156,18 +2190,19 @@ class Compiler {
                                 flow.code, bound_stack, nullptr, "keep"))
                     return false;
                 flow.max_stack = std::max(flow.max_stack, bound_stack + 1);
-                /* a COURTESY check: a keep the folder can read and that is past the
-                   ceiling is not an error (the list simply holds the last 4096), but it
-                   is not what the author asked for either */
+                /* a COURTESY check: a keep the folder can read that is past what a buffer
+                   can hold at all is not an error (the list simply holds what fits), but
+                   it is not what the author asked for either. The bound is BYTES now, so
+                   this speaks in the elements those bytes buy for this cell. */
                 double window = 0.0;
+                const uint32_t fits = buffer_capacity(def.elem);
                 if (fold_const(element, keep, window) &&
-                    window > static_cast<double>(kRetainedCeiling))
+                    window > static_cast<double>(fits))
                     diag(step_id, "keep_bound",
                          "keep is " + std::to_string(static_cast<long long>(window)) +
-                             "; a list holds at most " +
-                             std::to_string(kRetainedCeiling) +
-                             " elements, so it keeps the last " +
-                             std::to_string(kRetainedCeiling),
+                             "; one buffer holds " + std::to_string(fits) +
+                             " elements of this type, so it keeps the last " +
+                             std::to_string(fits),
                          DiagGrade::Warning, "keep");
             }
             Instruction ins;
@@ -2176,14 +2211,12 @@ class Compiler {
             ins.b = fault_site(
                 step_id, "append",
                 keep.empty()
-                    ? "list '" + def.name + "' hit the " +
-                          std::to_string(kRetainedCeiling) +
-                          "-element ceiling; add keep to bound it"
+                    ? "list '" + def.name +
+                          "' filled its buffer; add keep to bound what it holds"
                     : "'" + def.name +
-                          "' could not append: an append takes ONE element that fits "
-                          "the list, and a keep that is not a number leaves the list "
-                          "unbounded to the " +
-                          std::to_string(kRetainedCeiling) + "-element ceiling");
+                          "' could not append: an append takes ONE element that fits the "
+                          "list, and a keep that is not a number leaves the list growing "
+                          "until its buffer is full");
             flow.code.push_back(ins);
             return true;
         }
@@ -2209,9 +2242,8 @@ class Compiler {
             ins.a = cell;
             ins.b = fault_site(step_id, "store_key",
                                "map '" + def.name +
-                                   "' needs a text key, a value that fits it, and holds "
-                                   "at most " + std::to_string(kRetainedCeiling) +
-                                   " entries");
+                                   "' needs a text key, a value that fits it, and room in "
+                                   "its buffer (a map has no keep, so it only grows)");
         }
         flow.code.push_back(ins);
         return true;

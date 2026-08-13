@@ -156,8 +156,10 @@ function measureText(text: string, size: number): number {
 /* how many elements one ITERATE will walk. The view's ring is larger than the scalar
  * tier's 512-element ceiling (a trend keeps thousands of samples), so this is its own
  * number; past it the loop simply stops, which is bounded work and a short answer rather
- * than a hung frame. */
-const ITERATE_CAP = 4096;
+ * than a hung frame. It is FAR above what a screen can show — a path with this many points
+ * is already more than the renderer wants — because a cell's own bound is bytes now, and a
+ * frame budget is the only thing this one was ever really about. */
+const ITERATE_CAP = 65536;
 
 /* nothing outside an ITERATE body has arguments to read, so ARG there is Nil */
 const NO_ARGS: Json[] = [];

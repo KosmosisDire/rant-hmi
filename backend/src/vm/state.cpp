@@ -133,6 +133,17 @@ Value zero_value(Shape shape) {
     }
 }
 
+/* An element costs its Value, and a TEXT element costs the text slot that holds its bytes
+ * as well — a position that has ever held text keeps one for the buffer's life. An
+ * UNDECLARED element is charged as text because it may become one, which is the honest
+ * worst case for a buffer nothing has typed. */
+uint32_t buffer_capacity(Shape shape) noexcept {
+    const uint64_t per = shape == Shape::Text || shape == Shape::Unknown
+                             ? sizeof(Value) + kDefaultTextCap
+                             : sizeof(Value);
+    const uint64_t fits = kBufferBytes / per;
+    return static_cast<uint32_t>(fits > UINT32_MAX ? UINT32_MAX : fits);
+}
 
 RuntimeState::RuntimeState(const Program& program) {
     values.resize(program.cells.size(), Value::nil());
@@ -324,7 +335,7 @@ RuntimeState::RuntimeState(const Program& program) {
             if (field.shape != Shape::List && field.shape != Shape::Map) continue;
             const uint32_t bound =
                 std::min<uint32_t>(field.bound ? field.bound : kVarrCeiling,
-                                   kRetainedCeiling);
+                                   kDeliveryCeiling);
             if (field.shape == Shape::Map) {
                 values_here += bound * 2;
                 texts_here += bound * 2;
@@ -393,8 +404,8 @@ AggView RuntimeState::aggregate(const Value& value) const noexcept {
 
 uint32_t RuntimeState::list_text(ListState& held, uint32_t at) noexcept {
     /* a map's entries interleave, so the widest position an aggregate can name is twice
-       the ceiling: one text slot per key AND one per text value */
-    if (at >= kRetainedCeiling * 2) return UINT32_MAX;
+       its entry budget: one text slot per key AND one per text value */
+    if (at >= static_cast<uint64_t>(held.capacity()) * 2) return UINT32_MAX;
     while (held.texts.size() <= at) {
         held.texts.push_back(static_cast<uint32_t>(texts.size()));
         texts.emplace_back(kDefaultTextCap);
@@ -420,7 +431,7 @@ void RuntimeState::move_entry(ListState& held, uint32_t dst, uint32_t src) noexc
 }
 
 uint32_t RuntimeState::leaf_text(ListState& held, uint32_t at) noexcept {
-    if (at >= kLeafCeiling) return UINT32_MAX;
+    if (at >= static_cast<uint64_t>(held.leaf_capacity()) * 2) return UINT32_MAX;
     while (held.leaf_texts.size() <= at) {
         held.leaf_texts.push_back(static_cast<uint32_t>(texts.size()));
         texts.emplace_back(kDefaultTextCap);
@@ -483,6 +494,21 @@ void compact_leaves(RuntimeState& state, ListState& held, bool pairs) noexcept {
     held.leaf_live = cursor;
 }
 
+/* Is there room at the arena's tail for `span` more leaves, compacting when that is what
+ * it takes? The holes a relocation leaves are collected once they have grown past what is
+ * LIVE — amortized O(1) per append, since a compaction costs the live extent and only runs
+ * when the holes have matched it — and again at the budget itself, where collecting them is
+ * the only way to make room. The small-arena floor keeps a three-element buffer from
+ * sorting and reallocating on every append for no gain. */
+bool arena_room(RuntimeState& state, ListState& held, bool pairs, uint32_t span) noexcept {
+    const uint64_t arena = held.leaf_capacity();
+    const uint32_t holes = held.leaf_used - held.leaf_live;
+    if (static_cast<uint64_t>(held.leaf_used) + span > arena ||
+        (held.leaf_used > 64 && holes > held.leaf_live))
+        compact_leaves(state, held, pairs);
+    return static_cast<uint64_t>(held.leaf_used) + span <= arena;
+}
+
 /* Make room for `want` ENTRIES in row `row` and answer where its entries now start. A row
  * still inside its capacity does not move at all — which is what makes an append into a
  * settled row free — and one that has outgrown it is relocated whole to the tail with its
@@ -494,16 +520,14 @@ uint32_t reserve_row(RuntimeState& state, ListState& held, uint32_t row, bool pa
     const uint32_t need = row_span(want, row_pairs);
     const uint32_t was = held.row_cap[row];
     if (need <= was) return agg_start(held.elems[row_at(row, pairs)]);
-    /* the live budget is leaf POSITIONS across every row, so one ceiling covers a nested
-       cell exactly as it covers a flat one */
-    if (held.leaf_live - was + need > kRetainedCeiling) return UINT32_MAX;
+    /* THE ARENA IS ITS OWN BUFFER with its own budget: leaves are not entries of the list
+       and never spend the room its rows are counted in */
+    const uint32_t arena = held.leaf_capacity();
+    if (held.leaf_live - was + need > arena) return UINT32_MAX;
     uint32_t cap = was ? was * 2 : 4;
     while (cap < need) cap *= 2;
-    if (cap > kRetainedCeiling) cap = kRetainedCeiling;
-    if (held.leaf_used + cap > kLeafCeiling) {
-        compact_leaves(state, held, pairs);
-        if (held.leaf_used + cap > kLeafCeiling) return UINT32_MAX;
-    }
+    if (cap > arena) cap = arena;
+    if (!arena_room(state, held, pairs, cap)) return UINT32_MAX;
     Value& entry = held.elems[row_at(row, pairs)];
     const uint32_t start = agg_start(entry);
     const uint32_t used = row_span(agg_count(entry), row_pairs);
@@ -545,13 +569,13 @@ uint32_t find_row(const Program& program, const RuntimeState& state, const ListS
     return at < held.count ? at : UINT32_MAX;
 }
 
-/* the window `keep` asks a ring to hold, or UINT32_MAX where it asks for none: floored,
- * at least one, never past the ceiling — NaN lands on one beside the negatives */
-uint32_t keep_window(const Value& keep) noexcept {
+/* the window `keep` asks a ring to hold, or UINT32_MAX where it asks for none: floored, at
+ * least one, never past what the buffer can hold — NaN lands on one beside the negatives */
+uint32_t keep_window(const Value& keep, uint32_t cap) noexcept {
     if (keep.tag != ValueTag::Num) return UINT32_MAX;
     double wanted = std::floor(keep.data.num);
     if (!(wanted >= 1.0)) wanted = 1.0;
-    if (wanted > static_cast<double>(kRetainedCeiling)) wanted = kRetainedCeiling;
+    if (wanted > static_cast<double>(cap)) wanted = cap;
     return static_cast<uint32_t>(wanted);
 }
 
@@ -587,7 +611,8 @@ bool place_row(RuntimeState& state, const Program& source_program, const Runtime
                ListState& held, uint32_t list_slot, uint32_t row, bool pairs,
                const Value* data, uint32_t count, bool row_pairs, Shape leaf) noexcept {
     if (row >= held.row_cap.size() || row_at(row, pairs) >= held.elems.size()) return false;
-    if (count > kRetainedCeiling || (!data && count)) return false;
+    const uint32_t arena = held.leaf_capacity();
+    if (count > arena || (!data && count)) return false;
     const uint32_t span = row_span(count, row_pairs);
     /* a declared leaf shape is a promise this level keeps too: one foreign element refuses
        the whole row, exactly as it refuses a whole flat store. A map row's KEYS are text
@@ -595,11 +620,10 @@ bool place_row(RuntimeState& state, const Program& source_program, const Runtime
     for (uint32_t i = row_pairs ? 1u : 0u; i < span; i += row_pairs ? 2u : 1u)
         if (!elem_fits(leaf, data[i].tag)) return false;
     const uint32_t was = held.row_cap[row];
-    if (held.leaf_live - was + span > kRetainedCeiling) return false;
-    if (held.leaf_used + span > kLeafCeiling) {
-        compact_leaves(state, held, pairs);
-        if (held.leaf_used + span > kLeafCeiling) return false;
-    }
+    /* the arena's own budget, never the outer list's: a row is not an entry of the list it
+       sits in, so its leaves cost the list nothing */
+    if (held.leaf_live - was + span > arena) return false;
+    if (!arena_room(state, held, pairs, span)) return false;
     const uint32_t dst = held.leaf_used;
     if (held.leaves.size() < dst + span) held.leaves.resize(dst + span, Value::nil());
     for (uint32_t i = 0; i < span; ++i) held.leaves[dst + i] = data[i];
@@ -695,7 +719,7 @@ bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& 
                              uint32_t count, bool pairs) noexcept {
     if (list_slot >= lists.size() || cell_index >= values.size()) return false;
     ListState& held = lists[list_slot];
-    if (count > kRetainedCeiling) count = kRetainedCeiling;
+    if (count > held.capacity()) count = held.capacity();
     if (!data && count) return false;
     /* grow to what this store actually holds, once; a slot that only ever carries three
        options never carries the ceiling's worth of Values. A map's entries interleave,
@@ -784,7 +808,7 @@ void RuntimeState::seed_nested(const Program& program, uint32_t cell_index,
     const bool pairs = cell.shape == Shape::Map;
     const bool row_pairs = cell.elem == Shape::Map;
     uint32_t count = static_cast<uint32_t>(cell.row_init.size());
-    if (count > kRetainedCeiling) count = kRetainedCeiling;
+    if (count > held.capacity()) count = held.capacity();
     const uint32_t span = pairs ? count * 2 : count;
     if (held.elems.size() < span) held.elems.resize(span, Value::nil());
     for (uint32_t i = 0; i < span; ++i) held.elems[i] = Value::nil();
@@ -827,7 +851,7 @@ Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
     ListState& held = lists[list_slot];
     const uint32_t width = pairs ? 2u : 1u;
     uint32_t count = delivered / width;
-    const uint32_t limit = std::min(bound ? bound : kVarrCeiling, kRetainedCeiling);
+    const uint32_t limit = std::min(bound ? bound : kVarrCeiling, kDeliveryCeiling);
     if (count > limit) count = limit;   /* the ceiling: truncate, never overrun */
     const uint32_t span = count * width;
     if (held.elems.size() < span) held.elems.resize(span, Value::nil());
@@ -836,7 +860,7 @@ Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
        order is decided over the delivery's key views (still valid here), then the
        entries land already in place — text is homed per POSITION, so deciding the
        order first is what keeps each key's bytes from being copied twice. */
-    uint32_t order[kRetainedCeiling];
+    uint32_t order[kDeliveryCeiling];
     if (pairs) {
         for (uint32_t i = 0; i < count; ++i) order[i] = i;
         auto key_of = [&](uint32_t pair) {
@@ -891,9 +915,9 @@ bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Valu
     ListState& held = lists[cell.list_slot];
     if (!held.nested() && (value.tag == ValueTag::List || value.tag == ValueTag::Map))
         return false;
-    /* the runaway case: with nothing bounding the ring, the ceiling is the only answer,
-       and it refuses rather than silently dropping the oldest sample */
-    if (keep.tag != ValueTag::Num && held.count >= kRetainedCeiling) return false;
+    /* the runaway case: with nothing bounding the ring, the buffer's own budget is the
+       only answer, and it refuses rather than silently dropping the oldest sample */
+    if (keep.tag != ValueTag::Num && held.count >= held.capacity()) return false;
     if (held.nested()) return append_row(program, cell_index, value, keep);
     /* the element tag is a HINT and it is tracked, not recomputed: a ring appends every
        tick, and rescanning four thousand elements for a fact one comparison settles is
@@ -916,7 +940,7 @@ bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Valu
     else held.elems.push_back(value);
     ++held.count;
     ++held.total;
-    trim_front(*this, held, keep_window(keep));
+    trim_front(*this, held, keep_window(keep, held.capacity()));
     values[cell_index] = Value::retained_list(
         cell.list_slot, held.count, was == value.tag ? was : ValueTag::Nil);
     return true;
@@ -958,7 +982,7 @@ bool RuntimeState::append_row(const Program& program, uint32_t cell_index, Value
         }
     }
     ++held.total;
-    trim_front(*this, held, keep_window(keep));
+    trim_front(*this, held, keep_window(keep, held.capacity()));
     values[cell_index] = Value::retained_list(
         cell.list_slot, held.count, was == value.tag ? was : ValueTag::Nil);
     return true;
@@ -1022,7 +1046,7 @@ bool RuntimeState::store_key(const Program& program, uint32_t cell_index, const 
     if (!found) {
         /* a map has no keep, so a runaway one is a bug by construction rather than a
            window that needs trimming */
-        if (held.count >= kRetainedCeiling) return false;
+        if (held.count >= held.capacity()) return false;
         const uint32_t span = (held.count + 1) * 2;
         if (held.elems.size() < span) held.elems.resize(span, Value::nil());
         for (uint32_t p = span; p-- > at * 2 + 2;) move_entry(held, p, p - 2);
@@ -1254,7 +1278,7 @@ bool RuntimeState::append_leaf(const Program& program, uint32_t cell_index,
     if (held.elems[row_at(row, pairs)].tag != ValueTag::List) return false;
     const uint32_t count = agg_count(held.elems[row_at(row, pairs)]);
     const ValueTag was = count ? list_elem_tag(held.elems[row_at(row, pairs)]) : value.tag;
-    if (keep.tag != ValueTag::Num && count >= kRetainedCeiling) return false;
+    if (keep.tag != ValueTag::Num && count >= held.leaf_capacity()) return false;
     const uint32_t start = reserve_row(*this, held, row, pairs, count + 1);
     if (start == UINT32_MAX) return false;
     if (value.tag == ValueTag::Text) {
@@ -1265,7 +1289,8 @@ bool RuntimeState::append_leaf(const Program& program, uint32_t cell_index,
     }
     held.leaves[start + count] = value;
     uint32_t now = count + 1;
-    const uint32_t window = keep_window(keep);
+    /* a ROW's own window is bounded by the arena it lives in, not by the list's entries */
+    const uint32_t window = keep_window(keep, held.leaf_capacity());
     if (window != UINT32_MAX && now > window) {
         const uint32_t drop = now - window;
         for (uint32_t i = 0; i + drop < now; ++i) move_leaf(held, start + i, start + i + drop);
@@ -1343,7 +1368,7 @@ bool RuntimeState::store_leaf(const Program& program, uint32_t cell_index, const
             uint32_t base = start;
             uint32_t now = count;
             if (!found) {
-                if (count >= kRetainedCeiling) return false;
+                if (count >= held.leaf_capacity()) return false;
                 base = reserve_row(*this, held, row, pairs, count + 1);
                 if (base == UINT32_MAX) return false;
                 for (uint32_t p = (count + 1) * 2; p-- > at * 2 + 2;)

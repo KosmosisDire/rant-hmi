@@ -31,6 +31,13 @@ struct StructState {
     std::vector<uint32_t> texts;
 };
 
+/* HOW MANY ELEMENTS OF `shape` ONE BUFFER'S BYTES BUY (kBufferBytes, ir.h). Every element
+ * costs its Value; a TEXT element costs its own text slot on top, and an UNDECLARED one is
+ * charged as text because it may hold one. This is the only ceiling a retained aggregate
+ * has, and it is per BUFFER — the outer entries and a nested cell's leaf arena each get
+ * the whole of it. */
+uint32_t buffer_capacity(Shape shape) noexcept;
+
 /* One AGGREGATE cell's retained storage — a list's elements, or a map's entries
  * INTERLEAVED (key, value) with `count` counting PAIRS and the keys kept SORTED ascending
  * by text at all times (deterministic iteration is what makes a replay byte-identical,
@@ -39,8 +46,10 @@ struct StructState {
  * An aggregate built during a run lives in the scratch element pool, which resets before
  * the next one, so a cell that is to hold one ACROSS ticks needs storage of its own: this
  * is it. `elems` starts EMPTY and grows amortized toward the working size a store or an
- * append asks for, never past kRetainedCeiling — a slot that only ever holds three
- * options must not carry the ceiling's worth of Values. `texts` names one slot in
+ * append asks for, never past what one buffer's bytes buy (buffer_capacity) — a slot that
+ * only ever holds three options must not carry a whole budget's worth of Values, and a
+ * buffer that has earned its size keeps it rather than being cut off. `texts` names one
+ * slot in
  * RuntimeState::texts per element position that has ever held text, so element text
  * resolves through exactly the machinery every other text value does.
  *
@@ -85,6 +94,17 @@ struct ListState {
 
     bool nested() const noexcept { return elem == Shape::List || elem == Shape::Map; }
     bool row_pairs() const noexcept { return elem == Shape::Map; }
+
+    /* HOW MANY ENTRIES THIS BUFFER MAY HOLD, and how many its arena may. Two budgets, one
+     * per buffer, each the whole of kBufferBytes: a nested cell's rows are entries of the
+     * first and their leaves live in the second, so a list declared to hold N rows holds N
+     * of them however wide a row is. A nested cell's own entries are sub-aggregate Values
+     * costing no text, which is why the outer budget asks about `elem` only when it is
+     * flat. */
+    uint32_t capacity() const noexcept {
+        return buffer_capacity(nested() ? Shape::List : elem);
+    }
+    uint32_t leaf_capacity() const noexcept { return buffer_capacity(leaf); }
 };
 
 /* a bounds-checked window into an aggregate's elements; `count` is ENTRIES (a map's
