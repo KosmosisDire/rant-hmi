@@ -1,7 +1,9 @@
 /* The language's vocabulary tables: one row per builtin and method — the signature,
- * the result shape, the tier, the view encoding. The checker, the served autocomplete
- * (language_reference) and the template compiler's view_builtin()/view_method() all
- * read these rows and nothing else, so the vocabularies can never drift apart. */
+ * the result shape, the tier, the view encoding. The rows are GENERATED from the one
+ * table in tools/gen_ir.mjs (lang/tables.inc), beside the enum ids themselves. The
+ * checker, the served autocomplete (language_reference) and the view emitter's
+ * view_builtin()/view_method() all read these rows and nothing else, so the
+ * vocabularies can never drift apart. */
 #pragma once
 
 #include "lang/ir.h"

@@ -4,6 +4,8 @@
  *
  * Emits, from the tables below:
  *   backend/src/lang/ir_ops.h   the C++ enums and the name tables beside them
+ *   backend/src/lang/tables.inc the builtin/method SIGNATURE rows tables.cpp builds
+ *                               its vocabulary tables from (one row = id + spec)
  *   frontend/src/ir.ts          the view's copy of the shared vocabulary
  *
  * Run with no arguments to regenerate both files in place; run with --check to
@@ -226,100 +228,163 @@ result shape is the body's rather than the receiver's.`,
   },
 ];
 
+/* One row per BUILTIN: the enum id (`name`, emitted in this order), the surface
+ * spelling (`fn`), the signature (min/max arity, parameter shapes, result shape),
+ * `display` (display vocabulary, refused on the wire), and the VIEW column — the
+ * program.ts opcode, "@" where the template emitter folds it itself, "" where the
+ * view has none. A row with no `name` is VIEW-ONLY: it never reaches the scalar
+ * dispatcher, so it borrows an inert enum id (`id`, the clamp01 pattern) instead of
+ * minting one with no VM case. `c` comments the enum entry, `rc` the table row. */
 const BUILTINS = [
-  { name: "Clamp" },
-  { name: "MapRange" },
-  { name: "RoundTo" },
-  { name: "Lerp" },
-  { name: "Abs" },
-  { name: "Round" },
-  { name: "Floor" },
-  { name: "Ceil" },
-  { name: "Sqrt" },
-  { name: "Pow" },
-  { name: "Min" },
-  { name: "Max" },
-  { name: "Int" },
-  { name: "Num" },
-  { name: "Rgb" },
-  { name: "Hsv" },
-  { name: "Str" },
-  { name: "Name" },
-  { name: "FmtTime" },
-  { name: "FmtDuration" },
-  { name: "Color" },
-  { name: "Jet" },
-  { name: "Hot" },
-  { name: "CoolWarm" },
-  { name: "Viridis" },
-  { name: "Grayscale" },
-  { name: "Values" },
-  { name: "Keys" },
-  { name: "Invert" },
+  { name: "Clamp", fn: "clamp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
   {
-    name: "Sin",
+    name: "MapRange", fn: "mapRange", min: 5, max: 5, params: ["Num", "Num", "Num", "Num", "Num"], result: "Num", view: "@",
+    rc: `mapRange/roundTo/lerp: pure arithmetic, so the view folds each onto the
+existing ADD/SUB/MUL/DIV/POW/ROUND opcodes (template_expr.cpp) rather than
+gaining an opcode of its own -- "@" is the same bespoke marker \`clamp\` uses`,
+  },
+  { name: "RoundTo", fn: "roundTo", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@" },
+  { name: "Lerp", fn: "lerp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
+  { name: "Abs", fn: "abs", min: 1, max: 1, params: ["Num"], result: "Num", view: "ABS" },
+  { name: "Round", fn: "round", min: 1, max: 1, params: ["Num"], result: "Num", view: "ROUND" },
+  { name: "Floor", fn: "floor", min: 1, max: 1, params: ["Num"], result: "Num", view: "FLOOR" },
+  { name: "Ceil", fn: "ceil", min: 1, max: 1, params: ["Num"], result: "Num", view: "CEIL" },
+  { name: "Sqrt", fn: "sqrt", min: 1, max: 1, params: ["Num"], result: "Num", view: "SQRT" },
+  { name: "Pow", fn: "pow", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "POW" },
+  { name: "Min", fn: "min", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MIN" },
+  { name: "Max", fn: "max", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MAX" },
+  { name: "Int", fn: "int", min: 1, max: 1, params: ["Unknown"], result: "Num", view: "INT" },
+  { name: "Num", fn: "num", min: 1, max: 1, params: ["Unknown"], result: "Num" },
+  {
+    fn: "clamp01", id: "Clamp", min: 1, max: 1, params: ["Num"], result: "Num", view: "CLAMP01", viewOnly: true,
+    rc: `view-only: the template tier's saturating 0..1 fold, which the scalar language
+spells clamp(x, 0, 1) and has no separate opcode for`,
+  },
+  { name: "Rgb", fn: "rgb", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "@" },
+  { name: "Hsv", fn: "hsv", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "@" },
+  { name: "Str", fn: "str", min: 1, max: 1, params: ["Unknown"], result: "Text", view: "STR" },
+  {
+    fn: "measure", id: "Clamp", min: 2, max: 2, params: ["Text", "Num"], result: "Num", display: true, view: "MEASURE", viewOnly: true,
+    rc: `view-only: the estimated rendered width of TEXT at SIZE, in artboard units --
+the same estimator drawText/richUnits use, so an author's own layout maths
+agrees with what actually renders. No wire meaning (a machine does not care
+how wide a label draws), so it never had a scalar Builtin to begin with.`,
+  },
+  { name: "Name", fn: "name", min: 1, max: 1, params: ["Unknown"], result: "Text" },
+  { name: "FmtTime", fn: "fmtTime", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
+  { name: "FmtDuration", fn: "fmtDuration", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
+  { name: "Color", fn: "color", min: 1, max: 1, params: ["Text"], result: "Color", display: true },
+  { name: "Jet", fn: "jet", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Hot", fn: "hot", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "CoolWarm", fn: "coolWarm", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Viridis", fn: "viridis", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Grayscale", fn: "grayscale", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Values", fn: "values", min: 1, max: 1, params: ["Unknown"], result: "List" },
+  { name: "Keys", fn: "keys", min: 1, max: 1, params: ["Unknown"], result: "List" },
+  { name: "Invert", fn: "invert", min: 1, max: 1, params: ["Color"], result: "Color", display: true },
+  {
+    name: "Sin", fn: "sin", min: 1, max: 1, params: ["Num"], result: "Num", view: "SIN",
     c: `ordinary trigonometry, degrees in and out (the project-wide angle convention):
 both tiers gain these together, which is the piece that unblocks authoring a
 needle's capsule or an arc's annular sector as arithmetic instead of a hard-coded
 draw kind`,
+    rc: `ordinary trigonometry: degrees in and out on BOTH tiers, matching the
+project-wide angle convention (degrees, 0 = up, clockwise) rather than
+inventing a radians dialect nothing else in the document uses`,
   },
-  { name: "Cos" },
-  { name: "Tan" },
-  { name: "Asin" },
-  { name: "Acos" },
-  { name: "Atan2" },
+  { name: "Cos", fn: "cos", min: 1, max: 1, params: ["Num"], result: "Num", view: "COS" },
+  { name: "Tan", fn: "tan", min: 1, max: 1, params: ["Num"], result: "Num", view: "TAN" },
+  { name: "Asin", fn: "asin", min: 1, max: 1, params: ["Num"], result: "Num", view: "ASIN" },
+  { name: "Acos", fn: "acos", min: 1, max: 1, params: ["Num"], result: "Num", view: "ACOS" },
+  { name: "Atan2", fn: "atan2", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "ATAN2" },
+  {
+    fn: "sign", id: "Clamp", min: 1, max: 1, params: ["Num"], result: "Num", view: "SIGN", viewOnly: true,
+    rc: `view-only: SIGN and MOD already exist as program.ts opcodes (SIGN backs
+num.sign, MOD backs \`%\`) but neither had a free-function spelling in the
+surface grammar; giving them one costs nothing since the opcodes are already
+proven. hypot is new to both tiers but stays view-only here (nothing in the
+fixed vocabulary asks for it on the wire), folding onto MUL/ADD/SQRT the way
+mapRange folds onto arithmetic. The enum id on each view-only row is inert --
+Clamp is reused rather than adding an id with no VM case, since view_only rows
+never reach the scalar dispatcher that would use it.`,
+  },
+  { fn: "mod", id: "Clamp", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MOD", viewOnly: true },
+  { fn: "hypot", id: "Clamp", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
+  {
+    fn: "anchor", id: "Clamp", min: 2, max: 2, params: ["Num", "Num"], result: "Struct", display: true, view: "ANCHOR", viewOnly: true,
+    rc: `view-only: one point of a computed path, in fractions of the node's box —
+what a \`points\` attr's map produces per sample. No wire meaning (a machine
+has no boxes), so it never had a scalar Builtin; the id on the row is inert,
+the clamp01 pattern.`,
+  },
 ];
 
+/* One row per METHOD: the enum id (`name`, emitted in this order), the receiver
+ * shape (`recv`), the surface spelling (`m`), the signature, `display`, `property`
+ * (reads bare, never written with parens) and the view opcode. A row with no `recv`
+ * is enum-only: an id the emitter uses directly (TextConcat, the color arithmetic)
+ * with no surface method behind it. */
 const METHODS = [
-  { name: "NumRound" },
-  { name: "NumFloor" },
-  { name: "NumCeil" },
-  { name: "NumAbs" },
-  { name: "NumClamp" },
-  { name: "NumMapRange" },
-  { name: "NumSign" },
-  { name: "BoolInt" },
-  { name: "BoolNot" },
-  { name: "BoolPick" },
-  { name: "ColorR" },
-  { name: "ColorG" },
-  { name: "ColorB" },
-  { name: "ColorA" },
-  { name: "ColorAlpha" },
-  { name: "ColorMix" },
-  { name: "NumToFixed" },
-  { name: "TextLength" },
-  { name: "TextUpper" },
-  { name: "TextLower" },
-  { name: "TextTitle" },
-  { name: "TextTrim" },
-  { name: "TextSlice" },
-  { name: "TextStartsWith" },
-  { name: "TextEndsWith" },
-  { name: "TextContains" },
-  { name: "TextReplace" },
-  { name: "TextPadStart" },
-  { name: "EnumInt" },
-  { name: "EnumName" },
-  { name: "TextSplit" },
-  { name: "ListLength" },
-  { name: "ListFirst" },
-  { name: "ListLast" },
-  { name: "ListSum" },
-  { name: "ListAvg" },
-  { name: "ListMax" },
-  { name: "ListMin" },
-  { name: "ListJoin" },
-  { name: "ListSort" },
-  { name: "ListReverse" },
-  { name: "ListSlice" },
-  { name: "ListContains" },
-  { name: "ListIndexOf" },
-  { name: "MapLength" },
-  { name: "MapKeys" },
-  { name: "MapValues" },
-  { name: "MapHas" },
-  { name: "MapGet" },
+  { name: "NumRound", recv: "Num", m: "round", args: 1, params: ["Num"], result: "Num" },
+  { name: "NumFloor", recv: "Num", m: "floor", args: 0, params: [], result: "Num" },
+  { name: "NumCeil", recv: "Num", m: "ceil", args: 0, params: [], result: "Num" },
+  { name: "NumAbs", recv: "Num", m: "abs", args: 0, params: [], result: "Num" },
+  { name: "NumClamp", recv: "Num", m: "clamp", args: 2, params: ["Num", "Num"], result: "Num", view: "@" },
+  { name: "NumMapRange", recv: "Num", m: "mapRange", args: 4, params: ["Num", "Num", "Num", "Num"], result: "Num" },
+  { name: "NumSign", recv: "Num", m: "sign", args: 0, params: [], result: "Num" },
+  { name: "BoolInt", recv: "Bool", m: "int", args: 0, params: [], result: "Num", property: true },
+  { name: "BoolNot", recv: "Bool", m: "not", args: 0, params: [], result: "Bool" },
+  { name: "BoolPick", recv: "Bool", m: "pick", args: 2, params: ["Unknown", "Unknown"], result: "Unknown", view: "PICK" },
+  { name: "ColorR", recv: "Color", m: "r", args: 0, params: [], result: "Num", property: true, view: "COLOR_R" },
+  { name: "ColorG", recv: "Color", m: "g", args: 0, params: [], result: "Num", property: true, view: "COLOR_G" },
+  { name: "ColorB", recv: "Color", m: "b", args: 0, params: [], result: "Num", property: true, view: "COLOR_B" },
+  { name: "ColorA", recv: "Color", m: "a", args: 0, params: [], result: "Num", property: true, view: "COLOR_A" },
+  { name: "ColorAlpha", recv: "Color", m: "alpha", args: 1, params: ["Num"], result: "Color", display: true, view: "COLOR_ALPHA" },
+  { name: "ColorMix", recv: "Color", m: "mix", args: 2, params: ["Color", "Num"], result: "Color", display: true, view: "COLOR_MIX" },
+  { name: "NumToFixed", recv: "Num", m: "toFixed", args: 1, params: ["Num"], result: "Text", display: true, view: "TO_FIXED" },
+  {
+    name: "TextLength", recv: "Text", m: "length", args: 0, params: [], result: "Num", property: true, view: "LENGTH",
+    rc: `text: the predicates and length are wire-legal (a gate may test an alarm
+code); everything text-PRODUCING is formatting and stays display-side`,
+  },
+  { name: "TextUpper", recv: "Text", m: "upper", args: 0, params: [], result: "Text", display: true },
+  { name: "TextLower", recv: "Text", m: "lower", args: 0, params: [], result: "Text", display: true },
+  { name: "TextTitle", recv: "Text", m: "title", args: 0, params: [], result: "Text", display: true },
+  { name: "TextTrim", recv: "Text", m: "trim", args: 0, params: [], result: "Text", display: true },
+  { name: "TextSlice", recv: "Text", m: "slice", args: 2, params: ["Num", "Num"], result: "Text", display: true },
+  { name: "TextStartsWith", recv: "Text", m: "startsWith", args: 1, params: ["Text"], result: "Bool" },
+  { name: "TextEndsWith", recv: "Text", m: "endsWith", args: 1, params: ["Text"], result: "Bool" },
+  { name: "TextContains", recv: "Text", m: "contains", args: 1, params: ["Text"], result: "Bool" },
+  { name: "TextReplace", recv: "Text", m: "replace", args: 2, params: ["Text", "Text"], result: "Text", display: true },
+  { name: "TextPadStart", recv: "Text", m: "padStart", args: 2, params: ["Num", "Text"], result: "Text", display: true },
+  { name: "EnumInt", recv: "Enum", m: "int", args: 0, params: [], result: "Num", property: true },
+  { name: "EnumName", recv: "Enum", m: "name", args: 0, params: [], result: "Text", property: true },
+  { name: "TextSplit", recv: "Text", m: "split", args: 1, params: ["Text"], result: "List", display: true },
+  {
+    name: "ListLength", recv: "List", m: "length", args: 0, params: [], result: "Num", property: true, view: "LENGTH",
+    rc: `aggregates ride mid-expression on either tier (max over a list is a wire
+value); the wire-result rule alone keeps a LIST from going to a machine.
+LENGTH is receiver-blind in the view: one opcode answers text, list and map
+alike, so the three namesake rows must all carry it -- view_method() is keyed
+on the name alone.`,
+  },
+  { name: "ListFirst", recv: "List", m: "first", args: 0, params: [], result: "Unknown", property: true },
+  { name: "ListLast", recv: "List", m: "last", args: 0, params: [], result: "Unknown", property: true },
+  { name: "ListSum", recv: "List", m: "sum", args: 0, params: [], result: "Num", property: true, view: "LIST_SUM" },
+  { name: "ListAvg", recv: "List", m: "avg", args: 0, params: [], result: "Num", property: true, view: "LIST_AVG" },
+  { name: "ListMax", recv: "List", m: "max", args: 0, params: [], result: "Num", property: true, view: "LIST_MAX" },
+  { name: "ListMin", recv: "List", m: "min", args: 0, params: [], result: "Num", property: true, view: "LIST_MIN" },
+  { name: "ListJoin", recv: "List", m: "join", args: 1, params: ["Text"], result: "Text", display: true },
+  { name: "ListSort", recv: "List", m: "sort", args: 0, params: [], result: "List" },
+  { name: "ListReverse", recv: "List", m: "reverse", args: 0, params: [], result: "List" },
+  { name: "ListSlice", recv: "List", m: "slice", args: 2, params: ["Num", "Num"], result: "List" },
+  { name: "ListContains", recv: "List", m: "contains", args: 1, params: ["Unknown"], result: "Bool" },
+  { name: "ListIndexOf", recv: "List", m: "indexOf", args: 1, params: ["Unknown"], result: "Num", view: "INDEX_OF" },
+  { name: "MapLength", recv: "Map", m: "length", args: 0, params: [], result: "Num", property: true, view: "LENGTH" },
+  { name: "MapKeys", recv: "Map", m: "keys", args: 0, params: [], result: "List" },
+  { name: "MapValues", recv: "Map", m: "values", args: 0, params: [], result: "List" },
+  { name: "MapHas", recv: "Map", m: "has", args: 1, params: ["Text"], result: "Bool" },
+  { name: "MapGet", recv: "Map", m: "get", args: 1, params: ["Text"], result: "Unknown" },
   {
     name: "TextConcat",
     c: `\`a + b\` with a text operand (display tier): both sides rendered as str() would
@@ -331,7 +396,7 @@ render them, joined into the site's own slot`,
 \`.invert()\` flips them`,
   },
   { name: "ColorDiv" },
-  { name: "ColorInvert" },
+  { name: "ColorInvert", recv: "Color", m: "invert", args: 0, params: [], result: "Color", display: true },
 ];
 
 /* ------------------------------------------------------------- the emitters */
@@ -429,12 +494,52 @@ constexpr IterateModeDef kIterateModes[] = {
   out += `};
 
 `;
-  out += cEnum("Builtin", "uint16_t", BUILTINS);
+  out += cEnum("Builtin", "uint16_t", BUILTINS.filter((b) => b.name));
   out += `
 `;
   out += cEnum("MethodId", "uint16_t", METHODS);
   out += `
 } // namespace hmi
+`;
+  return out;
+}
+
+/* the signature rows lang/tables.cpp builds its two vocabulary tables from — the
+ * X-macro include, so the enum id and the spec come from ONE row here */
+function emitTablesInc() {
+  const shapes = (params) => params.map((p) => `Shape::${p}`).join(", ");
+  let out = `/* GENERATED by tools/gen_ir.mjs — DO NOT EDIT. Edit the tables there and
+ * regenerate; the ir_gen ctest fails on any drift between this file and them.
+ *
+ * One row per builtin and per method: the enum id, the surface spelling, the
+ * signature, the tier and the view encoding. lang/tables.cpp includes this file
+ * once per table with HMI_BUILTIN_ROW / HMI_METHOD_ROW defined — adding to a
+ * vocabulary is one row in gen_ir.mjs, nowhere else. Parameter lists ride inside
+ * parentheses so their commas survive the preprocessor. */
+
+#ifdef HMI_BUILTIN_ROW
+/* fn, enum id, min args, max args, (params), result, display_only, view, view_only */
+`;
+  for (const b of BUILTINS) {
+    if (!b.fn) continue;
+    if (b.rc) out += cComment(b.rc, "");
+    out += `HMI_BUILTIN_ROW("${b.fn}", ${b.name ?? b.id}, ${b.min}, ${b.max}, ` +
+           `(${shapes(b.params)}), ${b.result}, ${b.display ? "true" : "false"}, ` +
+           `"${b.view ?? ""}", ${b.viewOnly ? "true" : "false"})\n`;
+  }
+  out += `#endif
+
+#ifdef HMI_METHOD_ROW
+/* receiver, name, enum id, args, (params), result, display_only, property, view */
+`;
+  for (const m of METHODS) {
+    if (!m.recv) continue;
+    if (m.rc) out += cComment(m.rc, "");
+    out += `HMI_METHOD_ROW(${m.recv}, "${m.m}", ${m.name}, ${m.args}, ` +
+           `(${shapes(m.params)}), ${m.result}, ${m.display ? "true" : "false"}, ` +
+           `${m.property ? "true" : "false"}, "${m.view ?? ""}")\n`;
+  }
+  out += `#endif
 `;
   return out;
 }
@@ -466,6 +571,7 @@ export const TIME_FIELDS: { path: string; shape: string }[] = [
 
 const FILES = [
   { path: join(ROOT, "backend", "src", "lang", "ir_ops.h"), emit: emitOpsH },
+  { path: join(ROOT, "backend", "src", "lang", "tables.inc"), emit: emitTablesInc },
   { path: join(ROOT, "frontend", "src", "ir.ts"), emit: emitIrTs },
 ];
 

@@ -7,140 +7,31 @@
 
 namespace hmi {
 
-constexpr Shape ANY = Shape::Unknown;
-constexpr Shape NUM = Shape::Num;
+/* The two vocabulary tables, built row for row from the GENERATED signature rows
+ * (lang/tables.inc, emitted by tools/gen_ir.mjs beside the enums themselves) — so
+ * adding a builtin or a method is ONE row in the one table, and the enum id and the
+ * spec can never drift apart. A row's parameter list rides inside parentheses;
+ * HMI_SHAPES unwraps it into the aggregate's braces. */
+#define HMI_SHAPES(...) __VA_ARGS__
 
 const std::vector<MethodSpec>& methods() {
     static const std::vector<MethodSpec> table = {
-        {Shape::Num, "round", MethodId::NumRound, 1, {NUM}, Shape::Num, false},
-        {Shape::Num, "floor", MethodId::NumFloor, 0, {}, Shape::Num, false},
-        {Shape::Num, "ceil", MethodId::NumCeil, 0, {}, Shape::Num, false},
-        {Shape::Num, "abs", MethodId::NumAbs, 0, {}, Shape::Num, false},
-        {Shape::Num, "clamp", MethodId::NumClamp, 2, {NUM, NUM}, Shape::Num, false, false, "@"},
-        {Shape::Num, "mapRange", MethodId::NumMapRange, 4, {NUM, NUM, NUM, NUM}, Shape::Num, false},
-        {Shape::Num, "sign", MethodId::NumSign, 0, {}, Shape::Num, false},
-        {Shape::Bool, "int", MethodId::BoolInt, 0, {}, Shape::Num, false, true},
-        {Shape::Bool, "not", MethodId::BoolNot, 0, {}, Shape::Bool, false},
-        {Shape::Bool, "pick", MethodId::BoolPick, 2, {ANY, ANY}, Shape::Unknown, false, false, "PICK"},
-        {Shape::Color, "r", MethodId::ColorR, 0, {}, Shape::Num, false, true, "COLOR_R"},
-        {Shape::Color, "g", MethodId::ColorG, 0, {}, Shape::Num, false, true, "COLOR_G"},
-        {Shape::Color, "b", MethodId::ColorB, 0, {}, Shape::Num, false, true, "COLOR_B"},
-        {Shape::Color, "a", MethodId::ColorA, 0, {}, Shape::Num, false, true, "COLOR_A"},
-        {Shape::Color, "alpha", MethodId::ColorAlpha, 1, {NUM}, Shape::Color, true, false, "COLOR_ALPHA"},
-        {Shape::Color, "mix", MethodId::ColorMix, 2, {Shape::Color, NUM}, Shape::Color, true, false, "COLOR_MIX"},
-        {Shape::Color, "invert", MethodId::ColorInvert, 0, {}, Shape::Color, true},
-        {Shape::Num, "toFixed", MethodId::NumToFixed, 1, {NUM}, Shape::Text, true, false, "TO_FIXED"},
-        /* text: the predicates and length are wire-legal (a gate may test an alarm
-         * code); everything text-PRODUCING is formatting and stays display-side */
-        {Shape::Text, "length", MethodId::TextLength, 0, {}, Shape::Num, false, true, "LENGTH"},
-        {Shape::Text, "upper", MethodId::TextUpper, 0, {}, Shape::Text, true},
-        {Shape::Text, "lower", MethodId::TextLower, 0, {}, Shape::Text, true},
-        {Shape::Text, "title", MethodId::TextTitle, 0, {}, Shape::Text, true},
-        {Shape::Text, "trim", MethodId::TextTrim, 0, {}, Shape::Text, true},
-        {Shape::Text, "slice", MethodId::TextSlice, 2, {NUM, NUM}, Shape::Text, true},
-        {Shape::Text, "startsWith", MethodId::TextStartsWith, 1, {Shape::Text}, Shape::Bool, false},
-        {Shape::Text, "endsWith", MethodId::TextEndsWith, 1, {Shape::Text}, Shape::Bool, false},
-        {Shape::Text, "contains", MethodId::TextContains, 1, {Shape::Text}, Shape::Bool, false},
-        {Shape::Text, "replace", MethodId::TextReplace, 2, {Shape::Text, Shape::Text}, Shape::Text, true},
-        {Shape::Text, "padStart", MethodId::TextPadStart, 2, {NUM, Shape::Text}, Shape::Text, true},
-        {Shape::Enum, "int", MethodId::EnumInt, 0, {}, Shape::Num, false, true},
-        {Shape::Enum, "name", MethodId::EnumName, 0, {}, Shape::Text, false, true},
-        {Shape::Text, "split", MethodId::TextSplit, 1, {Shape::Text}, Shape::List, true},
-        /* aggregates ride mid-expression on either tier (max over a list is a wire
-         * value); the wire-result rule alone keeps a LIST from going to a machine */
-        /* the list rows the VIEW also encodes ("LENGTH" is receiver-blind there: one
-         * opcode answers text, list and map alike, so the three namesake rows must all
-         * carry it — view_method() is keyed on the name alone) */
-        {Shape::List, "length", MethodId::ListLength, 0, {}, Shape::Num, false, true, "LENGTH"},
-        {Shape::List, "first", MethodId::ListFirst, 0, {}, Shape::Unknown, false, true},
-        {Shape::List, "last", MethodId::ListLast, 0, {}, Shape::Unknown, false, true},
-        {Shape::List, "sum", MethodId::ListSum, 0, {}, Shape::Num, false, true, "LIST_SUM"},
-        {Shape::List, "avg", MethodId::ListAvg, 0, {}, Shape::Num, false, true, "LIST_AVG"},
-        {Shape::List, "max", MethodId::ListMax, 0, {}, Shape::Num, false, true, "LIST_MAX"},
-        {Shape::List, "min", MethodId::ListMin, 0, {}, Shape::Num, false, true, "LIST_MIN"},
-        {Shape::List, "join", MethodId::ListJoin, 1, {Shape::Text}, Shape::Text, true},
-        {Shape::List, "sort", MethodId::ListSort, 0, {}, Shape::List, false},
-        {Shape::List, "reverse", MethodId::ListReverse, 0, {}, Shape::List, false},
-        {Shape::List, "slice", MethodId::ListSlice, 2, {NUM, NUM}, Shape::List, false},
-        {Shape::List, "contains", MethodId::ListContains, 1, {ANY}, Shape::Bool, false},
-        {Shape::List, "indexOf", MethodId::ListIndexOf, 1, {ANY}, Shape::Num, false, false, "INDEX_OF"},
-        {Shape::Map, "length", MethodId::MapLength, 0, {}, Shape::Num, false, true, "LENGTH"},
-        {Shape::Map, "keys", MethodId::MapKeys, 0, {}, Shape::List, false},
-        {Shape::Map, "values", MethodId::MapValues, 0, {}, Shape::List, false},
-        {Shape::Map, "has", MethodId::MapHas, 1, {Shape::Text}, Shape::Bool, false},
-        {Shape::Map, "get", MethodId::MapGet, 1, {Shape::Text}, Shape::Unknown, false},
+#define HMI_METHOD_ROW(receiver, name, id, argc, params, result, display, property, view) \
+    {Shape::receiver, name, MethodId::id, argc, {HMI_SHAPES params}, Shape::result,       \
+     display, property, view},
+#include "lang/tables.inc"
+#undef HMI_METHOD_ROW
     };
     return table;
 }
 
 const std::unordered_map<std::string, BuiltinSpec>& builtins() {
     static const std::unordered_map<std::string, BuiltinSpec> table = {
-        {"clamp", {Builtin::Clamp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false, "@"}},
-        /* mapRange/roundTo/lerp: pure arithmetic, so the view folds each onto the
-           existing ADD/SUB/MUL/DIV/POW/ROUND opcodes (template_expr.cpp) rather than
-           gaining an opcode of its own -- "@" is the same bespoke marker `clamp` uses */
-        {"mapRange", {Builtin::MapRange, 5, 5, {NUM, NUM, NUM, NUM, NUM}, Shape::Num, false, "@"}},
-        {"roundTo", {Builtin::RoundTo, 2, 2, {NUM, NUM}, Shape::Num, false, "@"}},
-        {"lerp", {Builtin::Lerp, 3, 3, {NUM, NUM, NUM}, Shape::Num, false, "@"}},
-        {"abs", {Builtin::Abs, 1, 1, {NUM}, Shape::Num, false, "ABS"}},
-        {"round", {Builtin::Round, 1, 1, {NUM}, Shape::Num, false, "ROUND"}},
-        {"floor", {Builtin::Floor, 1, 1, {NUM}, Shape::Num, false, "FLOOR"}},
-        {"ceil", {Builtin::Ceil, 1, 1, {NUM}, Shape::Num, false, "CEIL"}},
-        {"sqrt", {Builtin::Sqrt, 1, 1, {NUM}, Shape::Num, false, "SQRT"}},
-        {"pow", {Builtin::Pow, 2, 2, {NUM, NUM}, Shape::Num, false, "POW"}},
-        {"min", {Builtin::Min, 2, 2, {NUM, NUM}, Shape::Num, false, "MIN"}},
-        {"max", {Builtin::Max, 2, 2, {NUM, NUM}, Shape::Num, false, "MAX"}},
-        {"int", {Builtin::Int, 1, 1, {ANY}, Shape::Num, false, "INT"}},
-        {"num", {Builtin::Num, 1, 1, {ANY}, Shape::Num, false}},
-        /* view-only: the template tier's saturating 0..1 fold, which the scalar language
-           spells clamp(x, 0, 1) and has no separate opcode for */
-        {"clamp01", {Builtin::Clamp, 1, 1, {NUM}, Shape::Num, false, "CLAMP01", true}},
-        /* ordinary trigonometry: degrees in and out on BOTH tiers, matching the
-           project-wide angle convention (degrees, 0 = up, clockwise) rather than
-           inventing a radians dialect nothing else in the document uses */
-        {"sin", {Builtin::Sin, 1, 1, {NUM}, Shape::Num, false, "SIN"}},
-        {"cos", {Builtin::Cos, 1, 1, {NUM}, Shape::Num, false, "COS"}},
-        {"tan", {Builtin::Tan, 1, 1, {NUM}, Shape::Num, false, "TAN"}},
-        {"asin", {Builtin::Asin, 1, 1, {NUM}, Shape::Num, false, "ASIN"}},
-        {"acos", {Builtin::Acos, 1, 1, {NUM}, Shape::Num, false, "ACOS"}},
-        {"atan2", {Builtin::Atan2, 2, 2, {NUM, NUM}, Shape::Num, false, "ATAN2"}},
-        /* view-only: SIGN and MOD already exist as program.ts opcodes (SIGN backs
-           num.sign, MOD backs `%`) but neither had a free-function spelling in the
-           surface grammar; giving them one costs nothing since the opcodes are already
-           proven. hypot is new to both tiers but stays view-only here (nothing in the
-           fixed vocabulary asks for it on the wire), folding onto MUL/ADD/SQRT the way
-           mapRange folds onto arithmetic above. The Builtin id on each row is inert --
-           see the clamp01 row above -- Clamp is reused rather than adding an id with no
-           VM case, since view_only rows never reach the scalar dispatcher that would
-           use it. */
-        {"sign", {Builtin::Clamp, 1, 1, {NUM}, Shape::Num, false, "SIGN", true}},
-        {"mod", {Builtin::Clamp, 2, 2, {NUM, NUM}, Shape::Num, false, "MOD", true}},
-        {"hypot", {Builtin::Clamp, 2, 2, {NUM, NUM}, Shape::Num, false, "@", true}},
-        {"rgb", {Builtin::Rgb, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true, "@"}},
-        {"hsv", {Builtin::Hsv, 3, 4, {NUM, NUM, NUM, NUM}, Shape::Color, true, "@"}},
-        {"str", {Builtin::Str, 1, 1, {ANY}, Shape::Text, false, "STR"}},
-        /* view-only: the estimated rendered width of TEXT at SIZE, in artboard units --
-           the same estimator drawText/richUnits use, so an author's own layout maths
-           agrees with what actually renders. No wire meaning (a machine does not care
-           how wide a label draws), so it never had a scalar Builtin to begin with. */
-        {"measure", {Builtin::Clamp, 2, 2, {Shape::Text, NUM}, Shape::Num, true, "MEASURE", true}},
-        {"name", {Builtin::Name, 1, 1, {ANY}, Shape::Text, false}},
-        {"fmtTime", {Builtin::FmtTime, 1, 1, {NUM}, Shape::Text, true}},
-        {"fmtDuration", {Builtin::FmtDuration, 1, 1, {NUM}, Shape::Text, true}},
-        {"values", {Builtin::Values, 1, 1, {ANY}, Shape::List, false}},
-        {"keys", {Builtin::Keys, 1, 1, {ANY}, Shape::List, false}},
-        {"color", {Builtin::Color, 1, 1, {Shape::Text}, Shape::Color, true}},
-        {"invert", {Builtin::Invert, 1, 1, {Shape::Color}, Shape::Color, true}},
-        {"jet", {Builtin::Jet, 1, 1, {NUM}, Shape::Color, true}},
-        {"hot", {Builtin::Hot, 1, 1, {NUM}, Shape::Color, true}},
-        {"coolWarm", {Builtin::CoolWarm, 1, 1, {NUM}, Shape::Color, true}},
-        {"viridis", {Builtin::Viridis, 1, 1, {NUM}, Shape::Color, true}},
-        {"grayscale", {Builtin::Grayscale, 1, 1, {NUM}, Shape::Color, true}},
-        /* view-only: one point of a computed path, in fractions of the node's box —
-         * what a `points` attr's map produces per sample. No wire meaning (a machine
-         * has no boxes), so it never had a scalar Builtin; the id on the row is inert,
-         * the clamp01 pattern. */
-        {"anchor", {Builtin::Clamp, 2, 2, {NUM, NUM}, Shape::Struct, true, "ANCHOR", true}},
+#define HMI_BUILTIN_ROW(fn, id, least, most, params, result, display, view, view_only) \
+    {fn, {Builtin::id, least, most, {HMI_SHAPES params}, Shape::result, display, view,  \
+          view_only}},
+#include "lang/tables.inc"
+#undef HMI_BUILTIN_ROW
     };
     return table;
 }
