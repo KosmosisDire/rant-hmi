@@ -95,6 +95,15 @@ enum class OpCode : uint8_t {
      * spellings of one thing. Keys stay sorted, so iteration is replay-deterministic.
      */
     StoreKey,
+    /* text -> the enum value whose variant name it is, over the type table entry in
+     * `b`: the IMPLICIT conversion at an enum-typed DESTINATION, so a Dropdown's
+     * selected name (or any dynamic text) writes back with no authored transform. The
+     * corrected contract (user's call, 2026-08-14): a CONSTANT name never reaches here
+     * (the compiler resolves or refuses it), and a runtime name outside the vocabulary
+     * converts to Nil and PROPAGATES (the one unknown rule) — the old opcode faulted,
+     * which is why it is dead and this one is not it.
+     */
+    ToEnum,
     /* push EVENT PARAMETER `a` (state.args): what the triggering event passed in, bound
      * by the parameter's declared name at compile. State-resident rather than a run_code
      * register so a lambda body can read it without colliding with its own x2/x3.
@@ -199,6 +208,7 @@ constexpr const char* kOpNames[] = {
     "ITERATE",
     "APPEND",
     "STORE_KEY",
+    "TO_ENUM",
     "LOAD_ARG",
     "RAISE",
     "CLOCK_READ",

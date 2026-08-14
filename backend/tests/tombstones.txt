@@ -39,9 +39,11 @@ address_chain
 spec->property
 
 # stage 4, enums first class: `.variant` is an expression resolved at COMPILE against
-# the enum its context expects, so the runtime text->enum coercion opcode died — a
-# wrong variant is a finding now, never a fault. The number/text equality leniencies
-# went with it (.int() / .name() spell the intent).
+# the enum its context expects, and the FAULTING runtime text->enum coercion died.
+# The corrected conversion (ToEnum, user's call 2026-08-14) is not it: constants
+# resolve or refuse at compile, and a dynamic name outside the vocabulary converts
+# to Nil and propagates — the buried symbol is the one that faulted. The number/text
+# equality leniencies stay dead (.int() / .name() spell the intent).
 EnumFromName
 
 # stage 4, recursive field access: the scalar tier's accumulated-path string walk

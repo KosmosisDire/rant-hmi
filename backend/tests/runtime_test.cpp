@@ -690,7 +690,11 @@ void test_enum_names() {
         /* an ENUM-TYPED variable (spec 2.7): typed by the path to the enum, its
            DEFAULT a variant name (data, resolved at compile) */
         {"locals", Json::array({
-             Json{{"name", "gearMode"}, {"type", "Gear.mode"}, {"init", "fast"}}})},
+             Json{{"name", "gearMode"}, {"type", "Gear.mode"}, {"init", "fast"}},
+             Json{{"name", "gearBad"}, {"type", "Gear.mode"}, {"init", "fast"}},
+             Json{{"name", "gearConst"}, {"type", "Gear.mode"}, {"init", "stop"}},
+             Json{{"name", "pickedName"}, {"type", "text"}, {"init", "run"}},
+             Json{{"name", "badName"}, {"type", "text"}, {"init", "bogus"}}})},
         {"flows",
          Json::array({
              /* writes spell the VARIANT: the destination's own vocabulary resolves
@@ -701,6 +705,15 @@ void test_enum_names() {
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "release"}}})},
                   {"when_mode", "first"},
                   {"do", Json::array({steps::set_var("gearMode", ".run")})}},
+             /* THE IMPLICIT CONVERSION at an enum destination (a Dropdown's picked
+                name writing back): dynamic text converts at runtime — a name in the
+                vocabulary becomes the variant, a foreign one becomes UNKNOWN and
+                propagates — and a CONSTANT name compiles to the variant itself */
+             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+                  {"when_mode", "first"},
+                  {"do", Json::array({steps::set_var("gearMode", "pickedName"),
+                                      steps::set_var("gearBad", "badName"),
+                                      steps::set_var("gearConst", "\"run\"")})}},
              /* an enum moved into a TEXT destination renders as its variant name */
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "held"}}})},
                   {"when_mode", "first"},
@@ -798,9 +811,8 @@ void test_enum_names() {
     CHECK_MSG(line.find("write V:gear.mode=enum(") == 0, line);
     CHECK_MSG(line.size() > 3 && line.compare(line.size() - 3, 3, ",2)") == 0, line);
 
-    /* TEXT into an enum destination is a FINDING now, at compile — the runtime
-       coercion that used to fault on a wrong name is dead, and the refusal names
-       the first-class spelling */
+    /* a CONSTANT name into an enum destination resolves at COMPILE: a name outside
+       the vocabulary is a finding right there — never a runtime surprise */
     {
         Json broken_root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                             {"pages", Json::array()}};
@@ -821,7 +833,8 @@ void test_enum_names() {
         CHECK(!refused.ok);
         bool taught = false;
         for (const Diag& diag : refused.program.diagnostics)
-            if (diag.message.find("write the variant itself") != std::string::npos)
+            if (diag.message.find("not one of this enum's variants") !=
+                std::string::npos)
                 taught = true;
         CHECK(taught);
     }
@@ -854,6 +867,28 @@ void test_enum_names() {
     RunResult held = run_event(compiled.program, state, instance, "held", Value::nil());
     CHECK(!held.faulted);
     CHECK(state.text(compiled.program, state.values[text_cell]) == "run");
+
+    /* THE IMPLICIT CONVERSION, end to end: a dynamic name in the vocabulary lands
+       the variant, a foreign one lands UNKNOWN (no fault — it propagates), and the
+       constant compiled to the variant itself */
+    auto local_cell = [&](const char* name) {
+        for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
+            if (compiled.program.cells[i].kind == CellKind::Local &&
+                compiled.program.cells[i].name == name)
+                return static_cast<int>(i);
+        return -1;
+    };
+    const int gear_bad = local_cell("gearBad");
+    const int gear_const = local_cell("gearConst");
+    CHECK(gear_bad >= 0 && gear_const >= 0);
+    state.clear_outputs();
+    RunResult press = run_event(compiled.program, state, instance, "press", Value::nil());
+    CHECK(!press.faulted);
+    CHECK(state.values[gear_mode].tag == ValueTag::Enum);
+    CHECK(state.values[gear_mode].data.integer == 1);        /* "run", converted */
+    CHECK(state.values[gear_bad].tag == ValueTag::Nil);      /* "bogus": unknown */
+    CHECK(state.values[gear_const].tag == ValueTag::Enum);
+    CHECK(state.values[gear_const].data.integer == 1);       /* constant, resolved */
 
     /* `+` JOINS text in a display expression, rendering the other side as str() does;
        a wire value refuses it like any other formatting */

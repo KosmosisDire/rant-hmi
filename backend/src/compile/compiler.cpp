@@ -1615,17 +1615,12 @@ class Compiler {
         }
         if (expected.kind != Shape::Unknown && result.shape != Shape::Unknown &&
             result.shape != Shape::Nil && result.shape != expected.kind) {
-            std::string message = "expression yields " +
-                                  std::string(shape_name(result.shape)) +
-                                  ", but this row wants " + shape_name(expected.kind);
-            /* the refusal teaches the first-class spelling: the vocabulary is the
-               destination's own, so name a real variant as the example */
-            if (expected.kind == Shape::Enum && result.shape == Shape::Text)
-                if (const EnumVariants* variants = scope.variants(expected.enum_id()))
-                    if (!variants->empty())
-                        message += "; write the variant itself (." +
-                                   variants->front().first + ", not a text)";
-            diag(node, "shape", message, DiagGrade::Error, where);
+            /* text never lands here against an enum destination: the pipeline's
+               boundary (lang/compile.cpp) converted or refused it already */
+            diag(node, "shape",
+                 "expression yields " + std::string(shape_name(result.shape)) +
+                     ", but this row wants " + shape_name(expected.kind),
+                 DiagGrade::Error, where);
             return false;
         }
         /* a variant resolves against its own enum, so a cross-enum landing here can

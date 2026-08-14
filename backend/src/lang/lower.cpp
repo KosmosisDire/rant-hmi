@@ -84,8 +84,15 @@ class Lower {
                 return;
             case ExprKind::Text:
                 site("a value", expr.at);
-                emit(OpCode::Const,
-                     sink_.add_constant(Value::text(sink_.add_text(expr.text))));
+                /* a constant NAME at an enum-typed destination was resolved by the
+                   boundary (compile.cpp): the note says it is the variant itself */
+                if (note(index).op == Note::Op::VariantConst)
+                    emit(OpCode::Const,
+                         sink_.add_constant(Value::enumeration(
+                             note(index).variant, note(index).variant_type)));
+                else
+                    emit(OpCode::Const,
+                         sink_.add_constant(Value::text(sink_.add_text(expr.text))));
                 pushed();
                 return;
             case ExprKind::BoolLit:

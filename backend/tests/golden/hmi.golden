@@ -4,13 +4,13 @@ node 487 error [template_expr] show: unknown field '@gp12/robotState.start' at c
 node 360 error [template_expr] surface: unknown field '@gp12/robotState.alarm' at column 25
 node 485 error [template_expr] text: unknown field '@gp12/joints.position' at column 22
 node 581 error [template_expr] enabled: unknown field '@gp12/robotState.start' at column 24
+node 605 error [template_expr] text: unknown field '@gp12/robotState.alarm' at column 24
 node 162 error [template_expr] surface: unknown field '@cage/plc/gSafetyStatus.xLampGreen' at column 37
 node 165 error [template_expr] surface: unknown field '@cage/plc/gSafetyStatus.xLampRed' at column 34
 node 570 error [template_expr] surface: unknown field '@cage/plc/gSafetyCmd.xSlowMode' at column 32
-node 605 error [template_expr] text: unknown field '@gp12/robotState.alarm' at column 24
 node 120 error [unresolved_type] type: variable 'selectedJob' has type 'JobCmd.jobName', which is not a type in the mesh
 node 452 error [unresolved_type] type: variable 'jogCmd' has type 'JogCmd', which is not a type in the mesh
-node 116 error [unresolved_type] options: slot 'options': variants(JobCmd.jobName) needs 'JobCmd.jobName' to name an enum in the mesh (a field's type reads Type.field)
+node 116 error [unresolved_type] options: slot 'options': variants(JobCmd.jobName).filter(v => v != "_None") needs 'JobCmd.jobName).filter(v => v != "_None"' to name an enum in the mesh (a field's type reads Type.field)
 node 70 error [expression] leftPos: unknown entity '@cage/plc/IO/wDistanceSensorD' at column 31
 node 70 error [expression] rightPos: unknown entity '@cage/plc/IO/wDistanceSensorA' at column 31
 node 53 error [expression] pushFraction: unknown entity '@cage/plc/PusherFeedback1/extending' at column 37
@@ -5936,7 +5936,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 1177.0
+            "v": 296.0
           }
         ]
       },
@@ -5944,7 +5944,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 495.0
+            "v": 439.0
           }
         ]
       },

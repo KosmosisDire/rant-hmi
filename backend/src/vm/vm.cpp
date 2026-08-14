@@ -1907,6 +1907,29 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 if (!pushed_ok) fail(ins.c);
                 break;
             }
+            /* the implicit text -> enum conversion at an enum-typed destination: a
+               name in the vocabulary becomes the variant, anything else — a foreign
+               name, a Nil — converts to Nil and PROPAGATES (the one unknown rule).
+               Constants never reach here; the compiler resolved or refused them. */
+            case OpCode::ToEnum: {
+                if (sp == 0) {
+                    fail(ins.c);
+                    break;
+                }
+                Value& top = state.stack[stack_base + sp - 1];
+                Value converted = Value::nil();
+                if (top.tag == ValueTag::Text && ins.b < program.types.size()) {
+                    const std::string_view name = state.text(program, top);
+                    for (const auto& row : program.types[ins.b].variants)
+                        if (row.first == name) {
+                            converted = Value::enumeration(
+                                row.second, static_cast<uint16_t>(ins.b));
+                            break;
+                        }
+                }
+                top = converted;
+                break;
+            }
             case OpCode::Index: {
                 const Value key = pop();
                 const Value target = pop();
