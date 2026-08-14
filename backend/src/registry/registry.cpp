@@ -650,10 +650,11 @@ Json dropdown_component() {
     return component("Dropdown", 264, 66,
                 compose_slots(tile_base(), {
                     /* THE OPTIONS ARE A LIST: authored as one (["Off", "Low", "High"])
-                     * or written as variants(Type.field), which the compiler expands to
-                     * a mesh enum's variant names so they cannot drift from the schema.
-                     * The editor tag still says enum-type: that is which PICKER the
-                     * inspector offers, not what the cell holds. */
+                     * or bound through an expression — myMode.variants() reads an
+                     * enum value's own vocabulary, so the list cannot drift from the
+                     * schema OR from the value beside it. The editor tag still says
+                     * enum-type: that is which PICKER the inspector offers, not what
+                     * the cell holds. */
                     slot("options", "list", Json::array(), "value", "enum-type"),
                     slot("value", "text", "", "value"),
                     /* the field itself is the box */

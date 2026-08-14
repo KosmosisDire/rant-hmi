@@ -372,6 +372,13 @@ code); everything text-PRODUCING is formatting and stays display-side`,
   { name: "TextPadStart", recv: "Text", m: "padStart", args: 2, params: ["Num", "Text"], result: "Text", display: true },
   { name: "EnumInt", recv: "Enum", m: "int", args: 0, params: [], result: "Num" },
   { name: "EnumName", recv: "Enum", m: "name", args: 0, params: [], result: "Text" },
+  {
+    name: "EnumVariants", recv: "Enum", m: "variants", args: 0, params: [], result: "List",
+    rc: `the VOCABULARY as a value: list(text) of the receiver's variant names. The
+receiver's TYPE answers at COMPILE, so this folds to a constant list (no VM
+case, the receiver's value is never read) and can never drift from the schema.
+The options spelling — myMode.variants(), filterable like any list.`,
+  },
   { name: "TextSplit", recv: "Text", m: "split", args: 1, params: ["Text"], result: "List", display: true },
   {
     name: "ListLength", recv: "List", m: "length", args: 0, params: [], result: "Num", view: "LENGTH",

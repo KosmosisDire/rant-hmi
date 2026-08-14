@@ -2,23 +2,23 @@
 node 186 error [template_expr] show: unknown field '@gp12/robotState.start' at column 24
 node 487 error [template_expr] show: unknown field '@gp12/robotState.start' at column 23
 node 360 error [template_expr] surface: unknown field '@gp12/robotState.alarm' at column 25
-node 485 error [template_expr] text: unknown field '@gp12/joints.position' at column 22
+node 485 error [template_expr] text: unknown field '@gp12/joints.position' at column 23
 node 581 error [template_expr] enabled: unknown field '@gp12/robotState.start' at column 24
 node 605 error [template_expr] text: unknown field '@gp12/robotState.alarm' at column 24
 node 162 error [template_expr] surface: unknown field '@cage/plc/gSafetyStatus.xLampGreen' at column 37
 node 165 error [template_expr] surface: unknown field '@cage/plc/gSafetyStatus.xLampRed' at column 34
 node 570 error [template_expr] surface: unknown field '@cage/plc/gSafetyCmd.xSlowMode' at column 32
 node 120 error [unresolved_type] type: variable 'selectedJob' has type 'JobCmd.jobName', which is not a type in the mesh
-node 452 error [unresolved_type] type: variable 'jogCmd' has type 'JogCmd', which is not a type in the mesh
-node 116 error [unresolved_type] options: slot 'options': variants(JobCmd.jobName).filter(v => v != "_None") needs 'JobCmd.jobName).filter(v => v != "_None"' to name an enum in the mesh (a field's type reads Type.field)
+node 609 error [unresolved_type] type: variable 'jogCmd' has type 'JogCmd', which is not a type in the mesh
 node 70 error [expression] leftPos: unknown entity '@cage/plc/IO/wDistanceSensorD' at column 31
 node 70 error [expression] rightPos: unknown entity '@cage/plc/IO/wDistanceSensorA' at column 31
 node 53 error [expression] pushFraction: unknown entity '@cage/plc/PusherFeedback1/extending' at column 37
+node 116 error [expression] options: unknown field 'selectedJob.variants' at column 23
 node 116 error [expression] value: unknown name 'selectedJob' at column 12
 node 138 error [expression] value: unknown field '@gp12/robotState.servoPower' at column 28
 node 478 error [expression] text: unknown field '@gp12/robotState.start' at column 24
 node 179 error [expression] value: unknown entity '@cage/plc/IO/rVacSense' at column 24
-node 567 error [expression] value: unknown field '@gp12/joints.position' at column 22
+node 567 error [expression] value: unknown field '@gp12/joints.position.map' at column 43
 node 100 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xConveyorGo is not reflected
 node 291 error [expression]: unknown entity '@cage/plc/IO/xConveyorGo' at column 26
 node 297 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xConveyorLoopGo is not reflected
@@ -3956,8 +3956,19 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
       "surface": {
         "code": [
           {
+            "cell": "state:pressed",
+            "op": "LOAD"
+          },
+          {
+            "cell": "theme:accent",
+            "op": "LOAD"
+          },
+          {
             "cell": "theme:scale",
             "op": "LOAD"
+          },
+          {
+            "op": "PICK"
           }
         ]
       },
@@ -6924,7 +6935,7 @@ flow 508 node 462 event release worst 2
   0 FAULT 106 0 0
   1 HALT
 flow 571 node 570 event tap worst 2
-  0 FAULT 108 0 0
+  0 FAULT 107 0 0
   1 HALT
 slot node 70 moving cell 7 every_tick
   0 LOAD 3 0 0
@@ -6956,6 +6967,6 @@ slot node 179 text cell 138 every_tick
   1 CONST 17 0 36
   2 METHOD small 16 36 1 37
   3 CONST 18 0 38
-  4 METHOD small 49 37 1 39
+  4 METHOD small 50 37 1 39
   5 STORE 138 0 40
   6 HALT

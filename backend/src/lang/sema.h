@@ -31,10 +31,15 @@ struct Note {
         ColorScale,
         ColorDiv,
         VariantConst, /* `.variant` resolved against the enum its context expects */
+        VariantsOf,   /* enum .variants(): the vocabulary as a constant list */
     } op = Op::None;
     Place place;
     const BuiltinSpec* builtin = nullptr;
     const MethodSpec* method = nullptr;
+    /* VariantsOf: the receiver's vocabulary, resolved from its TYPE at check —
+       what the emitter spells out as constants (the receiver's value is unused
+       and, expressions being pure, never evaluated) */
+    const EnumVariants* vocabulary = nullptr;
     IterateMode mode = IterateMode::Map;
     bool over_map = false;
     int64_t variant = 0;        /* IsVariant / VariantConst: the backing value */

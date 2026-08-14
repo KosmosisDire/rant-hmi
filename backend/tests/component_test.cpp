@@ -139,7 +139,7 @@ void test_template_expr() {
     CHECK(refuses("optcount(options)", scope, "options.length"));
     CHECK(refuses("optnames(options)", scope, "the list itself"));
     CHECK(refuses("optfrac(value, options)", scope, "options.indexOf(value)"));
-    CHECK(refuses("variants(options)", scope, "a slot's authored value"));
+    CHECK(refuses("variants(options)", scope, "reads off an enum value"));
 
     /* unknown names and fields are errors, not silent Nil */
     CHECK(refuses("nope", scope, "unknown name 'nope'"));

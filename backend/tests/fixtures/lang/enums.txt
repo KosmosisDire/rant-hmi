@@ -42,6 +42,31 @@ env mode: enum(idle, run, fault) = run
 expr mode.name()
 want text "run"
 
+== variants lists the vocabulary
+env mode: enum(idle, run, fault) = run
+expr mode.variants().length()
+want num 3
+
+== variants filters like any list
+env mode: enum(idle, run, fault) = run
+expr mode.variants().filter(v => v != "idle").length()
+want num 2
+
+== variants joins in declaration order
+env mode: enum(idle, run, fault) = fault
+expr mode.variants().join(",")
+want text "idle,run,fault"
+
+== variants demands its parentheses
+env mode: enum(idle, run, fault) = run
+expr mode.variants
+error is a method
+
+== the old free-function spelling teaches the method
+env mode: enum(idle, run, fault) = run
+expr variants(mode)
+error reads off an enum value
+
 == str renders the variant name
 env mode: enum(idle, run, fault) = fault
 expr str(mode)

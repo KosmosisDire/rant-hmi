@@ -378,6 +378,7 @@ enum class MethodId : uint16_t {
     TextPadStart,
     EnumInt,
     EnumName,
+    EnumVariants,
     TextSplit,
     ListLength,
     ListFirst,

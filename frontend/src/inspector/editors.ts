@@ -19,21 +19,6 @@ import { Editor, UNKNOWN_TEXT } from "../editor.js";
 import { bindChoice, bindField, bindGroup, bindText } from "../reconcile.js";
 import { Json, SlotSpec } from "../types.js";
 import { tokenAccess } from "./scope.js";
-import { openTypeTree } from "./typetree.js";
-
-/* the spelling the enum picker writes: an enum's variants AS A LIST, named through the
-   schema rather than copied out of it */
-export function variantsCall(ref: string): string {
-  return "variants(" + ref + ")";
-}
-
-/* the enum a value already names, so the picker opens standing on it. Only a bare
-   variants(...) call names one -- a list literal names no type at all, and neither does
-   half-typed text. */
-export function variantsRef(value: string): string {
-  const at = value.trim();
-  return at.startsWith("variants(") && at.endsWith(")") ? at.slice(9, -1).trim() : "";
-}
 
 export function valueEditor(
   spec: SlotSpec | null,
@@ -54,28 +39,9 @@ export function valueEditor(
     bindGroup(key, grid, () => text(read()) || (unknown ? "" : "center"));
     return grid;
   }
-  /* ... and an OPTIONS slot holds a LIST SPELLING: a literal like ["Off", "Low", "High"],
-     or variants(Valve.mode), which is the same list named through the schema so it can
-     never drift from it. The field edits that text like any other expression; the chip
-     beside it is SUGAR -- it picks an enum from the type tree and writes the variants(...)
-     call the author would otherwise type -- which is why the value stays legible and
-     hand-editable instead of being locked behind a picker. */
-  if (spec?.editor === "enum-type") {
-    const field = commitTextInput(text(value), commit, { class: "field grow", ...placeholder });
-    bindField(key, field, () => text(read()));
-    /* a constant affordance, like the colour row's $ button: the VALUE is the field's to
-       show, so this button only ever says what it does */
-    const node = el("button", {
-      class: "chip source-chip",
-      title: "picking an enum writes variants(...) into the field",
-    }, [el("span", { class: "name", text: "enum" })]);
-    node.addEventListener("click", () => {
-      if (editor)
-        openTypeTree(node, editor, { enums: true },
-                     (pick) => commit(variantsCall(pick.ref)), variantsRef(text(read())));
-    });
-    return el("span", { class: "value-cell grow" }, [field, node]);
-  }
+  /* ... an OPTIONS slot's value edits in the instance panel's slot row, whose browse
+     (optionsSlotScope) offers every enum-typed value in reach as its .variants()
+     read — so this editor needs no case for it */
   switch (shape) {
     case "bool": {
       const pair = boolPair(value === true, commit);

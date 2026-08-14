@@ -666,9 +666,7 @@ class Compiler {
                                         /* a whole-value token reference stays the
                                            authored literal spelling */
                                         initial = Json(text);
-                                    } else if (shape == Shape::List &&
-                                               (text.compare(0, 9, "variants(") == 0 ||
-                                                text[0] == '[')) {
+                                    } else if (shape == Shape::List && text[0] == '[') {
                                         initial = *override;
                                     } else if (shape == Shape::Map && text[0] == '{') {
                                         initial = *override;
@@ -924,33 +922,15 @@ class Compiler {
                            std::vector<Value>& out, Shape elem = Shape::Unknown) {
         const AggSite site{node_id, "slot '" + slot + "' is a list", slot,
                            "Write the options as a list ([\"Off\", \"Low\", \"High\"]) "
-                           "or as variants(Type.field), naming an enum in the mesh. To "
-                           "FOLLOW a variable instead, write its name as the value — "
-                           "the slot's expression is the binding"};
+                           "or bind them through an expression — a variable's name, or "
+                           "myMode.variants() for an enum's own vocabulary"};
         if (value.is_null()) return false;
         if (value.is_string()) {
             const std::string text = trimmed(value.get<std::string>());
             if (text.empty()) return false;
-            if (text.compare(0, 9, "variants(") == 0 && text.back() == ')') {
-                const std::string ref = trimmed(text.substr(9, text.size() - 10));
-                const int type_id = find_type_ref(ref);
-                if (type_id < 0 || program_.types[type_id].kind != TypeKind::Enum) {
-                    diag(node_id, "unresolved_type",
-                         "slot '" + slot + "': variants(" + ref + ") needs '" + ref +
-                             "' to name an enum in the mesh (a field's type reads "
-                             "Type.field)",
-                         DiagGrade::Error, slot);
-                    return false;
-                }
-                for (const auto& row : program_.types[type_id].variants)
-                    out.push_back(Value::text(program_.add_text(row.first)));
-                return list_within_bounds(site, out);
-            }
             const Json parsed = Json::parse(text, nullptr, false);
             if (!parsed.is_array())
-                return refuse_agg(site, "'" + text +
-                                            "' is neither a list nor a variants() "
-                                            "reference");
+                return refuse_agg(site, "'" + text + "' is not a list");
             return list_elements(site, parsed, out, elem);
         }
         if (!value.is_array())

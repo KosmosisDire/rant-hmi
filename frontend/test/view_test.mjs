@@ -3333,63 +3333,36 @@ check(stageNode("frame", 901) === heldAgain &&
         "and every element stands through the flip: a mode is not a reason to rebuild");
 }
 
-/* ---- THE OPTIONS SLOT: a list spelling, and a picker that is sugar for writing one ----
-   A Dropdown's options used to BE a TypeRef, so the row was a chip and nothing else. The
-   value is a real list now -- a literal, or variants(Valve.mode) naming an enum's variants
-   through the schema -- so the row is an ordinary field holding that text, with the type
-   picker beside it writing the call the author would otherwise type by hand. */
+/* ---- THE OPTIONS SLOT: a list spelling, discoverable through the reference browse ----
+   A Dropdown's options used to BE a TypeRef chip, then a variants(Type.field) magic
+   string. The vocabulary reads off an enum VALUE now (myMode.variants()), so the row
+   is an ordinary expression field, and the options browse (the reference selector)
+   offers every enum-typed value in reach as its .variants() read — picked, never
+   memorised, and never naming a different enum than the value beside it. */
 {
-  /* the popover places itself against the viewport, which this process otherwise has no
-     notion of */
-  globalThis.window = { innerWidth: 1280, innerHeight: 800 };
-  const { valueEditor } = await import(mod("inspector/editors.js"));
+  const { enumListRefs, optionsSlotScope } = await import(mod("inspector/scope.js"));
+  const valveVariants = [{ name: "Off", value: 0 }, { name: "On", value: 1 }];
   const optionsEditor = {
     ...editor,
+    store: { ...editor.store,
+             globals: () => [{ name: "valveMode", type: "Valve.mode" }] },
     mesh: {
-      entities: [],
-      types: [{
-        name: "Valve", entities: [],
-        fields: [{ path: "mode", shape: "enum",
-                   variants: [{ name: "Off", value: 0 }, { name: "On", value: 1 }] }],
-      }],
+      entities: [{ kind: "V", name: "plant/valve", type: "Valve", writable: true,
+                   fields: [{ path: "mode", shape: "enum", variants: valveVariants }] }],
+      types: [{ name: "Valve",
+                fields: [{ path: "mode", shape: "enum", variants: valveVariants }] }],
     },
   };
-  const written = [];
-  let spelling = '["Off", "On"]';
-  const optionsSpec = { name: "options", shape: "text", default: "", group: "config",
-                        editor: "enum-type" };
-  const optionsPanel = new Panel(new Element("div"));
-  const drawOptions = () =>
-    optionsPanel.render("options", (host) =>
-      host.appendChild(valueEditor(optionsSpec, "text", "1:options", () => spelling,
-                                   (next) => { spelling = next; written.push(next); },
-                                   false, optionsEditor)));
-  drawOptions();
-
-  const optionsField = optionsPanel.host.querySelector(".field");
-  const optionsChip = optionsPanel.host.querySelector(".source-chip");
-  check(optionsField !== null && optionsChip !== null,
-        "the options row is a field AND a picker, not a picker standing alone");
-  check(optionsField.value === '["Off", "On"]',
-        "the field carries the list spelling verbatim, got " + optionsField?.value);
-  typeInto(optionsField, '["Off", "Low", "High"]');
-  fire(optionsField, "change");
-  check(written[written.length - 1] === '["Off", "Low", "High"]',
-        "editing it commits the text as written, got " + written[written.length - 1]);
-
-  fire(optionsChip, "click");
-  const treeRow = (label) =>
-    document.body.querySelectorAll(".stree-row")
-      .find((r) => r.textContent.startsWith(label)) ?? null;
-  check(treeRow("Valve") !== null, "the chip opens the type tree on the enums it may pick");
-  fire(treeRow("Valve"), "click", { detail: 0 });
-  fire(treeRow("mode"), "click", { detail: 0 });
-  check(written[written.length - 1] === "variants(Valve.mode)",
-        "and the pick writes the variants(...) call, got " + written[written.length - 1]);
-  drawOptions();
-  check(optionsField.value === "variants(Valve.mode)",
-        "which the field then shows, like anything else the slot holds");
-  document.activeElement = null;
+  const refs = enumListRefs(optionsEditor, null);
+  check(refs.some((r) => r.insert === "valveMode.variants()"),
+        "an enum-typed variable offers its vocabulary as a .variants() read");
+  check(refs.some((r) => r.insert === "@plant/valve.mode.variants()"),
+        "and a mesh enum field offers the same, addressed");
+  const roots = optionsSlotScope(optionsEditor, null).roots();
+  const folder = roots.find((r) => r.key === "enums");
+  check(Boolean(folder) &&
+            folder.children.some((row) => row.insert === "valveMode.variants()"),
+        "the options browse lists them under enum lists, insert-ready");
 }
 
 /* ---- THE VALUE BOX on the attr rows (inspector redesign, phase 2) ----
@@ -3808,17 +3781,19 @@ check(stageNode("frame", 901) === heldAgain &&
           "in reflection order, behind the hmi names");
   }
 
-  /* the options-shaped box: the enum types ride its browse tree (the old chip's job) */
+  /* the options-shaped box: every enum-typed VALUE in reach rides its browse (the
+     reference selector), spelled as its .variants() read — here the valve struct
+     variable's enum field */
   document.activeElement = null;
   const optionsInput4a = row4a("options").querySelector("input");
   fire(row4a("options").querySelector(".vb-browse"), "click");
-  check(streeRow4a("enum types") !== null,
-        "an options box's browse carries the enum types section");
-  const valveRow = streeRow4a("Valve.mode");
-  check(valveRow !== null, "listing the schema's enums");
+  check(streeRow4a("enum lists") !== null,
+        "an options box's browse carries the enum lists section");
+  const valveRow = streeRow4a("valve.mode.variants()");
+  check(valveRow !== null, "listing each enum-typed value in reach");
   fire(valveRow, "click", { detail: 0 });
-  check(optionsInput4a.value === "variants(Valve.mode)",
-        "picking one inserts the variants(...) call, got " + optionsInput4a.value);
+  check(optionsInput4a.value === "valve.mode.variants()",
+        "picking one inserts its .variants() read, got " + optionsInput4a.value);
   document.activeElement = null;
 }
 

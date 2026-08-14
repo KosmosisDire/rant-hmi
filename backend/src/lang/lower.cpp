@@ -203,6 +203,24 @@ class Lower {
             --depth_;
             return;
         }
+        if (mark.op == Note::Op::VariantsOf) {
+            /* enum .variants(): the receiver's TYPE answered at check, its VALUE is
+               unused — and expressions are pure, so it is never evaluated at all.
+               The vocabulary lands as constants, the spelled list that cannot
+               drift from the schema. */
+            site(expr.text, expr.at);
+            const uint32_t count = static_cast<uint32_t>(mark.vocabulary->size());
+            for (const auto& row : *mark.vocabulary) {
+                emit(OpCode::Const,
+                     sink_.add_constant(Value::text(sink_.add_text(row.first))));
+                pushed();
+            }
+            sink_.reserve_elems(count, 0);
+            emit(OpCode::MakeList, 0, count);
+            if (count) depth_ -= count - 1;   /* the elements collapse into one */
+            else pushed();
+            return;
+        }
         /* a Member the checker resolved past Load: is / iterate / a table method */
         walk(expr.a);
         if (mark.op == Note::Op::IsVariant) {

@@ -21,7 +21,7 @@ import { Json, Mesh, MeshField, MeshType, Registry, SlotSpec, Token, ComponentTy
 
 /* is this string one of the literal spellings, and which kind */
 function literalKind(text: string): "text" | "color" | "token" | "num" | "bool" |
-                                     "agg" | "variants" | "empty" | null {
+                                     "agg" | "empty" | null {
   const at = text.trim();
   if (at === "") return "empty";
   if (/^'(?:\\.|[^'\\])*'$/.test(at) || /^"(?:\\.|[^"\\])*"$/.test(at)) return "text";
@@ -30,7 +30,6 @@ function literalKind(text: string): "text" | "color" | "token" | "num" | "bool" 
   if (/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(at)) return "num";
   if (at === "true" || at === "false") return "bool";
   if (at.startsWith("[") || at.startsWith("{")) return "agg";
-  if (at.startsWith("variants(") && at.endsWith(")")) return "variants";
   return null;
 }
 

@@ -723,6 +723,21 @@ class Sema {
         mark.op = Note::Op::MethodCall;
         mark.method = spec;
         switch (spec->method) {
+            case MethodId::EnumVariants: {
+                /* THE VOCABULARY AS A VALUE: the receiver's TYPE answers here at
+                   compile, so the list is constants and can never drift from the
+                   schema. No type, no vocabulary — nothing to list. */
+                const EnumVariants* variants = env_.variants(receiver.enum_id());
+                if (!variants) {
+                    fail("this value's enum type is not known here, so variants() "
+                         "has no vocabulary to list",
+                         expr.name_after);
+                    return Type();
+                }
+                mark.op = Note::Op::VariantsOf;
+                mark.vocabulary = variants;
+                return Type::list_of(Shape::List, Shape::Text);
+            }
             case MethodId::ListFirst:
             case MethodId::ListLast:
             case MethodId::MapGet:
@@ -987,6 +1002,15 @@ class Sema {
     Type call(uint32_t index) {
         const Expr& expr = at(index);
         const std::string& name = expr.text;
+        /* the old options spelling, taught toward the method: the vocabulary reads
+           off an enum VALUE now, so the list can never name a different enum than
+           the value beside it */
+        if (name == "variants") {
+            fail("variants() reads off an enum value now: write myMode.variants() "
+                 "and it lists that value's own vocabulary",
+                 expr.name_after);
+            return Type();
+        }
         const auto found = builtins().find(name);
         /* a view_only row describes the TEMPLATE tier's vocabulary and carries no
            Builtin id the VM could execute, so it is not a name this language knows */

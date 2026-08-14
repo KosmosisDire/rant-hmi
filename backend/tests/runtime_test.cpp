@@ -3964,14 +3964,20 @@ void test_color_element_variables() {
  * order, so they cannot drift from the schema. An unresolvable reference is a finding
  * on the slot and leaves the cell UNKNOWN -- never a quietly empty picker. */
 void test_variant_options() {
+    /* the options read off an enum VALUE beside them (myMode.variants()), so the
+       list can never name a different enum than the value it drives */
     auto selector = [](const char* name, const char* options) {
         return Json{{"kind", "frame"}, {"type", "Selector"}, {"name", name},
-                    {"slots", Json{{"options", options}, {"value", "'run'"}}}};
+                    {"slots", Json{{"options", options}, {"value", "'run'"}}},
+                    {"locals", Json::array({Json{{"name", "jobMode"},
+                                                 {"type", "Gear.mode"},
+                                                 {"init", "run"}}})}};
     };
     Json root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                  {"pages", Json::array({Json{
                       {"name", "P"},
-                      {"children", Json::array({selector("good", "variants(Gear.mode)")})}}})}};
+                      {"children",
+                       Json::array({selector("good", "jobMode.variants()")})}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -3980,13 +3986,21 @@ void test_variant_options() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
+    const uint64_t id = only_instance(document);
     int cell = -1;
     for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
         if (compiled.program.cells[i].kind == CellKind::Slot &&
             compiled.program.cells[i].name == "options")
             cell = static_cast<int>(i);
     if (!CHECK(cell >= 0)) return;
+    /* the vocabulary is a standing slot program now (constants + MakeList, no
+       deps): the seed pass runs it once at start */
+    const SlotProgram* fill = slot_program_of(compiled.program, id, "options");
+    if (!CHECK(fill != nullptr)) return;
     RuntimeState state(compiled.program);
+    state.reset_scratch();
+    RunResult seeded = run_slot(compiled.program, *fill, state);
+    CHECK(!seeded.faulted);
     const AggView view = state.aggregate(state.values[cell]);
     CHECK(view.count == 3);
     if (view.count == 3) {

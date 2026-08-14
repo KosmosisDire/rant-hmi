@@ -728,8 +728,9 @@ class ViewLower {
             return;
         }
         if (name == "variants") {
-            fail("variants(...) is a slot's authored value (the enum picker writes "
-                 "it); a template reads the resulting list from the options property",
+            fail("variants() reads off an enum value in a slot's expression "
+                 "(myMode.variants()); a template reads the resulting list from "
+                 "the options property",
                  expr.name_after);
             return;
         }

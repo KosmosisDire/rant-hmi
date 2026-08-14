@@ -123,6 +123,12 @@ HMI_METHOD_ROW(Text, "replace", TextReplace, 2, (Shape::Text, Shape::Text), Text
 HMI_METHOD_ROW(Text, "padStart", TextPadStart, 2, (Shape::Num, Shape::Text), Text, true, "")
 HMI_METHOD_ROW(Enum, "int", EnumInt, 0, (), Num, false, "")
 HMI_METHOD_ROW(Enum, "name", EnumName, 0, (), Text, false, "")
+/* the VOCABULARY as a value: list(text) of the receiver's variant names. The
+ * receiver's TYPE answers at COMPILE, so this folds to a constant list (no VM
+ * case, the receiver's value is never read) and can never drift from the schema.
+ * The options spelling — myMode.variants(), filterable like any list.
+ */
+HMI_METHOD_ROW(Enum, "variants", EnumVariants, 0, (), List, false, "")
 HMI_METHOD_ROW(Text, "split", TextSplit, 1, (Shape::Text), List, true, "")
 /* aggregates ride mid-expression on either tier (max over a list is a wire
  * value); the wire-result rule alone keeps a LIST from going to a machine.

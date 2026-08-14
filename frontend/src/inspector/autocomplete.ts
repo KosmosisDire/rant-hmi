@@ -309,9 +309,9 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
     if (entry.result === "elem") {
       current = current.elem ? { shape: current.elem, elem: current.leaf } : null;
     } else if (entry.result === "list") {
-      /* sort/reverse/slice/values keep the element shape (and its rows); split and keys
-         build a fresh list of text */
-      const kept = method !== "split" && method !== "keys";
+      /* sort/reverse/slice/values keep the element shape (and its rows); split, keys
+         and variants build a fresh list of text */
+      const kept = method !== "split" && method !== "keys" && method !== "variants";
       current = { shape: "list",
                   elem: kept ? current.elem : "text",
                   leaf: kept ? current.leaf : undefined };
