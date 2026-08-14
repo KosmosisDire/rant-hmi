@@ -37,3 +37,9 @@ address_chain
 # (x.length(), #f00.r()) — plain after a dot is a field. The bare-reading column
 # died with the property⇒method delta.
 spec->property
+
+# stage 4, enums first class: `.variant` is an expression resolved at COMPILE against
+# the enum its context expects, so the runtime text->enum coercion opcode died — a
+# wrong variant is a finding now, never a fault. The number/text equality leniencies
+# went with it (.int() / .name() spell the intent).
+EnumFromName

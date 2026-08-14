@@ -1588,22 +1588,39 @@ class Compiler {
      * slot), so a wire expression may yield that whole shape. It is never set for a
      * mesh destination — the machine still takes one scalar per field. */
     bool expression(uint64_t node, const std::string& text, ExprTier tier,
-                    const Env& scope, Shape expected,
+                    const Env& scope, const Type& expected,
                     std::vector<Instruction>& code, uint32_t& max_stack,
                     Shape* actual = nullptr, const std::string& where = "",
                     uint16_t* enum_out = nullptr, bool agg_ok = false) {
         ExpressionResult result;
         std::string error;
         ProgramEmit emit(program_);
-        if (!compile_expression(text, tier, scope, emit, code, result, error, agg_ok)) {
+        if (!compile_expression(text, tier, scope, emit, code, result, error, agg_ok,
+                                expected)) {
             diag(node, "expression", error, DiagGrade::Error, where);
             return false;
         }
-        if (expected != Shape::Unknown && result.shape != Shape::Unknown &&
-            result.shape != Shape::Nil && result.shape != expected) {
-            diag(node, "shape",
-                 "expression yields " + std::string(shape_name(result.shape)) +
-                     ", but this row wants " + shape_name(expected),
+        if (expected.kind != Shape::Unknown && result.shape != Shape::Unknown &&
+            result.shape != Shape::Nil && result.shape != expected.kind) {
+            std::string message = "expression yields " +
+                                  std::string(shape_name(result.shape)) +
+                                  ", but this row wants " + shape_name(expected.kind);
+            /* the refusal teaches the first-class spelling: the vocabulary is the
+               destination's own, so name a real variant as the example */
+            if (expected.kind == Shape::Enum && result.shape == Shape::Text)
+                if (const EnumVariants* variants = scope.variants(expected.enum_id()))
+                    if (!variants->empty())
+                        message += "; write the variant itself (." +
+                                   variants->front().first + ", not a text)";
+            diag(node, "shape", message, DiagGrade::Error, where);
+            return false;
+        }
+        /* a variant resolves against its own enum, so a cross-enum landing here can
+           only be a typed value from somewhere else — refuse it the way any other
+           wrong shape refuses */
+        if (expected.enum_id() && result.shape == Shape::Enum && result.enum_type &&
+            result.enum_type != expected.enum_id()) {
+            diag(node, "shape", "this is a different enum than the destination's",
                  DiagGrade::Error, where);
             return false;
         }
@@ -1817,7 +1834,7 @@ class Compiler {
         sp.cell = pending.cell;
         Shape produced = Shape::Unknown;
         if (!expression(element.id, pending.text, ExprTier::Display, scope,
-                        aggregate ? wanted : Shape::Unknown, sp.code, sp.max_stack,
+                        aggregate ? Type(wanted) : Type(), sp.code, sp.max_stack,
                         &produced, pending.name, nullptr, aggregate))
             return;   /* the finding is already pinned to the instance's slot row */
         /* the one automatic coercion (spec 6.2): an enum-yielding expression filling a
@@ -2177,7 +2194,7 @@ class Compiler {
          * is holding — an author appending a row wants to hear about `elem`, not to be
          * told that a wire value is one scalar. */
         Shape produced = Shape::Unknown;
-        if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced,
+        if (!push_scalar(element, step, flow, scope, from, Type(), &produced,
                          /*agg_ok=*/true))
             return false;
         /* an enum element writes into a text list as its variant name, the same
@@ -2209,7 +2226,7 @@ class Compiler {
                 flow.code.push_back(nothing);
                 flow.max_stack = std::max(flow.max_stack, 2u);
             } else {
-                if (!expression(step_id, keep, ExprTier::Wire, scope, Shape::Num,
+                if (!expression(step_id, keep, ExprTier::Wire, scope, Type(Shape::Num),
                                 flow.code, bound_stack, nullptr, "keep"))
                     return false;
                 flow.max_stack = std::max(flow.max_stack, bound_stack + 1);
@@ -2247,7 +2264,7 @@ class Compiler {
            text key, or a list's number index */
         uint32_t key_stack = 1;
         if (!expression(step_id, key, ExprTier::Wire, scope,
-                        indexed ? Shape::Num : Shape::Text, flow.code, key_stack,
+                        Type(indexed ? Shape::Num : Shape::Text), flow.code, key_stack,
                         nullptr, "key"))
             return false;
         flow.max_stack = std::max(flow.max_stack, key_stack + 1);
@@ -2287,7 +2304,7 @@ class Compiler {
      * the destination is a declared HMI aggregate, which may take a whole list or map
      * (copy a variable, rebuild one with a map/filter). */
     bool push_scalar(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                     Env& scope, const Json& from, Shape expected,
+                     Env& scope, const Json& from, const Type& expected,
                      Shape* actual = nullptr, bool agg_ok = false) {
         (void)element;
         const uint64_t step_id = id_of(step);
@@ -2300,16 +2317,17 @@ class Compiler {
         return false;
     }
 
-    /* push_scalar toward one typed destination, with the two compile-inserted enum
-     * coercions (spec 6.2): text into an enum-typed field or variable becomes the
-     * variant's value (a Dropdown's selected name writes back with no authored
-     * transform), and an enum into a text destination renders as its variant name. */
+    /* push_scalar toward one typed destination. An enum destination hands the
+     * expression its OWN type, so `.variant` resolves against the right vocabulary
+     * at compile — the runtime text->enum coercion opcode is dead. The one insertion
+     * left is a RENDER, not a coercion: an enum moved into a text destination reads
+     * as its variant name, the way str() would spell it. */
     bool push_typed(const ElementInfo& element, const Json& step, FlowProgram& flow,
                     Env& scope, const Json& from, Shape wanted,
                     uint16_t type_id, bool agg_ok = false) {
         if (wanted == Shape::Text) {
             Shape produced = Shape::Unknown;
-            if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced))
+            if (!push_scalar(element, step, flow, scope, from, Type(), &produced))
                 return false;
             if (produced == Shape::Enum) {
                 Instruction name;
@@ -2330,29 +2348,8 @@ class Compiler {
             }
             return true;
         }
-        if (wanted != Shape::Enum || type_id == 0)
-            return push_scalar(element, step, flow, scope, from, wanted, nullptr, agg_ok);
-        Shape produced = Shape::Unknown;
-        if (!push_scalar(element, step, flow, scope, from, Shape::Unknown, &produced))
-            return false;
-        if (produced == Shape::Text) {
-            Instruction coerce;
-            coerce.op = OpCode::EnumFromName;
-            coerce.b = type_id;
-            coerce.c = fault_site(id_of(step), "enum_name",
-                                  "the text is not one of this enum's variants");
-            flow.code.push_back(coerce);
-            return true;
-        }
-        if (produced != Shape::Unknown && produced != Shape::Nil &&
-            produced != Shape::Enum) {
-            diag(id_of(step), "shape",
-                 "the source is " + std::string(shape_name(produced)) +
-                     ", but this destination wants enum",
-                 DiagGrade::Error, "from");
-            return false;
-        }
-        return true;
+        return push_scalar(element, step, flow, scope, from, Type(wanted, type_id),
+                           nullptr, agg_ok);
     }
 
     /* `-> local`: the destination names a variable in scope, or declares a temporary by
@@ -2462,7 +2459,7 @@ class Compiler {
             Shape produced = Shape::Unknown;
             uint16_t produced_type = 0;
             if (!expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
-                            Shape::Unknown, flow.code, flow.max_stack, &produced,
+                            Type(), flow.code, flow.max_stack, &produced,
                             "from", &produced_type)) {
                 return false;
             }
@@ -2582,9 +2579,10 @@ class Compiler {
             }
         }
         /* a DECLARED destination goes through the typed path, so an enum variable
-           takes text (the Dropdown's selected name) and a text variable takes an enum
-           (rendered as its name), exactly like the same-shaped fields do. A declared
-           LIST or MAP variable takes a whole aggregate — an HMI cell, not a machine. */
+           resolves `.variant` against its own vocabulary and a text variable takes
+           an enum (rendered as its name), exactly like the same-shaped fields do. A
+           declared LIST or MAP variable takes a whole aggregate — an HMI cell, not a
+           machine. */
         if (cell != UINT32_MAX) {
             if (!push_typed(element, step, flow, scope, from, wanted,
                             program_.cells[cell].type_id, aggregate_shape(wanted)))
@@ -2593,7 +2591,7 @@ class Compiler {
         }
         Shape produced = Shape::Unknown;
         const size_t mark = flow.code.size();
-        if (!push_scalar(element, step, flow, scope, from, wanted, &produced)) return false;
+        if (!push_scalar(element, step, flow, scope, from, Type(), &produced)) return false;
         if (cell == UINT32_MAX) {
             if (produced == Shape::Unknown || produced == Shape::Nil) {
                 diag(step_id, "temp_shape",
@@ -2752,7 +2750,7 @@ class Compiler {
                 if (!push_typed(element, step, flow, scope, from, fdef.elem, 0))
                     return false;
                 uint32_t key_stack = 1;
-                if (!expression(step_id, key, ExprTier::Wire, scope, Shape::Num,
+                if (!expression(step_id, key, ExprTier::Wire, scope, Type(Shape::Num),
                                 flow.code, key_stack, nullptr, "key"))
                     return false;
                 flow.max_stack = std::max(flow.max_stack, key_stack + 1);
@@ -2944,7 +2942,7 @@ class Compiler {
                      "raise " + name + " needs " + pname, DiagGrade::Error, "args");
                 return false;
             }
-            if (!expression(step_id, text, ExprTier::Wire, scope, shape, flow.code,
+            if (!expression(step_id, text, ExprTier::Wire, scope, Type(shape), flow.code,
                             flow.max_stack, nullptr, "args"))
                 return false;
             has_arg = true;
@@ -2982,7 +2980,7 @@ class Compiler {
             return false;
         }
         Shape actual = Shape::Unknown;
-        if (!expression(step_id, text, ExprTier::Display, scope, Shape::Unknown,
+        if (!expression(step_id, text, ExprTier::Display, scope, Type(),
                         flow.code, flow.max_stack, &actual, "text"))
             return false;
         if (actual == Shape::List || actual == Shape::Map) {
@@ -2994,7 +2992,7 @@ class Compiler {
         }
         const std::string ms = trimmed(str_or(step, "ms", ""));
         if (!ms.empty() &&
-            !expression(step_id, ms, ExprTier::Display, scope, Shape::Num, flow.code,
+            !expression(step_id, ms, ExprTier::Display, scope, Type(Shape::Num), flow.code,
                         flow.max_stack, nullptr, "ms"))
             return false;
         Instruction ins;
@@ -3056,7 +3054,7 @@ class Compiler {
                 if (!compile_notify(step, flow, scope)) return false;
             } else if (kind == "gate") {
                 if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
-                                Shape::Bool, flow.code, flow.max_stack))
+                                Type(Shape::Bool), flow.code, flow.max_stack))
                     return false;
                 flow.code.push_back(Instruction{OpCode::Gate});
             } else if (kind == "deadband") {

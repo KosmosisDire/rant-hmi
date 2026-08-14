@@ -643,21 +643,19 @@ void test_enum_names() {
         {"name", "gear"},
         {"slots", Json{{"text", "@gear.mode"}}},
         /* an ENUM-TYPED variable (spec 2.7): typed by the path to the enum, its
-           DEFAULT a variant name, and taking text through the same coercion a field
-           does */
+           DEFAULT a variant name (data, resolved at compile) */
         {"locals", Json::array({
              Json{{"name", "gearMode"}, {"type", "Gear.mode"}, {"init", "fast"}}})},
         {"flows",
          Json::array({
+             /* writes spell the VARIANT: the destination's own vocabulary resolves
+                it at compile, so no runtime coercion exists to fault */
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
                   {"when_mode", "first"},
-                  {"do", Json::array({steps::write_field("V", "gear", "mode", "\"fast\"")})}},
-             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
-                  {"when_mode", "first"},
-                  {"do", Json::array({steps::write_field("V", "gear", "mode", "\"bogus\"")})}},
+                  {"do", Json::array({steps::write_field("V", "gear", "mode", ".fast")})}},
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "release"}}})},
                   {"when_mode", "first"},
-                  {"do", Json::array({steps::set_var("gearMode", "\"run\"")})}},
+                  {"do", Json::array({steps::set_var("gearMode", ".run")})}},
              /* an enum moved into a TEXT destination renders as its variant name */
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "held"}}})},
                   {"when_mode", "first"},
@@ -667,8 +665,8 @@ void test_enum_names() {
          })},
     };
     /* a second label formats with text JOINING: enum x rendered as its name. Its
-       `enabled` compares the enum three ways: a leading-dot variant literal, a
-       variant NAME, and the backing integer. */
+       `enabled` compares the enum three ways: variant literals on either side, and
+       the backing integer read through .int(). */
     Json fmt = {
         {"kind", "frame"},
         {"type", "Label"},
@@ -676,7 +674,7 @@ void test_enum_names() {
         {"slots",
          Json{{"text", "\"Run \" + @gear.mode"},
               {"enabled",
-               "@gear.mode == .fast || @gear.mode == \"stop\" || @gear.mode == 1"}}},
+               "@gear.mode == .fast || .stop == @gear.mode || @gear.mode.int() == 1"}}},
         {"flows", Json::array()},
     };
     root["pages"].push_back(
@@ -744,7 +742,7 @@ void test_enum_names() {
                               bad, eresult, eerror));
     CHECK_MSG(eerror.find("vocabulary") != std::string::npos, eerror);
 
-    /* writing the name lands the value */
+    /* writing the variant lands the value */
     state.clear_outputs();
     RunResult tap = run_event(compiled.program, state, instance, "tap", Value::nil());
     CHECK(!tap.faulted);
@@ -755,13 +753,36 @@ void test_enum_names() {
     CHECK_MSG(line.find("write V:gear.mode=enum(") == 0, line);
     CHECK_MSG(line.size() > 3 && line.compare(line.size() - 3, 3, ",2)") == 0, line);
 
-    /* a name outside the vocabulary faults instead of writing a wrong integer */
-    state.clear_outputs();
-    RunResult press = run_event(compiled.program, state, instance, "press", Value::nil());
-    CHECK(press.faulted);
+    /* TEXT into an enum destination is a FINDING now, at compile — the runtime
+       coercion that used to fault on a wrong name is dead, and the refusal names
+       the first-class spelling */
+    {
+        Json broken_root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                            {"pages", Json::array()}};
+        Json broken_label = {
+            {"kind", "frame"}, {"type", "Label"}, {"name", "gear"},
+            {"slots", Json::object()},
+            {"flows", Json::array({Json{
+                 {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"when_mode", "first"},
+                 {"do", Json::array({steps::write_field("V", "gear", "mode",
+                                                        "\"bogus\"")})}}})},
+        };
+        broken_root["pages"].push_back(
+            Json{{"name", "Main"}, {"children", Json::array({broken_label})}});
+        Document broken_doc;
+        CHECK_MSG(broken_doc.adopt(std::move(broken_root), error), error);
+        CompileResult refused = compile_document(broken_doc, builtin_registry(), mesh);
+        CHECK(!refused.ok);
+        bool taught = false;
+        for (const Diag& diag : refused.program.diagnostics)
+            if (diag.message.find("write the variant itself") != std::string::npos)
+                taught = true;
+        CHECK(taught);
+    }
 
-    /* an enum-typed VARIABLE: seeded at its DEFAULT variant by name, and text stores
-       through the same coercion */
+    /* an enum-typed VARIABLE: seeded at its DEFAULT variant by name (data), written
+       by variant literal */
     int gear_mode = -1;
     for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
         if (compiled.program.cells[i].kind == CellKind::Local &&

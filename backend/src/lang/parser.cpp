@@ -156,24 +156,7 @@ class Parser {
             const uint32_t made = node(ExprKind::Binary, out_.nodes[left].at);
             out_.nodes[made].op = op;
             advance();
-            uint32_t right;
-            /* `.Variant` (spec 6.2): a leading-dot variant literal, legal exactly as
-               the right side of an equality */
-            if ((op == TokenKind::EqEq || op == TokenKind::Ne) &&
-                token().kind == TokenKind::Dot) {
-                const size_t start = token().at;
-                advance();
-                if (token().kind != TokenKind::Ident) {
-                    fail("expected a variant name after '.'");
-                    return kNoExpr;
-                }
-                right = node(ExprKind::Variant, start);
-                out_.nodes[right].text = token().text;
-                advance();
-                close(right);
-            } else {
-                right = sum();
-            }
+            const uint32_t right = sum();
             if (!error_.empty()) return kNoExpr;
             out_.nodes[made].a = left;
             out_.nodes[made].b = right;
@@ -299,6 +282,21 @@ class Parser {
         const Token& t = token();
         if (lambda_ahead()) return lambda();
         switch (t.kind) {
+            case TokenKind::Dot: {
+                /* `.Variant` (spec 6.2): a leading-dot variant literal — an
+                   expression anywhere one is; the checker resolves it against
+                   the enum its CONTEXT expects (the other side of an equality,
+                   the destination being written, a ternary arm's expectation) */
+                advance();
+                if (token().kind != TokenKind::Ident) {
+                    fail("expected a variant name after '.'");
+                    return kNoExpr;
+                }
+                const uint32_t made = node(ExprKind::Variant, t.at);
+                out_.nodes[made].text = token().text;
+                advance();
+                return close(made);
+            }
             case TokenKind::Number: {
                 const uint32_t made = node(ExprKind::Number, t.at);
                 out_.nodes[made].number = t.number;

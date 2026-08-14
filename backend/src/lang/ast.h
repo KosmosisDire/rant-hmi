@@ -25,7 +25,7 @@ enum class ExprKind : uint8_t {
     EntityRef,  /* @path */
     ThemeRef,   /* $name — a theme token literal (view vocabulary; the scalar
                    checker refuses it the way its grammar always did) */
-    Variant,    /* .name — legal only as the right side of == / != */
+    Variant,    /* .name — a variant literal, resolved against the enum its context expects */
     Lambda,     /* params => body (a), legal only as an iterating method's argument */
     Prefix,     /* op(a): - ! not */
     Binary,     /* a op b */

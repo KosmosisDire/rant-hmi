@@ -78,7 +78,8 @@ class Sema {
         notes_.assign(ast.nodes.size(), Note{});
     }
 
-    bool run(Type& result) {
+    bool run(Type& result, const Type& expected) {
+        want_ = expected;
         result = check(ast_.root);
         return error_.empty();
     }
@@ -105,6 +106,11 @@ class Sema {
 
     Type check(uint32_t index) {
         if (!error_.empty() || index == kNoExpr) return Type();
+        /* the expectation reaches exactly ONE node: the contexts that carry it
+           further (a ternary's arms, an equality's variant side) re-arm it before
+           their own recursive checks */
+        const Type want = want_;
+        want_ = Type();
         const Expr& expr = at(index);
         Type type;
         switch (expr.kind) {
@@ -133,11 +139,38 @@ class Sema {
                 type = Type::list_of(Shape::List, uniform ? elem : Shape::Unknown);
                 break;
             }
-            case ExprKind::Variant:
-                /* legal only as the right side of an equality; Binary resolves it
-                   there, so reaching one here is a stray leading dot */
-                fail("expected an expression", expr.at);
-                return Type();
+            case ExprKind::Variant: {
+                /* `.variant` (spec 6.2): the vocabulary comes from the enum the
+                   CONTEXT expects — the other side of an equality, the destination
+                   being written, a ternary arm's expectation. No context, no
+                   vocabulary. */
+                if (want.enum_id() == 0) {
+                    fail("'." + expr.text + "' needs an enum to take its vocabulary "
+                         "from -- compare with an enum, or write into an enum-typed "
+                         "destination",
+                         expr.after);
+                    return Type();
+                }
+                bool found = false;
+                int64_t value = 0;
+                if (const EnumVariants* variants = env_.variants(want.enum_id()))
+                    for (const auto& row : *variants)
+                        if (row.first == expr.text) {
+                            value = row.second;
+                            found = true;
+                            break;
+                        }
+                if (!found) {
+                    fail("the enum has no variant '" + expr.text + "'", expr.after);
+                    return Type();
+                }
+                Note& mark = note(index);
+                mark.op = Note::Op::VariantConst;
+                mark.variant = value;
+                mark.variant_type = want.enum_id();
+                type = Type(Shape::Enum, want.enum_id());
+                break;
+            }
             case ExprKind::ThemeRef:
                 /* the one grammar carries $tokens for the view emitter; this tier
                    never accepted one, and the refusal it always gave stands */
@@ -159,7 +192,7 @@ class Sema {
                 break;
             }
             case ExprKind::Binary: type = binary(index); break;
-            case ExprKind::Ternary: type = ternary(index); break;
+            case ExprKind::Ternary: type = ternary(index, want); break;
             case ExprKind::Name:
             case ExprKind::EntityRef:
             case ExprKind::Member:
@@ -211,50 +244,49 @@ class Sema {
 
     Type compare(uint32_t index) {
         const Expr& expr = at(index);
-        const Type left = check(expr.a);
-        if (!error_.empty()) return Type();
-        Type right;
-        if (at(expr.b).kind == ExprKind::Variant) {
-            /* `.Variant` (spec 6.2): resolved against the LEFT side's enum
-               vocabulary, so `x == .running` needs no type spelled out */
-            const std::string& variant = at(expr.b).text;
-            bool found = false;
-            int64_t value = 0;
-            if (const EnumVariants* variants = env_.variants(left.enum_id()))
-                for (const auto& row : *variants)
-                    if (row.first == variant) {
-                        value = row.second;
-                        found = true;
-                        break;
-                    }
-            if (!found) {
-                fail(left.enum_id() ? "the enum has no variant '" + variant + "'"
-                                    : "'." + variant + "' needs an enum on the left "
-                                      "to take its vocabulary from",
-                     at(expr.b).after);
-                return Type();
-            }
-            Note& mark = note(expr.b);
-            mark.op = Note::Op::VariantConst;
-            mark.variant = value;
-            mark.variant_type = left.enum_id();
-            mark.type = Type(Shape::Enum, left.enum_id());
-            right = mark.type;
+        const bool equality = expr.op == TokenKind::EqEq || expr.op == TokenKind::Ne;
+        /* a variant literal takes its vocabulary from the OTHER side, so the plain
+           side checks first, whichever side it is on — `x == .run` and `.run == x`
+           are the same sentence */
+        Type left, right;
+        if (equality && at(expr.a).kind == ExprKind::Variant &&
+            at(expr.b).kind != ExprKind::Variant) {
+            right = check(expr.b);
+            if (!error_.empty()) return Type();
+            want_ = right;
+            left = check(expr.a);
+            if (!error_.empty()) return Type();
         } else {
+            left = check(expr.a);
+            if (!error_.empty()) return Type();
+            if (equality) want_ = left;
             right = check(expr.b);
             if (!error_.empty()) return Type();
         }
-        if (expr.op == TokenKind::EqEq || expr.op == TokenKind::Ne) {
-            /* an enum side may meet a number (its backing value), text (its variant
-               name) or another enum; every other mix is still a mistake */
-            const bool enum_mix =
-                (left.kind == Shape::Enum || right.kind == Shape::Enum) &&
-                (left.kind == Shape::Enum || left.kind == Shape::Num ||
-                 left.kind == Shape::Text) &&
-                (right.kind == Shape::Enum || right.kind == Shape::Num ||
-                 right.kind == Shape::Text);
+        if (equality) {
+            /* an enum compares to ITS OWN vocabulary and nothing else: a variant
+               literal or a value of the same enum. The old number/text leniencies
+               died with the runtime coercion — the intent is spelled now: x.int(),
+               x.name(). */
+            if (left.kind == Shape::Enum && right.kind == Shape::Enum &&
+                left.enum_id() && right.enum_id() &&
+                left.enum_id() != right.enum_id()) {
+                fail("these are different enums; an enum compares only to its own "
+                     "variants",
+                     at(expr.b).after);
+                return Type();
+            }
+            if ((left.kind == Shape::Enum) != (right.kind == Shape::Enum) &&
+                (left.kind == Shape::Num || left.kind == Shape::Text ||
+                 right.kind == Shape::Num || right.kind == Shape::Text)) {
+                fail("an enum compares to its own variants; write == .variant, or "
+                     "read .name() / .int() to compare the name or the backing "
+                     "number",
+                     at(expr.b).after);
+                return Type();
+            }
             if (left.kind != Shape::Unknown && right.kind != Shape::Unknown &&
-                left.kind != right.kind && !enum_mix)
+                left.kind != right.kind)
                 fail("comparison mixes " + std::string(shape_name(left.kind)) +
                          " and " + shape_name(right.kind),
                      at(expr.b).after);
@@ -327,14 +359,18 @@ class Sema {
 
     /* `c ? a : b` (spec 6.2): sugar over `.pick()`, both arms evaluated. Arms that
      * agree give the conditional their shape; a mix is Unknown, which is what
-     * `.pick()` already reports. An agreeing enum pair stays a typed enum. */
-    Type ternary(uint32_t index) {
+     * `.pick()` already reports. An agreeing enum pair stays a typed enum. The
+     * context's expectation carries into BOTH arms, so `on ? .run : .idle` resolves
+     * wherever an enum is expected. */
+    Type ternary(uint32_t index, const Type& want) {
         const Expr& expr = at(index);
         const Type cond = check(expr.a);
         if (!error_.empty()) return Type();
         if (!require(cond, Shape::Bool, "?:", at(expr.a).after)) return Type();
+        want_ = want;
         const Type yes = check(expr.b);
         if (!error_.empty()) return Type();
+        want_ = want;
         const Type no = check(expr.c);
         if (!error_.empty()) return Type();
         return yes.kind == no.kind ? no : Type();
@@ -929,6 +965,10 @@ class Sema {
     const Env& env_;
     std::vector<Note>& notes_;
     std::string& error_;
+    /* the type the CONTEXT expects of the next node checked — armed at the root by
+       the caller's destination, re-armed by ternary arms and equality sides, cleared
+       by check() itself so it never leaks deeper than one node */
+    Type want_;
     /* lambda state (spec 6.4): the flag doubles as the no-nesting guard and as what
        puts `x` out of scope; parameters ride x's slots positionally */
     bool in_lambda_ = false;
@@ -940,9 +980,10 @@ class Sema {
 } // namespace
 
 bool check_expression(const Ast& ast, ExprTier tier, const Env& env, bool allow_agg,
-                      std::vector<Note>& notes, Type& result, std::string& error) {
+                      std::vector<Note>& notes, Type& result, std::string& error,
+                      const Type& expected) {
     Sema sema(ast, tier, env, notes, error);
-    if (!sema.run(result)) return false;
+    if (!sema.run(result, expected)) return false;
     /* a MACHINE write is always one scalar (spec 6): aggregates may appear
      * mid-expression (max over a list), never as what goes to the mesh. But a wire
      * expression whose DESTINATION is an HMI aggregate — a list variable, a list

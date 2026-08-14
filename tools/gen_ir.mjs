@@ -76,12 +76,6 @@ cell is an ordinary expression plus Store, so it needs no opcode of its own.`,
   { name: "Halt" },
   { name: "Index" },
   {
-    name: "EnumFromName",
-    c: `text -> the enum value whose variant name it is, over the type table entry in
-\`b\`: the compile-inserted coercion at a move into an enum-typed field, so a
-Dropdown's selected name writes back with no authored transform (spec 6.2)`,
-  },
-  {
     name: "JmpNil",
     c: `pop; jump to \`a\` when it was Nil: a cased feed's bail-out, so an UNKNOWN input
 stores UNKNOWN instead of faulting its way down the arms (spec 2.4)`,

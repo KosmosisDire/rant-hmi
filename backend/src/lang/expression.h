@@ -30,11 +30,14 @@ struct ExpressionResult {
 /* `allow_agg` says the DESTINATION is an HMI aggregate — a list/map variable or slot,
  * or one element of one — so an aggregate RESULT is legal here and the CALLER checks
  * the shape, against what that destination declares it holds. Everywhere else the wire
- * tier's one-scalar rule stands: a machine write is one scalar. */
+ * tier's one-scalar rule stands: a machine write is one scalar.
+ *
+ * `expected` is the DESTINATION's type where the caller knows one — what a `.variant`
+ * literal at the root (or in a ternary arm on the way there) resolves against. */
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         EmitSink& sink, std::vector<Instruction>& code,
                         ExpressionResult& result, std::string& error,
-                        bool allow_agg = false);
+                        bool allow_agg = false, const Type& expected = Type());
 
 /* The language, as data (spec 3.7 / "everything is data"): one row per builtin and
  * method, straight from the tables the checker compiles with (lang/tables.h), so

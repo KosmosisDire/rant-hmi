@@ -30,7 +30,7 @@ struct Note {
         TextJoin,     /* `+` with a text side */
         ColorScale,
         ColorDiv,
-        VariantConst, /* `.variant` on the right of an equality */
+        VariantConst, /* `.variant` resolved against the enum its context expects */
     } op = Op::None;
     Place place;
     const BuiltinSpec* builtin = nullptr;
@@ -44,8 +44,11 @@ struct Note {
 
 /* On success `notes` holds one Note per Ast node and `result` the root's type; on
  * refusal `error` reads "<what> at column <n>" (or, for the wire tier's one-scalar
- * rule, the columnless teaching the surface always gave). */
+ * rule, the columnless teaching the surface always gave). `expected` is the type the
+ * DESTINATION declares, where the caller knows one — what a `.variant` literal at
+ * the root (or in a ternary arm on the way there) resolves its vocabulary against. */
 bool check_expression(const Ast& ast, ExprTier tier, const Env& env, bool allow_agg,
-                      std::vector<Note>& notes, Type& result, std::string& error);
+                      std::vector<Note>& notes, Type& result, std::string& error,
+                      const Type& expected = Type());
 
 } // namespace hmi

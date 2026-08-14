@@ -1871,31 +1871,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 if (!pushed_ok) fail(ins.c);
                 break;
             }
-            /* the compile-inserted text -> enum coercion: the top of stack must be one
-             * of the type's variant names; anything else is Nil plus a fault, so a
-             * misspelled option can never write a wrong integer silently */
-            case OpCode::EnumFromName: {
-                if (sp == 0) {
-                    fail(ins.c);
-                    break;
-                }
-                Value& top = state.stack[stack_base + sp - 1];
-                bool matched = false;
-                if (top.tag == ValueTag::Text && ins.b < program.types.size()) {
-                    const std::string_view name = state.text(program, top);
-                    for (const auto& row : program.types[ins.b].variants) {
-                        if (row.first != name) continue;
-                        top = Value::enumeration(row.second, static_cast<uint16_t>(ins.b));
-                        matched = true;
-                        break;
-                    }
-                }
-                if (!matched) {
-                    top = Value::nil();
-                    fail(ins.c);
-                }
-                break;
-            }
             case OpCode::Index: {
                 const Value key = pop();
                 const Value target = pop();

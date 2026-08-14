@@ -1,9 +1,15 @@
-# CONFORMANCE FIXTURES: enums (spec 6.2). A variant literal leans on the LEFT side's
-# vocabulary; `.is()` resolves against the receiver's.
+# CONFORMANCE FIXTURES: enums (spec 6.2). A variant literal resolves against the
+# enum its CONTEXT expects — the other side of an equality, the destination being
+# written, a ternary arm's expectation; `.is()` resolves against the receiver's.
 
 == a variant literal on the right of equality
 env mode: enum(idle, run, fault) = run
 expr mode == .run
+want bool true
+
+== a variant literal on the left of equality
+env mode: enum(idle, run, fault) = run
+expr .run == mode
 want bool true
 
 == a variant literal misses
@@ -51,20 +57,37 @@ env mode: enum(idle, run, fault) = idle
 expr name(mode)
 want text "idle"
 
-== an enum meets its backing number
+== an enum refuses its backing number; int() spells the intent
 env mode: enum(idle, run, fault) = run
 expr mode == 1
+error compares to its own variants
+
+== the backing number reads through int()
+env mode: enum(idle, run, fault) = run
+expr mode.int() == 1
 want bool true
 
-== an enum meets its variant text
+== an enum refuses variant text; name() spells the intent
 env mode: enum(idle, run, fault) = run
 expr mode == "run"
-want bool true
+error compares to its own variants
 
-== an enum misses foreign text
+== the variant name reads through name()
 env mode: enum(idle, run, fault) = run
-expr mode == "idle"
+expr mode.name() == "idle"
 want bool false
+
+== different enums never compare
+env mode: enum(idle, run, fault) = run
+env gear: enum(low, high) = low
+expr mode == gear
+error different enums
+
+== a ternary arm resolves against the equality's enum
+env mode: enum(idle, run, fault) = run
+env on: bool = true
+expr mode == (on ? .run : .idle)
+want bool true
 
 == enums are wire-legal
 tier wire
@@ -82,9 +105,13 @@ env mode: enum(idle, run, fault) = run
 expr mode.is(bogus)
 error no variant 'bogus'
 
-== a variant needs an enum on the left
+== a variant needs an enum beside it
 expr 5 == .run
-error needs an enum on the left
+error needs an enum
+
+== a variant literal alone has no vocabulary
+expr .run
+error needs an enum
 
 == an enum refuses a bool compare
 env mode: enum(idle, run, fault) = run
