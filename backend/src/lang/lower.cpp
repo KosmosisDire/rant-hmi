@@ -5,6 +5,26 @@
 namespace hmi {
 namespace {
 
+const char* op_word(TokenKind op) {
+    switch (op) {
+        case TokenKind::OrOr:
+        case TokenKind::KwOr: return "||";
+        case TokenKind::AndAnd:
+        case TokenKind::KwAnd: return "&&";
+        case TokenKind::EqEq: return "==";
+        case TokenKind::Ne: return "!=";
+        case TokenKind::Lt: return "<";
+        case TokenKind::Le: return "<=";
+        case TokenKind::Gt: return ">";
+        case TokenKind::Ge: return ">=";
+        case TokenKind::Plus: return "+";
+        case TokenKind::Minus: return "-";
+        case TokenKind::Star: return "*";
+        case TokenKind::Slash: return "/";
+        default: return "%";
+    }
+}
+
 class Lower {
   public:
     Lower(const Ast& ast, const std::vector<Note>& notes, EmitSink& sink,
@@ -20,7 +40,27 @@ class Lower {
     const Expr& at(uint32_t index) const { return ast_.at(index); }
     const Note& note(uint32_t index) const { return notes_[index]; }
 
+    /* the words the next emitted instructions fault under: rule 13, a fault names
+     * its own site — every instruction carries one, none defaulted, none shared */
+    void site(const std::string& what, size_t at) {
+        site_what_ = what;
+        site_at_ = at;
+    }
+
     void emit(OpCode op, uint32_t a = 0, uint32_t b = 0, uint16_t small = 0) {
+        Instruction ins;
+        ins.op = op;
+        ins.a = a;
+        ins.b = b;
+        ins.small = small;
+        ins.c = sink_.add_fault_site(
+            "expr_fault", "'" + site_what_ + "' at column " +
+                              std::to_string(site_at_ + 1) + " could not run");
+        code_->push_back(ins);
+    }
+
+    /* Iterate registers its own richer site immediately after emitting */
+    void emit_unsited(OpCode op, uint32_t a, uint32_t b, uint16_t small) {
         Instruction ins;
         ins.op = op;
         ins.a = a;
@@ -38,24 +78,29 @@ class Lower {
         const Expr& expr = at(index);
         switch (expr.kind) {
             case ExprKind::Number:
+                site("a value", expr.at);
                 emit(OpCode::Const, sink_.add_constant(Value::number(expr.number)));
                 pushed();
                 return;
             case ExprKind::Text:
+                site("a value", expr.at);
                 emit(OpCode::Const,
                      sink_.add_constant(Value::text(sink_.add_text(expr.text))));
                 pushed();
                 return;
             case ExprKind::BoolLit:
+                site("a value", expr.at);
                 emit(OpCode::Const,
                      sink_.add_constant(Value::boolean(expr.number != 0)));
                 pushed();
                 return;
             case ExprKind::ColorLit:
+                site("a value", expr.at);
                 emit(OpCode::Const, sink_.add_constant(Value::color(note(index).rgba)));
                 pushed();
                 return;
             case ExprKind::Variant:
+                site("a value", expr.at);
                 emit(OpCode::Const,
                      sink_.add_constant(Value::enumeration(note(index).variant,
                                                            note(index).variant_type)));
@@ -66,6 +111,7 @@ class Lower {
                 for (uint32_t child : expr.args) walk(child);
                 /* the literal's elements land in the run's scratch pool, so the site
                    reserves them like every other list-producing site does */
+                site("[]", expr.at);
                 sink_.reserve_elems(count, 0);
                 emit(OpCode::MakeList, 0, count);
                 if (count) depth_ -= count - 1;   /* the elements collapse into one */
@@ -74,6 +120,7 @@ class Lower {
             }
             case ExprKind::Prefix:
                 walk(expr.a);
+                site(expr.op == TokenKind::Minus ? "-" : "!", expr.at);
                 emit(expr.op == TokenKind::Minus ? OpCode::Neg : OpCode::Not);
                 return;
             case ExprKind::Binary:
@@ -85,6 +132,7 @@ class Lower {
                 walk(expr.a);
                 walk(expr.b);
                 walk(expr.c);
+                site("?:", expr.at);
                 emit(OpCode::Method, 0, 2, static_cast<uint16_t>(MethodId::BoolPick));
                 if (depth_ >= 2) depth_ -= 2;
                 return;
@@ -92,10 +140,11 @@ class Lower {
                 const BuiltinSpec& spec = *note(index).builtin;
                 for (uint32_t child : expr.args) walk(child);
                 const uint32_t argc = static_cast<uint32_t>(expr.args.size());
-                const uint32_t site =
+                site(expr.text, expr.at);
+                const uint32_t text_site =
                     spec.result == Shape::Text ? sink_.alloc_text_slot() : 0;
                 if (spec.result == Shape::List) sink_.reserve_elems(kVarrCeiling, 0);
-                emit(OpCode::Call, site, argc, static_cast<uint16_t>(spec.builtin));
+                emit(OpCode::Call, text_site, argc, static_cast<uint16_t>(spec.builtin));
                 if (argc) depth_ -= argc - 1;
                 return;
             }
@@ -114,6 +163,7 @@ class Lower {
 
     void load(uint32_t index) {
         const Place& place = note(index).place;
+        site(at(index).text, at(index).at);
         /* a TEXT clock field (time.text / time.date) renders into a fixed slot of
            its own, reserved per read site like any text-producing call */
         if (place.load == OpCode::ClockRead && place.type.kind == Shape::Text)
@@ -133,6 +183,7 @@ class Lower {
         if (expr.kind == ExprKind::Index) {
             walk(expr.a);
             walk(expr.b);
+            site("[]", expr.at);
             emit(OpCode::Index);
             --depth_;
             return;
@@ -140,6 +191,7 @@ class Lower {
         /* a Member the checker resolved past Load: is / iterate / a table method */
         walk(expr.a);
         if (mark.op == Note::Op::IsVariant) {
+            site("is", expr.at);
             emit(OpCode::Const, sink_.add_constant(Value::enumeration(
                                     mark.variant, mark.variant_type)));
             pushed();
@@ -154,17 +206,18 @@ class Lower {
         const MethodSpec& spec = *mark.method;
         for (uint32_t child : expr.args) walk(child);
         const uint32_t argc = static_cast<uint32_t>(expr.args.size());
+        site(expr.text, expr.at);
         /* a text-producing site owns one fixed slot for its result, assigned here so
          * runtime text costs no allocation and no cursor; a list-producing site
          * reserves its worst case in the element pool */
-        const uint32_t site =
+        const uint32_t text_site =
             spec.result == Shape::Text ? sink_.alloc_text_slot() : 0;
         if (spec.result == Shape::List) {
             const bool split = spec.method == MethodId::TextSplit;
             sink_.reserve_elems(split ? kSplitCeiling : kVarrCeiling,
                                 split ? kSplitCeiling : 0);
         }
-        emit(OpCode::Method, site, argc, static_cast<uint16_t>(spec.method));
+        emit(OpCode::Method, text_site, argc, static_cast<uint16_t>(spec.method));
         if (argc) depth_ -= argc;
     }
 
@@ -211,7 +264,8 @@ class Lower {
                 mark.mode == IterateMode::Map && body_shape == Shape::Text;
             sink_.reserve_elems(kVarrCeiling, texts ? kVarrCeiling : 0);
         }
-        emit(OpCode::Iterate, sub, kVarrCeiling, static_cast<uint16_t>(mark.mode));
+        emit_unsited(OpCode::Iterate, sub, kVarrCeiling,
+                     static_cast<uint16_t>(mark.mode));
         /* THE TRIP BOUND IS A FAULT, not a clip: a source that outruns the scratch
            this site reserved cannot be iterated at all, and half a fold is a wrong
            number nobody would see. The site names the limit so the finding reads as
@@ -232,12 +286,14 @@ class Lower {
         const TokenKind op = expr.op;
         if (op == TokenKind::OrOr || op == TokenKind::KwOr) {
             walk(expr.a);
+            site("||", expr.at);
             const uint32_t base = depth_ - 1;
             emit(OpCode::Not);
             const uint32_t branch = static_cast<uint32_t>(code_->size());
             emit(OpCode::JmpFalse);
             --depth_;
             walk(expr.b);
+            site("||", expr.at);
             const uint32_t done = static_cast<uint32_t>(code_->size());
             emit(OpCode::Jmp);
             (*code_)[branch].a = static_cast<uint32_t>(code_->size());
@@ -249,11 +305,13 @@ class Lower {
         }
         if (op == TokenKind::AndAnd || op == TokenKind::KwAnd) {
             walk(expr.a);
+            site("&&", expr.at);
             const uint32_t base = depth_ - 1;
             const uint32_t branch = static_cast<uint32_t>(code_->size());
             emit(OpCode::JmpFalse);
             --depth_;
             walk(expr.b);
+            site("&&", expr.at);
             const uint32_t done = static_cast<uint32_t>(code_->size());
             emit(OpCode::Jmp);
             (*code_)[branch].a = static_cast<uint32_t>(code_->size());
@@ -265,6 +323,7 @@ class Lower {
         }
         walk(expr.a);
         walk(expr.b);
+        site(op_word(op), expr.at);
         if (mark.op == Note::Op::TextJoin) {
             emit(OpCode::Method, sink_.alloc_text_slot(), 1,
                  static_cast<uint16_t>(MethodId::TextConcat));
@@ -303,6 +362,8 @@ class Lower {
     std::vector<Instruction>* code_;
     uint32_t depth_ = 0;
     uint32_t max_ = 0;
+    std::string site_what_ = "a value";
+    size_t site_at_ = 0;
 };
 
 } // namespace

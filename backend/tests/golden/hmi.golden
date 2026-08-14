@@ -6668,149 +6668,149 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
 }
 == program failed ==
 flow 116 node 116 event select worst 5
-  0 LOAD_ARG
-  1 STORE 45 0 5
-  2 LOAD_ARG
-  3 RAISE 0 1 6
+  0 LOAD_ARG 0 0 45
+  1 STORE 45 0 46
+  2 LOAD_ARG 0 0 47
+  3 RAISE 0 1 48
   4 HALT
 flow 138 node 138 event tap worst 8
-  0 LOAD 76 0 0
-  1 NOT
-  2 STORE 176 0 7
-  3 LOAD 176 0 0
-  4 STORE 76 0 8
-  5 LOAD 176 0 0
-  6 RAISE 1 1 9
+  0 LOAD 76 0 49
+  1 NOT 0 0 50
+  2 STORE 176 0 51
+  3 LOAD 176 0 52
+  4 STORE 76 0 53
+  5 LOAD 176 0 54
+  6 RAISE 1 1 55
   7 HALT
 flow 567 node 567 event every:567 worst 6
-  0 LOAD 163 0 0
-  1 LOAD 166 0 0
-  2 LOAD 165 0 0
-  3 MUL
-  4 APPEND 164 10 0
+  0 LOAD 163 0 56
+  1 LOAD 166 0 57
+  2 LOAD 165 0 58
+  3 MUL 0 0 59
+  4 APPEND 164 60 0
   5 HALT
 flow 99 node 70 event pressrelease worst 2
-  0 FAULT 11 0 0
+  0 FAULT 61 0 0
   1 HALT
 flow 288 node 70 event every:288 worst 2
-  0 FAULT 12 0 0
+  0 FAULT 62 0 0
   1 HALT
 flow 296 node 255 event pressrelease worst 2
-  0 FAULT 13 0 0
+  0 FAULT 63 0 0
   1 HALT
 flow 299 node 298 event pressrelease worst 2
-  0 FAULT 14 0 0
+  0 FAULT 64 0 0
   1 HALT
 flow 302 node 301 event pressrelease worst 2
-  0 FAULT 15 0 0
+  0 FAULT 65 0 0
   1 HALT
 flow 118 node 116 event changed worst 3
-  0 LOAD_ARG
-  1 STORE 177 0 16
+  0 LOAD_ARG 0 0 66
+  1 STORE 177 0 67
   2 HALT
 flow 192 node 186 event release worst 2
-  0 TMR_CANCEL 0 0 17
+  0 TMR_CANCEL 0 0 68
   1 HALT
 flow 193 node 186 event press worst 2
-  0 FAULT 19 0 0
+  0 FAULT 70 0 0
   1 HALT
 flow 198 node 186 event timer:194 worst 2
-  0 FAULT 20 0 0
+  0 FAULT 71 0 0
   1 HALT
 flow 498 node 487 event press worst 2
-  0 FAULT 21 0 0
+  0 FAULT 72 0 0
   1 HALT
 flow 140 node 138 event changed worst 2
-  0 FAULT 22 0 0
+  0 FAULT 73 0 0
   1 HALT
 flow 475 node 360 event pressrelease worst 2
-  0 FAULT 23 0 0
+  0 FAULT 74 0 0
   1 HALT
 flow 458 node 370 event pressrelease worst 10
-  0 CONST 21 0 0
-  1 NEG
-  2 LOAD_ARG
-  3 CONST 22 0 0
-  4 CONST 5 0 0
-  5 METHOD small 9 0 2 0
-  6 MUL
-  7 REPEAT_READ
-  8 STORE_INDEX 0 24 0
+  0 CONST 21 0 75
+  1 NEG 0 0 76
+  2 LOAD_ARG 0 0 77
+  3 CONST 22 0 78
+  4 CONST 5 0 79
+  5 METHOD small 9 0 2 80
+  6 MUL 0 0 81
+  7 REPEAT_READ 0 0 82
+  8 STORE_INDEX 0 83 0
   9 HALT
 flow 460 node 366 event pressrelease worst 9
-  0 CONST 21 0 0
-  1 LOAD_ARG
-  2 CONST 22 0 0
-  3 CONST 5 0 0
-  4 METHOD small 9 0 2 0
-  5 MUL
-  6 REPEAT_READ
-  7 STORE_INDEX 0 25 0
+  0 CONST 21 0 84
+  1 LOAD_ARG 0 0 85
+  2 CONST 22 0 86
+  3 CONST 5 0 87
+  4 METHOD small 9 0 2 88
+  5 MUL 0 0 89
+  6 REPEAT_READ 0 0 90
+  7 STORE_INDEX 0 91 0
   8 HALT
 flow 583 node 581 event release worst 2
-  0 TMR_CANCEL 2 0 26
+  0 TMR_CANCEL 2 0 92
   1 HALT
 flow 585 node 581 event press worst 2
-  0 FAULT 28 0 0
+  0 FAULT 94 0 0
   1 HALT
 flow 587 node 581 event timer:582 worst 2
-  0 FAULT 29 0 0
+  0 FAULT 95 0 0
   1 HALT
 flow 163 node 162 event tap worst 2
-  0 FAULT 31 0 0
+  0 FAULT 97 0 0
   1 HALT
 flow 166 node 165 event press worst 2
-  0 FAULT 32 0 0
+  0 FAULT 98 0 0
   1 HALT
 flow 181 node 179 event tap worst 2
-  0 FAULT 33 0 0
+  0 FAULT 99 0 0
   1 HALT
 flow 464 node 462 event pressrelease worst 3
-  0 LOAD_ARG
-  1 STORE 1 0 34
+  0 LOAD_ARG 0 0 100
+  1 STORE 1 0 101
   2 HALT
 flow 472 node 462 event held worst 2
-  0 FAULT 35 0 0
+  0 FAULT 102 0 0
   1 HALT
 flow 506 node 462 event press worst 2
-  0 FAULT 36 0 0
+  0 FAULT 103 0 0
   1 HALT
 flow 508 node 462 event release worst 2
-  0 FAULT 37 0 0
+  0 FAULT 105 0 0
   1 HALT
 flow 571 node 570 event tap worst 2
-  0 FAULT 39 0 0
+  0 FAULT 107 0 0
   1 HALT
 slot node 70 moving cell 7 every_tick
   0 LOAD 3 0 0
-  1 STORE 7 0 0
+  1 STORE 7 0 1
   2 HALT
 slot node 186 holdProgress cell 55 every_tick
-  0 TMR_READ
-  1 TMR_READ 0 3 0
-  2 CONST 5 0 0
-  3 METHOD small 9 0 2 0
-  4 STORE 55 0 1
+  0 TMR_READ 0 0 7
+  1 TMR_READ 0 3 8
+  2 CONST 5 0 9
+  3 METHOD small 9 0 2 10
+  4 STORE 55 0 11
   5 HALT
 slot node 138 track_color cell 78 every_tick
-  0 TMR_READ 1 0 0
-  1 CONST 8 0 0
-  2 CONST 9 0 0
-  3 METHOD small 9 0 2 0
-  4 STORE 78 0 2
+  0 TMR_READ 1 0 14
+  1 CONST 8 0 15
+  2 CONST 9 0 16
+  3 METHOD small 9 0 2 17
+  4 STORE 78 0 18
   5 HALT
 slot node 581 holdProgress cell 110 every_tick
-  0 TMR_READ 2 0 0
-  1 TMR_READ 2 3 0
-  2 CONST 5 0 0
-  3 METHOD small 9 0 2 0
-  4 STORE 110 0 3
+  0 TMR_READ 2 0 25
+  1 TMR_READ 2 3 26
+  2 CONST 5 0 27
+  3 METHOD small 9 0 2 28
+  4 STORE 110 0 29
   5 HALT
 slot node 179 text cell 138 every_tick
-  0 LOAD 133 0 0
-  1 CONST 17 0 0
-  2 METHOD small 16 36 1 0
-  3 CONST 18 0 0
-  4 METHOD small 49 37 1 0
-  5 STORE 138 0 4
+  0 LOAD 133 0 35
+  1 CONST 17 0 36
+  2 METHOD small 16 36 1 37
+  3 CONST 18 0 38
+  4 METHOD small 49 37 1 39
+  5 STORE 138 0 40
   6 HALT

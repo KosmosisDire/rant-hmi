@@ -43,11 +43,11 @@ want bool true
 # an unknown CONDITION faults the branch, so the same expression reversed dies.
 == unknown left of a disjunction faults
 expr (1 / 0 > 0) || true
-fault (unregistered)
+fault expr_fault
 
 == unknown left of a conjunction faults
 expr (1 / 0 > 0) && true
-fault (unregistered)
+fault expr_fault
 
 == less
 expr 1 < 2
