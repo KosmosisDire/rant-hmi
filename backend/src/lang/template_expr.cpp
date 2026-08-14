@@ -507,12 +507,16 @@ class ViewLower {
                 emit_load(bare->cell);
                 return true;
             }
-        std::string qualified = name;
+        /* the view holds no types by design: a mesh read is the served CELL the
+           spelled address names, so the members extend the ADDRESS until a served
+           row answers (the scalar tier's field TREE has no counterpart here — this
+           whole dialect dies at stage 7) */
+        std::string address = name;
         while (next < ops.size() && at(ops[next]).kind == ExprKind::Member) {
             const Expr& member = at(ops[next]);
-            qualified += "." + member.text;
+            address += "." + member.text;
             ++next;
-            if (const TemplateMeshField* field = scope_.mesh_field(qualified)) {
+            if (const TemplateMeshField* field = scope_.mesh_field(address)) {
                 /* parentheses cannot follow a field */
                 if (member.called) return fail("unexpected '('", member.name_after);
                 scope_.read_mesh(*field);
@@ -521,9 +525,9 @@ class ViewLower {
             }
             if (member.called) break;
         }
-        if (qualified != name) {
+        if (address != name) {
             const Expr& last = at(ops[next - 1]);
-            return fail("unknown field '" + qualified + "'",
+            return fail("unknown field '" + address + "'",
                         last.called ? last.name_after : last.after);
         }
         return fail(fielded ? "'" + name + "' is a whole message; pick a field (" +

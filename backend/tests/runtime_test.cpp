@@ -355,6 +355,29 @@ void test_expression_rejection() {
     error.clear();
     CHECK(!compile_expr("\"open", ExprTier::Wire, scope, program, code, result, error));
     CHECK(code.empty());
+
+    /* THE FIELD TREE (spec 6.2): a `.` is one postfix op, resolved one level at a
+       time against the fields the current node declares — a nested leaf reads
+       through its interior nodes, a read that ends ON a struct teaches a field,
+       and a miss names exactly what missed */
+    scope.bind_field("m", "pos.x", Place{Type(Shape::Num), OpCode::Load, 0, 0});
+    error.clear();
+    code.clear();
+    CHECK_MSG(compile_expr("m.pos.x + 1", ExprTier::Display, scope, program, code,
+                           result, error), error);
+    CHECK(result.shape == Shape::Num);
+    error.clear();
+    code.clear();
+    CHECK(!compile_expr("m.pos", ExprTier::Display, scope, program, code, result,
+                        error));
+    CHECK_MSG(error.find("is a struct; pick a field (m.pos.x)") != std::string::npos,
+              error);
+    error.clear();
+    code.clear();
+    CHECK(!compile_expr("m.pos.y", ExprTier::Display, scope, program, code, result,
+                        error));
+    CHECK_MSG(error.find("unknown field 'm.pos.y'") != std::string::npos, error);
+    CHECK(code.empty());
 }
 
 void test_tiers() {
@@ -1007,7 +1030,7 @@ void test_standing_slots() {
     CHECK(broken_cell >= 0 && empty.values[broken_cell].tag == ValueTag::Nil);
 }
 
-/* A WHOLE entity's fields in one expression: each read is its own qualified name off
+/* A WHOLE entity's fields in one expression: each read is its own field cell off
  * the last-value cache, so a struct comes in as whatever the expression makes of it
  * (a color struct as a color). */
 void test_whole_source() {

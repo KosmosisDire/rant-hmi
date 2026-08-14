@@ -32,12 +32,22 @@ struct Place {
     uint32_t b = 0;
 };
 
+/* One node of an object's FIELD TREE. A `.` is one postfix op: each member of a
+ * dotted read resolves against the kids the current node declares, one level at a
+ * time — never against an accumulated path string. A node with a place is a LEAF
+ * the read may end on; a node with kids is a STRUCT whose fields are the kids. */
+struct FieldNode {
+    std::optional<Place> place;
+    std::map<std::string, FieldNode> kids;
+};
+
 struct HostObject {
     /* the bare read of the name itself; absent where the object reads only by field
      * (the clock, a timer, a whole-message entity) */
     std::optional<Place> value;
-    /* dotted paths under the name ("running", "pos.x", "bar.fill_color") */
-    std::map<std::string, Place> fields;
+    /* the field tree under the name: the binder spells paths dotted
+     * ("running", "pos.x", "bar.fill_color") and bind_field files them recursively */
+    FieldNode fields;
     /* what reading the bare name of a fields-only object teaches, in the binder's
      * words ("'time' reads by field (time.now / ...)"). Empty = the checker's
      * generic whole-message refusal. */
@@ -62,7 +72,12 @@ struct Env {
         objects[name].value = std::move(place);
     }
     void bind_field(const std::string& root, const std::string& path, Place place) {
-        objects[root].fields[path] = std::move(place);
+        FieldNode* node = &objects[root].fields;
+        size_t start = 0;
+        for (size_t dot = path.find('.'); dot != std::string::npos;
+             start = dot + 1, dot = path.find('.', start))
+            node = &node->kids[path.substr(start, dot - start)];
+        node->kids[path.substr(start)].place = std::move(place);
     }
     void refuse(const std::string& word, std::string why) {
         refused[word] = std::move(why);

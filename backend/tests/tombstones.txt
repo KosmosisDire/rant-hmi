@@ -43,3 +43,9 @@ spec->property
 # wrong variant is a finding now, never a fault. The number/text equality leniencies
 # went with it (.int() / .name() spell the intent).
 EnumFromName
+
+# stage 4, recursive field access: the scalar tier's accumulated-path string walk
+# died — an object's fields are a recursive TREE (env.h FieldNode) and a `.` is one
+# postfix op resolved a level at a time. The word below was the old walk's variable;
+# the view tier spells its remaining name-walk `address`, which is what it emits.
+qualified

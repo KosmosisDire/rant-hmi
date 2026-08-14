@@ -195,7 +195,7 @@ class Parser {
 
     /* is the postfix chain under `index` a plain dotted name — a Name or entity head
      * reached only through uncalled members? Those dots read as FIELD access (the
-     * qualified walk); everything else's read as a method. */
+     * field-tree walk); everything else's read as a method. */
     bool plain_names(uint32_t index) const {
         const Expr& expr = out_.nodes[index];
         if (expr.kind == ExprKind::Name || expr.kind == ExprKind::EntityRef)

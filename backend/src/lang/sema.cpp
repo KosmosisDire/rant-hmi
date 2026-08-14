@@ -453,7 +453,7 @@ class Sema {
         const bool bound = object != env_.objects.end();
         const bool has_value = bound && object->second.value.has_value();
         const bool fielded =
-            bound && (!object->second.fields.empty() ||
+            bound && (!object->second.fields.kids.empty() ||
                       (has_value && object->second.value->type.kind == Shape::Struct));
         const bool dotted = !ops.empty() && at(ops[0]).kind == ExprKind::Member;
 
@@ -485,9 +485,13 @@ class Sema {
                 return Type();
             }
 
-        /* the dotted walk: member names extend the path until a field answers, a
-           refusal answers, or the names run out. A called member still spends its
-           name — parentheses cannot follow a field — and ends the walk. */
+        /* THE DOTTED WALK: a `.` is one postfix op, each member resolved against the
+           fields the CURRENT NODE declares — one level of the object's field tree at
+           a time, never an accumulated path string. A leaf answers the read; an
+           interior node is a struct the walk descends into; a called member still
+           spends its name — parentheses cannot follow a field. `path` only SPELLS
+           what was walked, for the refusal registry and the messages. */
+        const FieldNode* node = bound ? &object->second.fields : nullptr;
         std::string path;
         size_t last_after = head.after;
         while (next < ops.size() && at(ops[next]).kind == ExprKind::Member) {
@@ -495,41 +499,60 @@ class Sema {
             path += (path.empty() ? "" : ".") + member.text;
             ++next;
             last_after = member.after;
-            if (bound) {
-                const auto field = object->second.fields.find(path);
-                if (field != object->second.fields.end()) {
-                    if (member.called) {
-                        fail("unexpected '('", member.name_after);
-                        return Type();
-                    }
-                    const uint32_t landed = ops[next - 1];
-                    Note& mark = note(landed);
-                    mark.op = Note::Op::Load;
-                    mark.place = field->second;
-                    mark.type = mark.place.type;
-                    return mark.type;
+            const FieldNode* kid = nullptr;
+            if (node) {
+                const auto found = node->kids.find(member.text);
+                if (found != node->kids.end()) kid = &found->second;
+            }
+            if (kid && kid->place) {
+                if (member.called) {
+                    fail("unexpected '('", member.name_after);
+                    return Type();
                 }
+                const uint32_t landed = ops[next - 1];
+                Note& mark = note(landed);
+                mark.op = Note::Op::Load;
+                mark.place = *kid->place;
+                mark.type = mark.place.type;
+                return mark.type;
             }
             /* refused AT THIS DEPTH — a slot address may itself carry dots, and
                "unknown field" would send the author hunting a typo in a name
-               spelled right */
+               spelled right. Checked before the miss verdict so a refused word
+               deeper down still answers in its own words. */
             if (const auto no = env_.refused.find(name + "." + path);
                 no != env_.refused.end()) {
                 fail(no->second, member.after);
                 return Type();
             }
+            if (kid && !member.called) {
+                /* an interior node: a struct, walked one more level */
+                node = kid;
+                continue;
+            }
+            /* nothing by this name here: keep spelling members out only to probe
+               the refusal registry's deeper keys, then miss as a whole */
+            node = nullptr;
             if (member.called) break;
         }
 
         if (!path.empty()) {
             /* THE PREFIX MOVED: an instance's own slot is `this.<slot>` in both
                tiers. Refusing by name is what teaches the spelling. */
-            const std::string qualified = name + "." + path;
-            if (name == "widget")
+            if (name == "widget") {
                 fail("'widget." + path + "' is spelled 'this." + path + "' now",
                      last_after);
-            else
-                fail("unknown field '" + qualified + "'", last_after);
+                return Type();
+            }
+            if (node && !node->kids.empty()) {
+                /* the read ENDED on a struct: real, just not a value — teach a
+                   field that is one */
+                fail("'" + name + "." + path + "' is a struct; pick a field (" +
+                         name + "." + path + "." + node->kids.begin()->first + ")",
+                     last_after);
+                return Type();
+            }
+            fail("unknown field '" + name + "." + path + "'", last_after);
             return Type();
         }
 
