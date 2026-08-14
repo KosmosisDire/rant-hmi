@@ -886,13 +886,13 @@ function stepCell(
   if (GUARD_KINDS.some((g) => g.value === step.kind)) {
     const amount = numberInput(Number(step.a ?? 0), (a) => set("a", a), { class: "field num" });
     bindField(step.id + ":a", amount, () => String(Number(at().a ?? 0)));
-    const wordy: Record<string, [string, string]> = {
+    const labels: Record<string, [string, string]> = {
       deadband: ["moved by", ""],
       throttle: ["1 per", "ms"],
       debounce: ["", "ms quiet"],
       delay: ["", "ms"],
     };
-    const [before, after] = wordy[step.kind] ?? ["", ""];
+    const [before, after] = labels[step.kind] ?? ["", ""];
     if (before) cell.appendChild(el("span", { class: "op", text: before }));
     cell.appendChild(amount);
     if (after) cell.appendChild(el("span", { class: "op", text: after }));

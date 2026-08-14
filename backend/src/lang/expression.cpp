@@ -625,7 +625,8 @@ class Parser {
 
     Shape parse_or() {
         Shape left = parse_and();
-        while (error_.empty() && token_.kind == TokenKind::OrOr) {
+        while (error_.empty() &&
+               (token_.kind == TokenKind::OrOr || token_.kind == TokenKind::KwOr)) {
             if (!require(left, Shape::Bool, "||")) return Shape::Unknown;
             advance();
             const uint32_t base = depth_ - 1;
@@ -649,7 +650,8 @@ class Parser {
 
     Shape parse_and() {
         Shape left = parse_compare();
-        while (error_.empty() && token_.kind == TokenKind::AndAnd) {
+        while (error_.empty() &&
+               (token_.kind == TokenKind::AndAnd || token_.kind == TokenKind::KwAnd)) {
             if (!require(left, Shape::Bool, "&&")) return Shape::Unknown;
             advance();
             const uint32_t base = depth_ - 1;
@@ -819,7 +821,7 @@ class Parser {
             emit(OpCode::Neg);
             return Shape::Num;
         }
-        if (token_.kind == TokenKind::Bang) {
+        if (token_.kind == TokenKind::Bang || token_.kind == TokenKind::KwNot) {
             advance();
             Shape shape = parse_unary();
             require(shape, Shape::Bool, "!");
@@ -857,12 +859,9 @@ class Parser {
                 continue;
             }
             advance();
-            /* the word operators still name methods after a dot: `x.not()` stands */
-            const bool wordy = (token_.kind == TokenKind::Bang ||
-                                token_.kind == TokenKind::AndAnd ||
-                                token_.kind == TokenKind::OrOr) &&
-                               !token_.text.empty();
-            if (token_.kind != TokenKind::Ident && !wordy) {
+            /* a keyword after a dot is just a name: `x.not()` stands */
+            if (token_.kind != TokenKind::Ident && token_.kind != TokenKind::KwAnd &&
+                token_.kind != TokenKind::KwOr && token_.kind != TokenKind::KwNot) {
                 fail("expected a method after '.'");
                 return Shape::Unknown;
             }

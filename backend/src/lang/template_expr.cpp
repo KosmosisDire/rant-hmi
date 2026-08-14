@@ -154,7 +154,8 @@ class Parser {
      * effects, no faults), and Nil still poisons through the picked side. */
     void parse_or() {
         parse_and();
-        while (error_.empty() && token_.kind == TokenKind::OrOr) {
+        while (error_.empty() &&
+               (token_.kind == TokenKind::OrOr || token_.kind == TokenKind::KwOr)) {
             advance();
             emit_const(true);          /* a || b == a.pick(true, b) */
             parse_and();
@@ -164,7 +165,8 @@ class Parser {
 
     void parse_and() {
         parse_compare();
-        while (error_.empty() && token_.kind == TokenKind::AndAnd) {
+        while (error_.empty() &&
+               (token_.kind == TokenKind::AndAnd || token_.kind == TokenKind::KwAnd)) {
             advance();
             parse_compare();           /* a && b == a.pick(b, false) */
             emit_const(false);
@@ -221,7 +223,7 @@ class Parser {
             emit("NEG");
             return;
         }
-        if (token_.kind == TokenKind::Bang) {
+        if (token_.kind == TokenKind::Bang || token_.kind == TokenKind::KwNot) {
             advance();
             parse_unary();
             emit("NOT");

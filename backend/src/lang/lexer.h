@@ -43,6 +43,13 @@ enum class TokenKind {
     Ge,
     AndAnd,
     OrOr,
+    /* the word spellings of the boolean operators (spec 6.2), as REAL KEYWORD
+     * tokens rather than a lexer rewrite into the symbol kinds: `a and not b`
+     * reads the way an operator writes it, and a parser that meets one after a
+     * dot still has the word — a method named `not` stays a name. */
+    KwAnd,
+    KwOr,
+    KwNot,
     /* the conditional operator, `c ? a : b` (spec 6.2). Both tiers lower it to the same
      * thing `.pick()` already lowers to, so it is surface sugar over machinery that was
      * always there -- no opcode, no VM case, no view-interpreter case. */
@@ -58,7 +65,11 @@ struct Token {
     TokenKind kind = TokenKind::End;
     std::string text;
     double number = 0;
+    /* the SPAN in the source: [at, at + length). `length` counts source
+     * characters (a string token spans its quotes and escapes), so a diagnostic
+     * can underline exactly what was written. */
     size_t at = 0;
+    size_t length = 0;
 };
 
 class Lexer {
@@ -68,6 +79,7 @@ class Lexer {
     Token next();
 
   private:
+    Token scan();
     Token number();
     Token ident();
     Token theme();

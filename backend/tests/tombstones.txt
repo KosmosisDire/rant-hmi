@@ -6,5 +6,6 @@
 # blank lines are ignored; a hit anywhere in backend/src, backend/tests,
 # frontend/src, frontend/test or tools fails the test.
 #
-# Born empty: the first burials land with stage 1 (the lexer) and stage 2
-# (the language core).
+# stage 1, the lexer: the parser-side test for "was this operator token spelled
+# as a word" — real keyword tokens (KwAnd/KwOr/KwNot) carry the fact now
+wordy
