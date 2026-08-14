@@ -3,12 +3,12 @@
 
 == map transforms each element
 env temps: list(num) = [1, 2, 3]
-expr temps.map(v => v * 10).sum
+expr temps.map(v => v * 10).sum()
 want num 60
 
 == map may take the index
 env temps: list(num) = [5, 5, 5]
-expr temps.map((v, i) => v * i).sum
+expr temps.map((v, i) => v * i).sum()
 want num 15
 
 == map to text re-homes each result
@@ -18,12 +18,12 @@ want text "1s,2s"
 
 == filter keeps what passes
 env temps: list(num) = [5, 15, 25]
-expr temps.filter(v => v > 10).sum
+expr temps.filter(v => v > 10).sum()
 want num 40
 
 == filter keeps the element shape for the chain
 env temps: list(num) = [5, 15, 25]
-expr temps.filter(v => v > 10).first
+expr temps.filter(v => v > 10).first()
 want num 15
 
 == any finds a witness
@@ -53,7 +53,7 @@ want text "30,20,10"
 
 == sortBy over text keys
 env names: list(text) = ["bb", "a", "ccc"]
-expr names.sortBy(v => v.length).join(",")
+expr names.sortBy(v => v.length()).join(",")
 want text "a,bb,ccc"
 
 == reduce folds with its starting value
@@ -77,13 +77,13 @@ want num 7
 
 == the chain composes
 env temps: list(num) = [1, 2, 3, 4]
-expr temps.filter(v => v % 2 == 0).map(v => v * v).sum
+expr temps.filter(v => v % 2 == 0).map(v => v * v).sum()
 want num 20
 
 == iteration is wire-legal when the result folds
 tier wire
 env temps: list(num) = [1, 2, 3]
-expr temps.filter(v => v > 1).sum
+expr temps.filter(v => v > 1).sum()
 want num 5
 
 == a mapped list is one scalar short of the wire

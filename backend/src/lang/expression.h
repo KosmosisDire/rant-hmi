@@ -49,8 +49,6 @@ struct LangRow {
     const char* args[5] = {};
     const char* result = "";
     bool display_only = false;
-    /* method rows: a property reads bare (x.length); a method is called (x.trim()) */
-    bool property = false;
     /* does the VIEW tier (template_expr.cpp) have an encoding for this row at all --
      * NOT the same question `display_only` answers. Autocomplete in an ATTRIBUTE
      * field must offer exactly the rows where this is true. */
@@ -78,7 +76,6 @@ struct ViewMethod {
     bool known = false;
     const char* op = "";
     bool bespoke = false;
-    bool property = false;
     uint32_t args = 0;
 };
 

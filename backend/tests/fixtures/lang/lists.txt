@@ -3,50 +3,50 @@
 # results are observed through folds.
 
 == a literal list sums
-expr [1, 2, 3].sum
+expr [1, 2, 3].sum()
 want num 6
 
 == an env list sums
 env temps: list(num) = [10, 20, 30]
-expr temps.sum
+expr temps.sum()
 want num 60
 
 == average
 env temps: list(num) = [10, 20, 30]
-expr temps.avg
+expr temps.avg()
 want num 20
 
 == max
 env temps: list(num) = [10, 40, 30]
-expr temps.max
+expr temps.max()
 want num 40
 
 == min
 env temps: list(num) = [10, 40, 30]
-expr temps.min
+expr temps.min()
 want num 10
 
 == length
 env temps: list(num) = [10, 20, 30]
-expr temps.length
+expr temps.length()
 want num 3
 
 == first
 env temps: list(num) = [10, 20, 30]
-expr temps.first
+expr temps.first()
 want num 10
 
 == last
 env temps: list(num) = [10, 20, 30]
-expr temps.last
+expr temps.last()
 want num 30
 
 == an empty literal sums to zero
-expr [].sum
+expr [].sum()
 want num 0
 
 == first of an empty list is unknown
-expr [].first
+expr [].first()
 want nil
 
 == indexing
@@ -117,16 +117,16 @@ want text "1-2-3"
 
 == sum over text refuses at compile
 env names: list(text) = ["a", "b"]
-expr names.sum
+expr names.sum()
 error needs a list of numbers
 
 == a mixed literal loses its element shape and refuses nothing at compile
-expr [1, "a"].sum
+expr [1, "a"].sum()
 want nil
 
 == the chain keeps the element shape
 env temps: list(num) = [30, 10]
-expr temps.sort().first + 1
+expr temps.sort().first() + 1
 want num 11
 
 == a list is one scalar short of the wire
@@ -138,7 +138,7 @@ error one scalar
 == but a fold of one is wire-legal
 tier wire
 env temps: list(num) = [10, 20]
-expr temps.max + 1
+expr temps.max() + 1
 want num 21
 
 == indexing wants a number

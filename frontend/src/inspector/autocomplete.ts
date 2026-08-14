@@ -297,12 +297,13 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
     if (!m) return current;
     const method = m[0];
     i += m[0].length;
-    /* plain is a property, parens is a method: resolve in the matching class only */
+    /* every method is CALLED -- plain after a dot is a field, and fields were
+       consumed above, so an uncalled trailing name resolves to nothing */
     const called = chain[i] === "(";
     if (called) skipBalanced("(", ")");
+    if (!called) return null;
     const entry = lang?.methods.find(
-      (row) => row.receiver === current!.shape && row.name === method &&
-               !!row.property === !called,
+      (row) => row.receiver === current!.shape && row.name === method,
     );
     if (!entry) return null;
     if (entry.result === "elem") {
@@ -342,13 +343,12 @@ function methodRows(ctx: Scope, receiver: Resolved | null, prefix: string): Row[
     if (wire && entry.tier === "display") continue;
     if (ctx.tier === "attr" && !entry.view) continue;
     if (prefix && !entry.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
-    /* a property inserts bare; a METHOD is always called, so even a no-arg one
-       completes with its parentheses in place */
+    /* a method is always called, so even a no-arg one completes with its
+       parentheses in place */
     out.push({
-      insert: entry.property ? entry.name
-            : entry.name + (entry.args.length ? "(" : "()"),
+      insert: entry.name + (entry.args.length ? "(" : "()"),
       label: entry.name,
-      signature: entry.property ? "" : signature(entry) || "()",
+      signature: signature(entry) || "()",
       result:
         entry.result === "elem" && receiver?.elem ? receiver.elem : entry.result,
       note: receiver ? "" : entry.receiver ?? "",

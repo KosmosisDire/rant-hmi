@@ -582,15 +582,13 @@ class ViewLower {
                         "builtins and the list vocabulary (length / indexOf / sum / "
                         "avg / max / min, indexing, map / filter / reduce)",
                         expr.name_after);
-        if (view.property) {
-            if (expr.called)
-                return fail("'" + name + "' is a property; write it without "
-                            "parentheses (" + name + ")",
-                            expr.name_after);
-            emit(view.op);
-            return true;
-        }
-        if (!expr.called || expr.args.size() != view.args)
+        /* plain after a dot is a FIELD; a method is always CALLED -- the same line
+           the scalar checker holds, worded the same way */
+        if (!expr.called)
+            return fail("'" + name + "' is a method; call it with parentheses (" +
+                            name + "())",
+                        expr.name_after);
+        if (expr.args.size() != view.args)
             return fail(name + " takes " + std::to_string(view.args) + " argument" +
                             (view.args == 1 ? "" : "s"),
                         expr.name_after);
@@ -707,8 +705,8 @@ class ViewLower {
         /* the resolver cells died when options became a LIST: what they computed is
            ordinary list arithmetic now, so the refusal teaches the spelling */
         if (name == "optcount" || name == "optnames" || name == "optfrac") {
-            fail("'" + name + "' is gone: options are a list — write options.length, "
-                 "the list itself, or options.indexOf(value) / (options.length - 1)",
+            fail("'" + name + "' is gone: options are a list — write options.length(), "
+                 "the list itself, or options.indexOf(value) / (options.length() - 1)",
                  expr.name_after);
             return;
         }

@@ -28,12 +28,12 @@ want bool false
 
 == int is the backing value
 env mode: enum(idle, run, fault) = run
-expr mode.int
+expr mode.int()
 want num 1
 
 == name is the variant name
 env mode: enum(idle, run, fault) = run
-expr mode.name
+expr mode.name()
 want text "run"
 
 == str renders the variant name

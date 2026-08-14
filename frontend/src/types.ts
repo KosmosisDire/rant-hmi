@@ -110,7 +110,6 @@ export interface LangEntry {
      this field exists to close. */
   view: boolean;
   receiver?: string;   /* method rows only */
-  property?: boolean;  /* method rows: reads bare (x.length) vs called (x.trim()) */
 }
 
 export interface Lang {

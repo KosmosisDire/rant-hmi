@@ -163,7 +163,7 @@ want text "a"
 
 == bool int
 env on: bool = true
-expr on.int
+expr on.int()
 want num 1
 
 == toFixed refuses on the wire but int does not

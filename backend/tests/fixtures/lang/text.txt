@@ -5,15 +5,15 @@
 expr "hello"
 want text "hello"
 
-== length is a property
+== length is a method
 env note: text = "ready"
-expr note.length
+expr note.length()
 want num 5
 
 == length is wire-legal
 tier wire
 env note: text = "ready"
-expr note.length
+expr note.length()
 want num 5
 
 == upper
@@ -79,7 +79,7 @@ expr "a,b,c".split(",").join("|")
 want text "a|b|c"
 
 == split counts pieces
-expr "a,b,c".split(",").length
+expr "a,b,c".split(",").length()
 want num 3
 
 == concatenation joins text

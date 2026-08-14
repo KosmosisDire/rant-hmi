@@ -3,7 +3,7 @@
 
 == length counts pairs
 env limits: map(num) = {"hi": 10, "lo": 2}
-expr limits.length
+expr limits.length()
 want num 2
 
 == keys come sorted
@@ -13,7 +13,7 @@ want text "hi,lo"
 
 == values ride beside their keys
 env limits: map(num) = {"hi": 10, "lo": 2}
-expr limits.values().sum
+expr limits.values().sum()
 want num 12
 
 == has
@@ -48,12 +48,12 @@ want nil
 
 == map keys builtin
 env limits: map(num) = {"hi": 10, "lo": 2}
-expr keys(limits).length
+expr keys(limits).length()
 want num 2
 
 == map values builtin
 env limits: map(num) = {"hi": 10, "lo": 2}
-expr values(limits).max
+expr values(limits).max()
 want num 10
 
 == a map folds

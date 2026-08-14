@@ -182,20 +182,20 @@ void test_list_vocabulary() {
     CHECK_EQ(lower("options[0][1]", scope),
              "LOAD(slot:options) CONST(0.0) INDEX CONST(1.0) INDEX");
 
-    /* the encoded methods: length is a property, the aggregates are properties, and
-       indexOf is a call — exactly the scalar tier's spellings */
-    CHECK_EQ(lower("options.length", scope), "LOAD(slot:options) LENGTH");
+    /* the encoded methods: length, the aggregates and indexOf are all CALLS —
+       exactly the scalar tier's spellings */
+    CHECK_EQ(lower("options.length()", scope), "LOAD(slot:options) LENGTH");
     CHECK_EQ(lower("options.indexOf(value)", scope),
              "LOAD(slot:options) LOAD(slot:value) INDEX_OF");
-    /* a past is an ordinary LIST property now, so the aggregates read off it by name */
-    CHECK_EQ(lower("history.max", scope), "LOAD(slot:history) LIST_MAX");
-    CHECK_EQ(lower("history.min", scope), "LOAD(slot:history) LIST_MIN");
-    CHECK_EQ(lower("history.sum", scope), "LOAD(slot:history) LIST_SUM");
-    CHECK_EQ(lower("history.avg", scope), "LOAD(slot:history) LIST_AVG");
-    CHECK(refuses("options.length()", scope, "without parentheses"));
+    /* a past is an ordinary LIST property now, so the aggregates are called on it */
+    CHECK_EQ(lower("history.max()", scope), "LOAD(slot:history) LIST_MAX");
+    CHECK_EQ(lower("history.min()", scope), "LOAD(slot:history) LIST_MIN");
+    CHECK_EQ(lower("history.sum()", scope), "LOAD(slot:history) LIST_SUM");
+    CHECK_EQ(lower("history.avg()", scope), "LOAD(slot:history) LIST_AVG");
+    CHECK(refuses("options.length", scope, "call it with parentheses"));
 
     /* the Selector's needle fraction, whole: what optfrac used to be, as arithmetic */
-    CHECK_EQ(lower("max(options.indexOf(value), 0) / max(options.length - 1, 1)", scope),
+    CHECK_EQ(lower("max(options.indexOf(value), 0) / max(options.length() - 1, 1)", scope),
              "LOAD(slot:options) LOAD(slot:value) INDEX_OF CONST(0.0) MAX "
              "LOAD(slot:options) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV");
 
@@ -206,7 +206,7 @@ void test_list_vocabulary() {
     /* the Trend's whole plot: a map from its own history LIST to anchors, the seed of
        the no-privileged-renderer-paths acceptance test */
     CHECK_EQ(lower("history.map((v, i) => anchor("
-                   "i / max(history.length - 1, 1), "
+                   "i / max(history.length() - 1, 1), "
                    "1 - (v - min) / (max - min)))", scope),
              "LOAD(slot:history) ITERATE[MAP]{"
              "ARG(1) LOAD(slot:history) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
@@ -218,7 +218,7 @@ void test_list_vocabulary() {
              "LOAD(slot:options) CONST(\"\") ITERATE[REDUCE]{ARG(0) ARG(1) ADD}");
     CHECK_EQ(lower("options.reduce((acc, v, i) => acc + i, 0)", scope),
              "LOAD(slot:options) CONST(0.0) ITERATE[REDUCE]{ARG(0) ARG(2) ADD}");
-    CHECK_EQ(lower("options.filter(v => v != '').length", scope),
+    CHECK_EQ(lower("options.filter(v => v != '').length()", scope),
              "LOAD(slot:options) ITERATE[FILTER]{ARG(0) CONST(\"\") NE} LENGTH");
     CHECK_EQ(lower("options.any(v => v == value)", scope),
              "LOAD(slot:options) ITERATE[ANY]{ARG(0) LOAD(slot:value) EQ}");
@@ -295,14 +295,14 @@ void test_new_vocabulary() {
     CHECK_EQ(lower("rgb(1, 0, 0, 0.5)", scope),
              "CONST(1.0) CONST(0.0) CONST(0.0) CONST(0.5) RGB");
     CHECK_EQ(lower("hsv(120, 1, 1)", scope), "CONST(120.0) CONST(1.0) CONST(1.0) CONST(1.0) HSV");
-    CHECK_EQ(lower("#ff0000.r", scope), "CONST(\"#ff0000\") COLOR_R");
-    CHECK_EQ(lower("#ff0000.g", scope), "CONST(\"#ff0000\") COLOR_G");
-    CHECK_EQ(lower("#ff0000.b", scope), "CONST(\"#ff0000\") COLOR_B");
-    CHECK_EQ(lower("#ff0000.a", scope), "CONST(\"#ff0000\") COLOR_A");
+    CHECK_EQ(lower("#ff0000.r()", scope), "CONST(\"#ff0000\") COLOR_R");
+    CHECK_EQ(lower("#ff0000.g()", scope), "CONST(\"#ff0000\") COLOR_G");
+    CHECK_EQ(lower("#ff0000.b()", scope), "CONST(\"#ff0000\") COLOR_B");
+    CHECK_EQ(lower("#ff0000.a()", scope), "CONST(\"#ff0000\") COLOR_A");
     CHECK_EQ(lower("#ff0000.alpha(0.5)", scope), "CONST(\"#ff0000\") CONST(0.5) COLOR_ALPHA");
     CHECK_EQ(lower("#ff0000.mix(#0000ff, 0.5)", scope),
              "CONST(\"#ff0000\") CONST(\"#0000ff\") CONST(0.5) COLOR_MIX");
-    CHECK(refuses("#ff0000.r()", scope, "is a property"));
+    CHECK(refuses("#ff0000.r", scope, "is a method"));
     /* invert() is scalar/wire-tier color vocabulary; it stays out of the view (spec
        6.2 -- nothing in this task's fixed list asks for it) */
     CHECK(refuses("#ff0000.invert()", scope, "no encoding in the view"));

@@ -320,10 +320,11 @@ the clamp01 pattern.`,
 ];
 
 /* One row per METHOD: the enum id (`name`, emitted in this order), the receiver
- * shape (`recv`), the surface spelling (`m`), the signature, `display`, `property`
- * (reads bare, never written with parens) and the view opcode. A row with no `recv`
- * is enum-only: an id the emitter uses directly (TextConcat, the color arithmetic)
- * with no surface method behind it. */
+ * shape (`recv`), the surface spelling (`m`), the signature, `display` and the
+ * view opcode. Every method is CALLED — plain after a dot is a field, parens is
+ * work — so there is no bare-reading column. A row with no `recv` is enum-only:
+ * an id the emitter uses directly (TextConcat, the color arithmetic) with no
+ * surface method behind it. */
 const METHODS = [
   { name: "NumRound", recv: "Num", m: "round", args: 1, params: ["Num"], result: "Num" },
   { name: "NumFloor", recv: "Num", m: "floor", args: 0, params: [], result: "Num" },
@@ -332,18 +333,18 @@ const METHODS = [
   { name: "NumClamp", recv: "Num", m: "clamp", args: 2, params: ["Num", "Num"], result: "Num", view: "@" },
   { name: "NumMapRange", recv: "Num", m: "mapRange", args: 4, params: ["Num", "Num", "Num", "Num"], result: "Num" },
   { name: "NumSign", recv: "Num", m: "sign", args: 0, params: [], result: "Num" },
-  { name: "BoolInt", recv: "Bool", m: "int", args: 0, params: [], result: "Num", property: true },
+  { name: "BoolInt", recv: "Bool", m: "int", args: 0, params: [], result: "Num" },
   { name: "BoolNot", recv: "Bool", m: "not", args: 0, params: [], result: "Bool" },
   { name: "BoolPick", recv: "Bool", m: "pick", args: 2, params: ["Unknown", "Unknown"], result: "Unknown", view: "PICK" },
-  { name: "ColorR", recv: "Color", m: "r", args: 0, params: [], result: "Num", property: true, view: "COLOR_R" },
-  { name: "ColorG", recv: "Color", m: "g", args: 0, params: [], result: "Num", property: true, view: "COLOR_G" },
-  { name: "ColorB", recv: "Color", m: "b", args: 0, params: [], result: "Num", property: true, view: "COLOR_B" },
-  { name: "ColorA", recv: "Color", m: "a", args: 0, params: [], result: "Num", property: true, view: "COLOR_A" },
+  { name: "ColorR", recv: "Color", m: "r", args: 0, params: [], result: "Num", view: "COLOR_R" },
+  { name: "ColorG", recv: "Color", m: "g", args: 0, params: [], result: "Num", view: "COLOR_G" },
+  { name: "ColorB", recv: "Color", m: "b", args: 0, params: [], result: "Num", view: "COLOR_B" },
+  { name: "ColorA", recv: "Color", m: "a", args: 0, params: [], result: "Num", view: "COLOR_A" },
   { name: "ColorAlpha", recv: "Color", m: "alpha", args: 1, params: ["Num"], result: "Color", display: true, view: "COLOR_ALPHA" },
   { name: "ColorMix", recv: "Color", m: "mix", args: 2, params: ["Color", "Num"], result: "Color", display: true, view: "COLOR_MIX" },
   { name: "NumToFixed", recv: "Num", m: "toFixed", args: 1, params: ["Num"], result: "Text", display: true, view: "TO_FIXED" },
   {
-    name: "TextLength", recv: "Text", m: "length", args: 0, params: [], result: "Num", property: true, view: "LENGTH",
+    name: "TextLength", recv: "Text", m: "length", args: 0, params: [], result: "Num", view: "LENGTH",
     rc: `text: the predicates and length are wire-legal (a gate may test an alarm
 code); everything text-PRODUCING is formatting and stays display-side`,
   },
@@ -357,30 +358,30 @@ code); everything text-PRODUCING is formatting and stays display-side`,
   { name: "TextContains", recv: "Text", m: "contains", args: 1, params: ["Text"], result: "Bool" },
   { name: "TextReplace", recv: "Text", m: "replace", args: 2, params: ["Text", "Text"], result: "Text", display: true },
   { name: "TextPadStart", recv: "Text", m: "padStart", args: 2, params: ["Num", "Text"], result: "Text", display: true },
-  { name: "EnumInt", recv: "Enum", m: "int", args: 0, params: [], result: "Num", property: true },
-  { name: "EnumName", recv: "Enum", m: "name", args: 0, params: [], result: "Text", property: true },
+  { name: "EnumInt", recv: "Enum", m: "int", args: 0, params: [], result: "Num" },
+  { name: "EnumName", recv: "Enum", m: "name", args: 0, params: [], result: "Text" },
   { name: "TextSplit", recv: "Text", m: "split", args: 1, params: ["Text"], result: "List", display: true },
   {
-    name: "ListLength", recv: "List", m: "length", args: 0, params: [], result: "Num", property: true, view: "LENGTH",
+    name: "ListLength", recv: "List", m: "length", args: 0, params: [], result: "Num", view: "LENGTH",
     rc: `aggregates ride mid-expression on either tier (max over a list is a wire
 value); the wire-result rule alone keeps a LIST from going to a machine.
 LENGTH is receiver-blind in the view: one opcode answers text, list and map
 alike, so the three namesake rows must all carry it -- view_method() is keyed
 on the name alone.`,
   },
-  { name: "ListFirst", recv: "List", m: "first", args: 0, params: [], result: "Unknown", property: true },
-  { name: "ListLast", recv: "List", m: "last", args: 0, params: [], result: "Unknown", property: true },
-  { name: "ListSum", recv: "List", m: "sum", args: 0, params: [], result: "Num", property: true, view: "LIST_SUM" },
-  { name: "ListAvg", recv: "List", m: "avg", args: 0, params: [], result: "Num", property: true, view: "LIST_AVG" },
-  { name: "ListMax", recv: "List", m: "max", args: 0, params: [], result: "Num", property: true, view: "LIST_MAX" },
-  { name: "ListMin", recv: "List", m: "min", args: 0, params: [], result: "Num", property: true, view: "LIST_MIN" },
+  { name: "ListFirst", recv: "List", m: "first", args: 0, params: [], result: "Unknown" },
+  { name: "ListLast", recv: "List", m: "last", args: 0, params: [], result: "Unknown" },
+  { name: "ListSum", recv: "List", m: "sum", args: 0, params: [], result: "Num", view: "LIST_SUM" },
+  { name: "ListAvg", recv: "List", m: "avg", args: 0, params: [], result: "Num", view: "LIST_AVG" },
+  { name: "ListMax", recv: "List", m: "max", args: 0, params: [], result: "Num", view: "LIST_MAX" },
+  { name: "ListMin", recv: "List", m: "min", args: 0, params: [], result: "Num", view: "LIST_MIN" },
   { name: "ListJoin", recv: "List", m: "join", args: 1, params: ["Text"], result: "Text", display: true },
   { name: "ListSort", recv: "List", m: "sort", args: 0, params: [], result: "List" },
   { name: "ListReverse", recv: "List", m: "reverse", args: 0, params: [], result: "List" },
   { name: "ListSlice", recv: "List", m: "slice", args: 2, params: ["Num", "Num"], result: "List" },
   { name: "ListContains", recv: "List", m: "contains", args: 1, params: ["Unknown"], result: "Bool" },
   { name: "ListIndexOf", recv: "List", m: "indexOf", args: 1, params: ["Unknown"], result: "Num", view: "INDEX_OF" },
-  { name: "MapLength", recv: "Map", m: "length", args: 0, params: [], result: "Num", property: true, view: "LENGTH" },
+  { name: "MapLength", recv: "Map", m: "length", args: 0, params: [], result: "Num", view: "LENGTH" },
   { name: "MapKeys", recv: "Map", m: "keys", args: 0, params: [], result: "List" },
   { name: "MapValues", recv: "Map", m: "values", args: 0, params: [], result: "List" },
   { name: "MapHas", recv: "Map", m: "has", args: 1, params: ["Text"], result: "Bool" },
@@ -530,14 +531,14 @@ function emitTablesInc() {
   out += `#endif
 
 #ifdef HMI_METHOD_ROW
-/* receiver, name, enum id, args, (params), result, display_only, property, view */
+/* receiver, name, enum id, args, (params), result, display_only, view */
 `;
   for (const m of METHODS) {
     if (!m.recv) continue;
     if (m.rc) out += cComment(m.rc, "");
     out += `HMI_METHOD_ROW(${m.recv}, "${m.m}", ${m.name}, ${m.args}, ` +
            `(${shapes(m.params)}), ${m.result}, ${m.display ? "true" : "false"}, ` +
-           `${m.property ? "true" : "false"}, "${m.view ?? ""}")\n`;
+           `"${m.view ?? ""}")\n`;
   }
   out += `#endif
 `;

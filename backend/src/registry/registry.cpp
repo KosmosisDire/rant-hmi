@@ -25,8 +25,8 @@
  * sweep scaled to fill an oblong tile — an aspect-locked square dial replaces it), text
  * that sizes itself to its box (sizes are px until the DOM measures for us), tick
  * thinning below a pixel floor, rounded arc ends, and the Trend's autoscale and
- * display-tier smoothing (authorable now — history.min / history.max are one edit away —
- * left un-authored so the config slots stay predictable). */
+ * display-tier smoothing (authorable now — history.min() / history.max() are one edit
+ * away — left un-authored so the config slots stay predictable). */
 
 namespace hmi {
 namespace {
@@ -631,7 +631,7 @@ Json trend_component() {
                 Json::array({
                     owns(path("plot", Json{{"points",
                                             "history.map((v, i) => anchor("
-                                            "i / max(history.length - 1, 1), "
+                                            "i / max(history.length() - 1, 1), "
                                             "1 - (v - min) / (max - min)))"},
                                            {"stroke", "fill_color"},
                                            {"stroke_w", "2"}},
@@ -984,7 +984,7 @@ Json selector_component() {
      * -1 of a value not in the list clamped to the first detent rather than swinging
      * below the sweep */
     const Str frac =
-        "max(options.indexOf(value), 0) / max(options.length - 1, 1)";
+        "max(options.indexOf(value), 0) / max(options.length() - 1, 1)";
     const Str angle = "start_angle + " + frac + " * sweep_angle";
     return component("Selector", 176, 176,
                 compose_slots(tile_base(), {
@@ -1021,7 +1021,7 @@ Json selector_component() {
                                  by its own copy's fraction, its NAME beside it by index —
                                  the list indexing the old resolver cells could never do */
                               frame("detent",
-                                    Json{{"repeat", "options.length"},
+                                    Json{{"repeat", "options.length()"},
                                          {"surface", "$scale"},
                                          {"w", "0.02"},
                                          {"h", "0.08"},
@@ -1034,7 +1034,7 @@ Json selector_component() {
                                          {"rotate", "start_angle + repeat.fraction * "
                                                     "sweep_angle"}}),
                               text("names",
-                                   Json{{"repeat", "options.length"},
+                                   Json{{"repeat", "options.length()"},
                                         {"text", "options[repeat.index]"},
                                         {"color", "$ink-muted"},
                                         {"size", "10"},

@@ -656,7 +656,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 187.0
+            "v": 177.0
           }
         ]
       },
@@ -664,7 +664,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 671.0
+            "v": 0.0
           }
         ]
       },
@@ -672,7 +672,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 583.0
+            "v": 43.0
           }
         ]
       },
@@ -680,7 +680,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 209.0
+            "v": 187.0
           }
         ]
       }
@@ -3172,7 +3172,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 88.0
+            "v": 99.0
           }
         ]
       }
@@ -3248,11 +3248,19 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           }
         ]
       },
+      "bold": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": true
+          }
+        ]
+      },
       "h": {
         "code": [
           {
             "op": "CONST",
-            "v": 43.0
+            "v": 44.0
           }
         ]
       },
@@ -3287,7 +3295,10 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 0.0
+            "v": 1.0
+          },
+          {
+            "op": "NEG"
           }
         ]
       },
@@ -3443,7 +3454,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 88.0
+            "v": 99.0
           }
         ]
       }
@@ -3503,7 +3514,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 88.0
+            "v": 99.0
           }
         ]
       }
@@ -4797,7 +4808,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 25.0
+            "v": 24.0
           }
         ]
       },
@@ -5947,6 +5958,140 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
       }
     }
   },
+  "607": {
+    "attrs": {
+      "border": {
+        "code": [
+          {
+            "cell": "theme:line",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 220.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 682.0
+          }
+        ]
+      },
+      "radius": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 16.0
+          }
+        ]
+      },
+      "surface": {
+        "code": [
+          {
+            "cell": "theme:surface",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 561.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 187.0
+          }
+        ]
+      }
+    }
+  },
+  "608": {
+    "attrs": {
+      "align": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "center"
+          }
+        ]
+      },
+      "bold": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": true
+          }
+        ]
+      },
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 55.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 1.0
+          },
+          {
+            "op": "NEG"
+          }
+        ]
+      },
+      "size": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 24.0
+          }
+        ]
+      },
+      "text": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "Vaccuum"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 1.0
+          },
+          {
+            "op": "NEG"
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 187.0
+          }
+        ]
+      }
+    }
+  },
   "67": {
     "attrs": {}
   },
@@ -5960,7 +6105,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           },
           {
             "op": "CONST",
-            "v": 10.0
+            "v": 11.0
           },
           {
             "op": "MUL"
@@ -5986,7 +6131,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 54.0
+            "v": 43.0
           }
         ]
       },

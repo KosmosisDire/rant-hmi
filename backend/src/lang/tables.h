@@ -41,11 +41,6 @@ struct MethodSpec {
     Shape params[4];
     Shape result;
     bool display_only;
-    /* a PROPERTY reads bare (`x.length`, `#f00.r`): a value view of the receiver,
-     * never written with (). A method is an operation and is always CALLED
-     * (`x.trim()`, even with no arguments): plain after a dot is data, parens is
-     * work, and the checker holds the line both ways. */
-    bool property = false;
     /* the VIEW's encoding of this method, read by view_method() — "" = none, "@" =
      * the template compiler folds it itself (clamp's min/max fold). */
     const char* view = "";

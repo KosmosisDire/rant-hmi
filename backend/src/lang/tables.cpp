@@ -16,9 +16,9 @@ namespace hmi {
 
 const std::vector<MethodSpec>& methods() {
     static const std::vector<MethodSpec> table = {
-#define HMI_METHOD_ROW(receiver, name, id, argc, params, result, display, property, view) \
-    {Shape::receiver, name, MethodId::id, argc, {HMI_SHAPES params}, Shape::result,       \
-     display, property, view},
+#define HMI_METHOD_ROW(receiver, name, id, argc, params, result, display, view) \
+    {Shape::receiver, name, MethodId::id, argc, {HMI_SHAPES params}, Shape::result,     \
+     display, view},
 #include "lang/tables.inc"
 #undef HMI_METHOD_ROW
     };
@@ -120,7 +120,6 @@ ViewMethod view_method(const std::string& name) {
         out.known = true;
         out.bespoke = spec.view[0] == '@';
         out.op = out.bespoke ? "" : spec.view;
-        out.property = spec.property;
         out.args = spec.args;
         break;
     }
@@ -167,7 +166,6 @@ const std::vector<LangRow>& language_reference() {
                              ? "elem"
                              : doc_shape(spec.result);
             row.display_only = spec.display_only;
-            row.property = spec.property;
             row.view = spec.view[0] != 0;
             rows.push_back(row);
         }

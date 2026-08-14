@@ -32,3 +32,8 @@ parse_primary
 parse_postfix
 bespoke_args
 address_chain
+
+# stage 4, the semantic deltas: a callable is a METHOD and every method is CALLED
+# (x.length(), #f00.r()) — plain after a dot is a field. The bare-reading column
+# died with the property⇒method delta.
+spec->property

@@ -54,7 +54,7 @@ struct Expr {
     /* Where the token AFTER this node starts — the position the old single-pass
      * compiler anchored its refusals to, kept so every diagnostic column survives
      * the rewrite byte for byte. For a Member, `name_after` anchors refusals about
-     * the NAME itself (a property called with parens). */
+     * the NAME itself (a method read without its parentheses). */
     size_t after = 0;
     size_t name_after = 0;
     /* Member: where the name token itself starts — the anchor for refusals about

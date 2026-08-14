@@ -20,10 +20,10 @@ env setpoint: num = 1
 expr setpoint.launch()
 error has no method 'launch'
 
-== a property refuses parentheses
+== a no-argument method still demands parentheses
 env note: text = "x"
-expr note.length()
-error is a property
+expr note.length
+error is a method
 
 == a method demands parentheses
 env note: text = "x"

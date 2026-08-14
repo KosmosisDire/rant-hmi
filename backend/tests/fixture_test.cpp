@@ -10,7 +10,7 @@
  * cells are the case's environment, the real compiler, the real VM. Results are read
  * off the run's stack, so a fixture's expectation is a VALUE and storage stays out of
  * the story. A fixture result is always a scalar — list semantics are observed through
- * folds (`.sum`, `.join`), which is also the only way the wire tier may see one. */
+ * folds (`.sum()`, `.join()`), which is also the only way the wire tier may see one. */
 #include "check.h"
 #include "lang/expression.h"
 #include "vm/program.h"

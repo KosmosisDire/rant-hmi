@@ -62,19 +62,19 @@ expr 0.5 * #808080
 want color #404040
 
 == channel r reads 0 to 255
-expr #ff0000.r
+expr #ff0000.r()
 want num 255
 
 == channel g
-expr #80ff00.g
+expr #80ff00.g()
 want num 255
 
 == channel b
-expr #0000ff.b
+expr #0000ff.b()
 want num 255
 
 == channel a reads 0 to 1
-expr #ff000080.a
+expr #ff000080.a()
 want num 0.501960784
 
 == alpha stamps a new alpha
@@ -108,7 +108,7 @@ want color #ffffff
 == the accessors are the wire bridge
 tier wire
 env tint: color = #ff8040
-expr tint.r
+expr tint.r()
 want num 255
 
 # a bare color VALUE is not tier-gated: the destination's expected shape refuses it,

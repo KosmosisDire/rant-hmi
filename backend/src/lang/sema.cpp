@@ -576,15 +576,9 @@ class Sema {
                  expr.name_after);
             return Type();
         }
-        /* plain is DATA, parens is WORK: a property never takes (), a method is
-           always called with them, so what a dotted name is stays visible */
-        if (spec->property && expr.called) {
-            fail("'" + name + "' is a property; write it without parentheses (" +
-                     name + ")",
-                 expr.name_after);
-            return Type();
-        }
-        if (!spec->property && !expr.called) {
+        /* plain after a dot is DATA -- a field; a method is WORK and is always
+           CALLED, even with no arguments (x.length(), x.trim()) */
+        if (!expr.called) {
             fail("'" + name + "' is a method; call it with parentheses (" + name +
                      "())",
                  expr.name_after);

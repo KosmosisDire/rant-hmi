@@ -420,7 +420,7 @@ void test_tiers() {
     /* the accessors are the sanctioned wire bridge (an RGB LED takes channels) */
     error.clear();
     code.clear();
-    CHECK(compile_expr("x.r", ExprTier::Wire, scope, program, code, result, error));
+    CHECK(compile_expr("x.r()", ExprTier::Wire, scope, program, code, result, error));
     CHECK(result.shape == Shape::Num);
 
     /* the word operators are the symbol operators, and `.not()` still names the method */
@@ -437,13 +437,14 @@ void test_tiers() {
                                  error), error);
     CHECK(result.shape == Shape::Bool);
 
-    /* plain is data, parens is work: a property refuses (), a method demands them */
+    /* plain after a dot is a field; a method demands its parentheses, even with
+       no arguments */
     error.clear();
     code.clear();
     scope = x_scope(Shape::Text);
-    CHECK(!compile_expr("x.length()", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expr("x.length", ExprTier::Wire, scope, program, code,
                               result, error));
-    CHECK_MSG(error.find("property") != std::string::npos, error);
+    CHECK_MSG(error.find("call it") != std::string::npos, error);
     error.clear();
     code.clear();
     CHECK(!compile_expr("x.trim", ExprTier::Display, scope, program, code,
@@ -451,7 +452,7 @@ void test_tiers() {
     CHECK_MSG(error.find("call it") != std::string::npos, error);
     error.clear();
     code.clear();
-    CHECK_MSG(compile_expr("x.trim().length", ExprTier::Display, scope, program,
+    CHECK_MSG(compile_expr("x.trim().length()", ExprTier::Display, scope, program,
                                  code, result, error), error);
     CHECK(result.shape == Shape::Num);
 }
@@ -882,10 +883,9 @@ void test_slot_conditionals() {
     CHECK(!nil_run.faulted);
     CHECK(fresh.values[feed.cell].tag == ValueTag::Nil);
 
-    /* the explicit else that shows the rest as themselves: the D2 spelling is the
-       .name read, written out */
+    /* the explicit else that shows the rest as themselves: the D2 spelling is the        .name() call, written out */
     Document through = document_with(
-        "text", "@gear.mode == .stop ? \"Halted\" : @gear.mode.name");
+        "text", "@gear.mode == .stop ? \"Halted\" : @gear.mode.name()");
     CompileResult passing = compile_document(through, builtin_registry(), mesh);
     CHECK(passing.ok);
     RuntimeState passed(passing.program);
@@ -996,7 +996,7 @@ void test_whole_source() {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "motor"},
-        {"slots", Json{{"value", "@motor.speed * 2 + @motor.enabled.int"}}},
+        {"slots", Json{{"value", "@motor.speed * 2 + @motor.enabled.int()"}}},
         {"flows", Json::array()},
     };
     root["pages"].push_back(Json{{"name", "Main"}, {"children", Json::array({readout})}});
@@ -1413,7 +1413,7 @@ void test_colors() {
         "Readout",
         Json{{"reading", Json{{"text_color", "on.pick(#7fc4a0, #e0857c)"},
                               /* a CONSTANT chain folds into the cell's start */
-                              {"decimals", "#ff8040.g + #ffffff.a"}}},
+                              {"decimals", "#ff8040.g() + #ffffff.a()"}}},
              {"units", Json{{"text_color", "#000000.mix(#ffffff, n / 100).alpha(0.5)"}}},
              {"surface", "rgb(n / 255, 0, 1 - n / 255)"},
              {"border", "hsv(n, 1, 1)"}},
@@ -1650,15 +1650,15 @@ void test_text_and_enums() {
     Json instances = Json::array();
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
-        {"slots", Json{{"units", Json{{"text", "@machine.mode.name"}}},
+        {"slots", Json{{"units", Json{{"text", "@machine.mode.name()"}}},
                        {"reading",
                         Json{{"decimals", "@machine.mode.is(running).pick(4, 1)"}}},
-                       {"value", "@machine.mode.int"}}}});
+                       {"value", "@machine.mode.int()"}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "b"},
         {"slots", Json{{"units", Json{{"text", "@sensor.value.toFixed(2)"}}},
                        {"value", "num(@machine.note.trim())"},
-                       {"reading", Json{{"decimals", "@machine.note.length"}}}}}});
+                       {"reading", Json{{"decimals", "@machine.note.length()"}}}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "c"},
         {"slots",
@@ -1812,32 +1812,32 @@ void test_lists_and_maps() {
                     {"slots", std::move(slots)}};
     };
     Json instances = Json::array();
-    instances.push_back(readout3("a", "@plant.temps.max", "@plant.temps.length",
+    instances.push_back(readout3("a", "@plant.temps.max()", "@plant.temps.length()",
                                "@plant.names.join(\", \")"));
     instances.push_back(readout3("b", "@plant.temps.sort()[0]",
-                               "@plant.temps.slice(1, 3).sum",
+                               "@plant.temps.slice(1, 3).sum()",
                                "@plant.names.sort().join(\"|\")"));
     instances.push_back(readout3("c", "num(@plant.config.get(\"speed\"))",
-                               "@plant.config.length",
+                               "@plant.config.length()",
                                "@plant.config.keys().sort().join(\",\")"));
     instances.push_back(readout3("d", "@plant.names.indexOf(\"b\")", nullptr,
                                "@plant.config.has(\"mode\").pick(\"y\", \"n\")"));
     instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "e"},
         {"slots",
          Json{{"text", "@plant.csv.split(\",\").slice(0, 2).join(\"+\")"}}}});
-    instances.push_back(readout3("f", "values(@plant.config).length", nullptr, nullptr));
+    instances.push_back(readout3("f", "values(@plant.config).length()", nullptr, nullptr));
     /* lambdas (spec 6.4): every mode, end to end through the scheduler. temps is
        [30, 10, 20]; names is ["b", "c", "a"]. */
-    instances.push_back(readout3("g", "@plant.temps.map(v => v * 2).sum",
-                               "@plant.temps.filter(v => v > 15).length",
+    instances.push_back(readout3("g", "@plant.temps.map(v => v * 2).sum()",
+                               "@plant.temps.filter(v => v > 15).length()",
                                "@plant.names.map(v => v.upper()).join(\",\")"));
     instances.push_back(readout3("h", "@plant.temps.any(v => v > 25).pick(1, 0)",
                                "@plant.temps.all(v => v > 25).pick(1, 0)",
                                "@plant.names.sortBy(v => v).join(\"\")"));
     /* the body's own value orders the elements (a negated key reverses); chaining a
        lambda result is an ordinary list */
-    instances.push_back(readout3("i", "@plant.temps.sortBy(v => -v).first",
-                               "@plant.temps.filter(v => v > 15).map(v => v / 10).sum",
+    instances.push_back(readout3("i", "@plant.temps.sortBy(v => -v).first()",
+                               "@plant.temps.filter(v => v > 15).map(v => v / 10).sum()",
                                nullptr));
     Json root = {{"version", 1},
                  {"next_id", 1},
@@ -1889,7 +1889,7 @@ void test_lists_and_maps() {
     CHECK_EQ(cell_num(0, "reading.decimals"), 3.0);        /* length */
     CHECK_EQ(cell_text(0, "units.text"), "b, c, a");       /* join */
     CHECK_EQ(cell_num(1, "value"), 10.0);                  /* sort()[0] */
-    CHECK_EQ(cell_num(1, "reading.decimals"), 30.0);       /* slice(1,3).sum = 10+20 */
+    CHECK_EQ(cell_num(1, "reading.decimals"), 30.0);       /* slice(1,3).sum() = 10+20 */
     CHECK_EQ(cell_text(1, "units.text"), "a|b|c");         /* sort text, join */
     CHECK_EQ(cell_num(2, "value"), 5.0);                   /* num(get("speed")) */
     CHECK_EQ(cell_num(2, "reading.decimals"), 2.0);        /* map length */
@@ -1897,15 +1897,15 @@ void test_lists_and_maps() {
     CHECK_EQ(cell_num(3, "value"), 0.0);                   /* indexOf("b") */
     CHECK_EQ(cell_text(3, "units.text"), "y");             /* has("mode").pick */
     CHECK_EQ(cell_text(4, "text"), "a+b");                 /* split.slice.join */
-    CHECK_EQ(cell_num(5, "value"), 2.0);                   /* values(x).length */
+    CHECK_EQ(cell_num(5, "value"), 2.0);                   /* values(x).length() */
     /* lambdas, spec 6.4 */
-    CHECK_EQ(cell_num(6, "value"), 120.0);                 /* map(v => v * 2).sum */
+    CHECK_EQ(cell_num(6, "value"), 120.0);                 /* map(v => v * 2).sum() */
     CHECK_EQ(cell_num(6, "reading.decimals"), 2.0);        /* filter(v => v > 15) */
     CHECK_EQ(cell_text(6, "units.text"), "B,C,A");         /* map over TEXT elements */
     CHECK_EQ(cell_num(7, "value"), 1.0);                   /* any(v => v > 25) */
     CHECK_EQ(cell_num(7, "reading.decimals"), 0.0);        /* all(v => v > 25) */
     CHECK_EQ(cell_text(7, "units.text"), "abc");           /* sortBy ascending */
-    CHECK_EQ(cell_num(8, "value"), 30.0);                  /* sortBy(v => -v).first */
+    CHECK_EQ(cell_num(8, "value"), 30.0);                  /* sortBy(v => -v).first() */
     CHECK_EQ(cell_num(8, "reading.decimals"), 5.0);        /* filter then map */
 
     /* compile-time element checking: sum over a text list names the problem */
@@ -1937,7 +1937,7 @@ void test_lists_and_maps() {
             CHECK_MSG(error.find("another lambda") != std::string::npos, error);
         }
         /* x is out of scope inside a body: the parameter is the element */
-        CHECK(refused("x.map(v => x.length)", "not in scope"));
+        CHECK(refused("x.map(v => x.length())", "not in scope"));
         CHECK(refused("x.map(x => x)", "cannot name a lambda parameter"));
         /* the body is ONE expression, and the arrow is not optional */
         CHECK(refused("x.map(v => v, 2)", "ONE expression"));
@@ -1966,13 +1966,13 @@ void test_lists_and_maps() {
         /* but reducing one is fine, on either tier */
         code.clear();
         error.clear();
-        CHECK_MSG(compile_expr("x.filter(v => v > 1).sum", ExprTier::Wire, nums, scratch,
+        CHECK_MSG(compile_expr("x.filter(v => v > 1).sum()", ExprTier::Wire, nums, scratch,
                                code, result, error), error);
         CHECK(result.shape == Shape::Num);
         code.clear();
         error.clear();
     }
-    CHECK(!compile_expr("x.sum", ExprTier::Display, scope, scratch, code, result, error));
+    CHECK(!compile_expr("x.sum()", ExprTier::Display, scope, scratch, code, result, error));
     CHECK_MSG(error.find("numbers") != std::string::npos, error);
     /* and a LIST can never be the wire's final value */
     error.clear();
@@ -1983,7 +1983,7 @@ void test_lists_and_maps() {
     error.clear();
     code.clear();
     scope = x_scope(Shape::List, 0, Shape::Num);
-    CHECK(compile_expr("x.max + 1", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(compile_expr("x.max() + 1", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK(result.shape == Shape::Num);
 }
 
@@ -2019,11 +2019,11 @@ void test_reduce() {
     /* a numeric fold IS the sum, spelled out; the text fold proves each iteration's
        result is re-homed before it becomes the accumulator */
     instances.push_back(readout("a", "@fold.temps.reduce((acc, v) => acc + v, 0)",
-                              "@fold.temps.sum",
+                              "@fold.temps.sum()",
                               "@fold.temps.reduce((acc, v) => acc + str(v), \"\")"));
     /* the index, on both sides: a fold that weights by position, a map that reads it */
     instances.push_back(readout("b", "@fold.temps.reduce((acc, v, i) => acc + v * i, 0)",
-                              "@fold.temps.map((v, i) => v * 100 + i).sum",
+                              "@fold.temps.map((v, i) => v * 100 + i).sum()",
                               "@fold.names.map((v, i) => str(i) + v).join(\",\")"));
     /* an empty list leaves the starting value alone, and a fold over text joins */
     instances.push_back(readout("c",
@@ -3404,7 +3404,7 @@ void test_aggregate_ceilings() {
         {"flows", Json::array({
                       flow_on("tap", {steps::append_var("unbounded", "1")}),
                       flow_on("press", {steps::append_var("bounded", "1", "8")}),
-                      flow_on("release", {steps::set_var("total", "unbounded.sum")}),
+                      flow_on("release", {steps::set_var("total", "unbounded.sum()")}),
                       flow_on("held",
                               {steps::set_var("folded",
                                               "unbounded.reduce((acc, v) => acc + v, 0)")}),
@@ -3498,7 +3498,7 @@ void test_map_reduce() {
                                      "acc + (key == 'b' ? value : 0), 0)"),
                       /* the IN-PLACE readers over a RETAINED map: length counts pairs
                          and indexing looks a key up where the entries lie */
-                      steps::set_var("pairs", "table.length"),
+                      steps::set_var("pairs", "table.length()"),
                       steps::set_var("looked_up", "table['c']")}),
          })},
     };

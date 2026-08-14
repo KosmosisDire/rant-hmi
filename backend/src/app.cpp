@@ -609,7 +609,6 @@ Json App::lang_json() {
                    {"view", row.view}};
         if (std::string(row.kind) == "method") {
             entry["receiver"] = row.receiver;
-            entry["property"] = row.property;
             methods.push_back(std::move(entry));
         } else {
             builtins.push_back(std::move(entry));

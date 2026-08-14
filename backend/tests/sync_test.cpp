@@ -695,7 +695,7 @@ int main() {
                             {"op", "insert"}, {"parent", mesh_page}, {"list", "children"},
                             {"node", {{"kind", "frame"},
                                       {"attrs", {{"w", "@tank.level"},
-                                                 {"h", "@tank.readings.length"}}}}}}})}});
+                                                 {"h", "@tank.readings.length()"}}}}}}})}});
             CHECK(frame_of(pump(mesh_app, d, 1), "ops_applied") != nullptr);
 
             /* the read is what makes the key exist at all: before any delivery the
