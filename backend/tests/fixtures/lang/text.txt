@@ -1,0 +1,148 @@
+# CONFORMANCE FIXTURES: text (spec 6.2/6.3). Producing text is display vocabulary;
+# the predicates and length stay wire-legal.
+
+== a text literal
+expr "hello"
+want text "hello"
+
+== length is a property
+env note: text = "ready"
+expr note.length
+want num 5
+
+== length is wire-legal
+tier wire
+env note: text = "ready"
+expr note.length
+want num 5
+
+== upper
+expr "Mixed Case".upper()
+want text "MIXED CASE"
+
+== lower
+expr "Mixed Case".lower()
+want text "mixed case"
+
+== title
+expr "the jog head".title()
+want text "The Jog Head"
+
+== trim
+expr "  padded  ".trim()
+want text "padded"
+
+== slice
+expr "abcdef".slice(1, 4)
+want text "bcd"
+
+== slice with negative indexes counts from the end
+expr "abcdef".slice(-3, -1)
+want text "de"
+
+== slice collapsed range is empty
+expr "abcdef".slice(4, 2)
+want text ""
+
+== startsWith
+expr "gauge_1".startsWith("gauge")
+want bool true
+
+== endsWith
+expr "gauge_1".endsWith("_1")
+want bool true
+
+== contains
+expr "the jog head".contains("jog")
+want bool true
+
+== contains misses
+expr "the jog head".contains("axis")
+want bool false
+
+== predicates are wire-legal
+tier wire
+env note: text = "E42 overtravel"
+expr note.startsWith("E42")
+want bool true
+
+== replace
+expr "a-b-c".replace("-", "+")
+want text "a+b+c"
+
+== padStart
+expr "7".padStart(3, "0")
+want text "007"
+
+== split and join
+expr "a,b,c".split(",").join("|")
+want text "a|b|c"
+
+== split counts pieces
+expr "a,b,c".split(",").length
+want num 3
+
+== concatenation joins text
+expr "jog " + "head"
+want text "jog head"
+
+== concatenation renders a number the way str does
+expr "n=" + 5
+want text "n=5"
+
+== concatenation renders a bool
+expr "is " + true
+want text "is true"
+
+== toFixed
+expr (3.14159).toFixed(2)
+want text "3.14"
+
+== str of a number
+expr str(12.5)
+want text "12.5"
+
+== str of text passes through
+expr str("x")
+want text "x"
+
+== num parses text
+expr num("12.5")
+want num 12.5
+
+== num of unparseable text is unknown
+expr num("reading")
+want nil
+
+== int truncates toward zero
+expr int(3.9)
+want num 3
+
+== int truncates negative toward zero
+expr int(-3.9)
+want num -3
+
+== int of a bool
+expr int(true)
+want num 1
+
+== int parses text
+expr int("42.7")
+want num 42
+
+== concatenation is display vocabulary
+tier wire
+env note: text = "x"
+expr note + "y"
+error display vocabulary
+
+== upper is display vocabulary
+tier wire
+env note: text = "x"
+expr note.upper()
+error display vocabulary
+
+== toFixed is display vocabulary
+tier wire
+expr (1.5).toFixed(1)
+error display vocabulary

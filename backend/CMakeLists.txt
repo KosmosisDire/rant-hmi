@@ -110,6 +110,15 @@ foreach(_test doc_test sync_test runtime_test scheduler_test mesh_test component
   add_test(NAME ${_test} COMMAND hmi_${_test})
 endforeach()
 
+# THE CONFORMANCE FIXTURES (the language-rewrite ratchet's other half): value-level
+# cases in tests/fixtures/lang, expression + env -> value | refusal | fault. They pin
+# the LANGUAGE, never the encoding, so they survive IR changes unchanged and will run
+# in the second interpreter verbatim.
+add_executable(hmi_fixture_test tests/fixture_test.cpp)
+target_link_libraries(hmi_fixture_test PRIVATE hmi_core)
+add_test(NAME fixture_test COMMAND hmi_fixture_test
+         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/lang")
+
 # THE TOMBSTONE TEST: dead symbols stay dead. tests/tombstones.txt is the burial
 # list; a listed symbol appearing anywhere in the source trees fails the build.
 add_executable(hmi_tombstone_test tests/tombstone_test.cpp)

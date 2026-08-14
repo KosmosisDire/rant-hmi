@@ -1,0 +1,136 @@
+# CONFORMANCE FIXTURES: color (spec 6.3). Color is display vocabulary end to end;
+# the channel accessors are the sanctioned wire bridge.
+
+== a color literal
+expr #ff0000
+want color #ff0000
+
+== a color literal with alpha
+expr #ff000080
+want color #ff000080
+
+== a short color literal
+expr #f00
+want color #ff0000
+
+== rgb takes fractional channels
+expr rgb(1, 0, 0)
+want color #ff0000
+
+== rgb with alpha
+expr rgb(0, 1, 0, 0.5)
+want color #00ff0080
+
+== rgb clamps its channels
+expr rgb(2, -1, 0.5)
+want color #ff0080
+
+== hsv red
+expr hsv(0, 1, 1)
+want color #ff0000
+
+== hsv green
+expr hsv(120, 1, 1)
+want color #00ff00
+
+== hsv blue with alpha
+expr hsv(240, 1, 1, 0.5)
+want color #0000ff80
+
+== color parses text
+expr color("#8040ff")
+want color #8040ff
+
+== color of unparseable text is unknown
+expr color("red-ish")
+want nil
+
+== scaling darkens with alpha kept
+expr #808080 * 0.5
+want color #404040
+
+== scaling brightens and clamps
+expr #808080 * 2
+want color #ffffff
+
+== dividing scales down
+expr #808080 / 2
+want color #404040
+
+== the number may lead a scale
+expr 0.5 * #808080
+want color #404040
+
+== channel r reads 0 to 255
+expr #ff0000.r
+want num 255
+
+== channel g
+expr #80ff00.g
+want num 255
+
+== channel b
+expr #0000ff.b
+want num 255
+
+== channel a reads 0 to 1
+expr #ff000080.a
+want num 0.501960784
+
+== alpha stamps a new alpha
+expr #ff0000.alpha(0.5)
+want color #ff000080
+
+== mix meets in the middle
+expr #000000.mix(#ffffff, 0.5)
+want color #808080
+
+== mix clamps its fraction
+expr #000000.mix(#ffffff, 2)
+want color #ffffff
+
+== invert flips the channels and keeps alpha
+expr #ff000080.invert()
+want color #00ffff80
+
+== invert as a builtin
+expr invert(#ffffff)
+want color #000000
+
+== grayscale black
+expr grayscale(0)
+want color #000000
+
+== grayscale white
+expr grayscale(1)
+want color #ffffff
+
+== the accessors are the wire bridge
+tier wire
+env tint: color = #ff8040
+expr tint.r
+want num 255
+
+# a bare color VALUE is not tier-gated: the destination's expected shape refuses it,
+# not the language — only color WORK (the constructors, the arithmetic) is display-only
+== a color literal itself compiles on the wire
+tier wire
+expr #ff0000
+want color #ff0000
+
+== rgb is refused on the wire
+tier wire
+expr rgb(1, 0, 0)
+error display vocabulary
+
+== color scaling is refused on the wire
+tier wire
+env tint: color = #ff0000
+expr tint * 0.5
+error display vocabulary
+
+== mix is refused on the wire
+tier wire
+env tint: color = #ff0000
+expr tint.mix(#fff, 0.5)
+error display vocabulary

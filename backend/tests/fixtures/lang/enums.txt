@@ -1,0 +1,103 @@
+# CONFORMANCE FIXTURES: enums (spec 6.2). A variant literal leans on the LEFT side's
+# vocabulary; `.is()` resolves against the receiver's.
+
+== a variant literal on the right of equality
+env mode: enum(idle, run, fault) = run
+expr mode == .run
+want bool true
+
+== a variant literal misses
+env mode: enum(idle, run, fault) = run
+expr mode == .idle
+want bool false
+
+== inequality against a variant
+env mode: enum(idle, run, fault) = run
+expr mode != .idle
+want bool true
+
+== is tests a variant
+env mode: enum(idle, run, fault) = run
+expr mode.is(run)
+want bool true
+
+== is misses
+env mode: enum(idle, run, fault) = run
+expr mode.is(fault)
+want bool false
+
+== int is the backing value
+env mode: enum(idle, run, fault) = run
+expr mode.int
+want num 1
+
+== name is the variant name
+env mode: enum(idle, run, fault) = run
+expr mode.name
+want text "run"
+
+== str renders the variant name
+env mode: enum(idle, run, fault) = fault
+expr str(mode)
+want text "fault"
+
+== num converts the backing value
+env mode: enum(idle, run, fault) = fault
+expr num(mode)
+want num 2
+
+== name as a builtin
+env mode: enum(idle, run, fault) = idle
+expr name(mode)
+want text "idle"
+
+== an enum meets its backing number
+env mode: enum(idle, run, fault) = run
+expr mode == 1
+want bool true
+
+== an enum meets its variant text
+env mode: enum(idle, run, fault) = run
+expr mode == "run"
+want bool true
+
+== an enum misses foreign text
+env mode: enum(idle, run, fault) = run
+expr mode == "idle"
+want bool false
+
+== enums are wire-legal
+tier wire
+env mode: enum(idle, run, fault) = run
+expr mode == .run
+want bool true
+
+== a typo of a variant refuses
+env mode: enum(idle, run, fault) = run
+expr mode == .bogus
+error no variant 'bogus'
+
+== is refuses a typo
+env mode: enum(idle, run, fault) = run
+expr mode.is(bogus)
+error no variant 'bogus'
+
+== a variant needs an enum on the left
+expr 5 == .run
+error needs an enum on the left
+
+== an enum refuses a bool compare
+env mode: enum(idle, run, fault) = run
+expr mode == true
+error comparison mixes
+
+== ordered comparison refuses enums
+env mode: enum(idle, run, fault) = run
+expr mode < 2
+error ordered comparison wants num
+
+== a conditional keeps an agreeing enum pair typed
+env mode: enum(idle, run, fault) = run
+env on: bool = true
+expr (on ? mode : mode) == .run
+want bool true
