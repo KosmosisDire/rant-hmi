@@ -2,6 +2,7 @@
 
 /* for authored_slot(): one instance-slot address walked one way by both compilers */
 #include "compile/components.h"
+#include "doc/decode.h"
 #include "lang/expression.h"
 #include "lang/parser.h"
 
@@ -15,27 +16,6 @@
 
 namespace hmi {
 namespace {
-
-uint64_t id_of(const Json& node) {
-    auto it = node.find("id");
-    return it == node.end() ? 0 : json_u64_or(*it, 0);
-}
-
-/* Type-safe reads of document values. Json::value() substitutes its default only for a
- * MISSING key and THROWS on a present-but-differently-typed one, and the document holds
- * both legitimately: optional numbers default to null in the schema (poll_hz), and a
- * step keeps its old variant's fields across a kind flip, so `a` may hold another
- * kind's text. A read here never throws; the wrong type reads as absent. */
-double num_or(const Json& node, const char* key, double fallback) {
-    auto it = node.find(key);
-    return it != node.end() && it->is_number() ? it->get<double>() : fallback;
-}
-
-std::string str_or(const Json& node, const char* key, const char* fallback) {
-    auto it = node.find(key);
-    return it != node.end() && it->is_string() ? it->get<std::string>() : fallback;
-}
-
 
 bool entity_kind(const std::string& text, EntityKind& out) {
     if (text == "V") out = EntityKind::Variable;
@@ -100,27 +80,6 @@ Value json_value(Program& program, Shape shape, const Json& value, bool& ok) {
     }
 }
 
-/* A move's `from` / `to` is one object discriminated by the key it carries (spec 2.6),
- * so reading one is asking which key is there. */
-enum class SideKind { None, Expr, Local, Entity, Init };
-
-SideKind side_kind(const Json& side) {
-    if (!side.is_object()) return SideKind::None;
-    if (side.contains("expr")) return SideKind::Expr;
-    if (side.contains("local")) return SideKind::Local;
-    if (side.contains("slot")) return SideKind::Local;
-    if (side.contains("kind")) return SideKind::Entity;
-    if (side.contains("init")) return SideKind::Init;
-    return SideKind::None;
-}
-
-/* the slot a move destination names, or "" when it names something else */
-std::string slot_of(const Json& side) {
-    if (!side.is_object()) return {};
-    auto it = side.find("slot");
-    return it != side.end() && it->is_string() ? it->get<std::string>() : std::string();
-}
-
 /* what a JSON literal looks like in a message, for a diagnostic that names the mistake */
 std::string json_brief(const Json& value) {
     const std::string text = value.dump();
@@ -167,6 +126,127 @@ constexpr const char* kIsolatedHelp =
     "it works wherever it is placed. Declare a property here and let each instance's own "
     "value bring the variable or the mesh field in";
 
+/* ---- THE REGISTRY ROWS AS THIS COMPILER READS THEM ----
+ *
+ * The registry is a SERVED compile product and stays JSON on the wire; what this
+ * compiler needs of a row is decoded ONCE at construction into these records, the same
+ * boundary rule the document itself follows. The read-back exists at all only because
+ * two compilers still meet at the served row — it dies at stage 5b, when compile
+ * absorbs components.cpp and reads the definitions directly. */
+struct SlotSpec {
+    std::string name;
+    std::string shape;              /* the served word; var_shape reads it */
+    bool is_public = false;
+    Json initial;                   /* the declared default, a raw literal; null = none */
+    std::vector<std::string> variants;
+    std::string elem;
+    std::string leaf;
+};
+
+struct ParamSpec {
+    std::string name = "value";
+    std::string shape;
+};
+
+struct EventSpec {
+    std::string name;
+    std::vector<ParamSpec> params;
+};
+
+/* the template as trigger validation reads it: names, gestures, topology */
+struct ArmedNode {
+    std::string name;
+    std::string primitive;          /* "" = unarmed */
+    bool bubbles = true;
+    std::vector<ArmedNode> children;
+};
+
+struct ComponentSpec {
+    std::string name;
+    std::vector<SlotSpec> slots;
+    std::vector<EventSpec> events;
+    bool has_template = false;
+    ArmedNode tmpl;
+    std::vector<FlowDecl> behavior; /* document-form flows, read off the served row */
+};
+
+std::string spec_text(const Json& row, const char* key) {
+    auto it = row.find(key);
+    return it != row.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+ArmedNode decode_armed(const Json& node) {
+    ArmedNode out;
+    out.name = spec_text(node, "name");
+    auto interact = node.find("interact");
+    if (interact != node.end() && interact->is_object()) {
+        out.primitive = spec_text(*interact, "primitive");
+        auto bubbles = interact->find("bubbles");
+        if (bubbles != interact->end() && bubbles->is_boolean())
+            out.bubbles = bubbles->get<bool>();
+    }
+    auto children = node.find("children");
+    if (children != node.end() && children->is_array())
+        for (const Json& child : *children)
+            if (child.is_object()) out.children.push_back(decode_armed(child));
+    return out;
+}
+
+ComponentSpec decode_spec(const Json& row) {
+    ComponentSpec out;
+    out.name = spec_text(row, "name");
+    auto slots = row.find("slots");
+    if (slots != row.end() && slots->is_array())
+        for (const Json& slot : *slots) {
+            if (!slot.is_object()) continue;
+            SlotSpec spec;
+            spec.name = spec_text(slot, "name");
+            spec.shape = spec_text(slot, "shape");
+            auto is_public = slot.find("public");
+            spec.is_public = is_public != slot.end() && is_public->is_boolean() &&
+                             is_public->get<bool>();
+            auto initial = slot.find("default");
+            if (initial != slot.end()) spec.initial = *initial;
+            auto variants = slot.find("variants");
+            if (variants != slot.end() && variants->is_array())
+                for (const Json& variant : *variants)
+                    if (variant.is_string())
+                        spec.variants.push_back(variant.get<std::string>());
+            spec.elem = spec_text(slot, "elem");
+            spec.leaf = spec_text(slot, "leaf");
+            out.slots.push_back(std::move(spec));
+        }
+    auto events = row.find("events");
+    if (events != row.end() && events->is_array())
+        for (const Json& event : *events) {
+            if (!event.is_object()) continue;
+            EventSpec spec;
+            spec.name = spec_text(event, "name");
+            auto params = event.find("params");
+            if (params != event.end() && params->is_array())
+                for (const Json& param : *params) {
+                    ParamSpec row_param;
+                    if (param.is_object()) {
+                        const std::string name = spec_text(param, "name");
+                        if (!name.empty()) row_param.name = name;
+                        row_param.shape = spec_text(param, "shape");
+                    }
+                    spec.params.push_back(std::move(row_param));
+                }
+            out.events.push_back(std::move(spec));
+        }
+    auto tmpl = row.find("template");
+    if (tmpl != row.end() && tmpl->is_object()) {
+        out.has_template = true;
+        out.tmpl = decode_armed(*tmpl);
+    }
+    auto behavior = row.find("behavior");
+    if (behavior != row.end() && behavior->is_array())
+        for (const Json& flow : *behavior)
+            if (flow.is_object()) out.behavior.push_back(decode_flow(flow));
+    return out;
+}
+
 /* ONE RECORD PER ELEMENT ON A PAGE — every node in the tree, not only the ones naming a
  * component. What an element declares (locals, timers, flows) it declares wherever it
  * sits, and `parent` is what makes that a SCOPE: names resolve up the chain to the page
@@ -175,8 +255,8 @@ constexpr const char* kIsolatedHelp =
 struct ElementInfo {
     uint64_t id = 0;
     uint64_t page = 0;
-    const Json* node = nullptr;
-    const Json* type = nullptr;
+    const NodeDecl* node = nullptr;
+    const ComponentSpec* type = nullptr;
     /* index into elements_ of the enclosing element, UINT32_MAX at the page */
     uint32_t parent = UINT32_MAX;
     std::unordered_map<std::string, uint32_t> locals;
@@ -227,19 +307,23 @@ class Compiler {
     Compiler(const Document& document, const Json& registry, const MeshPort& mesh,
              const std::set<std::string>* attr_reads = nullptr,
              const std::set<std::string>* per_copy_slots = nullptr)
-        : document_(document), registry_(registry), mesh_(mesh), attr_reads_(attr_reads),
+        : doc_(decode_document(document)), mesh_(mesh), attr_reads_(attr_reads),
           per_copy_slots_(per_copy_slots) {
-        program_.document_version = document.version();
+        program_.document_version = doc_.version;
         program_.add_text("");
         /* The theme tokens (spec 2.10), name -> DARK value: the backend has no view and
          * therefore no theme mode, so dark is the canonical runtime resolution; light is
          * a per-view rendering the frontend applies. */
-        auto tokens = document.root.find("tokens");
-        if (tokens != document.root.end() && tokens->is_array())
-            for (const Json& token : *tokens) {
-                const std::string name = str_or(token, "name", "");
-                if (!name.empty()) tokens_[name] = str_or(token, "dark", "");
-            }
+        for (const TokenDecl& token : doc_.tokens)
+            if (!token.name.empty()) tokens_[token.name] = token.dark;
+        /* the registry rows this compile will consult, decoded once; specs_ never
+         * grows again, so a pointer into it holds for the whole compile */
+        if (registry.is_object()) {
+            auto components = registry.find("components");
+            if (components != registry.end() && components->is_array())
+                for (const Json& row : *components)
+                    if (row.is_object()) specs_.push_back(decode_spec(row));
+        }
     }
 
     CompileResult run() {
@@ -268,7 +352,9 @@ class Compiler {
         std::string name;
         std::string text;
         uint32_t cell = 0;
-        Json spec;   /* the registry slot row: variants for the constrained-text check */
+        /* the registry slot row (stable in specs_): variants for the constrained-text
+           check */
+        const SlotSpec* spec = nullptr;
     };
 
     void diag(uint64_t node, const std::string& code, const std::string& message,
@@ -291,12 +377,9 @@ class Compiler {
         return static_cast<uint32_t>(program_.runtime_faults.size() - 1);
     }
 
-    const Json* type_named(const std::string& name) const {
-        if (!registry_.is_object()) return nullptr;
-        auto types = registry_.find("components");
-        if (types == registry_.end() || !types->is_array()) return nullptr;
-        for (const Json& type : *types)
-            if (type.value("name", "") == name) return &type;
+    const ComponentSpec* type_named(const std::string& name) const {
+        for (const ComponentSpec& spec : specs_)
+            if (spec.name == name) return &spec;
         return nullptr;
     }
 
@@ -450,14 +533,13 @@ class Compiler {
         return static_cast<uint32_t>(program_.cells.size() - 1);
     }
 
-    uint32_t add_timer(uint64_t owner_node, const Json& var) {
+    uint32_t add_timer(uint64_t owner_node, const VarDecl& var) {
         TimerDef timer;
         timer.owner_node = owner_node;
-        timer.node_id = id_of(var);
-        timer.name = var.value("name", "");
+        timer.node_id = var.id;
+        timer.name = var.name;
         timer.event = "timer:" + std::to_string(timer.node_id);
-        const Json& init = var["init"];
-        const double seconds = init.is_number() ? init.get<double>() : 0.0;
+        const double seconds = var.init.is_number() ? var.init.get<double>() : 0.0;
         timer.duration_ticks =
             static_cast<uint32_t>(std::max(1.0, std::round(std::max(0.0, seconds) * 1000.0)));
         program_.timers.push_back(std::move(timer));
@@ -470,43 +552,39 @@ class Compiler {
      * gives it the ENUM type, seeded at the first variant, so `.name`/`.int`/`.is` work
      * on it like on any enum value. An unresolved TypeRef is a finding on the variable,
      * never a silent Nil. */
-    uint32_t declare_variable(const Json& var, CellKind kind, uint64_t owner) {
-        const std::string name = var.value("name", "");
-        const std::string type_text = var.value("type", "");
-        const Shape shape = var_shape(type_text);
+    uint32_t declare_variable(const VarDecl& var, CellKind kind, uint64_t owner) {
+        const Shape shape = var_shape(var.type);
         if (shape == Shape::List || shape == Shape::Map) {
             /* an aggregate's start has its own spellings and lands in the cell's
                constant run, not in the scalar initial, which stays Nil */
-            const uint32_t cell = add_cell(kind, owner, id_of(var), name, shape, Json(),
-                                           var.value("persist", false));
-            program_.cells[cell].elem = declared_elem(var, name);
-            program_.cells[cell].leaf =
-                declared_leaf(var, name, program_.cells[cell].elem);
+            const uint32_t cell = add_cell(kind, owner, var.id, var.name, shape, Json(),
+                                           var.persist);
+            program_.cells[cell].elem = declared_elem(var);
+            program_.cells[cell].leaf = declared_leaf(var, program_.cells[cell].elem);
             aggregate_var_initial(var, shape, cell);
             return cell;
         }
         if (shape != Shape::Unknown) {
-            Json init = var.contains("init") ? var["init"] : Json();
+            Json init = var.init;
             /* a colour variable names a theme token the same way every other authored
                colour does — one spelling for "$accent", wherever a colour is written */
-            if (shape == Shape::Color) init = resolve_token(id_of(var), "init", init);
-            return add_cell(kind, owner, id_of(var), name, shape, init,
-                            var.value("persist", false));
+            if (shape == Shape::Color) init = resolve_token(var.id, "init", init);
+            return add_cell(kind, owner, var.id, var.name, shape, init, var.persist);
         }
-        const int type_id = find_type_ref(type_text);
+        const int type_id = find_type_ref(var.type);
         if (type_id < 0) {
-            diag(id_of(var), "unresolved_type",
-                 type_text.empty()
-                     ? "variable '" + name + "' has no type"
-                     : "variable '" + name + "' has type '" + type_text +
+            diag(var.id, "unresolved_type",
+                 var.type.empty()
+                     ? "variable '" + var.name + "' has no type"
+                     : "variable '" + var.name + "' has type '" + var.type +
                            "', which is not a type in the mesh",
                  DiagGrade::Error, "type");
             return UINT32_MAX;
         }
-        const Json init = var.contains("init") ? var["init"] : Json();
+        const Json& init = var.init;
         if (program_.types[type_id].kind == TypeKind::Enum) {
-            const uint32_t cell = add_cell(kind, owner, id_of(var), name, Shape::Enum,
-                                           Json(), var.value("persist", false));
+            const uint32_t cell = add_cell(kind, owner, var.id, var.name, Shape::Enum,
+                                           Json(), var.persist);
             const auto& variants = program_.types[type_id].variants;
             program_.cells[cell].type_id = static_cast<uint16_t>(type_id);
             program_.cells[cell].initial = Value::enumeration(
@@ -524,15 +602,15 @@ class Compiler {
                         break;
                     }
                 if (!matched)
-                    diag(id_of(var), "enum_name",
+                    diag(var.id, "enum_name",
                          "'" + wanted + "' is not one of this enum's variants",
                          DiagGrade::Error, "init");
             }
             return cell;
         }
-        const uint32_t cell = add_struct_cell(kind, owner, 0, id_of(var), name,
+        const uint32_t cell = add_struct_cell(kind, owner, 0, var.id, var.name,
                                               static_cast<uint16_t>(type_id));
-        add_field_cells(kind, owner, 0, name, cell);
+        add_field_cells(kind, owner, 0, var.name, cell);
         /* a struct variable's DEFAULTS: an object of field values over the type's
            zero, applied at start and by a reset */
         if (init.is_object()) {
@@ -543,8 +621,8 @@ class Compiler {
                 for (uint32_t i = 0; i < fields.size(); ++i)
                     if (fields[i].path == it.key()) field = static_cast<int>(i);
                 if (field < 0) {
-                    diag(id_of(var), "unresolved_field",
-                         "'" + type_text + "' has no field '" + it.key() + "'",
+                    diag(var.id, "unresolved_field",
+                         "'" + var.type + "' has no field '" + it.key() + "'",
                          DiagGrade::Error, "init");
                     continue;
                 }
@@ -563,7 +641,7 @@ class Compiler {
                 }
                 if (!ok || value.tag == ValueTag::Nil) {
                     if (!it->is_null())
-                        diag(id_of(var), "value_shape",
+                        diag(var.id, "value_shape",
                              "field '" + it.key() + "' is " +
                                  shape_name(fields[field].shape) + ", but its default is " +
                                  json_brief(*it),
@@ -578,22 +656,16 @@ class Compiler {
     }
 
     void build_cells() {
-        auto globals = document_.root.find("globals");
-        if (globals != document_.root.end() && globals->is_array()) {
-            for (const Json& var : *globals) {
-                const std::string name = var.value("name", "");
-                const uint32_t cell = declare_variable(var, CellKind::Global, 0);
-                if (cell == UINT32_MAX) continue;
-                globals_[name] = cell;
-                if (program_.cells[cell].shape == Shape::Timer)
-                    global_timers_[name] = add_timer(0, var);
-            }
+        for (const VarDecl& var : doc_.globals) {
+            const uint32_t cell = declare_variable(var, CellKind::Global, 0);
+            if (cell == UINT32_MAX) continue;
+            globals_[var.name] = cell;
+            if (program_.cells[cell].shape == Shape::Timer)
+                global_timers_[var.name] = add_timer(0, var);
         }
 
-        auto pages = document_.root.find("pages");
-        if (pages == document_.root.end() || !pages->is_array()) return;
-        for (const Json& page : *pages) {
-            const uint64_t page_id = id_of(page);
+        for (const PageDecl& page : doc_.pages) {
+            const uint64_t page_id = page.id;
             /* A page is one tree of elements nesting to any depth, and EVERY ONE of them
              * gets a record: what an element declares does not depend on whether it
              * happens to name a component. The walk is pre-order and pushes before it
@@ -602,15 +674,13 @@ class Compiler {
              * `info.page` is always the PAGE's id, never an enclosing frame's: page
              * identity is what gates mesh polling, so an element three frames deep must
              * still resolve to its page. */
-            std::function<void(const Json&, uint32_t)> walk_children =
-                [&](const Json& node, uint32_t parent) {
-                auto children = node.find("children");
-                if (children == node.end() || !children->is_array()) return;
-                for (const Json& instance : *children) {
-                    const std::string type_name = instance.value("type", "");
+            std::function<void(const std::vector<NodeDecl>&, uint32_t)> walk_children =
+                [&](const std::vector<NodeDecl>& children, uint32_t parent) {
+                for (const NodeDecl& instance : children) {
+                    const std::string& type_name = instance.type;
 
                     ElementInfo info;
-                    info.id = id_of(instance);
+                    info.id = instance.id;
                     info.page = page_id;
                     info.node = &instance;
                     info.parent = parent;
@@ -619,25 +689,19 @@ class Compiler {
                         diag(info.id, "component_type",
                              "component '" + type_name + "' is not registered");
 
-                    auto locals = instance.find("locals");
-                    if (locals != instance.end() && locals->is_array()) {
-                        for (const Json& var : *locals) {
-                            const std::string name = var.value("name", "");
-                            const uint32_t cell = declare_variable(var, CellKind::Local, info.id);
-                            if (cell == UINT32_MAX) continue;
-                            info.locals[name] = cell;
-                            if (program_.cells[cell].shape == Shape::Timer)
-                                info.timers[name] = add_timer(info.id, var);
-                        }
+                    for (const VarDecl& var : instance.locals) {
+                        const uint32_t cell = declare_variable(var, CellKind::Local, info.id);
+                        if (cell == UINT32_MAX) continue;
+                        info.locals[var.name] = cell;
+                        if (program_.cells[cell].shape == Shape::Timer)
+                            info.timers[var.name] = add_timer(info.id, var);
                     }
 
                     if (info.type) {
-                        const Json& authored =
-                            instance.contains("slots") && instance["slots"].is_object()
-                                ? instance["slots"] : empty_object_;
-                        for (const Json& slot : info.type->value("slots", Json::array())) {
-                            const std::string name = slot.value("name", "");
-                            const Shape shape = slot_shape(slot);
+                        const Json& authored = instance.slots;
+                        for (const SlotSpec& slot : info.type->slots) {
+                            const std::string& name = slot.name;
+                            const Shape shape = var_shape(slot.shape);
                             const bool aggregate =
                                 shape == Shape::List || shape == Shape::Map;
                             /* PUBLIC IS WHAT A PLACEMENT MAY SET. A component's private
@@ -646,11 +710,11 @@ class Compiler {
                                against it on the instance is not consulted — encapsulation
                                is a rule the compiler keeps, not one the inspector merely
                                declines to offer. */
-                            const bool is_public = slot.value("public", false);
+                            const bool is_public = slot.is_public;
                             /* the declared DEFAULT is a raw literal (the component's own
                                spelling); only an AUTHORED value speaks the expression
                                encoding (spec D1) */
-                            Json initial = slot.value("default", Json());
+                            Json initial = slot.initial;
                             std::string expr_text;
                             /* the row's NAME is its address: an element's variable is
                                stored nested under it, so the lookup walks the dots */
@@ -697,7 +761,7 @@ class Compiler {
                                how the authored spelling reads — a `color` list's members
                                are hex strings, not text. */
                             const Shape slot_elem =
-                                aggregate ? var_shape(slot.value("elem", "")) : Shape::Unknown;
+                                aggregate ? var_shape(slot.elem) : Shape::Unknown;
                             std::vector<Value> list_init;
                             const bool has_list =
                                 expr_text.empty() &&
@@ -714,7 +778,7 @@ class Compiler {
                             if (aggregate) {
                                 CellDef& cell = program_.cells[info.slots[name]];
                                 cell.elem = slot_elem;
-                                cell.leaf = var_shape(slot.value("leaf", ""));
+                                cell.leaf = var_shape(slot.leaf);
                             }
                             if (has_list) {
                                 program_.cells[info.slots[name]].has_list = true;
@@ -728,17 +792,17 @@ class Compiler {
                                UNKNOWN, because there is no one value for it to hold. */
                             if (!expr_text.empty() && !per_copy_slot(info.id, name))
                                 pending_slots_.push_back(PendingSlot{
-                                    info.id, name, expr_text, info.slots[name], slot});
+                                    info.id, name, expr_text, info.slots[name], &slot});
                         }
                     }
                     const uint32_t index = static_cast<uint32_t>(elements_.size());
                     elements_.push_back(std::move(info));
                     /* an INSTANCE's children are its component's, not the document's:
                        the subtree under one is empty, and descending is a no-op */
-                    walk_children(instance, index);
+                    walk_children(instance.children, index);
                 }
             };
-            walk_children(page, UINT32_MAX);
+            walk_children(page.children, UINT32_MAX);
         }
     }
 
@@ -747,20 +811,15 @@ class Compiler {
      * (an edit recompiles, so compile time is live enough). */
     bool slot_number(const ElementInfo& element, const std::string& slot, double& out) const {
         if (!element.node || !element.type) return false;
-        const Json& authored = element.node->contains("slots") &&
-                                       (*element.node)["slots"].is_object()
-                                   ? (*element.node)["slots"]
-                                   : empty_object_;
-        if (const Json* at = authored_slot(authored, slot))
+        if (const Json* at = authored_slot(element.node->slots, slot))
             if (at->is_number()) {
                 out = at->get<double>();
                 return true;
             }
-        for (const Json& row : element.type->value("slots", Json::array()))
-            if (row.value("name", "") == slot) {
-                auto def = row.find("default");
-                if (def == row.end() || !def->is_number()) return false;
-                out = def->get<double>();
+        for (const SlotSpec& row : element.type->slots)
+            if (row.name == slot) {
+                if (!row.initial.is_number()) return false;
+                out = row.initial.get<double>();
                 return true;
             }
         return false;
@@ -840,16 +899,15 @@ class Compiler {
      * is a number or the text of a constant expression over the instance's slots; anything
      * unresolvable drops the trigger with a finding rather than picking a rate nobody
      * asked for. Ticks are milliseconds, clamped to something a scheduler can honour. */
-    bool cadence_trigger(const ElementInfo& element, const Json& trigger, uint64_t flow_id,
-                         FlowProgram& flow) {
-        auto ms = trigger.find("ms");
+    bool cadence_trigger(const ElementInfo& element, const TriggerDecl& trigger,
+                         uint64_t flow_id, FlowProgram& flow) {
         double period = 0.0;
         bool ok = false;
-        if (ms != trigger.end() && ms->is_number()) {
-            period = ms->get<double>();
+        if (trigger.ms.kind == NumOrText::Kind::Num) {
+            period = trigger.ms.num;
             ok = std::isfinite(period);
-        } else if (ms != trigger.end() && ms->is_string()) {
-            ok = fold_number(element, ms->get<std::string>(), period);
+        } else if (trigger.ms.kind == NumOrText::Kind::Text) {
+            ok = fold_number(element, trigger.ms.text, period);
         }
         if (!ok || period <= 0.0) {
             diag(flow_id, "trigger",
@@ -879,12 +937,6 @@ class Compiler {
              "unknown token '" + text + "': the slot paints transparent",
              DiagGrade::Warning, slot);
         return Json("#00000000");
-    }
-
-    /* the shape one served row holds — the same question `var_shape` answers, asked with
-       the row's own spelling of it */
-    Shape slot_shape(const Json& slot) const {
-        return var_shape(slot.value("shape", ""));
     }
 
     /* WHERE an authored aggregate is being read, so one set of parsers can serve a slot
@@ -1053,18 +1105,17 @@ class Compiler {
      * is a finding and the cell still starts empty — the declaration stands, the value
      * was wrong. `variants(...)` is a SLOT spelling and is refused here by name rather
      * than compiling to something surprising. */
-    void aggregate_var_initial(const Json& var, Shape shape, uint32_t cell) {
+    void aggregate_var_initial(const VarDecl& var, Shape shape, uint32_t cell) {
         const bool pairs = shape == Shape::Map;
-        const std::string name = var.value("name", "");
         const AggSite site{
-            id_of(var),
-            std::string("variable '") + name + "' is a " + (pairs ? "map" : "list"),
+            var.id,
+            std::string("variable '") + var.name + "' is a " + (pairs ? "map" : "list"),
             "init",
             pairs ? "Write its start as an object of scalars ({\"a\": 1, \"b\": 2}), or "
                     "leave it empty"
                   : "Write its start as a list of scalars ([1, 2, 3]), or leave it empty"};
         std::vector<Value> out;
-        Json value = var.contains("init") ? var["init"] : Json();
+        Json value = var.init;
         if (value.is_string()) {
             const std::string text = trimmed(value.get<std::string>());
             if (text.compare(0, 9, "variants(") == 0)
@@ -1186,15 +1237,15 @@ class Compiler {
     }
 
     /* a value outside a slot's declared variant set is a typo, not a new option */
-    void check_variants(uint64_t node_id, const std::string& slot, const Json& spec,
+    void check_variants(uint64_t node_id, const std::string& slot, const SlotSpec& spec,
                         const Json& value) {
-        auto variants = spec.find("variants");
-        if (variants == spec.end() || !variants->is_array() || !value.is_string()) return;
-        for (const Json& variant : *variants)
-            if (variant == value) return;
+        if (spec.variants.empty() || !value.is_string()) return;
+        const std::string text = value.get<std::string>();
+        for (const std::string& variant : spec.variants)
+            if (variant == text) return;
         std::string known;
-        for (const Json& variant : *variants)
-            known += (known.empty() ? "" : ", ") + variant.get<std::string>();
+        for (const std::string& variant : spec.variants)
+            known += (known.empty() ? "" : ", ") + variant;
         diag(node_id, "slot_variant",
              "slot '" + slot + "' is " + json_brief(value) + ", which is not one of: " + known,
              DiagGrade::Error, slot);
@@ -1204,8 +1255,8 @@ class Compiler {
      * scalar): spelled with the scalar variable type names, so the vocabulary the
      * type picker already teaches is the one this reads. A wrong spelling is a
      * finding on the variable, never a silent anything-goes. */
-    Shape declared_elem(const Json& var, const std::string& name) {
-        const std::string text = trimmed(var.value("elem", ""));
+    Shape declared_elem(const VarDecl& var) {
+        const std::string text = trimmed(var.elem);
         if (text.empty()) return Shape::Unknown;
         const Shape shape = var_shape(text);
         if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text ||
@@ -1214,8 +1265,8 @@ class Compiler {
         /* list or map here declares a NESTED cell: every element is a row, and `leaf`
            says what the rows hold */
         if (shape == Shape::List || shape == Shape::Map) return shape;
-        diag(id_of(var), "value_shape",
-             "variable '" + name + "': '" + text +
+        diag(var.id, "value_shape",
+             "variable '" + var.name + "': '" + text +
                  "' is not an element type; elements are num, bool, text, color or icon, "
                  "or list or map for rows",
              DiagGrade::Error, "elem");
@@ -1225,12 +1276,12 @@ class Compiler {
     /* THE LEAF TYPE of a nested list or map: what its ROWS hold. It is read only where
      * `elem` declares a row, and only a scalar can be spelled — nesting is ONE level by
      * construction, so there is nothing below a row for a third name to describe. */
-    Shape declared_leaf(const Json& var, const std::string& name, Shape elem) {
-        const std::string text = trimmed(var.value("leaf", ""));
+    Shape declared_leaf(const VarDecl& var, Shape elem) {
+        const std::string text = trimmed(var.leaf);
         if (text.empty()) return Shape::Unknown;
         if (elem != Shape::List && elem != Shape::Map) {
-            diag(id_of(var), "value_shape",
-                 "variable '" + name +
+            diag(var.id, "value_shape",
+                 "variable '" + var.name +
                      "': a leaf type says what the ROWS hold, and this variable's elements "
                      "are " +
                      (elem == Shape::Unknown ? std::string("undeclared")
@@ -1243,8 +1294,8 @@ class Compiler {
         if (shape == Shape::Num || shape == Shape::Bool || shape == Shape::Text ||
             shape == Shape::Color)
             return shape;
-        diag(id_of(var), "value_shape",
-             "variable '" + name + "': '" + text +
+        diag(var.id, "value_shape",
+             "variable '" + var.name + "': '" + text +
                  "' is not a leaf type; a row holds num, bool, text, color or icon — "
                  "nesting is one level, so there is nothing below a row to be a list of",
              DiagGrade::Error, "leaf");
@@ -1281,15 +1332,10 @@ class Compiler {
 
     /* `where` narrows the diag to a field of the node (a feed's "src" / "path" row); a
      * step passes nothing, the step row itself is the line */
-    int resolve_entity(const Json& ref, uint64_t node, const std::string& where = "") {
-        if (!ref.is_object()) {
-            diag(node, "entity_ref", "entity reference is not an object",
-                 DiagGrade::Error, where);
-            return -1;
-        }
+    int resolve_entity(const ToDecl& ref, uint64_t node, const std::string& where = "") {
         EntityKind kind;
-        const std::string kind_text = ref.value("kind", "");
-        const std::string name = ref.value("name", "");
+        const std::string& kind_text = ref.kind;
+        const std::string& name = ref.name;
         if (kind_text == "L") {
             diag(node, "local_entity", "an HMI variable is not a mesh target",
                  DiagGrade::Error, where);
@@ -1634,31 +1680,30 @@ class Compiler {
     void build_armed_elements() {
         for (ElementInfo& element : elements_) {
             if (element.type) {
-                auto tmpl = element.type->find("template");
-                if (tmpl == element.type->end() || !tmpl->is_object()) continue;
-                collect_armed(*tmpl, "", element, /*root=*/true);
+                if (!element.type->has_template) continue;
+                collect_armed(element.type->tmpl, "", element);
                 continue;
             }
             /* A PLAIN ELEMENT CARRIES ITS OWN GESTURE. There is no template under it, so
                its `interact` is the whole story and it rides the element's own channel —
                the same "" path a component root's does. This is what lets a frame drawn
                on the page have behavior without being made into a component first. */
-            collect_armed(*element.node, "", element, /*root=*/true, /*descend=*/false);
+            const InteractDecl& interact = element.node->interact;
+            if (interact.present && !interact.primitive.empty())
+                element.armed.push_back(ArmedInfo{"", interact.primitive, interact.bubbles});
         }
     }
 
-    /* `descend` walks a COMPONENT TEMPLATE, whose nodes are this instance's anatomy. A
-     * page element's children are elements in their own right, with their own records and
-     * their own channels, so its walk stops at itself. */
-    void collect_armed(const Json& node, const std::string& path, ElementInfo& element,
-                       bool root, bool descend = true) {
-        auto interact = node.find("interact");
-        if (interact != node.end() && interact->is_object() &&
-            !str_or(*interact, "primitive", "").empty()) {
+    /* walks a COMPONENT TEMPLATE, whose nodes are this instance's anatomy. A page
+     * element's children are elements in their own right, with their own records and
+     * their own channels, so its armed info is read off its own record above. */
+    void collect_armed(const ArmedNode& node, const std::string& path,
+                       ElementInfo& element) {
+        if (!node.primitive.empty()) {
             ArmedInfo info;
             info.element = path;
-            info.primitive = str_or(*interact, "primitive", "");
-            info.bubbles = interact->value("bubbles", true);
+            info.primitive = node.primitive;
+            info.bubbles = node.bubbles;
             element.armed.push_back(info);
             /* the root's own channel IS the instance-level one; only named elements
                enter the bubbling table */
@@ -1666,15 +1711,9 @@ class Compiler {
                 program_.armed_elements.push_back(
                     ArmedElement{element.id, path, info.bubbles});
         }
-        (void)root;
-        if (!descend) return;
-        auto children = node.find("children");
-        if (children == node.end() || !children->is_array()) return;
-        for (const Json& child : *children) {
-            const std::string name = str_or(child, "name", "");
-            collect_armed(child, path.empty() ? name : path + "." + name, element,
-                          /*root=*/false);
-        }
+        for (const ArmedNode& child : node.children)
+            collect_armed(child, path.empty() ? child.name : path + "." + child.name,
+                          element);
     }
 
     /* Resolve a trigger's SIGNATURE: a gesture event checks that some armed element (or
@@ -1718,19 +1757,18 @@ class Compiler {
         }
         (void)in_behavior;
         if (element.type)
-            for (const Json& row : element.type->value("events", Json::array())) {
-                if (row.value("name", "") != event) continue;
-                const Json params = row.value("params", Json::array());
-                if (params.is_array() && params.size() > 1) {
+            for (const EventSpec& row : element.type->events) {
+                if (row.name != event) continue;
+                if (row.params.size() > 1) {
                     diag(flow, "event", "'" + event + "' declares " +
-                             std::to_string(params.size()) +
+                             std::to_string(row.params.size()) +
                              " parameters; an event carries one for now",
                          DiagGrade::Error);
                     return false;
                 }
-                if (params.is_array() && params.size() == 1) {
-                    param.name = str_or(params[0], "name", "value");
-                    param.shape = shape_from_name(str_or(params[0], "shape", ""));
+                if (row.params.size() == 1) {
+                    param.name = row.params[0].name;
+                    param.shape = shape_from_name(row.params[0].shape);
                     has_param = true;
                 }
                 return true;
@@ -1864,7 +1902,7 @@ class Compiler {
             /* a constant text ref wears kConstantRef: strip it to read the pool */
             const uint32_t pool = value.ref & ~kConstantRef;
             if (value.tag == ValueTag::Text && pool < program_.texts.size())
-                check_variants(element.id, pending.name, pending.spec,
+                check_variants(element.id, pending.name, *pending.spec,
                                Json(program_.texts[pool]));
             return;
         }
@@ -1875,13 +1913,9 @@ class Compiler {
         for (uint32_t dep : sp.dep_entities) {
             if (program_.entities[dep].kind != EntityKind::Function) continue;
             double hz = 2.0;
-            auto poll = element.node->find("poll");
-            if (poll != element.node->end() && poll->is_object()) {
-                auto rate = poll->find(pending.name);
-                if (rate != poll->end() && rate->is_number() &&
-                    rate->get<double>() > 0.0)
-                    hz = rate->get<double>();
-            }
+            auto rate = element.node->poll.find(pending.name);
+            if (rate != element.node->poll.end() && rate->second > 0.0)
+                hz = rate->second;
             sp.poll_ms = std::max(10u, static_cast<uint32_t>(std::lround(1000.0 / hz)));
             break;
         }
@@ -1998,13 +2032,12 @@ class Compiler {
      * (`{init:true}` the one special form: reset to the destination's own start); the
      * lvalue stays structural. Reading the mesh is naming it — `@entity.field` in the
      * rvalue — so there is no separate "read" form anymore. */
-    bool compile_assign(const ElementInfo& element, const Json& step, FlowProgram& flow,
+    bool compile_assign(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                         Env& scope, FlowLocals& locals) {
-        const uint64_t step_id = id_of(step);
-        const Json& from = step.value("from", Json::object());
-        const Json& to = step.value("to", Json::object());
-        const SideKind source = side_kind(from);
-        if (source == SideKind::None) {
+        const uint64_t step_id = step.id;
+        const FromDecl& from = step.from;
+        const ToDecl& to = step.to;
+        if (!from.has_any) {
             diag(step_id, "move_source", "this assignment has no value", DiagGrade::Error,
                  "from");
             return false;
@@ -2014,10 +2047,9 @@ class Compiler {
          * end of a list, `key` writes one key of a map. They are separate verbs because
          * they mean separate things — one grows a history, the other addresses a table —
          * and asking for both at once is asking for neither. */
-        const std::string mode = str_or(step, "mode", "write");
-        const std::string keep = trimmed(str_or(step, "keep", ""));
-        const std::string key = trimmed(str_or(step, "key", ""));
-        const bool appends = mode == "append";
+        const std::string keep = trimmed(step.keep);
+        const std::string key = trimmed(step.key);
+        const bool appends = step.mode == "append";
         if (appends && !key.empty()) {
             diag(step_id, "move_mode",
                  "a move appends to a list OR writes a map by key, not both",
@@ -2031,7 +2063,7 @@ class Compiler {
             return false;
         }
 
-        const std::string slot = slot_of(to);
+        const std::string& slot = to.slot;
         if (!slot.empty()) {
             auto found = element.slots.find(slot);
             if (found == element.slots.end()) {
@@ -2050,10 +2082,10 @@ class Compiler {
                    emit_store(flow, step_id, found->second);
         }
 
-        if (to.contains("local")) {
+        if (to.has_local) {
             if (appends || !key.empty()) {
-                const std::string name = str_or(to, "local", "");
-                const std::string path = str_or(to, "path", "");
+                const std::string& name = to.local;
+                const std::string& path = to.path;
                 uint32_t cell = UINT32_MAX;
                 auto found = locals.find(name);
                 if (found != locals.end()) cell = found->second;
@@ -2080,7 +2112,7 @@ class Compiler {
             }
             return assign_into_local(element, step, flow, scope, locals);
         }
-        if (to.contains("kind")) {
+        if (to.has_kind) {
             if (appends) {
                 diag(step_id, "move_dest",
                      "a mesh entity takes no append; a list variable or a list slot "
@@ -2165,11 +2197,11 @@ class Compiler {
      * declared list or map. So the element is compiled with the one-scalar rule stood
      * down and TYPE CHECKED here (element_fits), where the refusal can name the list,
      * what it holds and the declaration that would take what the author wrote. */
-    bool aggregate_assign(const ElementInfo& element, const Json& step, FlowProgram& flow,
+    bool aggregate_assign(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                         Env& scope, uint32_t cell, bool appends,
                         const std::string& keep, const std::string& key) {
-        const uint64_t step_id = id_of(step);
-        const Json& from = step.value("from", Json::object());
+        const uint64_t step_id = step.id;
+        const FromDecl& from = step.from;
         const CellDef& def = program_.cells[cell];
         if (appends && def.shape != Shape::List) {
             diag(step_id, "move_dest",
@@ -2302,16 +2334,15 @@ class Compiler {
      * scope by bind_entities — so this is one compile, one vocabulary. `agg_ok` says
      * the destination is a declared HMI aggregate, which may take a whole list or map
      * (copy a variable, rebuild one with a map/filter). */
-    bool push_scalar(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                     Env& scope, const Json& from, const Type& expected,
+    bool push_scalar(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
+                     Env& scope, const FromDecl& from, const Type& expected,
                      Shape* actual = nullptr, bool agg_ok = false) {
         (void)element;
-        const uint64_t step_id = id_of(step);
-        if (from.contains("expr"))
-            return expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
-                              expected, flow.code, flow.max_stack, actual, "from",
+        if (from.has_expr)
+            return expression(step.id, from.expr_text ? from.expr : "x", ExprTier::Wire,
+                              scope, expected, flow.code, flow.max_stack, actual, "from",
                               nullptr, agg_ok);
-        diag(step_id, "move_source", "this assignment has no value", DiagGrade::Error,
+        diag(step.id, "move_source", "this assignment has no value", DiagGrade::Error,
              "from");
         return false;
     }
@@ -2321,8 +2352,8 @@ class Compiler {
      * at compile — the runtime text->enum coercion opcode is dead. The one insertion
      * left is a RENDER, not a coercion: an enum moved into a text destination reads
      * as its variant name, the way str() would spell it. */
-    bool push_typed(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                    Env& scope, const Json& from, Shape wanted,
+    bool push_typed(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
+                    Env& scope, const FromDecl& from, Shape wanted,
                     uint16_t type_id, bool agg_ok = false) {
         if (wanted == Shape::Text) {
             Shape produced = Shape::Unknown;
@@ -2339,7 +2370,7 @@ class Compiler {
             }
             if (produced != Shape::Unknown && produced != Shape::Nil &&
                 produced != Shape::Text) {
-                diag(id_of(step), "shape",
+                diag(step.id, "shape",
                      "the source is " + std::string(shape_name(produced)) +
                          ", but this destination wants text",
                      DiagGrade::Error, "from");
@@ -2354,13 +2385,13 @@ class Compiler {
     /* `-> local`: the destination names a variable in scope, or declares a temporary by
      * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt; a
      * field of one by StoreField; a scalar by Store. */
-    bool assign_into_local(const ElementInfo& element, const Json& step, FlowProgram& flow,
+    bool assign_into_local(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                          Env& scope, FlowLocals& locals) {
-        const uint64_t step_id = id_of(step);
-        const Json& from = step.value("from", Json::object());
-        const Json& to = step.value("to", Json::object());
-        const std::string name = str_or(to, "local", "");
-        const std::string path = str_or(to, "path", "");
+        const uint64_t step_id = step.id;
+        const FromDecl& from = step.from;
+        const ToDecl& to = step.to;
+        const std::string& name = to.local;
+        const std::string& path = to.path;
         if (name.empty()) {
             diag(step_id, "move_dest", "this move has no destination", DiagGrade::Error, "to");
             return false;
@@ -2369,7 +2400,7 @@ class Compiler {
         /* RESET (spec 2.6): the source `{init}` is the destination's own declared
            start. A struct variable re-runs its New (zero + authored defaults); a
            scalar or enum takes its init constant back. */
-        if (from.contains("init")) {
+        if (from.has_init) {
             uint32_t cell = UINT32_MAX;
             auto found = locals.find(name);
             if (found != locals.end()) cell = found->second;
@@ -2408,7 +2439,7 @@ class Compiler {
            name is declared here with that type and zeroed at THIS ROW every run: the
            per-run clean value a persistent variable cannot be. On a name that already
            exists the type is a claim to check, never a redeclaration. */
-        const std::string typed = str_or(to, "type", "");
+        const std::string& typed = to.type;
         if (!typed.empty() && name != "x") {
             const int type_id = find_type_ref(typed);
             if (type_id < 0) {
@@ -2457,8 +2488,8 @@ class Compiler {
         if (name == "x" && path.empty()) {
             Shape produced = Shape::Unknown;
             uint16_t produced_type = 0;
-            if (!expression(step_id, str_or(from, "expr", "x"), ExprTier::Wire, scope,
-                            Type(), flow.code, flow.max_stack, &produced,
+            if (!expression(step_id, from.expr_text ? from.expr : "x", ExprTier::Wire,
+                            scope, Type(), flow.code, flow.max_stack, &produced,
                             "from", &produced_type)) {
                 return false;
             }
@@ -2536,7 +2567,7 @@ class Compiler {
         uint16_t struct_type = 0;
         int read_entity = -1;
         {
-            const std::string expr = trimmed(str_or(from, "expr", ""));
+            const std::string expr = trimmed(from.expr);
             if (expr.size() > 1 && expr[0] == '@' &&
                 expr.find('.') == std::string::npos) {
                 const std::string ename = expr.substr(1);
@@ -2608,15 +2639,15 @@ class Compiler {
     }
 
     /* `-> entity`: the one way a value leaves a flow. The verb comes from the kind. */
-    bool assign_out(const ElementInfo& element, const Json& step, FlowProgram& flow,
+    bool assign_out(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                   Env& scope, FlowLocals& locals) {
-        const uint64_t step_id = id_of(step);
-        const Json& from = step.value("from", Json::object());
-        const Json& to = step.value("to", Json::object());
+        const uint64_t step_id = step.id;
+        const FromDecl& from = step.from;
+        const ToDecl& to = step.to;
         const int entity = resolve_entity(to, step_id, "to");
         if (entity < 0) return false;
         const EntityDef& target = program_.entities[entity];
-        const Verb verb = verb_for(target.kind, str_or(step, "mode", "write"));
+        const Verb verb = verb_for(target.kind, step.mode);
         if (verb == Verb::Unforce && target.kind != EntityKind::Variable) {
             diag(step_id, "move_mode", "only a variable can be unforced", DiagGrade::Error, "to");
             return false;
@@ -2639,7 +2670,7 @@ class Compiler {
            payload-less signal): the send itself is the whole message, so no field and
            no source are required — the schema's default (empty) request goes out.
            b = UINT32_MAX tells the VM to emit without popping a value. */
-        if (target.fields.empty() && str_or(to, "path", "").empty() &&
+        if (target.fields.empty() && to.path.empty() &&
             (target.kind == EntityKind::Function || target.kind == EntityKind::Signal)) {
             out.b = UINT32_MAX;
             flow.code.push_back(out);
@@ -2651,7 +2682,7 @@ class Compiler {
            holder is a flow temporary or a declared struct variable, spelled as the
            degenerate expression — the rvalue is EXACTLY its bare name (a struct is
            not a stack value, so the whole-value send is recognized here). */
-        const std::string source_local = bare_name(str_or(from, "expr", ""));
+        const std::string source_local = bare_name(from.expr);
         uint32_t held_cell = UINT32_MAX;
         if (!source_local.empty()) {
             auto held = locals.find(source_local);
@@ -2661,7 +2692,7 @@ class Compiler {
         const bool whole = held_cell != UINT32_MAX &&
                            program_.cells[held_cell].shape == Shape::Struct;
         if (whole) {
-            if (!trimmed(str_or(step, "key", "")).empty()) {
+            if (!trimmed(step.key).empty()) {
                 diag(step_id, "move_dest",
                      "a whole value goes out unaddressed; an index addresses one "
                      "array field",
@@ -2683,7 +2714,7 @@ class Compiler {
             flow.code.push_back(load);
             flow.max_stack = std::max(flow.max_stack, 1u);
         } else {
-            const int field = find_field(entity, str_or(to, "path", ""), step_id, "to");
+            const int field = find_field(entity, to.path, step_id, "to");
             if (field < 0) {
                 if (target.fields.size() > 1)
                     diag(step_id, "move_dest",
@@ -2699,7 +2730,7 @@ class Compiler {
                map fields stay refused — the encode never builds those, so a value
                pushed there would be dropped without a trace. */
             const FieldDef& fdef = target.fields[field];
-            const std::string key = trimmed(str_or(step, "key", ""));
+            const std::string key = trimmed(step.key);
             if (fdef.shape == Shape::Map) {
                 diag(step_id, "move_dest",
                      std::string(entity_kind_name(target.kind)) + ":" + target.name +
@@ -2866,18 +2897,16 @@ class Compiler {
      * `this.<slot>` rebinds to that cell for the steps below. An aggregate-shaped
      * slot (or an append/key write) still stands down whole: a shadow list is storage
      * this run has no business allocating. */
-    bool shadow_slot_write(const ElementInfo& element, const Json& step, FlowProgram& flow,
+    bool shadow_slot_write(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                            Env& scope, const std::string& slot) {
-        const uint64_t step_id = id_of(step);
+        const uint64_t step_id = step.id;
         auto found = element.slots.find(slot);
         if (found == element.slots.end()) return true;   /* claimed name, no cell: drop */
         const CellDef& def = program_.cells[found->second];
-        const std::string mode = str_or(step, "mode", "write");
-        if (def.shape == Shape::List || def.shape == Shape::Map || mode == "append" ||
-            !trimmed(str_or(step, "key", "")).empty())
+        if (def.shape == Shape::List || def.shape == Shape::Map || step.mode == "append" ||
+            !trimmed(step.key).empty())
             return true;                                /* aggregate: plain stand-down */
-        if (!push_typed(element, step, flow, scope, step.value("from", Json::object()),
-                        def.shape, def.type_id))
+        if (!push_typed(element, step, flow, scope, step.from, def.shape, def.type_id))
             return false;
         const uint32_t shadow =
             add_temp_cell(flow.flow_id, element.id, "this." + slot + "'", def.shape);
@@ -2892,10 +2921,10 @@ class Compiler {
      * one the type declares — a gesture is the pointer's to raise — and the argument
      * expression compiles against the declared parameter's shape. The record queues on
      * the state; the scheduler dispatches it after this run halts. */
-    bool compile_raise(const ElementInfo& element, const Json& step, FlowProgram& flow,
+    bool compile_raise(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                        Env& scope) {
-        const uint64_t step_id = id_of(step);
-        const std::string name = trimmed(str_or(step, "event", ""));
+        const uint64_t step_id = step.id;
+        const std::string name = trimmed(step.event);
         if (name.empty()) {
             diag(step_id, "raise_event", "raise names no event", DiagGrade::Error, "event");
             return false;
@@ -2907,35 +2936,31 @@ class Compiler {
                  DiagGrade::Error, "event");
             return false;
         }
-        /* COPY the row: the events list above is a temporary, and a pointer into it
-           would dangle the moment the loop ends */
-        Json row;
-        bool declared = false;
+        /* a reference into specs_, which never grows after construction */
+        const EventSpec* row = nullptr;
         if (element.type)
-            for (const Json& r : element.type->value("events", Json::array()))
-                if (r.value("name", "") == name) { row = r; declared = true; break; }
-        if (!declared) {
+            for (const EventSpec& r : element.type->events)
+                if (r.name == name) { row = &r; break; }
+        if (!row) {
             diag(step_id, "raise_event",
                  "this type declares no event '" + name +
                      "'; declare it in the events section first",
                  DiagGrade::Error, "event");
             return false;
         }
-        const Json params = row.value("params", Json::array());
-        if (params.is_array() && params.size() > 1) {
+        if (row->params.size() > 1) {
             diag(step_id, "raise_event",
-                 "'" + name + "' declares " + std::to_string(params.size()) +
+                 "'" + name + "' declares " + std::to_string(row->params.size()) +
                      " parameters; an event carries one for now",
                  DiagGrade::Error, "event");
             return false;
         }
         bool has_arg = false;
-        if (params.is_array() && params.size() == 1) {
-            const std::string pname = str_or(params[0], "name", "value");
-            const Shape shape = shape_from_name(str_or(params[0], "shape", ""));
-            const Json args = step.value("args", Json::object());
-            const std::string text =
-                args.is_object() ? trimmed(str_or(args, pname.c_str(), "")) : "";
+        if (row->params.size() == 1) {
+            const std::string& pname = row->params[0].name;
+            const Shape shape = shape_from_name(row->params[0].shape);
+            auto arg = step.args.find(pname);
+            const std::string text = arg == step.args.end() ? "" : trimmed(arg->second);
             if (text.empty()) {
                 diag(step_id, "raise_args",
                      "raise " + name + " needs " + pname, DiagGrade::Error, "args");
@@ -2970,9 +2995,9 @@ class Compiler {
      * message is a DISPLAY-tier expression — it is for a human, so text joining and the
      * formatting vocabulary are exactly what it is made of — and `ms`, when authored,
      * is how long it stays; absent, the view scales the time with the length. */
-    bool compile_notify(const Json& step, FlowProgram& flow, Env& scope) {
-        const uint64_t step_id = id_of(step);
-        const std::string text = trimmed(str_or(step, "text", ""));
+    bool compile_notify(const StepDecl& step, FlowProgram& flow, Env& scope) {
+        const uint64_t step_id = step.id;
+        const std::string text = trimmed(step.text);
         if (text.empty()) {
             diag(step_id, "notify_text", "notify says nothing; give it a message",
                  DiagGrade::Error, "text");
@@ -2989,7 +3014,7 @@ class Compiler {
                  DiagGrade::Error, "text");
             return false;
         }
-        const std::string ms = trimmed(str_or(step, "ms", ""));
+        const std::string ms = trimmed(step.ms);
         if (!ms.empty() &&
             !expression(step_id, ms, ExprTier::Display, scope, Type(Shape::Num), flow.code,
                         flow.max_stack, nullptr, "ms"))
@@ -3007,7 +3032,7 @@ class Compiler {
      * TYPE BEHAVIOR: a slot-writing step whose slot is already claimed (a feed, an
      * authored flow) is DROPPED — per step, so the raise beside it still runs and a fed
      * control still speaks `changed` while standing down its local echo. */
-    bool compile_steps(const ElementInfo& element, const Json& flow_node, FlowProgram& flow,
+    bool compile_steps(const ElementInfo& element, const FlowDecl& flow_node, FlowProgram& flow,
                        const EventParam* param = nullptr,
                        const std::unordered_map<std::string, std::string>* claimed = nullptr,
                        bool in_component = false, const std::string& copyless = "") {
@@ -3027,12 +3052,12 @@ class Compiler {
             scope.bind_value(param->name,
                              Place{Type(param->shape), OpCode::LoadArg, 0, 0});
         FlowLocals locals;
-        for (const Json& step : flow_node.value("do", Json::array())) {
-            const uint64_t step_id = id_of(step);
-            const std::string kind = step.value("kind", "");
+        for (const StepDecl& step : flow_node.steps) {
+            const uint64_t step_id = step.id;
+            const std::string& kind = step.kind;
             if (kind == "assign") {
                 if (claimed) {
-                    const std::string slot = slot_of(step.value("to", Json::object()));
+                    const std::string& slot = step.to.slot;
                     if (!slot.empty() && claimed->find(slot) != claimed->end()) {
                         /* THE WRITE STILL HOLDS WITHIN THIS RUN. The claimed cell stays
                            the feed's, but program order must not lie: a later step
@@ -3052,7 +3077,9 @@ class Compiler {
             } else if (kind == "notify") {
                 if (!compile_notify(step, flow, scope)) return false;
             } else if (kind == "gate") {
-                if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
+                const std::string condition =
+                    step.a.kind == NumOrText::Kind::Text ? step.a.text : "";
+                if (!expression(step_id, condition, ExprTier::Wire, scope,
                                 Type(Shape::Bool), flow.code, flow.max_stack))
                     return false;
                 Instruction gate{OpCode::Gate};
@@ -3064,30 +3091,33 @@ class Compiler {
                                     "value a default with ??");
                 flow.code.push_back(gate);
             } else if (kind == "deadband") {
+                const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
                 ins.op = OpCode::Deadband;
                 ins.a = state_site(StateSiteKind::Deadband, flow.flow_id, step_id);
-                ins.b = program_.add_constant(Value::number(num_or(step, "a", 0.0)));
+                ins.b = program_.add_constant(Value::number(a));
                 ins.c = fault_site(step_id, "deadband", "deadband needs a numeric value");
                 flow.code.push_back(ins);
             } else if (kind == "throttle") {
+                const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
                 ins.op = OpCode::Throttle;
                 ins.a = state_site(StateSiteKind::Throttle, flow.flow_id, step_id);
-                ins.b = static_cast<uint32_t>(std::max(0.0, step.value("a", 0.0)));
+                ins.b = static_cast<uint32_t>(std::max(0.0, a));
                 ins.c = fault_site(step_id, "throttle", "throttle state is invalid");
                 flow.code.push_back(ins);
             } else if (kind == "debounce" || kind == "delay") {
+                const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
                 ins.op = OpCode::Suspend;
                 ins.a = state_site(StateSiteKind::Suspend, flow.flow_id, step_id);
-                ins.b = static_cast<uint32_t>(std::max(0.0, step.value("a", 0.0)));
+                ins.b = static_cast<uint32_t>(std::max(0.0, a));
                 ins.small = kind == "debounce" ? 1 : 0;
                 ins.c = fault_site(step_id, "suspend", "suspension state is invalid");
                 flow.code.push_back(ins);
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
                 const int timer =
-                    resolve_timer(element, str_or(step, "timer", ""), step_id, in_component);
+                    resolve_timer(element, step.timer, step_id, in_component);
                 if (timer < 0) return false;
                 Instruction ins;
                 ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
@@ -3131,47 +3161,42 @@ class Compiler {
 
     void build_flows() {
         for (ElementInfo& element : elements_) {
-            auto flows = element.node->find("flows");
-            if (flows == element.node->end() || !flows->is_array()) continue;
-            for (const Json& node : *flows) {
-                const uint64_t flow_id = id_of(node);
-                const Json& triggers = node.value("when", Json::array());
-                if (!triggers.is_array() || triggers.empty()) {
+            for (const FlowDecl& node : element.node->flows) {
+                const uint64_t flow_id = node.id;
+                if (node.when.empty()) {
                     diag(flow_id, "trigger", "flow has no trigger");
                     continue;
                 }
                 const uint32_t group = program_.layout.fired_groups++;
-                for (const Json& trigger : triggers) {
+                for (const TriggerDecl& trigger : node.when) {
                     FlowProgram flow;
                     flow.node_id = element.id;
                     flow.flow_id = flow_id;
                     flow.group = group;
                     flow.runtime_index = static_cast<uint32_t>(program_.flows.size());
                     flow.first_only =
-                        triggers.size() > 1 && node.value("when_mode", "first") == "first";
+                        node.when.size() > 1 && node.when_mode == "first";
                     EventParam param;
                     bool has_param = false;
                     /* empty = this trigger carries a copy; otherwise the clock it is */
                     std::string copyless;
-                    if (trigger.value("kind", "") == "timer") {
-                        const std::string name = trigger.value("var", "");
-                        const int timer = resolve_timer(element, name, flow_id);
+                    if (trigger.kind == "timer") {
+                        const int timer = resolve_timer(element, trigger.var, flow_id);
                         if (timer < 0) continue;
                         flow.event = program_.timers[timer].event;
                         program_.timers[timer].rearm_groups.push_back(group);
                         copyless = "a timer";
-                    } else if (trigger.value("kind", "") == "every") {
+                    } else if (trigger.kind == "every") {
                         if (!cadence_trigger(element, trigger, flow_id, flow)) continue;
                         copyless = "an `every` trigger";
                     } else {
-                        flow.event = trigger.value("name", "");
+                        flow.event = trigger.name;
                         /* A COMPONENT'S ELEMENTS ARE PRIVATE ANATOMY: an instance flow's
                            trigger never names one — the instance-level channel and the
                            component's own events are its whole vocabulary */
-                        const std::string channel = trigger.value("element", "");
-                        if (!channel.empty()) {
+                        if (!trigger.element.empty()) {
                             diag(flow_id, "event",
-                                 "'" + channel + "' is an element of this instance's "
+                                 "'" + trigger.element + "' is an element of this instance's "
                                  "component; element channels live in the component's "
                                  "behavior",
                                  DiagGrade::Error);
@@ -3181,12 +3206,9 @@ class Compiler {
                                              /*in_behavior=*/false, param, has_param))
                             continue;
                         flow.hold_ticks =
-                            static_cast<uint32_t>(std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
-                        const Json every = trigger.value("every_ms", Json());
+                            static_cast<uint32_t>(std::max(0.0, trigger.hold_ms));
                         flow.every_ticks =
-                            every.is_number()
-                                ? static_cast<uint32_t>(std::max(0.0, every.get<double>()))
-                                : 0;
+                            static_cast<uint32_t>(std::max(0.0, trigger.every_ms));
                     }
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        nullptr, /*in_component=*/false, copyless)) {
@@ -3218,22 +3240,19 @@ class Compiler {
         for (const SlotProgram& sp : program_.slot_programs)
             if (sp.node_id == element.id)
                 out[sp.slot] = "its value is a bound expression";
-        auto flows = element.node->find("flows");
-        if (flows != element.node->end() && flows->is_array())
-            for (const Json& flow : *flows)
-                for (const std::string& slot : written_slots(flow))
-                    out[slot] = "a flow on this instance writes it";
+        for (const FlowDecl& flow : element.node->flows)
+            for (const std::string& slot : written_slots(flow))
+                out[slot] = "a flow on this instance writes it";
         return out;
     }
 
     /* The slots one flow writes: the destinations of its moves that name a slot. One
      * step kind to scan, so precedence is decided from one place (spec 2.3). */
-    std::vector<std::string> written_slots(const Json& flow) const {
+    std::vector<std::string> written_slots(const FlowDecl& flow) const {
         std::vector<std::string> out;
-        for (const Json& step : flow.value("do", Json::array())) {
-            if (step.value("kind", "") != "assign") continue;
-            const std::string slot = slot_of(step.value("to", Json::object()));
-            if (!slot.empty()) out.push_back(slot);
+        for (const StepDecl& step : flow.steps) {
+            if (step.kind != "assign") continue;
+            if (!step.to.slot.empty()) out.push_back(step.to.slot);
         }
         return out;
     }
@@ -3252,13 +3271,13 @@ class Compiler {
     void build_type_behavior() {
         for (ElementInfo& element : elements_) {
             if (!element.type) continue;
-            const Json& behavior = element.type->value("behavior", Json::array());
-            if (!behavior.is_array() || behavior.empty()) continue;
+            const std::vector<FlowDecl>& behavior = element.type->behavior;
+            if (behavior.empty()) continue;
             /* stand-down is PER STEP now (compile_steps drops the claimed slot writes),
                so a fed control still raises `changed` while its local echo yields */
             const std::unordered_map<std::string, std::string> claimed = claimed_slots(element);
-            for (const Json& node : behavior) {
-                for (const Json& trigger : node.value("when", Json::array())) {
+            for (const FlowDecl& node : behavior) {
+                for (const TriggerDecl& trigger : node.when) {
                     FlowProgram flow;
                     flow.node_id = element.id;
                     /* the instance's own id: document ids are unique, so this cannot collide
@@ -3269,18 +3288,18 @@ class Compiler {
                     EventParam param;
                     bool has_param = false;
                     std::string copyless;
-                    if (trigger.value("kind", "") == "every") {
+                    if (trigger.kind == "every") {
                         if (!cadence_trigger(element, trigger, element.id, flow)) continue;
                         copyless = "an `every` trigger";
                     } else {
-                        flow.event = trigger.value("name", "");
+                        flow.event = trigger.name;
                         /* behavior is the ONE place a trigger may name an element channel */
-                        flow.element = trigger.value("element", "");
+                        flow.element = trigger.element;
                         if (!event_signature(element, flow.event, flow.element, element.id,
                                              /*in_behavior=*/true, param, has_param))
                             continue;
-                        flow.hold_ticks = static_cast<uint32_t>(
-                            std::max(0.0, num_or(trigger, "hold_ms", 600.0)));
+                        flow.hold_ticks =
+                            static_cast<uint32_t>(std::max(0.0, trigger.hold_ms));
                     }
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        &claimed, /*in_component=*/true, copyless))
@@ -3293,12 +3312,12 @@ class Compiler {
         }
     }
 
-    const Document& document_;
-    const Json& registry_;
+    const Doc doc_;
+    /* the registry rows this compile consults, decoded once at construction */
+    std::vector<ComponentSpec> specs_;
     const MeshPort& mesh_;
     Program program_;
     bool has_errors_ = false;
-    Json empty_object_ = Json::object();
     std::unordered_map<std::string, uint32_t> globals_;
     std::unordered_map<std::string, std::string> tokens_;     /* token name -> dark value */
     std::unordered_map<std::string, uint16_t> struct_keys_;   /* schema key -> type id */

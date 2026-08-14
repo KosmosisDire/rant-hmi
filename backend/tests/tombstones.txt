@@ -51,3 +51,13 @@ EnumFromName
 # postfix op resolved a level at a time. The word below was the old walk's variable;
 # the view tier spells its remaining name-walk `address`, which is what it emits.
 qualified
+
+# stage 5a, the typed document: decode ONCE at the compile boundary (doc/decode.h)
+# replaced the defensive json-walking each compile-path reader restated — the
+# probe-every-use helpers below and the from/to discriminator enum they served.
+# The registry-row read-back (compiler.cpp decode_spec) is a decode of the SAME
+# discipline and dies with the two-compiler seam at stage 5b.
+array_or_empty
+side_kind
+SideKind
+slot_shape

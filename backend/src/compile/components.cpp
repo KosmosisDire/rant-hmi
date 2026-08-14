@@ -1,9 +1,11 @@
 #include "components.h"
 
+#include "doc/decode.h"
 #include "registry/attrs.h"
 #include "registry/registry.h"
 #include "lang/template_expr.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -14,22 +16,6 @@
 
 namespace hmi {
 namespace {
-
-uint64_t id_of(const Json& node) {
-    auto it = node.find("id");
-    return it == node.end() ? 0 : json_u64_or(*it, 0);
-}
-
-std::string str_or(const Json& node, const char* key, const char* fallback) {
-    auto it = node.find(key);
-    return it != node.end() && it->is_string() ? it->get<std::string>() : fallback;
-}
-
-const Json& array_or_empty(const Json& node, const char* key) {
-    static const Json empty = Json::array();
-    auto it = node.find(key);
-    return it != node.end() && it->is_array() ? *it : empty;
-}
 
 /* One compile's sink. A doc component's mistakes are the author's, pinned to the node; a
  * BUILT-IN's are ours, and shipping a silently broken built-in would paint every instance
@@ -76,10 +62,10 @@ bool identifier(const std::string& name) {
  * has to be an ADDRESS rather than a label: an address exists to reach a variable, so a
  * node with none under it is free to be called "Status group". This is what lets one
  * `name` field serve a page's labels and a component's addressing with no second rule. */
-bool needs_address(const Json& node) {
-    if (!array_or_empty(node, "locals").empty()) return true;
-    for (const Json& child : array_or_empty(node, "children"))
-        if (child.is_object() && needs_address(child)) return true;
+bool needs_address(const NodeDecl& node) {
+    if (!node.locals.empty()) return true;
+    for (const NodeDecl& child : node.children)
+        if (needs_address(child)) return true;
     return false;
 }
 
@@ -88,13 +74,13 @@ bool needs_address(const Json& node) {
  * against the node's RAW authored attrs (before shown_attrs folds `shown` in below),
  * which only ever matters for the key set — `shown_attrs` never adds a key the table does
  * not already know (`show` is common). */
-void check_attr_names(const Json& attrs, const std::string& kind, uint64_t node, Sink& sink) {
-    if (!attrs.is_object()) return;
-    for (auto it = attrs.begin(); it != attrs.end(); ++it) {
-        if (attr_known(kind, it.key())) continue;
+void check_attr_names(const std::vector<AttrDecl>& attrs, const std::string& kind,
+                      uint64_t node, Sink& sink) {
+    for (const AttrDecl& attr : attrs) {
+        if (attr_known(kind, attr.key)) continue;
         sink.report(node, "attr_name",
-                    "'" + it.key() + "' is not an attr a '" + kind + "' node reads",
-                    it.key());
+                    "'" + attr.key + "' is not an attr a '" + kind + "' node reads",
+                    attr.key);
     }
 }
 
@@ -129,35 +115,31 @@ std::shared_ptr<const TemplateMesh> build_mesh(const std::vector<EntityDef>* ref
  * (which is the live cell's key), and the declared type — enough to resolve a reference
  * and to refuse the two shapes an attr cannot read. A row with no usable name is skipped
  * silently: the scalar compiler is where a variable's own mistakes are reported. */
-void take_vars(const Json& rows, std::vector<TemplateVar>& out) {
-    if (!rows.is_array()) return;
-    for (const Json& var : rows) {
-        if (!var.is_object()) continue;
-        const std::string name = str_or(var, "name", "");
-        if (name.empty() || !identifier(name)) continue;
-        out.push_back(TemplateVar{name, id_of(var), str_or(var, "type", "num")});
+void take_vars(const std::vector<VarDecl>& rows, std::vector<TemplateVar>& out) {
+    for (const VarDecl& var : rows) {
+        if (var.name.empty() || !identifier(var.name)) continue;
+        out.push_back(TemplateVar{var.name, var.id, var.type});
     }
 }
 
 /* every attr entry: expression text -> a compiled view program; a bad one is a finding on
  * THIS node, named by the attr, and the attr is simply not served (an absent attr renders
  * its default, so the node degrades instead of vanishing) */
-Json compile_attrs(const Json& attrs, const TemplateScope& scope, uint64_t node,
-                   const std::string& prefix, Sink& sink) {
+Json compile_attrs(const std::vector<AttrDecl>& attrs, const TemplateScope& scope,
+                   uint64_t node, const std::string& prefix, Sink& sink) {
     Json out = Json::object();
-    if (!attrs.is_object()) return out;
-    for (auto it = attrs.begin(); it != attrs.end(); ++it) {
-        if (!it->is_string()) {
-            sink.report(node, "template_expr", "attr '" + it.key() + "' must be expression text",
-                        prefix + it.key());
+    for (const AttrDecl& attr : attrs) {
+        if (!attr.is_text) {
+            sink.report(node, "template_expr", "attr '" + attr.key + "' must be expression text",
+                        prefix + attr.key);
             continue;
         }
-        TemplateExprResult compiled = compile_template_expr(it->get<std::string>(), scope);
+        TemplateExprResult compiled = compile_template_expr(attr.text, scope);
         if (!compiled.ok) {
-            sink.report(node, "template_expr", compiled.error, prefix + it.key());
+            sink.report(node, "template_expr", compiled.error, prefix + attr.key);
             continue;
         }
-        out[it.key()] = std::move(compiled.program);
+        out[attr.key] = std::move(compiled.program);
     }
     return out;
 }
@@ -188,12 +170,12 @@ const Json* const_of(const Json& program) {
 }
 
 /* one TIME: a number, or expression text over `scope`. False = `error` says why. */
-bool compile_transition_time(const Json& raw, const TemplateScope& scope,
+bool compile_transition_time(const NumOrText& raw, const TemplateScope& scope,
                              Json& program, std::string& error) {
-    if (raw.is_number()) {
-        program = const_program(raw);
-    } else if (raw.is_string()) {
-        TemplateExprResult compiled = compile_template_expr(raw.get<std::string>(), scope);
+    if (raw.kind == NumOrText::Kind::Num) {
+        program = const_program(raw.raw);
+    } else if (raw.kind == NumOrText::Kind::Text) {
+        TemplateExprResult compiled = compile_template_expr(raw.text, scope);
         if (!compiled.ok) {
             error = compiled.error;
             return false;
@@ -249,28 +231,26 @@ bool compile_transition_profile(const std::string& raw, const TemplateScope& sco
  * (the attr table's `css` column — text content, structure and a rebuilt glyph have
  * nothing to blend). A refused time drops the row; a refused profile drops only the
  * profile — the sweep still runs at the view's default ease. */
-Json compile_transitions(const Json& node, const std::string& kind,
+Json compile_transitions(const NodeDecl& node, const std::string& kind,
                          const TemplateScope& scope, uint64_t node_id, Sink& sink) {
     Json out = Json::object();
-    const Json& rows = node.value("transitions", Json());
-    if (!rows.is_object()) return out;
-    for (auto it = rows.begin(); it != rows.end(); ++it) {
-        const std::string where = "transitions." + it.key();
-        if (!attr_known(kind, it.key())) {
+    for (const TransitionDecl& authored : node.transitions) {
+        const std::string where = "transitions." + authored.key;
+        if (!attr_known(kind, authored.key)) {
             sink.report(node_id, "transition",
-                        "'" + it.key() + "' is not an attr a '" + kind + "' node reads",
+                        "'" + authored.key + "' is not an attr a '" + kind + "' node reads",
                         where);
             continue;
         }
-        const char* css = attr_css(kind, it.key());
+        const char* css = attr_css(kind, authored.key);
         if (!css[0]) {
             sink.report(node_id, "transition",
-                        "'" + it.key() + "' cannot transition: it lands on nothing the "
+                        "'" + authored.key + "' cannot transition: it lands on nothing the "
                         "browser can animate",
                         where);
             continue;
         }
-        if (!it->is_object() || !it->contains("ms")) {
+        if (!authored.is_row || authored.ms.kind == NumOrText::Kind::None) {
             sink.report(node_id, "transition",
                         "a transition is {ms, profile?}: a time in milliseconds and an "
                         "optional easing profile",
@@ -279,19 +259,19 @@ Json compile_transitions(const Json& node, const std::string& kind,
         }
         Json ms_program;
         std::string error;
-        if (!compile_transition_time((*it)["ms"], scope, ms_program, error)) {
+        if (!compile_transition_time(authored.ms, scope, ms_program, error)) {
             sink.report(node_id, "transition", error, where);
             continue;
         }
         Json row{{"ms", std::move(ms_program)}};
         Json prof_program;
         bool has_profile = false;
-        if (!compile_transition_profile(it->value("profile", ""), scope, prof_program,
+        if (!compile_transition_profile(authored.profile, scope, prof_program,
                                         has_profile, error))
             sink.report(node_id, "transition", error, where);
         else if (has_profile)
             row["profile"] = std::move(prof_program);
-        out[it.key()] = std::move(row);
+        out[authored.key] = std::move(row);
     }
     return out;
 }
@@ -301,48 +281,47 @@ Json compile_transitions(const Json& node, const std::string& kind,
  * handles or an arc — and nothing here invents a `d` string; the renderer builds the
  * outline from the numbers these programs produce, which is what makes an anchor a value
  * an expression can compute rather than a character in a string nobody can. */
-Json compile_anchors(const Json& anchors, const TemplateScope& scope, uint64_t node,
-                     Sink& sink) {
+Json compile_anchors(const std::vector<AnchorDecl>& anchors, const TemplateScope& scope,
+                     uint64_t node, Sink& sink) {
     Json out = Json::array();
-    if (!anchors.is_array()) return out;
     size_t index = 0;
-    for (const Json& anchor : anchors) {
+    for (const AnchorDecl& anchor : anchors) {
         const std::string where = "anchors[" + std::to_string(index++) + "]";
-        if (!anchor.is_object()) {
+        if (!anchor.is_row) {
             sink.report(node, "anchor", "an anchor is a row of coordinates", where);
             continue;
         }
         Json row = Json::object();
-        for (auto it = anchor.begin(); it != anchor.end(); ++it) {
-            if (it.key() == "arc") {
+        for (const AnchorField& field : anchor.fields) {
+            if (field.key == "arc") {
                 /* the one nested row: an arc segment's radii and its two flags */
-                if (!it->is_object()) {
+                if (field.kind != AnchorField::Kind::Row) {
                     sink.report(node, "anchor", "'arc' is a row of radii and flags",
                                 where + ".arc");
                     continue;
                 }
-                Json arc = compile_attrs(*it, scope, node, where + ".arc.", sink);
+                Json arc = compile_attrs(field.row, scope, node, where + ".arc.", sink);
                 row["arc"] = std::move(arc);
                 continue;
             }
-            if (!it->is_string()) {
-                sink.report(node, "anchor", "'" + it.key() + "' must be expression text",
-                            where + "." + it.key());
+            if (field.kind != AnchorField::Kind::Text) {
+                sink.report(node, "anchor", "'" + field.key + "' must be expression text",
+                            where + "." + field.key);
                 continue;
             }
-            TemplateExprResult compiled = compile_template_expr(it->get<std::string>(), scope);
+            TemplateExprResult compiled = compile_template_expr(field.text, scope);
             if (!compiled.ok) {
-                sink.report(node, "anchor", compiled.error, where + "." + it.key());
+                sink.report(node, "anchor", compiled.error, where + "." + field.key);
                 continue;
             }
-            row[it.key()] = std::move(compiled.program);
+            row[field.key] = std::move(compiled.program);
         }
         out.push_back(std::move(row));
     }
     return out;
 }
 
-Json var_row(const Json& var, const std::string& address);
+Json var_row(const VarDecl& var, const std::string& address);
 
 /* a variable's DECLARED SWEEP, stashed in pass one and compiled in pass two — its ms
  * and profile are expressions over the declaring node's scope, which is not complete
@@ -350,7 +329,7 @@ Json var_row(const Json& var, const std::string& address);
 struct SweepRow {
     std::string address;
     std::string path;
-    Json ms;
+    NumOrText ms;
     std::string profile;
     uint64_t var_id = 0;
 };
@@ -383,12 +362,9 @@ bool elem_type_ok(const std::string& type) {
  * The ONE translation left: a `text` WITH VARIANTS is served as "enum", a picked-from-a-
  * list text, which is all the old `enum` shape ever meant. The vocabulary is the author's
  * own words — a mesh enum is a TypeRef, and those do not come this way. */
-std::string served_shape(const Json& var) {
-    const std::string type = str_or(var, "type", "num");
-    if (type != "text") return type;
-    auto variants = var.find("variants");
-    const bool picked = variants != var.end() && variants->is_array() && !variants->empty();
-    return picked ? "enum" : "text";
+std::string served_shape(const VarDecl& var) {
+    if (var.type != "text") return var.type;
+    return var.variants.empty() ? "text" : "enum";
 }
 
 /* The variables one node declares: each becomes a served row addressed under this node's
@@ -404,29 +380,28 @@ std::string served_shape(const Json& var) {
  *
  * A node with no path (an unnamed one) has nowhere to hang an address, so declaring there
  * is refused rather than quietly folded into the parent's namespace. */
-std::vector<std::string> collect_vars(const Json& rows, const std::string& path,
-                                      bool addressable, const TemplateScope& outer,
-                                      Json& slots, std::vector<SweepRow>& sweeps,
-                                      Sink& sink, bool quiet = false) {
+std::vector<std::string> collect_vars(const std::vector<VarDecl>& rows,
+                                      const std::string& path, bool addressable,
+                                      const TemplateScope& outer, Json& slots,
+                                      std::vector<SweepRow>& sweeps, Sink& sink,
+                                      bool quiet = false) {
     std::vector<std::string> names;
-    if (!rows.is_array()) return names;
     std::set<std::string> here;
-    for (const Json& var : rows) {
-        if (!var.is_object()) continue;
-        const std::string name = str_or(var, "name", "");
+    for (const VarDecl& var : rows) {
+        const std::string& name = var.name;
         if (name.empty()) {
-            sink.report(id_of(var), "var_name", "this variable has no name", "name");
+            sink.report(var.id, "var_name", "this variable has no name", "name");
             continue;
         }
         if (!identifier(name)) {
-            sink.report(id_of(var), "var_name",
+            sink.report(var.id, "var_name",
                         "'" + name + "' cannot name a variable: expressions read it as a "
                         "bare name, so it takes letters, digits and underscores",
                         "name");
             continue;
         }
         if (!here.insert(name).second) {
-            sink.report(id_of(var), "var_name",
+            sink.report(var.id, "var_name",
                         "two variables here are both named '" + name + "'", "name");
             continue;
         }
@@ -434,33 +409,30 @@ std::vector<std::string> collect_vars(const Json& rows, const std::string& path,
             /* quiet where the NODE's own name was already reported: one mistake, one
                finding — the row that says "this name cannot address" covers it */
             if (!quiet)
-                sink.report(id_of(var), "var_name",
+                sink.report(var.id, "var_name",
                             "name this element before giving it variables: a component's "
                             "variable is addressed under the element that owns it",
                             "name");
             continue;
         }
-        const std::string type = str_or(var, "type", "num");
-        if (!component_type_ok(type)) {
-            sink.report(id_of(var), "var_type",
-                        "a component's variable cannot be '" + type +
+        if (!component_type_ok(var.type)) {
+            sink.report(var.id, "var_type",
+                        "a component's variable cannot be '" + var.type +
                             "': it is storage per placement, and a timer or a mesh type "
                             "has no per-placement form here. A page element takes either",
                         "type");
             continue;
         }
-        const bool aggregate = type == "list" || type == "map";
-        const std::string elem = str_or(var, "elem", "");
-        const std::string leaf = str_or(var, "leaf", "");
-        const bool rows_of = elem == "list" || elem == "map";
-        if (aggregate && !elem.empty() && !elem_type_ok(elem) && !rows_of)
-            sink.report(id_of(var), "var_type",
-                        "'" + elem + "' is not an element type: elements are num, bool, "
+        const bool aggregate = var.type == "list" || var.type == "map";
+        const bool rows_of = var.elem == "list" || var.elem == "map";
+        if (aggregate && !var.elem.empty() && !elem_type_ok(var.elem) && !rows_of)
+            sink.report(var.id, "var_type",
+                        "'" + var.elem + "' is not an element type: elements are num, bool, "
                         "text, color or icon, or list or map for rows",
                         "elem");
-        else if (aggregate && !leaf.empty() && (!rows_of || !elem_type_ok(leaf)))
-            sink.report(id_of(var), "var_type",
-                        rows_of ? "'" + leaf + "' is not a leaf type: a row holds num, "
+        else if (aggregate && !var.leaf.empty() && (!rows_of || !elem_type_ok(var.leaf)))
+            sink.report(var.id, "var_type",
+                        rows_of ? "'" + var.leaf + "' is not a leaf type: a row holds num, "
                                   "bool, text, color or icon"
                                 : "a leaf type says what the ROWS hold; declare this "
                                   "variable's elements list or map first",
@@ -470,7 +442,7 @@ std::vector<std::string> collect_vars(const Json& rows, const std::string& path,
            `shown` is the exception and by design: every node has its own, so inside a
            node the bare word always means that node's own switch. */
         if (const std::string* above = name == "shown" ? nullptr : outer.find(name))
-            sink.report(id_of(var), "var_shadow",
+            sink.report(var.id, "var_shadow",
                         "'" + name + "' is already in scope here as '" + *above +
                             "'; the element's own wins below this point",
                         "name");
@@ -480,20 +452,18 @@ std::vector<std::string> collect_vars(const Json& rows, const std::string& path,
          * NUMBERS ONLY (the view tweens a number; a colour cross-fades on the attribute
          * that draws it); the ms/profile are EXPRESSIONS over the declaring node's scope,
          * so they are stashed here and compiled in pass two, once every name is known. */
-        auto smooth = var.find("smooth");
-        const bool sweeps_at_all = smooth != var.end() &&
-            ((smooth->is_number() && smooth->get<double>() != 0) ||
-             (smooth->is_string() && !smooth->get<std::string>().empty()));
+        const bool sweeps_at_all =
+            (var.smooth.kind == NumOrText::Kind::Num && var.smooth.num != 0) ||
+            (var.smooth.kind == NumOrText::Kind::Text && !var.smooth.text.empty());
         if (sweeps_at_all) {
-            if (type != "num")
-                sink.report(id_of(var), "var_smooth",
+            if (var.type != "num")
+                sink.report(var.id, "var_smooth",
                             "only a number sweeps; a colour cross-fades on the attribute "
                             "that draws it (its transition button)",
                             "smooth");
             else
                 sweeps.push_back(SweepRow{path.empty() ? name : path + "." + name, path,
-                                          *smooth, str_or(var, "profile", ""),
-                                          id_of(var)});
+                                          var.smooth, var.profile, var.id});
         }
         names.push_back(name);
         slots.push_back(var_row(var, path.empty() ? name : path + "." + name));
@@ -517,21 +487,19 @@ struct Walk {
  * does not declare it, so "show the scale" is the scale's own `shown` rather than a
  * `show_scale` on the component, and any node a user adds gets the same switch for free. A
  * node that wants to start hidden simply declares `shown` itself with a default of false. */
-bool declares_shown(const Json& rows) {
-    if (!rows.is_array()) return false;
-    for (const Json& var : rows)
-        if (var.is_object() && str_or(var, "name", "") == "shown") return true;
+bool declares_shown(const std::vector<VarDecl>& rows) {
+    for (const VarDecl& var : rows)
+        if (var.name == "shown") return true;
     return false;
 }
 
 /* pass one: the variables, their addresses and each node's scope */
-void collect_tree(const Json& node, const std::string& path, bool addressable,
+void collect_tree(const NodeDecl& node, const std::string& path, bool addressable,
                   const TemplateScope& outer, Walk& walk, Sink& sink, bool quiet = false) {
-    const Json& rows = node.value("locals", Json::array());
     std::vector<std::string> names =
-        collect_vars(rows, path, addressable, outer, walk.slots, walk.sweeps, sink,
+        collect_vars(node.locals, path, addressable, outer, walk.slots, walk.sweeps, sink,
                      quiet);
-    if (addressable && !path.empty() && !declares_shown(rows)) {
+    if (addressable && !path.empty() && !declares_shown(node.locals)) {
         names.push_back("shown");
         walk.slots.push_back(Json{{"name", path + ".shown"},
                                   {"shape", "bool"},
@@ -555,9 +523,8 @@ void collect_tree(const Json& node, const std::string& path, bool addressable,
             level_names.insert(entry.first);
 
     std::set<std::string> sibling_names;
-    for (const Json& child : node.value("children", Json::array())) {
-        if (!child.is_object()) continue;
-        const std::string child_name = str_or(child, "name", "");
+    for (const NodeDecl& child : node.children) {
+        const std::string& child_name = child.name;
         /* A NAME IS ONLY AN ADDRESS WHERE SOMETHING NEEDS ONE. A node with no variables
            anywhere under it is a LABEL — "Status group" is a fine name for a pane, and two
            panes may share one — while a node something must reach is held to the
@@ -580,7 +547,7 @@ void collect_tree(const Json& node, const std::string& path, bool addressable,
                           : "'" + child_name + "' cannot name this element: its name joins "
                             "the addresses of the variables under it, so it takes "
                             "letters, digits and underscores";
-            sink.report(id_of(child), "node_name", why, "name");
+            sink.report(child.id, "node_name", why, "name");
         }
         /* an unnamed child (or one whose name cannot address) adds no segment: it renders,
            it just cannot be addressed, and so it can own nothing */
@@ -593,30 +560,39 @@ void collect_tree(const Json& node, const std::string& path, bool addressable,
 /* A node's `show` attr, with its own `shown` variable folded in: the variable is the
  * switch, the attr is whatever the type computes, and the node draws when both hold.
  * The view needs no new opcode — `pick` is the conditional it already runs. */
-Json shown_attrs(const Json& attrs, const std::string& path, const Walk& walk) {
-    Json out = attrs.is_object() ? attrs : Json::object();
+std::vector<AttrDecl> shown_attrs(const std::vector<AttrDecl>& attrs,
+                                  const std::string& path, const Walk& walk) {
+    std::vector<AttrDecl> out = attrs;
     if (path.empty() || !walk.addresses->count(path + ".shown")) return out;
     const std::string shown = path + ".shown";
-    auto show = out.find("show");
-    out["show"] = show != out.end() && show->is_string()
-                      ? "(" + shown + ").pick((" + show->get<std::string>() + "), false)"
-                      : shown;
+    /* the rows ride in key order (that is how the object iterated), so the folded
+       `show` keeps the position an authored one would have compiled at */
+    auto at = std::lower_bound(out.begin(), out.end(), std::string("show"),
+                               [](const AttrDecl& row, const std::string& key) {
+                                   return row.key < key;
+                               });
+    if (at != out.end() && at->key == "show") {
+        at->text = at->is_text ? "(" + shown + ").pick((" + at->text + "), false)" : shown;
+        at->is_text = true;
+    } else {
+        out.insert(at, AttrDecl{"show", shown, true});
+    }
     return out;
 }
 
 /* the compiled form of the fields every node carries, whatever its kind: what a template
  * node and a page node have in common, which is nearly all of it */
-Json compile_common(const Json& node, const std::string& kind, const Json& attrs,
-                    const TemplateScope& scope, uint64_t node_id, Sink& sink) {
+Json compile_common(const NodeDecl& node, const std::string& kind,
+                    const std::vector<AttrDecl>& attrs, const TemplateScope& scope,
+                    uint64_t node_id, Sink& sink) {
     Json out{{"kind", kind},
-             {"name", str_or(node, "name", "")},
+             {"name", node.name},
              {"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
     Json transitions = compile_transitions(node, kind, scope, node_id, sink);
     if (!transitions.empty()) out["transitions"] = std::move(transitions);
     if (kind == "path") {
-        out["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
-                                         node_id, sink);
-        out["closed"] = node.value("closed", false);
+        out["anchors"] = compile_anchors(node.anchors, scope, node_id, sink);
+        out["closed"] = node.closed;
     }
     return out;
 }
@@ -627,18 +603,16 @@ Json compile_common(const Json& node, const std::string& kind, const Json& attrs
  * The same function serves a component's template nodes and a PAGE's elements — an
  * element that carries a gesture carries it wherever it sits, and a frame drawn on the
  * page should not have to become a component before it can be pressed. */
-Json compile_interact(const Json& node, const TemplateScope& scope, uint64_t node_id,
+Json compile_interact(const NodeDecl& node, const TemplateScope& scope, uint64_t node_id,
                       Sink& sink) {
-    const Json& interact = node.value("interact", Json());
-    if (!interact.is_object()) return Json();
-    Json wired{{"primitive", str_or(interact, "primitive", "press")},
-               {"params", compile_attrs(interact.value("params", Json::object()), scope,
-                                        node_id, "interact.", sink)}};
+    const InteractDecl& interact = node.interact;
+    if (!interact.present) return Json();
+    Json wired{{"primitive", interact.primitive_text ? interact.primitive : "press"},
+               {"params", compile_attrs(interact.params, scope, node_id, "interact.",
+                                        sink)}};
     /* the propagation topology is declared structure: an element whose gestures must
        not ring the instance-level channel says so here, once */
-    if (interact.contains("bubbles") && interact["bubbles"].is_boolean() &&
-        !interact["bubbles"].get<bool>())
-        wired["bubbles"] = false;
+    if (!interact.bubbles) wired["bubbles"] = false;
     return wired;
 }
 
@@ -647,34 +621,31 @@ Json compile_interact(const Json& node, const TemplateScope& scope, uint64_t nod
  * `path` is this node's ADDRESS PREFIX: empty at the root (whose variables are the
  * component's own, addressed bare), then the names of the nodes below it joined with dots.
  * The scope for that path says what a bare identifier means inside it. */
-Json compile_node(const Json& node, const std::string& path, const Walk& walk, Sink& sink) {
-    const uint64_t node_id = id_of(node);
-    const std::string kind = str_or(node, "kind", "frame");
+Json compile_node(const NodeDecl& node, const std::string& path, const Walk& walk,
+                  Sink& sink) {
     auto found = walk.scopes.find(path);
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
-    check_attr_names(node.value("attrs", Json::object()), kind, node_id, sink);
-    const Json attrs = shown_attrs(node.value("attrs", Json::object()), path, walk);
+    check_attr_names(node.attrs, node.kind, node.id, sink);
+    const std::vector<AttrDecl> attrs = shown_attrs(node.attrs, path, walk);
 
-    Json out = compile_common(node, kind, attrs, scope, node_id, sink);
-    if (kind != "frame") {
+    Json out = compile_common(node, node.kind, attrs, scope, node.id, sink);
+    if (node.kind != "frame") {
         /* a leaf holds neither children nor a gesture; the schema already refuses to store
            either, so anything here would be a definition built by hand */
         return out;
     }
 
     out["children"] = Json::array();
-    for (const Json& child : node.value("children", Json::array())) {
-        if (!child.is_object()) continue;
-        const std::string child_name = str_or(child, "name", "");
+    for (const NodeDecl& child : node.children) {
         /* the path pass one gave it: a name it refused to address (unnamed, or already
            reported) left the child on its parent's path */
-        const std::string named = path.empty() ? child_name : path + "." + child_name;
+        const std::string named = path.empty() ? child.name : path + "." + child.name;
         const std::string child_path =
-            !child_name.empty() && walk.scopes.count(named) ? named : path;
+            !child.name.empty() && walk.scopes.count(named) ? named : path;
         out["children"].push_back(compile_node(child, child_path, walk, sink));
     }
-    Json interact = compile_interact(node, scope, node_id, sink);
+    Json interact = compile_interact(node, scope, node.id, sink);
     if (!interact.is_null()) out["interact"] = std::move(interact);
     return out;
 }
@@ -685,29 +656,24 @@ Json compile_node(const Json& node, const std::string& path, const Walk& walk, S
  * component CONTEXT — entering a component — where the stage walks the doc tree it already
  * holds and pulls each node's programs by id, exactly as it does for a page. Same nodes,
  * same scopes, same programs; a second key, not a second compiler. */
-void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk,
+void emit_node_attrs(const NodeDecl& node, const std::string& path, const Walk& walk,
                      Sink& sink, Json& out) {
-    const uint64_t node_id = id_of(node);
-    const std::string kind = str_or(node, "kind", "frame");
     auto found = walk.scopes.find(path);
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
-    const Json attrs = shown_attrs(node.value("attrs", Json::object()), path, walk);
-    Json row{{"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
-    Json transitions = compile_transitions(node, kind, scope, node_id, sink);
+    const std::vector<AttrDecl> attrs = shown_attrs(node.attrs, path, walk);
+    Json row{{"attrs", compile_attrs(attrs, scope, node.id, "", sink)}};
+    Json transitions = compile_transitions(node, node.kind, scope, node.id, sink);
     if (!transitions.empty()) row["transitions"] = std::move(transitions);
-    if (kind == "path")
-        row["anchors"] = compile_anchors(node.value("anchors", Json::array()), scope,
-                                         node_id, sink);
-    if (node_id) out[std::to_string(node_id)] = std::move(row);
-    for (const Json& child : node.value("children", Json::array())) {
-        if (!child.is_object()) continue;
-        const std::string child_name = str_or(child, "name", "");
+    if (node.kind == "path")
+        row["anchors"] = compile_anchors(node.anchors, scope, node.id, sink);
+    if (node.id) out[std::to_string(node.id)] = std::move(row);
+    for (const NodeDecl& child : node.children) {
         /* the path pass one gave it, by compile_node's own rule: a name that could not
            address left the child on its parent's path */
-        const std::string named = path.empty() ? child_name : path + "." + child_name;
+        const std::string named = path.empty() ? child.name : path + "." + child.name;
         const std::string child_path =
-            !child_name.empty() && walk.scopes.count(named) ? named : path;
+            !child.name.empty() && walk.scopes.count(named) ? named : path;
         emit_node_attrs(child, child_path, walk, sink, out);
     }
 }
@@ -720,34 +686,28 @@ void emit_node_attrs(const Json& node, const std::string& path, const Walk& walk
  * what a placement, an editor and a view program need to know is the SHAPE of the value,
  * not which word declared it. name/shape/default/group/public are always present; the
  * optional keys are served only when they say something. */
-Json var_row(const Json& var, const std::string& address) {
+Json var_row(const VarDecl& var, const std::string& address) {
     Json out{{"name", address},
              {"shape", served_shape(var)},
-             {"default", var.contains("init") ? var["init"] : Json()},
-             {"group", str_or(var, "group", "appearance")},
+             {"default", var.init},
+             {"group", var.group},
              /* IS THIS PART OF THE COMPONENT'S INTERFACE? A private variable is served
                 all the same — its cell, its address and its scope entry are needed
                 whether or not an instance may see it — and this is the one bit that
                 says so. */
-             {"public", var.value("public", false)}};
-    const std::string editor = str_or(var, "editor", "");
-    if (!editor.empty()) out["editor"] = editor;
-    auto variants = var.find("variants");
-    if (variants != var.end() && variants->is_array() && !variants->empty())
-        out["variants"] = *variants;
+             {"public", var.is_public}};
+    if (!var.editor.empty()) out["editor"] = var.editor;
+    if (!var.variants.empty()) out["variants"] = var.variants;
     /* a list's or map's DECLARED ELEMENT type, enforced on every write exactly as it is
        for a page's variable — a component's list never had one to declare before. Served
        only where the type has elements at all, and already checked by collect_vars. */
     if (out["shape"] == "list" || out["shape"] == "map") {
-        const std::string elem = str_or(var, "elem", "");
-        if (!elem.empty()) out["elem"] = elem;
-        const std::string leaf = str_or(var, "leaf", "");
-        if (!leaf.empty()) out["leaf"] = leaf;
+        if (!var.elem.empty()) out["elem"] = var.elem;
+        if (!var.leaf.empty()) out["leaf"] = var.leaf;
     }
-    for (const char* key : {"step", "min", "max"}) {
-        auto it = var.find(key);
-        if (it != var.end() && it->is_number()) out[key] = *it;
-    }
+    if (!var.step.is_null()) out["step"] = var.step;
+    if (!var.min.is_null()) out["min"] = var.min;
+    if (!var.max.is_null()) out["max"] = var.max;
     /* the declared transition is NOT served here: its ms/profile are expressions over
        the declaring node's scope, compiled in pass two (compile_component) and attached
        to this row there */
@@ -760,9 +720,7 @@ Json var_row(const Json& var, const std::string& address) {
  * the box an instance renders as, and its children are what stands inside it. So the
  * template this produces is one frame node built from the component itself — there is no
  * wrapper, and no "one root element" rule to remember. */
-Json compile_component(const Json& component, Sink& sink) {
-    const std::string name = str_or(component, "name", "");
-
+Json compile_component(const ComponentDecl& component, Sink& sink) {
     /* The component's own PUBLIC variables are the INSTANCE's vocabulary: the value it
      * carries, its range, how it is dressed. They address bare, and they are what the
      * inspector shows while the instance itself is selected; an element's own are
@@ -780,7 +738,7 @@ Json compile_component(const Json& component, Sink& sink) {
     root.unknown_help = kIsolatedHelp;
     /* the root carries no path segment: its variables are the instance's own, so the
        addresses a document already names stay bare */
-    collect_tree(component, "", true, root, walk, sink);
+    collect_tree(component.root, "", true, root, walk, sink);
 
     /* PASS TWO FOR THE DECLARED SWEEPS: every scope exists now, so a variable's ms and
      * profile compile like any other field of its node — "1000 / rate" is a duration.
@@ -811,36 +769,29 @@ Json compile_component(const Json& component, Sink& sink) {
     /* events and behavior are already wire-shaped: DECLARED events as {name, params}
      * signatures (gesture events are never rows here — the primitive brings them) and
      * ordinary flow nodes the document compiler reads as data */
-    Json events = component.contains("events") && component["events"].is_array()
-                      ? component["events"] : Json::array();
-    Json behavior = component.contains("behavior") && component["behavior"].is_array()
-                        ? component["behavior"] : Json::array();
-
-    Json root_node = component;
-    root_node["kind"] = "frame";
-    Json tmpl = compile_node(root_node, "", walk, sink);
+    Json tmpl = compile_node(component.root, "", walk, sink);
 
     /* THE DESIGN FRAME RIDES THE TYPE: a child's x/y/w/h are px of this box, and the
      * view divides by it to fit the instance's own box — so a served template without
      * its design frame would be numbers with no space to mean anything in */
-    const double design_w = component.value("design_w", 240.0);
-    const double design_h = component.value("design_h", 120.0);
-
-    return Json{{"name", name}, {"slots", std::move(walk.slots)},
-                {"events", std::move(events)}, {"template", std::move(tmpl)},
-                {"design_w", design_w > 0 ? design_w : 240.0},
-                {"design_h", design_h > 0 ? design_h : 120.0},
-                {"behavior", std::move(behavior)}};
+    return Json{{"name", component.name}, {"slots", std::move(walk.slots)},
+                {"events", component.events}, {"template", std::move(tmpl)},
+                {"design_w", component.design_w > 0 ? component.design_w : 240.0},
+                {"design_h", component.design_h > 0 ? component.design_h : 120.0},
+                {"behavior", component.behavior}};
 }
 
-Json derive(const Json& doc_components, std::vector<Diag>* diags) {
+Json derive(const std::vector<ComponentDecl>& doc_components, std::vector<Diag>* diags) {
     Json types = Json::array();
     std::vector<std::string> names;
 
-    for (const Json& component : builtin_components()) {
+    for (const Json& record : builtin_components()) {
+        /* a built-in definition never went through adopt; decode's defaults are the
+           same schema defaults, stated once */
+        const ComponentDecl component = decode_component(record);
         Sink sink;
         sink.builtin = true;
-        sink.component = component.value("name", "");
+        sink.component = component.name;
         try {
             types.push_back(compile_component(component, sink));
         } catch (const std::exception& e) {
@@ -848,42 +799,38 @@ Json derive(const Json& doc_components, std::vector<Diag>* diags) {
                          sink.component.c_str(), e.what());
             std::abort();
         }
-        names.push_back(component.value("name", ""));
+        names.push_back(component.name);
     }
 
-    if (doc_components.is_array()) {
-        std::set<std::string> seen;
-        for (const Json& component : doc_components) {
-            if (!component.is_object()) continue;
-            Sink sink;
-            sink.diags = diags;
-            const std::string name = component.value("name", "");
-            if (name.empty()) {
-                sink.report(id_of(component), "component_name",
-                            "this component has no name", "name");
-                continue;
-            }
-            if (!seen.insert(name).second) {
-                sink.report(id_of(component), "component_name",
-                            "two components are both named '" + name +
-                                "'; the first one wins",
-                            "name");
-                continue;
-            }
-            Json compiled = compile_component(component, sink);
-            /* a doc component SHADOWS a built-in of the same name, in place, so the
-             * type keeps its position in every generated list */
-            bool shadowed = false;
-            for (size_t i = 0; i < names.size(); ++i) {
-                if (names[i] != name) continue;
-                types[i] = std::move(compiled);
-                shadowed = true;
-                break;
-            }
-            if (!shadowed) {
-                types.push_back(std::move(compiled));
-                names.push_back(name);
-            }
+    std::set<std::string> seen;
+    for (const ComponentDecl& component : doc_components) {
+        Sink sink;
+        sink.diags = diags;
+        if (component.name.empty()) {
+            sink.report(component.id, "component_name",
+                        "this component has no name", "name");
+            continue;
+        }
+        if (!seen.insert(component.name).second) {
+            sink.report(component.id, "component_name",
+                        "two components are both named '" + component.name +
+                            "'; the first one wins",
+                        "name");
+            continue;
+        }
+        Json compiled = compile_component(component, sink);
+        /* a doc component SHADOWS a built-in of the same name, in place, so the
+         * type keeps its position in every generated list */
+        bool shadowed = false;
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (names[i] != component.name) continue;
+            types[i] = std::move(compiled);
+            shadowed = true;
+            break;
+        }
+        if (!shadowed) {
+            types.push_back(std::move(compiled));
+            names.push_back(component.name);
         }
     }
 
@@ -902,22 +849,19 @@ Json derive(const Json& doc_components, std::vector<Diag>* diags) {
  * is per copy", which is a fact about the text, and the wire compiler has to skip it either
  * way — otherwise one mistake would be reported twice, once by each tier, and the second
  * report would name `repeat` as an unknown word. */
-Json compile_per_copy_slots(const Json& node, const Json* registry,
+Json compile_per_copy_slots(const NodeDecl& node, const Json* registry,
                             const TemplateScope& scope, uint64_t id, Sink& sink,
                             std::set<std::string>* per_copy) {
     Json out = Json::object();
     if (!registry || !per_copy) return out;
-    const std::string type = str_or(node, "type", "");
-    if (type.empty()) return out;
-    auto slots = node.find("slots");
-    if (slots == node.end() || !slots->is_object()) return out;
-    /* found through find(), never through value(): value() hands back a COPY, and a
-       pointer into one is a pointer into a temporary that dies at the semicolon */
+    if (node.type.empty()) return out;
+    /* the registry stays JSON here: it is the SERVED compile product, and this walk of
+       it dies at stage 5b when the two compilers become one */
     auto components = registry->find("components");
     if (components == registry->end() || !components->is_array()) return out;
     const Json* component = nullptr;
     for (const Json& row : *components)
-        if (row.is_object() && row.value("name", "") == type) {
+        if (row.is_object() && row.value("name", "") == node.type) {
             component = &row;
             break;
         }
@@ -927,7 +871,7 @@ Json compile_per_copy_slots(const Json& node, const Json* registry,
        one of them would build a program the other did not skip. */
     for (const Json& slot : component->value("slots", Json::array())) {
         const std::string name = slot.value("name", "");
-        const Json* authored = authored_slot(*slots, name);
+        const Json* authored = authored_slot(node.slots, name);
         if (!authored || !authored->is_string()) continue;
         const std::string text = authored->get<std::string>();
         if (!per_copy_expression(text)) continue;
@@ -945,12 +889,11 @@ Json compile_per_copy_slots(const Json& node, const Json* registry,
 } // namespace
 
 Json derive_registry(const Document& document, std::vector<Diag>& diags) {
-    auto components = document.root.find("components");
-    return derive(components == document.root.end() ? Json() : *components, &diags);
+    return derive(decode_document(document).components, &diags);
 }
 
 const Json& builtin_registry() {
-    static const Json built = derive(Json(), nullptr);
+    static const Json built = derive({}, nullptr);
     return built;
 }
 
@@ -975,6 +918,7 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh,
                         std::set<std::string>* attr_reads, const Json* registry,
                         std::set<std::string>* per_copy) {
+    const Doc doc = decode_document(document);
     Json out = Json::object();
     Sink sink;
     sink.diags = &diags;
@@ -987,46 +931,39 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
      * where the element sits, which is the whole of the scoping rule. */
     TemplateScope page_scope;
     page_scope.mesh = build_mesh(mesh, attr_reads);
-    take_vars(document.root.value("globals", Json::array()), page_scope.vars);
+    take_vars(doc.globals, page_scope.vars);
 
-    std::function<void(const Json&, const TemplateScope&)> walk =
-        [&](const Json& node, const TemplateScope& outer) {
-        if (!node.is_object()) return;
-        const uint64_t id = id_of(node);
-        const std::string kind = str_or(node, "kind", "frame");
+    std::function<void(const NodeDecl&, const TemplateScope&)> walk =
+        [&](const NodeDecl& node, const TemplateScope& outer) {
         /* this element's own locals, INSIDE its own attrs and everything below: the
            lexical chain the scalar tier walks (compiler.cpp scope_for), built here by
            carrying the scope down instead of walking parents back up */
         TemplateScope scope = outer;
-        take_vars(node.value("locals", Json::array()), scope.vars);
-        check_attr_names(node.value("attrs", Json::object()), kind, id, sink);
-        Json row{{"attrs", compile_attrs(node.value("attrs", Json::object()), scope, id, "",
-                                         sink)}};
-        Json transitions = compile_transitions(node, kind, scope, id, sink);
+        take_vars(node.locals, scope.vars);
+        check_attr_names(node.attrs, node.kind, node.id, sink);
+        Json row{{"attrs", compile_attrs(node.attrs, scope, node.id, "", sink)}};
+        Json transitions = compile_transitions(node, node.kind, scope, node.id, sink);
         if (!transitions.empty()) row["transitions"] = std::move(transitions);
-        if (kind == "path")
-            row["anchors"] =
-                compile_anchors(node.value("anchors", Json::array()), scope, id, sink);
+        if (node.kind == "path")
+            row["anchors"] = compile_anchors(node.anchors, scope, node.id, sink);
         /* A PAGE ELEMENT'S OWN GESTURE, served so the view can arm it. Only here: a doc
            COMPONENT's nodes are compiled below under their own ids for the context
            editor, and arming those would post gestures the backend has no channel for —
            an entered component's elements are deliberately unarmed. */
-        Json interact = compile_interact(node, scope, id, sink);
+        Json interact = compile_interact(node, scope, node.id, sink);
         if (!interact.is_null()) row["interact"] = std::move(interact);
         /* THE PER-COPY PROPERTIES of a placement, if any: compiled over this element's
            own scope, exactly as its attrs were, because a slot's value is authored where
            the instance stands and reads what anything else there reads */
-        Json slots = compile_per_copy_slots(node, registry, scope, id, sink, per_copy);
+        Json slots = compile_per_copy_slots(node, registry, scope, node.id, sink, per_copy);
         if (!slots.empty()) row["slots"] = std::move(slots);
-        out[std::to_string(id)] = std::move(row);
-        for (const Json& child : array_or_empty(node, "children")) walk(child, scope);
+        out[std::to_string(node.id)] = std::move(row);
+        for (const NodeDecl& child : node.children) walk(child, scope);
     };
 
-    auto pages = document.root.find("pages");
-    if (pages != document.root.end() && pages->is_array())
-        for (const Json& page : *pages)
-            for (const Json& child : array_or_empty(page, "children"))
-                walk(child, page_scope);
+    for (const PageDecl& page : doc.pages)
+        for (const NodeDecl& child : page.children)
+            walk(child, page_scope);
 
     /* DOC COMPONENTS COMPILE HERE TOO, keyed by their own node ids (globally unique, so
      * the two key spaces cannot collide). The sink is SILENT: derive_registry has already
@@ -1034,19 +971,13 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
      * Built-ins are deliberately absent — they carry no document ids until forked, which
      * is exactly what makes an unforked built-in's context read-only. */
     Sink quiet;
-    auto components = document.root.find("components");
-    if (components != document.root.end() && components->is_array()) {
-        for (const Json& component : *components) {
-            if (!component.is_object()) continue;
-            Walk pass;
-            TemplateScope component_root;
-            component_root.addresses = pass.addresses;
-            component_root.unknown_help = kIsolatedHelp;
-            collect_tree(component, "", true, component_root, pass, quiet);
-            Json root_node = component;
-            root_node["kind"] = "frame";
-            emit_node_attrs(root_node, "", pass, quiet, out);
-        }
+    for (const ComponentDecl& component : doc.components) {
+        Walk pass;
+        TemplateScope component_root;
+        component_root.addresses = pass.addresses;
+        component_root.unknown_help = kIsolatedHelp;
+        collect_tree(component.root, "", true, component_root, pass, quiet);
+        emit_node_attrs(component.root, "", pass, quiet, out);
     }
     return out;
 }

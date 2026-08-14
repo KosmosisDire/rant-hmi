@@ -49,6 +49,7 @@ FetchContent_MakeAvailable(ixwebsocket nlohmann_json)
 add_library(hmi_core STATIC
   src/doc/schema.cpp
   src/doc/doc.cpp
+  src/doc/decode.cpp
   src/doc/ops.cpp
   src/doc/refs.cpp
   src/doc/store.cpp
