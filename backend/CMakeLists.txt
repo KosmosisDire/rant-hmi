@@ -115,6 +115,14 @@ endforeach()
 # to have run. What a component LOOKS like is not checked here: that is a browser's
 # computation, so it belongs to a Playwright drive.
 find_program(NODE_EXE node)
+
+# The IR vocabulary is GENERATED (tools/gen_ir.mjs): one table emits the C++ enums
+# (src/lang/ir_ops.h) and the view's copy (frontend/src/ir.ts). This test fails when
+# either checked-in file drifts from the table — regenerate, never hand-edit.
+if(NODE_EXE)
+  add_test(NAME ir_gen COMMAND "${NODE_EXE}" "${HMI_ROOT}/tools/gen_ir.mjs" --check)
+endif()
+
 if(NODE_EXE AND EXISTS "${HMI_ROOT}/frontend/dist/main.js")
   add_test(NAME view_test COMMAND "${NODE_EXE}" test/view_test.mjs)
   set_tests_properties(view_test PROPERTIES

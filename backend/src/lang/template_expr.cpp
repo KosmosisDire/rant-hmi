@@ -230,15 +230,11 @@ class Parser {
         parse_postfix();
     }
 
-    /* the iterating methods, by the scalar tier's names, each with its view mode
-     * spelling; nullptr = not one of them */
+    /* the iterating methods and their view mode spellings, from the generated
+     * table (lang/ir_ops.h kIterateModes); nullptr = not one of them */
     static const char* iterate_mode(const std::string& name) {
-        if (name == "map") return "MAP";
-        if (name == "filter") return "FILTER";
-        if (name == "any") return "ANY";
-        if (name == "all") return "ALL";
-        if (name == "sortBy") return "SORT_BY";
-        if (name == "reduce") return "REDUCE";
+        for (const IterateModeDef& mode : kIterateModes)
+            if (name == mode.call) return mode.wire;
         return nullptr;
     }
 

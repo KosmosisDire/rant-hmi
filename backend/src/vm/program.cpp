@@ -48,68 +48,6 @@ const std::vector<FieldDef>& struct_fields(const Program& program, uint16_t type
     return type_id < program.types.size() ? program.types[type_id].fields : none;
 }
 
-namespace {
-
-const char* op_name(OpCode op) {
-    switch (op) {
-        case OpCode::Const: return "CONST";
-        case OpCode::LoadX: return "LOAD_X";
-        case OpCode::Load: return "LOAD";
-        case OpCode::LoadField: return "LOAD_FIELD";
-        case OpCode::Add: return "ADD";
-        case OpCode::Sub: return "SUB";
-        case OpCode::Mul: return "MUL";
-        case OpCode::Div: return "DIV";
-        case OpCode::Mod: return "MOD";
-        case OpCode::Neg: return "NEG";
-        case OpCode::Eq: return "EQ";
-        case OpCode::Ne: return "NE";
-        case OpCode::Lt: return "LT";
-        case OpCode::Le: return "LE";
-        case OpCode::Gt: return "GT";
-        case OpCode::Ge: return "GE";
-        case OpCode::Not: return "NOT";
-        case OpCode::Jmp: return "JMP";
-        case OpCode::JmpFalse: return "JMP_FALSE";
-        case OpCode::Call: return "CALL";
-        case OpCode::Method: return "METHOD";
-        case OpCode::StoreX: return "STORE_X";
-        case OpCode::Gate: return "GATE";
-        case OpCode::Deadband: return "DEADBAND";
-        case OpCode::Throttle: return "THROTTLE";
-        case OpCode::Suspend: return "SUSPEND";
-        case OpCode::New: return "NEW";
-        case OpCode::ReadEnt: return "READ_ENT";
-        case OpCode::LoadEnt: return "LOAD_ENT";
-        case OpCode::StoreField: return "STORE_FIELD";
-        case OpCode::MoveOut: return "MOVE_OUT";
-        case OpCode::Store: return "STORE";
-        case OpCode::TmrStart: return "TMR_START";
-        case OpCode::TmrCancel: return "TMR_CANCEL";
-        case OpCode::Fault: return "FAULT";
-        case OpCode::Halt: return "HALT";
-        case OpCode::Index: return "INDEX";
-        case OpCode::EnumFromName: return "ENUM_FROM_NAME";
-        case OpCode::JmpNil: return "JMP_NIL";
-        case OpCode::TmrRead: return "TMR_READ";
-        case OpCode::MakeList: return "MAKE_LIST";
-        case OpCode::Iterate: return "ITERATE";
-        case OpCode::Append: return "APPEND";
-        case OpCode::StoreKey: return "STORE_KEY";
-        case OpCode::LoadArg: return "LOAD_ARG";
-        case OpCode::Raise: return "RAISE";
-        case OpCode::ClockRead: return "CLOCK_READ";
-        case OpCode::RepeatRead: return "REPEAT_READ";
-        case OpCode::Notify: return "NOTIFY";
-        case OpCode::StoreIndex: return "STORE_INDEX";
-        case OpCode::MoveOutElem: return "MOVE_OUT_ELEM";
-        case OpCode::MarkField: return "MARK_FIELD";
-    }
-    return "?";
-}
-
-} // namespace
-
 std::string Program::disassembly() const {
     std::ostringstream out;
     for (const FlowProgram& flow : flows) {

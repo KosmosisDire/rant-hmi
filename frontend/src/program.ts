@@ -6,6 +6,7 @@
  * Every operation is total. Nil (null) poisons: any operation on it yields Nil, and a
  * Nil attribute renders the UNKNOWN treatment rather than a fabricated value. */
 
+import { ITERATE_MODES } from "./ir.js";
 import { Instr, Json, Program } from "./types.js";
 
 export type Cells = (cell: string) => Json;
@@ -171,9 +172,6 @@ const NO_ARGS: Json[] = [];
 function isMapValue(value: Json): value is Record<string, Json> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-/* what ITERATE can be asked to do with the values its body returned */
-const ITERATE_MODES = new Set(["MAP", "FILTER", "ANY", "ALL", "SORT_BY", "REDUCE"]);
 
 /* the ordering SORT_BY imposes on the keys a body produced: numbers first and ascending,
  * then text lexicographically, then everything a key has no order in (Nil, an object, a

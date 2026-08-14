@@ -16,6 +16,7 @@
 
 import { TokenAccess } from "../colorpicker.js";
 import { Editor } from "../editor.js";
+import { TIME_FIELDS } from "../ir.js";
 import { resolveColor } from "../slots.js";
 import { ComponentDef, Flow, Json, Lang, MeshEntity, MeshField, Node,
          SCALAR_TYPES, Var } from "../types.js";
@@ -174,22 +175,9 @@ const TIMER_FIELDS: MeshField[] = [
   { path: "progress", shape: "num" },
 ];
 
-/* the clock reads by field too — the view's mirror of lang/ir.h kClockFields, offered
- * on every expression surface (the scalar tiers bind it in scope_for, the template
- * tier answers "time:" cells). `now` is the animation clock, seconds since start. */
-const TIME_FIELDS: MeshField[] = [
-  { path: "now", shape: "num" },
-  { path: "unix", shape: "num" },
-  { path: "year", shape: "num" },
-  { path: "month", shape: "num" },
-  { path: "day", shape: "num" },
-  { path: "weekday", shape: "num" },
-  { path: "hour", shape: "num" },
-  { path: "minute", shape: "num" },
-  { path: "second", shape: "num" },
-  { path: "text", shape: "text" },
-  { path: "date", shape: "text" },
-];
+/* the clock reads by field too (TIME_FIELDS, the generated vocabulary in ir.ts),
+ * offered on every expression surface: the scalar tiers bind it in scope_for, the
+ * template tier answers "time:" cells. `now` is the animation clock. */
 
 /* WHICH COPY of a `repeat` — read by field on both tiers that can answer: an attr, which
  * is evaluated per copy, and a flow AN EVENT TRIGGERED, which is handed the copy that
