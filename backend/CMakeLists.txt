@@ -110,6 +110,14 @@ foreach(_test doc_test sync_test runtime_test scheduler_test mesh_test component
   add_test(NAME ${_test} COMMAND hmi_${_test})
 endforeach()
 
+# THE GOLDEN DUMP (the language-rewrite ratchet): the repo document's whole compile
+# product, byte for byte. Regenerate after an INTENDED change with:
+#   bin/hmi_golden_test hmi.json backend/tests/golden/hmi.golden --write
+add_executable(hmi_golden_test tests/golden_test.cpp)
+target_link_libraries(hmi_golden_test PRIVATE hmi_core)
+add_test(NAME golden_test COMMAND hmi_golden_test "${HMI_ROOT}/hmi.json"
+         "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/hmi.golden")
+
 # The view's pure half (boot and sync, document mirror, attribute interpreter, sidebar
 # reconciliation) is checked headlessly against a real backend; it needs `node build.mjs`
 # to have run. What a component LOOKS like is not checked here: that is a browser's

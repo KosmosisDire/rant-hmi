@@ -50,15 +50,30 @@ const std::vector<FieldDef>& struct_fields(const Program& program, uint16_t type
 
 std::string Program::disassembly() const {
     std::ostringstream out;
-    for (const FlowProgram& flow : flows) {
-        out << "flow " << flow.flow_id << " node " << flow.node_id << " event "
-            << flow.event << " worst " << flow.worst_steps << "\n";
-        for (size_t i = 0; i < flow.code.size(); ++i) {
-            const Instruction& ins = flow.code[i];
+    auto code_lines = [&](const std::vector<Instruction>& code) {
+        for (size_t i = 0; i < code.size(); ++i) {
+            const Instruction& ins = code[i];
             out << "  " << i << " " << op_name(ins.op);
+            if (ins.small) out << " small " << ins.small;
             if (ins.a || ins.b || ins.c) out << " " << ins.a << " " << ins.b << " " << ins.c;
             out << "\n";
         }
+    };
+    for (const FlowProgram& flow : flows) {
+        out << "flow " << flow.flow_id << " node " << flow.node_id << " event "
+            << flow.event << " worst " << flow.worst_steps << "\n";
+        code_lines(flow.code);
+    }
+    for (const SlotProgram& slot : slot_programs) {
+        out << "slot node " << slot.node_id << " " << slot.slot << " cell " << slot.cell;
+        if (slot.every_tick) out << " every_tick";
+        if (slot.poll_ms) out << " poll " << slot.poll_ms;
+        out << "\n";
+        code_lines(slot.code);
+    }
+    for (size_t s = 0; s < subs.size(); ++s) {
+        out << "sub " << s << "\n";
+        code_lines(subs[s].code);
     }
     return out.str();
 }
