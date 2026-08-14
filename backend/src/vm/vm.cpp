@@ -137,12 +137,10 @@ Value numeric(OpCode op, const Value& left, const Value& right) noexcept {
     }
 }
 
+/* the ORDERED comparisons only: Eq/Ne have their own dispatch case (equal_values,
+ * which knows the enum bridges), so nothing routes them here */
 Value compare(OpCode op, const Value& left, const Value& right) noexcept {
     if (left.tag == ValueTag::Nil || right.tag == ValueTag::Nil) return Value::nil();
-    if (op == OpCode::Eq || op == OpCode::Ne) {
-        const bool same = value_same_scalar(left, right);
-        return Value::boolean(op == OpCode::Eq ? same : !same);
-    }
     if (left.tag != ValueTag::Num || right.tag != ValueTag::Num) return Value::nil();
     const double a = left.data.num;
     const double b = right.data.num;
