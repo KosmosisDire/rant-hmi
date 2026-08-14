@@ -1,0 +1,10 @@
+# THE DEATH LEDGER'S TEETH (the language-rewrite plan, stage 0).
+#
+# Every symbol a rewrite stage kills is buried here in the same commit that
+# deletes it, and the tombstone ctest greps the source trees for each one —
+# so nothing dead ever resurrects quietly. One symbol per line; # lines and
+# blank lines are ignored; a hit anywhere in backend/src, backend/tests,
+# frontend/src, frontend/test or tools fails the test.
+#
+# Born empty: the first burials land with stage 1 (the lexer) and stage 2
+# (the language core).

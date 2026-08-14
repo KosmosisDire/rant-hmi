@@ -110,6 +110,12 @@ foreach(_test doc_test sync_test runtime_test scheduler_test mesh_test component
   add_test(NAME ${_test} COMMAND hmi_${_test})
 endforeach()
 
+# THE TOMBSTONE TEST: dead symbols stay dead. tests/tombstones.txt is the burial
+# list; a listed symbol appearing anywhere in the source trees fails the build.
+add_executable(hmi_tombstone_test tests/tombstone_test.cpp)
+add_test(NAME tombstone_test COMMAND hmi_tombstone_test "${HMI_ROOT}"
+         "${CMAKE_CURRENT_SOURCE_DIR}/tests/tombstones.txt")
+
 # THE GOLDEN DUMP (the language-rewrite ratchet): the repo document's whole compile
 # product, byte for byte. Regenerate after an INTENDED change with:
 #   bin/hmi_golden_test hmi.json backend/tests/golden/hmi.golden --write
