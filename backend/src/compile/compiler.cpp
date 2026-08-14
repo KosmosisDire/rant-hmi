@@ -3056,7 +3056,14 @@ class Compiler {
                 if (!expression(step_id, str_or(step, "a", ""), ExprTier::Wire, scope,
                                 Type(Shape::Bool), flow.code, flow.max_stack))
                     return false;
-                flow.code.push_back(Instruction{OpCode::Gate});
+                Instruction gate{OpCode::Gate};
+                /* not a fault: the counter behind this site is how a gate on an
+                   UNKNOWN condition says it did not run (the log drains it) */
+                gate.c = fault_site(step_id, "gate_unknown",
+                                    "this gate's condition is UNKNOWN, so the flow "
+                                    "did not run; guard with known(...) or give the "
+                                    "value a default with ??");
+                flow.code.push_back(gate);
             } else if (kind == "deadband") {
                 Instruction ins;
                 ins.op = OpCode::Deadband;

@@ -248,6 +248,11 @@ Value call(const ExecContext& ctx, Builtin builtin, uint32_t site, const Value* 
             const uint32_t rgba = args[0].data.rgba;
             return Value::color((~rgba & 0xffffff00u) | (rgba & 0xffu));
         }
+        /* THE UNKNOWN TEST: the one builtin that ASKS about Nil instead of
+           propagating it — == cannot (an unknown comparison is unknown) */
+        case Builtin::Known:
+            if (n != 1) return Value::nil();
+            return Value::boolean(args[0].tag != ValueTag::Nil);
         case Builtin::FmtTime: {
             if (n != 1 || args[0].tag != ValueTag::Num) return Value::nil();
             const double us = args[0].data.num;
@@ -1132,9 +1137,15 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 else if (!value.data.boolean) pc = ins.a;
                 break;
             }
+            /* THE UNKNOWN TEST: when the top is Nil, pop it and jump; otherwise leave
+               it and fall through. What `??` compiles to, and how && / || step around
+               an unknown condition instead of faulting on it. */
             case OpCode::JmpNil: {
-                const Value value = pop();
-                if (value.tag == ValueTag::Nil && ins.a < code.size()) pc = ins.a;
+                if (sp && state.stack[stack_base + sp - 1].tag == ValueTag::Nil) {
+                    --sp;
+                    if (ins.a < code.size()) pc = ins.a;
+                    else fail(ins.c);
+                }
                 break;
             }
             case OpCode::Call: {
@@ -1213,6 +1224,14 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             }
             case OpCode::Gate: {
                 const Value value = pop();
+                if (value.tag == ValueTag::Nil) {
+                    /* the ONE unknown rule: a guard on an unknown condition does not
+                       run and SAYS SO — the site's counter feeds the log, and the
+                       run stops without being a fault */
+                    state.fault(ins.c);
+                    result.halted = true;
+                    break;
+                }
                 if (value.tag != ValueTag::Bool || !value.data.boolean) result.halted = true;
                 break;
             }
@@ -1752,12 +1771,14 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 bool any_true = false;
                 bool all_true = true;
                 bool body_faulted = false;
+                bool condition_unknown = false;
                 ValueTag elem_tag = ValueTag::Nil;
                 bool uniform = true;
                 /* the fold's carried value: the body's first parameter each time round,
                    and what an empty list leaves untouched */
                 Value acc = init;
-                for (uint32_t i = 0; i < count && !body_faulted; ++i) {
+                for (uint32_t i = 0; i < count && !body_faulted && !condition_unknown;
+                     ++i) {
                     /* a map's entries interleave, so its "element" is the KEY and the
                        third parameter is the value beside it */
                     const Value element = over_map ? view.data[i * 2] : view.data[i];
@@ -1818,7 +1839,16 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                             state.elems[out_at + kept++] = stored;
                             break;
                         }
+                        /* the CONDITION modes hold the one unknown rule: a Nil body
+                           result poisons the whole answer instead of quietly reading
+                           as false — dropping the element (filter) or deciding the
+                           question (any/all) would be the unknown silently becoming
+                           a value */
                         case IterateMode::Filter:
+                            if (value.tag == ValueTag::Nil) {
+                                condition_unknown = true;
+                                break;
+                            }
                             if (value_truth(value)) {
                                 if (kept == 0) elem_tag = element.tag;
                                 else if (element.tag != elem_tag) uniform = false;
@@ -1832,10 +1862,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                             state.elems[out_at + kept++] = element;
                             break;
                         case IterateMode::Any:
-                            if (value_truth(value)) any_true = true;
+                            if (value.tag == ValueTag::Nil) condition_unknown = true;
+                            else if (value_truth(value)) any_true = true;
                             break;
                         case IterateMode::All:
-                            if (!value_truth(value)) all_true = false;
+                            if (value.tag == ValueTag::Nil) condition_unknown = true;
+                            else if (!value_truth(value)) all_true = false;
                             break;
                         case IterateMode::Reduce:
                             break;   /* folded above, before the modes that build */
@@ -1843,6 +1875,10 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 if (body_faulted) {
                     fail(ins.c);
+                    break;
+                }
+                if (condition_unknown) {
+                    if (!push(Value::nil())) fail(ins.c);
                     break;
                 }
                 if (mode == IterateMode::SortBy) {

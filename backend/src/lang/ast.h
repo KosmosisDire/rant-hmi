@@ -20,6 +20,7 @@ enum class ExprKind : uint8_t {
     Text,
     ColorLit,
     BoolLit,
+    NilLit,     /* nil — the UNKNOWN literal (spec 2.4) */
     ListLit,    /* [a, b, c] — elements in args */
     Name,       /* an identifier head; what it means is the checker's question */
     EntityRef,  /* @path */

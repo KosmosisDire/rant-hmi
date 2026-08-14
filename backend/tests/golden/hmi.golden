@@ -6921,10 +6921,10 @@ flow 506 node 462 event press worst 2
   0 FAULT 103 0 0
   1 HALT
 flow 508 node 462 event release worst 2
-  0 FAULT 105 0 0
+  0 FAULT 106 0 0
   1 HALT
 flow 571 node 570 event tap worst 2
-  0 FAULT 107 0 0
+  0 FAULT 108 0 0
   1 HALT
 slot node 70 moving cell 7 every_tick
   0 LOAD 3 0 0

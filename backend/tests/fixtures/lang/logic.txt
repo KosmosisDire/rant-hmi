@@ -39,15 +39,24 @@ want bool false
 expr true || (1 / 0 > 0)
 want bool true
 
-# The order-dependent unknown hole, pinned as it stands (the plan fixes it at stage 4):
-# an unknown CONDITION faults the branch, so the same expression reversed dies.
-== unknown left of a disjunction faults
+# THE ONE UNKNOWN RULE (spec 2.4): an unknown CONDITION side yields an unknown
+# result — never a fault, never silently a value. The decided cases short-circuit
+# as they always did.
+== unknown left of a disjunction is unknown
 expr (1 / 0 > 0) || true
-fault expr_fault
+want nil
 
-== unknown left of a conjunction faults
+== unknown left of a conjunction is unknown
 expr (1 / 0 > 0) && true
-fault expr_fault
+want nil
+
+== a decided disjunction never reaches the unknown side
+expr true || (1 / 0 > 0)
+want bool true
+
+== a false conjunction is false whatever follows
+expr false && (1 / 0 > 0)
+want bool false
 
 == less
 expr 1 < 2

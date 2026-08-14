@@ -237,6 +237,18 @@ function exec(code: Instr[], cells: Cells, args: Json[]): Json {
         stack.push(c === null ? NIL : c ? a : b);
         break;
       }
+      /* `a ?? b`: keep a unless it is Nil — the one place Nil is stepped around
+         rather than poisoning through */
+      case "COALESCE": {
+        const b = pop();
+        const a = pop();
+        stack.push(nil(a) ? b : a);
+        break;
+      }
+      /* the UNKNOWN test: the one operation that ASKS about Nil */
+      case "KNOWN":
+        stack.push(!nil(pop()));
+        break;
       case "ADD": {
         /* `+` CONCATENATES when either side is text — the language's own rule on both
          * tiers, not a view convenience — rendering the other operand the way
@@ -499,7 +511,14 @@ function exec(code: Instr[], cells: Cells, args: Json[]): Json {
         }
         const results: Json[] = [];
         for (let at = 0; at < count; at++) results.push(exec(body, cells, [list[at], at]));
-        if (mode === "MAP") stack.push(results);
+        /* the CONDITION modes hold the one unknown rule: a Nil body result poisons
+           the whole answer instead of quietly reading as false — the scalar VM's
+           exact behavior, pinned by the shared fixtures */
+        if ((mode === "FILTER" || mode === "ANY" || mode === "ALL") &&
+            results.some((r) => nil(r))) {
+          stack.push(NIL);
+        }
+        else if (mode === "MAP") stack.push(results);
         else if (mode === "FILTER")
           stack.push(list.slice(0, count).filter((_, at) => truthy(results[at]) === true));
         else if (mode === "ANY") stack.push(results.some((r) => truthy(r) === true));

@@ -94,6 +94,11 @@ class Lower {
                      sink_.add_constant(Value::boolean(expr.number != 0)));
                 pushed();
                 return;
+            case ExprKind::NilLit:
+                site("a value", expr.at);
+                emit(OpCode::Const, sink_.add_constant(Value::nil()));
+                pushed();
+                return;
             case ExprKind::ColorLit:
                 site("a value", expr.at);
                 emit(OpCode::Const, sink_.add_constant(Value::color(note(index).rgba)));
@@ -287,10 +292,33 @@ class Lower {
         const Expr& expr = at(index);
         const Note& mark = note(index);
         const TokenKind op = expr.op;
+        /* `a ?? b`: JmpNil pops a and jumps ONLY when it is Nil, so the fall-through
+           keeps a as the result and the jump path evaluates b instead */
+        if (op == TokenKind::Coalesce) {
+            walk(expr.a);
+            site("??", expr.at);
+            const uint32_t base = depth_ - 1;
+            const uint32_t nil_branch = static_cast<uint32_t>(code_->size());
+            emit(OpCode::JmpNil);
+            const uint32_t done = static_cast<uint32_t>(code_->size());
+            emit(OpCode::Jmp);
+            (*code_)[nil_branch].a = static_cast<uint32_t>(code_->size());
+            depth_ = base;
+            walk(expr.b);
+            site("??", expr.at);
+            (*code_)[done].a = static_cast<uint32_t>(code_->size());
+            return;
+        }
+        /* THE ONE UNKNOWN RULE on the boolean operators: an unknown CONDITION side
+           yields an unknown result — JmpNil peels it off to a Nil tail — instead of
+           faulting at the branch. The decided cases short-circuit as they always
+           did; both tiers now agree (the view's PICK lowering poisons the same way). */
         if (op == TokenKind::OrOr || op == TokenKind::KwOr) {
             walk(expr.a);
             site("||", expr.at);
             const uint32_t base = depth_ - 1;
+            const uint32_t nil_branch = static_cast<uint32_t>(code_->size());
+            emit(OpCode::JmpNil);
             emit(OpCode::Not);
             const uint32_t branch = static_cast<uint32_t>(code_->size());
             emit(OpCode::JmpFalse);
@@ -303,13 +331,22 @@ class Lower {
             depth_ = base;
             emit(OpCode::Const, sink_.add_constant(Value::boolean(true)));
             pushed();
+            const uint32_t after_true = static_cast<uint32_t>(code_->size());
+            emit(OpCode::Jmp);
+            (*code_)[nil_branch].a = static_cast<uint32_t>(code_->size());
+            depth_ = base;
+            emit(OpCode::Const, sink_.add_constant(Value::nil()));
+            pushed();
             (*code_)[done].a = static_cast<uint32_t>(code_->size());
+            (*code_)[after_true].a = static_cast<uint32_t>(code_->size());
             return;
         }
         if (op == TokenKind::AndAnd || op == TokenKind::KwAnd) {
             walk(expr.a);
             site("&&", expr.at);
             const uint32_t base = depth_ - 1;
+            const uint32_t nil_branch = static_cast<uint32_t>(code_->size());
+            emit(OpCode::JmpNil);
             const uint32_t branch = static_cast<uint32_t>(code_->size());
             emit(OpCode::JmpFalse);
             --depth_;
@@ -321,7 +358,14 @@ class Lower {
             depth_ = base;
             emit(OpCode::Const, sink_.add_constant(Value::boolean(false)));
             pushed();
+            const uint32_t after_false = static_cast<uint32_t>(code_->size());
+            emit(OpCode::Jmp);
+            (*code_)[nil_branch].a = static_cast<uint32_t>(code_->size());
+            depth_ = base;
+            emit(OpCode::Const, sink_.add_constant(Value::nil()));
+            pushed();
             (*code_)[done].a = static_cast<uint32_t>(code_->size());
+            (*code_)[after_false].a = static_cast<uint32_t>(code_->size());
             return;
         }
         walk(expr.a);

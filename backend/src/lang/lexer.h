@@ -50,11 +50,17 @@ enum class TokenKind {
     KwAnd,
     KwOr,
     KwNot,
+    /* `nil` (spec 2.4): the UNKNOWN literal, a keyword like the word operators so a
+     * field or method named nil still reads after a dot */
+    KwNil,
     /* the conditional operator, `c ? a : b` (spec 6.2). Both tiers lower it to the same
      * thing `.pick()` already lowers to, so it is surface sugar over machinery that was
      * always there -- no opcode, no VM case, no view-interpreter case. */
     Question,
     Colon,
+    /* `a ?? b` (spec 2.4): b where a is UNKNOWN, a everywhere else — the language's
+     * one way to give an unknown a default instead of letting it propagate */
+    Coalesce,
     /* `=>`: the lambda arrow (spec 6.4). One parameter, one expression body, legal only
      * as a direct argument to an iterating method -- the parser refuses it anywhere
      * else, so the token being lexable everywhere costs nothing. */

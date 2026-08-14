@@ -77,8 +77,9 @@ cell is an ordinary expression plus Store, so it needs no opcode of its own.`,
   { name: "Index" },
   {
     name: "JmpNil",
-    c: `pop; jump to \`a\` when it was Nil: a cased feed's bail-out, so an UNKNOWN input
-stores UNKNOWN instead of faulting its way down the arms (spec 2.4)`,
+    c: `THE UNKNOWN TEST (spec 2.4): when the top of stack is Nil, pop it and jump to
+\`a\`; otherwise leave it and fall through. What \`??\` compiles to, and how && / ||
+propagate an unknown condition instead of faulting on it.`,
   },
   {
     name: "TmrRead",
@@ -310,6 +311,13 @@ never reach the scalar dispatcher that would use it.`,
 what a \`points\` attr's map produces per sample. No wire meaning (a machine
 has no boxes), so it never had a scalar Builtin; the id on the row is inert,
 the clamp01 pattern.`,
+  },
+  {
+    name: "Known", fn: "known", min: 1, max: 1, params: ["Unknown"], result: "Bool", view: "KNOWN",
+    rc: `THE UNKNOWN TEST (spec 2.4): true when the value is not UNKNOWN. The one
+place the language ASKS about Nil instead of propagating it — == cannot test
+for it (an unknown comparison is unknown), so this is the honest spelling,
+beside \`??\` for the default-value case. Wire-legal: a gate may guard on it.`,
   },
 ];
 

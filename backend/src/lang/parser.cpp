@@ -99,7 +99,7 @@ class Parser {
     }
 
     uint32_t ternary() {
-        uint32_t cond = or_chain();
+        uint32_t cond = coalesce();
         if (!error_.empty() || token().kind != TokenKind::Question) return cond;
         const uint32_t made = node(ExprKind::Ternary, out_.nodes[cond].at);
         advance();
@@ -132,6 +132,14 @@ class Parser {
             left = close(made);
         }
         return left;
+    }
+
+    /* `a ?? b` binds looser than || so a whole condition can take a default, and
+     * tighter than ?: so a ternary arm can carry one */
+    uint32_t coalesce() {
+        return binary_chain(&Parser::or_chain, [](TokenKind k) {
+            return k == TokenKind::Coalesce;
+        });
     }
 
     uint32_t or_chain() {
@@ -225,7 +233,8 @@ class Parser {
             advance();
             /* a keyword after a dot is just a name: `x.not()` stands */
             if (token().kind != TokenKind::Ident && token().kind != TokenKind::KwAnd &&
-                token().kind != TokenKind::KwOr && token().kind != TokenKind::KwNot) {
+                token().kind != TokenKind::KwOr && token().kind != TokenKind::KwNot &&
+                token().kind != TokenKind::KwNil) {
                 fail(plain_names(receiver) ? "expected a field after '.'"
                                            : "expected a method after '.'");
                 return kNoExpr;
@@ -300,6 +309,11 @@ class Parser {
             case TokenKind::Number: {
                 const uint32_t made = node(ExprKind::Number, t.at);
                 out_.nodes[made].number = t.number;
+                advance();
+                return close(made);
+            }
+            case TokenKind::KwNil: {
+                const uint32_t made = node(ExprKind::NilLit, t.at);
                 advance();
                 return close(made);
             }

@@ -117,6 +117,7 @@ class Sema {
             case ExprKind::Number: type = Type(Shape::Num); break;
             case ExprKind::Text: type = Type(Shape::Text); break;
             case ExprKind::BoolLit: type = Type(Shape::Bool); break;
+            case ExprKind::NilLit: type = Type(Shape::Nil); break;
             case ExprKind::ColorLit: {
                 bool ok = false;
                 note(index).rgba = parse_color(expr.text, ok);
@@ -191,7 +192,7 @@ class Sema {
                 }
                 break;
             }
-            case ExprKind::Binary: type = binary(index); break;
+            case ExprKind::Binary: type = binary(index, want); break;
             case ExprKind::Ternary: type = ternary(index, want); break;
             case ExprKind::Name:
             case ExprKind::EntityRef:
@@ -219,9 +220,23 @@ class Sema {
         return Type();
     }
 
-    Type binary(uint32_t index) {
+    Type binary(uint32_t index, const Type& want) {
         const Expr& expr = at(index);
         const TokenKind op = expr.op;
+        /* `a ?? b`: b where a is UNKNOWN, a everywhere else. The context's
+           expectation carries into BOTH sides (an enum destination resolves
+           `x ?? .idle`); agreeing sides give the whole its type, exactly the
+           ternary's rule. */
+        if (op == TokenKind::Coalesce) {
+            want_ = want;
+            const Type left = check(expr.a);
+            if (!error_.empty()) return Type();
+            want_ = want;
+            const Type right = check(expr.b);
+            if (!error_.empty()) return Type();
+            if (left.kind == Shape::Nil || left.kind == Shape::Unknown) return right;
+            return left.kind == right.kind || right.kind == Shape::Nil ? left : Type();
+        }
         /* the boolean operators: each side a condition */
         if (op == TokenKind::OrOr || op == TokenKind::KwOr ||
             op == TokenKind::AndAnd || op == TokenKind::KwAnd) {
@@ -264,6 +279,16 @@ class Sema {
             if (!error_.empty()) return Type();
         }
         if (equality) {
+            /* `== nil` cannot work: an unknown comparison IS unknown (the one rule),
+               so the test would answer nil forever. Refuse toward the two honest
+               spellings before the mix check turns this into a shape complaint. */
+            if (at(expr.a).kind == ExprKind::NilLit ||
+                at(expr.b).kind == ExprKind::NilLit) {
+                fail("a comparison with an unknown side is unknown, so == cannot "
+                     "test for it; write known(x), or x ?? fallback for a default",
+                     at(expr.b).after);
+                return Type();
+            }
             /* an enum compares to ITS OWN vocabulary and nothing else: a variant
                literal or a value of the same enum. The old number/text leniencies
                died with the runtime coercion — the intent is spelled now: x.int(),

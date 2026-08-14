@@ -54,8 +54,9 @@ enum class OpCode : uint8_t {
     Fault,
     Halt,
     Index,
-    /* pop; jump to `a` when it was Nil: a cased feed's bail-out, so an UNKNOWN input
-     * stores UNKNOWN instead of faulting its way down the arms (spec 2.4)
+    /* THE UNKNOWN TEST (spec 2.4): when the top of stack is Nil, pop it and jump to
+     * `a`; otherwise leave it and fall through. What `??` compiles to, and how && / ||
+     * propagate an unknown condition instead of faulting on it.
      */
     JmpNil,
     /* push one FIELD of timer `a` from the timer table (`b`: 0 running, 1 remaining
@@ -333,6 +334,7 @@ enum class Builtin : uint16_t {
     Asin,
     Acos,
     Atan2,
+    Known,
 };
 
 enum class MethodId : uint16_t {

@@ -1,0 +1,95 @@
+# CONFORMANCE FIXTURES: nil, ??, known() — the one unknown rule (spec 2.4).
+# UNKNOWN propagates: it never faults and never silently becomes a value. `??`
+# gives it a default, known() is the one test that asks about it, and a tested
+# unknown poisons the test's answer everywhere, including filter / any / all.
+
+== the nil literal
+expr nil
+want nil
+
+== coalesce keeps a known value
+env level: num = 5
+expr level ?? 0
+want num 5
+
+== coalesce replaces an unknown
+expr (1 / 0) ?? 42
+want num 42
+
+== the nil literal coalesces away
+expr nil ?? 7
+want num 7
+
+== coalesce chains left
+expr nil ?? nil ?? 3
+want num 3
+
+== coalesce binds looser than arithmetic
+expr (1 / 0) ?? 2 + 3
+want num 5
+
+== a ternary arm carries a coalesce
+env on: bool = true
+expr on ? (1 / 0) ?? 9 : 0
+want num 9
+
+== a coalesce default resolves against the equality's enum
+env mode: enum(idle, run, fault) = run
+expr mode == (((1 / 0 > 0) ? .fault : .idle) ?? .run)
+want bool true
+
+== known on a value
+env level: num = 5
+expr known(level)
+want bool true
+
+== known on an unknown
+expr known(1 / 0)
+want bool false
+
+== known is the unknown test
+expr known(nil)
+want bool false
+
+== known guards a condition
+expr known(1 / 0) && false
+want bool false
+
+== equality cannot test for unknown
+env level: num = 5
+expr level == nil
+error cannot test for it; write known
+
+== inequality cannot test for unknown either
+env level: num = 5
+expr nil != level
+error cannot test for it; write known
+
+== an unknown filter condition poisons the answer
+env temps: list(num) = [1, 2, 3]
+expr temps.filter(v => v / 0 > 0).length()
+want nil
+
+== an unknown any condition poisons the answer
+env temps: list(num) = [1, 2, 3]
+expr temps.any(v => v / 0 > 0)
+want nil
+
+== an unknown all condition poisons the answer
+env temps: list(num) = [1, 2, 3]
+expr temps.all(v => v / 0 > 0)
+want nil
+
+== a decided filter still filters
+env temps: list(num) = [1, 2, 3]
+expr temps.filter(v => v > 1).length()
+want num 2
+
+== a map body may carry gaps
+env temps: list(num) = [1, 2, 3]
+expr temps.map(v => v / 0).length()
+want num 3
+
+== an unknown condition in a conditional is unknown
+expr (1 / 0 > 0) ? 1 : 2
+want nil

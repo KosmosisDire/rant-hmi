@@ -80,6 +80,12 @@ HMI_BUILTIN_ROW("hypot", Clamp, 2, 2, (Shape::Num, Shape::Num), Num, false, "@",
  * the clamp01 pattern.
  */
 HMI_BUILTIN_ROW("anchor", Clamp, 2, 2, (Shape::Num, Shape::Num), Struct, true, "ANCHOR", true)
+/* THE UNKNOWN TEST (spec 2.4): true when the value is not UNKNOWN. The one
+ * place the language ASKS about Nil instead of propagating it — == cannot test
+ * for it (an unknown comparison is unknown), so this is the honest spelling,
+ * beside `??` for the default-value case. Wire-legal: a gate may guard on it.
+ */
+HMI_BUILTIN_ROW("known", Known, 1, 1, (Shape::Unknown), Bool, false, "KNOWN", false)
 #endif
 
 #ifdef HMI_METHOD_ROW

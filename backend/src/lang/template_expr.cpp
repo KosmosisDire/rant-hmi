@@ -158,6 +158,10 @@ class ViewLower {
             case ExprKind::BoolLit:
                 emit_const(expr.number != 0);
                 return;
+            case ExprKind::NilLit:
+                /* the UNKNOWN literal: CONST of JSON null IS this tier's Nil */
+                emit_const(nullptr);
+                return;
             case ExprKind::ThemeRef:
                 emit_load("theme:" + expr.text);
                 return;
@@ -228,6 +232,15 @@ class ViewLower {
     void binary(uint32_t index) {
         const Expr& expr = at(index);
         const TokenKind op = expr.op;
+        /* `a ?? b`: both sides evaluate (this tier has no jumps — the PICK rule)
+           and COALESCE keeps a unless it is Nil */
+        if (op == TokenKind::Coalesce) {
+            lower(expr.a);
+            if (!error_.empty()) return;
+            lower(expr.b);
+            if (error_.empty()) emit("COALESCE");
+            return;
+        }
         if (op == TokenKind::OrOr || op == TokenKind::KwOr) {
             lower(expr.a);
             if (error_.empty()) emit_const(true);   /* a || b == a.pick(true, b) */

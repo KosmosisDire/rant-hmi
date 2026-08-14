@@ -46,7 +46,7 @@ Token Lexer::scan() {
         case '*': token.kind = TokenKind::Star; return token;
         case '/': token.kind = TokenKind::Slash; return token;
         case '%': token.kind = TokenKind::Percent; return token;
-        case '?': token.kind = TokenKind::Question; return token;
+        case '?': two('?', TokenKind::Coalesce, TokenKind::Question); return token;
         case ':': token.kind = TokenKind::Colon; return token;
         case '!': two('=', TokenKind::Ne, TokenKind::Bang); return token;
         case '=':
@@ -127,6 +127,7 @@ Token Lexer::ident() {
     if (token.text == "and") token.kind = TokenKind::KwAnd;
     else if (token.text == "or") token.kind = TokenKind::KwOr;
     else if (token.text == "not") token.kind = TokenKind::KwNot;
+    else if (token.text == "nil") token.kind = TokenKind::KwNil;
     return token;
 }
 
