@@ -1,4 +1,5 @@
 == diagnostics ==
+node 255 error [template_expr] surface: unknown entity '@cage/plc/IO/xConveyorLoopGo' at column 30
 node 186 error [template_expr] show: unknown field '@gp12/robotState.start' at column 24
 node 487 error [template_expr] show: unknown field '@gp12/robotState.start' at column 23
 node 360 error [template_expr] surface: unknown field '@gp12/robotState.alarm' at column 25
@@ -13,10 +14,12 @@ node 609 error [unresolved_type] type: variable 'jogCmd' has type 'JogCmd', whic
 node 70 error [expression] leftPos: unknown entity '@cage/plc/IO/wDistanceSensorD' at column 31
 node 70 error [expression] rightPos: unknown entity '@cage/plc/IO/wDistanceSensorA' at column 31
 node 53 error [expression] pushFraction: unknown entity '@cage/plc/PusherFeedback1/extending' at column 37
-node 116 error [expression] options: unknown field 'selectedJob.variants' at column 23
+node 116 error [expression] options: unknown field 'JobCmd.jobName.variants' at column 26
 node 116 error [expression] value: unknown name 'selectedJob' at column 12
 node 138 error [expression] value: unknown field '@gp12/robotState.servoPower' at column 28
 node 478 error [expression] text: unknown field '@gp12/robotState.start' at column 24
+node 610 error [expression] options: unknown field 'JogCmd.mode.variants' at column 23
+node 610 error [expression] value: unknown field 'jogCmd.mode' at column 12
 node 179 error [expression] value: unknown entity '@cage/plc/IO/rVacSense' at column 24
 node 567 error [expression] value: unknown field '@gp12/joints.position.map' at column 43
 node 100 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xConveyorGo is not reflected
@@ -31,6 +34,7 @@ node 141 error [unresolved_entity] to: mesh entity F:gp12/setServo is not reflec
 node 476 error [unresolved_entity] to: mesh entity F:gp12/resetAlarm is not reflected
 node 599 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 588 error [unresolved_entity] to: mesh entity F:gp12/setServo is not reflected
+node 612 error [move_dest] to: 'jogCmd' has no value yet at this row
 node 346 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 167 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 183 error [expression] from: unknown entity '@cage/plc/IO/xGripperSuction' at column 29
@@ -262,7 +266,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 318.0
+            "v": 362.0
           }
         ]
       },
@@ -309,7 +313,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 0.0
+            "v": 0.1111
           }
         ]
       },
@@ -365,7 +369,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 1.0
+            "v": 0.7778
           }
         ]
       }
@@ -393,7 +397,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 373.0
+            "v": 428.0
           }
         ]
       },
@@ -748,7 +752,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 373.0
+            "v": 417.0
           }
         ]
       },
@@ -3152,14 +3156,6 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           }
         ]
       },
-      "surface": {
-        "code": [
-          {
-            "cell": "theme:button-accent",
-            "op": "LOAD"
-          }
-        ]
-      },
       "top": {
         "code": [
           {
@@ -3534,7 +3530,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 495.0
+            "v": 539.0
           }
         ]
       },
@@ -3566,7 +3562,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 55.0
+            "v": 11.0
           }
         ]
       },
@@ -3618,7 +3614,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 373.0
+            "v": 428.0
           }
         ]
       },
@@ -3758,7 +3754,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 334.0
+            "v": 335.0
           }
         ]
       },
@@ -3790,7 +3786,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 455.0
+            "v": 500.0
           }
         ]
       },
@@ -3858,7 +3854,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 428.0
+            "v": 472.0
           }
         ]
       },
@@ -4506,7 +4502,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 318.0
+            "v": 362.0
           }
         ]
       },
@@ -4709,7 +4705,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 373.0
+            "v": 417.0
           }
         ]
       },
@@ -4767,7 +4763,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 32.0
+            "v": 87.0
           }
         ]
       },
@@ -4835,7 +4831,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 55.0
+            "v": 11.0
           }
         ]
       },
@@ -4855,7 +4851,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 5.0
+            "v": 3.0
           }
         ]
       },
@@ -4887,7 +4883,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 299.0
+            "v": 352.0
           }
         ]
       },
@@ -5903,7 +5899,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 373.0
+            "v": 417.0
           }
         ]
       },
@@ -5955,7 +5951,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 439.0
+            "v": 483.0
           }
         ]
       },
@@ -6098,6 +6094,1022 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           {
             "op": "CONST",
             "v": 187.0
+          }
+        ]
+      }
+    }
+  },
+  "610": {
+    "attrs": {
+      "border": {
+        "code": [
+          {
+            "cell": "theme:line",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 44.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 54.0
+          }
+        ]
+      },
+      "radius": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 8.0
+          }
+        ]
+      },
+      "surface": {
+        "code": [
+          {
+            "cell": "theme:surface-2",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 43.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 176.0
+          }
+        ]
+      }
+    }
+  },
+  "613": {
+    "attrs": {
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 33.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 318.0
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 54.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 176.0
+          }
+        ]
+      }
+    }
+  },
+  "614": {
+    "attrs": {
+      "align": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "center"
+          }
+        ]
+      },
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 44.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 10.0
+          }
+        ]
+      },
+      "text": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "Mode"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 43.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 44.0
+          }
+        ]
+      }
+    }
+  },
+  "615": {
+    "attrs": {
+      "align": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "center"
+          }
+        ]
+      },
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 44.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 263.0
+          }
+        ]
+      },
+      "text": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "Speed"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 43.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 55.0
+          }
+        ]
+      }
+    }
+  },
+  "617": {
+    "attrs": {
+      "border": {
+        "code": [
+          {
+            "cell": "slot:border",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "border_w": {
+        "code": [
+          {
+            "cell": "slot:border_w",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "enabled": {
+        "code": [
+          {
+            "cell": "slot:enabled",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "radius": {
+        "code": [
+          {
+            "cell": "slot:radius",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:visible",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "surface": {
+        "code": [
+          {
+            "cell": "slot:surface",
+            "op": "LOAD"
+          }
+        ]
+      }
+    }
+  },
+  "628": {
+    "attrs": {
+      "clip": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": true
+          }
+        ]
+      },
+      "h": {
+        "code": [
+          {
+            "cell": "slot:scale.shown",
+            "op": "LOAD"
+          },
+          {
+            "op": "CONST",
+            "v": 0.7
+          },
+          {
+            "op": "CONST",
+            "v": 1.0
+          },
+          {
+            "op": "PICK"
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.0
+          }
+        ]
+      },
+      "radius": {
+        "code": [
+          {
+            "cell": "slot:control.control_radius",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:control.shown",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "surface": {
+        "code": [
+          {
+            "cell": "slot:control.track_color",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 1.0
+          }
+        ]
+      }
+    }
+  },
+  "635": {
+    "attrs": {
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 1.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.0
+          }
+        ]
+      },
+      "radius": {
+        "code": [
+          {
+            "cell": "slot:control.control_radius",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:control.fill.shown",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "surface": {
+        "code": [
+          {
+            "cell": "slot:control.fill_color",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "cell": "slot:value",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "cell": "slot:max",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "op": "DIV"
+          },
+          {
+            "op": "CLAMP01"
+          }
+        ]
+      }
+    }
+  },
+  "636": {
+    "attrs": {
+      "align": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "end"
+          }
+        ]
+      },
+      "bold": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": true
+          }
+        ]
+      },
+      "color": {
+        "code": [
+          {
+            "cell": "slot:control.text_color",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "cell": "slot:value",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "cell": "slot:max",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "op": "DIV"
+          },
+          {
+            "op": "CLAMP01"
+          },
+          {
+            "op": "CONST",
+            "v": 0.02
+          },
+          {
+            "op": "SUB"
+          }
+        ]
+      },
+      "origin_x": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 1.0
+          }
+        ]
+      },
+      "origin_y": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.5
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:control.head_in.shown",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:text",
+            "op": "LOAD"
+          },
+          {
+            "op": "CONST",
+            "v": ""
+          },
+          {
+            "op": "NE"
+          },
+          {
+            "cell": "slot:value",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "cell": "slot:max",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "op": "DIV"
+          },
+          {
+            "op": "CLAMP01"
+          },
+          {
+            "op": "CONST",
+            "v": 0.3
+          },
+          {
+            "op": "GT"
+          },
+          {
+            "op": "CONST",
+            "v": false
+          },
+          {
+            "op": "PICK"
+          },
+          {
+            "op": "CONST",
+            "v": false
+          },
+          {
+            "op": "PICK"
+          }
+        ]
+      },
+      "size": {
+        "code": [
+          {
+            "cell": "slot:control.text_size",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "text": {
+        "code": [
+          {
+            "cell": "slot:text",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.5
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.4
+          }
+        ]
+      }
+    }
+  },
+  "637": {
+    "attrs": {
+      "align": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "start"
+          }
+        ]
+      },
+      "bold": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": true
+          }
+        ]
+      },
+      "color": {
+        "code": [
+          {
+            "cell": "slot:control.text_color",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "cell": "slot:value",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "cell": "slot:max",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "op": "DIV"
+          },
+          {
+            "op": "CLAMP01"
+          },
+          {
+            "op": "CONST",
+            "v": 0.02
+          },
+          {
+            "op": "ADD"
+          }
+        ]
+      },
+      "origin_x": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.0
+          }
+        ]
+      },
+      "origin_y": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.5
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:control.head_out.shown",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:text",
+            "op": "LOAD"
+          },
+          {
+            "op": "CONST",
+            "v": ""
+          },
+          {
+            "op": "NE"
+          },
+          {
+            "cell": "slot:value",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "cell": "slot:max",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "op": "DIV"
+          },
+          {
+            "op": "CLAMP01"
+          },
+          {
+            "op": "CONST",
+            "v": 0.3
+          },
+          {
+            "op": "LE"
+          },
+          {
+            "op": "CONST",
+            "v": false
+          },
+          {
+            "op": "PICK"
+          },
+          {
+            "op": "CONST",
+            "v": false
+          },
+          {
+            "op": "PICK"
+          }
+        ]
+      },
+      "size": {
+        "code": [
+          {
+            "cell": "slot:control.text_size",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "text": {
+        "code": [
+          {
+            "cell": "slot:text",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.5
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.4
+          }
+        ]
+      }
+    }
+  },
+  "638": {
+    "attrs": {
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.26
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.0
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:scale.shown",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.74
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 1.0
+          }
+        ]
+      }
+    }
+  },
+  "643": {
+    "attrs": {
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.34
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "cell": "repeat:fraction",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "origin_x": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.5
+          }
+        ]
+      },
+      "repeat": {
+        "code": [
+          {
+            "cell": "slot:scale.divisions",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:scale.mark.shown",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "surface": {
+        "code": [
+          {
+            "cell": "theme:scale",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.004
+          }
+        ]
+      }
+    }
+  },
+  "644": {
+    "attrs": {
+      "align": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": "center"
+          }
+        ]
+      },
+      "color": {
+        "code": [
+          {
+            "cell": "theme:ink-muted",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "cell": "repeat:fraction",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "origin_x": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.5
+          }
+        ]
+      },
+      "repeat": {
+        "code": [
+          {
+            "cell": "slot:scale.divisions",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "show": {
+        "code": [
+          {
+            "cell": "slot:scale.value.shown",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:scale.labels",
+            "op": "LOAD"
+          },
+          {
+            "op": "CONST",
+            "v": false
+          },
+          {
+            "op": "PICK"
+          }
+        ]
+      },
+      "size": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 9.0
+          }
+        ]
+      },
+      "text": {
+        "code": [
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:max",
+            "op": "LOAD"
+          },
+          {
+            "cell": "slot:min",
+            "op": "LOAD"
+          },
+          {
+            "op": "SUB"
+          },
+          {
+            "cell": "repeat:fraction",
+            "op": "LOAD"
+          },
+          {
+            "op": "MUL"
+          },
+          {
+            "op": "ADD"
+          },
+          {
+            "cell": "slot:scale.decimals",
+            "op": "LOAD"
+          },
+          {
+            "op": "TO_FIXED"
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.42
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 0.2
           }
         ]
       }
@@ -6824,149 +7836,184 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
 }
 == program failed ==
 flow 116 node 116 event select worst 5
-  0 LOAD_ARG 0 0 45
-  1 STORE 45 0 46
-  2 LOAD_ARG 0 0 47
-  3 RAISE 0 1 48
+  0 LOAD_ARG 0 0 50
+  1 STORE 46 0 51
+  2 LOAD_ARG 0 0 52
+  3 RAISE 0 1 53
   4 HALT
 flow 138 node 138 event tap worst 8
-  0 LOAD 76 0 49
-  1 NOT 0 0 50
-  2 STORE 176 0 51
-  3 LOAD 176 0 52
-  4 STORE 76 0 53
-  5 LOAD 176 0 54
-  6 RAISE 1 1 55
+  0 LOAD 77 0 54
+  1 NOT 0 0 55
+  2 STORE 209 0 56
+  3 LOAD 209 0 57
+  4 STORE 77 0 58
+  5 LOAD 209 0 59
+  6 RAISE 1 1 60
   7 HALT
+flow 610 node 610 event select worst 5
+  0 LOAD_ARG 0 0 61
+  1 STORE 117 0 62
+  2 LOAD_ARG 0 0 63
+  3 RAISE 2 1 64
+  4 HALT
+flow 613 node 613 event input worst 5
+  0 LOAD_ARG 0 0 65
+  1 STORE 128 0 66
+  2 LOAD_ARG 0 0 67
+  3 RAISE 3 1 68
+  4 HALT
+flow 613 node 613 event commit worst 5
+  0 LOAD_ARG 0 0 69
+  1 STORE 128 0 70
+  2 LOAD_ARG 0 0 71
+  3 RAISE 4 1 72
+  4 HALT
 flow 567 node 567 event every:567 worst 6
-  0 LOAD 163 0 56
-  1 LOAD 166 0 57
-  2 LOAD 165 0 58
-  3 MUL 0 0 59
-  4 APPEND 164 60 0
+  0 LOAD 196 0 73
+  1 LOAD 199 0 74
+  2 LOAD 198 0 75
+  3 MUL 0 0 76
+  4 APPEND 197 77 0
   5 HALT
 flow 99 node 70 event pressrelease worst 2
-  0 FAULT 61 0 0
+  0 FAULT 78 0 0
   1 HALT
 flow 288 node 70 event every:288 worst 2
-  0 FAULT 62 0 0
+  0 FAULT 79 0 0
   1 HALT
 flow 296 node 255 event pressrelease worst 2
-  0 FAULT 63 0 0
+  0 FAULT 80 0 0
   1 HALT
 flow 299 node 298 event pressrelease worst 2
-  0 FAULT 64 0 0
+  0 FAULT 81 0 0
   1 HALT
 flow 302 node 301 event pressrelease worst 2
-  0 FAULT 65 0 0
+  0 FAULT 82 0 0
   1 HALT
 flow 118 node 116 event changed worst 3
-  0 LOAD_ARG 0 0 66
-  1 STORE 177 0 67
+  0 LOAD_ARG 0 0 83
+  1 STORE 210 0 84
   2 HALT
 flow 192 node 186 event release worst 2
-  0 TMR_CANCEL 0 0 68
+  0 TMR_CANCEL 0 0 85
   1 HALT
 flow 193 node 186 event press worst 2
-  0 FAULT 70 0 0
+  0 FAULT 87 0 0
   1 HALT
 flow 198 node 186 event timer:194 worst 2
-  0 FAULT 71 0 0
+  0 FAULT 88 0 0
   1 HALT
 flow 498 node 487 event press worst 2
-  0 FAULT 72 0 0
+  0 FAULT 89 0 0
   1 HALT
 flow 140 node 138 event changed worst 2
-  0 FAULT 73 0 0
+  0 FAULT 90 0 0
   1 HALT
 flow 475 node 360 event pressrelease worst 2
-  0 FAULT 74 0 0
+  0 FAULT 91 0 0
   1 HALT
-flow 458 node 370 event pressrelease worst 10
-  0 CONST 21 0 75
-  1 NEG 0 0 76
-  2 LOAD_ARG 0 0 77
-  3 CONST 22 0 78
-  4 CONST 5 0 79
-  5 METHOD small 9 0 2 80
-  6 MUL 0 0 81
-  7 REPEAT_READ 0 0 82
-  8 STORE_INDEX 0 83 0
-  9 HALT
-flow 460 node 366 event pressrelease worst 9
-  0 CONST 21 0 84
-  1 LOAD_ARG 0 0 85
-  2 CONST 22 0 86
-  3 CONST 5 0 87
-  4 METHOD small 9 0 2 88
-  5 MUL 0 0 89
-  6 REPEAT_READ 0 0 90
-  7 STORE_INDEX 0 91 0
-  8 HALT
+flow 458 node 370 event pressrelease worst 12
+  0 CONST 21 0 92
+  1 NEG 0 0 93
+  2 LOAD 3 0 94
+  3 MUL 0 0 95
+  4 LOAD_ARG 0 0 96
+  5 CONST 22 0 97
+  6 CONST 6 0 98
+  7 METHOD small 9 0 2 99
+  8 MUL 0 0 100
+  9 REPEAT_READ 0 0 101
+  10 STORE_INDEX 0 102 0
+  11 HALT
+flow 460 node 366 event pressrelease worst 11
+  0 CONST 21 0 103
+  1 LOAD 3 0 104
+  2 MUL 0 0 105
+  3 LOAD_ARG 0 0 106
+  4 CONST 22 0 107
+  5 CONST 6 0 108
+  6 METHOD small 9 0 2 109
+  7 MUL 0 0 110
+  8 REPEAT_READ 0 0 111
+  9 STORE_INDEX 0 112 0
+  10 HALT
 flow 583 node 581 event release worst 2
-  0 TMR_CANCEL 2 0 92
+  0 TMR_CANCEL 2 0 113
   1 HALT
 flow 585 node 581 event press worst 2
-  0 FAULT 94 0 0
+  0 FAULT 115 0 0
   1 HALT
 flow 587 node 581 event timer:582 worst 2
-  0 FAULT 95 0 0
+  0 FAULT 116 0 0
   1 HALT
+flow 611 node 610 event changed worst 2
+  0 FAULT 117 0 0
+  1 HALT
+flow 652 node 613 event changed worst 3
+  0 LOAD_ARG 0 0 118
+  1 STORE 3 0 119
+  2 HALT
 flow 163 node 162 event tap worst 2
-  0 FAULT 97 0 0
+  0 FAULT 121 0 0
   1 HALT
 flow 166 node 165 event press worst 2
-  0 FAULT 98 0 0
+  0 FAULT 122 0 0
   1 HALT
 flow 181 node 179 event tap worst 2
-  0 FAULT 99 0 0
+  0 FAULT 123 0 0
   1 HALT
 flow 464 node 462 event pressrelease worst 3
-  0 LOAD_ARG 0 0 100
-  1 STORE 1 0 101
+  0 LOAD_ARG 0 0 124
+  1 STORE 1 0 125
   2 HALT
 flow 472 node 462 event held worst 2
-  0 FAULT 102 0 0
+  0 FAULT 126 0 0
   1 HALT
 flow 506 node 462 event press worst 2
-  0 FAULT 103 0 0
+  0 FAULT 127 0 0
   1 HALT
 flow 508 node 462 event release worst 2
-  0 FAULT 106 0 0
+  0 FAULT 130 0 0
   1 HALT
 flow 571 node 570 event tap worst 2
-  0 FAULT 107 0 0
+  0 FAULT 131 0 0
   1 HALT
-slot node 70 moving cell 7 every_tick
-  0 LOAD 3 0 0
-  1 STORE 7 0 1
+slot node 70 moving cell 8 every_tick
+  0 LOAD 4 0 0
+  1 STORE 8 0 1
   2 HALT
-slot node 186 holdProgress cell 55 every_tick
-  0 TMR_READ 0 0 7
-  1 TMR_READ 0 3 8
-  2 CONST 5 0 9
-  3 METHOD small 9 0 2 10
-  4 STORE 55 0 11
+slot node 186 holdProgress cell 56 every_tick
+  0 TMR_READ 0 0 8
+  1 TMR_READ 0 3 9
+  2 CONST 6 0 10
+  3 METHOD small 9 0 2 11
+  4 STORE 56 0 12
   5 HALT
-slot node 138 track_color cell 78 every_tick
-  0 TMR_READ 1 0 14
-  1 CONST 8 0 15
-  2 CONST 9 0 16
-  3 METHOD small 9 0 2 17
-  4 STORE 78 0 18
+slot node 138 track_color cell 79 every_tick
+  0 TMR_READ 1 0 15
+  1 CONST 9 0 16
+  2 CONST 10 0 17
+  3 METHOD small 9 0 2 18
+  4 STORE 79 0 19
   5 HALT
-slot node 581 holdProgress cell 110 every_tick
-  0 TMR_READ 2 0 25
-  1 TMR_READ 2 3 26
-  2 CONST 5 0 27
-  3 METHOD small 9 0 2 28
-  4 STORE 110 0 29
+slot node 581 holdProgress cell 111 every_tick
+  0 TMR_READ 2 0 26
+  1 TMR_READ 2 3 27
+  2 CONST 6 0 28
+  3 METHOD small 9 0 2 29
+  4 STORE 111 0 30
   5 HALT
-slot node 179 text cell 138 every_tick
-  0 LOAD 133 0 35
-  1 CONST 17 0 36
-  2 METHOD small 16 36 1 37
-  3 CONST 18 0 38
-  4 METHOD small 50 37 1 39
-  5 STORE 138 0 40
+slot node 613 text cell 132 every_tick
+  0 LOAD 128 0 32
+  1 CONST 6 0 33
+  2 METHOD small 16 38 1 34
+  3 STORE 132 0 35
+  4 HALT
+slot node 179 text cell 171 every_tick
+  0 LOAD 166 0 40
+  1 CONST 17 0 41
+  2 METHOD small 16 39 1 42
+  3 CONST 18 0 43
+  4 METHOD small 50 40 1 44
+  5 STORE 171 0 45
   6 HALT
