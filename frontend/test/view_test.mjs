@@ -3358,6 +3358,8 @@ check(stageNode("frame", 901) === heldAgain &&
         "an enum-typed variable offers its vocabulary as a .variants() read");
   check(refs.some((r) => r.insert === "@plant/valve.mode.variants()"),
         "and a mesh enum field offers the same, addressed");
+  check(refs.some((r) => r.insert === "Valve.mode.variants()"),
+        "and the schema type itself covers the no-value case");
   const roots = optionsSlotScope(optionsEditor, null).roots();
   const folder = roots.find((r) => r.key === "enums");
   check(Boolean(folder) &&

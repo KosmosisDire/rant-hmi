@@ -570,6 +570,17 @@ export function enumListRefs(editor: Editor, instance: Node | null):
         out.push({ label: ref, insert: ref + ".variants()" });
       }
   }
+  /* the schema's enum TYPES by their own spelling — the no-value case: a function
+     argument's enum is a field a call writes, never a value to read, so its type
+     reference is the one road to the vocabulary */
+  for (const type of editor.mesh.types) {
+    if (!type.name) continue;
+    for (const field of type.fields)
+      if (field.variants?.length) {
+        const ref = type.name + "." + field.path;
+        out.push({ label: ref, insert: ref + ".variants()" });
+      }
+  }
   return out;
 }
 

@@ -525,6 +525,44 @@ class Sema {
                 return Type();
             }
 
+        /* A SCHEMA TYPE REFERENCE (spec 6.2): with no value of an enum in scope, the
+           TYPE's own spelling still reaches the vocabulary — Gear.mode.variants() —
+           because a function argument's enum is a field a call WRITES, never a value
+           to read. Tried only where the object roster had nothing, so a bound name
+           always shadows a type; and the only thing a type answers is variants(). */
+        if (!bound && head.kind == ExprKind::Name && !ops.empty() &&
+            at(ops[0]).kind == ExprKind::Member && !at(ops[0]).called) {
+            const std::string spelling = name + "." + at(ops[0]).text;
+            const auto type_ref = env_.enum_types.find(spelling);
+            if (type_ref != env_.enum_types.end()) {
+                const EnumVariants* variants = env_.variants(type_ref->second);
+                if (ops.size() < 2 || at(ops[1]).kind != ExprKind::Member ||
+                    at(ops[1]).text != "variants" || !variants) {
+                    fail("'" + spelling + "' names a type, and a type is not a "
+                         "value; write " + spelling + ".variants() to read its "
+                         "vocabulary",
+                         at(ops[0]).after);
+                    return Type();
+                }
+                const Expr& call = at(ops[1]);
+                if (!call.called) {
+                    fail("'variants' is a method; call it with parentheses "
+                         "(variants())",
+                         call.name_after);
+                    return Type();
+                }
+                if (!call.args.empty()) {
+                    fail("variants takes 0 arguments", call.after);
+                    return Type();
+                }
+                Note& mark = note(ops[1]);
+                mark.op = Note::Op::VariantsOf;
+                mark.vocabulary = variants;
+                next = 2;
+                return Type::list_of(Shape::List, Shape::Text);
+            }
+        }
+
         /* THE DOTTED WALK: a `.` is one postfix op, each member resolved against the
            fields the CURRENT NODE declares — one level of the object's field tree at
            a time, never an accumulated path string. A leaf answers the read; an

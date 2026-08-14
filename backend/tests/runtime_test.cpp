@@ -26,6 +26,15 @@ static bool compile_expr(const std::string& text, hmi::ExprTier tier, hmi::Env s
     scope.enums.clear();
     for (const auto& type : program.types)
         scope.enums.push_back(type.kind == hmi::TypeKind::Enum ? &type.variants : nullptr);
+    /* the TYPE ROSTER too, exactly as the document compiler binds it */
+    scope.enum_types.clear();
+    for (const auto& type : program.types) {
+        if (type.name.empty()) continue;
+        for (const auto& field : type.fields)
+            if (field.type_id && field.type_id < program.types.size() &&
+                program.types[field.type_id].kind == hmi::TypeKind::Enum)
+                scope.enum_types[type.name + "." + field.path] = field.type_id;
+    }
     /* refusals are data now; the pins here match substrings, so join every finding
        (position rendered from its span) into the one string the checks read */
     std::vector<hmi::Refusal> refusals;
@@ -799,6 +808,24 @@ void test_enum_names() {
     CHECK(!compile_expr("x == .fast", ExprTier::Display, escope, compiled.program,
                               bad, eresult, eerror));
     CHECK_MSG(eerror.find("vocabulary") != std::string::npos, eerror);
+
+    /* THE TYPE REFERENCE: no value of the enum in scope still reaches the
+       vocabulary through the type's own spelling — and a type is ONLY that */
+    bad.clear();
+    eerror.clear();
+    CHECK_MSG(compile_expr("Gear.mode.variants().length()", ExprTier::Display, escope,
+                           compiled.program, bad, eresult, eerror), eerror);
+    CHECK(eresult.shape == Shape::Num);
+    bad.clear();
+    eerror.clear();
+    CHECK(!compile_expr("Gear.mode", ExprTier::Display, escope, compiled.program,
+                        bad, eresult, eerror));
+    CHECK_MSG(eerror.find("a type is not a value") != std::string::npos, eerror);
+    bad.clear();
+    eerror.clear();
+    CHECK(!compile_expr("Gear.mode.name()", ExprTier::Display, escope,
+                        compiled.program, bad, eresult, eerror));
+    CHECK_MSG(eerror.find("write Gear.mode.variants()") != std::string::npos, eerror);
 
     /* writing the variant lands the value */
     state.clear_outputs();
@@ -4007,6 +4034,40 @@ void test_variant_options() {
         CHECK_EQ(std::string(state.text(compiled.program, view.data[0])), "stop");
         CHECK_EQ(std::string(state.text(compiled.program, view.data[1])), "run");
         CHECK_EQ(std::string(state.text(compiled.program, view.data[2])), "fast");
+    }
+
+    /* THE TYPE SPELLING covers the no-value case: a function argument's enum has no
+       value to read, so the schema type's own reference reaches the vocabulary */
+    {
+        Json troot = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+                      {"pages", Json::array({Json{
+                           {"name", "P"},
+                           {"children", Json::array({Json{
+                                {"kind", "frame"}, {"type", "Selector"},
+                                {"name", "typed"},
+                                {"slots", Json{{"options", "Gear.mode.variants()"},
+                                               {"value", "'run'"}}}}})}}})}};
+        Document tdoc;
+        CHECK(tdoc.adopt(std::move(troot), err));
+        CompileResult tc = compile_document(tdoc, builtin_registry(), mesh);
+        CHECK_MSG(tc.ok, tc.program.diagnostics.empty()
+                             ? "compile failed without a diagnostic"
+                             : tc.program.diagnostics[0].message);
+        int tcell = -1;
+        for (uint32_t i = 0; i < tc.program.cells.size(); ++i)
+            if (tc.program.cells[i].kind == CellKind::Slot &&
+                tc.program.cells[i].name == "options")
+                tcell = static_cast<int>(i);
+        const SlotProgram* tfill =
+            slot_program_of(tc.program, only_instance(tdoc), "options");
+        if (!CHECK(tcell >= 0 && tfill != nullptr)) return;
+        RuntimeState tstate(tc.program);
+        tstate.reset_scratch();
+        CHECK(!run_slot(tc.program, *tfill, tstate).faulted);
+        const AggView tview = tstate.aggregate(tstate.values[tcell]);
+        CHECK(tview.count == 3);
+        if (tview.count == 3)
+            CHECK_EQ(std::string(tstate.text(tc.program, tview.data[2])), "fast");
     }
 
     /* an element that is not a scalar is a finding too: a list slot holds values, and

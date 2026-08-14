@@ -1523,6 +1523,17 @@ class Compiler {
         scope.enums.clear();
         for (const TypeDef& type : program_.types)
             scope.enums.push_back(type.kind == TypeKind::Enum ? &type.variants : nullptr);
+        /* the TYPE ROSTER: every enum field of every named schema type, under the
+           spelling find_type_ref reads ("JobCmd.jobName") — what a bare type
+           reference's .variants() resolves against */
+        scope.enum_types.clear();
+        for (const TypeDef& type : program_.types) {
+            if (type.name.empty()) continue;
+            for (const FieldDef& field : type.fields)
+                if (field.type_id && field.type_id < program_.types.size() &&
+                    program_.types[field.type_id].kind == TypeKind::Enum)
+                    scope.enum_types[type.name + "." + field.path] = field.type_id;
+        }
     }
 
     /* WHAT A NAME MEANS INSIDE A COMPONENT — its own properties, its own locals, the

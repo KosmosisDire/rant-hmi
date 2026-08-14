@@ -67,6 +67,13 @@ struct Env {
     /* the enum vocabulary behind each type-table id (null rows = not an enum): type
      * data the checker resolves `.variant` and `.is()` against */
     std::vector<const EnumVariants*> enums;
+    /* THE TYPE ROSTER: the schema's enum types by their dotted spelling
+     * ("JobCmd.jobName" -> the type id). What a bare TYPE REFERENCE resolves against,
+     * so a vocabulary stays reachable with no value of the type in scope (a function
+     * argument's enum is a field a call WRITES, never a value to read). A bound name
+     * always shadows a type: this roster answers only where the object roster has
+     * nothing. */
+    std::map<std::string, uint16_t> enum_types;
 
     void bind_value(const std::string& name, Place place) {
         objects[name].value = std::move(place);
