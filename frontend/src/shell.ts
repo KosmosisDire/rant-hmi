@@ -31,7 +31,7 @@ import { designInspectorShape, designShape, renderDesignInspector, renderDesignT
 import { renderStyleWorkspace, styleShape } from "./workspaces/style.js";
 
 const SIDEBAR_MIN = 200;
-const SIDEBAR_MAX = 1200;
+const SIDEBAR_MAX = 2500;
 
 export class App implements Editor {
   store = new DocStore();
