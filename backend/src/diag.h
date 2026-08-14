@@ -15,6 +15,12 @@ struct Diag {
     /* the field WITHIN the node the finding is about (a slot name, "init"), so the view
      * can pin it on the exact row; empty when the node itself is the line */
     std::string where;
+    /* THE SPAN, as data (the rewrite's rule 15): where in `where`'s expression source
+     * this finding points, [at, at + length). SIZE_MAX = no span (a finding about a
+     * whole node or field). Every surface that shows a position renders it from these
+     * fields — the message never carries one. */
+    size_t at = static_cast<size_t>(-1);
+    size_t length = 0;
 };
 
 } // namespace hmi

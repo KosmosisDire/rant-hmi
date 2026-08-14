@@ -11,13 +11,17 @@ namespace hmi {
 
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         EmitSink& sink, std::vector<Instruction>& code,
-                        ExpressionResult& result, std::string& error, bool allow_agg,
-                        const Type& expected) {
+                        ExpressionResult& result, std::vector<Refusal>& refusals,
+                        bool allow_agg, const Type& expected) {
     Ast ast;
-    if (!parse_expression(text, ast, error)) return false;
+    Refusal broken;
+    if (!parse_expression(text, ast, broken)) {
+        refusals.push_back(std::move(broken));
+        return false;
+    }
     std::vector<Note> notes;
     Type type;
-    if (!check_expression(ast, tier, env, allow_agg, notes, type, error, expected))
+    if (!check_expression(ast, tier, env, allow_agg, notes, type, refusals, expected))
         return false;
     uint32_t max_stack = 0;
     emit_expression(ast, notes, sink, code, max_stack);

@@ -73,21 +73,25 @@ bool leads_with_name(const Ast& ast, uint32_t index) {
 class Sema {
   public:
     Sema(const Ast& ast, ExprTier tier, const Env& env, std::vector<Note>& notes,
-         std::string& error)
-        : ast_(ast), tier_(tier), env_(env), notes_(notes), error_(error) {
+         std::vector<Refusal>& out)
+        : ast_(ast), tier_(tier), env_(env), notes_(notes), out_(out) {
         notes_.assign(ast.nodes.size(), Note{});
     }
 
     bool run(Type& result, const Type& expected) {
         want_ = expected;
         result = check(ast_.root);
-        return error_.empty();
+        return out_.empty();
     }
 
   private:
+    /* one refusal, as DATA: message and position apart. `failed_` aborts the
+       CURRENT spine exactly as the single error string used to — the recovery
+       points (argument lists, list elements) clear it to check the next sibling,
+       so independent findings all land in `out_`. */
     bool fail(const std::string& message, size_t at) {
-        if (error_.empty())
-            error_ = message + " at column " + std::to_string(at + 1);
+        out_.push_back(Refusal{message, at, 0});
+        failed_ = true;
         return false;
     }
 
@@ -105,7 +109,7 @@ class Sema {
     Note& note(uint32_t index) { return notes_[index]; }
 
     Type check(uint32_t index) {
-        if (!error_.empty() || index == kNoExpr) return Type();
+        if (failed_ || index == kNoExpr) return Type();
         /* the expectation reaches exactly ONE node: the contexts that carry it
            further (a ternary's arms, an equality's variant side) re-arm it before
            their own recursive checks */
@@ -131,11 +135,22 @@ class Sema {
             case ExprKind::ListLit: {
                 Shape elem = Shape::Unknown;
                 bool uniform = true;
+                /* elements are INDEPENDENT: one broken element still lets its
+                   siblings report their own findings (rule 16) */
+                bool poisoned = false;
                 for (size_t i = 0; i < expr.args.size(); ++i) {
                     const Type one = check(expr.args[i]);
-                    if (!error_.empty()) return Type();
+                    if (failed_) {
+                        failed_ = false;
+                        poisoned = true;
+                        continue;
+                    }
                     if (i == 0) elem = one.kind;
                     else if (one.kind != elem) uniform = false;
+                }
+                if (poisoned) {
+                    failed_ = true;
+                    return Type();
                 }
                 type = Type::list_of(Shape::List, uniform ? elem : Shape::Unknown);
                 break;
@@ -182,7 +197,7 @@ class Sema {
                 break;
             case ExprKind::Prefix: {
                 const Type inner = check(expr.a);
-                if (!error_.empty()) return Type();
+                if (failed_) return Type();
                 if (expr.op == TokenKind::Minus) {
                     require(inner, Shape::Num, "unary -", at(expr.a).after);
                     type = Type(Shape::Num);
@@ -202,7 +217,7 @@ class Sema {
                 break;
             case ExprKind::Call: type = call(index); break;
         }
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         note(index).type = type;
         return type;
     }
@@ -230,10 +245,10 @@ class Sema {
         if (op == TokenKind::Coalesce) {
             want_ = want;
             const Type left = check(expr.a);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
             want_ = want;
             const Type right = check(expr.b);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
             if (left.kind == Shape::Nil || left.kind == Shape::Unknown) return right;
             return left.kind == right.kind || right.kind == Shape::Nil ? left : Type();
         }
@@ -243,10 +258,10 @@ class Sema {
             const bool disjunction = op == TokenKind::OrOr || op == TokenKind::KwOr;
             const char* name = disjunction ? "||" : "&&";
             const Type left = check(expr.a);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
             if (!require(left, Shape::Bool, name, at(expr.a).after)) return Type();
             const Type right = check(expr.b);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
             if (!require(right, Shape::Bool, name, at(expr.b).after)) return Type();
             return Type(Shape::Bool);
         }
@@ -267,16 +282,16 @@ class Sema {
         if (equality && at(expr.a).kind == ExprKind::Variant &&
             at(expr.b).kind != ExprKind::Variant) {
             right = check(expr.b);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
             want_ = right;
             left = check(expr.a);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
         } else {
             left = check(expr.a);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
             if (equality) want_ = left;
             right = check(expr.b);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
         }
         if (equality) {
             /* `== nil` cannot work: an unknown comparison IS unknown (the one rule),
@@ -325,9 +340,9 @@ class Sema {
     Type sum(uint32_t index) {
         const Expr& expr = at(index);
         const Type left = check(expr.a);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         const Type right = check(expr.b);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         /* `+` with a text side JOINS (spec 6.2): the other operand is rendered as
            str() renders it. Text production is display vocabulary, so a wire value
            refuses it like any other formatting. */
@@ -351,9 +366,9 @@ class Sema {
     Type product(uint32_t index) {
         const Expr& expr = at(index);
         const Type left = check(expr.a);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         const Type right = check(expr.b);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         /* `*` and `/` SCALE a color's channels by a number (alpha kept), so
            `#ff8040 * 0.5` darkens without spelling three channels out. Color is
            display vocabulary, refused on the wire like the rest of it. */
@@ -390,14 +405,14 @@ class Sema {
     Type ternary(uint32_t index, const Type& want) {
         const Expr& expr = at(index);
         const Type cond = check(expr.a);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         if (!require(cond, Shape::Bool, "?:", at(expr.a).after)) return Type();
         want_ = want;
         const Type yes = check(expr.b);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         want_ = want;
         const Type no = check(expr.c);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         return yes.kind == no.kind ? no : Type();
     }
 
@@ -432,12 +447,12 @@ class Sema {
         } else {
             type = check(primary);
         }
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         for (; next < ops.size(); ++next) {
             const Expr& op = at(ops[next]);
             type = op.kind == ExprKind::Index ? apply_index(ops[next], type)
                                               : apply_member(ops[next], type);
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
             note(ops[next]).type = type;
         }
         return type;
@@ -607,7 +622,7 @@ class Sema {
     Type apply_index(uint32_t index, const Type& receiver) {
         const Expr& expr = at(index);
         const Type key = check(expr.b);
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         if (receiver.kind == Shape::List) {
             if (!require(key, Shape::Num, "list index", expr.after)) return Type();
         } else if (receiver.kind == Shape::Map) {
@@ -674,13 +689,21 @@ class Sema {
                  expr.name_after);
             return Type();
         }
+        /* arguments are INDEPENDENT: each one reports its own finding (rule 16) */
+        bool args_poisoned = false;
         for (size_t i = 0; i < expr.args.size(); ++i) {
             const Type argument = argument_check(expr.args[i], "method");
-            if (!error_.empty()) return Type();
-            if (i < spec->args && spec->params[i] != Shape::Unknown)
+            if (!failed_ && i < spec->args && spec->params[i] != Shape::Unknown)
                 require(argument, spec->params[i], name.c_str(),
                         at(expr.args[i]).after);
-            if (!error_.empty()) return Type();
+            if (failed_) {
+                failed_ = false;
+                args_poisoned = true;
+            }
+        }
+        if (args_poisoned) {
+            failed_ = true;
+            return Type();
         }
         if (expr.args.size() != spec->args) {
             fail(name + " takes " + std::to_string(spec->args) + " arguments",
@@ -858,7 +881,7 @@ class Sema {
         in_lambda_ = false;
         lambda_params_.clear();
         lambda_types_.clear();
-        if (!error_.empty()) return Type();
+        if (failed_) return Type();
         notes_[expr.args[0]].type = body;
 
         /* A fold's SECOND argument is the value it starts from, an ordinary
@@ -872,7 +895,7 @@ class Sema {
                 return Type();
             }
             init = argument_check(expr.args[1], "method");
-            if (!error_.empty()) return Type();
+            if (failed_) return Type();
         }
         if (expr.args.size() > (mode == IterateMode::Reduce ? 2u : 1u)) {
             fail(mode == IterateMode::Reduce
@@ -979,14 +1002,24 @@ class Sema {
             return Type();
         }
         Shape first_arg_elem = Shape::Unknown;
+        /* arguments are INDEPENDENT: each one reports its own finding (rule 16) */
+        bool args_poisoned = false;
         for (size_t i = 0; i < expr.args.size(); ++i) {
             const Type argument = argument_check(expr.args[i], "call");
-            if (!error_.empty()) return Type();
-            if (i == 0) first_arg_elem = argument.elem_shape();
-            if (i < spec.max_args && spec.params[i] != Shape::Unknown)
-                require(argument, spec.params[i], name.c_str(),
-                        at(expr.args[i]).after);
-            if (!error_.empty()) return Type();
+            if (!failed_) {
+                if (i == 0) first_arg_elem = argument.elem_shape();
+                if (i < spec.max_args && spec.params[i] != Shape::Unknown)
+                    require(argument, spec.params[i], name.c_str(),
+                            at(expr.args[i]).after);
+            }
+            if (failed_) {
+                failed_ = false;
+                args_poisoned = true;
+            }
+        }
+        if (args_poisoned) {
+            failed_ = true;
+            return Type();
         }
         if (expr.args.size() < spec.min_args || expr.args.size() > spec.max_args) {
             fail(name + " takes " +
@@ -1012,7 +1045,8 @@ class Sema {
     ExprTier tier_;
     const Env& env_;
     std::vector<Note>& notes_;
-    std::string& error_;
+    std::vector<Refusal>& out_;
+    bool failed_ = false;
     /* the type the CONTEXT expects of the next node checked — armed at the root by
        the caller's destination, re-armed by ternary arms and equality sides, cleared
        by check() itself so it never leaks deeper than one node */
@@ -1028,22 +1062,25 @@ class Sema {
 } // namespace
 
 bool check_expression(const Ast& ast, ExprTier tier, const Env& env, bool allow_agg,
-                      std::vector<Note>& notes, Type& result, std::string& error,
-                      const Type& expected) {
-    Sema sema(ast, tier, env, notes, error);
+                      std::vector<Note>& notes, Type& result,
+                      std::vector<Refusal>& out, const Type& expected) {
+    Sema sema(ast, tier, env, notes, out);
     if (!sema.run(result, expected)) return false;
     /* a MACHINE write is always one scalar (spec 6): aggregates may appear
      * mid-expression (max over a list), never as what goes to the mesh. But a wire
      * expression whose DESTINATION is an HMI aggregate — a list variable, a list
      * slot, one element of either — is building state, not a machine value, so it
-     * passes exactly there and the caller types it. */
+     * passes exactly there and the caller types it. This is the one refusal about
+     * the WHOLE expression, so it carries no position (kNowhere). */
     if (tier == ExprTier::Wire && !allow_agg &&
         (result.kind == Shape::List || result.kind == Shape::Map)) {
-        error = "a wire value is one scalar; this expression yields a " +
+        out.push_back(Refusal{
+            "a wire value is one scalar; this expression yields a " +
                 std::string(shape_name(result.kind)) +
                 ". A list or map result may only be written whole into a variable or "
                 "slot declared with that shape, or appended to one whose ELEMENTS are "
-                "declared that shape";
+                "declared that shape",
+            kNowhere, 0});
         return false;
     }
     return true;

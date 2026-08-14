@@ -1395,14 +1395,17 @@ void test_transitions() {
         ProgramEmit emit(program);
         std::vector<Instruction> code;
         ExpressionResult eresult;
-        std::string eerror;
+        std::vector<Refusal> refusals;
         CHECK(!compile_expression("value.smooth(300)", ExprTier::Display, escope, emit,
-                                  code, eresult, eerror));
-        CHECK(eerror.find("not written in an expression") != std::string::npos);
-        eerror.clear();
+                                  code, eresult, refusals));
+        CHECK(!refusals.empty() &&
+              refusals[0].message.find("not written in an expression") !=
+                  std::string::npos);
+        refusals.clear();
         CHECK(!compile_expression("value.transition(300)", ExprTier::Wire, escope, emit,
-                                  code, eresult, eerror));
-        CHECK(eerror.find("the value stays true") != std::string::npos);
+                                  code, eresult, refusals));
+        CHECK(!refusals.empty() &&
+              refusals[0].message.find("the value stays true") != std::string::npos);
     }
 }
 

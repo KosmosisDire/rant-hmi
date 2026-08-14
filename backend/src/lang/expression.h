@@ -21,6 +21,19 @@ namespace hmi {
 
 enum class ExprTier : uint8_t { Display, Wire };
 
+/* A DIAGNOSTIC IS DATA (the rewrite's rule 15): the message says what happened and
+ * what to write instead; the SPAN says where in the expression source, as fields —
+ * never baked into the words. `at == kNowhere` marks a refusal about the whole
+ * expression (the wire tier's one-scalar teaching). `length` is 0 where the anchor
+ * is a POSITION (the old caret columns) rather than a run of characters. */
+inline constexpr size_t kNowhere = static_cast<size_t>(-1);
+
+struct Refusal {
+    std::string message;
+    size_t at = kNowhere;
+    size_t length = 0;
+};
+
 struct ExpressionResult {
     Shape shape = Shape::Unknown;
     uint16_t enum_type = 0;   /* when shape is Enum: the id, so a chain can keep it */
@@ -33,10 +46,14 @@ struct ExpressionResult {
  * tier's one-scalar rule stands: a machine write is one scalar.
  *
  * `expected` is the DESTINATION's type where the caller knows one — what a `.variant`
- * literal at the root (or in a ternary arm on the way there) resolves against. */
+ * literal at the root (or in a ternary arm on the way there) resolves against.
+ *
+ * On refusal `refusals` holds EVERY independent finding (arguments and list elements
+ * recover; a broken receiver still suppresses what depended on it), depth-first
+ * left-to-right, so the first entry is the error the surface always led with. */
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         EmitSink& sink, std::vector<Instruction>& code,
-                        ExpressionResult& result, std::string& error,
+                        ExpressionResult& result, std::vector<Refusal>& refusals,
                         bool allow_agg = false, const Type& expected = Type());
 
 /* The language, as data (spec 3.7 / "everything is data"): one row per builtin and

@@ -26,7 +26,19 @@ static bool compile_expr(const std::string& text, hmi::ExprTier tier, hmi::Env s
     scope.enums.clear();
     for (const auto& type : program.types)
         scope.enums.push_back(type.kind == hmi::TypeKind::Enum ? &type.variants : nullptr);
-    return hmi::compile_expression(text, tier, scope, emit, code, result, error);
+    /* refusals are data now; the pins here match substrings, so join every finding
+       (position rendered from its span) into the one string the checks read */
+    std::vector<hmi::Refusal> refusals;
+    const bool ok =
+        hmi::compile_expression(text, tier, scope, emit, code, result, refusals);
+    error.clear();
+    for (const hmi::Refusal& refusal : refusals) {
+        if (!error.empty()) error += "; ";
+        error += refusal.message;
+        if (refusal.at != hmi::kNowhere)
+            error += " at column " + std::to_string(refusal.at + 1);
+    }
+    return ok;
 }
 
 /* an Env whose pipeline register x carries the given type — what every expression-level
@@ -377,6 +389,16 @@ void test_expression_rejection() {
     CHECK(!compile_expr("m.pos.y", ExprTier::Display, scope, program, code, result,
                         error));
     CHECK_MSG(error.find("unknown field 'm.pos.y'") != std::string::npos, error);
+    CHECK(code.empty());
+
+    /* MULTI-ERROR (rule 16): arguments are independent, so BOTH broken ones report
+       — the old checker stopped at the first */
+    error.clear();
+    code.clear();
+    CHECK(!compile_expr("max(x.bogus(), x.missing())", ExprTier::Display, scope,
+                        program, code, result, error));
+    CHECK_MSG(error.find("no method 'bogus'") != std::string::npos, error);
+    CHECK_MSG(error.find("no method 'missing'") != std::string::npos, error);
     CHECK(code.empty());
 }
 

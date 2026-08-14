@@ -73,7 +73,12 @@ std::string dump_document(const std::string& doc_path, std::string& err) {
         out << "node " << diag.node_id << " " << grade_name(diag.grade) << " ["
             << diag.code << "]";
         if (!diag.where.empty()) out << " " << diag.where;
-        out << ": " << diag.message << "\n";
+        out << ": " << diag.message;
+        /* the span is DATA on the row now; the dump renders it the way the old
+           messages spelled it, so a finding's position stays pinned */
+        if (diag.at != static_cast<size_t>(-1))
+            out << " at column " << diag.at + 1;
+        out << "\n";
     };
     for (const Diag& diag : diags) diag_line(diag);
     for (const Diag& diag : compiled.program.diagnostics) diag_line(diag);

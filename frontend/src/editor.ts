@@ -279,7 +279,11 @@ function showPop(anchor: HTMLElement, diags: Diag[]): void {
     diags.map((row) =>
       el("div", { class: "diag-pop-row " + row.grade }, [
         el("span", { class: "grade", text: row.grade }),
-        el("span", { class: "message", text: row.message }),
+        /* the span rides as data; the pop renders the position the way the old
+           messages spelled it */
+        el("span", { class: "message",
+                     text: row.message +
+                           (row.at !== undefined ? ` at column ${row.at + 1}` : "") }),
       ]),
     ),
   );

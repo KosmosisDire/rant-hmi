@@ -8,8 +8,8 @@ namespace {
 
 class Parser {
   public:
-    Parser(const std::string& source, Ast& out, std::string& error)
-        : out_(out), error_(error) {
+    Parser(const std::string& source, Ast& out, Refusal& refusal)
+        : out_(out), refusal_(refusal) {
         Lexer lexer(source);
         for (;;) {
             tokens_.push_back(lexer.next());
@@ -19,7 +19,7 @@ class Parser {
 
     bool parse() {
         out_.root = ternary();
-        if (!error_.empty()) return false;
+        if (failed()) return false;
         if (token().kind != TokenKind::End)
             return fail("unexpected '" + token().text + "'");
         return true;
@@ -35,9 +35,14 @@ class Parser {
         if (at_ + 1 < tokens_.size()) ++at_;
     }
 
+    bool failed() const { return !refusal_.message.empty(); }
+
     bool fail(const std::string& message) {
-        if (error_.empty())
-            error_ = message + " at column " + std::to_string(token().at + 1);
+        if (!failed()) {
+            refusal_.message = message;
+            refusal_.at = token().at;
+            refusal_.length = token().length;
+        }
         return false;
     }
 
@@ -100,7 +105,7 @@ class Parser {
 
     uint32_t ternary() {
         uint32_t cond = coalesce();
-        if (!error_.empty() || token().kind != TokenKind::Question) return cond;
+        if (failed() || token().kind != TokenKind::Question) return cond;
         const uint32_t made = node(ExprKind::Ternary, out_.nodes[cond].at);
         advance();
         const uint32_t yes = ternary();
@@ -110,7 +115,7 @@ class Parser {
         }
         advance();
         const uint32_t no = ternary();
-        if (!error_.empty()) return kNoExpr;
+        if (failed()) return kNoExpr;
         Expr& expr = out_.nodes[made];
         expr.a = cond;
         expr.b = yes;
@@ -121,12 +126,12 @@ class Parser {
     uint32_t binary_chain(uint32_t (Parser::*next)(),
                           bool (*wants)(TokenKind)) {
         uint32_t left = (this->*next)();
-        while (error_.empty() && wants(token().kind)) {
+        while (!failed() && wants(token().kind)) {
             const uint32_t made = node(ExprKind::Binary, out_.nodes[left].at);
             out_.nodes[made].op = token().kind;
             advance();
             const uint32_t right = (this->*next)();
-            if (!error_.empty()) return kNoExpr;
+            if (failed()) return kNoExpr;
             out_.nodes[made].a = left;
             out_.nodes[made].b = right;
             left = close(made);
@@ -158,14 +163,14 @@ class Parser {
     uint32_t compare() {
         uint32_t left = sum();
         const TokenKind op = token().kind;
-        if (error_.empty() &&
+        if (!failed() &&
             (op == TokenKind::EqEq || op == TokenKind::Ne || op == TokenKind::Lt ||
              op == TokenKind::Le || op == TokenKind::Gt || op == TokenKind::Ge)) {
             const uint32_t made = node(ExprKind::Binary, out_.nodes[left].at);
             out_.nodes[made].op = op;
             advance();
             const uint32_t right = sum();
-            if (!error_.empty()) return kNoExpr;
+            if (failed()) return kNoExpr;
             out_.nodes[made].a = left;
             out_.nodes[made].b = right;
             left = close(made);
@@ -194,7 +199,7 @@ class Parser {
             out_.nodes[made].op = op;
             advance();
             const uint32_t inner = unary();
-            if (!error_.empty()) return kNoExpr;
+            if (failed()) return kNoExpr;
             out_.nodes[made].a = inner;
             return close(made);
         }
@@ -213,7 +218,7 @@ class Parser {
 
     uint32_t postfix() {
         uint32_t receiver = primary();
-        while (error_.empty() && (token().kind == TokenKind::Dot ||
+        while (!failed() && (token().kind == TokenKind::Dot ||
                                   token().kind == TokenKind::LBracket)) {
             if (token().kind == TokenKind::LBracket) {
                 const uint32_t made = node(ExprKind::Index, out_.nodes[receiver].at);
@@ -266,7 +271,7 @@ class Parser {
                     arg = lambda();
                 } else {
                     arg = ternary();
-                    if (error_.empty() && token().kind == TokenKind::Arrow) {
+                    if (!failed() && token().kind == TokenKind::Arrow) {
                         const uint32_t bad =
                             node(ExprKind::Lambda, out_.nodes[arg].at);
                         out_.nodes[bad].malformed = true;
@@ -276,7 +281,7 @@ class Parser {
                         arg = close(bad);
                     }
                 }
-                if (!error_.empty()) return false;
+                if (failed()) return false;
                 out_.nodes[made].args.push_back(arg);
                 if (token().kind != TokenKind::Comma) break;
                 advance();
@@ -340,7 +345,7 @@ class Parser {
             case TokenKind::LParen: {
                 advance();
                 const uint32_t inner = ternary();
-                if (!error_.empty()) return kNoExpr;
+                if (failed()) return kNoExpr;
                 if (token().kind != TokenKind::RParen) {
                     fail("expected ')'");
                     return kNoExpr;
@@ -356,7 +361,7 @@ class Parser {
                 if (token().kind != TokenKind::RBracket) {
                     for (;;) {
                         const uint32_t element = ternary();
-                        if (!error_.empty()) return kNoExpr;
+                        if (failed()) return kNoExpr;
                         out_.nodes[made].args.push_back(element);
                         if (token().kind != TokenKind::Comma) break;
                         advance();
@@ -410,15 +415,15 @@ class Parser {
     }
 
     Ast& out_;
-    std::string& error_;
+    Refusal& refusal_;   /* the first broken token, as data; empty message = fine */
     std::vector<Token> tokens_;
     size_t at_ = 0;
 };
 
 } // namespace
 
-bool parse_expression(const std::string& source, Ast& out, std::string& error) {
-    Parser parser(source, out, error);
+bool parse_expression(const std::string& source, Ast& out, Refusal& refusal) {
+    Parser parser(source, out, refusal);
     return parser.parse();
 }
 

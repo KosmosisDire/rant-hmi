@@ -868,7 +868,13 @@ TemplateExprResult compile_template_expr(const std::string& text,
                                          const TemplateScope& scope) {
     TemplateExprResult out;
     Ast ast;
-    if (!parse_expression(text, ast, out.error)) return out;
+    Refusal broken;
+    if (!parse_expression(text, ast, broken)) {
+        /* this dialect's errors stay strings until the whole dialect dies (stage 7),
+           so the parser's data-refusal renders here the way it always read */
+        out.error = broken.message + " at column " + std::to_string(broken.at + 1);
+        return out;
+    }
     ViewLower lower(ast, scope);
     out.ok = lower.run(out.program, out.error);
     return out;

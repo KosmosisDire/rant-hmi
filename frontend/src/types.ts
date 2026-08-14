@@ -655,4 +655,9 @@ export interface Diag {
   code: string;
   message: string;
   where?: string;
+  /* the SPAN in `where`'s expression source, as data — [at, at + length); absent on
+     findings about a whole node or field. The message never carries a position; a
+     surface that shows one renders it from these. */
+  at?: number;
+  length?: number;
 }

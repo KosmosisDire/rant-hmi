@@ -618,9 +618,14 @@ check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is
      the pair shifts up one. */
   check(json(vm(...three, over("MAP", [arg(0), arg(1), { op: "ADD" }]))) === "[10,21,32]",
         "MAP runs the body per element, with the index beside it");
-  check(json(vm(lit(1), lit(null), lit(2), lit(6), { op: "MAKE_LIST", n: 4 },
+  check(json(vm(lit(1), lit(2), lit(6), { op: "MAKE_LIST", n: 3 },
                 over("FILTER", [arg(0), lit(2), { op: "GE" }]))) === "[2,6]",
-        "FILTER keeps what the body called true, and a Nil answer is not true");
+        "FILTER keeps what the body called true");
+  /* the one unknown rule (spec 2.4): a Nil condition result poisons the whole
+     answer — dropping the element would be the unknown silently reading as false */
+  check(json(vm(lit(1), lit(null), lit(2), lit(6), { op: "MAKE_LIST", n: 4 },
+                over("FILTER", [arg(0), lit(2), { op: "GE" }]))) === "null",
+        "FILTER: an unknown condition poisons the answer");
   check(vm(lit(0), lit(1), { op: "MAKE_LIST", n: 2 }, over("ANY", [arg(0)])) === true &&
           vm(lit(0), lit(1), { op: "MAKE_LIST", n: 2 }, over("ALL", [arg(0)])) === false,
         "ANY and ALL answer over the same body");

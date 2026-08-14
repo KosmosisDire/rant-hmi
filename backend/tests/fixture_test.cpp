@@ -330,10 +330,19 @@ void run_case(const FixtureCase& item) {
 
     std::vector<Instruction> code;
     ExpressionResult result;
-    std::string error;
     ProgramEmit emit(program);
+    std::vector<Refusal> refusals;
     const bool ok = compile_expression(item.expr, item.tier, scope, emit, code, result,
-                                       error);
+                                       refusals);
+    /* refusals are data; the fixtures pin substrings, so join every finding (with
+       its position rendered from the span) into the one string the pins search */
+    std::string error;
+    for (const Refusal& refusal : refusals) {
+        if (!error.empty()) error += "; ";
+        error += refusal.message;
+        if (refusal.at != kNowhere)
+            error += " at column " + std::to_string(refusal.at + 1);
+    }
     if (item.has_error) {
         CHECK_MSG(!ok, where + "  compiled, expected refusal: " + item.error);
         if (!ok)

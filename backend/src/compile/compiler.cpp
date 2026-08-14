@@ -277,6 +277,15 @@ class Compiler {
         if (grade == DiagGrade::Error) has_errors_ = true;
     }
 
+    /* an expression finding: the same row plus its SPAN in the field's source */
+    void diag_span(uint64_t node, const std::string& code, const std::string& message,
+                   DiagGrade grade, const std::string& where, size_t at,
+                   size_t length) {
+        program_.diagnostics.push_back(Diag{node, grade, code, message, where, at,
+                                            length});
+        if (grade == DiagGrade::Error) has_errors_ = true;
+    }
+
     uint32_t fault_site(uint64_t node, const std::string& code, const std::string& message) {
         program_.runtime_faults.push_back(Diag{node, DiagGrade::Error, code, message});
         return static_cast<uint32_t>(program_.runtime_faults.size() - 1);
@@ -773,8 +782,8 @@ class Compiler {
     bool fold_number(const ElementInfo& element, const std::string& text,
                      double& out) const {
         Ast ast;
-        std::string error;
-        if (!parse_expression(text, ast, error)) return false;
+        Refusal broken;
+        if (!parse_expression(text, ast, broken)) return false;
         if (!fold_node(element, ast, ast.root, out)) return false;
         return std::isfinite(out);
     }
@@ -1593,11 +1602,15 @@ class Compiler {
                     Shape* actual = nullptr, const std::string& where = "",
                     uint16_t* enum_out = nullptr, bool agg_ok = false) {
         ExpressionResult result;
-        std::string error;
+        std::vector<Refusal> refusals;
         ProgramEmit emit(program_);
-        if (!compile_expression(text, tier, scope, emit, code, result, error, agg_ok,
-                                expected)) {
-            diag(node, "expression", error, DiagGrade::Error, where);
+        if (!compile_expression(text, tier, scope, emit, code, result, refusals,
+                                agg_ok, expected)) {
+            /* EVERY independent finding lands as its own row (rule 16), each
+               carrying its span as data */
+            for (const Refusal& refusal : refusals)
+                diag_span(node, "expression", refusal.message, DiagGrade::Error,
+                          where, refusal.at, refusal.length);
             return false;
         }
         if (expected.kind != Shape::Unknown && result.shape != Shape::Unknown &&

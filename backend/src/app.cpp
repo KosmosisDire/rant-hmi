@@ -620,13 +620,21 @@ Json App::lang_json() {
 Json App::diagnostics() const {
     Json rows = Json::array();
     auto row = [&](const Diag& diag) {
-        rows.push_back(Json{{"node", diag.node_id},
-                            {"grade", diag.grade == DiagGrade::Error     ? "error"
-                                      : diag.grade == DiagGrade::Warning ? "warning"
-                                                                         : "info"},
-                            {"code", diag.code},
-                            {"message", diag.message},
-                            {"where", diag.where}});
+        Json entry{{"node", diag.node_id},
+                   {"grade", diag.grade == DiagGrade::Error     ? "error"
+                             : diag.grade == DiagGrade::Warning ? "warning"
+                                                                : "info"},
+                   {"code", diag.code},
+                   {"message", diag.message},
+                   {"where", diag.where}};
+        /* the SPAN as data: where in the field's expression source the finding
+           points, so the view can underline instead of parsing a column out of
+           the words */
+        if (diag.at != static_cast<size_t>(-1)) {
+            entry["at"] = static_cast<uint64_t>(diag.at);
+            entry["length"] = static_cast<uint64_t>(diag.length);
+        }
+        rows.push_back(std::move(entry));
     };
     /* component findings first: a broken component explains the instance findings that
      * usually follow it */
