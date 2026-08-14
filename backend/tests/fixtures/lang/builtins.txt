@@ -198,9 +198,9 @@ error unknown function
 expr frobnicate(1)
 error unknown function 'frobnicate'
 
-== the arity refusal names min_args even when the call overshoots
+== the arity refusal names the whole legal range
 expr rgb(1, 0, 0, 1, 1)
-error rgb takes 3 arguments
+error rgb takes 3 or 4 arguments
 
 == clamp arity
 expr clamp(1, 2)

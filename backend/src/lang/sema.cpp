@@ -906,7 +906,12 @@ class Sema {
             if (!error_.empty()) return Type();
         }
         if (expr.args.size() < spec.min_args || expr.args.size() > spec.max_args) {
-            fail(name + " takes " + std::to_string(spec.min_args) + " arguments",
+            fail(name + " takes " +
+                     (spec.min_args == spec.max_args
+                          ? std::to_string(spec.min_args)
+                          : std::to_string(spec.min_args) + " or " +
+                                std::to_string(spec.max_args)) +
+                     " arguments",
                  expr.after);
             return Type();
         }
