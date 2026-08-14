@@ -20,3 +20,7 @@ no_x
 enum_type_
 arg_shape
 x_timer
+
+# stage 2 also killed the THIRD hand-rolled arithmetic parser: `every` cadences and
+# `keep` bounds now go through THE parser and a constant walk over its AST
+fold_const

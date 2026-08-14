@@ -3,6 +3,7 @@
 /* for authored_slot(): one instance-slot address walked one way by both compilers */
 #include "compile/components.h"
 #include "lang/expression.h"
+#include "lang/parser.h"
 
 #include <algorithm>
 #include <cctype>
@@ -758,89 +759,74 @@ class Compiler {
         return false;
     }
 
-    /* THE CONSTANT FOLDER: `+ - * / ( )` over numeric literals and the instance's own slot
-     * values, and nothing else. It is what lets a cadence be authored as "1000 / rate"
-     * and a keep as "rate * window" — configuration arithmetic, resolved once at compile
-     * against values an edit would recompile anyway, rather than a second expression
-     * tier the scheduler would have to evaluate per tick.
+    /* THE CONSTANT FOLD: `+ - * / ( )` over numeric literals and the instance's own
+     * slot values, and nothing else. It is what lets a cadence be authored as
+     * "1000 / rate" and a keep as "rate * window" — configuration arithmetic, resolved
+     * once at compile against values an edit would recompile anyway, rather than a
+     * second expression tier the scheduler would have to evaluate per tick.
      *
-     * `this.` is accepted as a prefix so the same text reads in a flow's expressions
-     * and here. Anything it cannot resolve fails, and the caller turns that into a
-     * finding: a cadence that quietly fell back to a default would be a lie about how
-     * often something samples. */
-    bool fold_const(const ElementInfo& element, const std::string& text, double& out) const {
-        size_t at = 0;
-        bool ok = true;
-        const std::function<double()> sum = [&]() -> double {
-            const std::function<double()> unary = [&]() -> double {
-                while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at])))
-                    ++at;
-                if (at < text.size() && (text[at] == '-' || text[at] == '+')) {
-                    const bool negate = text[at++] == '-';
-                    const double inner = unary();
-                    return negate ? -inner : inner;
-                }
-                if (at < text.size() && text[at] == '(') {
-                    ++at;
-                    const double inner = sum();
-                    while (at < text.size() &&
-                           std::isspace(static_cast<unsigned char>(text[at])))
-                        ++at;
-                    if (at < text.size() && text[at] == ')') ++at;
-                    else ok = false;
-                    return inner;
-                }
-                const size_t start = at;
-                while (at < text.size() &&
-                       (std::isdigit(static_cast<unsigned char>(text[at])) ||
-                        text[at] == '.'))
-                    ++at;
-                if (at > start) return std::strtod(text.substr(start, at - start).c_str(),
-                                                   nullptr);
-                while (at < text.size() &&
-                       (std::isalnum(static_cast<unsigned char>(text[at])) ||
-                        text[at] == '_' || text[at] == '.'))
-                    ++at;
-                if (at == start) {
-                    ok = false;
-                    return 0.0;
-                }
-                std::string name = text.substr(start, at - start);
-                if (name.compare(0, 5, "this.") == 0) name = name.substr(5);
-                double value = 0.0;
-                if (!slot_number(element, name, value)) ok = false;
-                return value;
-            };
-            double left = unary();
-            for (;;) {
-                while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at])))
-                    ++at;
-                if (at >= text.size()) break;
-                const char op = text[at];
-                if (op != '+' && op != '-' && op != '*' && op != '/') break;
-                ++at;
-                const double right = unary();
-                /* one precedence level, applied left to right: configuration arithmetic
-                   is short enough that parentheses say what is meant, and a folder that
-                   silently disagreed with the expression tier would be worse than one
-                   that asks for them */
-                switch (op) {
-                    case '+': left += right; break;
-                    case '-': left -= right; break;
-                    case '*': left *= right; break;
-                    default:
-                        if (right == 0.0) ok = false;
-                        else left /= right;
-                        break;
+     * The text goes through THE parser — one grammar, one precedence, one spelling of
+     * every token — and this walk answers only what is constant. `this.` is accepted
+     * as a prefix so the same text reads in a flow's expressions and here. Anything it
+     * cannot resolve fails, and the caller turns that into a finding: a cadence that
+     * quietly fell back to a default would be a lie about how often something samples. */
+    bool fold_number(const ElementInfo& element, const std::string& text,
+                     double& out) const {
+        Ast ast;
+        std::string error;
+        if (!parse_expression(text, ast, error)) return false;
+        if (!fold_node(element, ast, ast.root, out)) return false;
+        return std::isfinite(out);
+    }
+
+    bool fold_node(const ElementInfo& element, const Ast& ast, uint32_t index,
+                   double& out) const {
+        const Expr& expr = ast.at(index);
+        switch (expr.kind) {
+            case ExprKind::Number:
+                out = expr.number;
+                return true;
+            case ExprKind::Prefix: {
+                if (expr.op != TokenKind::Minus) return false;
+                if (!fold_node(element, ast, expr.a, out)) return false;
+                out = -out;
+                return true;
+            }
+            case ExprKind::Binary: {
+                double left = 0, right = 0;
+                if (!fold_node(element, ast, expr.a, left) ||
+                    !fold_node(element, ast, expr.b, right))
+                    return false;
+                switch (expr.op) {
+                    case TokenKind::Plus: out = left + right; return true;
+                    case TokenKind::Minus: out = left - right; return true;
+                    case TokenKind::Star: out = left * right; return true;
+                    case TokenKind::Slash:
+                        if (right == 0.0) return false;
+                        out = left / right;
+                        return true;
+                    default: return false;
                 }
             }
-            return left;
-        };
-        const double value = sum();
-        while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at]))) ++at;
-        if (!ok || at != text.size() || !std::isfinite(value)) return false;
-        out = value;
-        return true;
+            case ExprKind::Name:
+            case ExprKind::Member: {
+                /* a plain dotted name, read off the instance's own slots */
+                std::string name;
+                uint32_t walk = index;
+                while (ast.at(walk).kind == ExprKind::Member) {
+                    const Expr& member = ast.at(walk);
+                    if (member.called) return false;
+                    name = member.text + (name.empty() ? "" : "." + name);
+                    walk = member.a;
+                }
+                if (ast.at(walk).kind != ExprKind::Name) return false;
+                name = ast.at(walk).text + (name.empty() ? "" : "." + name);
+                if (name.compare(0, 5, "this.") == 0) name = name.substr(5);
+                return slot_number(element, name, out);
+            }
+            default:
+                return false;
+        }
     }
 
     /* AN `every` TRIGGER: the flow runs on its own clock, with no event behind it. `ms`
@@ -856,7 +842,7 @@ class Compiler {
             period = ms->get<double>();
             ok = std::isfinite(period);
         } else if (ms != trigger.end() && ms->is_string()) {
-            ok = fold_const(element, ms->get<std::string>(), period);
+            ok = fold_number(element, ms->get<std::string>(), period);
         }
         if (!ok || period <= 0.0) {
             diag(flow_id, "trigger",
@@ -2233,7 +2219,7 @@ class Compiler {
                    this speaks in the elements those bytes buy for this cell. */
                 double window = 0.0;
                 const uint32_t fits = buffer_capacity(def.elem);
-                if (fold_const(element, keep, window) &&
+                if (fold_number(element, keep, window) &&
                     window > static_cast<double>(fits))
                     diag(step_id, "keep_bound",
                          "keep is " + std::to_string(static_cast<long long>(window)) +
