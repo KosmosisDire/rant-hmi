@@ -247,6 +247,7 @@ class Parser {
                                            : "expected a method after '.'");
                 return kNoExpr;
             }
+            out_.nodes[made].name_at = token().at;
             out_.nodes[made].text = token().text;
             advance();
             out_.nodes[made].name_after = token().at;
@@ -359,6 +360,12 @@ class Parser {
             case TokenKind::Entity: {
                 const uint32_t made = node(ExprKind::EntityRef, t.at);
                 out_.nodes[made].text = "@" + t.text;
+                advance();
+                return close(made);
+            }
+            case TokenKind::Theme: {
+                const uint32_t made = node(ExprKind::ThemeRef, t.at);
+                out_.nodes[made].text = t.text;
                 advance();
                 return close(made);
             }

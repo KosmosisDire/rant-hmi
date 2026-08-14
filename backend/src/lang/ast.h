@@ -23,6 +23,8 @@ enum class ExprKind : uint8_t {
     ListLit,    /* [a, b, c] — elements in args */
     Name,       /* an identifier head; what it means is the checker's question */
     EntityRef,  /* @path */
+    ThemeRef,   /* $name — a theme token literal (view vocabulary; the scalar
+                   checker refuses it the way its grammar always did) */
     Variant,    /* .name — legal only as the right side of == / != */
     Lambda,     /* params => body (a), legal only as an iterating method's argument */
     Prefix,     /* op(a): - ! not */
@@ -55,6 +57,9 @@ struct Expr {
      * the NAME itself (a property called with parens). */
     size_t after = 0;
     size_t name_after = 0;
+    /* Member: where the name token itself starts — the anchor for refusals about
+     * an unknown FIELD, which the view tier points at the word, not past it. */
+    size_t name_at = 0;
 };
 
 struct Ast {

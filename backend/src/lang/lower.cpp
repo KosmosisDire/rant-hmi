@@ -158,6 +158,9 @@ class Lower {
                 /* only ever reached as an iterating method's argument, where the
                    Iterate emission below walks the body itself */
                 return;
+            case ExprKind::ThemeRef:
+                /* never survives the checker on this tier */
+                return;
         }
     }
 

@@ -24,3 +24,11 @@ x_timer
 # stage 2 also killed the THIRD hand-rolled arithmetic parser: `every` cadences and
 # `keep` bounds now go through THE parser and a constant walk over its AST
 fold_const
+
+# stage 3, the view emitter: the SECOND parser (template_expr.cpp's own recursive
+# descent) died — the view tier walks THE parser's AST now, and $theme joined the one
+# grammar. These are the old descent's methods; one Parser class remains in the repo.
+parse_primary
+parse_postfix
+bespoke_args
+address_chain

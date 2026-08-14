@@ -1,8 +1,7 @@
-/* The expression lexer, shared by the two compilers that read the same surface
- * grammar: the scalar compiler (expression.cpp, lowering to VM instructions) and the
- * template-expression compiler (template_expr.cpp, lowering to view programs). One
- * lexer means one spelling of every token, so the two dialects can never drift at the
- * character level. */
+/* The expression lexer: one spelling of every token for the one parser (parser.h).
+ * Both emitters — the scalar tier's (lower.h, VM instructions) and the view tier's
+ * (template_expr.h, view programs) — read the same AST, so the two dialects cannot
+ * drift at any level below emission. */
 #pragma once
 
 #include <string>
@@ -16,8 +15,9 @@ enum class TokenKind {
     String,
     Color,
     Ident,
-    Theme,     /* $<name>: a theme token literal (template expressions only; the
-                  scalar parser refuses it as an unexpected token) */
+    Theme,     /* $<name>: a theme token literal. The parser carries it for the view
+                  emitter; the scalar checker refuses it the way its grammar always
+                  did. */
     Entity,    /* @<path>: a MESH ENTITY reference (`@cage/plc/gSafety`). The `@`
                   consumes identifier characters plus '/', because DART names are
                   path-spelled and '/' is otherwise division; the dot that follows is

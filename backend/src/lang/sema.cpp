@@ -138,6 +138,11 @@ class Sema {
                    there, so reaching one here is a stray leading dot */
                 fail("expected an expression", expr.at);
                 return Type();
+            case ExprKind::ThemeRef:
+                /* the one grammar carries $tokens for the view emitter; this tier
+                   never accepted one, and the refusal it always gave stands */
+                fail("expected an expression", expr.at);
+                return Type();
             case ExprKind::Lambda:
                 type = lambda_in_value_position(index);
                 break;

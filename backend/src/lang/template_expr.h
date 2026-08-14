@@ -1,8 +1,9 @@
-/* The template-expression compiler: the same surface grammar as the scalar language
- * (spec 6.2), lowered to VIEW PROGRAMS — the Json {"code":[{"op":...}...]} form the
- * frontend's stack interpreter (frontend/src/program.ts) executes over symbolic cells.
- * This is how a component's template attrs are authored as text ("value.pick(fill_color,
- * track_color)") and served compiled, with the view still never parsing anything.
+/* The view emitter: the one surface grammar (spec 6.2), parsed by THE parser
+ * (lang/parser.h) and lowered from its AST to VIEW PROGRAMS — the Json
+ * {"code":[{"op":...}...]} form the frontend's stack interpreter
+ * (frontend/src/program.ts) executes over symbolic cells. This is how a component's
+ * template attrs are authored as text ("value.pick(fill_color, track_color)") and
+ * served compiled, with the view still never parsing anything.
  *
  * The vocabulary is exactly what that interpreter can run: scalar and list literals,
  * property / state / theme loads, arithmetic, comparisons, and/or/not, pick, toFixed,
