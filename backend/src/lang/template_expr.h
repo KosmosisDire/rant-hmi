@@ -108,7 +108,7 @@ struct TemplateScope {
     /* the mesh, shared by every scope of one compile. Null inside a component. */
     std::shared_ptr<const TemplateMesh> mesh;
     /* appended to every unknown-name refusal: what this surface's emptiness MEANS (the
-     * scalar tier's ExpressionScope carries the same field, with the same text) */
+     * scalar tier's Env carries the same field, with the same text) */
     std::string unknown_help;
 
     bool addressed(const std::string& address) const {

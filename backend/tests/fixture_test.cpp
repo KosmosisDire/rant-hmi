@@ -152,7 +152,7 @@ bool split_elements(const std::string& literal, char open, char close,
 }
 
 /* the case's environment, as cells of a hand-built Program, bound into `scope` */
-bool build_env(Program& program, ExpressionScope& scope, const FixtureCase& item,
+bool build_env(Program& program, Env& scope, const FixtureCase& item,
                std::string& why) {
     for (const FixtureEnv& var : item.env) {
         std::string head, arg;
@@ -251,10 +251,15 @@ bool build_env(Program& program, ExpressionScope& scope, const FixtureCase& item
         }
         const uint32_t index = static_cast<uint32_t>(program.cells.size());
         program.cells.push_back(std::move(cell));
-        scope.names[var.name] =
-            Binding{program.cells[index].shape, OpCode::Load, index, 0,
-                    program.cells[index].type_id, program.cells[index].elem};
+        const CellDef& made = program.cells[index];
+        const Type bound = made.shape == Shape::List || made.shape == Shape::Map
+                               ? Type::list_of(made.shape, made.elem)
+                               : Type(made.shape, made.type_id);
+        scope.bind_value(var.name, Place{bound, OpCode::Load, index, 0});
     }
+    /* the enum vocabulary the checker resolves `.variant` and `.is()` against */
+    for (const TypeDef& type : program.types)
+        scope.enums.push_back(type.kind == TypeKind::Enum ? &type.variants : nullptr);
     return true;
 }
 
@@ -316,8 +321,10 @@ void run_case(const FixtureCase& item) {
     Program program;
     program.add_text("");
     program.types.push_back(TypeDef{});   /* type id 0 stays "untyped" */
-    ExpressionScope scope;
-    scope.no_x = true;   /* fixtures name their sources; there is no pipeline register */
+    Env scope;
+    /* fixtures name their sources; there is no pipeline register */
+    scope.refuse("x", "there is no x here: a slot expression names its sources "
+                      "directly (a variable, this.<slot>, @entity.<field>)");
     std::string why;
     if (!CHECK_MSG(build_env(program, scope, item, why), where + "  " + why)) return;
 

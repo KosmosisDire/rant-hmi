@@ -6727,10 +6727,10 @@ flow 475 node 360 event pressrelease worst 2
   0 FAULT 23 0 0
   1 HALT
 flow 458 node 370 event pressrelease worst 10
-  0 CONST 22 0 0
+  0 CONST 21 0 0
   1 NEG
   2 LOAD_ARG
-  3 CONST 23 0 0
+  3 CONST 22 0 0
   4 CONST 5 0 0
   5 METHOD small 9 0 2 0
   6 MUL
@@ -6738,9 +6738,9 @@ flow 458 node 370 event pressrelease worst 10
   8 STORE_INDEX 0 24 0
   9 HALT
 flow 460 node 366 event pressrelease worst 9
-  0 CONST 22 0 0
+  0 CONST 21 0 0
   1 LOAD_ARG
-  2 CONST 23 0 0
+  2 CONST 22 0 0
   3 CONST 5 0 0
   4 METHOD small 9 0 2 0
   5 MUL

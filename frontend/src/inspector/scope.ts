@@ -525,7 +525,7 @@ export function constScope(editor: Editor): Scope {
  * the instance's own slots as `this.<name>` — PLUS every readable mesh entity bound
  * under its '@' spelling (bind_entities): `@name` where the entity reads as one field,
  * `@name.field` per field otherwise (a function binds its RESPONSE fields). `x` is
- * refused there (scope.no_x), so no x row exists. The tier is "display": that is the
+ * refused there by name, so no x row exists. The tier is "display": that is the
  * ExprTier the backend compiles a slot program at.
  *
  * Color tokens are served with ONE caveat the compiler enforces: `$name` stands as a

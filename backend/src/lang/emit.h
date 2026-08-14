@@ -3,9 +3,10 @@
  * The scalar compiler used to take a `Program&` and reach into it, which put the whole
  * runtime model — entities, cells, feeds, flows, timers — inside the language's headers
  * for the sake of a handful of operations. This is those operations, and it is the
- * entire coupling between lang/ and vm/: a constant pool, a text pool, the enum
- * vocabulary shape checking reads, the two allocation counters a text- or list-producing
- * site bumps, the lambda-body table, and the one runtime finding an iteration can hit.
+ * entire coupling between lang/ and vm/: a constant pool, a text pool, the two
+ * allocation counters a text- or list-producing site bumps, the lambda-body table, and
+ * the one runtime finding an iteration can hit. (The enum vocabulary the checker reads
+ * rides the Env now — checking is pure, only EMISSION touches the sink.)
  *
  * Virtual rather than a template because the implementation is 965 lines that have no
  * business in a header, and because this is compile-time work: nothing here is ever
@@ -17,13 +18,9 @@
 
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace hmi {
-
-/* an enum type's vocabulary: variant name -> backing integer, in declaration order */
-using EnumVariants = std::vector<std::pair<std::string, int64_t>>;
 
 struct EmitSink {
     virtual ~EmitSink() = default;
@@ -31,10 +28,6 @@ struct EmitSink {
     /* intern a constant / a text literal, returning its pool index */
     virtual uint32_t add_constant(Value value) = 0;
     virtual uint32_t add_text(const std::string& text) = 0;
-
-    /* the vocabulary behind a type-table id, null when that id names no enum. Read-only:
-     * the language checks variant names against it and never adds a type. */
-    virtual const EnumVariants* enum_variants(uint16_t type_id) const = 0;
 
     /* a text-producing site owns one fixed slot for its result, so runtime text costs no
      * allocation and no cursor */

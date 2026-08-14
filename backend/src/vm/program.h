@@ -335,11 +335,6 @@ struct ProgramEmit final : EmitSink {
     uint32_t add_constant(Value value) override { return program.add_constant(value); }
     uint32_t add_text(const std::string& text) override { return program.add_text(text); }
 
-    const EnumVariants* enum_variants(uint16_t type_id) const override {
-        if (!type_id || type_id >= program.types.size()) return nullptr;
-        return &program.types[type_id].variants;
-    }
-
     uint32_t alloc_text_slot() override { return program.layout.text_slots++; }
 
     void reserve_elems(uint32_t values, uint32_t texts) override {

@@ -1353,19 +1353,21 @@ class Compiler {
      * any other name. An AGGREGATE field binds to its DERIVED CELL (real retained
      * storage) rather than LoadField, so `m.v` reads, appends and element-writes like
      * any list variable. */
-    void bind_variable(ExpressionScope& scope, const std::string& name, uint32_t cell_index) {
+    void bind_variable(Env& scope, const std::string& name, uint32_t cell_index) {
         const CellDef& cell = program_.cells[cell_index];
-        scope.names[name] = Binding{cell.shape, OpCode::Load, cell_index, 0, cell.type_id};
+        scope.bind_value(name,
+                         Place{Type(cell.shape, cell.type_id), OpCode::Load, cell_index, 0});
         if (cell.shape != Shape::Struct) return;
         const std::vector<FieldDef>& fields = struct_fields(program_, cell.type_id);
         for (uint32_t i = 0; i < fields.size(); ++i) {
             const uint32_t derived = field_cell(cell_index, i);
-            scope.qualified[name + "." + fields[i].path] =
+            scope.bind_field(
+                name, fields[i].path,
                 derived != UINT32_MAX
-                    ? Binding{fields[i].shape, OpCode::Load, derived, 0, 0,
-                              fields[i].elem}
-                    : Binding{fields[i].shape, OpCode::LoadField, cell_index, i,
-                              fields[i].type_id};
+                    ? Place{Type::list_of(fields[i].shape, fields[i].elem),
+                            OpCode::Load, derived, 0}
+                    : Place{Type(fields[i].shape, fields[i].type_id),
+                            OpCode::LoadField, cell_index, i});
         }
     }
 
@@ -1456,42 +1458,49 @@ class Compiler {
 
     /* a timer variable reads by FIELD (`blink.running`, `blink.remaining`): the state
      * lives in the timer table, not the cell, so its bindings load from there */
-    void bind_timer(ExpressionScope& scope, const std::string& name, uint32_t index) {
-        scope.qualified[name + ".running"] = Binding{Shape::Bool, OpCode::TmrRead, index, 0};
-        scope.qualified[name + ".remaining"] = Binding{Shape::Num, OpCode::TmrRead, index, 1};
-        scope.qualified[name + ".progress"] = Binding{Shape::Num, OpCode::TmrRead, index, 3};
-        scope.qualified[name + ".duration"] = Binding{Shape::Num, OpCode::TmrRead, index, 2};
+    void bind_timer(Env& scope, const std::string& name, uint32_t index) {
+        scope.bind_field(name, "running", Place{Type(Shape::Bool), OpCode::TmrRead, index, 0});
+        scope.bind_field(name, "remaining", Place{Type(Shape::Num), OpCode::TmrRead, index, 1});
+        scope.bind_field(name, "progress", Place{Type(Shape::Num), OpCode::TmrRead, index, 3});
+        scope.bind_field(name, "duration", Place{Type(Shape::Num), OpCode::TmrRead, index, 2});
+        scope.objects[name].bare_refusal =
+            "'" + name + "' is a timer; read a field (" + name +
+            ".running / .remaining / .duration / .progress)";
     }
 
     /* the system clock, in every scalar scope: `time` reads by field, off the one table
        the VM dispatches on. Bound FIRST-AS-RESERVED: it lands after every variable and
        timer, so `time.*` is always the clock — the same reservation the display tier
        makes by checking `time` before the property scope. */
-    void bind_clock(ExpressionScope& scope) {
+    void bind_clock(Env& scope) {
         constexpr uint32_t count = sizeof(kClockFields) / sizeof(kClockFields[0]);
         for (uint32_t i = 0; i < count; ++i)
-            scope.qualified[std::string("time.") + kClockFields[i].name] =
-                Binding{kClockFields[i].shape, OpCode::ClockRead, i, 0};
+            scope.bind_field("time", kClockFields[i].name,
+                             Place{Type(kClockFields[i].shape), OpCode::ClockRead, i, 0});
+        scope.objects["time"].bare_refusal =
+            "'time' reads by field (time.now / time.unix / time.year / time.month / "
+            "time.day / time.weekday / time.hour / time.minute / time.second / "
+            "time.text / time.date)";
     }
 
     /* WHICH COPY OF A `repeat` RAISED THIS: the same three fields the view answers, off
      * the copy that rides the input frame. Bound only where an event can carry one — see
      * refuse_repeat for the other half. Reserved like `time`, by landing last: no
      * variable can shadow it. */
-    void bind_repeat(ExpressionScope& scope) {
-        scope.qualified["repeat.index"] = Binding{Shape::Num, OpCode::RepeatRead, 0, 0};
-        scope.qualified["repeat.count"] = Binding{Shape::Num, OpCode::RepeatRead, 1, 0};
-        scope.qualified["repeat.fraction"] = Binding{Shape::Num, OpCode::RepeatRead, 2, 0};
+    void bind_repeat(Env& scope) {
+        scope.bind_field("repeat", "index", Place{Type(Shape::Num), OpCode::RepeatRead, 0, 0});
+        scope.bind_field("repeat", "count", Place{Type(Shape::Num), OpCode::RepeatRead, 1, 0});
+        scope.bind_field("repeat", "fraction", Place{Type(Shape::Num), OpCode::RepeatRead, 2, 0});
     }
 
     /* A CADENCE HAS NO COPY. `every` and a timer fire for the ELEMENT — one element, one
      * set of cells, however many times the view drew it — so there is no copy to be, and
      * a run reading Nil here would fault somewhere downstream with the reason a step
      * removed. Refused by name, saying which triggers do carry one. */
-    void refuse_repeat(ExpressionScope& scope, const std::string& what) {
-        scope.refused["repeat"] =
-            "there is no copy behind " + what + ": `repeat` names the copy an EVENT "
-            "arrived on, so it reads in a flow some event triggers";
+    void refuse_repeat(Env& scope, const std::string& what) {
+        scope.refuse("repeat",
+                     "there is no copy behind " + what + ": `repeat` names the copy an "
+                     "EVENT arrived on, so it reads in a flow some event triggers");
     }
 
     /* the elements enclosing this one, OUTERMOST FIRST — the page's own children at the
@@ -1512,9 +1521,9 @@ class Compiler {
      * (reserved), then `this.<prop>` for the component this element places.
      *
      * A component's insides do NOT come through here — see behavior_scope_for. */
-    ExpressionScope scope_for(const ElementInfo& element, Shape x_shape) {
-        ExpressionScope scope;
-        scope.x_shape = x_shape;
+    Env scope_for(const ElementInfo& element, Shape x_shape) {
+        Env scope;
+        bind_enums(scope);
         for (const auto& item : globals_) bind_variable(scope, item.first, item.second);
         for (const auto& item : global_timers_) bind_timer(scope, item.first, item.second);
         for (const ElementInfo* at : lexical_chain(element)) {
@@ -1523,7 +1532,22 @@ class Compiler {
         }
         bind_clock(scope);
         bind_own_props(scope, element);
+        bind_x(scope, x_shape);
         return scope;
+    }
+
+    /* `x`, the pipeline register, bound LAST: it is the language's word, so no
+     * variable may shadow it — a declaration named x is simply dead here, exactly as
+     * it always was */
+    void bind_x(Env& scope, Shape x_shape, uint16_t x_enum = 0) {
+        scope.bind_value("x", Place{Type(x_shape, x_enum), OpCode::LoadX, 0, 0});
+    }
+
+    /* the enum vocabulary behind each type id, for `.variant` and `.is()` */
+    void bind_enums(Env& scope) {
+        scope.enums.clear();
+        for (const TypeDef& type : program_.types)
+            scope.enums.push_back(type.kind == TypeKind::Enum ? &type.variants : nullptr);
     }
 
     /* WHAT A NAME MEANS INSIDE A COMPONENT — its own properties, its own locals, the
@@ -1532,14 +1556,15 @@ class Compiler {
      * the page it was written for. Data enters through properties (whose VALUES are
      * authored on the instance, in the page's own full scope) and leaves through events.
      * The refusal that enforces this teaches the way in — see isolated_name_help. */
-    ExpressionScope behavior_scope_for(const ElementInfo& element, Shape x_shape) {
-        ExpressionScope scope;
-        scope.x_shape = x_shape;
+    Env behavior_scope_for(const ElementInfo& element, Shape x_shape) {
+        Env scope;
+        bind_enums(scope);
         /* deliberately no locals and no timers: the instance's are the PAGE's, and the
            component's own are declared on the component (they arrive with per-instance
            component locals; until then a component's behavior holds no variables) */
         bind_clock(scope);
         bind_own_props(scope, element);
+        bind_x(scope, x_shape);
         return scope;
     }
 
@@ -1556,19 +1581,20 @@ class Compiler {
      * writes it: the value differs per picture and the backend keeps one of it. Binding it
      * anyway would read UNKNOWN forever — the exact silent wrongness the refusals exist to
      * prevent — so the word is refused with what the author can do instead. */
-    void bind_own_props(ExpressionScope& scope, const ElementInfo& element) {
+    void bind_own_props(Env& scope, const ElementInfo& element) {
         for (const auto& item : element.slots) {
             if (per_copy_slot(element.id, item.first)) {
-                scope.refused["this." + item.first] =
+                scope.refuse(
+                    "this." + item.first,
                     "'" + item.first + "' is evaluated PER COPY here — its expression "
                     "names the view's own `state` or `repeat`, so it has one value per "
                     "picture and none for a flow to read; name what it reads from "
-                    "directly, or drop `state`/`repeat` out of the property's expression";
+                    "directly, or drop `state`/`repeat` out of the property's expression");
                 continue;
             }
             const CellDef& cell = program_.cells[item.second];
-            scope.qualified["this." + item.first] =
-                Binding{cell.shape, OpCode::Load, item.second, 0};
+            scope.bind_field("this", item.first,
+                             Place{Type(cell.shape), OpCode::Load, item.second, 0});
         }
     }
 
@@ -1576,7 +1602,7 @@ class Compiler {
      * slot), so a wire expression may yield that whole shape. It is never set for a
      * mesh destination — the machine still takes one scalar per field. */
     bool expression(uint64_t node, const std::string& text, ExprTier tier,
-                    const ExpressionScope& scope, Shape expected,
+                    const Env& scope, Shape expected,
                     std::vector<Instruction>& code, uint32_t& max_stack,
                     Shape* actual = nullptr, const std::string& where = "",
                     uint16_t* enum_out = nullptr, bool agg_ok = false) {
@@ -1718,21 +1744,29 @@ class Compiler {
      * entity (or a one-field message) reads bare, a fielded one by `@name.field`. This
      * is what makes a slot expression multi-source — its deps are whatever it reads.
      * Function entities bind their RESPONSE fields; the poll cadence asks for them. */
-    void bind_entities(ExpressionScope& scope) {
+    void bind_entities(Env& scope) {
         for (uint32_t e = 0; e < program_.entities.size(); ++e) {
             const EntityDef& def = program_.entities[e];
             const std::vector<FieldDef>& fields = feed_fields(def);
             if (fields.empty()) continue;
             const std::string base = "@" + def.name;
             if (fields.size() == 1)
-                scope.names[base] = Binding{fields[0].shape, OpCode::LoadEnt, e, 0,
-                                            fields[0].type_id, fields[0].elem};
+                scope.bind_value(base, Place{entity_field_type(fields[0]),
+                                             OpCode::LoadEnt, e, 0});
             if (fields.size() == 1 && fields[0].path.empty()) continue;
             for (uint32_t i = 0; i < fields.size(); ++i)
-                scope.qualified[base + "." + fields[i].path] =
-                    Binding{fields[i].shape, OpCode::LoadEnt, e, i, fields[i].type_id,
-                            fields[i].elem};
+                scope.bind_field(base, fields[i].path,
+                                 Place{entity_field_type(fields[i]),
+                                       OpCode::LoadEnt, e, i});
         }
+    }
+
+    /* an entity field's Type: an aggregate carries its declared element, a scalar its
+     * enum id — exactly what the old Binding carried */
+    static Type entity_field_type(const FieldDef& field) {
+        if (field.shape == Shape::List || field.shape == Shape::Map)
+            return Type::list_of(field.shape, field.elem);
+        return Type(field.shape, field.type_id);
     }
 
     /* What a compiled slot expression READS, off its own instructions (lambda bodies
@@ -1784,8 +1818,11 @@ class Compiler {
     void compile_slot_program(ElementInfo& element, const PendingSlot& pending) {
         const Shape wanted = program_.cells[pending.cell].shape;
         const bool aggregate = wanted == Shape::List || wanted == Shape::Map;
-        ExpressionScope scope = scope_for(element, Shape::Unknown);
-        scope.no_x = true;   /* a slot expression has no pipeline register */
+        Env scope = scope_for(element, Shape::Unknown);
+        /* a slot expression has no pipeline register */
+        scope.objects.erase("x");
+        scope.refuse("x", "there is no x here: a slot expression names its sources "
+                          "directly (a variable, this.<slot>, @entity.<field>)");
         bind_entities(scope);
         SlotProgram sp;
         sp.node_id = element.id;
@@ -1960,7 +1997,7 @@ class Compiler {
      * lvalue stays structural. Reading the mesh is naming it — `@entity.field` in the
      * rvalue — so there is no separate "read" form anymore. */
     bool compile_assign(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                        ExpressionScope& scope, FlowLocals& locals) {
+                        Env& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
         const Json& to = step.value("to", Json::object());
@@ -2127,7 +2164,7 @@ class Compiler {
      * down and TYPE CHECKED here (element_fits), where the refusal can name the list,
      * what it holds and the declaration that would take what the author wrote. */
     bool aggregate_assign(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                        ExpressionScope& scope, uint32_t cell, bool appends,
+                        Env& scope, uint32_t cell, bool appends,
                         const std::string& keep, const std::string& key) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
@@ -2264,7 +2301,7 @@ class Compiler {
      * the destination is a declared HMI aggregate, which may take a whole list or map
      * (copy a variable, rebuild one with a map/filter). */
     bool push_scalar(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                     ExpressionScope& scope, const Json& from, Shape expected,
+                     Env& scope, const Json& from, Shape expected,
                      Shape* actual = nullptr, bool agg_ok = false) {
         (void)element;
         const uint64_t step_id = id_of(step);
@@ -2282,7 +2319,7 @@ class Compiler {
      * variant's value (a Dropdown's selected name writes back with no authored
      * transform), and an enum into a text destination renders as its variant name. */
     bool push_typed(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                    ExpressionScope& scope, const Json& from, Shape wanted,
+                    Env& scope, const Json& from, Shape wanted,
                     uint16_t type_id, bool agg_ok = false) {
         if (wanted == Shape::Text) {
             Shape produced = Shape::Unknown;
@@ -2336,7 +2373,7 @@ class Compiler {
      * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt; a
      * field of one by StoreField; a scalar by Store. */
     bool assign_into_local(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                         ExpressionScope& scope, FlowLocals& locals) {
+                         Env& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
         const Json& to = step.value("to", Json::object());
@@ -2405,8 +2442,9 @@ class Compiler {
                                                     Shape::Enum);
                 program_.cells[cell].type_id = static_cast<uint16_t>(type_id);
                 locals[name] = cell;
-                scope.names[name] = Binding{Shape::Enum, OpCode::Load, cell, 0,
-                                            static_cast<uint16_t>(type_id)};
+                scope.bind_value(name,
+                                 Place{Type(Shape::Enum, static_cast<uint16_t>(type_id)),
+                                       OpCode::Load, cell, 0});
             } else if (fresh) {
                 const uint32_t cell = ensure_struct_local(element, flow, locals, scope,
                                                           name, static_cast<uint16_t>(type_id),
@@ -2443,8 +2481,7 @@ class Compiler {
                 return false;
             }
             flow.code.push_back(Instruction{OpCode::StoreX});
-            scope.x_shape = produced;
-            scope.x_enum = produced_type;
+            bind_x(scope, produced, produced_type);
             return true;
         }
 
@@ -2582,14 +2619,14 @@ class Compiler {
             }
             cell = add_temp_cell(flow.flow_id, element.id, name, produced);
             locals[name] = cell;
-            scope.names[name] = Binding{produced, OpCode::Load, cell, 0};
+            scope.bind_value(name, Place{Type(produced), OpCode::Load, cell, 0});
         }
         return emit_store(flow, step_id, cell);
     }
 
     /* `-> entity`: the one way a value leaves a flow. The verb comes from the kind. */
     bool assign_out(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                  ExpressionScope& scope, FlowLocals& locals) {
+                  Env& scope, FlowLocals& locals) {
         const uint64_t step_id = id_of(step);
         const Json& from = step.value("from", Json::object());
         const Json& to = step.value("to", Json::object());
@@ -2767,7 +2804,7 @@ class Compiler {
      * staged across flows, spec 2.7); a declared variable of any other type is a
      * finding rather than a coercion. */
     uint32_t ensure_struct_local(const ElementInfo& element, FlowProgram& flow,
-                                 FlowLocals& locals, ExpressionScope& scope,
+                                 FlowLocals& locals, Env& scope,
                                  const std::string& name, uint16_t type_id, uint64_t step_id) {
         auto found = locals.find(name);
         if (found != locals.end()) {
@@ -2803,12 +2840,13 @@ class Compiler {
         const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
         for (uint32_t i = 0; i < fields.size(); ++i) {
             const uint32_t derived = field_cell(cell, i);
-            scope.qualified[name + "." + fields[i].path] =
+            scope.bind_field(
+                name, fields[i].path,
                 derived != UINT32_MAX
-                    ? Binding{fields[i].shape, OpCode::Load, derived, 0, 0,
-                              fields[i].elem}
-                    : Binding{fields[i].shape, OpCode::LoadField, cell, i,
-                              fields[i].type_id};
+                    ? Place{Type::list_of(fields[i].shape, fields[i].elem),
+                            OpCode::Load, derived, 0}
+                    : Place{Type(fields[i].shape, fields[i].type_id),
+                            OpCode::LoadField, cell, i});
         }
         return cell;
     }
@@ -2846,7 +2884,7 @@ class Compiler {
      * slot (or an append/key write) still stands down whole: a shadow list is storage
      * this run has no business allocating. */
     bool shadow_slot_write(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                           ExpressionScope& scope, const std::string& slot) {
+                           Env& scope, const std::string& slot) {
         const uint64_t step_id = id_of(step);
         auto found = element.slots.find(slot);
         if (found == element.slots.end()) return true;   /* claimed name, no cell: drop */
@@ -2862,8 +2900,8 @@ class Compiler {
             add_temp_cell(flow.flow_id, element.id, "this." + slot + "'", def.shape);
         program_.cells[shadow].type_id = def.type_id;
         if (!emit_store(flow, step_id, shadow)) return false;
-        scope.qualified["this." + slot] =
-            Binding{def.shape, OpCode::Load, shadow, 0, def.type_id};
+        scope.bind_field("this", slot,
+                         Place{Type(def.shape, def.type_id), OpCode::Load, shadow, 0});
         return true;
     }
 
@@ -2872,7 +2910,7 @@ class Compiler {
      * expression compiles against the declared parameter's shape. The record queues on
      * the state; the scheduler dispatches it after this run halts. */
     bool compile_raise(const ElementInfo& element, const Json& step, FlowProgram& flow,
-                       ExpressionScope& scope) {
+                       Env& scope) {
         const uint64_t step_id = id_of(step);
         const std::string name = trimmed(str_or(step, "event", ""));
         if (name.empty()) {
@@ -2949,7 +2987,7 @@ class Compiler {
      * message is a DISPLAY-tier expression — it is for a human, so text joining and the
      * formatting vocabulary are exactly what it is made of — and `ms`, when authored,
      * is how long it stays; absent, the view scales the time with the length. */
-    bool compile_notify(const Json& step, FlowProgram& flow, ExpressionScope& scope) {
+    bool compile_notify(const Json& step, FlowProgram& flow, Env& scope) {
         const uint64_t step_id = id_of(step);
         const std::string text = trimmed(str_or(step, "text", ""));
         if (text.empty()) {
@@ -2990,7 +3028,7 @@ class Compiler {
                        const EventParam* param = nullptr,
                        const std::unordered_map<std::string, std::string>* claimed = nullptr,
                        bool in_component = false, const std::string& copyless = "") {
-        ExpressionScope scope = in_component ? behavior_scope_for(element, Shape::Unknown)
+        Env scope = in_component ? behavior_scope_for(element, Shape::Unknown)
                                              : scope_for(element, Shape::Unknown);
         /* `repeat` reads where an EVENT drove the run and carried the copy with it, and
            is refused by name where the trigger is a clock */
@@ -3003,7 +3041,8 @@ class Compiler {
         if (in_component) scope.unknown_help = kIsolatedHelp;
         else bind_entities(scope);
         if (param)
-            scope.names[param->name] = Binding{param->shape, OpCode::LoadArg, 0, 0};
+            scope.bind_value(param->name,
+                             Place{Type(param->shape), OpCode::LoadArg, 0, 0});
         FlowLocals locals;
         for (const Json& step : flow_node.value("do", Json::array())) {
             const uint64_t step_id = id_of(step);

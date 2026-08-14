@@ -16,13 +16,29 @@
 
 /* These tests exercise the language against a real Program, which the language itself no
  * longer knows about: it emits through an EmitSink (lang/emit.h) and ProgramEmit is the
- * adapter. Wrapping it here keeps every call site reading as the expression under test. */
-static bool compile_expr(const std::string& text, hmi::ExprTier tier,
-                         const hmi::ExpressionScope& scope, hmi::Program& program,
-                         std::vector<hmi::Instruction>& code, hmi::ExpressionResult& result,
-                         std::string& error) {
+ * adapter. Wrapping it here keeps every call site reading as the expression under test;
+ * the scope rides by value so the program's enum vocabulary can be adopted into it, the
+ * way the document compiler builds every real Env. */
+static bool compile_expr(const std::string& text, hmi::ExprTier tier, hmi::Env scope,
+                         hmi::Program& program, std::vector<hmi::Instruction>& code,
+                         hmi::ExpressionResult& result, std::string& error) {
     hmi::ProgramEmit emit(program);
+    scope.enums.clear();
+    for (const auto& type : program.types)
+        scope.enums.push_back(type.kind == hmi::TypeKind::Enum ? &type.variants : nullptr);
     return hmi::compile_expression(text, tier, scope, emit, code, result, error);
+}
+
+/* an Env whose pipeline register x carries the given type — what every expression-level
+ * test used to spell as scope.x_shape */
+static hmi::Env x_scope(hmi::Shape shape, uint16_t enum_type = 0,
+                        hmi::Shape elem = hmi::Shape::Unknown) {
+    hmi::Env env;
+    const hmi::Type type = shape == hmi::Shape::List || shape == hmi::Shape::Map
+                               ? hmi::Type::list_of(shape, elem)
+                               : hmi::Type(shape, enum_type);
+    env.bind_value("x", hmi::Place{type, hmi::OpCode::LoadX, 0, 0});
+    return env;
 }
 
 static std::atomic<uint64_t> allocation_count{0};
@@ -330,8 +346,7 @@ void test_compile_and_run() {
 void test_expression_rejection() {
     Program program;
     program.add_text("");
-    ExpressionScope scope;
-    scope.x_shape = Shape::Num;
+    Env scope = x_scope(Shape::Num);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
@@ -345,8 +360,7 @@ void test_expression_rejection() {
 void test_tiers() {
     Program program;
     program.add_text("");
-    ExpressionScope scope;
-    scope.x_shape = Shape::Num;
+    Env scope = x_scope(Shape::Num);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
@@ -399,7 +413,7 @@ void test_tiers() {
                               result, error));
     CHECK_MSG(error.find("'round'") != std::string::npos, error);
     error.clear();
-    scope.x_shape = Shape::Color;
+    scope = x_scope(Shape::Color);
     CHECK(!compile_expr("x.mix(#fff, 0.5)", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
@@ -412,13 +426,13 @@ void test_tiers() {
     /* the word operators are the symbol operators, and `.not()` still names the method */
     error.clear();
     code.clear();
-    scope.x_shape = Shape::Num;
+    scope = x_scope(Shape::Num);
     CHECK_MSG(compile_expr("x > 0 and not (x > 10) or x == 42", ExprTier::Wire,
                                  scope, program, code, result, error), error);
     CHECK(result.shape == Shape::Bool);
     error.clear();
     code.clear();
-    scope.x_shape = Shape::Bool;
+    scope = x_scope(Shape::Bool);
     CHECK_MSG(compile_expr("x.not()", ExprTier::Wire, scope, program, code, result,
                                  error), error);
     CHECK(result.shape == Shape::Bool);
@@ -426,7 +440,7 @@ void test_tiers() {
     /* plain is data, parens is work: a property refuses (), a method demands them */
     error.clear();
     code.clear();
-    scope.x_shape = Shape::Text;
+    scope = x_scope(Shape::Text);
     CHECK(!compile_expr("x.length()", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("property") != std::string::npos, error);
@@ -716,9 +730,7 @@ void test_enum_names() {
     /* the vocabulary is checked at compile: an unknown variant is a finding, and a
        dot literal with no enum beside it has nothing to resolve against */
     std::vector<Instruction> bad;
-    ExpressionScope escope;
-    escope.x_shape = Shape::Enum;
-    escope.x_enum = mode_type;
+    Env escope = x_scope(Shape::Enum, mode_type);
     ExpressionResult eresult;
     std::string eerror;
     CHECK(!compile_expr("x == .bogus", ExprTier::Display, escope, compiled.program,
@@ -726,8 +738,7 @@ void test_enum_names() {
     CHECK_MSG(eerror.find("no variant") != std::string::npos, eerror);
     bad.clear();
     eerror.clear();
-    escope.x_shape = Shape::Num;
-    escope.x_enum = 0;
+    escope = x_scope(Shape::Num);
     CHECK(!compile_expr("x == .fast", ExprTier::Display, escope, compiled.program,
                               bad, eresult, eerror));
     CHECK_MSG(eerror.find("vocabulary") != std::string::npos, eerror);
@@ -779,9 +790,7 @@ void test_enum_names() {
 
     /* `+` JOINS text in a display expression, rendering the other side as str() does;
        a wire value refuses it like any other formatting */
-    ExpressionScope scope;
-    scope.x_shape = Shape::Enum;
-    scope.x_enum = mode_type;
+    Env scope = x_scope(Shape::Enum, mode_type);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string expr_error;
@@ -1510,8 +1519,7 @@ void test_colors() {
 
     /* color arithmetic is display vocabulary, refused on the wire */
     {
-        ExpressionScope wire_scope;
-        wire_scope.x_shape = Shape::Color;
+        Env wire_scope = x_scope(Shape::Color);
         std::vector<Instruction> code;
         ExpressionResult result;
         std::string error;
@@ -1528,8 +1536,7 @@ void test_colors() {
     /* the chain type-checks end to end and yields a color */
     Program program;
     program.add_text("");
-    ExpressionScope scope;
-    scope.x_shape = Shape::Num;
+    Env scope = x_scope(Shape::Num);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
@@ -1616,8 +1623,7 @@ void test_tonemaps() {
 
     /* all of it is display vocabulary: refused where the value is for a machine */
     Program scratch;
-    ExpressionScope scope;
-    scope.x_shape = Shape::Num;
+    Env scope = x_scope(Shape::Num);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
@@ -1755,9 +1761,7 @@ void test_text_and_enums() {
     scratch.types.resize(2);
     scratch.types[1].kind = TypeKind::Enum;
     scratch.types[1].variants = {{"idle", 0}, {"running", 2}};
-    ExpressionScope scope;
-    scope.x_shape = Shape::Enum;
-    scope.x_enum = 1;
+    Env scope = x_scope(Shape::Enum, 1);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
@@ -1906,18 +1910,14 @@ void test_lists_and_maps() {
 
     /* compile-time element checking: sum over a text list names the problem */
     Program scratch;
-    ExpressionScope scope;
-    scope.x_shape = Shape::List;
-    scope.x_elem = Shape::Text;
+    Env scope = x_scope(Shape::List, 0, Shape::Text);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
 
     /* ---- the lambda's deliberate limits (spec 6.4) ---- */
     {
-        ExpressionScope nums;
-        nums.x_shape = Shape::List;
-        nums.x_elem = Shape::Num;
+        Env nums = x_scope(Shape::List, 0, Shape::Num);
         auto refused = [&](const char* text, const char* needle) {
             code.clear();
             error.clear();
@@ -1929,9 +1929,7 @@ void test_lists_and_maps() {
            over a list of numbers the inner `v.map` dies earlier, at "num has no method
            map", which proves nothing about nesting. */
         {
-            ExpressionScope nested;
-            nested.x_shape = Shape::List;
-            nested.x_elem = Shape::List;
+            Env nested = x_scope(Shape::List, 0, Shape::List);
             code.clear();
             error.clear();
             CHECK(!compile_expr("x.map(v => v.map(w => w))", ExprTier::Display, nested,
@@ -1984,7 +1982,7 @@ void test_lists_and_maps() {
     /* but reducing one on the wire tier is fine */
     error.clear();
     code.clear();
-    scope.x_elem = Shape::Num;
+    scope = x_scope(Shape::List, 0, Shape::Num);
     CHECK(compile_expr("x.max + 1", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK(result.shape == Shape::Num);
 }
@@ -2088,9 +2086,7 @@ void test_reduce() {
 
     /* ---- what the fold refuses (spec 6.4) ---- */
     Program scratch;
-    ExpressionScope nums;
-    nums.x_shape = Shape::List;
-    nums.x_elem = Shape::Num;
+    Env nums = x_scope(Shape::List, 0, Shape::Num);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
@@ -3549,8 +3545,7 @@ void test_map_reduce() {
     CHECK_EQ(state.values[named_cell(program, "looked_up")].data.num, 30.0);
 
     Program scratch;
-    ExpressionScope scope;
-    scope.x_shape = Shape::Map;
+    Env scope = x_scope(Shape::Map);
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;

@@ -57,7 +57,11 @@ add_library(hmi_core STATIC
   # vm/ and compile/ depend on IT (src/lang/emit.h is the whole seam).
   src/lang/value.cpp
   src/lang/lexer.cpp
-  src/lang/expression.cpp
+  src/lang/parser.cpp
+  src/lang/sema.cpp
+  src/lang/lower.cpp
+  src/lang/compile.cpp
+  src/lang/tables.cpp
   src/lang/template_expr.cpp
   src/vm/program.cpp
   src/vm/state.cpp

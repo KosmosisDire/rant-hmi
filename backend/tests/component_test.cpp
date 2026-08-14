@@ -1389,10 +1389,8 @@ void test_transitions() {
     /* THE SCALAR TIER REFUSES BY NAME, teaching where a transition lives: a flow, a
      * feed and the wire all read the true value, so easing has no meaning there */
     {
-        ExpressionScope escope;
-        Binding value_binding;
-        value_binding.shape = Shape::Num;
-        escope.names["value"] = value_binding;
+        Env escope;
+        escope.bind_value("value", Place{Type(Shape::Num), OpCode::Load, 0, 0});
         Program program;
         ProgramEmit emit(program);
         std::vector<Instruction> code;
