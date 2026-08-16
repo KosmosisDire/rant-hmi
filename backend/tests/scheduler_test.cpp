@@ -182,7 +182,7 @@ void tick(Scheduler& scheduler, uint32_t count) {
 void test_timing() {
     Document document = timed_document();
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -233,7 +233,7 @@ void test_timing() {
 void test_filters() {
     Document document = filter_document();
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK(compiled.ok);
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
@@ -261,7 +261,7 @@ void test_filters() {
 void test_first_of_rearm() {
     Document document = first_document();
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK(compiled.ok);
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
@@ -321,7 +321,7 @@ void test_scheduler_speaks() {
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -382,7 +382,7 @@ void test_held_nullary() {
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -461,7 +461,7 @@ void test_timer_reads() {
     CHECK_MSG(document.adopt(timer_read_root("blink.running.pick(#00ff00, #102030)"), error),
               error);
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -519,7 +519,7 @@ void test_timer_reads() {
         Document bad;
         std::string adopt_error;
         CHECK_MSG(bad.adopt(std::move(root), adopt_error), adopt_error);
-        CompileResult result = compile_document(bad, builtin_registry(), mesh);
+        CompileResult result = compile_document(bad, mesh);
         CHECK(!result.ok);
         bool found = false;
         for (const auto& diagnostic : result.program.diagnostics)
@@ -586,7 +586,7 @@ void test_flow_entity_read() {
     EntityDef bystander = suction;
     bystander.name = "bystander";
     FakeMesh mesh({suction, bystander});
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -650,7 +650,7 @@ void test_cadence_flows() {
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -720,7 +720,7 @@ void test_trend_samples() {
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -836,7 +836,7 @@ Document repeat_document() {
 void test_repeat_copy() {
     Document document = repeat_document();
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
@@ -927,7 +927,7 @@ void test_repeat_refused_without_an_event() {
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK(!compiled.ok);
     bool taught = false;
     for (const Diag& diag : compiled.program.diagnostics)

@@ -126,127 +126,6 @@ constexpr const char* kIsolatedHelp =
     "it works wherever it is placed. Declare a property here and let each instance's own "
     "value bring the variable or the mesh field in";
 
-/* ---- THE REGISTRY ROWS AS THIS COMPILER READS THEM ----
- *
- * The registry is a SERVED compile product and stays JSON on the wire; what this
- * compiler needs of a row is decoded ONCE at construction into these records, the same
- * boundary rule the document itself follows. The read-back exists at all only because
- * two compilers still meet at the served row — it dies at stage 5b, when compile
- * absorbs components.cpp and reads the definitions directly. */
-struct SlotSpec {
-    std::string name;
-    std::string shape;              /* the served word; var_shape reads it */
-    bool is_public = false;
-    Json initial;                   /* the declared default, a raw literal; null = none */
-    std::vector<std::string> variants;
-    std::string elem;
-    std::string leaf;
-};
-
-struct ParamSpec {
-    std::string name = "value";
-    std::string shape;
-};
-
-struct EventSpec {
-    std::string name;
-    std::vector<ParamSpec> params;
-};
-
-/* the template as trigger validation reads it: names, gestures, topology */
-struct ArmedNode {
-    std::string name;
-    std::string primitive;          /* "" = unarmed */
-    bool bubbles = true;
-    std::vector<ArmedNode> children;
-};
-
-struct ComponentSpec {
-    std::string name;
-    std::vector<SlotSpec> slots;
-    std::vector<EventSpec> events;
-    bool has_template = false;
-    ArmedNode tmpl;
-    std::vector<FlowDecl> behavior; /* document-form flows, read off the served row */
-};
-
-std::string spec_text(const Json& row, const char* key) {
-    auto it = row.find(key);
-    return it != row.end() && it->is_string() ? it->get<std::string>() : std::string();
-}
-
-ArmedNode decode_armed(const Json& node) {
-    ArmedNode out;
-    out.name = spec_text(node, "name");
-    auto interact = node.find("interact");
-    if (interact != node.end() && interact->is_object()) {
-        out.primitive = spec_text(*interact, "primitive");
-        auto bubbles = interact->find("bubbles");
-        if (bubbles != interact->end() && bubbles->is_boolean())
-            out.bubbles = bubbles->get<bool>();
-    }
-    auto children = node.find("children");
-    if (children != node.end() && children->is_array())
-        for (const Json& child : *children)
-            if (child.is_object()) out.children.push_back(decode_armed(child));
-    return out;
-}
-
-ComponentSpec decode_spec(const Json& row) {
-    ComponentSpec out;
-    out.name = spec_text(row, "name");
-    auto slots = row.find("slots");
-    if (slots != row.end() && slots->is_array())
-        for (const Json& slot : *slots) {
-            if (!slot.is_object()) continue;
-            SlotSpec spec;
-            spec.name = spec_text(slot, "name");
-            spec.shape = spec_text(slot, "shape");
-            auto is_public = slot.find("public");
-            spec.is_public = is_public != slot.end() && is_public->is_boolean() &&
-                             is_public->get<bool>();
-            auto initial = slot.find("default");
-            if (initial != slot.end()) spec.initial = *initial;
-            auto variants = slot.find("variants");
-            if (variants != slot.end() && variants->is_array())
-                for (const Json& variant : *variants)
-                    if (variant.is_string())
-                        spec.variants.push_back(variant.get<std::string>());
-            spec.elem = spec_text(slot, "elem");
-            spec.leaf = spec_text(slot, "leaf");
-            out.slots.push_back(std::move(spec));
-        }
-    auto events = row.find("events");
-    if (events != row.end() && events->is_array())
-        for (const Json& event : *events) {
-            if (!event.is_object()) continue;
-            EventSpec spec;
-            spec.name = spec_text(event, "name");
-            auto params = event.find("params");
-            if (params != event.end() && params->is_array())
-                for (const Json& param : *params) {
-                    ParamSpec row_param;
-                    if (param.is_object()) {
-                        const std::string name = spec_text(param, "name");
-                        if (!name.empty()) row_param.name = name;
-                        row_param.shape = spec_text(param, "shape");
-                    }
-                    spec.params.push_back(std::move(row_param));
-                }
-            out.events.push_back(std::move(spec));
-        }
-    auto tmpl = row.find("template");
-    if (tmpl != row.end() && tmpl->is_object()) {
-        out.has_template = true;
-        out.tmpl = decode_armed(*tmpl);
-    }
-    auto behavior = row.find("behavior");
-    if (behavior != row.end() && behavior->is_array())
-        for (const Json& flow : *behavior)
-            if (flow.is_object()) out.behavior.push_back(decode_flow(flow));
-    return out;
-}
-
 /* ONE RECORD PER ELEMENT ON A PAGE — every node in the tree, not only the ones naming a
  * component. What an element declares (locals, timers, flows) it declares wherever it
  * sits, and `parent` is what makes that a SCOPE: names resolve up the chain to the page
@@ -304,11 +183,11 @@ bool gesture_from(const std::string& event, const std::string& primitive) {
 
 class Compiler {
   public:
-    Compiler(const Document& document, const Json& registry, const MeshPort& mesh,
+    Compiler(const Document& document, const MeshPort& mesh,
              const std::set<std::string>* attr_reads = nullptr,
              const std::set<std::string>* per_copy_slots = nullptr)
-        : doc_(decode_document(document)), mesh_(mesh), attr_reads_(attr_reads),
-          per_copy_slots_(per_copy_slots) {
+        : doc_(decode_document(document)), specs_(derive_specs(doc_.components)),
+          mesh_(mesh), attr_reads_(attr_reads), per_copy_slots_(per_copy_slots) {
         program_.document_version = doc_.version;
         program_.add_text("");
         /* The theme tokens (spec 2.10), name -> DARK value: the backend has no view and
@@ -316,14 +195,6 @@ class Compiler {
          * a per-view rendering the frontend applies. */
         for (const TokenDecl& token : doc_.tokens)
             if (!token.name.empty()) tokens_[token.name] = token.dark;
-        /* the registry rows this compile will consult, decoded once; specs_ never
-         * grows again, so a pointer into it holds for the whole compile */
-        if (registry.is_object()) {
-            auto components = registry.find("components");
-            if (components != registry.end() && components->is_array())
-                for (const Json& row : *components)
-                    if (row.is_object()) specs_.push_back(decode_spec(row));
-        }
     }
 
     CompileResult run() {
@@ -1679,7 +1550,6 @@ class Compiler {
     void build_armed_elements() {
         for (ElementInfo& element : elements_) {
             if (element.type) {
-                if (!element.type->has_template) continue;
                 collect_armed(element.type->tmpl, "", element);
                 continue;
             }
@@ -1756,7 +1626,7 @@ class Compiler {
         }
         (void)in_behavior;
         if (element.type)
-            for (const EventSpec& row : element.type->events) {
+            for (const EventDecl& row : element.type->events) {
                 if (row.name != event) continue;
                 if (row.params.size() > 1) {
                     diag(flow, "event", "'" + event + "' declares " +
@@ -2936,9 +2806,9 @@ class Compiler {
             return false;
         }
         /* a reference into specs_, which never grows after construction */
-        const EventSpec* row = nullptr;
+        const EventDecl* row = nullptr;
         if (element.type)
-            for (const EventSpec& r : element.type->events)
+            for (const EventDecl& r : element.type->events)
                 if (r.name == name) { row = &r; break; }
         if (!row) {
             diag(step_id, "raise_event",
@@ -3312,8 +3182,10 @@ class Compiler {
     }
 
     const Doc doc_;
-    /* the registry rows this compile consults, decoded once at construction */
-    std::vector<ComponentSpec> specs_;
+    /* every component this compile may place: built-ins shadowed and extended by the
+     * document's own, derived by the registry's own walk (compile/components.h) —
+     * never read back off the served rows. Never grows, so pointers into it hold. */
+    const std::vector<ComponentSpec> specs_;
     const MeshPort& mesh_;
     Program program_;
     bool has_errors_ = false;
@@ -3347,11 +3219,10 @@ Shape shape_from_name(const std::string& name) {
     return Shape::Unknown;
 }
 
-CompileResult compile_document(const Document& document, const Json& component_registry,
-                               const MeshPort& mesh,
+CompileResult compile_document(const Document& document, const MeshPort& mesh,
                                const std::set<std::string>* attr_reads,
                                const std::set<std::string>* per_copy_slots) {
-    return Compiler(document, component_registry, mesh, attr_reads, per_copy_slots).run();
+    return Compiler(document, mesh, attr_reads, per_copy_slots).run();
 }
 
 } // namespace hmi

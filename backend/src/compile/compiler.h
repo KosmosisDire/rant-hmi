@@ -22,8 +22,7 @@ struct CompileResult {
  * slots the display tier took over (THE PLACEMENT RULE, lang/template_expr.h). No standing
  * program is built for one, and reading it from a flow is refused by name — the backend
  * holds one cell where the view draws N copies, so there is no single value to read. */
-CompileResult compile_document(const Document& document, const Json& component_registry,
-                               const MeshPort& mesh,
+CompileResult compile_document(const Document& document, const MeshPort& mesh,
                                const std::set<std::string>* attr_reads = nullptr,
                                const std::set<std::string>* per_copy_slots = nullptr);
 

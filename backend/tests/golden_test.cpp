@@ -58,14 +58,13 @@ std::string dump_document(const std::string& doc_path, std::string& err) {
     if (!document.adopt(std::move(root), err)) return "";
 
     std::vector<Diag> diags;
-    Json registry = derive_registry(document, diags);
+    derive_registry(document, diags);   /* the serving product still pins its findings */
     FakeMesh mesh;
     std::set<std::string> attr_reads;
     std::set<std::string> per_copy;
     Json node_attrs = compile_page_attrs(document, diags, &mesh.reflection(), &attr_reads,
-                                         &registry, &per_copy);
-    CompileResult compiled = compile_document(document, registry, mesh, &attr_reads,
-                                              &per_copy);
+                                         &per_copy);
+    CompileResult compiled = compile_document(document, mesh, &attr_reads, &per_copy);
 
     std::ostringstream out;
     out << "== diagnostics ==\n";

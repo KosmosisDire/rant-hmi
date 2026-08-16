@@ -203,11 +203,25 @@ struct TokenDecl {
     std::string dark;              /* the canonical runtime resolution */
 };
 
+/* One declared event's SIGNATURE: {name, params: [{name?, shape?}]}. A params entry
+ * that is not an object still counts one (default-named, unshaped) parameter — the
+ * arity is authored structure. */
+struct ParamDecl {
+    std::string name = "value";
+    std::string shape;
+};
+
+struct EventDecl {
+    std::string name;
+    std::vector<ParamDecl> params;
+};
+
 /* A component definition — a document row or a built-in, one shape. The record IS its
- * root node (`root` carries the attrs, interact, locals and children); `events` and
- * `behavior` stay JSON because they are served VERBATIM in the registry row, and the
- * document compiler reads them back off that row (the seam dies at stage 5b, when the
- * registry becomes a pure serving product). */
+ * root node (`root` carries the attrs, interact, locals and children). `events` and
+ * `behavior` keep their raw JSON because the registry row serves them VERBATIM; the
+ * decoded twins beside them are the same rows as the compilers read them — the
+ * served-row read-back died at stage 5b, when the registry became a pure serving
+ * product. */
 struct ComponentDecl {
     uint64_t id = 0;
     std::string name;
@@ -215,6 +229,8 @@ struct ComponentDecl {
     double design_h = 120.0;
     Json events = Json::array();
     Json behavior = Json::array();
+    std::vector<EventDecl> event_decls;
+    std::vector<FlowDecl> behavior_decls;
     NodeDecl root;
 };
 

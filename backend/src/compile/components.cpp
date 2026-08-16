@@ -334,6 +334,20 @@ struct SweepRow {
     uint64_t var_id = 0;
 };
 
+/* what one pass over the node tree learns: the served slot table and its typed twin
+ * (one walk, two products — the wire row and the spec the document compiler reads),
+ * every address (shared with every scope, so a dotted read resolves against the whole
+ * component) and what a bare name means inside each node */
+struct Walk {
+    Json slots = Json::array();
+    std::vector<SlotSpec> specs;
+    std::shared_ptr<std::set<std::string>> addresses =
+        std::make_shared<std::set<std::string>>();
+    std::map<std::string, TemplateScope> scopes;
+    /* declared variable sweeps, compiled after the scopes exist (pass two) */
+    std::vector<SweepRow> sweeps;
+};
+
 /* ---- THE TYPE A COMPONENT'S VARIABLE MAY HAVE ----
  *
  * A component's variable is storage PER PLACEMENT, addressed by the instance and the
@@ -380,11 +394,26 @@ std::string served_shape(const VarDecl& var) {
  *
  * A node with no path (an unnamed one) has nowhere to hang an address, so declaring there
  * is refused rather than quietly folded into the parent's namespace. */
+/* the typed slot row the document compiler reads, written from the same declaration
+ * the served row is — the two cannot disagree because neither is read back */
+SlotSpec spec_row(const VarDecl& var, const std::string& address) {
+    SlotSpec out;
+    out.name = address;
+    out.shape = served_shape(var);
+    out.is_public = var.is_public;
+    out.initial = var.init;
+    out.variants = var.variants;
+    if (out.shape == "list" || out.shape == "map") {
+        out.elem = var.elem;
+        out.leaf = var.leaf;
+    }
+    return out;
+}
+
 std::vector<std::string> collect_vars(const std::vector<VarDecl>& rows,
                                       const std::string& path, bool addressable,
-                                      const TemplateScope& outer, Json& slots,
-                                      std::vector<SweepRow>& sweeps, Sink& sink,
-                                      bool quiet = false) {
+                                      const TemplateScope& outer, Walk& walk,
+                                      Sink& sink, bool quiet = false) {
     std::vector<std::string> names;
     std::set<std::string> here;
     for (const VarDecl& var : rows) {
@@ -462,26 +491,16 @@ std::vector<std::string> collect_vars(const std::vector<VarDecl>& rows,
                             "that draws it (its transition button)",
                             "smooth");
             else
-                sweeps.push_back(SweepRow{path.empty() ? name : path + "." + name, path,
-                                          var.smooth, var.profile, var.id});
+                walk.sweeps.push_back(SweepRow{path.empty() ? name : path + "." + name,
+                                               path, var.smooth, var.profile, var.id});
         }
         names.push_back(name);
-        slots.push_back(var_row(var, path.empty() ? name : path + "." + name));
+        const std::string address = path.empty() ? name : path + "." + name;
+        walk.slots.push_back(var_row(var, address));
+        walk.specs.push_back(spec_row(var, address));
     }
     return names;
 }
-
-/* what one pass over the node tree learns: the served slot table, every address in it
- * (shared with every scope, so a dotted read resolves against the whole component) and
- * what a bare name means inside each node */
-struct Walk {
-    Json slots = Json::array();
-    std::shared_ptr<std::set<std::string>> addresses =
-        std::make_shared<std::set<std::string>>();
-    std::map<std::string, TemplateScope> scopes;
-    /* declared variable sweeps, compiled after the scopes exist (pass two) */
-    std::vector<SweepRow> sweeps;
-};
 
 /* EVERY addressed node can be switched off: the variable is synthesized where the node
  * does not declare it, so "show the scale" is the scale's own `shown` rather than a
@@ -497,8 +516,7 @@ bool declares_shown(const std::vector<VarDecl>& rows) {
 void collect_tree(const NodeDecl& node, const std::string& path, bool addressable,
                   const TemplateScope& outer, Walk& walk, Sink& sink, bool quiet = false) {
     std::vector<std::string> names =
-        collect_vars(node.locals, path, addressable, outer, walk.slots, walk.sweeps, sink,
-                     quiet);
+        collect_vars(node.locals, path, addressable, outer, walk, sink, quiet);
     if (addressable && !path.empty() && !declares_shown(node.locals)) {
         names.push_back("shown");
         walk.slots.push_back(Json{{"name", path + ".shown"},
@@ -508,6 +526,12 @@ void collect_tree(const NodeDecl& node, const std::string& path, bool addressabl
                                   /* the switch is the instance's to throw, so the one
                                      variable nobody declared is public like the rest */
                                   {"public", true}});
+        SlotSpec shown;
+        shown.name = path + ".shown";
+        shown.shape = "bool";
+        shown.is_public = true;
+        shown.initial = Json(true);
+        walk.specs.push_back(std::move(shown));
     }
     for (const std::string& name : names)
         walk.addresses->insert(path.empty() ? name : path + "." + name);
@@ -597,6 +621,13 @@ Json compile_common(const NodeDecl& node, const std::string& kind,
     return out;
 }
 
+/* the primitive an interact declaration ARMS: the serving default where none is
+ * spelled, the authored word otherwise — one fact, read by the served template and
+ * the armed spec alike */
+std::string armed_primitive(const InteractDecl& interact) {
+    return interact.primitive_text ? interact.primitive : "press";
+}
+
 /* ONE GESTURE DECLARATION, compiled: the primitive, its params as view programs over the
  * node's own scope, and the propagation topology. Null where the node carries none.
  *
@@ -607,7 +638,7 @@ Json compile_interact(const NodeDecl& node, const TemplateScope& scope, uint64_t
                       Sink& sink) {
     const InteractDecl& interact = node.interact;
     if (!interact.present) return Json();
-    Json wired{{"primitive", interact.primitive_text ? interact.primitive : "press"},
+    Json wired{{"primitive", armed_primitive(interact)},
                {"params", compile_attrs(interact.params, scope, node_id, "interact.",
                                         sink)}};
     /* the propagation topology is declared structure: an element whose gestures must
@@ -781,6 +812,41 @@ Json compile_component(const ComponentDecl& component, Sink& sink) {
                 {"behavior", component.behavior}};
 }
 
+/* the armed-template row trigger validation reads, straight off the declaration: the
+ * same names the served template carries (raw, never address-checked), the serving
+ * default for an interact that spells no primitive, and children only where a frame
+ * can hold them — a leaf kind holds neither children nor a gesture */
+ArmedNode armed_node(const NodeDecl& node) {
+    ArmedNode out;
+    out.name = node.name;
+    if (node.interact.present) {
+        out.primitive = armed_primitive(node.interact);
+        out.bubbles = node.interact.bubbles;
+    }
+    if (node.kind == "frame")
+        for (const NodeDecl& child : node.children)
+            out.children.push_back(armed_node(child));
+    return out;
+}
+
+/* one component's spec: the SAME walk that writes the served row, minus the compiled
+ * programs — and silent, because derive() already pinned every component finding */
+ComponentSpec spec_of(const ComponentDecl& component) {
+    ComponentSpec out;
+    out.name = component.name;
+    Walk walk;
+    TemplateScope root;
+    root.addresses = walk.addresses;
+    root.unknown_help = kIsolatedHelp;
+    Sink quiet;
+    collect_tree(component.root, "", true, root, walk, quiet);
+    out.slots = std::move(walk.specs);
+    out.events = component.event_decls;
+    out.tmpl = armed_node(component.root);
+    out.behavior = component.behavior_decls;
+    return out;
+}
+
 Json derive(const std::vector<ComponentDecl>& doc_components, std::vector<Diag>* diags) {
     Json types = Json::array();
     std::vector<std::string> names;
@@ -849,19 +915,16 @@ Json derive(const std::vector<ComponentDecl>& doc_components, std::vector<Diag>*
  * is per copy", which is a fact about the text, and the wire compiler has to skip it either
  * way — otherwise one mistake would be reported twice, once by each tier, and the second
  * report would name `repeat` as an unknown word. */
-Json compile_per_copy_slots(const NodeDecl& node, const Json* registry,
+Json compile_per_copy_slots(const NodeDecl& node,
+                            const std::vector<ComponentSpec>* specs,
                             const TemplateScope& scope, uint64_t id, Sink& sink,
                             std::set<std::string>* per_copy) {
     Json out = Json::object();
-    if (!registry || !per_copy) return out;
+    if (!specs || !per_copy) return out;
     if (node.type.empty()) return out;
-    /* the registry stays JSON here: it is the SERVED compile product, and this walk of
-       it dies at stage 5b when the two compilers become one */
-    auto components = registry->find("components");
-    if (components == registry->end() || !components->is_array()) return out;
-    const Json* component = nullptr;
-    for (const Json& row : *components)
-        if (row.is_object() && row.value("name", "") == node.type) {
+    const ComponentSpec* component = nullptr;
+    for (const ComponentSpec& row : *specs)
+        if (row.name == node.type) {
             component = &row;
             break;
         }
@@ -869,19 +932,18 @@ Json compile_per_copy_slots(const NodeDecl& node, const Json* registry,
     /* THE COMPONENT'S OWN SLOT LIST is what is walked, not the authored keys, because
        that is the list the wire compiler walks: the two must consider the same slots or
        one of them would build a program the other did not skip. */
-    for (const Json& slot : component->value("slots", Json::array())) {
-        const std::string name = slot.value("name", "");
-        const Json* authored = authored_slot(node.slots, name);
+    for (const SlotSpec& slot : component->slots) {
+        const Json* authored = authored_slot(node.slots, slot.name);
         if (!authored || !authored->is_string()) continue;
         const std::string text = authored->get<std::string>();
         if (!per_copy_expression(text)) continue;
-        per_copy->insert(std::to_string(id) + "\n" + name);
+        per_copy->insert(std::to_string(id) + "\n" + slot.name);
         TemplateExprResult compiled = compile_template_expr(text, scope);
         if (!compiled.ok) {
-            sink.report(id, "template_expr", compiled.error, name);
+            sink.report(id, "template_expr", compiled.error, slot.name);
             continue;
         }
-        out[name] = std::move(compiled.program);
+        out[slot.name] = std::move(compiled.program);
     }
     return out;
 }
@@ -895,6 +957,29 @@ Json derive_registry(const Document& document, std::vector<Diag>& diags) {
 const Json& builtin_registry() {
     static const Json built = derive({}, nullptr);
     return built;
+}
+
+std::vector<ComponentSpec> derive_specs(const std::vector<ComponentDecl>& doc_components) {
+    std::vector<ComponentSpec> out;
+    for (const Json& record : builtin_components())
+        out.push_back(spec_of(decode_component(record)));
+    /* the same skip and shadow rules derive() serves by: an unnamed or duplicate
+     * document component contributes nothing, and a built-in's namesake replaces it
+     * IN PLACE so the type keeps its position */
+    std::set<std::string> seen;
+    for (const ComponentDecl& component : doc_components) {
+        if (component.name.empty() || !seen.insert(component.name).second) continue;
+        ComponentSpec spec = spec_of(component);
+        bool shadowed = false;
+        for (ComponentSpec& row : out) {
+            if (row.name != component.name) continue;
+            row = std::move(spec);
+            shadowed = true;
+            break;
+        }
+        if (!shadowed) out.push_back(std::move(spec));
+    }
+    return out;
 }
 
 const Json* authored_slot(const Json& slots, const std::string& address) {
@@ -916,12 +1001,16 @@ const Json* authored_slot(const Json& slots, const std::string& address) {
 
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh,
-                        std::set<std::string>* attr_reads, const Json* registry,
+                        std::set<std::string>* attr_reads,
                         std::set<std::string>* per_copy) {
     const Doc doc = decode_document(document);
     Json out = Json::object();
     Sink sink;
     sink.diags = &diags;
+    /* the specs the placement rule consults, derived only where a per-copy set is
+       collecting at all — a bare compile treats every slot as a standing program */
+    std::vector<ComponentSpec> specs;
+    if (per_copy) specs = derive_specs(doc.components);
 
     /* A PAGE NODE READS THE WHOLE PAGE UNIVERSE: the document's globals, the locals of
      * every element enclosing it and its own, and the mesh. Not because the display tier
@@ -955,7 +1044,8 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
         /* THE PER-COPY PROPERTIES of a placement, if any: compiled over this element's
            own scope, exactly as its attrs were, because a slot's value is authored where
            the instance stands and reads what anything else there reads */
-        Json slots = compile_per_copy_slots(node, registry, scope, node.id, sink, per_copy);
+        Json slots = compile_per_copy_slots(node, per_copy ? &specs : nullptr, scope,
+                                            node.id, sink, per_copy);
         if (!slots.empty()) row["slots"] = std::move(slots);
         out[std::to_string(node.id)] = std::move(row);
         for (const NodeDecl& child : node.children) walk(child, scope);

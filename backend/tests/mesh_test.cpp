@@ -467,7 +467,7 @@ int main() {
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
 
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh);
+    CompileResult compiled = compile_document(document, mesh);
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.grade == DiagGrade::Error)
             std::printf("compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
@@ -710,7 +710,7 @@ int main() {
         CHECK_MSG(retyped, "the re-typed gauge never reflected");
 
         /* the app's hot-swap: recompile against the new reflection, re-apply */
-        CompileResult swapped = compile_document(document, builtin_registry(), mesh);
+        CompileResult swapped = compile_document(document, mesh);
         for (const Diag& diag : swapped.program.diagnostics)
             if (diag.grade == DiagGrade::Error)
                 std::printf("recompile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
@@ -849,7 +849,7 @@ int main() {
 
         std::unique_ptr<Scheduler> cur;
         auto recompile = [&] {
-            CompileResult result = compile_document(cycle_doc, builtin_registry(), mesh);
+            CompileResult result = compile_document(cycle_doc, mesh);
             auto next = std::make_unique<Scheduler>(std::move(result.program), mesh);
             if (cur)
                 next->state() =

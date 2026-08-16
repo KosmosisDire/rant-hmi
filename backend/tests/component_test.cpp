@@ -653,7 +653,7 @@ void test_doc_components() {
     /* the document compiler consumes the derived registry like any other: the Meter
      * instance gets its slot cell, and the shadowed Toggle keeps its default behavior */
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, registry, mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -760,7 +760,7 @@ void test_part_properties() {
     /* an instance's nested value reaches the compiled cell; an unauthored one keeps
        the type's default */
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, registry, mesh);
+    CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
@@ -1059,7 +1059,7 @@ void test_page_universe() {
        marks the entity as read so the mesh consumes it — the attr's picture and a
        flow's guard fill from ONE mirror */
     FakeMesh mesh(mesh_defs);
-    CompileResult compiled = compile_document(document, builtin_registry(), mesh, &reads);
+    CompileResult compiled = compile_document(document, mesh, &reads);
     auto entity_named = [&](const char* name) -> const EntityDef* {
         for (const EntityDef& def : compiled.program.entities)
             if (def.name == name) return &def;
@@ -1084,7 +1084,7 @@ void test_page_universe() {
     }
     /* nothing stamped without the reads: a document whose attrs name no mesh leaves the
        consume list exactly where the flows put it */
-    CompileResult bare = compile_document(document, builtin_registry(), mesh);
+    CompileResult bare = compile_document(document, mesh);
     for (const EntityDef& def : bare.program.entities) CHECK(def.attr_reads.empty());
 
     /* THE KEY IS ONE SPELLING, shared by the compiler that emits the load and the live
@@ -1144,8 +1144,7 @@ void test_per_copy_slots() {
     std::vector<Diag> diags;
     std::set<std::string> reads;
     std::set<std::string> per_copy;
-    Json rows = compile_page_attrs(document, diags, nullptr, &reads, &builtin_registry(),
-                                   &per_copy);
+    Json rows = compile_page_attrs(document, diags, nullptr, &reads, &per_copy);
 
     /* THE PROGRAM IS SERVED WITH THE INSTANCE, beside its attrs: same row, same
        interpreter, and the copy it is evaluated for is the one the renderer is drawing */
@@ -1172,8 +1171,7 @@ void test_per_copy_slots() {
     CHECK_MSG(bad_doc.adopt(std::move(broken), bad_error), bad_error);
     std::vector<Diag> bad_diags;
     std::set<std::string> bad_per_copy;
-    compile_page_attrs(bad_doc, bad_diags, nullptr, nullptr, &builtin_registry(),
-                       &bad_per_copy);
+    compile_page_attrs(bad_doc, bad_diags, nullptr, nullptr, &bad_per_copy);
     size_t named = 0;
     for (const Diag& d : bad_diags)
         if (d.node_id == 120 && d.where == "value") ++named;
@@ -1186,7 +1184,7 @@ void test_per_copy_slots() {
        ordinary instance's — so a per-copy slot costs the backend nothing at all. */
     FakeMesh mesh;
     CompileResult compiled =
-        compile_document(document, builtin_registry(), mesh, &reads, &per_copy);
+        compile_document(document, mesh, &reads, &per_copy);
     uint64_t standing_for = 0;
     size_t standing = 0;
     for (const SlotProgram& sp : compiled.program.slot_programs)

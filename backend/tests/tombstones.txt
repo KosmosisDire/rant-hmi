@@ -71,3 +71,12 @@ ProgramEmit
 alloc_text_slot
 reserve_elems
 SubProgram
+
+# stage 5b, the two-compiler seam: the registry is a pure SERVING product now — the
+# document compiler reads typed ComponentSpecs derived by the registry's own walk
+# (compile/components.h derive_specs), never the served JSON rows. The read-back
+# decoder, its string helper, and its armed-template walk over served nodes.
+decode_spec
+spec_text
+decode_armed
+component_registry

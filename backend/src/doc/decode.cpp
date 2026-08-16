@@ -271,9 +271,32 @@ ComponentDecl decode_component(const Json& record) {
     out.design_w = number_or(record, "design_w", 240.0);
     out.design_h = number_or(record, "design_h", 120.0);
     auto events = record.find("events");
-    if (events != record.end() && events->is_array()) out.events = *events;
+    if (events != record.end() && events->is_array()) {
+        out.events = *events;
+        for (const Json& event : *events) {
+            if (!event.is_object()) continue;
+            EventDecl decl;
+            decl.name = text_or(event, "name", "");
+            auto params = event.find("params");
+            if (params != event.end() && params->is_array())
+                for (const Json& param : *params) {
+                    ParamDecl row;
+                    if (param.is_object()) {
+                        const std::string name = text_or(param, "name", "");
+                        if (!name.empty()) row.name = name;
+                        row.shape = text_or(param, "shape", "");
+                    }
+                    decl.params.push_back(std::move(row));
+                }
+            out.event_decls.push_back(std::move(decl));
+        }
+    }
     auto behavior = record.find("behavior");
-    if (behavior != record.end() && behavior->is_array()) out.behavior = *behavior;
+    if (behavior != record.end() && behavior->is_array()) {
+        out.behavior = *behavior;
+        for (const Json& flow : *behavior)
+            if (flow.is_object()) out.behavior_decls.push_back(decode_flow(flow));
+    }
     /* the component record IS its root node; what it draws is a frame by definition */
     out.root = decode_node(record);
     out.root.kind = "frame";
