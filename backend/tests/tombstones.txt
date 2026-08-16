@@ -61,3 +61,13 @@ array_or_empty
 side_kind
 SideKind
 slot_shape
+
+# stage 5b, the Module: a compile RETURNS a value (lang/module.h) — the callback
+# seam between lang/ and the program died. The virtual sink interface, its Program
+# adapter, the adapter's two allocation verbs (now the Module's own counters), and
+# the lambda-body record that dissolved into the Module's nested Procedures.
+EmitSink
+ProgramEmit
+alloc_text_slot
+reserve_elems
+SubProgram

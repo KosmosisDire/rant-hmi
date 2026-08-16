@@ -55,8 +55,10 @@ add_library(hmi_core STATIC
   src/doc/store.cpp
   # lang/: the authored language — lexer, scalar compiler, template-expression
   # compiler, and the value/IR form both tiers lower to. Depends on nothing above it;
-  # vm/ and compile/ depend on IT (src/lang/emit.h is the whole seam).
+  # vm/ and compile/ depend on IT (lang/module.h — the Module a compile fills — is
+  # the whole seam).
   src/lang/value.cpp
+  src/lang/module.cpp
   src/lang/lexer.cpp
   src/lang/parser.cpp
   src/lang/sema.cpp

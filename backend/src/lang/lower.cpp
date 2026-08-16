@@ -27,9 +27,9 @@ const char* op_word(TokenKind op) {
 
 class Lower {
   public:
-    Lower(const Ast& ast, const std::vector<Note>& notes, EmitSink& sink,
+    Lower(const Ast& ast, const std::vector<Note>& notes, Module& module,
           std::vector<Instruction>& code)
-        : ast_(ast), notes_(notes), sink_(sink), code_(&code) {}
+        : ast_(ast), notes_(notes), module_(module), code_(&code) {}
 
     uint32_t run() {
         walk(ast_.root);
@@ -53,7 +53,7 @@ class Lower {
         ins.a = a;
         ins.b = b;
         ins.small = small;
-        ins.c = sink_.add_fault_site(
+        ins.c = module_.add_fault_site(
             "expr_fault", "'" + site_what_ + "' at column " +
                               std::to_string(site_at_ + 1) + " could not run");
         code_->push_back(ins);
@@ -79,7 +79,7 @@ class Lower {
         switch (expr.kind) {
             case ExprKind::Number:
                 site("a value", expr.at);
-                emit(OpCode::Const, sink_.add_constant(Value::number(expr.number)));
+                emit(OpCode::Const, module_.add_constant(Value::number(expr.number)));
                 pushed();
                 return;
             case ExprKind::Text:
@@ -88,34 +88,34 @@ class Lower {
                    boundary (compile.cpp): the note says it is the variant itself */
                 if (note(index).op == Note::Op::VariantConst)
                     emit(OpCode::Const,
-                         sink_.add_constant(Value::enumeration(
+                         module_.add_constant(Value::enumeration(
                              note(index).variant, note(index).variant_type)));
                 else
                     emit(OpCode::Const,
-                         sink_.add_constant(Value::text(sink_.add_text(expr.text))));
+                         module_.add_constant(Value::text(module_.add_text(expr.text))));
                 pushed();
                 return;
             case ExprKind::BoolLit:
                 site("a value", expr.at);
                 emit(OpCode::Const,
-                     sink_.add_constant(Value::boolean(expr.number != 0)));
+                     module_.add_constant(Value::boolean(expr.number != 0)));
                 pushed();
                 return;
             case ExprKind::NilLit:
                 site("a value", expr.at);
-                emit(OpCode::Const, sink_.add_constant(Value::nil()));
+                emit(OpCode::Const, module_.add_constant(Value::nil()));
                 pushed();
                 return;
             case ExprKind::ColorLit:
                 site("a value", expr.at);
-                emit(OpCode::Const, sink_.add_constant(Value::color(note(index).rgba)));
+                emit(OpCode::Const, module_.add_constant(Value::color(note(index).rgba)));
                 pushed();
                 return;
             case ExprKind::Variant:
                 site("a value", expr.at);
                 emit(OpCode::Const,
-                     sink_.add_constant(Value::enumeration(note(index).variant,
-                                                           note(index).variant_type)));
+                     module_.add_constant(Value::enumeration(note(index).variant,
+                                                             note(index).variant_type)));
                 pushed();
                 return;
             case ExprKind::ListLit: {
@@ -124,7 +124,7 @@ class Lower {
                 /* the literal's elements land in the run's scratch pool, so the site
                    reserves them like every other list-producing site does */
                 site("[]", expr.at);
-                sink_.reserve_elems(count, 0);
+                module_.elem_values += count;
                 emit(OpCode::MakeList, 0, count);
                 if (count) depth_ -= count - 1;   /* the elements collapse into one */
                 else pushed();
@@ -154,8 +154,8 @@ class Lower {
                 const uint32_t argc = static_cast<uint32_t>(expr.args.size());
                 site(expr.text, expr.at);
                 const uint32_t text_site =
-                    spec.result == Shape::Text ? sink_.alloc_text_slot() : 0;
-                if (spec.result == Shape::List) sink_.reserve_elems(kVarrCeiling, 0);
+                    spec.result == Shape::Text ? module_.text_slots++ : 0;
+                if (spec.result == Shape::List) module_.elem_values += kVarrCeiling;
                 emit(OpCode::Call, text_site, argc, static_cast<uint16_t>(spec.builtin));
                 if (argc) depth_ -= argc - 1;
                 return;
@@ -182,7 +182,7 @@ class Lower {
         /* a TEXT clock field (time.text / time.date) renders into a fixed slot of
            its own, reserved per read site like any text-producing call */
         if (place.load == OpCode::ClockRead && place.type.kind == Shape::Text)
-            emit(OpCode::ClockRead, place.a, sink_.alloc_text_slot());
+            emit(OpCode::ClockRead, place.a, module_.text_slots++);
         else
             emit(place.load, place.a, place.b);
         pushed();
@@ -212,10 +212,10 @@ class Lower {
             const uint32_t count = static_cast<uint32_t>(mark.vocabulary->size());
             for (const auto& row : *mark.vocabulary) {
                 emit(OpCode::Const,
-                     sink_.add_constant(Value::text(sink_.add_text(row.first))));
+                     module_.add_constant(Value::text(module_.add_text(row.first))));
                 pushed();
             }
-            sink_.reserve_elems(count, 0);
+            module_.elem_values += count;
             emit(OpCode::MakeList, 0, count);
             if (count) depth_ -= count - 1;   /* the elements collapse into one */
             else pushed();
@@ -225,7 +225,7 @@ class Lower {
         walk(expr.a);
         if (mark.op == Note::Op::IsVariant) {
             site("is", expr.at);
-            emit(OpCode::Const, sink_.add_constant(Value::enumeration(
+            emit(OpCode::Const, module_.add_constant(Value::enumeration(
                                     mark.variant, mark.variant_type)));
             pushed();
             emit(OpCode::Eq);
@@ -244,11 +244,11 @@ class Lower {
          * runtime text costs no allocation and no cursor; a list-producing site
          * reserves its worst case in the element pool */
         const uint32_t text_site =
-            spec.result == Shape::Text ? sink_.alloc_text_slot() : 0;
+            spec.result == Shape::Text ? module_.text_slots++ : 0;
         if (spec.result == Shape::List) {
             const bool split = spec.method == MethodId::TextSplit;
-            sink_.reserve_elems(split ? kSplitCeiling : kVarrCeiling,
-                                split ? kSplitCeiling : 0);
+            module_.elem_values += split ? kSplitCeiling : kVarrCeiling;
+            if (split) module_.elem_texts += kSplitCeiling;
         }
         emit(OpCode::Method, text_site, argc, static_cast<uint16_t>(spec.method));
         if (argc) depth_ -= argc;
@@ -282,7 +282,7 @@ class Lower {
            Iterate takes over. */
         if (mark.mode == IterateMode::Reduce) walk(expr.args[1]);
 
-        const uint32_t sub = sink_.add_sub(std::move(body), body_stack);
+        const uint32_t sub = module_.add_sub(std::move(body), body_stack);
         /* A TEXT-producing body writes into the one slot its site was assigned at
            compile, so a result kept past the next iteration would alias the last
            one's text. Map re-homes each element's result into its own element text
@@ -291,11 +291,11 @@ class Lower {
            ELEMENT, which already owns its text. */
         if (mark.mode == IterateMode::Reduce) {
             if (body_shape == Shape::Text || body_shape == Shape::Unknown)
-                sink_.reserve_elems(0, kVarrCeiling);
+                module_.elem_texts += kVarrCeiling;
         } else if (mark.mode != IterateMode::Any && mark.mode != IterateMode::All) {
-            const bool texts =
-                mark.mode == IterateMode::Map && body_shape == Shape::Text;
-            sink_.reserve_elems(kVarrCeiling, texts ? kVarrCeiling : 0);
+            module_.elem_values += kVarrCeiling;
+            if (mark.mode == IterateMode::Map && body_shape == Shape::Text)
+                module_.elem_texts += kVarrCeiling;
         }
         emit_unsited(OpCode::Iterate, sub, kVarrCeiling,
                      static_cast<uint16_t>(mark.mode));
@@ -303,7 +303,7 @@ class Lower {
            this site reserved cannot be iterated at all, and half a fold is a wrong
            number nobody would see. The site names the limit so the finding reads as
            an answer. */
-        code_->back().c = sink_.add_fault_site(
+        code_->back().c = module_.add_fault_site(
             "iterate_bound",
             expr.text + " ran over " + std::to_string(kVarrCeiling) +
                 " elements, which is the most one expression may iterate; reduce the "
@@ -354,13 +354,13 @@ class Lower {
             emit(OpCode::Jmp);
             (*code_)[branch].a = static_cast<uint32_t>(code_->size());
             depth_ = base;
-            emit(OpCode::Const, sink_.add_constant(Value::boolean(true)));
+            emit(OpCode::Const, module_.add_constant(Value::boolean(true)));
             pushed();
             const uint32_t after_true = static_cast<uint32_t>(code_->size());
             emit(OpCode::Jmp);
             (*code_)[nil_branch].a = static_cast<uint32_t>(code_->size());
             depth_ = base;
-            emit(OpCode::Const, sink_.add_constant(Value::nil()));
+            emit(OpCode::Const, module_.add_constant(Value::nil()));
             pushed();
             (*code_)[done].a = static_cast<uint32_t>(code_->size());
             (*code_)[after_true].a = static_cast<uint32_t>(code_->size());
@@ -381,13 +381,13 @@ class Lower {
             emit(OpCode::Jmp);
             (*code_)[branch].a = static_cast<uint32_t>(code_->size());
             depth_ = base;
-            emit(OpCode::Const, sink_.add_constant(Value::boolean(false)));
+            emit(OpCode::Const, module_.add_constant(Value::boolean(false)));
             pushed();
             const uint32_t after_false = static_cast<uint32_t>(code_->size());
             emit(OpCode::Jmp);
             (*code_)[nil_branch].a = static_cast<uint32_t>(code_->size());
             depth_ = base;
-            emit(OpCode::Const, sink_.add_constant(Value::nil()));
+            emit(OpCode::Const, module_.add_constant(Value::nil()));
             pushed();
             (*code_)[done].a = static_cast<uint32_t>(code_->size());
             (*code_)[after_false].a = static_cast<uint32_t>(code_->size());
@@ -397,7 +397,7 @@ class Lower {
         walk(expr.b);
         site(op_word(op), expr.at);
         if (mark.op == Note::Op::TextJoin) {
-            emit(OpCode::Method, sink_.alloc_text_slot(), 1,
+            emit(OpCode::Method, module_.text_slots++, 1,
                  static_cast<uint16_t>(MethodId::TextConcat));
             if (depth_) --depth_;
             return;
@@ -430,7 +430,7 @@ class Lower {
 
     const Ast& ast_;
     const std::vector<Note>& notes_;
-    EmitSink& sink_;
+    Module& module_;
     std::vector<Instruction>* code_;
     uint32_t depth_ = 0;
     uint32_t max_ = 0;
@@ -440,9 +440,9 @@ class Lower {
 
 } // namespace
 
-void emit_expression(const Ast& ast, const std::vector<Note>& notes, EmitSink& sink,
+void emit_expression(const Ast& ast, const std::vector<Note>& notes, Module& module,
                      std::vector<Instruction>& code, uint32_t& max_stack) {
-    Lower lower(ast, notes, sink, code);
+    Lower lower(ast, notes, module, code);
     max_stack = std::max(max_stack, lower.run());
 }
 

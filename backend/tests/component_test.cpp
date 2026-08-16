@@ -1392,18 +1392,17 @@ void test_transitions() {
         Env escope;
         escope.bind_value("value", Place{Type(Shape::Num), OpCode::Load, 0, 0});
         Program program;
-        ProgramEmit emit(program);
         std::vector<Instruction> code;
         ExpressionResult eresult;
         std::vector<Refusal> refusals;
-        CHECK(!compile_expression("value.smooth(300)", ExprTier::Display, escope, emit,
-                                  code, eresult, refusals));
+        CHECK(!compile_expression("value.smooth(300)", ExprTier::Display, escope,
+                                  program, code, eresult, refusals));
         CHECK(!refusals.empty() &&
               refusals[0].message.find("not written in an expression") !=
                   std::string::npos);
         refusals.clear();
-        CHECK(!compile_expression("value.transition(300)", ExprTier::Wire, escope, emit,
-                                  code, eresult, refusals));
+        CHECK(!compile_expression("value.transition(300)", ExprTier::Wire, escope,
+                                  program, code, eresult, refusals));
         CHECK(!refusals.empty() &&
               refusals[0].message.find("the value stays true") != std::string::npos);
     }

@@ -10,7 +10,7 @@
 namespace hmi {
 
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
-                        EmitSink& sink, std::vector<Instruction>& code,
+                        Module& module, std::vector<Instruction>& code,
                         ExpressionResult& result, std::vector<Refusal>& refusals,
                         bool allow_agg, const Type& expected) {
     Ast ast;
@@ -59,12 +59,12 @@ bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
     }
 
     uint32_t max_stack = 0;
-    emit_expression(ast, notes, sink, code, max_stack);
+    emit_expression(ast, notes, module, code, max_stack);
     if (convert) {
         Instruction to_enum;
         to_enum.op = OpCode::ToEnum;
         to_enum.b = expected.enum_id();
-        to_enum.c = sink.add_fault_site(
+        to_enum.c = module.add_fault_site(
             "enum_convert", "the name could not become a variant");
         code.push_back(to_enum);
     }

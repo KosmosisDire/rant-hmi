@@ -5,14 +5,14 @@
  *
  * It knows nothing about instances, entities, cells or flows. Names arrive already
  * described in an Env (lang/env.h) — the CALLER decided what `setpoint` addresses —
- * and everything emitted lands through an EmitSink (lang/emit.h). That is what lets
- * the same compiler serve the backend's Program and anything else that can hold a
- * constant pool. */
+ * and everything emitted lands in a Module (lang/module.h), a value the caller owns.
+ * That is what lets the same compiler serve the backend's Program and anything else
+ * that holds the Module's tables. */
 #pragma once
 
-#include "lang/emit.h"
 #include "lang/env.h"
 #include "lang/ir.h"
+#include "lang/module.h"
 
 #include <string>
 #include <vector>
@@ -52,7 +52,7 @@ struct ExpressionResult {
  * recover; a broken receiver still suppresses what depended on it), depth-first
  * left-to-right, so the first entry is the error the surface always led with. */
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
-                        EmitSink& sink, std::vector<Instruction>& code,
+                        Module& module, std::vector<Instruction>& code,
                         ExpressionResult& result, std::vector<Refusal>& refusals,
                         bool allow_agg = false, const Type& expected = Type());
 

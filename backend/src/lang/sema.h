@@ -5,7 +5,7 @@
  *
  * It accepts and rejects EXACTLY what the old single-pass shape tracker did (the
  * rewrite plan, stage 2): every rule here is a port, including the ones stage 4
- * replaces. It touches no sink — checking is pure. */
+ * replaces. It writes nothing — checking is pure. */
 #pragma once
 
 #include "lang/ast.h"

@@ -26,23 +26,6 @@ const char* verb_name(Verb verb) {
     return "?";
 }
 
-uint32_t Program::add_text(const std::string& text) {
-    for (uint32_t i = 0; i < texts.size(); ++i)
-        if (texts[i] == text) return kConstantRef | i;
-    texts.push_back(text);
-    return kConstantRef | static_cast<uint32_t>(texts.size() - 1);
-}
-
-uint32_t Program::add_constant(Value value) {
-    /* exact type_id match: value equality treats type 0 as a wildcard, but merging
-     * constants across enum types would strip the stamp `.is()` compares against */
-    for (uint32_t i = 0; i < constants.size(); ++i)
-        if (constants[i].type_id == value.type_id && value_same_scalar(constants[i], value))
-            return i;
-    constants.push_back(value);
-    return static_cast<uint32_t>(constants.size() - 1);
-}
-
 const std::vector<FieldDef>& struct_fields(const Program& program, uint16_t type_id) {
     static const std::vector<FieldDef> none;
     return type_id < program.types.size() ? program.types[type_id].fields : none;

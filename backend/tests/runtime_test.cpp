@@ -14,15 +14,14 @@
 #include <ctime>
 #include <new>
 
-/* These tests exercise the language against a real Program, which the language itself no
- * longer knows about: it emits through an EmitSink (lang/emit.h) and ProgramEmit is the
- * adapter. Wrapping it here keeps every call site reading as the expression under test;
- * the scope rides by value so the program's enum vocabulary can be adopted into it, the
- * way the document compiler builds every real Env. */
+/* These tests exercise the language against a real Program, which the language itself
+ * knows only as the Module it fills (lang/module.h) — a Program IS one, plus the host
+ * tables. Wrapping the call here keeps every call site reading as the expression under
+ * test; the scope rides by value so the program's enum vocabulary can be adopted into
+ * it, the way the document compiler builds every real Env. */
 static bool compile_expr(const std::string& text, hmi::ExprTier tier, hmi::Env scope,
                          hmi::Program& program, std::vector<hmi::Instruction>& code,
                          hmi::ExpressionResult& result, std::string& error) {
-    hmi::ProgramEmit emit(program);
     scope.enums.clear();
     for (const auto& type : program.types)
         scope.enums.push_back(type.kind == hmi::TypeKind::Enum ? &type.variants : nullptr);
@@ -39,7 +38,7 @@ static bool compile_expr(const std::string& text, hmi::ExprTier tier, hmi::Env s
        (position rendered from its span) into the one string the checks read */
     std::vector<hmi::Refusal> refusals;
     const bool ok =
-        hmi::compile_expression(text, tier, scope, emit, code, result, refusals);
+        hmi::compile_expression(text, tier, scope, program, code, result, refusals);
     error.clear();
     for (const hmi::Refusal& refusal : refusals) {
         if (!error.empty()) error += "; ";
@@ -1980,10 +1979,10 @@ void test_lists_and_maps() {
             std::printf("list compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
     if (!CHECK(compiled.program.slot_programs.size() == 21)) return;
-    CHECK(compiled.program.layout.elem_values > 0);
+    CHECK(compiled.program.elem_values > 0);
     /* one sub-program per lambda, and the stack is sized for a run plus a body */
     CHECK(compiled.program.subs.size() == 9);
-    CHECK(compiled.program.layout.sub_stack > 0);
+    CHECK(compiled.program.sub_stack > 0);
 
     Scheduler scheduler(std::move(compiled.program), mesh);
     const Program& program = scheduler.program();

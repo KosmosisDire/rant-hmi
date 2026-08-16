@@ -336,7 +336,7 @@ class Compiler {
          * the gesture and `this.<slot>` agrees with what the event passed. */
         build_type_behavior();
         build_flows();
-        program_.layout.stack_values = std::max<uint32_t>(program_.layout.stack_values, 1);
+        program_.stack_values = std::max<uint32_t>(program_.stack_values, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
         CompileResult out;
         out.ok = !has_errors_;
@@ -499,8 +499,8 @@ class Compiler {
             if (!entity.fields.empty() && !bare_scalar)
                 entity.type_id = intern_struct(entity, e);
         }
-        program_.layout.elem_values += intake_values;
-        program_.layout.elem_texts += intake_texts;
+        program_.elem_values += intake_values;
+        program_.elem_texts += intake_texts;
     }
 
     uint32_t add_cell(CellKind kind, uint64_t owner_node, uint64_t node_id,
@@ -522,7 +522,7 @@ class Compiler {
                  DiagGrade::Error, kind == CellKind::Slot ? name : "init");
         cell.persistent = persistent;
         if (shape == Shape::Text) {
-            cell.text_slot = program_.layout.text_slots++;
+            cell.text_slot = program_.text_slots++;
             cell.text_cap = 256;
         }
         /* an aggregate cell owns retained storage: the run's element pool resets every
@@ -1640,8 +1640,7 @@ class Compiler {
                     uint16_t* enum_out = nullptr, bool agg_ok = false) {
         ExpressionResult result;
         std::vector<Refusal> refusals;
-        ProgramEmit emit(program_);
-        if (!compile_expression(text, tier, scope, emit, code, result, refusals,
+        if (!compile_expression(text, tier, scope, program_, code, result, refusals,
                                 agg_ok, expected)) {
             /* EVERY independent finding lands as its own row (rule 16), each
                carrying its span as data */
@@ -1880,7 +1879,7 @@ class Compiler {
         if (!aggregate && produced == Shape::Enum && wanted == Shape::Text) {
             Instruction as_name;
             as_name.op = OpCode::Method;
-            as_name.a = program_.layout.text_slots++;
+            as_name.a = program_.text_slots++;
             as_name.b = 0;
             as_name.small = static_cast<uint16_t>(MethodId::EnumName);
             sp.code.push_back(as_name);
@@ -1926,7 +1925,7 @@ class Compiler {
                              "slot '" + pending.name + "' could not store its value");
         sp.code.push_back(store);
         sp.code.push_back(Instruction{OpCode::Halt});
-        program_.layout.stack_values = std::max(program_.layout.stack_values, sp.max_stack);
+        program_.stack_values = std::max(program_.stack_values, sp.max_stack);
         program_.slot_programs.push_back(std::move(sp));
     }
 
@@ -1993,7 +1992,7 @@ class Compiler {
         cell.name = name;
         cell.shape = shape;
         if (shape == Shape::Text) {
-            cell.text_slot = program_.layout.text_slots++;
+            cell.text_slot = program_.text_slots++;
             cell.text_cap = 256;
         }
         program_.cells.push_back(std::move(cell));
@@ -2233,7 +2232,7 @@ class Compiler {
         if (def.elem == Shape::Text && produced == Shape::Enum) {
             Instruction name;
             name.op = OpCode::Method;
-            name.a = program_.layout.text_slots++;
+            name.a = program_.text_slots++;
             name.b = 0;
             name.small = static_cast<uint16_t>(MethodId::EnumName);
             flow.code.push_back(name);
@@ -2362,7 +2361,7 @@ class Compiler {
             if (produced == Shape::Enum) {
                 Instruction name;
                 name.op = OpCode::Method;
-                name.a = program_.layout.text_slots++;
+                name.a = program_.text_slots++;
                 name.b = 0;
                 name.small = static_cast<uint16_t>(MethodId::EnumName);
                 flow.code.push_back(name);
@@ -3222,8 +3221,8 @@ class Compiler {
                         flow.max_stack = 1;
                         flow.worst_steps = 2;
                     }
-                    program_.layout.stack_values =
-                        std::max(program_.layout.stack_values, flow.max_stack);
+                    program_.stack_values =
+                        std::max(program_.stack_values, flow.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
             }
@@ -3304,8 +3303,8 @@ class Compiler {
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        &claimed, /*in_component=*/true, copyless))
                         continue;
-                    program_.layout.stack_values =
-                        std::max(program_.layout.stack_values, flow.max_stack);
+                    program_.stack_values =
+                        std::max(program_.stack_values, flow.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
             }

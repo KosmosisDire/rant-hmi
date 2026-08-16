@@ -1,8 +1,8 @@
 #pragma once
 
 #include "diag.h"
-#include "lang/emit.h"
 #include "lang/ir.h"
+#include "lang/module.h"
 #include "lang/value.h"
 
 #include <cstdint>
@@ -151,16 +151,6 @@ struct CellDef {
     uint64_t owner_flow = 0;
 };
 
-/* A lambda body (spec 6.4), compiled once and invoked per element by Iterate. It is a
- * plain instruction run like any other -- the only thing that makes it a "sub" program
- * is that it executes on a stack frame ABOVE its caller's and reads its parameter where
- * a flow reads `x`. `max_stack` is its own frame's depth, which the layout pass adds on
- * top of the enclosing run's so the two never overlap. */
-struct SubProgram {
-    std::vector<Instruction> code;
-    uint32_t max_stack = 0;
-};
-
 /* One struct slot in the run: which type it holds, so RuntimeState can size its fields.
  * `temp` marks a flow temporary's slot: only those are snapshot and restored around a
  * suspension (a declared variable is stable storage, and restoring it would roll back
@@ -262,8 +252,6 @@ struct SlotProgram {
 };
 
 struct ProgramLayout {
-    uint32_t text_slots = 0;
-    uint32_t stack_values = 1;
     uint32_t effect_capacity = 1;
     /* raised-event buffer: one slot per Raise instruction — a cascade past this
      * faults rather than growing */
@@ -279,22 +267,17 @@ struct ProgramLayout {
     /* struct storage: the widest field table any struct slot holds, so a suspension's
      * deep copy and the effect records are one fixed size */
     uint32_t max_struct_fields = 1;
-    /* the aggregate scratch pool: element Values and element text slots, computed from
-     * the schemas' bounds plus each list-producing expression site's worst case */
-    uint32_t elem_values = 0;
-    uint32_t elem_texts = 0;
     /* retained aggregate storage: one slot per list- or map-shaped cell (an aggregate a
      * cell holds across ticks cannot live in the scratch pool, which resets every run) */
     uint32_t list_slots = 0;
-    /* the deepest lambda body's frame, already included in stack_values above: a body
-     * executes on top of its caller, so the stack is sized for both (spec 6.4) */
-    uint32_t sub_stack = 0;
 };
 
-struct Program {
+/* The compiled program: the MODULE the compile filled (lang/module.h — the pools, the
+ * lambda bodies, the fault-site table, the storage counts) plus the host tables only
+ * this backend reads. One artifact until stage 7 splits the two along exactly this
+ * seam. Plain data, copied into the scheduler by value — no vtable. */
+struct Program : Module {
     uint64_t document_version = 0;
-    std::vector<Value> constants;
-    std::vector<std::string> texts;
     /* the TYPE TABLE, indexed by Value.type_id: entry 0 is the untyped placeholder, and
      * identical schemas / identical variant lists share one entry (built in
      * build_types), so equality between values from different entities of the same type
@@ -303,8 +286,6 @@ struct Program {
     std::vector<CellDef> cells;
     std::vector<EntityDef> entities;
     std::vector<StructDef> structs;
-    /* lambda bodies, indexed by Iterate's `a` operand */
-    std::vector<SubProgram> subs;
     std::vector<FlowProgram> flows;
     std::vector<SlotProgram> slot_programs;
     std::vector<RaiseDef> raises;
@@ -312,60 +293,14 @@ struct Program {
     std::vector<TimerDef> timers;
     std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;
-    std::vector<Diag> runtime_faults;
     /* [struct slot][field] -> the derived cell holding that aggregate field's entries
      * (UINT32_MAX where the field is scalar). What ReadEnt fills, New clears, MarkField
      * refreshes through, and a move out resolves elements from. */
     std::vector<std::vector<uint32_t>> struct_field_cells;
     ProgramLayout layout;
 
-    uint32_t add_text(const std::string& text);
-    uint32_t add_constant(Value value);
     const char* disassemble() const = delete;
     std::string disassembly() const;
-};
-
-/* A Program, as the language's EmitSink (lang/emit.h). An adapter rather than making
- * Program implement the interface directly: Program is plain data that gets copied into
- * the scheduler by value, and it has no business carrying a vtable for the sake of a
- * compile-time interface. */
-struct ProgramEmit final : EmitSink {
-    explicit ProgramEmit(Program& program) : program(program) {}
-
-    uint32_t add_constant(Value value) override { return program.add_constant(value); }
-    uint32_t add_text(const std::string& text) override { return program.add_text(text); }
-
-    uint32_t alloc_text_slot() override { return program.layout.text_slots++; }
-
-    void reserve_elems(uint32_t values, uint32_t texts) override {
-        program.layout.elem_values += values;
-        program.layout.elem_texts += texts;
-    }
-
-    /* A body runs on a frame ABOVE its caller's, so the one stack must hold the deepest
-     * run PLUS the deepest body. The high-water mark lives on the layout, not on this
-     * adapter: a fresh ProgramEmit is constructed per expression compiled, so an adapter
-     * member would reset between lambdas and each one would re-add its own depth.
-     * Bodies never nest (spec 6.4 forbids a lambda inside a lambda), so two frames is
-     * the whole depth this has to cover. */
-    uint32_t add_sub(std::vector<Instruction> code, uint32_t max_stack) override {
-        SubProgram sub;
-        sub.code = std::move(code);
-        sub.max_stack = max_stack;
-        program.subs.push_back(std::move(sub));
-        if (max_stack > program.layout.sub_stack) {
-            program.layout.stack_values += max_stack - program.layout.sub_stack;
-            program.layout.sub_stack = max_stack;
-        }
-        return static_cast<uint32_t>(program.subs.size() - 1);
-    }
-
-    uint32_t add_fault_site(const std::string& code, const std::string& message) override {
-        program.runtime_faults.push_back(Diag{0, DiagGrade::Error, code, message});
-        return static_cast<uint32_t>(program.runtime_faults.size() - 1);
-    }
-
-    Program& program;
 };
 
 } // namespace hmi

@@ -231,7 +231,7 @@ class RuntimeState {
     std::vector<uint32_t> pending_texts;               /* [pending site] -> first slot */
     /* the aggregate scratch pool: list/map elements live here for one run, dealt out
      * by a cursor that whoever seeds x resets (reset_scratch). Element text rides in
-     * `texts` slots [elem_text_base, elem_text_base + layout.elem_texts). */
+     * `texts` slots [elem_text_base, elem_text_base + the module's elem_texts). */
     std::vector<Value> elems;
     uint32_t elem_cursor = 0;
     uint32_t elem_text_base = 0;

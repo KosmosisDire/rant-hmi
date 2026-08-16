@@ -241,7 +241,7 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
                 return false;
             }
             if (cell.shape == Shape::Text) {
-                cell.text_slot = program.layout.text_slots++;
+                cell.text_slot = program.text_slots++;
                 cell.text_cap = 256;
             }
             if (!scalar_value(program, cell.shape, 0, var.literal, cell.initial)) {
@@ -330,10 +330,9 @@ void run_case(const FixtureCase& item) {
 
     std::vector<Instruction> code;
     ExpressionResult result;
-    ProgramEmit emit(program);
     std::vector<Refusal> refusals;
-    const bool ok = compile_expression(item.expr, item.tier, scope, emit, code, result,
-                                       refusals);
+    const bool ok = compile_expression(item.expr, item.tier, scope, program, code,
+                                       result, refusals);
     /* refusals are data; the fixtures pin substrings, so join every finding (with
        its position rendered from the span) into the one string the pins search */
     std::string error;
@@ -356,8 +355,8 @@ void run_case(const FixtureCase& item) {
                    where + "  a fixture result is a scalar; fold the aggregate"))
         return;
 
-    program.layout.stack_values =
-        std::max(program.layout.stack_values, result.max_stack);
+    program.stack_values =
+        std::max(program.stack_values, result.max_stack);
     /* a compiled expression always precedes its consumer (a store, a gate), so the
        short-circuit jumps land on a real instruction; a bare run gets a Halt to land on */
     Instruction halt;
