@@ -45,14 +45,14 @@ std::string Program::disassembly() const {
     for (const FlowProgram& flow : flows) {
         out << "flow " << flow.flow_id << " node " << flow.node_id << " event "
             << flow.event << " worst " << flow.worst_steps << "\n";
-        code_lines(flow.code);
+        code_lines(flow.body.code);
     }
     for (const SlotProgram& slot : slot_programs) {
         out << "slot node " << slot.node_id << " " << slot.slot << " cell " << slot.cell;
         if (slot.every_tick) out << " every_tick";
         if (slot.poll_ms) out << " poll " << slot.poll_ms;
         out << "\n";
-        code_lines(slot.code);
+        code_lines(slot.body.code);
     }
     for (size_t s = 0; s < subs.size(); ++s) {
         out << "sub " << s << "\n";

@@ -363,7 +363,7 @@ void run_case(const FixtureCase& item) {
     halt.op = OpCode::Halt;
     code.push_back(halt);
     SlotProgram slot;
-    slot.code = code;
+    slot.body.code = code;
     RuntimeState state(program);
     state.reset_scratch();
     const RunResult run = run_slot(program, slot, state);

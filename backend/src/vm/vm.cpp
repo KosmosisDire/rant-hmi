@@ -1967,7 +1967,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
                    Value arg) noexcept {
     state.args[0] = arg;
-    return run_code(program, flow.code, &flow, state, Value::nil());
+    return run_code(program, flow.body.code, &flow, state, Value::nil());
 }
 
 bool element_reaches(const Program& program, uint64_t node,
@@ -2000,7 +2000,7 @@ RunResult run_event(const Program& program, RuntimeState& state, uint64_t node_i
 
 RunResult run_slot(const Program& program, const SlotProgram& slot,
                    RuntimeState& state) noexcept {
-    return run_code(program, slot.code, nullptr, state, Value::nil());
+    return run_code(program, slot.body.code, nullptr, state, Value::nil());
 }
 
 RunResult resume_pending(const Program& program, RuntimeState& state,
@@ -2022,7 +2022,7 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     state.repeat = pending.repeat;
     pending.active = false;
     const FlowProgram& flow = program.flows[flow_index];
-    return run_code(program, flow.code, &flow, state, x, pc);
+    return run_code(program, flow.body.code, &flow, state, x, pc);
 }
 
 } // namespace hmi

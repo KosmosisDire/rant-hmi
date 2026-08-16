@@ -1344,7 +1344,7 @@ class Compiler {
         mark.op = OpCode::MarkField;
         mark.a = program_.cells[derived].field_of;
         mark.b = program_.cells[derived].field_index;
-        flow.code.push_back(mark);
+        flow.body.code.push_back(mark);
         return true;
     }
 
@@ -1740,7 +1740,7 @@ class Compiler {
         sp.cell = pending.cell;
         Shape produced = Shape::Unknown;
         if (!expression(element.id, pending.text, ExprTier::Display, scope,
-                        aggregate ? Type(wanted) : Type(), sp.code, sp.max_stack,
+                        aggregate ? Type(wanted) : Type(), sp.body.code, sp.body.max_stack,
                         &produced, pending.name, nullptr, aggregate))
             return;   /* the finding is already pinned to the instance's slot row */
         /* the one automatic coercion (spec 6.2): an enum-yielding expression filling a
@@ -1752,7 +1752,7 @@ class Compiler {
             as_name.a = program_.text_slots++;
             as_name.b = 0;
             as_name.small = static_cast<uint16_t>(MethodId::EnumName);
-            sp.code.push_back(as_name);
+            sp.body.code.push_back(as_name);
             produced = Shape::Text;
         }
         if (!aggregate && wanted != Shape::Unknown && produced != Shape::Unknown &&
@@ -1765,8 +1765,8 @@ class Compiler {
         }
         /* A CONSTANT is the literal it spells: it folds into the cell's start and no
            standing program exists — a quoted caption costs what the raw literal did. */
-        if (sp.code.size() == 1 && sp.code[0].op == OpCode::Const) {
-            const Value value = program_.constants[sp.code[0].a];
+        if (sp.body.code.size() == 1 && sp.body.code[0].op == OpCode::Const) {
+            const Value value = program_.constants[sp.body.code[0].a];
             program_.cells[pending.cell].initial = value;
             /* a constant text ref wears kConstantRef: strip it to read the pool */
             const uint32_t pool = value.ref & ~kConstantRef;
@@ -1775,7 +1775,7 @@ class Compiler {
                                Json(program_.texts[pool]));
             return;
         }
-        if (!scan_slot_deps(sp.code, sp)) return;
+        if (!scan_slot_deps(sp.body.code, sp)) return;
         /* a program that reads nothing live (an array literal, arithmetic over
            constants) still has to run once; the seed pass at start covers it, and
            there is nothing to re-run it for */
@@ -1793,22 +1793,22 @@ class Compiler {
         store.a = pending.cell;
         store.c = fault_site(element.id, "slot_store",
                              "slot '" + pending.name + "' could not store its value");
-        sp.code.push_back(store);
-        sp.code.push_back(Instruction{OpCode::Halt});
-        program_.stack_values = std::max(program_.stack_values, sp.max_stack);
+        sp.body.code.push_back(store);
+        sp.body.code.push_back(Instruction{OpCode::Halt});
+        program_.stack_values = std::max(program_.stack_values, sp.body.max_stack);
         program_.slot_programs.push_back(std::move(sp));
     }
 
     void break_flow(FlowProgram& flow, uint64_t node, const std::string& code,
                     const std::string& message) {
         diag(node, code, message);
-        flow.code.clear();
+        flow.body.code.clear();
         Instruction fault;
         fault.op = OpCode::Fault;
         fault.a = fault_site(node, code, message);
-        flow.code.push_back(fault);
-        flow.code.push_back(Instruction{OpCode::Halt});
-        flow.max_stack = 1;
+        flow.body.code.push_back(fault);
+        flow.body.code.push_back(Instruction{OpCode::Halt});
+        flow.body.max_stack = 1;
         flow.worst_steps = 2;
     }
 
@@ -2105,7 +2105,7 @@ class Compiler {
             name.a = program_.text_slots++;
             name.b = 0;
             name.small = static_cast<uint16_t>(MethodId::EnumName);
-            flow.code.push_back(name);
+            flow.body.code.push_back(name);
             produced = Shape::Text;
         }
         if (!element_fits(def, produced)) {
@@ -2123,13 +2123,13 @@ class Compiler {
                 nothing.a = program_.add_constant(Value::nil());
                 nothing.c = fault_site(step_id, "move_store",
                                        "the append bound could not be read");
-                flow.code.push_back(nothing);
-                flow.max_stack = std::max(flow.max_stack, 2u);
+                flow.body.code.push_back(nothing);
+                flow.body.max_stack = std::max(flow.body.max_stack, 2u);
             } else {
                 if (!expression(step_id, keep, ExprTier::Wire, scope, Type(Shape::Num),
-                                flow.code, bound_stack, nullptr, "keep"))
+                                flow.body.code, bound_stack, nullptr, "keep"))
                     return false;
-                flow.max_stack = std::max(flow.max_stack, bound_stack + 1);
+                flow.body.max_stack = std::max(flow.body.max_stack, bound_stack + 1);
                 /* a COURTESY check: a keep the folder can read that is past what a buffer
                    can hold at all is not an error (the list simply holds what fits), but
                    it is not what the author asked for either. The bound is BYTES now, so
@@ -2157,17 +2157,17 @@ class Compiler {
                           "' could not append: an append takes ONE element that fits the "
                           "list, and a keep that is not a number leaves the list growing "
                           "until its buffer is full");
-            flow.code.push_back(ins);
+            flow.body.code.push_back(ins);
             return true;
         }
         /* likewise: the address rides above the value the write is carrying — a map's
            text key, or a list's number index */
         uint32_t key_stack = 1;
         if (!expression(step_id, key, ExprTier::Wire, scope,
-                        Type(indexed ? Shape::Num : Shape::Text), flow.code, key_stack,
+                        Type(indexed ? Shape::Num : Shape::Text), flow.body.code, key_stack,
                         nullptr, "key"))
             return false;
-        flow.max_stack = std::max(flow.max_stack, key_stack + 1);
+        flow.body.max_stack = std::max(flow.body.max_stack, key_stack + 1);
         Instruction ins;
         if (indexed) {
             ins.op = OpCode::StoreIndex;
@@ -2185,7 +2185,7 @@ class Compiler {
                                    "' needs a text key, a value that fits it, and room in "
                                    "its buffer (a map has no keep, so it only grows)");
         }
-        flow.code.push_back(ins);
+        flow.body.code.push_back(ins);
         return true;
     }
 
@@ -2194,7 +2194,7 @@ class Compiler {
         store.op = OpCode::Store;
         store.a = cell;
         store.c = fault_site(step_id, "move_store", "the value could not be stored");
-        flow.code.push_back(store);
+        flow.body.code.push_back(store);
         return true;
     }
 
@@ -2209,7 +2209,7 @@ class Compiler {
         (void)element;
         if (from.has_expr)
             return expression(step.id, from.expr_text ? from.expr : "x", ExprTier::Wire,
-                              scope, expected, flow.code, flow.max_stack, actual, "from",
+                              scope, expected, flow.body.code, flow.body.max_stack, actual, "from",
                               nullptr, agg_ok);
         diag(step.id, "move_source", "this assignment has no value", DiagGrade::Error,
              "from");
@@ -2234,7 +2234,7 @@ class Compiler {
                 name.a = program_.text_slots++;
                 name.b = 0;
                 name.small = static_cast<uint16_t>(MethodId::EnumName);
-                flow.code.push_back(name);
+                flow.body.code.push_back(name);
                 return true;
             }
             if (produced != Shape::Unknown && produced != Shape::Nil &&
@@ -2292,15 +2292,15 @@ class Compiler {
                 zero.a = cell;
                 zero.b = def.type_id;
                 zero.c = fault_site(step_id, "move_new", "the value could not be created");
-                flow.code.push_back(zero);
+                flow.body.code.push_back(zero);
                 return true;
             }
             Instruction constant;
             constant.op = OpCode::Const;
             constant.a = program_.add_constant(def.initial);
             constant.c = fault_site(step_id, "move_source", "the default could not be read");
-            flow.code.push_back(constant);
-            flow.max_stack = std::max(flow.max_stack, 1u);
+            flow.body.code.push_back(constant);
+            flow.body.max_stack = std::max(flow.body.max_stack, 1u);
             return emit_store(flow, step_id, cell);
         }
 
@@ -2337,7 +2337,7 @@ class Compiler {
                 zero.a = cell;
                 zero.b = static_cast<uint32_t>(type_id);
                 zero.c = fault_site(step_id, "move_new", "the value could not be created");
-                flow.code.push_back(zero);
+                flow.body.code.push_back(zero);
             } else {
                 const uint32_t held = locals.count(name) ? locals[name]
                                                          : declared_cell(element, name);
@@ -2358,11 +2358,11 @@ class Compiler {
             Shape produced = Shape::Unknown;
             uint16_t produced_type = 0;
             if (!expression(step_id, from.expr_text ? from.expr : "x", ExprTier::Wire,
-                            scope, Type(), flow.code, flow.max_stack, &produced,
+                            scope, Type(), flow.body.code, flow.body.max_stack, &produced,
                             "from", &produced_type)) {
                 return false;
             }
-            flow.code.push_back(Instruction{OpCode::StoreX});
+            flow.body.code.push_back(Instruction{OpCode::StoreX});
             bind_x(scope, produced, produced_type);
             return true;
         }
@@ -2423,7 +2423,7 @@ class Compiler {
             set.a = cell;
             set.b = static_cast<uint32_t>(field);
             set.c = fault_site(step_id, "move_field", "the field could not be set");
-            flow.code.push_back(set);
+            flow.body.code.push_back(set);
             return true;
         }
 
@@ -2462,7 +2462,7 @@ class Compiler {
             ins.a = cell;
             ins.b = static_cast<uint32_t>(read_entity);
             ins.c = fault_site(step_id, "move_new", "the value could not be created");
-            flow.code.push_back(ins);
+            flow.body.code.push_back(ins);
             return true;
         }
 
@@ -2489,7 +2489,7 @@ class Compiler {
             return emit_store(flow, step_id, cell);
         }
         Shape produced = Shape::Unknown;
-        const size_t mark = flow.code.size();
+        const size_t mark = flow.body.code.size();
         if (!push_scalar(element, step, flow, scope, from, Type(), &produced)) return false;
         if (cell == UINT32_MAX) {
             if (produced == Shape::Unknown || produced == Shape::Nil) {
@@ -2497,7 +2497,7 @@ class Compiler {
                      "'" + name + "' cannot take its type from this source; "
                      "declare it as a variable",
                      DiagGrade::Error, "to");
-                flow.code.resize(mark);
+                flow.body.code.resize(mark);
                 return false;
             }
             cell = add_temp_cell(flow.flow_id, element.id, name, produced);
@@ -2530,7 +2530,7 @@ class Compiler {
         out.c = fault_site(step_id, "assign_out", "UNKNOWN was not sent");
 
         if (verb == Verb::Unforce) {
-            flow.code.push_back(out);
+            flow.body.code.push_back(out);
             ++program_.layout.effect_capacity;
             return true;
         }
@@ -2542,7 +2542,7 @@ class Compiler {
         if (target.fields.empty() && to.path.empty() &&
             (target.kind == EntityKind::Function || target.kind == EntityKind::Signal)) {
             out.b = UINT32_MAX;
-            flow.code.push_back(out);
+            flow.body.code.push_back(out);
             ++program_.layout.effect_capacity;
             return true;
         }
@@ -2580,8 +2580,8 @@ class Compiler {
             load.op = OpCode::Load;
             load.a = cell;
             load.c = fault_site(step_id, "assign_out", "the value could not be read");
-            flow.code.push_back(load);
-            flow.max_stack = std::max(flow.max_stack, 1u);
+            flow.body.code.push_back(load);
+            flow.body.max_stack = std::max(flow.body.max_stack, 1u);
         } else {
             const int field = find_field(entity, to.path, step_id, "to");
             if (field < 0) {
@@ -2624,7 +2624,7 @@ class Compiler {
                                     /*agg_ok=*/true))
                         return false;
                     out.b = static_cast<uint32_t>(field);
-                    flow.code.push_back(out);
+                    flow.body.code.push_back(out);
                     ++program_.layout.effect_capacity;
                     return true;
                 }
@@ -2650,16 +2650,16 @@ class Compiler {
                     return false;
                 uint32_t key_stack = 1;
                 if (!expression(step_id, key, ExprTier::Wire, scope, Type(Shape::Num),
-                                flow.code, key_stack, nullptr, "key"))
+                                flow.body.code, key_stack, nullptr, "key"))
                     return false;
-                flow.max_stack = std::max(flow.max_stack, key_stack + 1);
+                flow.body.max_stack = std::max(flow.body.max_stack, key_stack + 1);
                 out.op = OpCode::MoveOutElem;
                 out.b = static_cast<uint32_t>(field);
                 out.c = fault_site(step_id, "assign_out",
                                    "@" + target.name + "." + fdef.path +
                                        " did not take the element: the index must be a "
                                        "whole number inside the owner's array");
-                flow.code.push_back(out);
+                flow.body.code.push_back(out);
                 ++program_.layout.effect_capacity;
                 return true;
             }
@@ -2675,7 +2675,7 @@ class Compiler {
                 return false;
             out.b = static_cast<uint32_t>(field);
         }
-        flow.code.push_back(out);
+        flow.body.code.push_back(out);
         ++program_.layout.effect_capacity;
         (void)element;
         return true;
@@ -2835,8 +2835,8 @@ class Compiler {
                      "raise " + name + " needs " + pname, DiagGrade::Error, "args");
                 return false;
             }
-            if (!expression(step_id, text, ExprTier::Wire, scope, Type(shape), flow.code,
-                            flow.max_stack, nullptr, "args"))
+            if (!expression(step_id, text, ExprTier::Wire, scope, Type(shape), flow.body.code,
+                            flow.body.max_stack, nullptr, "args"))
                 return false;
             has_arg = true;
         }
@@ -2855,7 +2855,7 @@ class Compiler {
         ins.b = has_arg ? 1 : 0;
         ins.c = fault_site(step_id, "raise",
                            "the raise queue is full (events kept raising each other)");
-        flow.code.push_back(ins);
+        flow.body.code.push_back(ins);
         ++program_.layout.raise_capacity;
         return true;
     }
@@ -2874,7 +2874,7 @@ class Compiler {
         }
         Shape actual = Shape::Unknown;
         if (!expression(step_id, text, ExprTier::Display, scope, Type(),
-                        flow.code, flow.max_stack, &actual, "text"))
+                        flow.body.code, flow.body.max_stack, &actual, "text"))
             return false;
         if (actual == Shape::List || actual == Shape::Map) {
             diag(step_id, "notify_text",
@@ -2885,14 +2885,14 @@ class Compiler {
         }
         const std::string ms = trimmed(step.ms);
         if (!ms.empty() &&
-            !expression(step_id, ms, ExprTier::Display, scope, Type(Shape::Num), flow.code,
-                        flow.max_stack, nullptr, "ms"))
+            !expression(step_id, ms, ExprTier::Display, scope, Type(Shape::Num), flow.body.code,
+                        flow.body.max_stack, nullptr, "ms"))
             return false;
         Instruction ins;
         ins.op = OpCode::Notify;
         ins.b = ms.empty() ? 0 : 1;
         ins.c = fault_site(step_id, "notify", "notify needs a message it can render");
-        flow.code.push_back(ins);
+        flow.body.code.push_back(ins);
         ++program_.layout.notice_capacity;
         return true;
     }
@@ -2949,7 +2949,7 @@ class Compiler {
                 const std::string condition =
                     step.a.kind == NumOrText::Kind::Text ? step.a.text : "";
                 if (!expression(step_id, condition, ExprTier::Wire, scope,
-                                Type(Shape::Bool), flow.code, flow.max_stack))
+                                Type(Shape::Bool), flow.body.code, flow.body.max_stack))
                     return false;
                 Instruction gate{OpCode::Gate};
                 /* not a fault: the counter behind this site is how a gate on an
@@ -2958,7 +2958,7 @@ class Compiler {
                                     "this gate's condition is UNKNOWN, so the flow "
                                     "did not run; guard with known(...) or give the "
                                     "value a default with ??");
-                flow.code.push_back(gate);
+                flow.body.code.push_back(gate);
             } else if (kind == "deadband") {
                 const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
@@ -2966,7 +2966,7 @@ class Compiler {
                 ins.a = state_site(StateSiteKind::Deadband, flow.flow_id, step_id);
                 ins.b = program_.add_constant(Value::number(a));
                 ins.c = fault_site(step_id, "deadband", "deadband needs a numeric value");
-                flow.code.push_back(ins);
+                flow.body.code.push_back(ins);
             } else if (kind == "throttle") {
                 const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
@@ -2974,7 +2974,7 @@ class Compiler {
                 ins.a = state_site(StateSiteKind::Throttle, flow.flow_id, step_id);
                 ins.b = static_cast<uint32_t>(std::max(0.0, a));
                 ins.c = fault_site(step_id, "throttle", "throttle state is invalid");
-                flow.code.push_back(ins);
+                flow.body.code.push_back(ins);
             } else if (kind == "debounce" || kind == "delay") {
                 const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
@@ -2983,7 +2983,7 @@ class Compiler {
                 ins.b = static_cast<uint32_t>(std::max(0.0, a));
                 ins.small = kind == "debounce" ? 1 : 0;
                 ins.c = fault_site(step_id, "suspend", "suspension state is invalid");
-                flow.code.push_back(ins);
+                flow.body.code.push_back(ins);
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
                 const int timer =
                     resolve_timer(element, step.timer, step_id, in_component);
@@ -2992,18 +2992,18 @@ class Compiler {
                 ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
                 ins.a = static_cast<uint32_t>(timer);
                 ins.c = fault_site(step_id, "timer", "timer state is invalid");
-                flow.code.push_back(ins);
+                flow.body.code.push_back(ins);
             } else {
                 diag(step_id, "step_kind", "unknown step kind '" + kind + "'");
                 return false;
             }
         }
-        flow.code.push_back(Instruction{OpCode::Halt});
-        flow.worst_steps = static_cast<uint32_t>(flow.code.size());
+        flow.body.code.push_back(Instruction{OpCode::Halt});
+        flow.worst_steps = static_cast<uint32_t>(flow.body.code.size());
         /* an entity read that arrived through an EXPRESSION (@name in an rvalue, a
            guard, a keep/key) must stamp the same subscription a structural read did:
            the mesh only consumes what something declares it reads */
-        stamp_flow_reads(flow.code);
+        stamp_flow_reads(flow.body.code);
         return true;
     }
 
@@ -3082,17 +3082,17 @@ class Compiler {
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        nullptr, /*in_component=*/false, copyless)) {
                         const std::string message = "flow could not be compiled";
-                        flow.code.clear();
+                        flow.body.code.clear();
                         Instruction fault;
                         fault.op = OpCode::Fault;
                         fault.a = fault_site(flow_id, "compile_fault", message);
-                        flow.code.push_back(fault);
-                        flow.code.push_back(Instruction{OpCode::Halt});
-                        flow.max_stack = 1;
+                        flow.body.code.push_back(fault);
+                        flow.body.code.push_back(Instruction{OpCode::Halt});
+                        flow.body.max_stack = 1;
                         flow.worst_steps = 2;
                     }
                     program_.stack_values =
-                        std::max(program_.stack_values, flow.max_stack);
+                        std::max(program_.stack_values, flow.body.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
             }
@@ -3174,7 +3174,7 @@ class Compiler {
                                        &claimed, /*in_component=*/true, copyless))
                         continue;
                     program_.stack_values =
-                        std::max(program_.stack_values, flow.max_stack);
+                        std::max(program_.stack_values, flow.body.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
             }

@@ -160,6 +160,9 @@ struct StructDef {
     bool temp = true;
 };
 
+/* One flow TRIGGER row: the invocation data the scheduler folds over — which event,
+ * which group, what cadence — plus the one Procedure it invokes. A flow with several
+ * triggers compiles one row per trigger, each carrying its own copy of the body. */
 struct FlowProgram {
     uint64_t node_id = 0;
     uint64_t flow_id = 0;
@@ -180,8 +183,7 @@ struct FlowProgram {
      * step is the whole of what the privileged sampler used to be. */
     uint32_t cadence_ticks = 0;
     bool first_only = false;
-    std::vector<Instruction> code;
-    uint32_t max_stack = 0;
+    Procedure body;
     uint32_t worst_steps = 0;
 };
 
@@ -241,8 +243,7 @@ struct SlotProgram {
     uint32_t poll_ms = 0;
     bool every_tick = false;
     std::vector<uint32_t> dep_entities;
-    std::vector<Instruction> code;
-    uint32_t max_stack = 0;
+    Procedure body;
 
     bool depends_on(uint32_t entity) const {
         for (uint32_t dep : dep_entities)
