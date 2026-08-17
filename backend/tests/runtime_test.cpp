@@ -1979,10 +1979,10 @@ void test_lists_and_maps() {
             std::printf("list compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
     if (!CHECK(compiled.program.slot_programs.size() == 21)) return;
-    CHECK(compiled.program.elem_values > 0);
+    CHECK(compiled.program.frame.elems > 0);
     /* one sub-program per lambda, and the stack is sized for a run plus a body */
     CHECK(compiled.program.subs.size() == 9);
-    CHECK(compiled.program.sub_stack > 0);
+    CHECK(compiled.program.frame.deepest_sub > 0);
 
     Scheduler scheduler(std::move(compiled.program), mesh);
     const Program& program = scheduler.program();

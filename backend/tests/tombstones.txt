@@ -133,3 +133,11 @@ flow_reads
 # it stands — the record set that carried the display tier's decisions into the
 # document compile, and the old name of the classifier that fed it.
 per_copy_expression
+
+# stage 6a, the frame record: the Module's five loose storage counters became ONE
+# FrameExtent — the size of the storage a RUN owns, as opposed to what a cell owns —
+# and the operand stack moved into the run's Frame. The old counter spellings.
+text_slots
+elem_values
+stack_values
+sub_stack

@@ -51,6 +51,22 @@ struct Procedure {
     Signature sig;
 };
 
+/* THE FRAME'S EXTENT (stage 6a): how much in-flight storage ONE run needs — the
+ * operand stack, the fixed result slot every text-producing site owns, and the
+ * element pool aggregate-producing sites build into — counted by the compiler as
+ * the code lowers. Values AT REST live in cell storage; values IN FLIGHT live in
+ * the frame this record sizes. `stack` carries the deepest run plus the deepest
+ * lambda body (`deepest_sub` is the high-water mark that keeps the sum honest as
+ * bodies intern). `elems` includes the delivery-staging slack the store verbs
+ * lean on (settled_row copies a self-sourced row through the pool). */
+struct FrameExtent {
+    uint32_t stack = 1;
+    uint32_t deepest_sub = 0;
+    uint32_t texts = 0;
+    uint32_t elems = 0;
+    uint32_t elem_texts = 0;
+};
+
 struct Module {
     /* the shared pools every procedure indexes into */
     std::vector<Value> constants;
@@ -63,17 +79,10 @@ struct Module {
      * node-pinned ones interleave in it. */
     std::vector<Diag> runtime_faults;
 
-    /* WHAT THE COMPILED CODE NEEDS OF STORAGE, counted as it lowers: a text-producing
-     * site's fixed result slot, a list-producing site's worst case in the run's
-     * element pool, and the one stack tall enough for the deepest run PLUS the deepest
-     * lambda body. The text-slot counter is also the cell allocator's — cells and
-     * expression sites share one index space into the run's text table. All of this
-     * dies at stage 6a, when the frame arena replaces compile-time slot allocation. */
-    uint32_t text_slots = 0;
-    uint32_t elem_values = 0;
-    uint32_t elem_texts = 0;
-    uint32_t stack_values = 1;
-    uint32_t sub_stack = 0;
+    /* the frame's extent (above): the one record of what a run's in-flight storage
+     * costs. `frame.texts` is still the cell text allocator's counter too — cells
+     * and expression sites share one index space until the arena split lands. */
+    FrameExtent frame;
 
     /* infer `code`'s signature off its own instructions, lambda bodies included
      * (an Iterate's sub can read the mesh too) */

@@ -1040,12 +1040,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
     uint32_t sp = 0;
     uint32_t pc = start_pc;
     auto push = [&](Value value) {
-        if (stack_base + sp >= state.stack.size()) return false;
-        state.stack[stack_base + sp++] = value;
+        if (stack_base + sp >= state.frame.stack.size()) return false;
+        state.frame.stack[stack_base + sp++] = value;
         return true;
     };
     auto pop = [&]() {
-        return sp ? state.stack[stack_base + --sp] : Value::nil();
+        return sp ? state.frame.stack[stack_base + --sp] : Value::nil();
     };
     auto fail = [&](uint32_t site) {
         state.fault(site);
@@ -1141,7 +1141,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                it and fall through. What `??` compiles to, and how && / || step around
                an unknown condition instead of faulting on it. */
             case OpCode::JmpNil: {
-                if (sp && state.stack[stack_base + sp - 1].tag == ValueTag::Nil) {
+                if (sp && state.frame.stack[stack_base + sp - 1].tag == ValueTag::Nil) {
                     --sp;
                     if (ins.a < code.size()) pc = ins.a;
                     else fail(ins.c);
@@ -1157,7 +1157,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 /* with no arguments the slice would start one past the end when the
                    stack is exactly full: never form that address */
                 const Value value = call(ctx, static_cast<Builtin>(ins.small), ins.a,
-                                         argc ? &state.stack[stack_base + sp - argc] : nullptr, argc);
+                                         argc ? &state.frame.stack[stack_base + sp - argc] : nullptr, argc);
                 sp -= argc;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -1171,8 +1171,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const uint32_t receiver_at = stack_base + sp - argc - 1;
                 const Value value =
                     method(ctx, static_cast<MethodId>(ins.small), ins.a,
-                           state.stack[receiver_at],
-                           argc ? &state.stack[receiver_at + 1] : nullptr, argc);
+                           state.frame.stack[receiver_at],
+                           argc ? &state.frame.stack[receiver_at + 1] : nullptr, argc);
                 sp = sp - argc - 1;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -1698,7 +1698,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 ValueTag elem = ValueTag::Nil;
                 bool uniform = true;
                 for (uint32_t k = 0; k < count; ++k) {
-                    const Value v = state.stack[stack_base + sp - count + k];
+                    const Value v = state.frame.stack[stack_base + sp - count + k];
                     state.elems[offset + k] = v;
                     if (k == 0) elem = v.tag;
                     else if (v.tag != elem) uniform = false;
@@ -1800,7 +1800,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     /* a body is ONE expression, so it leaves exactly one value at the
                        bottom of its own frame */
                     const Value value =
-                        frame < state.stack.size() ? state.stack[frame] : Value::nil();
+                        frame < state.frame.stack.size() ? state.frame.stack[frame] : Value::nil();
                     if (folds) {
                         /* the accumulator has to survive the NEXT iteration writing the
                            body's own text slot, so a text result is re-homed into an
@@ -1916,7 +1916,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
-                Value& top = state.stack[stack_base + sp - 1];
+                Value& top = state.frame.stack[stack_base + sp - 1];
                 Value converted = Value::nil();
                 if (top.tag == ValueTag::Text && ins.b < program.types.size()) {
                     const std::string_view name = state.text(program, top);

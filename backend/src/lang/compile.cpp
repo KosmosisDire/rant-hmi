@@ -196,7 +196,7 @@ bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
     if (render) {
         Instruction name;
         name.op = OpCode::Method;
-        name.a = module.text_slots++;
+        name.a = module.frame.texts++;
         name.b = 0;
         name.small = static_cast<uint16_t>(MethodId::EnumName);
         code.push_back(name);

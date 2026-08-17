@@ -22,7 +22,7 @@ uint32_t Module::add_constant(Value value) {
 }
 
 /* A body runs on a frame ABOVE its caller's, so the one stack must hold the deepest
- * run PLUS the deepest body: the high-water mark rides `sub_stack` and each deeper
+ * run PLUS the deepest body: the high-water mark rides `deepest_sub` and each deeper
  * body adds only its excess. Bodies never nest (spec 6.4 forbids a lambda inside a
  * lambda), so two frames is the whole depth this has to cover. */
 uint32_t Module::add_sub(std::vector<Instruction> code, uint32_t max_stack) {
@@ -30,9 +30,9 @@ uint32_t Module::add_sub(std::vector<Instruction> code, uint32_t max_stack) {
     sub.code = std::move(code);
     sub.max_stack = max_stack;
     subs.push_back(std::move(sub));
-    if (max_stack > sub_stack) {
-        stack_values += max_stack - sub_stack;
-        sub_stack = max_stack;
+    if (max_stack > frame.deepest_sub) {
+        frame.stack += max_stack - frame.deepest_sub;
+        frame.deepest_sub = max_stack;
     }
     return static_cast<uint32_t>(subs.size() - 1);
 }

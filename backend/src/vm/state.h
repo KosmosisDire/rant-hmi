@@ -186,6 +186,14 @@ struct RepeatSeat {
     uint32_t count = 0;
 };
 
+/* THE FRAME (stage 6a): the storage a RUN owns, as opposed to the storage a CELL
+ * owns. Values at rest live in cell storage; values in flight live here, sized once
+ * from the compiler's FrameExtent and reused run after run. The operand stack is its
+ * first tenant; the text and element arenas follow as the split lands. */
+struct Frame {
+    std::vector<Value> stack;
+};
+
 struct PendingState {
     bool active = false;
     uint64_t wake_tick = 0;
@@ -254,7 +262,8 @@ class RuntimeState {
     std::vector<PendingState> pending;
     std::vector<TimerState> timers;
     std::vector<uint8_t> fired;
-    std::vector<Value> stack;
+    /* the active run's frame: every run enters it, and nothing at rest points into it */
+    Frame frame;
     std::vector<EffectRecord> effects;
     uint32_t effect_count = 0;
     /* THE EVENT PARAMETER: what the triggering event passed in, seeded at dispatch,

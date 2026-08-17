@@ -147,8 +147,8 @@ uint32_t buffer_capacity(Shape shape) noexcept {
 
 RuntimeState::RuntimeState(const Program& program) {
     values.resize(program.cells.size(), Value::nil());
-    texts.reserve(program.text_slots);
-    for (uint32_t i = 0; i < program.text_slots; ++i)
+    texts.reserve(program.frame.texts);
+    for (uint32_t i = 0; i < program.frame.texts; ++i)
         texts.emplace_back(kDefaultTextCap);
 
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
@@ -200,11 +200,11 @@ RuntimeState::RuntimeState(const Program& program) {
         for (uint32_t k = 0; k < per_pending; ++k) texts.emplace_back(kDefaultTextCap);
     }
     /* the aggregate scratch pool (elements + their text slots) */
-    elems.resize(program.elem_values, Value::nil());
+    elems.resize(program.frame.elems, Value::nil());
     elem_text_base = static_cast<uint32_t>(texts.size());
     elem_text_cursor = elem_text_base;
-    elem_text_count = program.elem_texts;
-    for (uint32_t i = 0; i < program.elem_texts; ++i)
+    elem_text_count = program.frame.elem_texts;
+    for (uint32_t i = 0; i < program.frame.elem_texts; ++i)
         texts.emplace_back(kDefaultTextCap);
 
     /* retained aggregate storage: one slot per list- or map-shaped cell, born EMPTY and
@@ -325,7 +325,7 @@ RuntimeState::RuntimeState(const Program& program) {
         }
     }
 
-    stack.resize(std::max<uint32_t>(program.stack_values, 1), Value::nil());
+    frame.stack.resize(std::max<uint32_t>(program.frame.stack, 1), Value::nil());
     /* aggregate payload capacity: the widest single entity's aggregate fields decide
        what one effect may have to carry (a map's entries interleave, so 2x pairs) */
     uint32_t agg_values_cap = 0, agg_texts_cap = 0;

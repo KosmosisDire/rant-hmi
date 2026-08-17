@@ -124,7 +124,7 @@ class Lower {
                 /* the literal's elements land in the run's scratch pool, so the site
                    reserves them like every other list-producing site does */
                 site("[]", expr.at);
-                module_.elem_values += count;
+                module_.frame.elems += count;
                 emit(OpCode::MakeList, 0, count);
                 if (count) depth_ -= count - 1;   /* the elements collapse into one */
                 else pushed();
@@ -154,8 +154,8 @@ class Lower {
                 const uint32_t argc = static_cast<uint32_t>(expr.args.size());
                 site(expr.text, expr.at);
                 const uint32_t text_site =
-                    spec.result == Shape::Text ? module_.text_slots++ : 0;
-                if (spec.result == Shape::List) module_.elem_values += kVarrCeiling;
+                    spec.result == Shape::Text ? module_.frame.texts++ : 0;
+                if (spec.result == Shape::List) module_.frame.elems += kVarrCeiling;
                 emit(OpCode::Call, text_site, argc, static_cast<uint16_t>(spec.builtin));
                 if (argc) depth_ -= argc - 1;
                 return;
@@ -182,7 +182,7 @@ class Lower {
         /* a TEXT clock field (time.text / time.date) renders into a fixed slot of
            its own, reserved per read site like any text-producing call */
         if (place.load == OpCode::ClockRead && place.type.kind == Shape::Text)
-            emit(OpCode::ClockRead, place.a, module_.text_slots++);
+            emit(OpCode::ClockRead, place.a, module_.frame.texts++);
         else
             emit(place.load, place.a, place.b);
         pushed();
@@ -215,7 +215,7 @@ class Lower {
                      module_.add_constant(Value::text(module_.add_text(row.first))));
                 pushed();
             }
-            module_.elem_values += count;
+            module_.frame.elems += count;
             emit(OpCode::MakeList, 0, count);
             if (count) depth_ -= count - 1;   /* the elements collapse into one */
             else pushed();
@@ -244,11 +244,11 @@ class Lower {
          * runtime text costs no allocation and no cursor; a list-producing site
          * reserves its worst case in the element pool */
         const uint32_t text_site =
-            spec.result == Shape::Text ? module_.text_slots++ : 0;
+            spec.result == Shape::Text ? module_.frame.texts++ : 0;
         if (spec.result == Shape::List) {
             const bool split = spec.method == MethodId::TextSplit;
-            module_.elem_values += split ? kSplitCeiling : kVarrCeiling;
-            if (split) module_.elem_texts += kSplitCeiling;
+            module_.frame.elems += split ? kSplitCeiling : kVarrCeiling;
+            if (split) module_.frame.elem_texts += kSplitCeiling;
         }
         emit(OpCode::Method, text_site, argc, static_cast<uint16_t>(spec.method));
         if (argc) depth_ -= argc;
@@ -291,11 +291,11 @@ class Lower {
            ELEMENT, which already owns its text. */
         if (mark.mode == IterateMode::Reduce) {
             if (body_shape == Shape::Text || body_shape == Shape::Unknown)
-                module_.elem_texts += kVarrCeiling;
+                module_.frame.elem_texts += kVarrCeiling;
         } else if (mark.mode != IterateMode::Any && mark.mode != IterateMode::All) {
-            module_.elem_values += kVarrCeiling;
+            module_.frame.elems += kVarrCeiling;
             if (mark.mode == IterateMode::Map && body_shape == Shape::Text)
-                module_.elem_texts += kVarrCeiling;
+                module_.frame.elem_texts += kVarrCeiling;
         }
         emit_unsited(OpCode::Iterate, sub, kVarrCeiling,
                      static_cast<uint16_t>(mark.mode));
@@ -397,7 +397,7 @@ class Lower {
         walk(expr.b);
         site(op_word(op), expr.at);
         if (mark.op == Note::Op::TextJoin) {
-            emit(OpCode::Method, module_.text_slots++, 1,
+            emit(OpCode::Method, module_.frame.texts++, 1,
                  static_cast<uint16_t>(MethodId::TextConcat));
             if (depth_) --depth_;
             return;

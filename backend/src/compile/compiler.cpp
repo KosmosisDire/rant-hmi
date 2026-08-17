@@ -211,7 +211,7 @@ class Compiler {
            queries for subscriptions and accessors instead of stamped entity flags */
         for (FlowProgram& flow : program_.flows)
             flow.body.sig = program_.infer_signature(flow.body.code);
-        program_.stack_values = std::max<uint32_t>(program_.stack_values, 1);
+        program_.frame.stack = std::max<uint32_t>(program_.frame.stack, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
         CompileResult out;
         out.ok = !has_errors_;
@@ -452,8 +452,8 @@ class Compiler {
             if (!entity.fields.empty() && !bare_scalar)
                 entity.type_id = intern_struct(entity, e);
         }
-        program_.elem_values += intake_values;
-        program_.elem_texts += intake_texts;
+        program_.frame.elems += intake_values;
+        program_.frame.elem_texts += intake_texts;
     }
 
     uint32_t add_cell(CellKind kind, uint64_t owner_node, uint64_t node_id,
@@ -478,7 +478,7 @@ class Compiler {
                  DiagGrade::Error, kind == CellKind::Slot ? name : "init");
         cell.persistent = persistent;
         if (shape == Shape::Text) {
-            cell.text_slot = program_.text_slots++;
+            cell.text_slot = program_.frame.texts++;
             cell.text_cap = 256;
         }
         /* an aggregate cell owns retained storage: the run's element pool resets every
@@ -1841,7 +1841,7 @@ class Compiler {
             sp.poll_ms = std::max(10u, static_cast<uint32_t>(std::lround(1000.0 / hz)));
             break;
         }
-        program_.stack_values = std::max(program_.stack_values, sp.body.max_stack);
+        program_.frame.stack = std::max(program_.frame.stack, sp.body.max_stack);
         program_.slot_programs.push_back(std::move(sp));
     }
 
@@ -1909,7 +1909,7 @@ class Compiler {
         cell.name = name;
         cell.shape = shape;
         if (shape == Shape::Text) {
-            cell.text_slot = program_.text_slots++;
+            cell.text_slot = program_.frame.texts++;
             cell.text_cap = 256;
         }
         program_.cells.push_back(std::move(cell));
@@ -3069,8 +3069,8 @@ class Compiler {
                         flow.body.max_stack = 1;
                         flow.worst_steps = 2;
                     }
-                    program_.stack_values =
-                        std::max(program_.stack_values, flow.body.max_stack);
+                    program_.frame.stack =
+                        std::max(program_.frame.stack, flow.body.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
                 if (!stepped) abandon_steps();
@@ -3154,8 +3154,8 @@ class Compiler {
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        &claimed, /*in_component=*/true, copyless))
                         continue;
-                    program_.stack_values =
-                        std::max(program_.stack_values, flow.body.max_stack);
+                    program_.frame.stack =
+                        std::max(program_.frame.stack, flow.body.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
                 /* every trigger refused for THIS instance: nothing vouched for the

@@ -241,7 +241,7 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
                 return false;
             }
             if (cell.shape == Shape::Text) {
-                cell.text_slot = program.text_slots++;
+                cell.text_slot = program.frame.texts++;
                 cell.text_cap = 256;
             }
             if (!scalar_value(program, cell.shape, 0, var.literal, cell.initial)) {
@@ -355,8 +355,8 @@ void run_case(const FixtureCase& item) {
                    where + "  a fixture result is a scalar; fold the aggregate"))
         return;
 
-    program.stack_values =
-        std::max(program.stack_values, result.max_stack);
+    program.frame.stack =
+        std::max(program.frame.stack, result.max_stack);
     /* a compiled expression always precedes its consumer (a store, a gate), so the
        short-circuit jumps land on a real instruction; a bare run gets a Halt to land on */
     Instruction halt;
@@ -386,7 +386,7 @@ void run_case(const FixtureCase& item) {
     if (!CHECK_MSG(!run.faulted, where + "  faulted, expected " + item.want_type + " " +
                                      item.want))
         return;
-    const Value& value = state.stack.empty() ? Value::nil() : state.stack[0];
+    const Value& value = state.frame.stack.empty() ? Value::nil() : state.frame.stack[0];
     CHECK_MSG(value_matches(program, state, value, item.want_type, item.want),
               where + "  came to " + render(program, state, value) + ", expected " +
                   item.want_type + " " + item.want);
