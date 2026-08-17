@@ -228,6 +228,16 @@ class Sema {
                 type = chain(index);
                 break;
             case ExprKind::Call: type = call(index); break;
+            case ExprKind::Error:
+                /* the parser's hole: its refusal already spoke, and judgment on
+                   whatever depends on it is spent — but a receiver the broken
+                   chain had built still resolves and reports (rule 16) */
+                if (expr.a != kNoExpr) {
+                    Type ignored;
+                    checked(expr.a, ignored);
+                }
+                failed_ = true;
+                return Type();
         }
         if (failed_) return Type();
         note(index).type = type;

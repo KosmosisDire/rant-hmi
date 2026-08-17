@@ -34,6 +34,11 @@ enum class ExprKind : uint8_t {
     Member,     /* a.text, called with args when `called` */
     Index,      /* a[b] */
     Call,       /* text(args) — a free function */
+    Error,      /* a HOLE the parser's recovery leaves where text failed to parse:
+                   the refusal has spoken, and the hole stands in so everything
+                   around the break still parses and checks. `a` optionally
+                   carries the receiver a broken postfix chain had already built.
+                   Never present in an AST whose parse SUCCEEDED. */
 };
 
 struct Expr {

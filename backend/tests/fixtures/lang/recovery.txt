@@ -48,3 +48,36 @@ error unknown name 'nope2'
 == a fold's start reports beside its broken body
 expr [1, 2].reduce((acc, v) => acc + nope1, nope2)
 error unknown name 'nope2'
+
+# ---- PARSE RECOVERY: a hole (ast.h Error) stands where text failed to parse,
+# so the checker still reports the independent findings beside the break. The
+# parse refusal stays the first entry; each pin below is a finding the
+# abandoned-parse pipeline never produced.
+
+== a trailing operator keeps the left side's findings
+expr nope1 +
+error unknown name 'nope1'
+
+== an unclosed paren keeps the findings before it
+expr nope1 + (
+error unknown name 'nope1'
+
+== a broken member keeps its receiver's findings
+expr nope1.
+error unknown name 'nope1'
+
+== both sides of a parse break report
+expr nope1 + + nope2
+error unknown name 'nope2'
+
+== a broken argument list keeps the arguments that parsed
+expr str(nope1
+error unknown name 'nope1'
+
+== pathological nesting terminates
+expr ((((
+error expected an expression
+
+== bare delimiters terminate
+expr [,]
+error expected an expression

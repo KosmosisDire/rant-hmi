@@ -67,12 +67,18 @@ bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         const Dest& dest) {
     Ast ast;
     Refusal broken;
-    if (!parse_expression(text, ast, broken)) {
-        refusals.push_back(std::move(broken));
-        return false;
-    }
     std::vector<Note> notes;
     Type type;
+    if (!parse_expression(text, ast, broken)) {
+        /* the parser's recovery left a tree with HOLES where its refusal spoke
+           (ast.h Error), and the tree is STILL CHECKED: the findings beside the
+           break report too, and every name that resolves leaves its note —
+           nothing is emitted. The parse refusal stays the one the surface leads
+           with. */
+        refusals.push_back(std::move(broken));
+        check_expression(ast, tier, env, notes, type, refusals, dest);
+        return false;
+    }
     if (!check_expression(ast, tier, env, notes, type, refusals, dest))
         return false;
 

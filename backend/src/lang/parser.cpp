@@ -62,6 +62,16 @@ class Parser {
         return index;
     }
 
+    /* THE RECOVERY: where an expression fails to parse, the refusal — the FIRST
+       one, which fail() keeps — has spoken, and a HOLE stands in so everything
+       around the break still parses and checks (the checker treats a hole as a
+       subtree that already failed). Every loop below consumes its operator or
+       delimiter before it can meet a hole, so the walk always advances. */
+    uint32_t hole() {
+        const uint32_t made = node(ExprKind::Error, token().at);
+        return close(made);
+    }
+
     /* is the token run at `from` a lambda head — `name =>` or `(name, ...) =>`? */
     bool lambda_ahead() const {
         if (token().kind == TokenKind::Ident)
@@ -105,17 +115,18 @@ class Parser {
 
     uint32_t ternary() {
         uint32_t cond = coalesce();
-        if (failed() || token().kind != TokenKind::Question) return cond;
+        if (token().kind != TokenKind::Question) return cond;
         const uint32_t made = node(ExprKind::Ternary, out_.nodes[cond].at);
         advance();
         const uint32_t yes = ternary();
-        if (token().kind != TokenKind::Colon) {
+        uint32_t no;
+        if (token().kind == TokenKind::Colon) {
+            advance();
+            no = ternary();
+        } else {
             fail("expected ':' to complete the conditional");
-            return kNoExpr;
+            no = hole();
         }
-        advance();
-        const uint32_t no = ternary();
-        if (failed()) return kNoExpr;
         Expr& expr = out_.nodes[made];
         expr.a = cond;
         expr.b = yes;
@@ -126,12 +137,11 @@ class Parser {
     uint32_t binary_chain(uint32_t (Parser::*next)(),
                           bool (*wants)(TokenKind)) {
         uint32_t left = (this->*next)();
-        while (!failed() && wants(token().kind)) {
+        while (wants(token().kind)) {
             const uint32_t made = node(ExprKind::Binary, out_.nodes[left].at);
             out_.nodes[made].op = token().kind;
             advance();
             const uint32_t right = (this->*next)();
-            if (failed()) return kNoExpr;
             out_.nodes[made].a = left;
             out_.nodes[made].b = right;
             left = close(made);
@@ -163,14 +173,12 @@ class Parser {
     uint32_t compare() {
         uint32_t left = sum();
         const TokenKind op = token().kind;
-        if (!failed() &&
-            (op == TokenKind::EqEq || op == TokenKind::Ne || op == TokenKind::Lt ||
-             op == TokenKind::Le || op == TokenKind::Gt || op == TokenKind::Ge)) {
+        if (op == TokenKind::EqEq || op == TokenKind::Ne || op == TokenKind::Lt ||
+            op == TokenKind::Le || op == TokenKind::Gt || op == TokenKind::Ge) {
             const uint32_t made = node(ExprKind::Binary, out_.nodes[left].at);
             out_.nodes[made].op = op;
             advance();
             const uint32_t right = sum();
-            if (failed()) return kNoExpr;
             out_.nodes[made].a = left;
             out_.nodes[made].b = right;
             left = close(made);
@@ -199,7 +207,6 @@ class Parser {
             out_.nodes[made].op = op;
             advance();
             const uint32_t inner = unary();
-            if (failed()) return kNoExpr;
             out_.nodes[made].a = inner;
             return close(made);
         }
@@ -218,17 +225,14 @@ class Parser {
 
     uint32_t postfix() {
         uint32_t receiver = primary();
-        while (!failed() && (token().kind == TokenKind::Dot ||
-                                  token().kind == TokenKind::LBracket)) {
+        while (token().kind == TokenKind::Dot ||
+               token().kind == TokenKind::LBracket) {
             if (token().kind == TokenKind::LBracket) {
                 const uint32_t made = node(ExprKind::Index, out_.nodes[receiver].at);
                 advance();
                 const uint32_t key = ternary();
-                if (token().kind != TokenKind::RBracket) {
-                    fail("expected ']'");
-                    return kNoExpr;
-                }
-                advance();
+                if (token().kind == TokenKind::RBracket) advance();
+                else fail("expected ']'");
                 out_.nodes[made].a = receiver;
                 out_.nodes[made].b = key;
                 receiver = close(made);
@@ -242,7 +246,12 @@ class Parser {
                 token().kind != TokenKind::KwNil) {
                 fail(plain_names(receiver) ? "expected a field after '.'"
                                            : "expected a method after '.'");
-                return kNoExpr;
+                /* the chain is spent, but the receiver it already built still
+                   speaks — the node becomes the hole and carries it */
+                Expr& expr = out_.nodes[made];
+                expr.kind = ExprKind::Error;
+                expr.a = receiver;
+                return close(made);
             }
             out_.nodes[made].name_at = token().at;
             out_.nodes[made].text = token().text;
@@ -251,8 +260,7 @@ class Parser {
             if (token().kind == TokenKind::LParen) {
                 out_.nodes[made].called = true;
                 advance();
-                if (!arguments(made, "expected ')' after method arguments"))
-                    return kNoExpr;
+                arguments(made, "expected ')' after method arguments");
             }
             out_.nodes[made].a = receiver;
             receiver = close(made);
@@ -263,7 +271,7 @@ class Parser {
     /* a call's argument list, ')' already expected; `made` collects the nodes. An
      * argument may be a lambda; `expr => expr` parses as a MALFORMED one, because
      * what to say about it depends on what the receiver turns out to be. */
-    bool arguments(uint32_t made, const char* closing) {
+    void arguments(uint32_t made, const char* closing) {
         if (token().kind != TokenKind::RParen) {
             for (;;) {
                 uint32_t arg;
@@ -271,7 +279,7 @@ class Parser {
                     arg = lambda();
                 } else {
                     arg = ternary();
-                    if (!failed() && token().kind == TokenKind::Arrow) {
+                    if (token().kind == TokenKind::Arrow) {
                         const uint32_t bad =
                             node(ExprKind::Lambda, out_.nodes[arg].at);
                         out_.nodes[bad].malformed = true;
@@ -281,15 +289,13 @@ class Parser {
                         arg = close(bad);
                     }
                 }
-                if (failed()) return false;
                 out_.nodes[made].args.push_back(arg);
                 if (token().kind != TokenKind::Comma) break;
                 advance();
             }
         }
-        if (token().kind != TokenKind::RParen) return fail(closing);
-        advance();
-        return true;
+        if (token().kind == TokenKind::RParen) advance();
+        else fail(closing);
     }
 
     uint32_t primary() {
@@ -304,7 +310,7 @@ class Parser {
                 advance();
                 if (token().kind != TokenKind::Ident) {
                     fail("expected a variant name after '.'");
-                    return kNoExpr;
+                    return hole();
                 }
                 const uint32_t made = node(ExprKind::Variant, t.at);
                 out_.nodes[made].text = token().text;
@@ -335,7 +341,8 @@ class Parser {
                 parse_color(t.text, ok);
                 if (!ok) {
                     fail("invalid color literal");
-                    return kNoExpr;
+                    advance();
+                    return hole();
                 }
                 const uint32_t made = node(ExprKind::ColorLit, t.at);
                 out_.nodes[made].text = t.text;
@@ -345,12 +352,8 @@ class Parser {
             case TokenKind::LParen: {
                 advance();
                 const uint32_t inner = ternary();
-                if (failed()) return kNoExpr;
-                if (token().kind != TokenKind::RParen) {
-                    fail("expected ')'");
-                    return kNoExpr;
-                }
-                advance();
+                if (token().kind == TokenKind::RParen) advance();
+                else fail("expected ')'");
                 /* the parens leave no node; the span stays the inner expression's */
                 return inner;
             }
@@ -361,17 +364,13 @@ class Parser {
                 if (token().kind != TokenKind::RBracket) {
                     for (;;) {
                         const uint32_t element = ternary();
-                        if (failed()) return kNoExpr;
                         out_.nodes[made].args.push_back(element);
                         if (token().kind != TokenKind::Comma) break;
                         advance();
                     }
                 }
-                if (token().kind != TokenKind::RBracket) {
-                    fail("expected ']'");
-                    return kNoExpr;
-                }
-                advance();
+                if (token().kind == TokenKind::RBracket) advance();
+                else fail("expected ']'");
                 return close(made);
             }
             case TokenKind::Entity: {
@@ -399,8 +398,7 @@ class Parser {
                     advance();
                     out_.nodes[made].name_after = token().at;   /* the '(' */
                     advance();
-                    if (!arguments(made, "expected ')' after arguments"))
-                        return kNoExpr;
+                    arguments(made, "expected ')' after arguments");
                     return close(made);
                 }
                 const uint32_t made = node(ExprKind::Name, t.at);
@@ -410,7 +408,7 @@ class Parser {
             }
             default:
                 fail("expected an expression");
-                return kNoExpr;
+                return hole();
         }
     }
 
