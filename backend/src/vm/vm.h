@@ -13,7 +13,7 @@ struct RunResult {
     uint32_t steps = 0;
 };
 
-/* Runs one flow with `arg` as the event's parameter (state.args[0], read by LoadArg
+/* Runs one flow with `arg` as the event's parameter (frame.args[0], read by Arg
  * under the parameter's declared name). The pipeline register x starts Nil: an event is
  * a function call, and what it passed in arrives as a named parameter, never as x. */
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,

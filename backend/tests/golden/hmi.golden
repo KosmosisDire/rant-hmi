@@ -7857,9 +7857,9 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
 }
 == program failed ==
 flow 116 node 116 event select worst 5
-  0 LOAD_ARG 0 0 50
+  0 ARG 0 0 50
   1 STORE 46 0 51
-  2 LOAD_ARG 0 0 52
+  2 ARG 0 0 52
   3 RAISE 0 1 53
   4 HALT
 flow 138 node 138 event tap worst 8
@@ -7872,21 +7872,21 @@ flow 138 node 138 event tap worst 8
   6 RAISE 1 1 60
   7 HALT
 flow 610 node 610 event select worst 5
-  0 LOAD_ARG 0 0 61
+  0 ARG 0 0 61
   1 STORE 117 0 62
-  2 LOAD_ARG 0 0 63
+  2 ARG 0 0 63
   3 RAISE 2 1 64
   4 HALT
 flow 613 node 613 event input worst 5
-  0 LOAD_ARG 0 0 65
+  0 ARG 0 0 65
   1 STORE 128 0 66
-  2 LOAD_ARG 0 0 67
+  2 ARG 0 0 67
   3 RAISE 3 1 68
   4 HALT
 flow 613 node 613 event commit worst 5
-  0 LOAD_ARG 0 0 69
+  0 ARG 0 0 69
   1 STORE 128 0 70
-  2 LOAD_ARG 0 0 71
+  2 ARG 0 0 71
   3 RAISE 4 1 72
   4 HALT
 flow 567 node 567 event every:567 worst 6
@@ -7912,7 +7912,7 @@ flow 302 node 301 event pressrelease worst 2
   0 FAULT 86 0 0
   1 HALT
 flow 118 node 116 event changed worst 3
-  0 LOAD_ARG 0 0 87
+  0 ARG 0 0 87
   1 STORE 210 0 88
   2 HALT
 flow 192 node 186 event release worst 2
@@ -7938,7 +7938,7 @@ flow 458 node 370 event pressrelease worst 12
   1 NEG 0 0 102
   2 LOAD 3 0 103
   3 MUL 0 0 104
-  4 LOAD_ARG 0 0 105
+  4 ARG 0 0 105
   5 CONST 23 0 106
   6 CONST 6 0 107
   7 METHOD small 9 0 2 108
@@ -7950,7 +7950,7 @@ flow 460 node 366 event pressrelease worst 11
   0 CONST 22 0 112
   1 LOAD 3 0 113
   2 MUL 0 0 114
-  3 LOAD_ARG 0 0 115
+  3 ARG 0 0 115
   4 CONST 23 0 116
   5 CONST 6 0 117
   6 METHOD small 9 0 2 118
@@ -7971,7 +7971,7 @@ flow 611 node 610 event changed worst 2
   0 FAULT 128 0 0
   1 HALT
 flow 652 node 613 event changed worst 3
-  0 LOAD_ARG 0 0 129
+  0 ARG 0 0 129
   1 STORE 3 0 130
   2 HALT
 flow 163 node 162 event tap worst 2
@@ -7984,7 +7984,7 @@ flow 181 node 179 event tap worst 2
   0 FAULT 136 0 0
   1 HALT
 flow 464 node 462 event pressrelease worst 3
-  0 LOAD_ARG 0 0 137
+  0 ARG 0 0 137
   1 STORE 1 0 138
   2 HALT
 flow 472 node 462 event held worst 2

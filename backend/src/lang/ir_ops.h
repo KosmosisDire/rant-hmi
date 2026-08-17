@@ -104,11 +104,13 @@ enum class OpCode : uint8_t {
      * which is why it is dead and this one is not it.
      */
     ToEnum,
-    /* push EVENT PARAMETER `a` (state.args): what the triggering event passed in, bound
-     * by the parameter's declared name at compile. State-resident rather than a run_code
-     * register so a lambda body can read it without colliding with its own x2/x3.
+    /* push INVOCATION ARGUMENT `a` off the frame's argument slots: the context a run
+     * was CALLED with, as opposed to state it reads. `0` is the triggering event's
+     * declared parameter, bound by the parameter's name at compile. Frame-resident
+     * rather than a run_code register so a lambda body reads it without colliding with
+     * its own x2/x3 — and so a park keeps it by keeping the frame.
      */
-    LoadArg,
+    Arg,
     /* RAISE the event in Program.raises[`a`] (`b`: 1 = pop one argument value off the
      * stack, 0 = nullary; `c`: the fault site for a full raise buffer). The record is
      * queued on the state and the scheduler dispatches it AFTER this run halts — a raise
@@ -209,7 +211,7 @@ constexpr const char* kOpNames[] = {
     "APPEND",
     "STORE_KEY",
     "TO_ENUM",
-    "LOAD_ARG",
+    "ARG",
     "RAISE",
     "CLOCK_READ",
     "REPEAT_READ",

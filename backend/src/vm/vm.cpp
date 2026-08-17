@@ -1066,10 +1066,10 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::LoadX:
                 if (ins.a > 2 || !push(ins.a == 0 ? x : ins.a == 1 ? x2 : x3)) fail(ins.c);
                 break;
-            /* the EVENT PARAMETER: state-resident so a lambda body reads it without
-               colliding with its own x2/x3 registers */
-            case OpCode::LoadArg:
-                if (ins.a >= 1 || !push(state.args[ins.a])) fail(ins.c);
+            /* an INVOCATION ARGUMENT: frame-resident so a lambda body reads it without
+               colliding with its own x2/x3 registers, and so a park keeps it */
+            case OpCode::Arg:
+                if (ins.a >= Frame::kArgs || !push(state.frame.args[ins.a])) fail(ins.c);
                 break;
             case OpCode::Load:
                 if (ins.a >= state.values.size() || !push(state.values[ins.a])) fail(ins.c);
@@ -1237,8 +1237,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             }
             case OpCode::Deadband: {
                 /* the value a deadband watches is what the EVENT passed in (the
-                   parameter register) — x is the pipeline's and starts Nil */
-                const Value& watched = state.args[0];
+                   parameter argument) — x is the pipeline's and starts Nil */
+                const Value& watched = state.frame.args[0];
                 if (ins.a >= state.deadband.size() || watched.tag != ValueTag::Num) {
                     fail(ins.c);
                     break;
@@ -1282,7 +1282,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                  * input scratch) into the frame's own arena: a later run must not
                  * move a held value under the park. Frame-owned and constant text is
                  * already frozen — a temporary's fields included — because the
-                 * frame parks whole below. */
+                 * frame parks whole below. The parameter argument pins IN PLACE:
+                 * it rides the frame into the pending slot. */
                 auto pin = [&](const Value& value) -> Value {
                     if (value.tag != ValueTag::Text) return value;
                     if ((value.ref & (kConstantRef | kFrameRef)) != 0) return value;
@@ -1292,7 +1293,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     return Value::text(kFrameRef | slot);
                 };
                 pending.x = pin(x);
-                pending.arg = pin(state.args[0]);
+                state.frame.args[0] = pin(state.frame.args[0]);
                 pending.repeat = state.repeat;
                 /* THE PARK: the frame moves into the pending slot whole — arena,
                  * cursors and all — and the slot's previous buffers become the
@@ -1964,7 +1965,7 @@ RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState
                    Value arg) noexcept {
     /* a fresh run enters an empty arena; only resume_pending continues one */
     state.frame.reset();
-    state.args[0] = arg;
+    state.frame.args[0] = arg;
     return run_code(program, flow.body.code, &flow, state, Value::nil());
 }
 
@@ -2008,14 +2009,13 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     PendingState& pending = state.pending[pending_slot];
     if (!pending.active || pending.flow >= program.flows.size())
         return RunResult{true, true, false, 0};
-    /* the parked frame returns whole — held refs, temporaries and all resolve
-     * against it again — and the run continues its own arena from where it parked
-     * (no reset) */
+    /* the parked frame returns whole — held refs, temporaries, the arguments and
+     * all resolve against it again — and the run continues its own arena from
+     * where it parked (no reset) */
     std::swap(state.frame, pending.held);
     const uint32_t flow_index = pending.flow;
     const uint32_t pc = pending.resume_pc;
     const Value x = pending.x;
-    state.args[0] = pending.arg;
     state.repeat = pending.repeat;
     pending.active = false;
     const FlowProgram& flow = program.flows[flow_index];

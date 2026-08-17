@@ -2897,7 +2897,7 @@ class Compiler {
         else bind_entities(scope);
         if (param)
             scope.bind_value(param->name,
-                             Place{Type(param->shape), OpCode::LoadArg, 0, 0});
+                             Place{Type(param->shape), OpCode::Arg, 0, 0});
         FlowLocals locals;
         /* A BROKEN STEP SUPPRESSES ITSELF, NEVER ITS SIBLINGS (the same recovery rule
            the checker holds): later steps still ANALYZE — their findings report and

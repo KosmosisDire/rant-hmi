@@ -161,3 +161,9 @@ pending_texts
 # where fields live), so the per-slot record whose `temp` flag drove the
 # snapshot-and-restore loops around a park died with those loops.
 StructDef
+
+# stage 6b, the argument rides the frame: what a run is invoked WITH is frame data
+# read by Arg, so the state-resident parameter register (a one-slot array on the
+# state) and the pending slot's per-field copy of it died — a park keeps the
+# argument because it keeps the frame, and the pin happens in place.
+LoadArg

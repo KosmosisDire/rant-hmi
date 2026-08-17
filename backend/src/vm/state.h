@@ -197,6 +197,10 @@ struct RepeatSeat {
  * kFrameRef, so nothing at rest can be confused with it. The element arena is the
  * pool aggregate-producing sites build into, reset at each fresh run's entry. */
 struct Frame {
+    /* how many argument slots every frame carries (the vocabulary is fixed: one
+     * declared parameter per event, enforced at compile) */
+    static constexpr uint32_t kArgs = 1;
+
     std::vector<Value> stack;
     /* [fixed site slots | frame locals' field texts | element text region] */
     std::vector<FixedText> texts;
@@ -205,14 +209,21 @@ struct Frame {
      * them by ownership and nothing snapshots or restores field by field. Slot k
      * here is struct slot layout.state_structs + k. */
     std::vector<StructState> locals;
+    /* THE INVOCATION'S ARGUMENTS: what this run was CALLED with, seeded by the
+     * invoker and read by Arg — [0] the triggering event's declared parameter.
+     * Frame-resident so a lambda body reads them without touching its own x2/x3
+     * registers, and so a park keeps them by keeping the frame. */
+    Value args[kArgs] = {Value::nil()};
     uint32_t elem_cursor = 0;
     uint32_t text_base = 0;
     uint32_t text_cursor = 0;
 
-    /* a fresh run starts with an empty arena; a resumed one keeps what it held */
+    /* a fresh run starts with an empty arena and no arguments; the invoker seeds
+     * what it calls with, and a resumed run keeps what it held */
     void reset() noexcept {
         elem_cursor = 0;
         text_cursor = text_base;
+        for (Value& arg : args) arg = Value::nil();
     }
     /* a run of `count` element slots, or UINT32_MAX when the extent is spent */
     uint32_t alloc(uint32_t count) noexcept {
@@ -234,16 +245,14 @@ struct PendingState {
     uint32_t flow = 0;
     uint32_t resume_pc = 0;
     Value x = Value::nil();
-    /* the event parameter the parked run arrived with, restored at resume */
-    Value arg = Value::nil();
     /* and which copy it arrived on: a run that parks in a debounce must wake as the same
        copy it was pressed on, or the delay would silently move the write elsewhere */
     RepeatSeat repeat;
     /* THE PARKED FRAME (stage 6a): parking SWAPS the run's frame in here whole —
-     * arena, cursors and all — and resume swaps it back, so held scratch survives
-     * by ownership rather than by deep copy. Values referencing storage OUTSIDE
-     * the frame (a cell's text slot, the input scratch) are pinned into the frame
-     * arena at park, which is the whole of what still copies. */
+     * arena, cursors, arguments and all — and resume swaps it back, so held scratch
+     * survives by ownership rather than by deep copy. Values referencing storage
+     * OUTSIDE the frame (a cell's text slot, the input scratch) are pinned into the
+     * frame arena at park, which is the whole of what still copies. */
     Frame held;
 };
 
@@ -293,11 +302,6 @@ class RuntimeState {
     Frame frame;
     std::vector<EffectRecord> effects;
     uint32_t effect_count = 0;
-    /* THE EVENT PARAMETER: what the triggering event passed in, seeded at dispatch,
-     * read by LoadArg wherever the parameter's name is spoken — including inside a
-     * lambda body, which is why this is state rather than a run_code register. One
-     * slot: the vocabulary is one parameter per event (enforced at compile). */
-    Value args[1] = {Value::nil()};
     /* THE COPY THIS RUN IS: seeded by whoever drove the run (an input event carries one,
      * a cadence does not), read by RepeatRead. A raise inherits it untouched, which is
      * right — an event raised from a copy's own run is that copy speaking. */

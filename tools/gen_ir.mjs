@@ -133,10 +133,12 @@ converts to Nil and PROPAGATES (the one unknown rule) — the old opcode faulted
 which is why it is dead and this one is not it.`,
   },
   {
-    name: "LoadArg",
-    c: `push EVENT PARAMETER \`a\` (state.args): what the triggering event passed in, bound
-by the parameter's declared name at compile. State-resident rather than a run_code
-register so a lambda body can read it without colliding with its own x2/x3.`,
+    name: "Arg",
+    c: `push INVOCATION ARGUMENT \`a\` off the frame's argument slots: the context a run
+was CALLED with, as opposed to state it reads. \`0\` is the triggering event's
+declared parameter, bound by the parameter's name at compile. Frame-resident
+rather than a run_code register so a lambda body reads it without colliding with
+its own x2/x3 — and so a park keeps it by keeping the frame.`,
   },
   {
     name: "Raise",
