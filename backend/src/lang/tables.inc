@@ -30,7 +30,7 @@ HMI_BUILTIN_ROW("num", Num, 1, 1, (Shape::Unknown), Num, false, "", false)
 /* view-only: the template tier's saturating 0..1 fold, which the scalar language
  * spells clamp(x, 0, 1) and has no separate opcode for
  */
-HMI_BUILTIN_ROW("clamp01", Clamp, 1, 1, (Shape::Num), Num, false, "CLAMP01", true)
+HMI_BUILTIN_ROW("clamp01", None, 1, 1, (Shape::Num), Num, false, "CLAMP01", true)
 HMI_BUILTIN_ROW("rgb", Rgb, 3, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Color, true, "@", false)
 HMI_BUILTIN_ROW("hsv", Hsv, 3, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Color, true, "@", false)
 HMI_BUILTIN_ROW("str", Str, 1, 1, (Shape::Unknown), Text, false, "STR", false)
@@ -39,7 +39,7 @@ HMI_BUILTIN_ROW("str", Str, 1, 1, (Shape::Unknown), Text, false, "STR", false)
  * agrees with what actually renders. No wire meaning (a machine does not care
  * how wide a label draws), so it never had a scalar Builtin to begin with.
  */
-HMI_BUILTIN_ROW("measure", Clamp, 2, 2, (Shape::Text, Shape::Num), Num, true, "MEASURE", true)
+HMI_BUILTIN_ROW("measure", None, 2, 2, (Shape::Text, Shape::Num), Num, true, "MEASURE", true)
 HMI_BUILTIN_ROW("name", Name, 1, 1, (Shape::Unknown), Text, false, "", false)
 HMI_BUILTIN_ROW("fmtTime", FmtTime, 1, 1, (Shape::Num), Text, true, "", false)
 HMI_BUILTIN_ROW("fmtDuration", FmtDuration, 1, 1, (Shape::Num), Text, true, "", false)
@@ -67,19 +67,18 @@ HMI_BUILTIN_ROW("atan2", Atan2, 2, 2, (Shape::Num, Shape::Num), Num, false, "ATA
  * surface grammar; giving them one costs nothing since the opcodes are already
  * proven. hypot is new to both tiers but stays view-only here (nothing in the
  * fixed vocabulary asks for it on the wire), folding onto MUL/ADD/SQRT the way
- * mapRange folds onto arithmetic. The enum id on each view-only row is inert --
- * Clamp is reused rather than adding an id with no VM case, since view_only rows
- * never reach the scalar dispatcher that would use it.
+ * mapRange folds onto arithmetic. Builtin::None marks each view-only row: no
+ * scalar id exists, and view_only rows never reach the dispatcher that would
+ * want one.
  */
-HMI_BUILTIN_ROW("sign", Clamp, 1, 1, (Shape::Num), Num, false, "SIGN", true)
-HMI_BUILTIN_ROW("mod", Clamp, 2, 2, (Shape::Num, Shape::Num), Num, false, "MOD", true)
-HMI_BUILTIN_ROW("hypot", Clamp, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", true)
+HMI_BUILTIN_ROW("sign", None, 1, 1, (Shape::Num), Num, false, "SIGN", true)
+HMI_BUILTIN_ROW("mod", None, 2, 2, (Shape::Num, Shape::Num), Num, false, "MOD", true)
+HMI_BUILTIN_ROW("hypot", None, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", true)
 /* view-only: one point of a computed path, in fractions of the node's box —
  * what a `points` attr's map produces per sample. No wire meaning (a machine
- * has no boxes), so it never had a scalar Builtin; the id on the row is inert,
- * the clamp01 pattern.
+ * has no boxes), so it never had a scalar Builtin, and its row says so.
  */
-HMI_BUILTIN_ROW("anchor", Clamp, 2, 2, (Shape::Num, Shape::Num), Struct, true, "ANCHOR", true)
+HMI_BUILTIN_ROW("anchor", None, 2, 2, (Shape::Num, Shape::Num), Struct, true, "ANCHOR", true)
 /* THE UNKNOWN TEST (spec 2.4): true when the value is not UNKNOWN. The one
  * place the language ASKS about Nil instead of propagating it — == cannot test
  * for it (an unknown comparison is unknown), so this is the honest spelling,

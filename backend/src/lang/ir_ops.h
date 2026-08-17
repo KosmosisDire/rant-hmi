@@ -345,6 +345,11 @@ enum class Builtin : uint16_t {
     Acos,
     Atan2,
     Known,
+    /* the no-scalar-id marker VIEW-ONLY table rows carry: no VM case dispatches
+     * it, so a bug that routes one to the scalar dispatcher faults instead of
+     * silently computing some borrowed builtin
+     */
+    None,
 };
 
 enum class MethodId : uint16_t {

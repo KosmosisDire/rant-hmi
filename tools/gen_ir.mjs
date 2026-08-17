@@ -238,8 +238,9 @@ result shape is the body's rather than the receiver's.`,
  * `display` (display vocabulary, refused on the wire), and the VIEW column — the
  * program.ts opcode, "@" where the template emitter folds it itself, "" where the
  * view has none. A row with no `name` is VIEW-ONLY: it never reaches the scalar
- * dispatcher, so it borrows an inert enum id (`id`, the clamp01 pattern) instead of
- * minting one with no VM case. `c` comments the enum entry, `rc` the table row. */
+ * dispatcher, so its table row carries Builtin::None — the honest "no scalar id",
+ * which faults loudly if a bug ever routes one to the VM instead of silently
+ * computing a borrowed builtin. `c` comments the enum entry, `rc` the table row. */
 const BUILTINS = [
   { name: "Clamp", fn: "clamp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
   {
@@ -261,7 +262,7 @@ gaining an opcode of its own -- "@" is the same bespoke marker \`clamp\` uses`,
   { name: "Int", fn: "int", min: 1, max: 1, params: ["Unknown"], result: "Num", view: "INT" },
   { name: "Num", fn: "num", min: 1, max: 1, params: ["Unknown"], result: "Num" },
   {
-    fn: "clamp01", id: "Clamp", min: 1, max: 1, params: ["Num"], result: "Num", view: "CLAMP01", viewOnly: true,
+    fn: "clamp01", min: 1, max: 1, params: ["Num"], result: "Num", view: "CLAMP01", viewOnly: true,
     rc: `view-only: the template tier's saturating 0..1 fold, which the scalar language
 spells clamp(x, 0, 1) and has no separate opcode for`,
   },
@@ -269,7 +270,7 @@ spells clamp(x, 0, 1) and has no separate opcode for`,
   { name: "Hsv", fn: "hsv", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "@" },
   { name: "Str", fn: "str", min: 1, max: 1, params: ["Unknown"], result: "Text", view: "STR" },
   {
-    fn: "measure", id: "Clamp", min: 2, max: 2, params: ["Text", "Num"], result: "Num", display: true, view: "MEASURE", viewOnly: true,
+    fn: "measure", min: 2, max: 2, params: ["Text", "Num"], result: "Num", display: true, view: "MEASURE", viewOnly: true,
     rc: `view-only: the estimated rendered width of TEXT at SIZE, in artboard units --
 the same estimator drawText/richUnits use, so an author's own layout maths
 agrees with what actually renders. No wire meaning (a machine does not care
@@ -303,24 +304,23 @@ inventing a radians dialect nothing else in the document uses`,
   { name: "Acos", fn: "acos", min: 1, max: 1, params: ["Num"], result: "Num", view: "ACOS" },
   { name: "Atan2", fn: "atan2", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "ATAN2" },
   {
-    fn: "sign", id: "Clamp", min: 1, max: 1, params: ["Num"], result: "Num", view: "SIGN", viewOnly: true,
+    fn: "sign", min: 1, max: 1, params: ["Num"], result: "Num", view: "SIGN", viewOnly: true,
     rc: `view-only: SIGN and MOD already exist as program.ts opcodes (SIGN backs
 num.sign, MOD backs \`%\`) but neither had a free-function spelling in the
 surface grammar; giving them one costs nothing since the opcodes are already
 proven. hypot is new to both tiers but stays view-only here (nothing in the
 fixed vocabulary asks for it on the wire), folding onto MUL/ADD/SQRT the way
-mapRange folds onto arithmetic. The enum id on each view-only row is inert --
-Clamp is reused rather than adding an id with no VM case, since view_only rows
-never reach the scalar dispatcher that would use it.`,
+mapRange folds onto arithmetic. Builtin::None marks each view-only row: no
+scalar id exists, and view_only rows never reach the dispatcher that would
+want one.`,
   },
-  { fn: "mod", id: "Clamp", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MOD", viewOnly: true },
-  { fn: "hypot", id: "Clamp", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
+  { fn: "mod", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MOD", viewOnly: true },
+  { fn: "hypot", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
   {
-    fn: "anchor", id: "Clamp", min: 2, max: 2, params: ["Num", "Num"], result: "Struct", display: true, view: "ANCHOR", viewOnly: true,
+    fn: "anchor", min: 2, max: 2, params: ["Num", "Num"], result: "Struct", display: true, view: "ANCHOR", viewOnly: true,
     rc: `view-only: one point of a computed path, in fractions of the node's box —
 what a \`points\` attr's map produces per sample. No wire meaning (a machine
-has no boxes), so it never had a scalar Builtin; the id on the row is inert,
-the clamp01 pattern.`,
+has no boxes), so it never had a scalar Builtin, and its row says so.`,
   },
   {
     name: "Known", fn: "known", min: 1, max: 1, params: ["Unknown"], result: "Bool", view: "KNOWN",
@@ -514,7 +514,15 @@ constexpr IterateModeDef kIterateModes[] = {
   out += `};
 
 `;
-  out += cEnum("Builtin", "uint16_t", BUILTINS.filter((b) => b.name));
+  out += cEnum("Builtin", "uint16_t", [
+    ...BUILTINS.filter((b) => b.name),
+    {
+      name: "None",
+      c: `the no-scalar-id marker VIEW-ONLY table rows carry: no VM case dispatches
+it, so a bug that routes one to the scalar dispatcher faults instead of
+silently computing some borrowed builtin`,
+    },
+  ]);
   out += `
 `;
   out += cEnum("MethodId", "uint16_t", METHODS);
@@ -543,7 +551,7 @@ function emitTablesInc() {
   for (const b of BUILTINS) {
     if (!b.fn) continue;
     if (b.rc) out += cComment(b.rc, "");
-    out += `HMI_BUILTIN_ROW("${b.fn}", ${b.name ?? b.id}, ${b.min}, ${b.max}, ` +
+    out += `HMI_BUILTIN_ROW("${b.fn}", ${b.name ?? "None"}, ${b.min}, ${b.max}, ` +
            `(${shapes(b.params)}), ${b.result}, ${b.display ? "true" : "false"}, ` +
            `"${b.view ?? ""}", ${b.viewOnly ? "true" : "false"})\n`;
   }
