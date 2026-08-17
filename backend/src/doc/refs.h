@@ -1,7 +1,7 @@
 /* Variable references: where they live (driven by the schema's prop roles) and how a
  * rename rewrites all of them in one transaction (spec 2.7). Expression text is
- * rewritten by identifier scanning, not by parsing: the parser belongs to the
- * compiler, and a rename only ever touches bare identifiers. */
+ * rewritten by THE LEXER's identifier scan, not by parsing: a rename only ever
+ * touches bare identifiers, and what counts as one is the language's own rule. */
 #pragma once
 
 #include "schema.h"

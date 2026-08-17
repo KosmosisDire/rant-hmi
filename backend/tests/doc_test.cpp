@@ -461,6 +461,12 @@ void test_expr_rewrite() {
     CHECK(rewrite_ident("flowing + flow", "flow", "rate") == "flowing + rate");
     CHECK(!expr_uses("x.flow", "flow"));
     CHECK(expr_uses("clamp(flow, 0, 1)", "flow"));
+    /* the scan is THE LEXER's: what it owns whole is not an identifier, so a mesh
+       path, a number's exponent and a color literal keep their spelling however a
+       variable is named */
+    CHECK(rewrite_ident("@flow.rate + flow", "flow", "lpm") == "@flow.rate + lpm");
+    CHECK(rewrite_ident("1e5 + e5", "e5", "n") == "1e5 + n");
+    CHECK(!expr_uses("#f00", "f00"));
 }
 
 /* A variable's type owns the shape of its init. Without this a bool variable keeps the

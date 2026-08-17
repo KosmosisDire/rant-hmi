@@ -4,6 +4,7 @@
  * literal) or expression text is the language's own rule, and the rename has to read it
  * from the same table the compiler does — "ease-out" lexes as two identifiers, so a
  * rename that guessed would corrupt it the day a variable is called `ease`. */
+#include "lang/lexer.h"
 #include "lang/template_expr.h"
 
 #include <functional>
@@ -14,27 +15,23 @@ namespace {
 bool ident_start(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 bool ident_char(char c) { return ident_start(c) || (c >= '0' && c <= '9'); }
 
-/* Call fn(start, len) for every bare identifier: skips string literals, skips a name
- * after '.' (a field or method), and skips a name followed by '(' (a builtin). */
+/* Call fn(start, len) for every bare identifier — THE LEXER's identifiers (spans and
+ * all), never a private spelling of them: a name after '.' is a field or method, a
+ * name followed by '(' is a call, and what the lexer owns whole (strings, numbers,
+ * colors, `@entity` paths, `$tokens`, the word operators) is no identifier at all.
+ * The hand scan this replaced disagreed on exactly those — it saw an identifier
+ * inside `@motor.speed`, `1e5` and `#f00`, so a rename could corrupt an entity
+ * reference or a literal that happened to spell the variable's name. */
 void scan_idents(const std::string& s, const std::function<void(size_t, size_t)>& fn) {
-    size_t i = 0;
-    while (i < s.size()) {
-        const char c = s[i];
-        if (c == '"' || c == '\'') {
-            const char quote = c;
-            ++i;
-            while (i < s.size() && s[i] != quote) i += (s[i] == '\\' ? 2 : 1);
-            ++i;
-            continue;
-        }
-        if (!ident_start(c)) { ++i; continue; }
-        const size_t start = i;
-        while (i < s.size() && ident_char(s[i])) ++i;
-        size_t after = i;
-        while (after < s.size() && (s[after] == ' ' || s[after] == '\t')) ++after;
-        const bool is_call = after < s.size() && s[after] == '(';
-        const bool is_member = start > 0 && s[start - 1] == '.';
-        if (!is_call && !is_member) fn(start, i - start);
+    Lexer lexer(s);
+    TokenKind before = TokenKind::End;
+    for (Token token = lexer.next(); token.kind != TokenKind::End;) {
+        const Token after = lexer.next();
+        if (token.kind == TokenKind::Ident && before != TokenKind::Dot &&
+            after.kind != TokenKind::LParen)
+            fn(token.at, token.length);
+        before = token.kind;
+        token = after;
     }
 }
 
