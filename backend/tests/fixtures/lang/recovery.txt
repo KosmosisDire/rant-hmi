@@ -1,0 +1,50 @@
+# CONFORMANCE FIXTURES: sibling recovery (rule 16). A broken subtree suppresses
+# what DEPENDED on it — the judgments its ancestors would have made — never its
+# SIBLINGS: every independent subtree still reports its own findings, so one
+# error cannot hide another. Each pin below is the SECOND finding, the one the
+# spine-aborting checker never reached.
+
+== both sides of a sum report
+expr nope1 + nope2
+error unknown name 'nope2'
+
+== both sides of a product report
+expr nope1 * nope2
+error unknown name 'nope2'
+
+== both sides of a comparison report
+expr nope1 == nope2
+error unknown name 'nope2'
+
+== both sides of a condition report
+expr nope1 && nope2
+error unknown name 'nope2'
+
+== both sides of a coalesce report
+expr nope1 ?? nope2
+error unknown name 'nope2'
+
+== both arms of a ternary report
+env flag: bool = true
+expr flag ? nope1 : nope2
+error unknown name 'nope2'
+
+== a failed condition still lets the arms speak
+expr 1 ? nope1 : 2
+error unknown name 'nope1'
+
+== an index key above a broken value reports
+expr nope1[nope2]
+error unknown name 'nope2'
+
+== a method argument above a broken value reports
+expr nope1.round(nope2)
+error unknown name 'nope2'
+
+== a lambda body above a broken value reports
+expr nope1.filter(v => v + nope2)
+error unknown name 'nope2'
+
+== a fold's start reports beside its broken body
+expr [1, 2].reduce((acc, v) => acc + nope1, nope2)
+error unknown name 'nope2'

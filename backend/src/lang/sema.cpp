@@ -85,14 +85,26 @@ class Sema {
     }
 
   private:
-    /* one refusal, as DATA: message and position apart. `failed_` aborts the
-       CURRENT spine exactly as the single error string used to — the recovery
-       points (argument lists, list elements) clear it to check the next sibling,
-       so independent findings all land in `out_`. */
+    /* one refusal, as DATA: message and position apart. `failed_` suppresses what
+       DEPENDS on a broken subtree — the judgments its ancestors would have made
+       of it — never its SIBLINGS: every independent subtree is still visited
+       (checked() below), so all independent findings land in `out_` (rule 16),
+       and every name that resolves leaves its Note even in an expression that
+       refuses as a whole — which is what lets a rename trust partial notes. */
     bool fail(const std::string& message, size_t at) {
         out_.push_back(Refusal{message, at, 0});
         failed_ = true;
         return false;
+    }
+
+    /* check one INDEPENDENT subtree: a sibling's failure must not silence this
+       one. Leaves failed_ CLEAR — the caller collects the verdicts and fails
+       once, after every sibling has spoken. */
+    bool checked(uint32_t index, Type& out) {
+        out = check(index);
+        const bool ok = !failed_;
+        failed_ = false;
+        return ok;
     }
 
     /* the old tracker's one gate: Unknown and Nil pass anywhere */
@@ -244,11 +256,15 @@ class Sema {
            ternary's rule. */
         if (op == TokenKind::Coalesce) {
             want_ = want;
-            const Type left = check(expr.a);
-            if (failed_) return Type();
+            Type left;
+            const bool lok = checked(expr.a, left);
             want_ = want;
-            const Type right = check(expr.b);
-            if (failed_) return Type();
+            Type right;
+            const bool rok = checked(expr.b, right);
+            if (!lok || !rok) {
+                failed_ = true;
+                return Type();
+            }
             if (left.kind == Shape::Nil || left.kind == Shape::Unknown) return right;
             return left.kind == right.kind || right.kind == Shape::Nil ? left : Type();
         }
@@ -257,12 +273,17 @@ class Sema {
             op == TokenKind::AndAnd || op == TokenKind::KwAnd) {
             const bool disjunction = op == TokenKind::OrOr || op == TokenKind::KwOr;
             const char* name = disjunction ? "||" : "&&";
-            const Type left = check(expr.a);
-            if (failed_) return Type();
-            if (!require(left, Shape::Bool, name, at(expr.a).after)) return Type();
-            const Type right = check(expr.b);
-            if (failed_) return Type();
-            if (!require(right, Shape::Bool, name, at(expr.b).after)) return Type();
+            Type left, right;
+            bool lok = checked(expr.a, left);
+            if (lok) lok = require(left, Shape::Bool, name, at(expr.a).after);
+            failed_ = false;
+            bool rok = checked(expr.b, right);
+            if (rok) rok = require(right, Shape::Bool, name, at(expr.b).after);
+            failed_ = false;
+            if (!lok || !rok) {
+                failed_ = true;
+                return Type();
+            }
             return Type(Shape::Bool);
         }
         if (op == TokenKind::EqEq || op == TokenKind::Ne || op == TokenKind::Lt ||
@@ -281,17 +302,30 @@ class Sema {
         Type left, right;
         if (equality && at(expr.a).kind == ExprKind::Variant &&
             at(expr.b).kind != ExprKind::Variant) {
-            right = check(expr.b);
-            if (failed_) return Type();
+            /* a variant literal is NOTHING BUT its context: with the side that
+               supplies the vocabulary broken there is no true thing to say about
+               it, and no name inside it to resolve — skip it, fail once */
+            if (!checked(expr.b, right)) {
+                failed_ = true;
+                return Type();
+            }
             want_ = right;
-            left = check(expr.a);
-            if (failed_) return Type();
+            if (!checked(expr.a, left)) {
+                failed_ = true;
+                return Type();
+            }
         } else {
-            left = check(expr.a);
-            if (failed_) return Type();
+            const bool lok = checked(expr.a, left);
             if (equality) want_ = left;
-            right = check(expr.b);
-            if (failed_) return Type();
+            if (!lok && at(expr.b).kind == ExprKind::Variant) {
+                failed_ = true;
+                return Type();
+            }
+            const bool rok = checked(expr.b, right);
+            if (!lok || !rok) {
+                failed_ = true;
+                return Type();
+            }
         }
         if (equality) {
             /* `== nil` cannot work: an unknown comparison IS unknown (the one rule),
@@ -339,10 +373,13 @@ class Sema {
 
     Type sum(uint32_t index) {
         const Expr& expr = at(index);
-        const Type left = check(expr.a);
-        if (failed_) return Type();
-        const Type right = check(expr.b);
-        if (failed_) return Type();
+        Type left, right;
+        const bool lok = checked(expr.a, left);
+        const bool rok = checked(expr.b, right);
+        if (!lok || !rok) {
+            failed_ = true;
+            return Type();
+        }
         /* `+` with a text side JOINS (spec 6.2): the other operand is rendered as
            str() renders it. Text production is display vocabulary, so a wire value
            refuses it like any other formatting. */
@@ -365,10 +402,13 @@ class Sema {
 
     Type product(uint32_t index) {
         const Expr& expr = at(index);
-        const Type left = check(expr.a);
-        if (failed_) return Type();
-        const Type right = check(expr.b);
-        if (failed_) return Type();
+        Type left, right;
+        const bool lok = checked(expr.a, left);
+        const bool rok = checked(expr.b, right);
+        if (!lok || !rok) {
+            failed_ = true;
+            return Type();
+        }
         /* `*` and `/` SCALE a color's channels by a number (alpha kept), so
            `#ff8040 * 0.5` darkens without spelling three channels out. Color is
            display vocabulary, refused on the wire like the rest of it. */
@@ -404,15 +444,20 @@ class Sema {
      * wherever an enum is expected. */
     Type ternary(uint32_t index, const Type& want) {
         const Expr& expr = at(index);
-        const Type cond = check(expr.a);
-        if (failed_) return Type();
-        if (!require(cond, Shape::Bool, "?:", at(expr.a).after)) return Type();
+        Type cond;
+        bool cok = checked(expr.a, cond);
+        if (cok) cok = require(cond, Shape::Bool, "?:", at(expr.a).after);
+        failed_ = false;
         want_ = want;
-        const Type yes = check(expr.b);
-        if (failed_) return Type();
+        Type yes;
+        const bool yok = checked(expr.b, yes);
         want_ = want;
-        const Type no = check(expr.c);
-        if (failed_) return Type();
+        Type no;
+        const bool nok = checked(expr.c, no);
+        if (!cok || !yok || !nok) {
+            failed_ = true;
+            return Type();
+        }
         return yes.kind == no.kind ? no : Type();
     }
 
@@ -447,15 +492,63 @@ class Sema {
         } else {
             type = check(primary);
         }
-        if (failed_) return Type();
+        if (failed_) {
+            /* the head's resolution spent members spelling its path; their own
+               subexpressions still speak */
+            for (size_t spent = 0; spent < next; ++spent) orphan(ops[spent]);
+        }
         for (; next < ops.size(); ++next) {
+            if (failed_) {
+                orphan(ops[next]);
+                continue;
+            }
             const Expr& op = at(ops[next]);
             type = op.kind == ExprKind::Index ? apply_index(ops[next], type)
                                               : apply_member(ops[next], type);
-            if (failed_) return Type();
-            note(ops[next]).type = type;
+            if (!failed_) note(ops[next]).type = type;
         }
+        if (failed_) return Type();
         return type;
+    }
+
+    /* A postfix op above a broken value. Every judgment about the op itself —
+       which method this is, what the key must be — needs the value's type and is
+       spent with it, but an index KEY and call ARGUMENTS are expressions in
+       their own right: they still report their own findings and resolve their
+       own names (rule 16). A lambda argument is visited with unknown parameter
+       types where an iterating receiver would have typed them; any other lambda
+       is a judgment the receiver owns, and stays unjudged. */
+    void orphan(uint32_t index) {
+        failed_ = false;
+        const Expr& expr = at(index);
+        Type ignored;
+        if (expr.kind == ExprKind::Index) {
+            checked(expr.b, ignored);
+        } else if (expr.called) {
+            IterateMode mode = IterateMode::Map;
+            const bool iterates = iterate_mode(expr.text, mode) && !in_lambda_;
+            for (size_t i = 0; i < expr.args.size(); ++i) {
+                const Expr& arg = at(expr.args[i]);
+                if (arg.kind == ExprKind::Lambda) {
+                    if (iterates && i == 0 && !arg.malformed) orphan_lambda(arg);
+                    continue;
+                }
+                checked(expr.args[i], ignored);
+            }
+        }
+        failed_ = true;
+    }
+
+    void orphan_lambda(const Expr& lambda) {
+        in_lambda_ = true;
+        lambda_params_ = lambda.params;
+        lambda_types_.assign(lambda.params.size(), Type());
+        lambda_elem_ = 0;
+        Type ignored;
+        checked(lambda.a, ignored);
+        in_lambda_ = false;
+        lambda_params_.clear();
+        lambda_types_.clear();
     }
 
     /* What a NAME at the head of a chain means, in the order the surface always
@@ -934,12 +1027,15 @@ class Sema {
         in_lambda_ = false;
         lambda_params_.clear();
         lambda_types_.clear();
-        if (failed_) return Type();
-        notes_[expr.args[0]].type = body;
+        const bool body_ok = !failed_;
+        failed_ = false;
+        if (body_ok) notes_[expr.args[0]].type = body;
 
         /* A fold's SECOND argument is the value it starts from, an ordinary
-           expression compiled into the enclosing run. */
+           expression compiled into the enclosing run — independent of the body,
+           so each reports its own findings. */
         Type init;
+        bool init_ok = true;
         if (mode == IterateMode::Reduce) {
             if (expr.args.size() < 2) {
                 fail("reduce takes a lambda AND the value the fold starts from: " +
@@ -948,7 +1044,12 @@ class Sema {
                 return Type();
             }
             init = argument_check(expr.args[1], "method");
-            if (failed_) return Type();
+            init_ok = !failed_;
+            failed_ = false;
+        }
+        if (!body_ok || !init_ok) {
+            failed_ = true;
+            return Type();
         }
         if (expr.args.size() > (mode == IterateMode::Reduce ? 2u : 1u)) {
             fail(mode == IterateMode::Reduce

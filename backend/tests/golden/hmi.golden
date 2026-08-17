@@ -18,6 +18,9 @@ node 116 error [expression] options: unknown field 'JobCmd.jobName.variants' at 
 node 116 error [expression] value: unknown name 'selectedJob' at column 12
 node 138 error [expression] value: unknown field '@gp12/robotState.servoPower' at column 28
 node 478 error [expression] text: unknown field '@gp12/robotState.start' at column 24
+node 478 error [expression] text: unknown field '@gp12/robotState.curJobName' at column 67
+node 478 error [expression] text: unknown field '@gp12/robotState.jobStep.toFixed' at column 114
+node 478 error [expression] text: unknown entity '@cage/plc/IO/xRobotHome' at column 140
 node 610 error [expression] options: unknown field 'JogCmd.mode.variants' at column 23
 node 610 error [expression] value: unknown field 'jogCmd.mode' at column 12
 node 179 error [expression] value: unknown entity '@cage/plc/IO/rVacSense' at column 24

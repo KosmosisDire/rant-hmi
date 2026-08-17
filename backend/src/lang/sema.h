@@ -50,7 +50,10 @@ struct Note {
 /* On success `notes` holds one Note per Ast node and `result` the root's type; on
  * refusal `out` holds EVERY independent finding as DATA (expression.h Refusal) —
  * depth-first, left-to-right, so the first entry is the error the surface always
- * led with; a broken subtree still suppresses whatever depended on it. `dest` is
+ * led with; a broken subtree suppresses whatever DEPENDED on it, never its
+ * siblings: every independent subtree is checked, and `notes` keeps every
+ * resolution the walk reached even when the whole refuses — a rename reads its
+ * references off exactly these notes. `dest` is
  * the DESTINATION as data: its type is what a `.variant` literal at the root (or
  * in a ternary arm on the way there) resolves its vocabulary against, and whether
  * it takes an aggregate is what the wire tier's one-scalar rule reads. */
