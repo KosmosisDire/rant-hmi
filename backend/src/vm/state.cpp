@@ -236,10 +236,14 @@ RuntimeState::RuntimeState(const Program& program) {
     }
 
     uint32_t max_fields = std::max<uint32_t>(program.layout.max_entity_fields, 1);
-    structs.resize(program.structs.size());
-    for (uint32_t i = 0; i < program.structs.size(); ++i) {
+    /* declared struct variables' slots: state storage. A flow temporary's slot is
+       the frame's, built with it below. */
+    const uint32_t state_structs = std::min<uint32_t>(
+        program.layout.state_structs, static_cast<uint32_t>(program.structs.size()));
+    structs.resize(state_structs);
+    for (uint32_t i = 0; i < state_structs; ++i) {
         StructState& item = structs[i];
-        item.type_id = program.structs[i].type_id;
+        item.type_id = program.structs[i];
         const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
         const uint32_t n = static_cast<uint32_t>(defs.size());
         /* born ZEROED with no bit set (spec 2.7): a declared struct variable reads as
@@ -256,18 +260,52 @@ RuntimeState::RuntimeState(const Program& program) {
             }
         }
     }
-    /* a struct-shaped cell POINTS at its slot: the Value is the handle, the fields live
-     * in `structs`, so a cell read pushes something copyable and a field write lands in
-     * exactly one place. A declared variable's authored DEFAULTS land over the zero. */
+    /* THE FRAME: the storage the active run owns. Site text slots first, then the
+       frame locals' own field text, then the element text region the cursor deals. */
+    frame.stack.resize(std::max<uint32_t>(program.frame.stack, 1), Value::nil());
+    frame.texts.reserve(program.frame.texts + program.frame.elem_texts);
+    for (uint32_t i = 0; i < program.frame.texts; ++i)
+        frame.texts.emplace_back(kDefaultTextCap);
+    /* FLOW TEMPORARIES are frame locals: a parked message buffer survives by the
+       frame's ownership, and nothing snapshots or restores field by field */
+    for (uint32_t i = state_structs; i < program.structs.size(); ++i) {
+        StructState item;
+        item.type_id = program.structs[i];
+        const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
+        const uint32_t n = static_cast<uint32_t>(defs.size());
+        item.fields.resize(n, Value::nil());
+        item.set.resize(n, 0);
+        item.texts.assign(n, UINT32_MAX);
+        for (uint32_t f = 0; f < n; ++f) {
+            item.fields[f] = zero_value(defs[f].shape);
+            if (defs[f].shape == Shape::Text) {
+                item.texts[f] = kFrameRef | static_cast<uint32_t>(frame.texts.size());
+                frame.texts.emplace_back(kDefaultTextCap);
+            }
+        }
+        frame.locals.push_back(std::move(item));
+    }
+    frame.text_base = static_cast<uint32_t>(frame.texts.size());
+    frame.text_cursor = frame.text_base;
+    for (uint32_t i = 0; i < program.frame.elem_texts; ++i)
+        frame.texts.emplace_back(kDefaultTextCap);
+    /* and the element pool aggregate-producing sites build into */
+    frame.elems.resize(program.frame.elems, Value::nil());
+
+    /* a struct-shaped cell POINTS at its slot: the Value is the handle, the fields
+     * live in the slot's own storage, so a cell read pushes something copyable and a
+     * field write lands in exactly one place. A declared variable's authored
+     * DEFAULTS land over the zero. */
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
-        if (cell.shape != Shape::Struct || cell.struct_slot >= structs.size()) continue;
+        if (cell.shape != Shape::Struct) continue;
+        StructState* item = struct_at(cell.struct_slot);
+        if (!item) continue;
         values[i] = Value::structure(cell.struct_slot, cell.type_id);
-        StructState& item = structs[cell.struct_slot];
         for (const auto& start : cell.struct_init) {
-            if (start.first >= item.fields.size()) continue;
-            item.fields[start.first] = start.second;
-            item.set[start.first] = 1;
+            if (start.first >= item->fields.size()) continue;
+            item->fields[start.first] = start.second;
+            item->set[start.first] = 1;
         }
     }
     /* a struct's AGGREGATE fields mirror their derived cells' handles (born-empty
@@ -276,10 +314,10 @@ RuntimeState::RuntimeState(const Program& program) {
         const CellDef& cell = program.cells[i];
         if (cell.field_of == UINT32_MAX || cell.field_of >= program.cells.size())
             continue;
-        const uint32_t slot = program.cells[cell.field_of].struct_slot;
-        if (slot >= structs.size()) continue;
-        if (cell.field_index < structs[slot].fields.size())
-            structs[slot].fields[cell.field_index] = values[i];
+        StructState* owner = struct_at(program.cells[cell.field_of].struct_slot);
+        if (!owner) continue;
+        if (cell.field_index < owner->fields.size())
+            owner->fields[cell.field_index] = values[i];
     }
 
     last.resize(program.entities.size());
@@ -296,26 +334,6 @@ RuntimeState::RuntimeState(const Program& program) {
     timers.resize(program.timers.size());
     fired.resize(program.layout.fired_groups, 0);
     pending.resize(program.layout.pending_slots);
-    for (PendingState& item : pending) {
-        item.structs.resize(structs.size());
-        for (uint32_t i = 0; i < structs.size(); ++i) {
-            item.structs[i].type_id = structs[i].type_id;
-            item.structs[i].fields.resize(structs[i].fields.size(), Value::nil());
-            item.structs[i].set.resize(structs[i].set.size(), 0);
-        }
-    }
-
-    frame.stack.resize(std::max<uint32_t>(program.frame.stack, 1), Value::nil());
-    /* the frame's text arena: the fixed result slot every text-producing site owns
-       (compile-assigned frame-relative; kFrameRef marks a ref as the frame's), then
-       the element text region its cursor deals out */
-    frame.texts.reserve(program.frame.texts + program.frame.elem_texts);
-    for (uint32_t i = 0; i < program.frame.texts + program.frame.elem_texts; ++i)
-        frame.texts.emplace_back(kDefaultTextCap);
-    frame.text_base = program.frame.texts;
-    frame.text_cursor = frame.text_base;
-    /* and the element pool aggregate-producing sites build into */
-    frame.elems.resize(program.frame.elems, Value::nil());
     /* every pending site holds a full frame of its own: parking swaps the active
        frame in whole, so a parked run's scratch survives by ownership */
     for (PendingState& item : pending) item.held = frame;

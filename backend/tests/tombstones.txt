@@ -155,3 +155,9 @@ elem_text_base
 # slot whole and swaps back at resume, so held scratch survives by ownership — the
 # per-site runs of deep-copy text slots died with the copying.
 pending_texts
+
+# stage 6a, temporaries live in the frame: the struct-slot table is a partitioned
+# run of type ids (declared slots first, temporaries after — the boundary says
+# where fields live), so the per-slot record whose `temp` flag drove the
+# snapshot-and-restore loops around a park died with those loops.
+StructDef

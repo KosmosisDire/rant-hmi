@@ -211,14 +211,11 @@ class Compiler {
            queries for subscriptions and accessors instead of stamped entity flags */
         for (FlowProgram& flow : program_.flows)
             flow.body.sig = program_.infer_signature(flow.body.code);
-        /* PARK PINNING: each park may copy x, the event parameter and a held
-           temporary's text fields into the frame arena so nothing can move a held
-           value while the run sleeps; every pending site may park once per run */
-        uint32_t per_park = 2;
-        for (const StructDef& item : program_.structs)
-            for (const FieldDef& field : struct_fields(program_, item.type_id))
-                if (field.shape == Shape::Text) ++per_park;
-        program_.frame.elem_texts += program_.layout.pending_slots * per_park;
+        /* PARK PINNING: each park may copy x and the event parameter into the
+           frame arena so nothing can move a held value while the run sleeps (a
+           temporary's fields are frame-owned already); every pending site may
+           park once per run */
+        program_.frame.elem_texts += program_.layout.pending_slots * 2;
         program_.frame.stack = std::max<uint32_t>(program_.frame.stack, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
         CompileResult out;
@@ -1900,7 +1897,12 @@ class Compiler {
         cell.shape = Shape::Struct;
         cell.type_id = type_id;
         cell.struct_slot = static_cast<uint32_t>(program_.structs.size());
-        program_.structs.push_back(StructDef{type_id, kind == CellKind::Temp});
+        program_.structs.push_back(type_id);
+        /* declared slots all precede the first temporary (cells build before any
+           flow compiles), which is what keeps the partition a single boundary */
+        if (kind != CellKind::Temp)
+            program_.layout.state_structs =
+                static_cast<uint32_t>(program_.structs.size());
         program_.layout.max_struct_fields = std::max<uint32_t>(
             program_.layout.max_struct_fields,
             static_cast<uint32_t>(struct_fields(program_, type_id).size()));

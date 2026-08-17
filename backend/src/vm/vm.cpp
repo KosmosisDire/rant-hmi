@@ -1077,9 +1077,9 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::LoadField: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
-                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size() ||
-                    ins.b >= state.structs[holder.ref].fields.size() ||
-                    !push(state.structs[holder.ref].fields[ins.b]))
+                const StructState* item =
+                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
+                if (!item || ins.b >= item->fields.size() || !push(item->fields[ins.b]))
                     fail(ins.c);
                 break;
             }
@@ -1281,7 +1281,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 /* PIN text referencing storage OUTSIDE the frame (a cell's slot, the
                  * input scratch) into the frame's own arena: a later run must not
                  * move a held value under the park. Frame-owned and constant text is
-                 * already frozen, because the frame parks whole below. */
+                 * already frozen — a temporary's fields included — because the
+                 * frame parks whole below. */
                 auto pin = [&](const Value& value) -> Value {
                     if (value.tag != ValueTag::Text) return value;
                     if ((value.ref & (kConstantRef | kFrameRef)) != 0) return value;
@@ -1293,21 +1294,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 pending.x = pin(x);
                 pending.arg = pin(state.args[0]);
                 pending.repeat = state.repeat;
-                /* only TEMPORARIES snapshot: a declared struct variable is stable
-                 * storage, and restoring it at resume would roll back writes that
-                 * landed while this run was parked */
-                for (uint32_t i = 0; i < state.structs.size(); ++i) {
-                    if (i < program.structs.size() && !program.structs[i].temp) continue;
-                    pending.structs[i].type_id = state.structs[i].type_id;
-                    pending.structs[i].fields = state.structs[i].fields;
-                    pending.structs[i].set = state.structs[i].set;
-                    const std::vector<FieldDef>& defs =
-                        struct_fields(program, state.structs[i].type_id);
-                    for (uint32_t f = 0; f < defs.size() &&
-                                         f < pending.structs[i].fields.size(); ++f)
-                        if (defs[f].shape == Shape::Text)
-                            pending.structs[i].fields[f] = pin(state.structs[i].fields[f]);
-                }
                 /* THE PARK: the frame moves into the pending slot whole — arena,
                  * cursors and all — and the slot's previous buffers become the
                  * active frame, reset at the next fresh run's entry */
@@ -1322,11 +1308,13 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::New: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
-                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size()) {
+                StructState* slot_item =
+                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
+                if (!slot_item) {
                     fail(ins.c);
                     break;
                 }
-                StructState& item = state.structs[holder.ref];
+                StructState& item = *slot_item;
                 const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
                 std::fill(item.set.begin(), item.set.end(), uint8_t{0});
                 for (uint32_t i = 0; i < item.fields.size(); ++i)
@@ -1357,12 +1345,13 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::ReadEnt: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
-                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size() ||
-                    ins.b >= state.last.size()) {
+                StructState* slot_item =
+                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
+                if (!slot_item || ins.b >= state.last.size()) {
                     fail(ins.c);
                     break;
                 }
-                StructState& item = state.structs[holder.ref];
+                StructState& item = *slot_item;
                 const LastValueState& last = state.last[ins.b];
                 const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
                 const std::vector<uint32_t>* derived_row =
@@ -1402,10 +1391,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                                                                           : Value::nil();
                     /* re-home cached text into the struct's own slot (see StoreField) */
                     if (item.fields[i].tag == ValueTag::Text && i < item.texts.size() &&
-                        item.texts[i] < state.texts.size() &&
                         item.fields[i].ref != item.texts[i]) {
-                        state.texts[item.texts[i]].set(state.text(program, item.fields[i]));
-                        item.fields[i] = Value::text(item.texts[i]);
+                        FixedText* own = state.field_text(item.texts[i]);
+                        if (own) {
+                            own->set(state.text(program, item.fields[i]));
+                            item.fields[i] = Value::text(item.texts[i]);
+                        }
                     }
                     item.set[i] = 1;
                 }
@@ -1423,20 +1414,23 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::StoreField: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
-                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size() ||
-                    ins.b >= state.structs[holder.ref].fields.size()) {
+                StructState* slot_item =
+                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
+                if (!slot_item || ins.b >= slot_item->fields.size()) {
                     fail(ins.c);
                     break;
                 }
-                StructState& item = state.structs[holder.ref];
+                StructState& item = *slot_item;
                 Value value = pop();
                 /* text is copied into the struct's OWN slot, so the value at rest never
                  * points into a site's scratch and survives whatever runs next */
                 if (value.tag == ValueTag::Text && ins.b < item.texts.size() &&
-                    item.texts[ins.b] < state.texts.size() &&
                     value.ref != item.texts[ins.b]) {
-                    state.texts[item.texts[ins.b]].set(state.text(program, value));
-                    value = Value::text(item.texts[ins.b]);
+                    FixedText* own = state.field_text(item.texts[ins.b]);
+                    if (own) {
+                        own->set(state.text(program, value));
+                        value = Value::text(item.texts[ins.b]);
+                    }
                 }
                 item.fields[ins.b] = value;
                 item.set[ins.b] = 1;
@@ -1485,8 +1479,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                  * the next tick still reads its own write without an owner echo */
                 const Value source = pop();
                 if (source.tag == ValueTag::Struct) {
-                    if (source.ref >= state.structs.size() ||
-                        !emit_struct(program, state, verb, ins.a, state.structs[source.ref])) {
+                    const StructState* item = state.struct_at(source.ref);
+                    if (!item || !emit_struct(program, state, verb, ins.a, *item)) {
                         fail(ins.c);
                         break;
                     }
@@ -1652,9 +1646,10 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::MarkField: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
-                if (holder.tag != ValueTag::Struct || holder.ref >= state.structs.size())
-                    break;
-                StructState& item = state.structs[holder.ref];
+                StructState* slot_item =
+                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
+                if (!slot_item) break;
+                StructState& item = *slot_item;
                 if (ins.b >= item.set.size()) break;
                 item.set[ins.b] = 1;
                 if (holder.ref < program.struct_field_cells.size()) {
@@ -2013,15 +2008,10 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     PendingState& pending = state.pending[pending_slot];
     if (!pending.active || pending.flow >= program.flows.size())
         return RunResult{true, true, false, 0};
-    /* the parked frame returns whole — held refs resolve against it again — and the
-     * run continues its own arena from where it parked (no reset) */
+    /* the parked frame returns whole — held refs, temporaries and all resolve
+     * against it again — and the run continues its own arena from where it parked
+     * (no reset) */
     std::swap(state.frame, pending.held);
-    for (uint32_t i = 0; i < state.structs.size(); ++i) {
-        if (i < program.structs.size() && !program.structs[i].temp) continue;
-        state.structs[i].type_id = pending.structs[i].type_id;
-        state.structs[i].fields = pending.structs[i].fields;
-        state.structs[i].set = pending.structs[i].set;
-    }
     const uint32_t flow_index = pending.flow;
     const uint32_t pc = pending.resume_pc;
     const Value x = pending.x;

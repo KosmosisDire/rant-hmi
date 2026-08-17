@@ -142,15 +142,6 @@ struct CellDef {
     uint64_t owner_flow = 0;
 };
 
-/* One struct slot in the run: which type it holds, so RuntimeState can size its fields.
- * `temp` marks a flow temporary's slot: only those are snapshot and restored around a
- * suspension (a declared variable is stable storage, and restoring it would roll back
- * writes that landed while the run was parked). */
-struct StructDef {
-    uint16_t type_id = 0;
-    bool temp = true;
-};
-
 /* One flow TRIGGER row: the invocation data the scheduler folds over — which event,
  * which group, what cadence — plus the one Procedure it invokes. A flow with several
  * triggers compiles one row per trigger, each carrying its own copy of the body. */
@@ -248,9 +239,13 @@ struct ProgramLayout {
     uint32_t throttle_slots = 0;
     uint32_t pending_slots = 0;
     uint32_t fired_groups = 0;
-    /* struct storage: the widest field table any struct slot holds, so a suspension's
-     * deep copy and the effect records are one fixed size */
+    /* struct storage: the widest field table any struct slot holds, so the effect
+     * records are one fixed size */
     uint32_t max_struct_fields = 1;
+    /* the struct-slot partition: slots below this are declared variables' (state
+     * storage); slots at or above are flow temporaries' (frame storage). Declared
+     * cells all build before any flow compiles, so one boundary is the whole fact. */
+    uint32_t state_structs = 0;
     /* retained aggregate storage: one slot per list- or map-shaped cell (an aggregate a
      * cell holds across ticks cannot live in the scratch pool, which resets every run) */
     uint32_t list_slots = 0;
@@ -273,7 +268,11 @@ struct Program : Module {
     std::vector<TypeDef> types;
     std::vector<CellDef> cells;
     std::vector<EntityDef> entities;
-    std::vector<StructDef> structs;
+    /* struct slots, by type-table entry, PARTITIONED: declared variables' slots
+     * first (state storage), flow temporaries' after (frame storage —
+     * layout.state_structs is the boundary), so a handle's number says where its
+     * fields live and a park needs no per-slot flag. */
+    std::vector<uint16_t> structs;
     std::vector<FlowProgram> flows;
     std::vector<SlotProgram> slot_programs;
     std::vector<RaiseDef> raises;

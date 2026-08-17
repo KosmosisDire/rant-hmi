@@ -198,8 +198,13 @@ struct RepeatSeat {
  * pool aggregate-producing sites build into, reset at each fresh run's entry. */
 struct Frame {
     std::vector<Value> stack;
+    /* [fixed site slots | frame locals' field texts | element text region] */
     std::vector<FixedText> texts;
     std::vector<Value> elems;
+    /* FLOW TEMPORARIES: a run's message buffers live with the run, so a park keeps
+     * them by ownership and nothing snapshots or restores field by field. Slot k
+     * here is struct slot layout.state_structs + k. */
+    std::vector<StructState> locals;
     uint32_t elem_cursor = 0;
     uint32_t text_base = 0;
     uint32_t text_cursor = 0;
@@ -234,9 +239,6 @@ struct PendingState {
     /* and which copy it arrived on: a run that parks in a debounce must wake as the same
        copy it was pressed on, or the delay would silently move the write elsewhere */
     RepeatSeat repeat;
-    /* every struct slot, by value, so a run that parks mid-message re-enters with its
-     * own storage and nothing dangles when the scratch resets (spec 5.6) */
-    std::vector<StructState> structs;
     /* THE PARKED FRAME (stage 6a): parking SWAPS the run's frame in here whole —
      * arena, cursors and all — and resume swaps it back, so held scratch survives
      * by ownership rather than by deep copy. Values referencing storage OUTSIDE
@@ -278,6 +280,8 @@ class RuntimeState {
      * a flow the entity's last list/map exactly as the cache hands it a scalar. Empty
      * after a recompile until the mesh re-delivers — the scalar cache's own rule. */
     std::vector<std::vector<uint32_t>> entity_aggs;
+    /* declared struct variables' slots only: a flow temporary's fields live in
+     * frame.locals (struct_at routes a handle to whichever owns it) */
     std::vector<StructState> structs;
     std::vector<LastValueState> last;
     std::vector<Value> deadband;
@@ -308,6 +312,27 @@ class RuntimeState {
     uint32_t fault_count = 0;
 
     std::string_view text(const Program& program, const Value& value) const noexcept;
+    /* the storage behind a struct handle: a declared variable's slot is the state's,
+     * a flow temporary's is the frame's — it parks and resumes with its run */
+    StructState* struct_at(uint32_t slot) noexcept {
+        if (slot < structs.size()) return &structs[slot];
+        const uint32_t local = slot - static_cast<uint32_t>(structs.size());
+        return local < frame.locals.size() ? &frame.locals[local] : nullptr;
+    }
+    const StructState* struct_at(uint32_t slot) const noexcept {
+        if (slot < structs.size()) return &structs[slot];
+        const uint32_t local = slot - static_cast<uint32_t>(structs.size());
+        return local < frame.locals.size() ? &frame.locals[local] : nullptr;
+    }
+    /* the FixedText behind a struct field's own text slot, wherever it lives
+     * (kFrameRef marks a frame local's; UINT32_MAX resolves to nowhere) */
+    FixedText* field_text(uint32_t ref) noexcept {
+        if ((ref & kFrameRef) != 0) {
+            const uint32_t at = ref & ~kFrameRef;
+            return at < frame.texts.size() ? &frame.texts[at] : nullptr;
+        }
+        return ref < texts.size() ? &texts[ref] : nullptr;
+    }
     bool store(const Program& program, uint32_t cell, const Value& value) noexcept;
     void clear_outputs() noexcept;
     void fault(uint32_t site) noexcept;
