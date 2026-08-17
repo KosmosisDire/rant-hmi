@@ -1597,8 +1597,18 @@ class Compiler {
                     uint16_t* enum_out = nullptr) {
         ExpressionResult result;
         std::vector<Refusal> refusals;
-        if (!compile_expression(text, tier, scope, program_, code, result, refusals,
-                                dest)) {
+        std::vector<NameRef> names;
+        const bool ok = compile_expression(text, tier, scope, program_, code, result,
+                                           refusals, dest, &names);
+        /* THE REFERENCE INDEX (Program::references): every name this expression
+           resolved, keyed to its declaring node — recorded whether the compile
+           held or not, because a rename must see the names beside a break */
+        for (const NameRef& name : names) {
+            if (name.cell >= program_.cells.size()) continue;
+            program_.references.push_back(RefRow{node, text, name.at, name.length,
+                                                 program_.cells[name.cell].node_id});
+        }
+        if (!ok) {
             for (const Refusal& refusal : refusals)
                 diag_span(node, refusal.code, refusal.message, DiagGrade::Error,
                           where, refusal.at, refusal.length);

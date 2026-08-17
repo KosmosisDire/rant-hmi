@@ -1466,11 +1466,47 @@ void test_definition_check() {
     }
 }
 
+/* THE REFERENCE INDEX (Program::references): the compile records every resolved
+ * bare name against the node that DECLARED it, so a rename asks the index which
+ * occurrences are its variable's instead of restating the scope rules. */
+void test_reference_index() {
+    Json root = {
+        {"version", 3},
+        {"next_id", 2000},
+        {"globals", Json::array({
+            Json{{"id", 900}, {"name", "flow"}, {"type", "num"}, {"init", 2.0}},
+        })},
+        {"pages", Json::array({Json{
+            {"name", "Main"},
+            {"children", Json::array({
+                Json{{"id", 950}, {"kind", "frame"}, {"type", "Toggle"}, {"name", "T"},
+                     {"slots", Json{{"value", "flow > 1 && flow < 9"}}}},
+            })}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, mesh);
+
+    /* both reads of the global landed, each with its exact span */
+    int hits = 0;
+    for (const RefRow& row : compiled.program.references) {
+        if (row.decl != 900) continue;
+        ++hits;
+        CHECK_EQ(row.node, uint64_t(950));
+        CHECK_EQ(row.text, std::string("flow > 1 && flow < 9"));
+        CHECK(row.text.compare(row.at, row.length, "flow") == 0);
+    }
+    CHECK_EQ(hits, 2);
+}
+
 } // namespace
 
 int main() {
     test_template_expr();
     test_definition_check();
+    test_reference_index();
     test_list_vocabulary();
     test_new_vocabulary();
     test_builtins_compile_clean();

@@ -59,12 +59,41 @@ bool element_fit(const Dest& dest, const Type& type, std::vector<Refusal>& refus
     return false;
 }
 
+/* the leftmost leaf under `index` — the head a postfix chain hangs off */
+uint32_t head_of(const Ast& ast, uint32_t index) {
+    for (;;) {
+        const Expr& expr = ast.at(index);
+        if ((expr.kind == ExprKind::Member || expr.kind == ExprKind::Index) &&
+            expr.a != kNoExpr) {
+            index = expr.a;
+            continue;
+        }
+        return index;
+    }
+}
+
+/* every resolved name read: a Load note whose place is a CELL, traced to the bare
+ * identifier at the head of its chain. Lambda parameters (LoadX), host objects and
+ * entity reads carry other opcodes and stay out. */
+void collect_names(const Ast& ast, const std::vector<Note>& notes,
+                   std::vector<NameRef>& out) {
+    for (uint32_t i = 0; i < notes.size() && i < ast.nodes.size(); ++i) {
+        if (notes[i].op != Note::Op::Load) continue;
+        if (notes[i].place.load != OpCode::Load &&
+            notes[i].place.load != OpCode::LoadField)
+            continue;
+        const Expr& head = ast.at(head_of(ast, i));
+        if (head.kind != ExprKind::Name) continue;
+        out.push_back(NameRef{head.at, head.text.size(), notes[i].place.a});
+    }
+}
+
 } // namespace
 
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         Module& module, std::vector<Instruction>& code,
                         ExpressionResult& result, std::vector<Refusal>& refusals,
-                        const Dest& dest) {
+                        const Dest& dest, std::vector<NameRef>* names) {
     Ast ast;
     Refusal broken;
     std::vector<Note> notes;
@@ -77,10 +106,12 @@ bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
            with. */
         refusals.push_back(std::move(broken));
         check_expression(ast, tier, env, notes, type, refusals, dest);
+        if (names) collect_names(ast, notes, *names);
         return false;
     }
-    if (!check_expression(ast, tier, env, notes, type, refusals, dest))
-        return false;
+    const bool checked = check_expression(ast, tier, env, notes, type, refusals, dest);
+    if (names) collect_names(ast, notes, *names);
+    if (!checked) return false;
 
     /* THE IMPLICIT text -> enum CONVERSION at an enum-typed DESTINATION (spec 6.2,
      * corrected 2026-08-14): the destination always says which enum, so a CONSTANT

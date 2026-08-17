@@ -294,6 +294,14 @@ struct Program : Module {
     std::vector<TimerDef> timers;
     std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;
+    /* THE REFERENCE INDEX: every bare variable name the compile RESOLVED, as
+     * (node whose prop holds the text, the text itself, the identifier's span,
+     * the declaring variable's node). A rename asks this index which occurrences
+     * are its variable's, so the scope rule is stated once — in resolution —
+     * and the fan-out cannot drift from it. Membership is keyed (node, text):
+     * every expression a node owns resolves in that node's one scope, so the
+     * prop it sits in never changes what a name means. */
+    std::vector<RefRow> references;
     /* [struct slot][field] -> the derived cell holding that aggregate field's entries
      * (UINT32_MAX where the field is scalar). What ReadEnt fills, New clears, MarkField
      * refreshes through, and a move out resolves elements from. */

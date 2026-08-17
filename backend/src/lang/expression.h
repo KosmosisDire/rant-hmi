@@ -68,13 +68,27 @@ struct Dest {
     bool append = false;
 };
 
+/* ONE RESOLVED NAME READ, for the caller's reference index (rename): the head
+ * identifier's exact span in the source and the cell its Load resolved to. Only
+ * bare-name heads that landed on a cell qualify — lambda parameters, entities and
+ * host objects are not variable words. */
+struct NameRef {
+    size_t at = 0;
+    size_t length = 0;
+    uint32_t cell = 0;
+};
+
 /* On refusal `refusals` holds EVERY independent finding (arguments and list elements
  * recover; a broken receiver still suppresses what depended on it), depth-first
- * left-to-right, so the first entry is the error the surface always led with. */
+ * left-to-right, so the first entry is the error the surface always led with.
+ * `names`, when given, receives every resolved name read — on success AND on
+ * refusal (the checker resolves what it can around a break), which is what lets
+ * a rename trust the index on a document that does not fully compile. */
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         Module& module, std::vector<Instruction>& code,
                         ExpressionResult& result, std::vector<Refusal>& refusals,
-                        const Dest& dest = Dest());
+                        const Dest& dest = Dest(),
+                        std::vector<NameRef>* names = nullptr);
 
 /* The language, as data (spec 3.7 / "everything is data"): one row per builtin and
  * method, straight from the tables the checker compiles with (lang/tables.h), so
