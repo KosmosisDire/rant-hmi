@@ -417,10 +417,11 @@ class Compiler {
             if (field.variants.empty()) return;
             field.type_id = intern_enum(field.variants);
         };
-        /* the aggregate intake bound: one delivery's elements live in the scratch pool
-         * at a time (the pool resets per feed run), so the pool carries the LARGEST
-         * single entity's aggregate payload plus every expression site's worst case
-         * (added by the parser as it compiles) */
+        /* the frame arena's SLACK, sized as the largest single entity's aggregate
+         * payload: deliveries decode in the mesh's own scratch now, but the arena
+         * still leans on this headroom for what no site charges itself — a store
+         * verb staging a self-sourced row through the pool (settled_row), and
+         * sortBy's second key block beside the one run its site reserved */
         uint32_t intake_values = 0, intake_texts = 0;
         auto measure = [&](const std::vector<FieldDef>& fields) {
             uint32_t values = 0, texts = 0;
