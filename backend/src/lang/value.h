@@ -28,6 +28,11 @@ const char* shape_name(Shape shape);
 enum class ValueTag : uint8_t { Nil, Num, Bool, Text, Enum, List, Map, Struct, Color };
 
 constexpr uint32_t kConstantRef = 0x80000000u;
+/* A text ref with this bit set names a slot in the active run's FRAME (the fixed
+ * result slot its producing site owns) rather than the state's at-rest text table.
+ * Nothing at rest ever holds one — every store re-homes text into the destination's
+ * own storage — so a frame ref never outlives the run that made it. */
+constexpr uint32_t kFrameRef = 0x40000000u;
 
 /* An aggregate's `flags` carries the element ValueTag in its low bits. kRetainedAgg is
  * the one bit above it: set, the aggregate does NOT live in the run's scratch pool but

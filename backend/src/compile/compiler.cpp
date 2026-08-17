@@ -478,7 +478,7 @@ class Compiler {
                  DiagGrade::Error, kind == CellKind::Slot ? name : "init");
         cell.persistent = persistent;
         if (shape == Shape::Text) {
-            cell.text_slot = program_.frame.texts++;
+            cell.text_slot = program_.layout.cell_texts++;
             cell.text_cap = 256;
         }
         /* an aggregate cell owns retained storage: the run's element pool resets every
@@ -1909,7 +1909,7 @@ class Compiler {
         cell.name = name;
         cell.shape = shape;
         if (shape == Shape::Text) {
-            cell.text_slot = program_.frame.texts++;
+            cell.text_slot = program_.layout.cell_texts++;
             cell.text_cap = 256;
         }
         program_.cells.push_back(std::move(cell));

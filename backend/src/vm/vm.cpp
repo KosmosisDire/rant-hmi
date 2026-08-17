@@ -13,8 +13,8 @@ namespace hmi {
 namespace {
 
 /* everything a builtin or method needs to touch text: the program's constant pool and
- * the run's fixed text slots. Text-producing sites carry their own dedicated slot in
- * the instruction (ins.a), so no allocation and no cursor exist at runtime. */
+ * the frame's fixed text slots. Text-producing sites carry their own frame-relative
+ * slot in the instruction (ins.a), so no allocation and no cursor exist at runtime. */
 struct ExecContext {
     const Program& program;
     RuntimeState& state;
@@ -25,9 +25,9 @@ std::string_view text_of(const ExecContext& ctx, const Value& value) noexcept {
 }
 
 Value text_result(const ExecContext& ctx, uint32_t site, std::string_view view) noexcept {
-    if (site >= ctx.state.texts.size()) return Value::nil();
-    ctx.state.texts[site].set(view);
-    return Value::text(site);
+    if (site >= ctx.state.frame.texts.size()) return Value::nil();
+    ctx.state.frame.texts[site].set(view);
+    return Value::text(kFrameRef | site);
 }
 
 std::string_view enum_variant_name(const Program& program, uint16_t type,
@@ -1566,7 +1566,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     break;
                 }
                 if (field == ClockField::Text || field == ClockField::Date) {
-                    if (ins.b >= state.texts.size()) {
+                    if (ins.b >= state.frame.texts.size()) {
                         fail(ins.c);
                         break;
                     }
@@ -1578,8 +1578,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
                                       parts.tm_year + 1900, parts.tm_mon + 1,
                                       parts.tm_mday);
-                    state.texts[ins.b].set(buffer);
-                    if (!push(Value::text(ins.b))) fail(ins.c);
+                    state.frame.texts[ins.b].set(buffer);
+                    if (!push(Value::text(kFrameRef | ins.b))) fail(ins.c);
                     break;
                 }
                 const double number =

@@ -147,8 +147,8 @@ uint32_t buffer_capacity(Shape shape) noexcept {
 
 RuntimeState::RuntimeState(const Program& program) {
     values.resize(program.cells.size(), Value::nil());
-    texts.reserve(program.frame.texts);
-    for (uint32_t i = 0; i < program.frame.texts; ++i)
+    texts.reserve(program.layout.cell_texts);
+    for (uint32_t i = 0; i < program.layout.cell_texts; ++i)
         texts.emplace_back(kDefaultTextCap);
 
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
@@ -326,6 +326,11 @@ RuntimeState::RuntimeState(const Program& program) {
     }
 
     frame.stack.resize(std::max<uint32_t>(program.frame.stack, 1), Value::nil());
+    /* the frame's text arena: the fixed result slot every text-producing site owns,
+       compile-assigned frame-relative (kFrameRef marks a ref as the frame's) */
+    frame.texts.reserve(program.frame.texts);
+    for (uint32_t i = 0; i < program.frame.texts; ++i)
+        frame.texts.emplace_back(kDefaultTextCap);
     /* aggregate payload capacity: the widest single entity's aggregate fields decide
        what one effect may have to carry (a map's entries interleave, so 2x pairs) */
     uint32_t agg_values_cap = 0, agg_texts_cap = 0;
@@ -375,6 +380,11 @@ std::string_view RuntimeState::text(const Program& program, const Value& value) 
     if ((value.ref & kConstantRef) != 0) {
         const uint32_t at = value.ref & ~kConstantRef;
         return at < program.texts.size() ? std::string_view(program.texts[at]) : std::string_view{};
+    }
+    /* in flight: the producing site's slot in the active run's frame */
+    if ((value.ref & kFrameRef) != 0) {
+        const uint32_t at = value.ref & ~kFrameRef;
+        return at < frame.texts.size() ? frame.texts[at].view() : std::string_view{};
     }
     return value.ref < texts.size() ? texts[value.ref].view() : std::string_view{};
 }

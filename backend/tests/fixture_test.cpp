@@ -241,7 +241,7 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
                 return false;
             }
             if (cell.shape == Shape::Text) {
-                cell.text_slot = program.frame.texts++;
+                cell.text_slot = program.layout.cell_texts++;
                 cell.text_cap = 256;
             }
             if (!scalar_value(program, cell.shape, 0, var.literal, cell.initial)) {

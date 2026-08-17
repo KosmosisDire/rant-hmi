@@ -80,8 +80,8 @@ struct Module {
     std::vector<Diag> runtime_faults;
 
     /* the frame's extent (above): the one record of what a run's in-flight storage
-     * costs. `frame.texts` is still the cell text allocator's counter too — cells
-     * and expression sites share one index space until the arena split lands. */
+     * costs. Cell text lives apart (the host layout's cell_texts) — a cell's
+     * storage and a run's scratch never share an index space. */
     FrameExtent frame;
 
     /* infer `code`'s signature off its own instructions, lambda bodies included

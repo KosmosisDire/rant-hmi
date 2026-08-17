@@ -254,6 +254,10 @@ struct ProgramLayout {
     /* retained aggregate storage: one slot per list- or map-shaped cell (an aggregate a
      * cell holds across ticks cannot live in the scratch pool, which resets every run) */
     uint32_t list_slots = 0;
+    /* at-rest text: one slot per text-shaped cell. The cells' own allocator — an
+     * expression site's result slot is the frame's (FrameExtent::texts), a separate
+     * space, so a cell's storage and a run's scratch can never alias. */
+    uint32_t cell_texts = 0;
 };
 
 /* The compiled program: the MODULE the compile filled (lang/module.h — the pools, the

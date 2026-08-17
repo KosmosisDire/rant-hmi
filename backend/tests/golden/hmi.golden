@@ -8027,14 +8027,14 @@ slot node 581 holdProgress cell 111 every_tick
 slot node 613 text cell 132 every_tick
   0 LOAD 128 0 32
   1 CONST 6 0 33
-  2 METHOD small 16 38 1 34
+  2 METHOD small 16 0 1 34
   3 STORE 132 0 35
   4 HALT
 slot node 179 text cell 171 every_tick
   0 LOAD 166 0 40
   1 CONST 17 0 41
-  2 METHOD small 16 39 1 42
+  2 METHOD small 16 1 1 42
   3 CONST 18 0 43
-  4 METHOD small 50 40 1 44
+  4 METHOD small 50 2 1 44
   5 STORE 171 0 45
   6 HALT

@@ -188,10 +188,12 @@ struct RepeatSeat {
 
 /* THE FRAME (stage 6a): the storage a RUN owns, as opposed to the storage a CELL
  * owns. Values at rest live in cell storage; values in flight live here, sized once
- * from the compiler's FrameExtent and reused run after run. The operand stack is its
- * first tenant; the text and element arenas follow as the split lands. */
+ * from the compiler's FrameExtent and reused run after run. The operand stack and
+ * the text arena — every text-producing site's fixed result slot, referenced with
+ * kFrameRef — live here; the element arena follows as the split lands. */
 struct Frame {
     std::vector<Value> stack;
+    std::vector<FixedText> texts;
 };
 
 struct PendingState {
