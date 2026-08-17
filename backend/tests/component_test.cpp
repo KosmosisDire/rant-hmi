@@ -1458,12 +1458,29 @@ void test_definition_check() {
     CHECK_MSG(document.adopt(std::move(root), error), error);
 
     FakeMesh mesh;
-    std::vector<Diag> diags = check_component_definitions(document, mesh);
+    std::vector<RefRow> refs;
+    std::vector<RefSite> gaps;
+    std::vector<Diag> diags = check_component_definitions(document, mesh, &refs, &gaps);
     CHECK_EQ(diags.size(), size_t(1));
     if (!diags.empty()) {
         CHECK_EQ(diags[0].node_id, uint64_t(310));
         CHECK(diags[0].message.find("nope") != std::string::npos);
     }
+    /* the pass EXPORTS its index rows: the refused expression still resolved its
+       `this.value` read, and the slot cell's decl is the DECLARING variable (301),
+       never the placement — spelled `this`, so a rename of `value` skips the span.
+       The FAILING step is also exported blind whole: whatever of it the compile
+       never reached left no row, and absence must not read as "not this variable". */
+    bool this_read = false;
+    for (const RefRow& row : refs)
+        if (row.node == 310 && row.decl == 301 &&
+            row.text.compare(row.at, row.length, "this") == 0)
+            this_read = true;
+    CHECK(this_read);
+    bool step_blind = false;
+    for (const RefSite& gap : gaps)
+        if (gap.node == 310 && gap.text.empty()) step_blind = true;
+    CHECK(step_blind);
 }
 
 /* THE REFERENCE INDEX (Program::references): the compile records every resolved

@@ -223,7 +223,8 @@ class Compiler {
      * the cells, sites and groups allocated here never serve, and only the
      * findings travel. Inner elements' flows are not checked because nothing runs
      * them — the behavior list is a component's one wire surface. */
-    std::vector<Diag> check_definitions() {
+    std::vector<Diag> check_definitions(std::vector<RefRow>* refs = nullptr,
+                                        std::vector<RefSite>* gaps = nullptr) {
         copy_entities();
         /* the schema copy above may re-report what the real compile already said;
            only what the DEFINITIONS say is this pass's product */
@@ -258,6 +259,7 @@ class Compiler {
                same way it would validate placed */
             collect_armed(spec->tmpl, "", element);
             for (const FlowDecl& node : component.behavior_decls) {
+                bool stepped = false;   /* any trigger reached compile_steps */
                 for (const TriggerDecl& trigger : node.when) {
                     FlowProgram flow;
                     flow.node_id = element.id;
@@ -278,13 +280,23 @@ class Compiler {
                                              has_param))
                             continue;
                     }
+                    stepped = true;
                     compile_steps(element, node, flow, has_param ? &param : nullptr,
                                   nullptr, /*in_component=*/true, copyless);
                 }
+                if (!stepped)
+                    for (const StepDecl& step : node.steps)
+                        program_.reference_gaps.push_back(RefSite{step.id, ""});
             }
         }
         program_.diagnostics.erase(program_.diagnostics.begin(),
                                    program_.diagnostics.begin() + said);
+        /* the scratch program never serves; its index rows travel out the same way
+           its findings do — an unplaced component's references live nowhere else */
+        if (refs)
+            for (RefRow& row : program_.references) refs->push_back(std::move(row));
+        if (gaps)
+            for (RefSite& gap : program_.reference_gaps) gaps->push_back(std::move(gap));
         return std::move(program_.diagnostics);
     }
 
@@ -3257,8 +3269,10 @@ CompileResult compile_document(const Document& document, const MeshPort& mesh,
 }
 
 std::vector<Diag> check_component_definitions(const Document& document,
-                                              const MeshPort& mesh) {
-    return Compiler(document, mesh).check_definitions();
+                                              const MeshPort& mesh,
+                                              std::vector<RefRow>* refs,
+                                              std::vector<RefSite>* gaps) {
+    return Compiler(document, mesh).check_definitions(refs, gaps);
 }
 
 } // namespace hmi
