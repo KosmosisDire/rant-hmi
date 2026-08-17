@@ -25,15 +25,6 @@ struct RefEdit {
     Json value;
 };
 
-/* every variable reference in this subtree, rewritten from -> to; returns the count.
- * FLAT: it descends every element regardless of what they declare, which is right only
- * where the whole subtree is known to be one scope. Prefer rename_scoped below. */
-int rename_refs(Kind kind, Json& node, const std::string& from, const std::string& to,
-                std::vector<RefEdit>* edits);
-
-/* how many references to `name` this subtree holds */
-int count_refs(Kind kind, Json& node, const std::string& name);
-
 /* ---- THE SCOPED FAN-OUT: a rename follows the same lexical scope the compiler resolves
  * by (compile/compiler.cpp scope_for, compile/components.cpp for the display tier).
  *

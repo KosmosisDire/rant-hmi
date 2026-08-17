@@ -38,15 +38,14 @@ void scan_idents(const std::string& s, const std::function<void(size_t, size_t)>
 /* (owner node id, prop key, role, the value to inspect or rewrite) */
 using Site = std::function<void(uint64_t, const std::string&, Role, Json&)>;
 
-/* Visit every reference-carrying prop value in the subtree, tagged with its role.
- *
- * `descend_elements` false stops at this element's OWN sites — its attrs, its gestures,
- * its locals' initialisers, its flows — without entering the elements nested inside it.
- * That is what lets the caller apply the LEXICAL SCOPE rule, which no walk over a flat
- * subtree could: a child that redeclares the name owns everything below it. Only
- * `children` holds elements, so only a Node list is pruned; a flow's steps and a
- * variable's initialiser belong to this element and always ride along. */
-void walk_refs(Kind kind, Json& node, const Site& visit, bool descend_elements = true) {
+/* Visit every reference-carrying prop value THIS ELEMENT OWNS, tagged with its role —
+ * its attrs, its gestures, its locals' initialisers, its flows and their steps — never
+ * the elements nested inside it. Stopping at the element boundary is what lets the
+ * caller (scoped_pass) apply the LEXICAL SCOPE rule, which no walk over a flat subtree
+ * could: a child that redeclares the name owns everything below it. Only `children`
+ * holds elements, so only a Node list is pruned; a flow's steps and a variable's
+ * initialiser belong to this element and always ride along. */
+void walk_refs(Kind kind, Json& node, const Site& visit) {
     if (!node.is_object()) return;
     const NodeSpec& spec = node_spec(kind);
     const std::string variant = node_variant(spec, node);
@@ -59,7 +58,7 @@ void walk_refs(Kind kind, Json& node, const Site& visit, bool descend_elements =
         visit(id, p->key, p->role, *it);
     }
     for (const ChildList* l : node_lists(spec, variant)) {
-        if (!descend_elements && l->kind == Kind::Node) continue;
+        if (l->kind == Kind::Node) continue;
         auto it = node.find(l->key);
         if (it == node.end() || !it->is_array()) continue;
         for (Json& child : *it) walk_refs(l->kind, child, visit);
@@ -203,25 +202,6 @@ std::string rewrite_ident(const std::string& expr, const std::string& from,
     return out;
 }
 
-int rename_refs(Kind kind, Json& node, const std::string& from, const std::string& to,
-                std::vector<RefEdit>* edits) {
-    int hits = 0;
-    walk_refs(kind, node, [&](uint64_t owner, const std::string& key, Role role, Json& value) {
-        const int before = hits;
-        visit_site(role, value, from, to, hits);
-        if (hits != before && edits) edits->push_back(RefEdit{owner, key, value});
-    });
-    return hits;
-}
-
-int count_refs(Kind kind, Json& node, const std::string& name) {
-    int hits = 0;
-    walk_refs(kind, node, [&](uint64_t, const std::string&, Role role, Json& value) {
-        visit_site(role, value, name, "", hits);
-    });
-    return hits;
-}
-
 namespace {
 
 /* ONE ELEMENT AND EVERYTHING IT LEXICALLY OWNS. `declared_here` marks the element that
@@ -244,8 +224,7 @@ void scoped_pass(Json& element, const std::string& from, const std::string& to,
                   const int at = hits;
                   visit_site(role, value, from, to, hits);
                   if (hits != at && edits) edits->push_back(RefEdit{owner, key, value});
-              },
-              /*descend_elements=*/false);
+              });
     if (hits != before && swallows && !captured_by)
         captured_by = json_u64_or(element.value("id", Json(0)), 0);
     auto children = element.find("children");

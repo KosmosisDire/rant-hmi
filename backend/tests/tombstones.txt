@@ -94,3 +94,9 @@ push_typed
 element_fits
 element_refusal
 allow_agg
+
+# stage 5b, the rename walks: the FLAT fan-out (descend every element regardless of
+# scope) lost its last caller when the scoped walk landed — a flat rewrite is exactly
+# the corruption the scope rule exists to prevent, so the pair stays dead.
+rename_refs
+count_refs
