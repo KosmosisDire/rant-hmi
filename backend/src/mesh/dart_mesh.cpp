@@ -858,7 +858,7 @@ void DartMesh::apply(const Program& program) {
      * cadence at compile, page-gated by the instance's page (the visibility rule) */
     for (const SlotProgram& slot : program.slot_programs) {
         if (!slot.poll_ms) continue;
-        for (uint32_t dep : slot.dep_entities) {
+        for (uint32_t dep : slot.body.sig.reads) {
             if (dep >= program.entities.size()) continue;
             const EntityDef& def = program.entities[dep];
             if (def.kind != EntityKind::Function) continue;
@@ -872,13 +872,29 @@ void DartMesh::apply(const Program& program) {
         }
     }
     /* an entity ANY program reads — a flow's `read <entity>`, a single-field source,
-     * a slot expression's `@entity` (the dep scan stamps those too) — needs a live
-     * subscription: without one its last-value mirror never fills and every read
-     * yields Nil, so a gate over it can never pass. An entity a flow only WRITES
-     * needs its accessor standing just as early: one created at the moment of the
-     * first effect has no owner matched yet, and that first write would fail */
-    for (const EntityDef& def : program.entities)
-        if (def.flow_reads || def.flow_writes) consume(def);
+     * a slot expression's `@entity` — needs a live subscription: without one its
+     * last-value mirror never fills and every read yields Nil, so a gate over it can
+     * never pass. An entity a flow only WRITES needs its accessor standing just as
+     * early: one created at the moment of the first effect has no owner matched yet,
+     * and that first write would fail. All of it is a QUERY over the procedure
+     * signatures — nothing is stamped per entity; the display tier's attr reads are
+     * the one flag left. */
+    std::vector<uint8_t> engaged(program.entities.size(), 0);
+    auto mark = [&](const std::vector<uint32_t>& list) {
+        for (uint32_t e : list)
+            if (e < engaged.size()) engaged[e] = 1;
+    };
+    for (const FlowProgram& flow : program.flows) {
+        mark(flow.body.sig.reads);
+        mark(flow.body.sig.writes);
+    }
+    for (const SlotProgram& slot : program.slot_programs) {
+        mark(slot.body.sig.reads);
+        mark(slot.body.sig.writes);
+    }
+    for (uint32_t e = 0; e < program.entities.size(); ++e)
+        if (engaged[e] || program.entities[e].flow_reads)
+            consume(program.entities[e]);
 }
 
 /* ============================== drain ======================================= */

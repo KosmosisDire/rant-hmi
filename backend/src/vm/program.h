@@ -49,9 +49,10 @@ struct EntityDef {
     std::vector<FieldDef> fields;
     /* FUNCTION only: the response fields (what a function feed reads and decodes) */
     std::vector<FieldDef> rsp_fields;
-    /* stamped by the compiler when a FLOW reads this entity (`read <entity>` or a
-     * single-field source): the mesh must consume it so the last-value mirror is live,
-     * exactly as it does for an entity a feed names */
+    /* stamped when the DISPLAY tier reads this entity — the wire tier's reads and
+     * writes are queries over the procedure signatures now, and this flag is the
+     * display product's one remaining stamp until its reads ride to the mesh as
+     * their own fact */
     bool flow_reads = false;
     /* stamped when a display-tier ATTR reads a field of this entity, one flag per
      * read-side field (parallel to feed_fields, empty where nothing reads it): the mesh
@@ -59,10 +60,6 @@ struct EntityDef {
      * fields' mirrors under `mesh:<name>[.<path>]` so a view program can load them. A
      * read nobody published would draw UNKNOWN forever. */
     std::vector<uint8_t> attr_reads;
-    /* stamped when a FLOW writes/calls/emits this entity: the mesh establishes the
-     * accessor at apply() so the owner match has formed long before the first effect
-     * (a write through a just-created accessor fails until its match converges) */
-    bool flow_writes = false;
 };
 
 /* the field table a FEED reads from: the response side of a function, else the value */
@@ -229,15 +226,15 @@ struct ArmedElement {
 };
 
 /* ONE SLOT'S STANDING EXPRESSION (spec D1): the compiled form of an instance slot whose
- * authored value is a non-constant expression. Its deps are whatever the code READS —
- * recorded by scanning the instructions, so multi-source expressions (two topics in one
- * value) carry every source. Scheduling follows the deps:
- *   every_tick   the code reads a CELL or a TIMER (a variable, another slot, x never):
- *                cells can move any tick, so the program re-evaluates each tick, exactly
- *                as the old computed feeds did. Entity reads ride the last-value cache.
- *   otherwise    entity deps only: the scheduler runs it when one of `dep_entities`
- *                delivers, and the cell stays UNKNOWN until the first arrival (the old
- *                fed-slot rule).
+ * authored value is a non-constant expression. Its deps are the body signature's READS
+ * (multi-source expressions carry every source), and scheduling is a QUERY over them:
+ *   sig.every_tick   the code reads a CELL or a TIMER (a variable, another slot, x
+ *                    never): cells can move any tick, so the program re-evaluates each
+ *                    tick, exactly as the old computed feeds did. Entity reads ride the
+ *                    last-value cache.
+ *   otherwise        entity deps only: the scheduler runs it when one of `sig.reads`
+ *                    delivers, and the cell stays UNKNOWN until the first arrival (the
+ *                    old fed-slot rule).
  * `poll_ms` is set when a dep is a mesh FUNCTION: the instance's `poll` map (default
  * 2 Hz) says how often the mesh asks; the response arrives like any delivery. */
 struct SlotProgram {
@@ -246,15 +243,7 @@ struct SlotProgram {
     std::string slot;          /* the slot's address, the finding's `where` */
     uint32_t cell = 0;
     uint32_t poll_ms = 0;
-    bool every_tick = false;
-    std::vector<uint32_t> dep_entities;
     Procedure body;
-
-    bool depends_on(uint32_t entity) const {
-        for (uint32_t dep : dep_entities)
-            if (dep == entity) return true;
-        return false;
-    }
 };
 
 struct ProgramLayout {

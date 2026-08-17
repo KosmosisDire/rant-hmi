@@ -19,6 +19,28 @@
 
 namespace hmi {
 
+/* What a procedure's own instructions READ and WRITE — its signature (rule 7:
+ * every runnable thing has one, inferred, never authored). Every WHEN/WHERE
+ * decision is a query over this rather than a fact stamped somewhere else: the
+ * scheduler asks `every_tick` for the re-evaluation class, the mesh asks `reads`/
+ * `writes` for what to consume and which accessors to stand up. As much of the
+ * plan's {reads, writes, effects, sites} as today's queries ask for — place-path
+ * granularity arrives with the machine stages. */
+struct Signature {
+    /* reads a cell, the clock or a timer: the value can move on any tick */
+    bool every_tick = false;
+    /* the entities read (LoadEnt / ReadEnt), in first-encounter order */
+    std::vector<uint32_t> reads;
+    /* the entities written (MoveOut: write, call, emit) */
+    std::vector<uint32_t> writes;
+
+    bool reads_entity(uint32_t entity) const {
+        for (uint32_t e : reads)
+            if (e == entity) return true;
+        return false;
+    }
+};
+
 /* One runnable body. A lambda is a NESTED procedure (spec 6.4): a plain instruction
  * run that executes on a stack frame ABOVE its caller's and reads its parameter where
  * a flow reads `x`. `max_stack` is its own frame's depth, which the layout adds on top
@@ -26,6 +48,7 @@ namespace hmi {
 struct Procedure {
     std::vector<Instruction> code;
     uint32_t max_stack = 0;
+    Signature sig;
 };
 
 struct Module {
@@ -51,6 +74,10 @@ struct Module {
     uint32_t elem_texts = 0;
     uint32_t stack_values = 1;
     uint32_t sub_stack = 0;
+
+    /* infer `code`'s signature off its own instructions, lambda bodies included
+     * (an Iterate's sub can read the mesh too) */
+    Signature infer_signature(const std::vector<Instruction>& code) const;
 
     /* intern a constant / a text literal, returning its pool index */
     uint32_t add_text(const std::string& text);

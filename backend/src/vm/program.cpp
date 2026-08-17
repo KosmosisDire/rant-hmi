@@ -49,7 +49,7 @@ std::string Program::disassembly() const {
     }
     for (const SlotProgram& slot : slot_programs) {
         out << "slot node " << slot.node_id << " " << slot.slot << " cell " << slot.cell;
-        if (slot.every_tick) out << " every_tick";
+        if (slot.body.sig.every_tick) out << " every_tick";
         if (slot.poll_ms) out << " poll " << slot.poll_ms;
         out << "\n";
         code_lines(slot.body.code);

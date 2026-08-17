@@ -111,3 +111,12 @@ rename_scoped
 scoped_pass
 capture_site
 rewrite_ident
+
+# stage 5c, the signature: every Procedure carries {every_tick, reads, writes}
+# inferred off its own instructions, and the scheduler and the mesh QUERY it —
+# the per-slot dep scan, the per-flow subscription stamping, the slot's stamped
+# dep list and the entity's write flag all restated what the code already said.
+scan_slot_deps
+stamp_flow_reads
+dep_entities
+flow_writes

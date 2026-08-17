@@ -207,6 +207,11 @@ class Compiler {
          * the gesture and `this.<slot>` agrees with what the event passed. */
         build_type_behavior();
         build_flows();
+        /* every flow's signature, off its finished body (a failed flow's Fault stub
+           reads nothing, exactly as its steps stamped nothing before) — what the mesh
+           queries for subscriptions and accessors instead of stamped entity flags */
+        for (FlowProgram& flow : program_.flows)
+            flow.body.sig = program_.infer_signature(flow.body.code);
         program_.stack_values = std::max<uint32_t>(program_.stack_values, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
         CompileResult out;
@@ -406,8 +411,8 @@ class Compiler {
         /* THE DISPLAY TIER'S READS, stamped before anything else looks at the table: an
            attr naming `@entity.field` has to make the mesh consume that entity exactly as
            a flow reading it does, or the mirror never fills and the picture draws UNKNOWN
-           forever. `flow_reads` is the consume flag's name and stays it — what changed is
-           that a second tier can now set it. */
+           forever. The wire tier's reads are signature queries now, so this stamp is the
+           flag's one remaining writer. */
         if (attr_reads_)
             for (EntityDef& def : program_.entities) {
                 const std::vector<FieldDef>& fields = feed_fields(def);
@@ -1785,40 +1790,6 @@ class Compiler {
         return Type(field.shape, field.type_id);
     }
 
-    /* What a compiled slot expression READS, off its own instructions (lambda bodies
-     * included): entity reads become deps the scheduler re-evaluates on — scalar
-     * fields off the last-value cache, aggregate fields off the entity mirrors — and
-     * a cell or timer read makes the program an every-tick one (cells can move any
-     * tick). */
-    bool scan_slot_deps(const std::vector<Instruction>& code, SlotProgram& sp) {
-        for (const Instruction& ins : code) {
-            switch (ins.op) {
-                case OpCode::Load:
-                case OpCode::LoadField:
-                case OpCode::TmrRead:
-                /* the clock moves every tick by definition */
-                case OpCode::ClockRead:
-                    sp.every_tick = true;
-                    break;
-                case OpCode::LoadEnt: {
-                    if (!sp.depends_on(ins.a)) sp.dep_entities.push_back(ins.a);
-                    /* the mesh must consume a read entity or its mirror never fills,
-                       exactly as it does for one a flow reads */
-                    program_.entities[ins.a].flow_reads = true;
-                    break;
-                }
-                case OpCode::Iterate:
-                    if (ins.a < program_.subs.size() &&
-                        !scan_slot_deps(program_.subs[ins.a].code, sp))
-                        return false;
-                    break;
-                default:
-                    break;
-            }
-        }
-        return true;
-    }
-
     /* THE STANDING SLOT PROGRAMS (spec D1): every pending authored expression, compiled
      * against the instance's scope PLUS the mesh. A constant folds into the cell's start
      * and leaves no program; anything live stores into the cell whenever a dep moves —
@@ -1861,11 +1832,18 @@ class Compiler {
                                Json(program_.texts[pool]));
             return;
         }
-        if (!scan_slot_deps(sp.body.code, sp)) return;
+        Instruction store;
+        store.op = OpCode::Store;
+        store.a = pending.cell;
+        store.c = fault_site(element.id, "slot_store",
+                             "slot '" + pending.name + "' could not store its value");
+        sp.body.code.push_back(store);
+        sp.body.code.push_back(Instruction{OpCode::Halt});
+        sp.body.sig = program_.infer_signature(sp.body.code);
         /* a program that reads nothing live (an array literal, arithmetic over
            constants) still has to run once; the seed pass at start covers it, and
            there is nothing to re-run it for */
-        for (uint32_t dep : sp.dep_entities) {
+        for (uint32_t dep : sp.body.sig.reads) {
             if (program_.entities[dep].kind != EntityKind::Function) continue;
             double hz = 2.0;
             auto rate = element.node->poll.find(pending.name);
@@ -1874,13 +1852,6 @@ class Compiler {
             sp.poll_ms = std::max(10u, static_cast<uint32_t>(std::lround(1000.0 / hz)));
             break;
         }
-        Instruction store;
-        store.op = OpCode::Store;
-        store.a = pending.cell;
-        store.c = fault_site(element.id, "slot_store",
-                             "slot '" + pending.name + "' could not store its value");
-        sp.body.code.push_back(store);
-        sp.body.code.push_back(Instruction{OpCode::Halt});
         program_.stack_values = std::max(program_.stack_values, sp.body.max_stack);
         program_.slot_programs.push_back(std::move(sp));
     }
@@ -2449,7 +2420,6 @@ class Compiler {
                                                       struct_type, step_id);
             if (cell == UINT32_MAX) return false;
             reference(step_id, name, program_.cells[cell].decl);
-            program_.entities[read_entity].flow_reads = true;
             Instruction ins;
             ins.op = OpCode::ReadEnt;
             ins.a = cell;
@@ -3030,32 +3000,7 @@ class Compiler {
         if (!ok) return false;
         flow.body.code.push_back(Instruction{OpCode::Halt});
         flow.worst_steps = static_cast<uint32_t>(flow.body.code.size());
-        /* an entity read that arrived through an EXPRESSION (@name in an rvalue, a
-           guard, a keep/key) must stamp the same subscription a structural read did:
-           the mesh only consumes what something declares it reads */
-        stamp_flow_reads(flow.body.code);
         return true;
-    }
-
-    /* every mesh read AND write this compiled code performs, marked so the mesh
-     * consumes the entity (lambda bodies included — an ITERATE's sub can read the mesh
-     * too). Writes stamp so apply() creates the accessor up front: a write through an
-     * accessor created at the moment of the first effect finds no owner matched yet */
-    void stamp_flow_reads(const std::vector<Instruction>& code) {
-        for (const Instruction& ins : code) {
-            if (ins.op == OpCode::LoadEnt) {
-                if (ins.a < program_.entities.size())
-                    program_.entities[ins.a].flow_reads = true;
-            } else if (ins.op == OpCode::ReadEnt) {
-                if (ins.b < program_.entities.size())
-                    program_.entities[ins.b].flow_reads = true;
-            } else if (ins.op == OpCode::MoveOut) {
-                if (ins.a < program_.entities.size())
-                    program_.entities[ins.a].flow_writes = true;
-            } else if (ins.op == OpCode::Iterate && ins.a < program_.subs.size()) {
-                stamp_flow_reads(program_.subs[ins.a].code);
-            }
-        }
     }
 
     void build_flows() {

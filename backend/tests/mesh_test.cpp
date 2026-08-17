@@ -167,7 +167,7 @@ int main() {
     CHECK(suction.valid());
 
     /* a variable the document only WRITES (no feed, no flow read anywhere): its
-     * accessor exists solely because the compiler stamps flow_writes, and the very
+     * accessor exists solely because a flow's signature writes it, and the very
      * first write races the accessor's forming owner match */
     auto set_schema = dart::Schema::compile("Set { target: f64 }");
     CHECK(set_schema.has_value());
@@ -436,8 +436,8 @@ int main() {
         {"slots", Json{{"value", "@gauge.value"}}},
     };
 
-    /* WRITE-ONLY: no expression anywhere reads @setpoint, so only the flow_writes
-     * stamp gives it a standing accessor */
+    /* WRITE-ONLY: no expression anywhere reads @setpoint, so only the write in a
+     * flow's signature gives it a standing accessor */
     Json setpoint_instance = {
         {"kind", "frame"},
         {"type", "Button"},
@@ -489,7 +489,7 @@ int main() {
     mesh.set_viewed_pages({page_id});
 
     /* ---- THE FIRST WRITE, immediately: the setpoint accessor was created by the
-     * apply() a moment ago (flow_writes is its only claim to one) and its owner
+     * apply() a moment ago (a signature write is its only claim to one) and its owner
      * match is still forming. ONE tap, no retries — the write must land anyway
      * (the mesh layer waits out the forming match instead of failing with a
      * no-owner send status and dropping the effect). ---- */

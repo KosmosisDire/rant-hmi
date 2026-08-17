@@ -153,7 +153,7 @@ void Scheduler::release_session(uint64_t session) {
 
 void Scheduler::apply_slot_programs() {
     for (const SlotProgram& slot : program_.slot_programs) {
-        if (!slots_seeded_ && !slot.every_tick) {
+        if (!slots_seeded_ && !slot.body.sig.every_tick) {
             /* the SEED: one evaluation at start, whatever the deps — a dep-less
                program (an array literal) lands its value here and never re-runs; a
                mesh-only one stores UNKNOWN, exactly what its cell already holds */
@@ -161,7 +161,7 @@ void Scheduler::apply_slot_programs() {
             run_slot(program_, slot, state_);
             continue;
         }
-        if (!slot.every_tick) continue;
+        if (!slot.body.sig.every_tick) continue;
         /* a cell-reading expression re-evaluates every tick, as the computed feeds
            always did: a cell can move any tick, and an unchanged store is free on the
            wire (scalars broadcast whole; an identical aggregate keeps its gen) */
@@ -230,7 +230,9 @@ void Scheduler::on_update(const MeshUpdate& update) {
     /* the mesh-only slot expressions re-evaluate on the deliveries they read; the
        every-tick ones read the refreshed cache on this same tick's pass anyway */
     for (const SlotProgram& slot : program_.slot_programs) {
-        if (slot.every_tick || !slot.depends_on(static_cast<uint32_t>(entity))) continue;
+        if (slot.body.sig.every_tick ||
+            !slot.body.sig.reads_entity(static_cast<uint32_t>(entity)))
+            continue;
         state_.reset_scratch();
         run_slot(program_, slot, state_);
     }

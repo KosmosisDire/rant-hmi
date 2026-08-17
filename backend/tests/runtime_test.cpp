@@ -315,7 +315,7 @@ void test_compile_and_run() {
     const SlotProgram* computed =
         slot_program_of(compiled.program, readout_id, "value");
     if (!CHECK(computed != nullptr)) return;
-    CHECK(computed->every_tick && computed->dep_entities.empty());
+    CHECK(computed->body.sig.every_tick && computed->body.sig.reads.empty());
     RunResult stood = run_slot(compiled.program, *computed, state);
     CHECK(!stood.faulted);
     CHECK(state.values[computed->cell].data.num == 20);
@@ -350,7 +350,7 @@ void test_compile_and_run() {
     /* the mesh-bound slot: entity-dep only, re-evaluated on delivery, off the cache */
     const SlotProgram* bound = slot_program_of(compiled.program, instance, "value");
     if (!CHECK(bound != nullptr)) return;
-    CHECK(!bound->every_tick && bound->dep_entities.size() == 1);
+    CHECK(!bound->body.sig.every_tick && bound->body.sig.reads.size() == 1);
     seed_entity(state, compiled.program, "sensor", 0, Value::number(12.34));
     const uint64_t before_feed = allocation_count.load(std::memory_order_relaxed);
     allocation_trace = true;
@@ -1065,8 +1065,8 @@ void test_standing_slots() {
     /* MULTI-SOURCE is the point: one program, two recorded deps, no every-tick */
     if (!CHECK(compiled.program.slot_programs.size() == 1)) return;
     const SlotProgram& sum = compiled.program.slot_programs[0];
-    CHECK(sum.dep_entities.size() == 2);
-    CHECK(!sum.every_tick);
+    CHECK(sum.body.sig.reads.size() == 2);
+    CHECK(!sum.body.sig.every_tick);
     /* the literal slot stayed a CONSTANT: no program, the cell starts at its value */
     CHECK(slot_program_of(compiled.program, id, "reading.decimals") == nullptr);
     const int decimals = slot_cell_of(compiled.program, id, "reading.decimals");
@@ -1137,7 +1137,7 @@ void test_whole_source() {
                                : compiled.program.diagnostics[0].message);
     if (!CHECK(compiled.program.slot_programs.size() == 1)) return;
     const SlotProgram& feed = compiled.program.slot_programs[0];
-    CHECK(feed.dep_entities.size() == 1);
+    CHECK(feed.body.sig.reads.size() == 1);
 
     RuntimeState state(compiled.program);
     int motor = -1;
@@ -1569,7 +1569,7 @@ void test_colors() {
     const SlotProgram* swept = slot_program_of(compiled.program, id, "border");
     if (!CHECK(picked && mixed && built && swept)) return;
     /* a variable dep makes each an every-tick program */
-    CHECK(picked->every_tick && picked->dep_entities.empty());
+    CHECK(picked->body.sig.every_tick && picked->body.sig.reads.empty());
     const int on_cell = [&] {
         for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
             if (compiled.program.cells[i].name == "on" &&
@@ -1621,7 +1621,7 @@ void test_colors() {
     const SlotProgram* channels =
         slot_program_of(compiled.program, id, "reading.decimals");
     if (!CHECK(channels != nullptr)) return;
-    CHECK(!channels->every_tick && channels->dep_entities.empty());
+    CHECK(!channels->body.sig.every_tick && channels->body.sig.reads.empty());
     run_slot(compiled.program, *channels, state);
     CHECK(state.values[channels->cell].tag == ValueTag::Num);
     CHECK_EQ(state.values[channels->cell].data.num, 129.0);   /* 0x80 + a of 1.0 */
@@ -3368,9 +3368,15 @@ void test_assign_expression_reads_mesh() {
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     if (!CHECK(a_at >= 0 && b_at >= 0 && total >= 0 && hits >= 0 && instance)) return;
 
-    /* the expression-borne reads subscribe exactly as structural reads did */
-    CHECK(program.entities[a_at].flow_reads);
-    CHECK(program.entities[b_at].flow_reads);
+    /* the expression-borne reads subscribe exactly as structural reads did — the
+       flow signatures the mesh queries carry them */
+    auto flow_reads_entity = [&](int entity) {
+        for (const FlowProgram& flow : program.flows)
+            if (flow.body.sig.reads_entity(static_cast<uint32_t>(entity))) return true;
+        return false;
+    };
+    CHECK(flow_reads_entity(a_at));
+    CHECK(flow_reads_entity(b_at));
 
     RuntimeState state(program);
     state.last[a_at].known = true;
@@ -4303,7 +4309,7 @@ void test_clock() {
     if (!CHECK(compiled.program.slot_programs.size() == 5)) return;
     /* the clock moves every tick by definition */
     for (const SlotProgram& slot : compiled.program.slot_programs)
-        CHECK(slot.every_tick);
+        CHECK(slot.body.sig.every_tick);
 
     const Json& kids = document.root["pages"][0]["children"];
     const uint64_t ids[5] = {

@@ -590,10 +590,15 @@ void test_flow_entity_read() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed"
                                : compiled.program.diagnostics[0].message);
-    /* the stamp the mesh adapter keys its subscriptions on: the read entity carries
-       it, an unreferenced one does not */
-    CHECK(compiled.program.entities[0].flow_reads);
-    CHECK(!compiled.program.entities[1].flow_reads);
+    /* the signature query the mesh adapter keys its subscriptions on: some flow
+       reads the entity, and no flow touches the bystander */
+    auto engaged = [&](uint32_t entity) {
+        for (const FlowProgram& flow : compiled.program.flows)
+            if (flow.body.sig.reads_entity(entity)) return true;
+        return false;
+    };
+    CHECK(engaged(0));
+    CHECK(!engaged(1));
 
     const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
