@@ -7894,7 +7894,7 @@ flow 567 node 567 event every:567 worst 6
   1 LOAD 199 0 74
   2 LOAD 198 0 75
   3 MUL 0 0 76
-  4 APPEND 197 77 0
+  4 STORE small 256 197 0 77
   5 HALT
 flow 99 node 70 event pressrelease worst 2
   0 FAULT 78 0 0
@@ -7944,7 +7944,7 @@ flow 458 node 370 event pressrelease worst 12
   7 METHOD small 9 0 2 108
   8 MUL 0 0 109
   9 ARG 1 0 110
-  10 STORE_INDEX 0 111 0
+  10 STORE small 2 0 0 111
   11 HALT
 flow 460 node 366 event pressrelease worst 11
   0 CONST 22 0 112
@@ -7956,7 +7956,7 @@ flow 460 node 366 event pressrelease worst 11
   6 METHOD small 9 0 2 118
   7 MUL 0 0 119
   8 ARG 1 0 120
-  9 STORE_INDEX 0 121 0
+  9 STORE small 2 0 0 121
   10 HALT
 flow 583 node 581 event release worst 2
   0 TMR_CANCEL 2 0 122

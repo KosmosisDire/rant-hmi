@@ -544,7 +544,7 @@ void test_migration() {
     const int setpoint = cell_named(compiled.program, "setpoint");
     const int note = cell_named(compiled.program, "note");
     CHECK(setpoint >= 0 && note >= 0);
-    old_state.store(compiled.program, static_cast<uint32_t>(setpoint), Value::number(77));
+    old_state.write(compiled.program, static_cast<uint32_t>(setpoint), 0, StorePlace::Cell, StoreMode::Assign, Value::number(77));
 
     Program same = compiled.program;
     same.cells[setpoint].initial = Value::number(3);
@@ -567,7 +567,7 @@ void test_migration() {
             compiled.program.cells[i].shape == Shape::Num)
             slot = static_cast<int>(i);
     CHECK(slot >= 0);
-    old_state.store(compiled.program, static_cast<uint32_t>(slot), Value::number(41));
+    old_state.write(compiled.program, static_cast<uint32_t>(slot), 0, StorePlace::Cell, StoreMode::Assign, Value::number(41));
 
     Program reslotted = compiled.program;
     reslotted.cells[slot].initial = Value::number(9);
@@ -1380,7 +1380,7 @@ void test_events_are_calls() {
                 return i;
         return UINT32_MAX;
     }();
-    fed_state.store(fed_compiled.program, fed_slot, Value::boolean(true));
+    fed_state.write(fed_compiled.program, fed_slot, 0, StorePlace::Cell, StoreMode::Assign, Value::boolean(true));
     run_event(fed_compiled.program, fed_state, fed_id, "tap", Value::nil());
     drain_raised(fed_compiled.program, fed_state);
     /* the local echo stood down (the expression owns the slot)... */
@@ -1473,7 +1473,7 @@ void test_events_are_calls() {
                 return i;
         return UINT32_MAX;
     }();
-    shadow_state.store(shadow_compiled.program, shadow_slot, Value::boolean(true));
+    shadow_state.write(shadow_compiled.program, shadow_slot, 0, StorePlace::Cell, StoreMode::Assign, Value::boolean(true));
     shadow_state.clear_outputs();
     run_event(shadow_compiled.program, shadow_state, shadow_id, "tap", Value::nil());
     drain_raised(shadow_compiled.program, shadow_state);
@@ -2737,25 +2737,20 @@ void test_nested_aggregates() {
     /* INSIDE A ROW. A leaf append grows that row alone; a leaf write edits one position
        and moves the generation, because the aggs lane has no in-place-edit vocabulary. */
     const uint32_t before = state.lists[grid_slot].gen;
-    CHECK(state.append_leaf(program, grid, Value::number(1), Value::number(42),
-                            Value::nil()));
+    CHECK(state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Append, Value::number(42), Value::number(1), Value::nil()));
     CHECK_EQ(nested_dump(program, state, grid), "[9]|[7,8,42]|[7,8]");
     CHECK(state.lists[grid_slot].gen == before + 1);
-    CHECK(state.store_leaf(program, grid, Value::number(1), Value::number(0),
-                           Value::number(5)));
+    CHECK(state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Assign, Value::number(5), Value::number(1), Value::number(0)));
     CHECK_EQ(nested_dump(program, state, grid), "[9]|[5,8,42]|[7,8]");
     /* a write past the row's end EDITS nothing: a row grows by its own append */
-    CHECK(!state.store_leaf(program, grid, Value::number(1), Value::number(9),
-                            Value::number(1)));
+    CHECK(!state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Assign, Value::number(1), Value::number(1), Value::number(9)));
     /* and neither verb reaches a row that is not there */
-    CHECK(!state.append_leaf(program, grid, Value::number(7), Value::number(1),
-                             Value::nil()));
+    CHECK(!state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Append, Value::number(1), Value::number(7), Value::nil()));
 
     /* A ROW'S OWN KEEP trims its front, and a row that has reached its width stops
        growing its extent: the arena settles instead of climbing forever */
     for (int i = 0; i < 300; ++i)
-        CHECK(state.append_leaf(program, grid, Value::number(2), Value::number(i),
-                                Value::number(4)));
+        CHECK(state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Append, Value::number(i), Value::number(2), Value::number(4)));
     CHECK_EQ(row_text(program, state, state.aggregate(state.values[grid]).data[2]),
              "296,297,298,299");
     CHECK(state.lists[grid_slot].leaves.size() <= buffer_capacity(Shape::Num));
@@ -2763,29 +2758,25 @@ void test_nested_aggregates() {
     /* a MAP ROW upserts by key inside its own extent, Nil erasing as it does above */
     state.texts[state.mesh_scratch].set("z");
     state.texts[state.input_scratch].set("zz");
-    CHECK(state.store_leaf(program, rows, Value::number(0),
-                           Value::text(state.mesh_scratch),
-                           Value::text(state.input_scratch)));
+    CHECK(state.write(program, rows, 0, StorePlace::Leaf, StoreMode::Assign, Value::text(state.input_scratch), Value::number(0), Value::text(state.mesh_scratch)));
     CHECK_EQ(nested_dump(program, state, rows), "[k=v,z=zz]");
     state.texts[state.mesh_scratch].set("k");
-    CHECK(state.store_leaf(program, rows, Value::number(0),
-                           Value::text(state.mesh_scratch), Value::nil()));
+    CHECK(state.write(program, rows, 0, StorePlace::Leaf, StoreMode::Assign, Value::nil(), Value::number(0), Value::text(state.mesh_scratch)));
     CHECK_EQ(nested_dump(program, state, rows), "[z=zz]");
 
     /* A SCALAR IS NOT A ROW: a nested cell's declared element is what it says it is, and
        the runtime refuses what the compiler could not see */
-    CHECK(!state.append_list(program, grid, Value::number(1), Value::nil()));
+    CHECK(!state.write(program, grid, 0, StorePlace::Cell, StoreMode::Append, Value::number(1), Value::nil()));
     /* nor is a row a leaf: there is no third level to write into */
-    CHECK(!state.store_leaf(program, grid, Value::number(0), Value::number(0),
-                            state.values[grid]));
+    CHECK(!state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Assign, state.values[grid], Value::number(0), Value::number(0)));
 
     /* CLEARED releases the arena with the entries: an extent nothing names is hole, and a
        cell still counting the cleared rows as live would refuse the next append for room
        it is holding */
     RuntimeState blank(program);
-    CHECK(blank.store(program, grid, Value::nil()));
+    CHECK(blank.write(program, grid, 0, StorePlace::Cell, StoreMode::Assign, Value::nil()));
     CHECK(blank.lists[grid_slot].leaf_live == 0 && blank.lists[grid_slot].row_cap.empty());
-    CHECK(blank.append_list(program, grid, Value::list(0, 0, ValueTag::Nil), Value::nil()));
+    CHECK(blank.write(program, grid, 0, StorePlace::Cell, StoreMode::Append, Value::list(0, 0, ValueTag::Nil), Value::nil()));
     CHECK_EQ(nested_dump(program, blank, grid), "[]");
 
     /* a recompile carries the rows by value into the new run's own arena */
@@ -3062,11 +3053,10 @@ void test_indexed_writes() {
     /* direct refusals the flows above cannot spell: a non-number index, a foreign
        element on a typed cell, an aggregate element */
     RuntimeState& mut = const_cast<RuntimeState&>(state);
-    CHECK(!mut.store_index(program, buf, Value::text(0), Value::number(1)));
-    CHECK(!mut.store_index(program, buf, Value::number(-1), Value::number(1)));
-    CHECK(!mut.store_index(program, nums, Value::number(0),
-                           state.values[words]));
-    CHECK(!mut.append_list(program, nums, Value::boolean(true), Value::nil()));
+    CHECK(!mut.write(program, buf, 0, StorePlace::Elem, StoreMode::Assign, Value::number(1), Value::text(0)));
+    CHECK(!mut.write(program, buf, 0, StorePlace::Elem, StoreMode::Assign, Value::number(1), Value::number(-1)));
+    CHECK(!mut.write(program, nums, 0, StorePlace::Elem, StoreMode::Assign, state.values[words], Value::number(0)));
+    CHECK(!mut.write(program, nums, 0, StorePlace::Cell, StoreMode::Append, Value::boolean(true), Value::nil()));
     CHECK_EQ(list_dump(program, state, nums), "1,2");
 }
 
@@ -3478,10 +3468,10 @@ void test_aggregate_expressions() {
     CHECK(state.lists[dst_slot].gen == gen_after_first + 1);
 
     /* Nil onto an already-UNKNOWN cell is not a change either */
-    CHECK(state.store(program, static_cast<uint32_t>(dst), Value::nil()));
+    CHECK(state.write(program, static_cast<uint32_t>(dst), 0, StorePlace::Cell, StoreMode::Assign, Value::nil()));
     const uint32_t gen_cleared = state.lists[dst_slot].gen;
     CHECK(state.values[dst].tag == ValueTag::Nil);
-    CHECK(state.store(program, static_cast<uint32_t>(dst), Value::nil()));
+    CHECK(state.write(program, static_cast<uint32_t>(dst), 0, StorePlace::Cell, StoreMode::Assign, Value::nil()));
     CHECK(state.lists[dst_slot].gen == gen_cleared);
 
     /* THE REFUSALS: a scalar variable, the pipeline register and a mesh field all still
@@ -4144,8 +4134,7 @@ void test_suspend_holds_text() {
     const int note = cell_named(compiled.program, "note");
     CHECK(note >= 0);
     state.texts[state.mesh_scratch].set("second");
-    CHECK(state.store(compiled.program, static_cast<uint32_t>(note),
-                      Value::text(state.mesh_scratch)));
+    CHECK(state.write(compiled.program, static_cast<uint32_t>(note), 0, StorePlace::Cell, StoreMode::Assign, Value::text(state.mesh_scratch)));
 
     resume_pending(compiled.program, state, 0);
     const int out = cell_named(compiled.program, "out");

@@ -174,3 +174,21 @@ LoadArg
 # state-resident seat register, the pending slot's copy of it, and the scheduler's
 # four stampings all died — the seat is invocation data the host records carry.
 RepeatRead
+
+# stage 6c, the one store: a write is a PLACE and a MODE riding one opcode's `small`,
+# landed by the state's one `write` entry. The four per-shape store opcodes and the
+# mark-the-owner instruction died into it (the owner's set-bit-and-handle refresh is
+# part of the write itself now, never a following instruction), and the state's
+# per-verb public entries died into the one dispatch — the whole-cell verb by its
+# qualified spelling, since the bare word is everywhere.
+StoreField
+StoreIndex
+StoreKey
+OpCode::Append
+MarkField
+mark_field
+RuntimeState::store
+append_list
+append_row
+append_leaf
+store_leaf

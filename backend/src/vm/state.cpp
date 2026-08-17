@@ -914,8 +914,8 @@ Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
                  : Value::retained_list(list_slot, count, elem);
 }
 
-bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Value value,
-                               const Value& keep) noexcept {
+bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Value value,
+                                const Value& keep) noexcept {
     if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
     if (cell.shape != Shape::List || cell.list_slot >= lists.size()) return false;
@@ -934,7 +934,7 @@ bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Valu
     /* the runaway case: with nothing bounding the ring, the buffer's own budget is the
        only answer, and it refuses rather than silently dropping the oldest sample */
     if (keep.tag != ValueTag::Num && held.count >= held.capacity()) return false;
-    if (held.nested()) return append_row(program, cell_index, value, keep);
+    if (held.nested()) return write_row(program, cell_index, value, keep);
     /* the element tag is a HINT and it is tracked, not recomputed: a ring appends every
        tick, and rescanning four thousand elements for a fact one comparison settles is
        exactly the per-tick cost this tier does not pay. Mixed reads as Nil, which is
@@ -966,8 +966,8 @@ bool RuntimeState::append_list(const Program& program, uint32_t cell_index, Valu
  * append grows one — an entry, a capacity, a cursor — and the row's own elements are laid
  * into the arena beside every other row's. A Nil row appends as a Nil entry with no extent
  * at all, which is the same gap a Nil scalar leaves and reads the same way. */
-bool RuntimeState::append_row(const Program& program, uint32_t cell_index, Value value,
-                              const Value& keep) noexcept {
+bool RuntimeState::write_row(const Program& program, uint32_t cell_index, Value value,
+                             const Value& keep) noexcept {
     const CellDef& cell = program.cells[cell_index];
     ListState& held = lists[cell.list_slot];
     if (value.tag != ValueTag::Nil && held.row_pairs() != (value.tag == ValueTag::Map))
@@ -1004,7 +1004,7 @@ bool RuntimeState::append_row(const Program& program, uint32_t cell_index, Value
     return true;
 }
 
-bool RuntimeState::store_key(const Program& program, uint32_t cell_index, const Value& key,
+bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const Value& key,
                              Value value) noexcept {
     if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
@@ -1133,8 +1133,8 @@ static bool same_element(const Program& program, const RuntimeState& state,
     }
 }
 
-bool RuntimeState::store(const Program& program, uint32_t cell_index,
-                         const Value& value) noexcept {
+bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
+                               const Value& value) noexcept {
     if (cell_index >= values.size()) return false;
     const CellDef& cell = program.cells[cell_index];
     /* a struct cell's Value is its handle and is fixed for the run: it is filled by New
@@ -1144,7 +1144,7 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
     /* An AGGREGATE cell is written WHOLE and keeps what it was given: the entries are
      * copied out of wherever they were built into the cell's own retained slot, because
      * what built them (the scratch pool) is reused by the very next run. Appending and
-     * keyed writes are their own verbs (Append / StoreKey); this is replacement. */
+     * keyed writes are their own places and modes; this is replacement. */
     if (cell.shape == Shape::List || cell.shape == Shape::Map) {
         const bool pairs = cell.shape == Shape::Map;
         if (value.tag == ValueTag::Nil) {
@@ -1216,8 +1216,8 @@ bool RuntimeState::store(const Program& program, uint32_t cell_index,
     return true;
 }
 
-bool RuntimeState::store_index(const Program& program, uint32_t cell_index,
-                               const Value& index, Value value) noexcept {
+bool RuntimeState::write_elem(const Program& program, uint32_t cell_index,
+                              const Value& index, Value value) noexcept {
     if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
     if (cell.shape != Shape::List || cell.list_slot >= lists.size()) return false;
@@ -1232,7 +1232,7 @@ bool RuntimeState::store_index(const Program& program, uint32_t cell_index,
         return false;
     /* the index truncates the way an `x[i]` read does; NaN and negatives land in the
        first refusal, a position past the window in the second — an element write EDITS
-       what is there, it never grows the list (growth is Append's verb) */
+       what is there, it never grows the list (growth is the append mode's verb) */
     const double raw = index.data.num;
     if (!(raw >= 0.0)) return false;
     const uint32_t at = static_cast<uint32_t>(raw);
@@ -1273,14 +1273,15 @@ bool RuntimeState::store_index(const Program& program, uint32_t cell_index,
     return true;
 }
 
-bool RuntimeState::append_leaf(const Program& program, uint32_t cell_index,
-                               const Value& outer, Value value, const Value& keep) noexcept {
+bool RuntimeState::write_leaf_append(const Program& program, uint32_t cell_index,
+                                     const Value& outer, Value value,
+                                     const Value& keep) noexcept {
     if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
     if (cell.list_slot >= lists.size()) return false;
     ListState& held = lists[cell.list_slot];
     /* only a LIST row grows by appending — a map row grows by being written a new key,
-       which is store_leaf's verb, exactly as it is one level up */
+       which is the leaf assign's verb, exactly as it is one level up */
     if (!held.nested() || held.row_pairs()) return false;
     if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
         value.tag == ValueTag::Struct)
@@ -1320,7 +1321,7 @@ bool RuntimeState::append_leaf(const Program& program, uint32_t cell_index,
     return true;
 }
 
-bool RuntimeState::store_leaf(const Program& program, uint32_t cell_index, const Value& outer,
+bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const Value& outer,
                               const Value& inner, Value value) noexcept {
     if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
@@ -1415,6 +1416,70 @@ bool RuntimeState::store_leaf(const Program& program, uint32_t cell_index, const
     held.total = held.count;
     values[cell_index] = retained_value(held, cell.list_slot, pairs);
     return true;
+}
+
+bool RuntimeState::write_field(const Program& program, uint32_t cell_index, uint32_t field,
+                               Value value) noexcept {
+    const Value holder = values[cell_index];
+    StructState* item = holder.tag == ValueTag::Struct ? struct_at(holder.ref) : nullptr;
+    if (!item || field >= item->fields.size()) return false;
+    /* text is copied into the struct's OWN slot, so the value at rest never points
+     * into a site's scratch and survives whatever runs next */
+    if (value.tag == ValueTag::Text && field < item->texts.size() &&
+        value.ref != item->texts[field]) {
+        FixedText* own = field_text(item->texts[field]);
+        if (own) {
+            own->set(text(program, value));
+            value = Value::text(item->texts[field]);
+        }
+    }
+    item->fields[field] = value;
+    item->set[field] = 1;
+    return true;
+}
+
+/* A write that landed in a struct's aggregate-field storage refreshes the OWNER: the
+ * field's set bit — what decides whether a move out carries these elements or the RMW
+ * base keeps the owner's bytes — and the field's handle, which has to name the count
+ * this write just made true. Part of the write itself, so no instruction anywhere has
+ * to remember to follow a store. */
+static void refresh_owner(const Program& program, RuntimeState& state,
+                          uint32_t cell_index) noexcept {
+    const CellDef& cell = program.cells[cell_index];
+    if (cell.field_of == UINT32_MAX || cell.field_of >= state.values.size()) return;
+    const Value holder = state.values[cell.field_of];
+    StructState* item =
+        holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
+    if (!item || cell.field_index >= item->fields.size()) return;
+    if (cell.field_index < item->set.size()) item->set[cell.field_index] = 1;
+    item->fields[cell.field_index] = state.values[cell_index];
+}
+
+bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
+                         StorePlace place, StoreMode mode, Value value, const Value& step,
+                         const Value& step2) noexcept {
+    if (cell >= values.size() || cell >= program.cells.size()) return false;
+    bool landed = false;
+    if (mode == StoreMode::Append) {
+        landed = place == StorePlace::Cell
+                     ? write_append(program, cell, value, step)
+                     : place == StorePlace::Leaf &&
+                           write_leaf_append(program, cell, step, value, step2);
+    } else {
+        switch (place) {
+            case StorePlace::Cell: landed = write_whole(program, cell, value); break;
+            case StorePlace::Field:
+                landed = write_field(program, cell, field, value);
+                break;
+            case StorePlace::Elem: landed = write_elem(program, cell, step, value); break;
+            case StorePlace::Key: landed = write_key(program, cell, step, value); break;
+            case StorePlace::Leaf:
+                landed = write_leaf(program, cell, step, step2, value);
+                break;
+        }
+    }
+    if (landed) refresh_owner(program, *this, cell);
+    return landed;
 }
 
 void RuntimeState::clear_outputs() noexcept {

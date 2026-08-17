@@ -39,15 +39,23 @@ enum class OpCode : uint8_t {
     Deadband,
     Throttle,
     Suspend,
-    /* the move step's four forms (spec 5.4). New and ReadEnt fill a struct cell;
-     * StoreField sets one field of one; MoveOut emits the effect. A move into a scalar
-     * cell is an ordinary expression plus Store, so it needs no opcode of its own.
+    /* the move step's forms (spec 5.4): New and ReadEnt fill a struct cell, Store
+     * lands a value at a place, MoveOut emits the effect.
      */
     New,
     ReadEnt,
     LoadEnt,
-    StoreField,
     MoveOut,
+    /* THE ONE STORE (stage 6c): land the value at a PLACE with a MODE, both riding
+     * `small` (the low byte a StorePlace, the high byte a StoreMode). The root is
+     * always cell `a`; Field names struct field `b`; every other step the place
+     * needs — an element index, a map key, the append's keep bound — was pushed
+     * ABOVE the value and pops first. `c` is the fault site: a place that refuses
+     * the value (a foreign element, a miss, a full buffer) faults loudly rather
+     * than dropping the write. A store that lands in a struct's aggregate-field
+     * storage refreshes the owner's field — the set bit and the handle — as part
+     * of the write, so no separate instruction follows a store anywhere.
+     */
     Store,
     TmrStart,
     TmrCancel,
@@ -81,20 +89,6 @@ enum class OpCode : uint8_t {
      * stack frame, the trip bound, the element window -- written once.
      */
     Iterate,
-    /* APPEND ONE ELEMENT to list cell `a` (`b`: the fault site). The stack reads
-     * [value, keep] -- keep comes off first, having been pushed last. A non-Nil keep
-     * trims the front to that many elements, which is what makes a history ring one
-     * authored step instead of a privileged machine; a Nil keep means unbounded, and
-     * the append REFUSES at the retained ceiling rather than growing forever. The one
-     * verb that changes a list without replacing it.
-     */
-    Append,
-    /* WRITE ONE KEY of map cell `a` (`b`: the fault site). The stack reads [value, key]
-     * -- key comes off first. A Nil value ERASES the key: a map has no other removal
-     * verb, and "this key holds UNKNOWN" and "this key is absent" would otherwise be two
-     * spellings of one thing. Keys stay sorted, so iteration is replay-deterministic.
-     */
-    StoreKey,
     /* text -> the enum value whose variant name it is, over the type table entry in
      * `b`: the IMPLICIT conversion at an enum-typed DESTINATION, so a Dropdown's
      * selected name (or any dynamic text) writes back with no authored transform. The
@@ -133,31 +127,14 @@ enum class OpCode : uint8_t {
      * App drains after the tick and broadcasts — the VM never sees a session.
      */
     Notify,
-    /* WRITE ONE INDEX of list cell `a` (`b`: the fault site). The stack reads
-     * [value, index] -- the index was pushed last, so it comes off first. The index
-     * must land inside the list (0..count-1): an element write EDITS, it never grows —
-     * growth is Append's verb — so a miss is a fault, not a silent extension. A Nil
-     * value STORES as Nil (a gap is a value; a list has no positional erase). To the
-     * wire an in-place edit is a discontinuity: the aggs lane speaks appends, so the
-     * generation moves and the window resends whole.
-     */
-    StoreIndex,
     /* WRITE ONE ELEMENT of a mesh entity's array field: entity `a`, field `b`,
      * verb in `small`, fault site in `c`. The stack reads [value, index], index off
-     * first, exactly as StoreIndex. The effect carries the element position and the
+     * first, having been pushed last. The effect carries the element position and the
      * encode side rewrites that one element over the owner's own bytes (RMW), so the
      * rest of the array is preserved untouched; an index past the owner's live count
      * is refused at the encode, never a grow.
      */
     MoveOutElem,
-    /* MARK FIELD `b` of struct cell `a` as SET and refresh its handle. Emitted after
-     * every write that lands in a struct value's aggregate-field DERIVED CELL: the
-     * field's storage is that cell (Program.struct_field_cells maps it), but the
-     * struct's own set-bit — what decides whether a move out carries our elements or
-     * the RMW base keeps the owner's — lives on the StructState, and the Store family
-     * has no operand room to reach it. Pops nothing.
-     */
-    MarkField,
 };
 
 /* the disassembly spelling of every opcode, derived from the enum names */
@@ -191,7 +168,6 @@ constexpr const char* kOpNames[] = {
     "NEW",
     "READ_ENT",
     "LOAD_ENT",
-    "STORE_FIELD",
     "MOVE_OUT",
     "STORE",
     "TMR_START",
@@ -203,21 +179,52 @@ constexpr const char* kOpNames[] = {
     "TMR_READ",
     "MAKE_LIST",
     "ITERATE",
-    "APPEND",
-    "STORE_KEY",
     "TO_ENUM",
     "ARG",
     "RAISE",
     "CLOCK_READ",
     "NOTIFY",
-    "STORE_INDEX",
     "MOVE_OUT_ELEM",
-    "MARK_FIELD",
 };
 
 inline const char* op_name(OpCode op) {
     const auto index = static_cast<size_t>(op);
     return index < sizeof(kOpNames) / sizeof(kOpNames[0]) ? kOpNames[index] : "?";
+}
+
+/* where a Store LANDS and HOW: the two halves of its `small` (place low byte,
+ * mode high byte) */
+enum class StorePlace : uint8_t {
+    /* the whole cell `a` */
+    Cell,
+    /* field `b` of struct cell `a` */
+    Field,
+    /* one position of list cell `a`; the index pops above the value */
+    Elem,
+    /* one key of map cell `a`; the key pops above the value. A Nil value ERASES the
+     * key — a map has no other removal verb, and "this key holds UNKNOWN" and "this
+     * key is absent" would otherwise be two spellings of one thing.
+     */
+    Key,
+    /* inside one row of nested cell `a`: outer then inner, both popped */
+    Leaf,
+};
+
+enum class StoreMode : uint8_t {
+    /* replace what the place holds; an element edit never grows */
+    Assign,
+    /* grow the place by ONE element, trimmed to the keep bound popped above the
+     * value: a non-Nil keep is what makes a history ring one authored step instead
+     * of a privileged machine, and a Nil keep means unbounded — the append REFUSES
+     * at the retained ceiling rather than growing forever.
+     */
+    Append,
+};
+
+/* the one Store's `small`, assembled */
+constexpr uint16_t store_small(StorePlace place, StoreMode mode) {
+    return static_cast<uint16_t>(static_cast<uint16_t>(place) |
+                                 (static_cast<uint16_t>(mode) << 8));
 }
 
 /* the fields `time` reads by — ONE table, so the scalar tier's bindings, the template

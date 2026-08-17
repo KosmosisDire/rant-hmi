@@ -1431,18 +1431,6 @@ class Compiler {
         return derived;
     }
 
-    /* the MarkField every derived-cell write is followed by: the set-bit — what
-     * decides whether a move out carries our elements or keeps the owner's bytes —
-     * lives on the StructState, out of the Store family's reach */
-    bool mark_field(FlowProgram& flow, uint32_t derived) {
-        Instruction mark;
-        mark.op = OpCode::MarkField;
-        mark.a = program_.cells[derived].field_of;
-        mark.b = program_.cells[derived].field_index;
-        flow.body.code.push_back(mark);
-        return true;
-    }
-
     /* a timer variable reads by FIELD (`blink.running`, `blink.remaining`): the state
      * lives in the timer table, not the cell, so its bindings load from there */
     void bind_timer(Env& scope, const std::string& name, uint32_t index) {
@@ -2027,14 +2015,14 @@ class Compiler {
                 }
                 reference(step_id, name, program_.cells[cell].decl);
                 /* a struct value's AGGREGATE FIELD is its derived cell: the same
-                   verbs a list variable takes, plus the set-bit mark a move out reads */
+                   places a list variable takes, and the store itself refreshes the
+                   owner's set bit and handle */
                 if (!path.empty()) {
                     const uint32_t derived =
                         resolve_field_cell(cell, name, path, step_id);
                     if (derived == UINT32_MAX) return false;
                     return aggregate_assign(element, step, flow, scope, derived, appends,
-                                          keep, key) &&
-                           mark_field(flow, derived);
+                                            keep, key);
                 }
                 return aggregate_assign(element, step, flow, scope, cell, appends, keep, key);
             }
@@ -2142,9 +2130,10 @@ class Compiler {
                          DiagGrade::Warning, "keep");
             }
             Instruction ins;
-            ins.op = OpCode::Append;
+            ins.op = OpCode::Store;
+            ins.small = store_small(StorePlace::Cell, StoreMode::Append);
             ins.a = cell;
-            ins.b = fault_site(
+            ins.c = fault_site(
                 step_id, "append",
                 keep.empty()
                     ? "list '" + def.name +
@@ -2165,18 +2154,18 @@ class Compiler {
             return false;
         flow.body.max_stack = std::max(flow.body.max_stack, key_stack + 1);
         Instruction ins;
+        ins.op = OpCode::Store;
+        ins.a = cell;
         if (indexed) {
-            ins.op = OpCode::StoreIndex;
-            ins.a = cell;
-            ins.b = fault_site(
+            ins.small = store_small(StorePlace::Elem, StoreMode::Assign);
+            ins.c = fault_site(
                 step_id, "store_index",
                 "'" + def.name + "' did not take the element: the index must land "
                 "inside the list (an element write edits, it never grows), and the "
                 "element must fit the list");
         } else {
-            ins.op = OpCode::StoreKey;
-            ins.a = cell;
-            ins.b = fault_site(step_id, "store_key",
+            ins.small = store_small(StorePlace::Key, StoreMode::Assign);
+            ins.c = fault_site(step_id, "store_key",
                                "map '" + def.name +
                                    "' needs a text key, a value that fits it, and room in "
                                    "its buffer (a map has no keep, so it only grows)");
@@ -2212,8 +2201,8 @@ class Compiler {
     }
 
     /* `-> local`: the destination names a variable in scope, or declares a temporary by
-     * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt; a
-     * field of one by StoreField; a scalar by Store. */
+     * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt;
+     * everything else is one Store at its place. */
     bool assign_into_local(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                          Env& scope, FlowLocals& locals) {
         const uint64_t step_id = step.id;
@@ -2363,7 +2352,7 @@ class Compiler {
             /* an AGGREGATE field of a struct value is its derived cell: a whole list
                or map lands there exactly as it lands in a declared list variable —
                the one-scalar rule steps aside for a declared HMI aggregate — and the
-               MarkField sets the bit a move out reads */
+               store refreshes the set bit a move out reads */
             if (fields[field].shape == Shape::List || fields[field].shape == Shape::Map) {
                 const uint32_t derived = field_cell(cell, static_cast<uint32_t>(field));
                 if (derived == UINT32_MAX) {
@@ -2375,14 +2364,14 @@ class Compiler {
                 return push_scalar(element, step, flow, scope, from,
                                    Dest{Type(fields[field].shape), "this row",
                                         /*aggregate_ok=*/true}) &&
-                       emit_store(flow, step_id, derived) &&
-                       mark_field(flow, derived);
+                       emit_store(flow, step_id, derived);
             }
             if (!push_scalar(element, step, flow, scope, from,
                              Dest{Type(fields[field].shape, fields[field].type_id)}))
                 return false;
             Instruction set;
-            set.op = OpCode::StoreField;
+            set.op = OpCode::Store;
+            set.small = store_small(StorePlace::Field, StoreMode::Assign);
             set.a = cell;
             set.b = static_cast<uint32_t>(field);
             set.c = fault_site(step_id, "move_field", "the field could not be set");

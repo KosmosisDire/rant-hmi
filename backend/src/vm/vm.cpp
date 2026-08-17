@@ -1389,7 +1389,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     }
                     item.fields[i] = last.known && i < last.fields.size() ? last.fields[i]
                                                                           : Value::nil();
-                    /* re-home cached text into the struct's own slot (see StoreField) */
+                    /* re-home cached text into the struct's own slot (the field
+                       store's rule) */
                     if (item.fields[i].tag == ValueTag::Text && i < item.texts.size() &&
                         item.fields[i].ref != item.texts[i]) {
                         FixedText* own = state.field_text(item.texts[i]);
@@ -1409,31 +1410,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 const LastValueState& last = state.last[ins.a];
                 if (!push(last.known ? last.fields[ins.b] : Value::nil())) fail(ins.c);
-                break;
-            }
-            case OpCode::StoreField: {
-                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
-                                                                 : Value::nil();
-                StructState* slot_item =
-                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
-                if (!slot_item || ins.b >= slot_item->fields.size()) {
-                    fail(ins.c);
-                    break;
-                }
-                StructState& item = *slot_item;
-                Value value = pop();
-                /* text is copied into the struct's OWN slot, so the value at rest never
-                 * points into a site's scratch and survives whatever runs next */
-                if (value.tag == ValueTag::Text && ins.b < item.texts.size() &&
-                    value.ref != item.texts[ins.b]) {
-                    FixedText* own = state.field_text(item.texts[ins.b]);
-                    if (own) {
-                        own->set(state.text(program, value));
-                        value = Value::text(item.texts[ins.b]);
-                    }
-                }
-                item.fields[ins.b] = value;
-                item.set[ins.b] = 1;
                 break;
             }
             /* the one way a value leaves a flow. The source arrives on the stack, and
@@ -1489,9 +1465,20 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 break;
             }
+            /* THE ONE STORE: the place and the mode ride `small`; whatever the place
+             * needs beyond the cell — an index, a key, the keep bound — was pushed
+             * ABOVE the value and pops first. The state owns the landing, the
+             * aggregate-field owner refresh included; a refusal faults here. */
             case OpCode::Store: {
+                const StorePlace place = static_cast<StorePlace>(ins.small & 0xffu);
+                const StoreMode mode = static_cast<StoreMode>(ins.small >> 8);
+                const bool stepped = place == StorePlace::Elem ||
+                                     place == StorePlace::Key ||
+                                     mode == StoreMode::Append;
+                const Value step = stepped ? pop() : Value::nil();
                 const Value value = pop();
-                if (!state.store(program, ins.a, value)) fail(ins.c);
+                if (!state.write(program, ins.a, ins.b, place, mode, value, step))
+                    fail(ins.c);
                 break;
             }
             case OpCode::TmrStart:
@@ -1588,60 +1575,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 if (!push(Value::number(number))) fail(ins.c);
                 break;
             }
-            /* THE RING, AUTHORED: one element onto a list cell, trimmed to whatever
-             * `keep` asks for. The operands come off in reverse push order (keep last
-             * in, first out), and a refusal is a FAULT rather than a silent drop —
-             * either the element was an aggregate, or an unbounded list reached the
-             * retained ceiling, and both are things the author has to be told. */
-            case OpCode::Append: {
-                const Value keep = pop();
-                const Value value = pop();
-                if (!state.append_list(program, ins.a, value, keep)) fail(ins.b);
-                break;
-            }
-            /* one KEY of a map cell; a Nil value erases it. Same operand order rule:
-             * the key was pushed last, so it comes off first. */
-            case OpCode::StoreKey: {
-                const Value key = pop();
-                const Value value = pop();
-                if (!state.store_key(program, ins.a, key, value)) fail(ins.b);
-                break;
-            }
-            /* one INDEX of a list cell; the index came off first, having been pushed
-             * last. A miss (not a number, outside the list, a foreign element type)
-             * is the state's refusal and faults here. */
-            case OpCode::StoreIndex: {
-                const Value index = pop();
-                const Value value = pop();
-                if (!state.store_index(program, ins.a, index, value)) fail(ins.b);
-                break;
-            }
-            /* MARK one field of a struct value SET and refresh its handle: emitted
-             * after every write into an aggregate field's derived cell. The set-bit
-             * decides whether a move out carries our elements or the RMW base keeps
-             * the owner's bytes; the handle refresh keeps the struct's own field
-             * Value naming the current count. */
-            case OpCode::MarkField: {
-                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
-                                                                 : Value::nil();
-                StructState* slot_item =
-                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
-                if (!slot_item) break;
-                StructState& item = *slot_item;
-                if (ins.b >= item.set.size()) break;
-                item.set[ins.b] = 1;
-                if (holder.ref < program.struct_field_cells.size()) {
-                    const std::vector<uint32_t>& row =
-                        program.struct_field_cells[holder.ref];
-                    if (ins.b < row.size() && row[ins.b] != UINT32_MAX)
-                        item.fields[ins.b] = state.values[row[ins.b]];
-                }
-                break;
-            }
-            /* one ELEMENT of a mesh entity's array field: [value, index] exactly as
-             * StoreIndex. The index resolves here (it must be a whole non-negative
-             * number); the bounds live at the ENCODE, against the owner's own bytes,
-             * because only the RMW base knows how long the array really is. */
+            /* one ELEMENT of a mesh entity's array field: [value, index], index off
+             * first, having been pushed last. The index resolves here (it must be a
+             * whole non-negative number); the bounds live at the ENCODE, against the
+             * owner's own bytes, because only the RMW base knows how long the array
+             * really is. */
             case OpCode::MoveOutElem: {
                 const Value index = pop();
                 const Value value = pop();

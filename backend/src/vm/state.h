@@ -336,7 +336,17 @@ class RuntimeState {
         }
         return ref < texts.size() ? &texts[ref] : nullptr;
     }
-    bool store(const Program& program, uint32_t cell, const Value& value) noexcept;
+    /* THE ONE STORE (stage 6c): every write a program makes lands through here — the
+     * place says where, the mode how (ir_ops.h). `step` is the place's dynamic step:
+     * Elem's index, Key's key, an Append's keep bound, a Leaf's outer address; `step2`
+     * is the Leaf place's second (Assign: the inner index or key; Append: the keep).
+     * A write that lands in a struct's aggregate-field storage (CellDef::field_of)
+     * refreshes the owner's field — its set bit and its handle — as part of the write.
+     * False is a REFUSAL the caller faults on: a foreign element, a miss, a full
+     * buffer — never a silent drop. */
+    bool write(const Program& program, uint32_t cell, uint32_t field, StorePlace place,
+               StoreMode mode, Value value, const Value& step = Value::nil(),
+               const Value& step2 = Value::nil()) noexcept;
     void clear_outputs() noexcept;
     void fault(uint32_t site) noexcept;
 
@@ -356,49 +366,6 @@ class RuntimeState {
      * cell as `row_init` rather than in one flat run, because a run of scalars is exactly
      * what a nested literal is not */
     void seed_nested(const Program& program, uint32_t cell, const CellDef& def) noexcept;
-    /* Append ONE element to a list cell — a scalar, or a whole ROW where the cell
-     * declares a list/map element. An element the cell's declared shape does not fit is
-     * refused, and so is an append that would cross kRetainedCeiling with no keep to
-     * bound it; both return false so the caller can fault loudly. A Nil value APPENDS: a
-     * gap is a value, and a ring that silently skipped its unknown samples would draw a
-     * lie. `keep`, when it is a number, trims the FRONT afterwards. */
-    bool append_list(const Program& program, uint32_t cell, Value value,
-                     const Value& keep) noexcept;
-    /* the same append where the cell declares a nested element: the value is a whole ROW,
-     * laid into the slot's leaf arena beside every other row's. Reached through
-     * append_list, which is where the shape is decided. */
-    bool append_row(const Program& program, uint32_t cell, Value value,
-                    const Value& keep) noexcept;
-    /* Write ONE key of a map cell, at its sorted position. A Nil value ERASES the key
-     * (an absent key is already erased, which is not a failure). A non-text key, an
-     * aggregate value, or a NEW key past the ceiling all return false: a map has no
-     * keep, so a runaway one is a bug by construction. */
-    bool store_key(const Program& program, uint32_t cell, const Value& key,
-                   Value value) noexcept;
-    /* Write ONE position of a list cell. The index must be a number inside the list
-     * (0..count-1): an element write EDITS in place, growth stays Append's verb, so a
-     * miss refuses rather than extending. A Nil value stores as Nil (a gap is a value;
-     * a list has no positional erase). An unchanged element is no write at all — the
-     * wire stays silent; a changed one is a discontinuity (gen moves, whole resend),
-     * because the aggs lane has no in-place-edit vocabulary. */
-    bool store_index(const Program& program, uint32_t cell, const Value& index,
-                     Value value) noexcept;
-    /* ---- INSIDE one row of a nested cell ----
-     *
-     * `outer` addresses the row the way the cell itself is addressed — a number index
-     * into a nested list, a text key into a nested map — and the verbs below are the row's
-     * own append and element write. Both refuse on a cell that is not nested, on a row
-     * that is not there (a row is grown by writing the OUTER entry, never by reaching
-     * into a position that does not exist), and on an aggregate value (a row holds
-     * scalars: nesting is one level and this is already the bottom of it).
-     *
-     * A leaf edit is a DISCONTINUITY like every other in-place edit here: the aggs lane
-     * has no vocabulary for "element 3 of row 2 moved", so the generation bumps and the
-     * cell goes out whole on the next publish. */
-    bool append_leaf(const Program& program, uint32_t cell, const Value& outer, Value value,
-                     const Value& keep) noexcept;
-    bool store_leaf(const Program& program, uint32_t cell, const Value& outer,
-                    const Value& inner, Value value) noexcept;
     /* One delivered aggregate field into its mirror slot: `data` is the delivery's
      * element run (a map's pairs interleaved, arrival order), `elem_texts[k]` the text
      * behind data[k] where that element is text. Bounds to the field's own bound and
@@ -416,6 +383,35 @@ class RuntimeState {
     void move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept;
     /* the same move, within the leaf arena */
     void move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept;
+
+  private:
+    /* THE LANDINGS behind `write`, one per place-and-mode. The whole store replaces
+     * (an unchanged aggregate is no write; Nil clears); the field store re-homes text
+     * into the struct's own slot; the element store EDITS inside the window (growth is
+     * the append mode's verb) and a changed element is a discontinuity the wire sees
+     * whole; the keyed store upserts at sorted position and Nil ERASES; the append
+     * grows by one trimmed to `keep`, refusing at the retained ceiling unbounded, and
+     * a Nil element APPENDS (a gap is a value — a ring that skipped its unknown
+     * samples would draw a lie). The leaf pair does the same inside one ROW of a
+     * nested cell, `outer` addressing the row the way the cell itself is addressed;
+     * a row that is not there refuses (a row grows by writing the OUTER entry). */
+    bool write_whole(const Program& program, uint32_t cell, const Value& value) noexcept;
+    bool write_field(const Program& program, uint32_t cell, uint32_t field,
+                     Value value) noexcept;
+    bool write_elem(const Program& program, uint32_t cell, const Value& index,
+                    Value value) noexcept;
+    bool write_key(const Program& program, uint32_t cell, const Value& key,
+                   Value value) noexcept;
+    bool write_append(const Program& program, uint32_t cell, Value value,
+                      const Value& keep) noexcept;
+    /* write_append where the cell declares a nested element: the value is a whole ROW,
+     * laid into the slot's leaf arena beside every other row's */
+    bool write_row(const Program& program, uint32_t cell, Value value,
+                   const Value& keep) noexcept;
+    bool write_leaf(const Program& program, uint32_t cell, const Value& outer,
+                    const Value& inner, Value value) noexcept;
+    bool write_leaf_append(const Program& program, uint32_t cell, const Value& outer,
+                           Value value, const Value& keep) noexcept;
 };
 
 RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_state,
