@@ -244,6 +244,7 @@ class Compiler {
                 const Shape shape = var_shape(slot.shape);
                 const uint32_t cell = add_cell(CellKind::Slot, info.id, info.id,
                                                slot.name, shape, Json(), false);
+                program_.cells[cell].decl = slot.id;
                 if (shape == Shape::List || shape == Shape::Map) {
                     program_.cells[cell].elem = var_shape(slot.elem);
                     program_.cells[cell].leaf = var_shape(slot.leaf);
@@ -318,6 +319,14 @@ class Compiler {
     uint32_t fault_site(uint64_t node, const std::string& code, const std::string& message) {
         program_.runtime_faults.push_back(Diag{node, DiagGrade::Error, code, message});
         return static_cast<uint32_t>(program_.runtime_faults.size() - 1);
+    }
+
+    /* ONE STRUCTURAL REFERENCE for the index: a variable name a step or trigger
+     * carries as DATA rather than inside expression text (a move's `local`, a timer's
+     * name). The row's text is the word itself, spanned whole. `decl` 0 (a temp, the
+     * pipeline register) still records: the verify reads binding stability off it. */
+    void reference(uint64_t node, const std::string& word, uint64_t decl) {
+        program_.references.push_back(RefRow{node, word, 0, word.size(), decl});
     }
 
     const ComponentSpec* type_named(const std::string& name) const {
@@ -454,6 +463,9 @@ class Compiler {
         cell.owner_node = owner_node;
         cell.name = name;
         cell.node_id = node_id;
+        /* a slot cell's node_id is the PLACEMENT; its declaration is the component's
+           variable, and the slot loop overrides `decl` with that var's id after this */
+        cell.decl = node_id;
         cell.shape = shape;
         bool ok = true;
         cell.initial = json_value(program_, shape, initial, ok);
@@ -718,6 +730,10 @@ class Compiler {
                                 add_cell(CellKind::Slot, info.id, info.id, name, shape,
                                          aggregate || !expr_text.empty() ? Json() : initial,
                                          false);
+                            /* the cell is keyed by the PLACEMENT; the declaration is
+                               the component's variable, and that is what a reference
+                               to this slot means */
+                            program_.cells[info.slots[name]].decl = slot.id;
                             if (aggregate) {
                                 CellDef& cell = program_.cells[info.slots[name]];
                                 cell.elem = slot_elem;
@@ -1597,17 +1613,21 @@ class Compiler {
                     uint16_t* enum_out = nullptr) {
         ExpressionResult result;
         std::vector<Refusal> refusals;
-        std::vector<NameRef> names;
+        NameIndex names;
         const bool ok = compile_expression(text, tier, scope, program_, code, result,
                                            refusals, dest, &names);
         /* THE REFERENCE INDEX (Program::references): every name this expression
            resolved, keyed to its declaring node — recorded whether the compile
-           held or not, because a rename must see the names beside a break */
-        for (const NameRef& name : names) {
+           held or not, because a rename must see the names beside a break. A
+           PARSE break leaves the site blind instead: what never entered the tree
+           left no row, and absence must not read as "not this variable". */
+        for (const NameRef& name : names.rows) {
             if (name.cell >= program_.cells.size()) continue;
             program_.references.push_back(RefRow{node, text, name.at, name.length,
-                                                 program_.cells[name.cell].node_id});
+                                                 program_.cells[name.cell].decl});
         }
+        if (!names.complete)
+            program_.reference_gaps.push_back(RefSite{node, text});
         if (!ok) {
             for (const Refusal& refusal : refusals)
                 diag_span(node, refusal.code, refusal.message, DiagGrade::Error,
@@ -1895,6 +1915,7 @@ class Compiler {
         cell.owner_node = owner_node;
         cell.owner_flow = flow_id;
         cell.node_id = node_id;
+        cell.decl = node_id;
         cell.name = name;
         cell.shape = Shape::Struct;
         cell.type_id = type_id;
@@ -2021,6 +2042,7 @@ class Compiler {
                          DiagGrade::Error, "to");
                     return false;
                 }
+                reference(step_id, name, program_.cells[cell].decl);
                 /* a struct value's AGGREGATE FIELD is its derived cell: the same
                    verbs a list variable takes, plus the set-bit mark a move out reads */
                 if (!path.empty()) {
@@ -2235,6 +2257,7 @@ class Compiler {
                      DiagGrade::Error, "to");
                 return false;
             }
+            reference(step_id, name, program_.cells[cell].decl);
             const CellDef& def = program_.cells[cell];
             if (def.shape == Shape::Timer) {
                 diag(step_id, "move_source", "a timer is started and cancelled, not reset",
@@ -2335,6 +2358,7 @@ class Compiler {
                      "'" + name + "' has no value yet at this row", DiagGrade::Error, "to");
                 return false;
             }
+            reference(step_id, name, program_.cells[cell].decl);
             if (program_.cells[cell].shape != Shape::Struct) {
                 diag(step_id, "move_dest",
                      "'" + name + "' is " + shape_name(program_.cells[cell].shape) +
@@ -2412,6 +2436,7 @@ class Compiler {
             const uint32_t cell = ensure_struct_local(element, flow, locals, scope, name,
                                                       struct_type, step_id);
             if (cell == UINT32_MAX) return false;
+            reference(step_id, name, program_.cells[cell].decl);
             program_.entities[read_entity].flow_reads = true;
             Instruction ins;
             ins.op = OpCode::ReadEnt;
@@ -2439,6 +2464,7 @@ class Compiler {
            declared LIST or MAP variable takes a whole aggregate — an HMI cell, not a
            machine. */
         if (cell != UINT32_MAX) {
+            reference(step_id, name, program_.cells[cell].decl);
             if (!push_scalar(element, step, flow, scope, from,
                              Dest{Type(wanted, program_.cells[cell].type_id), "this row",
                                   aggregate_shape(wanted)}))
@@ -2460,6 +2486,9 @@ class Compiler {
             cell = add_temp_cell(flow.flow_id, element.id, name, produced);
             locals[name] = cell;
             scope.bind_value(name, Place{Type(produced), OpCode::Load, cell, 0});
+            /* the declaring write itself: decl 0 (a temp is nobody's variable), so a
+               rename never rewrites it — and the verify reads that stability */
+            reference(step_id, name, 0);
         }
         return emit_store(flow, step_id, cell);
     }
@@ -2517,6 +2546,12 @@ class Compiler {
         }
         const bool whole = held_cell != UINT32_MAX &&
                            program_.cells[held_cell].shape == Shape::Struct;
+        if (whole)
+            /* the degenerate expression never reaches the expression compiler, so its
+               one name records here — spanned where it sits in the authored text */
+            program_.references.push_back(
+                RefRow{step_id, from.expr, from.expr.find(source_local),
+                       source_local.size(), program_.cells[held_cell].decl});
         if (whole) {
             if (!trimmed(step.key).empty()) {
                 diag(step_id, "move_dest",
@@ -2882,7 +2917,16 @@ class Compiler {
             scope.bind_value(param->name,
                              Place{Type(param->shape), OpCode::LoadArg, 0, 0});
         FlowLocals locals;
-        for (const StepDecl& step : flow_node.steps) {
+        /* the flow stops compiling at its first bad step: that step's remaining names
+           and every later step's never resolve, so the index cannot vouch for them —
+           each such step is marked blind whole (empty text = every site it owns) */
+        auto abandon = [&](size_t from_row) {
+            for (size_t rest = from_row; rest < flow_node.steps.size(); ++rest)
+                program_.reference_gaps.push_back(RefSite{flow_node.steps[rest].id, ""});
+            return false;
+        };
+        for (size_t row = 0; row < flow_node.steps.size(); ++row) {
+            const StepDecl& step = flow_node.steps[row];
             const uint64_t step_id = step.id;
             const std::string& kind = step.kind;
             if (kind == "assign") {
@@ -2897,22 +2941,23 @@ class Compiler {
                            on a fed instance instead of the fed value. An aggregate
                            write (append, key, list/map slot) still just stands down. */
                         if (!shadow_slot_write(element, step, flow, scope, slot))
-                            return false;
+                            return abandon(row);
                         continue;
                     }
                 }
-                if (!compile_assign(element, step, flow, scope, locals)) return false;
+                if (!compile_assign(element, step, flow, scope, locals))
+                    return abandon(row);
             } else if (kind == "raise") {
-                if (!compile_raise(element, step, flow, scope)) return false;
+                if (!compile_raise(element, step, flow, scope)) return abandon(row);
             } else if (kind == "notify") {
-                if (!compile_notify(step, flow, scope)) return false;
+                if (!compile_notify(step, flow, scope)) return abandon(row);
             } else if (kind == "gate") {
                 const std::string condition =
                     step.a.kind == NumOrText::Kind::Text ? step.a.text : "";
                 if (!expression(step_id, condition, ExprTier::Wire, scope,
                                 Dest{Type(Shape::Bool)}, flow.body.code,
                                 flow.body.max_stack))
-                    return false;
+                    return abandon(row);
                 Instruction gate{OpCode::Gate};
                 /* not a fault: the counter behind this site is how a gate on an
                    UNKNOWN condition says it did not run (the log drains it) */
@@ -2949,7 +2994,8 @@ class Compiler {
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
                 const int timer =
                     resolve_timer(element, step.timer, step_id, in_component);
-                if (timer < 0) return false;
+                if (timer < 0) return abandon(row);
+                reference(step_id, step.timer, program_.timers[timer].node_id);
                 Instruction ins;
                 ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
                 ins.a = static_cast<uint32_t>(timer);
@@ -2957,7 +3003,7 @@ class Compiler {
                 flow.body.code.push_back(ins);
             } else {
                 diag(step_id, "step_kind", "unknown step kind '" + kind + "'");
-                return false;
+                return abandon(row);
             }
         }
         flow.body.code.push_back(Instruction{OpCode::Halt});
@@ -2994,10 +3040,18 @@ class Compiler {
         for (ElementInfo& element : elements_) {
             for (const FlowDecl& node : element.node->flows) {
                 const uint64_t flow_id = node.id;
+                /* a flow whose every trigger refused never compiles its steps, so
+                   nothing vouched for the names they carry — mark them blind whole */
+                auto abandon_steps = [&] {
+                    for (const StepDecl& step : node.steps)
+                        program_.reference_gaps.push_back(RefSite{step.id, ""});
+                };
                 if (node.when.empty()) {
                     diag(flow_id, "trigger", "flow has no trigger");
+                    abandon_steps();
                     continue;
                 }
+                bool stepped = false;   /* any trigger reached compile_steps */
                 const uint32_t group = program_.layout.fired_groups++;
                 for (const TriggerDecl& trigger : node.when) {
                     FlowProgram flow;
@@ -3013,7 +3067,12 @@ class Compiler {
                     std::string copyless;
                     if (trigger.kind == "timer") {
                         const int timer = resolve_timer(element, trigger.var, flow_id);
-                        if (timer < 0) continue;
+                        if (timer < 0) {
+                            program_.reference_gaps.push_back(
+                                RefSite{flow_id, trigger.var});
+                            continue;
+                        }
+                        reference(flow_id, trigger.var, program_.timers[timer].node_id);
                         flow.event = program_.timers[timer].event;
                         program_.timers[timer].rearm_groups.push_back(group);
                         copyless = "a timer";
@@ -3041,6 +3100,7 @@ class Compiler {
                         flow.every_ticks =
                             static_cast<uint32_t>(std::max(0.0, trigger.every_ms));
                     }
+                    stepped = true;
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        nullptr, /*in_component=*/false, copyless)) {
                         const std::string message = "flow could not be compiled";
@@ -3057,6 +3117,7 @@ class Compiler {
                         std::max(program_.stack_values, flow.body.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
+                if (!stepped) abandon_steps();
             }
         }
     }
@@ -3108,6 +3169,7 @@ class Compiler {
                so a fed control still raises `changed` while its local echo yields */
             const std::unordered_map<std::string, std::string> claimed = claimed_slots(element);
             for (const FlowDecl& node : behavior) {
+                bool stepped = false;   /* any trigger reached compile_steps */
                 for (const TriggerDecl& trigger : node.when) {
                     FlowProgram flow;
                     flow.node_id = element.id;
@@ -3132,6 +3194,7 @@ class Compiler {
                         flow.hold_ticks =
                             static_cast<uint32_t>(std::max(0.0, trigger.hold_ms));
                     }
+                    stepped = true;
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,
                                        &claimed, /*in_component=*/true, copyless))
                         continue;
@@ -3139,6 +3202,12 @@ class Compiler {
                         std::max(program_.stack_values, flow.body.max_stack);
                     program_.flows.push_back(std::move(flow));
                 }
+                /* every trigger refused for THIS instance: nothing vouched for the
+                   definition steps' names, and the blind mark must win over rows
+                   another instance's compile may have recorded */
+                if (!stepped)
+                    for (const StepDecl& step : node.steps)
+                        program_.reference_gaps.push_back(RefSite{step.id, ""});
             }
         }
     }

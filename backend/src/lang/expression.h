@@ -78,6 +78,15 @@ struct NameRef {
     uint32_t cell = 0;
 };
 
+/* the caller's reference-index channel: rows arrive on success AND on refusal (the
+ * checker resolves what it can around a break), and `complete` goes false when the
+ * PARSE broke — text past the break never entered the tree, so the absence of a row
+ * proves nothing about this expression and a rename touching it must refuse. */
+struct NameIndex {
+    std::vector<NameRef> rows;
+    bool complete = true;
+};
+
 /* On refusal `refusals` holds EVERY independent finding (arguments and list elements
  * recover; a broken receiver still suppresses what depended on it), depth-first
  * left-to-right, so the first entry is the error the surface always led with.
@@ -87,8 +96,7 @@ struct NameRef {
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         Module& module, std::vector<Instruction>& code,
                         ExpressionResult& result, std::vector<Refusal>& refusals,
-                        const Dest& dest = Dest(),
-                        std::vector<NameRef>* names = nullptr);
+                        const Dest& dest = Dest(), NameIndex* names = nullptr);
 
 /* The language, as data (spec 3.7 / "everything is data"): one row per builtin and
  * method, straight from the tables the checker compiles with (lang/tables.h), so

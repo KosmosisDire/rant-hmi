@@ -1501,6 +1501,76 @@ void test_reference_index() {
     CHECK_EQ(hits, 2);
 }
 
+/* THE STRUCTURAL ROWS AND THE BLIND SPOTS: a name a step or trigger carries as DATA
+ * (a move's `local`, a timer's name) records a row at its resolution, and a flow that
+ * stops compiling marks its failing step and everything after it blind — the index
+ * must never let absence-because-unanalyzed read as "not this variable". */
+void test_structural_reference_index() {
+    Json root = {
+        {"version", 3},
+        {"next_id", 2000},
+        {"globals", Json::array({
+            Json{{"id", 900}, {"name", "flow"}, {"type", "num"}, {"init", 2.0}},
+            Json{{"id", 905}, {"name", "blink"}, {"type", "timer"}, {"init", 0.5}},
+        })},
+        {"pages", Json::array({Json{
+            {"name", "Main"},
+            {"children", Json::array({
+                Json{{"id", 950}, {"kind", "frame"}, {"name", "Zone"},
+                     {"flows", Json::array({
+                         Json{{"id", 951},
+                              {"when", Json::array({Json{{"kind", "timer"},
+                                                         {"var", "blink"}}})},
+                              {"do", Json::array({
+                                  Json{{"id", 952}, {"kind", "assign"},
+                                       {"from", {{"expr", "flow + 1"}}},
+                                       {"to", {{"local", "flow"}, {"path", ""}}}},
+                                  Json{{"id", 953}, {"kind", "tmr_start"},
+                                       {"timer", "blink"}},
+                              })}},
+                         Json{{"id", 955},
+                              {"when", Json::array({Json{{"kind", "every"},
+                                                         {"ms", 1000.0}}})},
+                              {"do", Json::array({
+                                  Json{{"id", 956}, {"kind", "assign"},
+                                       {"from", {{"expr", "nope"}}},
+                                       {"to", {{"local", "flow"}, {"path", ""}}}},
+                                  Json{{"id", 957}, {"kind", "assign"},
+                                       {"from", {{"expr", "1"}}},
+                                       {"to", {{"local", "flow"}, {"path", ""}}}},
+                              })}},
+                     })}},
+            })}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, mesh);
+
+    auto has_row = [&](uint64_t node, const char* text, uint64_t decl) {
+        for (const RefRow& row : compiled.program.references)
+            if (row.node == node && row.text == text && row.decl == decl) return true;
+        return false;
+    };
+    CHECK(has_row(951, "blink", 905));      /* the timer trigger's variable */
+    CHECK(has_row(952, "flow", 900));       /* the move destination */
+    CHECK(has_row(952, "flow + 1", 900));   /* and the source expression's read */
+    CHECK(has_row(953, "blink", 905));      /* tmr_start's timer */
+
+    /* the broken flow: its first step failed (unknown name), so it and everything
+       after it are blind whole, and the second step recorded NO destination row */
+    CHECK(!has_row(957, "flow", 900));
+    auto gapped = [&](uint64_t node) {
+        for (const RefSite& gap : compiled.program.reference_gaps)
+            if (gap.node == node && gap.text.empty()) return true;
+        return false;
+    };
+    CHECK(gapped(956));
+    CHECK(gapped(957));
+    CHECK(!gapped(952));
+}
+
 /* THE DISPLAY TIER'S HALF OF THE INDEX (compile_page_attrs refs/blind): an attr's
  * variable read records with the DECLARING variable's id — the nearest declaration,
  * so a shadowing local's read is the local's row, never the global's — a component
@@ -1574,6 +1644,7 @@ int main() {
     test_template_expr();
     test_definition_check();
     test_reference_index();
+    test_structural_reference_index();
     test_display_reference_index();
     test_list_vocabulary();
     test_new_vocabulary();

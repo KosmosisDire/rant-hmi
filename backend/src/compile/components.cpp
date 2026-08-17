@@ -427,6 +427,7 @@ std::string served_shape(const VarDecl& var) {
 SlotSpec spec_row(const VarDecl& var, const std::string& address) {
     SlotSpec out;
     out.name = address;
+    out.id = var.id;
     out.shape = served_shape(var);
     out.is_public = var.is_public;
     out.initial = var.init;

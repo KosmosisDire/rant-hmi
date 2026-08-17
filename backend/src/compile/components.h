@@ -48,6 +48,9 @@ const Json& builtin_registry();
  * used to decode these facts back OFF the served JSON rows. */
 struct SlotSpec {
     std::string name;               /* the ADDRESS: bare, or "<element path>.<name>" */
+    /* the DECLARING VarDecl's document id (0 for built-ins and the synthesized
+     * `shown`): what a reference to this slot means to a rename */
+    uint64_t id = 0;
     std::string shape;              /* the served word; the compiler's var_shape reads it */
     bool is_public = false;
     Json initial;                   /* the declared default, a raw literal; null = none */

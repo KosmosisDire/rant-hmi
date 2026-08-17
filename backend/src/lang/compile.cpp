@@ -93,7 +93,7 @@ void collect_names(const Ast& ast, const std::vector<Note>& notes,
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         Module& module, std::vector<Instruction>& code,
                         ExpressionResult& result, std::vector<Refusal>& refusals,
-                        const Dest& dest, std::vector<NameRef>* names) {
+                        const Dest& dest, NameIndex* names) {
     Ast ast;
     Refusal broken;
     std::vector<Note> notes;
@@ -103,14 +103,18 @@ bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
            (ast.h Error), and the tree is STILL CHECKED: the findings beside the
            break report too, and every name that resolves leaves its note —
            nothing is emitted. The parse refusal stays the one the surface leads
-           with. */
+           with. The index is told the rows are INCOMPLETE: text past the break
+           never entered the tree, so absence proves nothing here. */
         refusals.push_back(std::move(broken));
         check_expression(ast, tier, env, notes, type, refusals, dest);
-        if (names) collect_names(ast, notes, *names);
+        if (names) {
+            collect_names(ast, notes, names->rows);
+            names->complete = false;
+        }
         return false;
     }
     const bool checked = check_expression(ast, tier, env, notes, type, refusals, dest);
-    if (names) collect_names(ast, notes, *names);
+    if (names) collect_names(ast, notes, names->rows);
     if (!checked) return false;
 
     /* THE IMPLICIT text -> enum CONVERSION at an enum-typed DESTINATION (spec 6.2,

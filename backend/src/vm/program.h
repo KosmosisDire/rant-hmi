@@ -104,6 +104,11 @@ struct CellDef {
     CellKind kind = CellKind::Global;
     uint64_t owner_node = 0;
     uint64_t node_id = 0;
+    /* the DECLARING VARIABLE's document node — what a reference to this cell means to
+     * a rename. Usually node_id itself, but an instance's slot cell is keyed by the
+     * PLACEMENT while its declaration lives in the component: this carries the
+     * component variable's own id there. 0 = nobody's word (a temp, a derived field). */
+    uint64_t decl = 0;
     std::string name;
     Shape shape = Shape::Unknown;
     /* list/map cells: the DECLARED element shape (a map's VALUE shape; keys are text).
@@ -302,6 +307,12 @@ struct Program : Module {
      * every expression a node owns resolves in that node's one scope, so the
      * prop it sits in never changes what a name means. */
     std::vector<RefRow> references;
+    /* THE INDEX'S BLIND SPOTS: sites whose analysis broke before every name in them
+     * got a verdict — a parse-broken expression (text past the break never entered
+     * the tree), or a step at or after a flow's first failing one (the flow stops
+     * compiling there). Empty text = every site the node owns. A rename that would
+     * touch a blind site refuses rather than rewriting what nothing vouched for. */
+    std::vector<RefSite> reference_gaps;
     /* [struct slot][field] -> the derived cell holding that aggregate field's entries
      * (UINT32_MAX where the field is scalar). What ReadEnt fills, New clears, MarkField
      * refreshes through, and a move out resolves elements from. */
