@@ -228,10 +228,9 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
     const Indexer indexer = [this](const Document& doc) {
         RefIndex index;
         std::vector<Diag> findings;
-        std::set<std::string> per_copy;
-        compile_page_attrs(doc, findings, &mesh_->reflection(), nullptr, &per_copy,
-                           &index.rows, &index.blind);
-        CompileResult compiled = compile_document(doc, *mesh_, &per_copy);
+        compile_page_attrs(doc, findings, &mesh_->reflection(), nullptr, &index.rows,
+                           &index.blind);
+        CompileResult compiled = compile_document(doc, *mesh_);
         for (RefRow& row : compiled.program.references)
             index.rows.push_back(std::move(row));
         for (RefSite& gap : compiled.program.reference_gaps)
@@ -518,14 +517,13 @@ void App::compile_runtime() {
      * stamped into the wire compile. A page's expressions see the mesh; a component's
      * deliberately do not. */
     attr_entity_reads_.clear();
-    per_copy_slots_.clear();
     node_attrs_ = compile_page_attrs(doc_, component_diags_, &mesh_->reflection(),
-                                     &attr_entity_reads_, &per_copy_slots_);
+                                     &attr_entity_reads_);
     /* the WIRE tier checks unplaced components' behavior the same way the display
        tier just checked their attrs: off the definition, findings only */
     for (Diag& diag : check_component_definitions(doc_, *mesh_))
         component_diags_.push_back(std::move(diag));
-    CompileResult compiled = compile_document(doc_, *mesh_, &per_copy_slots_);
+    CompileResult compiled = compile_document(doc_, *mesh_);
     auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);
     if (scheduler_)
         next->state() = migrate_state(scheduler_->program(), scheduler_->state(),

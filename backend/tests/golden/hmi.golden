@@ -65,7 +65,6 @@ node 509 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflect
 node 510 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflected
 node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 == attr reads ==
-== per-copy slots ==
 == node_attrs ==
 {
   "108": {

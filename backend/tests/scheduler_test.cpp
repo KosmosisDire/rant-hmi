@@ -361,21 +361,23 @@ void test_scheduler_speaks() {
 
 /* HOLD-TO-TOGGLE: held() is a MOMENT — it carries nothing, and the flow reads the
  * state it flips. A press shorter than hold_ms commits nothing; the second hold reads
- * the state the first one left and flips it back. */
+ * the state the first one left and flips it back. (The variable is `lit`, not `state`:
+ * a slot expression spelling `state` names the VIEW's own input and goes per copy —
+ * the placement rule, derived from the text on both tiers.) */
 void test_held_nullary() {
     Json toggle = {{"kind", "frame"}, {"type", "Toggle"},
-                   {"slots", Json{{"value", "state"}}},
+                   {"slots", Json{{"value", "lit"}}},
                    {"flows",
                     Json::array({Json{
                         {"when", Json::array({Json{{"kind", "event"},
                                                    {"name", "held"},
                                                    {"hold_ms", 5}}})},
                         {"when_mode", "first"},
-                        {"do", Json::array({steps::set_var("state", "!state")})}}})}};
+                        {"do", Json::array({steps::set_var("lit", "!lit")})}}})}};
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals",
-                  Json::array({Json{{"name", "state"}, {"type", "bool"}, {"init", false}}})},
+                  Json::array({Json{{"name", "lit"}, {"type", "bool"}, {"init", false}}})},
                  {"pages",
                   Json::array({Json{{"name", "Main"}, {"children", Json::array({toggle})}}})}};
     Document document;
@@ -390,7 +392,7 @@ void test_held_nullary() {
     Scheduler scheduler(std::move(compiled.program), mesh);
     uint32_t state_cell = UINT32_MAX;
     for (uint32_t i = 0; i < scheduler.program().cells.size(); ++i)
-        if (scheduler.program().cells[i].name == "state") state_cell = i;
+        if (scheduler.program().cells[i].name == "lit") state_cell = i;
     CHECK(state_cell != UINT32_MAX);
 
     /* a press shorter than the hold commits nothing */

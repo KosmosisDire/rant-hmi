@@ -61,10 +61,8 @@ std::string dump_document(const std::string& doc_path, std::string& err) {
     derive_registry(document, diags);   /* the serving product still pins its findings */
     FakeMesh mesh;
     std::set<std::string> attr_reads;
-    std::set<std::string> per_copy;
-    Json node_attrs = compile_page_attrs(document, diags, &mesh.reflection(), &attr_reads,
-                                         &per_copy);
-    CompileResult compiled = compile_document(document, mesh, &per_copy);
+    Json node_attrs = compile_page_attrs(document, diags, &mesh.reflection(), &attr_reads);
+    CompileResult compiled = compile_document(document, mesh);
 
     std::ostringstream out;
     out << "== diagnostics ==\n";
@@ -83,8 +81,6 @@ std::string dump_document(const std::string& doc_path, std::string& err) {
     for (const Diag& diag : compiled.program.diagnostics) diag_line(diag);
     out << "== attr reads ==\n";
     for (const std::string& row : attr_reads) out << seam_row(row) << "\n";
-    out << "== per-copy slots ==\n";
-    for (const std::string& row : per_copy) out << seam_row(row) << "\n";
     out << "== node_attrs ==\n" << node_attrs.dump(2) << "\n";
     out << "== program " << (compiled.ok ? "ok" : "failed") << " ==\n"
         << compiled.program.disassembly();

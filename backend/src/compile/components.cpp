@@ -965,19 +965,17 @@ Json derive(const std::vector<ComponentDecl>& doc_components, std::vector<Diag>*
  * per picture and none at all for the wire to carry. Such an expression is compiled HERE,
  * against the same page scope the instance's attrs read, and served in its own row.
  *
- * The address is recorded whether or not the compile succeeded: the record says "this slot
- * is per copy", which is a fact about the text, and the wire compiler has to skip it either
- * way — otherwise one mistake would be reported twice, once by each tier, and the second
- * report would name `repeat` as an unknown word. */
+ * A per-copy expression that does not compile is still per copy — that is a fact about
+ * the text, and the wire compiler derives it from the same text — so this tier owns the
+ * finding and the wire tier skips the slot either way; otherwise one mistake would be
+ * reported twice, and the second report would name `repeat` as an unknown word. */
 Json compile_per_copy_slots(const NodeDecl& node,
-                            const std::vector<ComponentSpec>* specs,
-                            const TemplateScope& scope, uint64_t id, Sink& sink,
-                            std::set<std::string>* per_copy) {
+                            const std::vector<ComponentSpec>& specs,
+                            const TemplateScope& scope, uint64_t id, Sink& sink) {
     Json out = Json::object();
-    if (!specs || !per_copy) return out;
     if (node.type.empty()) return out;
     const ComponentSpec* component = nullptr;
-    for (const ComponentSpec& row : *specs)
+    for (const ComponentSpec& row : specs)
         if (row.name == node.type) {
             component = &row;
             break;
@@ -990,8 +988,7 @@ Json compile_per_copy_slots(const NodeDecl& node,
         const Json* authored = authored_slot(node.slots, slot.name);
         if (!authored || !authored->is_string()) continue;
         const std::string text = authored->get<std::string>();
-        if (!per_copy_expression(text)) continue;
-        per_copy->insert(std::to_string(id) + "\n" + slot.name);
+        if (!reads_view_input(text)) continue;
         TemplateExprResult compiled = compile_template_expr(text, scope);
         sink.record(id, text, compiled);
         if (!compiled.ok) {
@@ -1057,7 +1054,6 @@ const Json* authored_slot(const Json& slots, const std::string& address) {
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh,
                         std::set<std::string>* attr_reads,
-                        std::set<std::string>* per_copy,
                         std::vector<RefRow>* refs,
                         std::vector<RefSite>* blind) {
     const Doc doc = decode_document(document);
@@ -1066,10 +1062,8 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
     sink.diags = &diags;
     sink.refs = refs;
     sink.blind = blind;
-    /* the specs the placement rule consults, derived only where a per-copy set is
-       collecting at all — a bare compile treats every slot as a standing program */
-    std::vector<ComponentSpec> specs;
-    if (per_copy) specs = derive_specs(doc.components);
+    /* the specs the placement rule consults: which slots a placement HAS */
+    const std::vector<ComponentSpec> specs = derive_specs(doc.components);
 
     /* A PAGE NODE READS THE WHOLE PAGE UNIVERSE: the document's globals, the locals of
      * every element enclosing it and its own, and the mesh. Not because the display tier
@@ -1103,8 +1097,7 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
         /* THE PER-COPY PROPERTIES of a placement, if any: compiled over this element's
            own scope, exactly as its attrs were, because a slot's value is authored where
            the instance stands and reads what anything else there reads */
-        Json slots = compile_per_copy_slots(node, per_copy ? &specs : nullptr, scope,
-                                            node.id, sink, per_copy);
+        Json slots = compile_per_copy_slots(node, specs, scope, node.id, sink);
         if (!slots.empty()) row["slots"] = std::move(slots);
         out[std::to_string(node.id)] = std::move(row);
         for (const NodeDecl& child : node.children) walk(child, scope);

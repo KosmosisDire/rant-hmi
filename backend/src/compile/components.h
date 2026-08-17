@@ -92,14 +92,11 @@ std::vector<ComponentSpec> derive_specs(const std::vector<ComponentDecl>& doc_co
  * serves the live frame off it and hands the read entities to the mesh at apply() —
  * nothing is stamped into the wire compile. Both params are optional so a test can
  * compile a page's attrs with no mesh at all. */
-/* `per_copy` is the other half of that seam, and it is THE PLACEMENT RULE
- * (lang/template_expr.h per_copy_expression): a slot expression that names the view's
- * own inputs is compiled here into a view program served in the instance's row under
- * `slots`, and its "<node id>\n<slot>" address is recorded so the document compiler
- * builds no standing program for it and refuses a flow that tries to read it. The
- * specs say which slots a placement HAS; with no `per_copy` set collecting, no slot
- * is per copy and every expression stays a standing program, which is what a bare
- * test compile wants. */
+/* THE PLACEMENT RULE always applies (lang/template_expr.h reads_view_input): a slot
+ * expression that names the view's own inputs is compiled here into a view program
+ * served in the instance's row under `slots`. No record of the decision travels — the
+ * document compiler asks the same function over the same authored text and builds no
+ * standing program for such a slot, refusing a flow that tries to read it. */
 /* `refs` and `blind` are the DISPLAY TIER's half of the reference index (the wire
  * tier's rides in Program::references): every resolved property or variable read as a
  * RefRow keyed (owning node, expression text), and every site whose compile FAILED as
@@ -110,7 +107,6 @@ std::vector<ComponentSpec> derive_specs(const std::vector<ComponentDecl>& doc_co
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh = nullptr,
                         std::set<std::string>* attr_reads = nullptr,
-                        std::set<std::string>* per_copy = nullptr,
                         std::vector<RefRow>* refs = nullptr,
                         std::vector<RefSite>* blind = nullptr);
 

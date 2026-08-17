@@ -223,12 +223,12 @@ bool easing_profile(const std::string& name);
  * backend keeps ONE cell where the view draws N copies, and a press belongs to one copy.
  * So it is compiled as a VIEW program and served with the instance's own node row, and
  * every other slot expression stays a standing program with a published cell that a flow
- * can read. Which it is falls out of the text, and this is the ONE place that question is
- * answered — the display compiler builds the view program from it and the wire compiler
- * skips the standing one, and a disagreement would leave a slot with two truths or none.
+ * can read. Which it is falls out of the text, and this is the ONE function that answers
+ * — the display compiler and the wire compiler each ask it in place, so no record of the
+ * decision rides between them and the two can never disagree.
  *
  * Read with the real lexer, so a "repeat" inside a string literal and an `x.repeat` field
  * access are not it — the same words the parser would refuse to treat as the view input. */
-bool per_copy_expression(const std::string& text);
+bool reads_view_input(const std::string& text);
 
 } // namespace hmi

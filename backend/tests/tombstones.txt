@@ -127,3 +127,9 @@ flow_writes
 # vector stamped into the wire compile's entity table restated a fact whose owner
 # already held it.
 flow_reads
+
+# stage 5c, per-copy derived in place: THE PLACEMENT RULE is one function over the
+# authored text (lang/template_expr.h reads_view_input) that each tier asks where
+# it stands — the record set that carried the display tier's decisions into the
+# document compile, and the old name of the classifier that fed it.
+per_copy_expression

@@ -5,6 +5,7 @@
 #include "doc/decode.h"
 #include "lang/expression.h"
 #include "lang/parser.h"
+#include "lang/template_expr.h"
 
 #include <algorithm>
 #include <cctype>
@@ -183,10 +184,9 @@ bool gesture_from(const std::string& event, const std::string& primitive) {
 
 class Compiler {
   public:
-    Compiler(const Document& document, const MeshPort& mesh,
-             const std::set<std::string>* per_copy_slots = nullptr)
+    Compiler(const Document& document, const MeshPort& mesh)
         : doc_(decode_document(document)), specs_(derive_specs(doc_.components)),
-          mesh_(mesh), per_copy_slots_(per_copy_slots) {
+          mesh_(mesh) {
         program_.document_version = doc_.version;
         program_.add_text("");
         /* The theme tokens (spec 2.10), name -> DARK value: the backend has no view and
@@ -750,7 +750,7 @@ class Compiler {
                                copy; the cell still exists (it is the slot's declared
                                storage and the migration keys on it) and simply stays
                                UNKNOWN, because there is no one value for it to hold. */
-                            if (!expr_text.empty() && !per_copy_slot(info.id, name))
+                            if (!expr_text.empty() && !reads_view_input(expr_text))
                                 pending_slots_.push_back(PendingSlot{
                                     info.id, name, expr_text, info.slots[name], &slot});
                         }
@@ -1572,11 +1572,16 @@ class Compiler {
         return scope;
     }
 
-    /* did the display tier take this slot over? (THE PLACEMENT RULE — its expression names
-       `state` or `repeat`, so it is evaluated per copy in the view) */
-    bool per_copy_slot(uint64_t node, const std::string& name) const {
-        return per_copy_slots_ &&
-               per_copy_slots_->count(std::to_string(node) + "\n" + name) > 0;
+    /* did the display tier take this slot over? (THE PLACEMENT RULE — its expression
+       names `state` or `repeat`, so it is evaluated per copy in the view). Derived
+       from the AUTHORED TEXT by the same function the display tier asks
+       (lang/template_expr.h reads_view_input): no record travels between the tiers,
+       so they can never disagree. */
+    bool per_copy_slot(const ElementInfo& element, const std::string& name) const {
+        if (!element.node) return false;
+        const Json* authored = authored_slot(element.node->slots, name);
+        return authored && authored->is_string() &&
+               reads_view_input(authored->get<std::string>());
     }
 
     /* `this.<prop>` — the properties of the component this element places, by address.
@@ -1587,7 +1592,7 @@ class Compiler {
      * prevent — so the word is refused with what the author can do instead. */
     void bind_own_props(Env& scope, const ElementInfo& element) {
         for (const auto& item : element.slots) {
-            if (per_copy_slot(element.id, item.first)) {
+            if (per_copy_slot(element, item.first)) {
                 scope.refuse(
                     "this." + item.first,
                     "'" + item.first + "' is evaluated PER COPY here — its expression "
@@ -3179,10 +3184,6 @@ class Compiler {
     std::unordered_map<std::string, uint32_t> global_timers_;
     std::vector<ElementInfo> elements_;
     std::vector<PendingSlot> pending_slots_;
-    /* which slots the DISPLAY tier TOOK OVER ("<node id>\n<slot>"): a per-copy
-       expression has one value per picture, so no standing program is built and no
-       flow may read the cell */
-    const std::set<std::string>* per_copy_slots_ = nullptr;
 };
 
 } // namespace
@@ -3199,9 +3200,8 @@ Shape shape_from_name(const std::string& name) {
     return Shape::Unknown;
 }
 
-CompileResult compile_document(const Document& document, const MeshPort& mesh,
-                               const std::set<std::string>* per_copy_slots) {
-    return Compiler(document, mesh, per_copy_slots).run();
+CompileResult compile_document(const Document& document, const MeshPort& mesh) {
+    return Compiler(document, mesh).run();
 }
 
 std::vector<Diag> check_component_definitions(const Document& document,

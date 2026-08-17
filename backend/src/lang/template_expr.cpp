@@ -899,7 +899,7 @@ bool easing_profile(const std::string& name) {
  * off the token stream exact rather than a guess. The lexer is the language's own, so a
  * string literal is a String token and never scanned, and `after_dot` skips a field
  * access: `bar.state` is somebody's property. */
-bool per_copy_expression(const std::string& text) {
+bool reads_view_input(const std::string& text) {
     Lexer lexer(text);
     bool after_dot = false;
     for (Token token = lexer.next(); token.kind != TokenKind::End;

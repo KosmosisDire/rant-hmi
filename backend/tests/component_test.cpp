@@ -1076,12 +1076,12 @@ void test_page_universe() {
  * writes the expression; nobody chooses the tier. */
 void test_per_copy_slots() {
     /* the one question both compilers ask, and the reasons it is not a text search */
-    CHECK(per_copy_expression("readings[repeat.index]"));
-    CHECK(per_copy_expression("state.pressed ? 1 : 0"));
-    CHECK(!per_copy_expression("readings[0]"));
+    CHECK(reads_view_input("readings[repeat.index]"));
+    CHECK(reads_view_input("state.pressed ? 1 : 0"));
+    CHECK(!reads_view_input("readings[0]"));
     /* a STRING is not code, and a FIELD is somebody's property */
-    CHECK(!per_copy_expression("'repeat is a word'"));
-    CHECK(!per_copy_expression("bar.repeat + row.state"));
+    CHECK(!reads_view_input("'repeat is a word'"));
+    CHECK(!reads_view_input("bar.repeat + row.state"));
 
     Json root = {
         {"version", 1}, {"next_id", 900},
@@ -1115,9 +1115,7 @@ void test_per_copy_slots() {
     CHECK_MSG(document.adopt(std::move(root), error), error);
 
     std::vector<Diag> diags;
-    std::set<std::string> reads;
-    std::set<std::string> per_copy;
-    Json rows = compile_page_attrs(document, diags, nullptr, &reads, &per_copy);
+    Json rows = compile_page_attrs(document, diags);
 
     /* THE PROGRAM IS SERVED WITH THE INSTANCE, beside its attrs: same row, same
        interpreter, and the copy it is evaluated for is the one the renderer is drawing */
@@ -1128,35 +1126,33 @@ void test_per_copy_slots() {
     /* an ordinary slot expression is NOT served here: it still has one value, and one
        cell is the cheapest way to say a value */
     CHECK(!rows["120"].contains("slots"));
-    CHECK_EQ(per_copy.size(), size_t(2));
-    CHECK(per_copy.count(std::string("110\nvalue")) == 1);
-    CHECK(per_copy.count(std::string("130\nvalue")) == 1);
-    CHECK(per_copy.count(std::string("120\nvalue")) == 0);
+    CHECK(rows["130"].contains("slots"));
     /* the display tier's own compile, so its own findings: nothing wrong here */
     for (const Diag& d : diags) CHECK_MSG(false, d.message);
 
     /* AND A PER-COPY EXPRESSION THAT DOES NOT COMPILE is refused ONCE, by the tier that
-       owns it — the wire tier must not pile "unknown name 'repeat'" on top of it */
+       owns it — the wire tier derives "per copy" from the same text and skips the slot,
+       so it must not pile "unknown name 'repeat'" on top of it */
     Json broken = document.root;
     broken["pages"][0]["children"][1]["slots"]["value"] = "readings[repeat.nope]";
     Document bad_doc;
     std::string bad_error;
     CHECK_MSG(bad_doc.adopt(std::move(broken), bad_error), bad_error);
     std::vector<Diag> bad_diags;
-    std::set<std::string> bad_per_copy;
-    compile_page_attrs(bad_doc, bad_diags, nullptr, nullptr, &bad_per_copy);
+    compile_page_attrs(bad_doc, bad_diags);
     size_t named = 0;
     for (const Diag& d : bad_diags)
         if (d.node_id == 120 && d.where == "value") ++named;
     CHECK_EQ(named, size_t(1));
-    /* recorded even though it did not compile: "this slot is per copy" is a fact about
-       the text, and the wire tier has to skip it either way */
-    CHECK(bad_per_copy.count(std::string("120\nvalue")) == 1);
+    FakeMesh bad_mesh;
+    CompileResult bad_compiled = compile_document(bad_doc, bad_mesh);
+    for (const SlotProgram& sp : bad_compiled.program.slot_programs)
+        CHECK(sp.node_id != 120);
 
     /* AND THE WIRE TIER BUILDS NO STANDING PROGRAM FOR IT. Exactly one survives — the
        ordinary instance's — so a per-copy slot costs the backend nothing at all. */
     FakeMesh mesh;
-    CompileResult compiled = compile_document(document, mesh, &per_copy);
+    CompileResult compiled = compile_document(document, mesh);
     uint64_t standing_for = 0;
     size_t standing = 0;
     for (const SlotProgram& sp : compiled.program.slot_programs)
@@ -1604,7 +1600,7 @@ void test_display_reference_index() {
     std::vector<Diag> diags;
     std::vector<RefRow> refs;
     std::vector<RefSite> blind;
-    compile_page_attrs(document, diags, nullptr, nullptr, nullptr, &refs, &blind);
+    compile_page_attrs(document, diags, nullptr, nullptr, &refs, &blind);
 
     auto rows_of = [&](uint64_t node, const char* text, uint64_t decl,
                        const char* word) {

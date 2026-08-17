@@ -159,14 +159,10 @@ class App {
        product, and the reason a page and a component render through one path */
     Json node_attrs_;
     /* every mesh field a PAGE's attrs read, as "<entity>\n<path>": the attr compiler
-       gathers it, the program compile stamps the entities with it, and the live frame
-       carries their mirrors. Held across the compile because both halves need it. */
+       gathers it, the live frame serves exactly those mirrors off it, and the mesh is
+       handed the read entities at apply(). The display product's own fact — nothing
+       is stamped into the wire compile. */
     std::set<std::string> attr_entity_reads_;
-    /* and every slot the display tier TOOK OVER, as "<node id>\n<slot>": its expression
-       names `state` or `repeat`, so the view evaluates it per copy and the wire tier
-       builds no standing program for it. Same seam, same ordering — the attrs compile
-       first and hand both facts to the program compile behind them. */
-    std::set<std::string> per_copy_slots_;
     std::vector<Diag> component_diags_;
     Server server_;
     std::unordered_map<uint64_t, SessionState> sessions_;

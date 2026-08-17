@@ -4,7 +4,6 @@
 #include "mesh/port.h"
 #include "vm/program.h"
 
-#include <set>
 #include <string>
 
 namespace hmi {
@@ -14,14 +13,14 @@ struct CompileResult {
     bool ok = false;
 };
 
-/* `per_copy_slots` is the display tier's half of the placement seam: "<node id>\n<slot>"
- * rows for the slots it took over (THE PLACEMENT RULE, lang/template_expr.h). No standing
- * program is built for one, and reading it from a flow is refused by name — the backend
- * holds one cell where the view draws N copies, so there is no single value to read.
- * What the display tier READS of the mesh never enters this compile: the app hands it to
- * the mesh at apply() and serves the live frame off its own set. */
-CompileResult compile_document(const Document& document, const MeshPort& mesh,
-                               const std::set<std::string>* per_copy_slots = nullptr);
+/* The whole compile takes the document and the mesh, full stop. THE PLACEMENT RULE is
+ * derived in place (lang/template_expr.h reads_view_input over each slot's authored
+ * text): a per-copy slot gets no standing program and a flow reading it is refused by
+ * name — the backend holds one cell where the view draws N copies, so there is no
+ * single value to read. What the display tier READS of the mesh never enters this
+ * compile either: the app hands it to the mesh at apply() and serves the live frame
+ * off its own set. */
+CompileResult compile_document(const Document& document, const MeshPort& mesh);
 
 /* THE STANDALONE DEFINITION CHECK: every component the document does NOT place
  * has its behavior flows checked off the definition, so a broken flow is a
