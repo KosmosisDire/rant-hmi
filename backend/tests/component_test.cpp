@@ -1575,16 +1575,17 @@ void test_structural_reference_index() {
     CHECK(has_row(952, "flow + 1", 900));   /* and the source expression's read */
     CHECK(has_row(953, "blink", 905));      /* tmr_start's timer */
 
-    /* the broken flow: its first step failed (unknown name), so it and everything
-       after it are blind whole, and the second step recorded NO destination row */
-    CHECK(!has_row(957, "flow", 900));
+    /* the broken flow: a broken step suppresses ITSELF, never its siblings — the
+       failing step is blind whole (the flow still refuses to run), while the step
+       after it still analyzed and recorded its rows */
+    CHECK(has_row(957, "flow", 900));
     auto gapped = [&](uint64_t node) {
         for (const RefSite& gap : compiled.program.reference_gaps)
             if (gap.node == node && gap.text.empty()) return true;
         return false;
     };
     CHECK(gapped(956));
-    CHECK(gapped(957));
+    CHECK(!gapped(957));
     CHECK(!gapped(952));
 }
 

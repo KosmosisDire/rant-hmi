@@ -2929,18 +2929,18 @@ class Compiler {
             scope.bind_value(param->name,
                              Place{Type(param->shape), OpCode::LoadArg, 0, 0});
         FlowLocals locals;
-        /* the flow stops compiling at its first bad step: that step's remaining names
-           and every later step's never resolve, so the index cannot vouch for them —
-           each such step is marked blind whole (empty text = every site it owns) */
-        auto abandon = [&](size_t from_row) {
-            for (size_t rest = from_row; rest < flow_node.steps.size(); ++rest)
-                program_.reference_gaps.push_back(RefSite{flow_node.steps[rest].id, ""});
-            return false;
-        };
+        /* A BROKEN STEP SUPPRESSES ITSELF, NEVER ITS SIBLINGS (the same recovery rule
+           the checker holds): later steps still ANALYZE — their findings report and
+           their names join the index — while the flow as a whole refuses, so nothing
+           half-compiled ever runs (every caller discards the body on false). Only the
+           failing step itself is marked blind whole (empty text = every site it owns):
+           whatever of it the compile never reached left no row. */
+        bool ok = true;
         for (size_t row = 0; row < flow_node.steps.size(); ++row) {
             const StepDecl& step = flow_node.steps[row];
             const uint64_t step_id = step.id;
             const std::string& kind = step.kind;
+            bool step_ok = true;
             if (kind == "assign") {
                 if (claimed) {
                     const std::string& slot = step.to.slot;
@@ -2952,32 +2952,34 @@ class Compiler {
                            so `value = false; raise changed(this.value)` speaks false
                            on a fed instance instead of the fed value. An aggregate
                            write (append, key, list/map slot) still just stands down. */
-                        if (!shadow_slot_write(element, step, flow, scope, slot))
-                            return abandon(row);
+                        if (shadow_slot_write(element, step, flow, scope, slot))
+                            continue;
+                        program_.reference_gaps.push_back(RefSite{step_id, ""});
+                        ok = false;
                         continue;
                     }
                 }
-                if (!compile_assign(element, step, flow, scope, locals))
-                    return abandon(row);
+                step_ok = compile_assign(element, step, flow, scope, locals);
             } else if (kind == "raise") {
-                if (!compile_raise(element, step, flow, scope)) return abandon(row);
+                step_ok = compile_raise(element, step, flow, scope);
             } else if (kind == "notify") {
-                if (!compile_notify(step, flow, scope)) return abandon(row);
+                step_ok = compile_notify(step, flow, scope);
             } else if (kind == "gate") {
                 const std::string condition =
                     step.a.kind == NumOrText::Kind::Text ? step.a.text : "";
-                if (!expression(step_id, condition, ExprTier::Wire, scope,
-                                Dest{Type(Shape::Bool)}, flow.body.code,
-                                flow.body.max_stack))
-                    return abandon(row);
-                Instruction gate{OpCode::Gate};
-                /* not a fault: the counter behind this site is how a gate on an
-                   UNKNOWN condition says it did not run (the log drains it) */
-                gate.c = fault_site(step_id, "gate_unknown",
-                                    "this gate's condition is UNKNOWN, so the flow "
-                                    "did not run; guard with known(...) or give the "
-                                    "value a default with ??");
-                flow.body.code.push_back(gate);
+                step_ok = expression(step_id, condition, ExprTier::Wire, scope,
+                                     Dest{Type(Shape::Bool)}, flow.body.code,
+                                     flow.body.max_stack);
+                if (step_ok) {
+                    Instruction gate{OpCode::Gate};
+                    /* not a fault: the counter behind this site is how a gate on an
+                       UNKNOWN condition says it did not run (the log drains it) */
+                    gate.c = fault_site(step_id, "gate_unknown",
+                                        "this gate's condition is UNKNOWN, so the flow "
+                                        "did not run; guard with known(...) or give the "
+                                        "value a default with ??");
+                    flow.body.code.push_back(gate);
+                }
             } else if (kind == "deadband") {
                 const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
@@ -3006,18 +3008,26 @@ class Compiler {
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
                 const int timer =
                     resolve_timer(element, step.timer, step_id, in_component);
-                if (timer < 0) return abandon(row);
-                reference(step_id, step.timer, program_.timers[timer].node_id);
-                Instruction ins;
-                ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
-                ins.a = static_cast<uint32_t>(timer);
-                ins.c = fault_site(step_id, "timer", "timer state is invalid");
-                flow.body.code.push_back(ins);
+                if (timer < 0) {
+                    step_ok = false;
+                } else {
+                    reference(step_id, step.timer, program_.timers[timer].node_id);
+                    Instruction ins;
+                    ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
+                    ins.a = static_cast<uint32_t>(timer);
+                    ins.c = fault_site(step_id, "timer", "timer state is invalid");
+                    flow.body.code.push_back(ins);
+                }
             } else {
                 diag(step_id, "step_kind", "unknown step kind '" + kind + "'");
-                return abandon(row);
+                step_ok = false;
+            }
+            if (!step_ok) {
+                program_.reference_gaps.push_back(RefSite{step_id, ""});
+                ok = false;
             }
         }
+        if (!ok) return false;
         flow.body.code.push_back(Instruction{OpCode::Halt});
         flow.worst_steps = static_cast<uint32_t>(flow.body.code.size());
         /* an entity read that arrived through an EXPRESSION (@name in an rvalue, a

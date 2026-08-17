@@ -28,22 +28,41 @@ node 567 error [expression] value: unknown field '@gp12/joints.position.map' at 
 node 100 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xConveyorGo is not reflected
 node 291 error [expression]: unknown entity '@cage/plc/IO/xConveyorGo' at column 26
 node 297 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xConveyorLoopGo is not reflected
+node 304 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xConveyorLoopStop is not reflected
 node 300 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xConveyorGo is not reflected
 node 303 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xPusherA is not reflected
 node 596 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 598 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 580 error [unresolved_entity] to: mesh entity F:gp12/setServo is not reflected
+node 199 error [unresolved_entity] to: mesh entity F:gp12/runJob is not reflected
+node 602 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 604 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 499 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflected
+node 501 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflected
 node 141 error [unresolved_entity] to: mesh entity F:gp12/setServo is not reflected
 node 476 error [unresolved_entity] to: mesh entity F:gp12/resetAlarm is not reflected
 node 599 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 601 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 588 error [unresolved_entity] to: mesh entity F:gp12/setServo is not reflected
+node 589 error [unresolved_entity] to: mesh entity F:gp12/runJob is not reflected
+node 590 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 592 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 612 error [move_dest] to: 'jogCmd' has no value yet at this row
 node 346 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 164 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 176 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 347 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 167 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 442 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 174 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
+node 443 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 node 183 error [expression] from: unknown entity '@cage/plc/IO/xGripperSuction' at column 29
+node 182 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xGripperSuction is not reflected
 node 479 error [move_dest] to: 'jogCmd' has no value yet at this row
+node 480 error [unresolved_entity] to: mesh entity T:gp12/jogCmd is not reflected
 node 507 error [unresolved_entity] to: mesh entity F:gp12/runJob is not reflected
 node 509 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflected
+node 510 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflected
 node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 == attr reads ==
 == per-copy slots ==
@@ -7882,104 +7901,104 @@ flow 99 node 70 event pressrelease worst 2
   0 FAULT 78 0 0
   1 HALT
 flow 288 node 70 event every:288 worst 2
-  0 FAULT 79 0 0
+  0 FAULT 83 0 0
   1 HALT
 flow 296 node 255 event pressrelease worst 2
-  0 FAULT 80 0 0
+  0 FAULT 84 0 0
   1 HALT
 flow 299 node 298 event pressrelease worst 2
-  0 FAULT 81 0 0
+  0 FAULT 85 0 0
   1 HALT
 flow 302 node 301 event pressrelease worst 2
-  0 FAULT 82 0 0
+  0 FAULT 86 0 0
   1 HALT
 flow 118 node 116 event changed worst 3
-  0 LOAD_ARG 0 0 83
-  1 STORE 210 0 84
+  0 LOAD_ARG 0 0 87
+  1 STORE 210 0 88
   2 HALT
 flow 192 node 186 event release worst 2
-  0 TMR_CANCEL 0 0 85
+  0 TMR_CANCEL 0 0 89
   1 HALT
 flow 193 node 186 event press worst 2
-  0 FAULT 87 0 0
+  0 FAULT 92 0 0
   1 HALT
 flow 198 node 186 event timer:194 worst 2
-  0 FAULT 88 0 0
+  0 FAULT 94 0 0
   1 HALT
 flow 498 node 487 event press worst 2
-  0 FAULT 89 0 0
+  0 FAULT 95 0 0
   1 HALT
 flow 140 node 138 event changed worst 2
-  0 FAULT 90 0 0
+  0 FAULT 99 0 0
   1 HALT
 flow 475 node 360 event pressrelease worst 2
-  0 FAULT 91 0 0
+  0 FAULT 100 0 0
   1 HALT
 flow 458 node 370 event pressrelease worst 12
-  0 CONST 21 0 92
-  1 NEG 0 0 93
-  2 LOAD 3 0 94
-  3 MUL 0 0 95
-  4 LOAD_ARG 0 0 96
-  5 CONST 22 0 97
-  6 CONST 6 0 98
-  7 METHOD small 9 0 2 99
-  8 MUL 0 0 100
-  9 REPEAT_READ 0 0 101
-  10 STORE_INDEX 0 102 0
+  0 CONST 22 0 101
+  1 NEG 0 0 102
+  2 LOAD 3 0 103
+  3 MUL 0 0 104
+  4 LOAD_ARG 0 0 105
+  5 CONST 23 0 106
+  6 CONST 6 0 107
+  7 METHOD small 9 0 2 108
+  8 MUL 0 0 109
+  9 REPEAT_READ 0 0 110
+  10 STORE_INDEX 0 111 0
   11 HALT
 flow 460 node 366 event pressrelease worst 11
-  0 CONST 21 0 103
-  1 LOAD 3 0 104
-  2 MUL 0 0 105
-  3 LOAD_ARG 0 0 106
-  4 CONST 22 0 107
-  5 CONST 6 0 108
-  6 METHOD small 9 0 2 109
-  7 MUL 0 0 110
-  8 REPEAT_READ 0 0 111
-  9 STORE_INDEX 0 112 0
+  0 CONST 22 0 112
+  1 LOAD 3 0 113
+  2 MUL 0 0 114
+  3 LOAD_ARG 0 0 115
+  4 CONST 23 0 116
+  5 CONST 6 0 117
+  6 METHOD small 9 0 2 118
+  7 MUL 0 0 119
+  8 REPEAT_READ 0 0 120
+  9 STORE_INDEX 0 121 0
   10 HALT
 flow 583 node 581 event release worst 2
-  0 TMR_CANCEL 2 0 113
+  0 TMR_CANCEL 2 0 122
   1 HALT
 flow 585 node 581 event press worst 2
-  0 FAULT 115 0 0
+  0 FAULT 125 0 0
   1 HALT
 flow 587 node 581 event timer:582 worst 2
-  0 FAULT 116 0 0
-  1 HALT
-flow 611 node 610 event changed worst 2
-  0 FAULT 117 0 0
-  1 HALT
-flow 652 node 613 event changed worst 3
-  0 LOAD_ARG 0 0 118
-  1 STORE 3 0 119
-  2 HALT
-flow 163 node 162 event tap worst 2
-  0 FAULT 121 0 0
-  1 HALT
-flow 166 node 165 event press worst 2
-  0 FAULT 122 0 0
-  1 HALT
-flow 181 node 179 event tap worst 2
-  0 FAULT 123 0 0
-  1 HALT
-flow 464 node 462 event pressrelease worst 3
-  0 LOAD_ARG 0 0 124
-  1 STORE 1 0 125
-  2 HALT
-flow 472 node 462 event held worst 2
-  0 FAULT 126 0 0
-  1 HALT
-flow 506 node 462 event press worst 2
   0 FAULT 127 0 0
   1 HALT
+flow 611 node 610 event changed worst 2
+  0 FAULT 128 0 0
+  1 HALT
+flow 652 node 613 event changed worst 3
+  0 LOAD_ARG 0 0 129
+  1 STORE 3 0 130
+  2 HALT
+flow 163 node 162 event tap worst 2
+  0 FAULT 133 0 0
+  1 HALT
+flow 166 node 165 event press worst 2
+  0 FAULT 135 0 0
+  1 HALT
+flow 181 node 179 event tap worst 2
+  0 FAULT 136 0 0
+  1 HALT
+flow 464 node 462 event pressrelease worst 3
+  0 LOAD_ARG 0 0 137
+  1 STORE 1 0 138
+  2 HALT
+flow 472 node 462 event held worst 2
+  0 FAULT 139 0 0
+  1 HALT
+flow 506 node 462 event press worst 2
+  0 FAULT 140 0 0
+  1 HALT
 flow 508 node 462 event release worst 2
-  0 FAULT 130 0 0
+  0 FAULT 143 0 0
   1 HALT
 flow 571 node 570 event tap worst 2
-  0 FAULT 131 0 0
+  0 FAULT 144 0 0
   1 HALT
 slot node 70 moving cell 8 every_tick
   0 LOAD 4 0 0
