@@ -365,7 +365,6 @@ void run_case(const FixtureCase& item) {
     SlotProgram slot;
     slot.body.code = code;
     RuntimeState state(program);
-    state.reset_scratch();
     const RunResult run = run_slot(program, slot, state);
 
     if (item.has_fault) {

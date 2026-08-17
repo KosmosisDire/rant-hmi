@@ -72,7 +72,6 @@ void Scheduler::drain_raised() {
 
 void Scheduler::dispatch(uint64_t node, const std::string& element,
                          const std::string& event, Value arg, RepeatSeat copy) {
-    state_.reset_scratch();
     /* WHICH COPY, for the whole dispatch: every flow this event reaches runs as the copy
        that raised it, and so does anything they raise (drain_raised leaves it standing). */
     state_.repeat = copy;
@@ -157,7 +156,6 @@ void Scheduler::apply_slot_programs() {
             /* the SEED: one evaluation at start, whatever the deps — a dep-less
                program (an array literal) lands its value here and never re-runs; a
                mesh-only one stores UNKNOWN, exactly what its cell already holds */
-            state_.reset_scratch();
             run_slot(program_, slot, state_);
             continue;
         }
@@ -165,7 +163,6 @@ void Scheduler::apply_slot_programs() {
         /* a cell-reading expression re-evaluates every tick, as the computed feeds
            always did: a cell can move any tick, and an unchanged store is free on the
            wire (scalars broadcast whole; an identical aggregate keeps its gen) */
-        state_.reset_scratch();
         run_slot(program_, slot, state_);
     }
     slots_seeded_ = true;
@@ -233,7 +230,6 @@ void Scheduler::on_update(const MeshUpdate& update) {
         if (slot.body.sig.every_tick ||
             !slot.body.sig.reads_entity(static_cast<uint32_t>(entity)))
             continue;
-        state_.reset_scratch();
         run_slot(program_, slot, state_);
     }
 }
@@ -302,7 +298,6 @@ bool Scheduler::tick(std::string& fault) {
         /* held() is nullary — the firing IS the information; a flow reads the
            instance's own slots for values. The copy is the one the press landed on:
            a finger held down is still on the picture it went down on. */
-        state_.reset_scratch();
         state_.repeat = hold.copy;
         run_one(hold.flow, Value::nil());
         if (hold.repeat) {
@@ -330,7 +325,6 @@ bool Scheduler::tick(std::string& fault) {
         uint64_t& next = cadence_next_[i];
         if (next == 0) next = state_.tick;
         if (state_.tick < next) continue;
-        state_.reset_scratch();
         state_.repeat = RepeatSeat{};
         run_one(i, Value::nil());
         next += cadence;

@@ -116,10 +116,10 @@ bool sorts_before(const ExecContext& ctx, const Value& a, const Value& b) noexce
 /* copy `count` values taken every `stride` entries from src into a fresh pool range */
 Value copied_list(const ExecContext& ctx, const Value* src, uint32_t count,
                   uint32_t stride, uint32_t first, ValueTag elem) noexcept {
-    const uint32_t offset = ctx.state.alloc_elems(count);
+    const uint32_t offset = ctx.state.frame.alloc(count);
     if (offset == UINT32_MAX) return Value::nil();
     for (uint32_t i = 0; i < count; ++i)
-        ctx.state.elems[offset + i] = src[first + i * stride];
+        ctx.state.frame.elems[offset + i] = src[first + i * stride];
     return Value::list(offset, count, elem);
 }
 
@@ -588,7 +588,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
                     at = hit + sep.size();
                 }
             }
-            const uint32_t offset = ctx.state.alloc_elems(pieces);
+            const uint32_t offset = ctx.state.frame.alloc(pieces);
             if (offset == UINT32_MAX) return Value::nil();
             size_t at = 0;
             for (uint32_t i = 0; i < pieces; ++i) {
@@ -598,10 +598,10 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
                 const std::string_view piece =
                     hit == std::string_view::npos ? view.substr(at)
                                                   : view.substr(at, hit - at);
-                const uint32_t slot = ctx.state.alloc_elem_text();
+                const uint32_t slot = ctx.state.frame.alloc_text();
                 if (slot == UINT32_MAX) return Value::nil();
-                ctx.state.texts[slot].set(piece);
-                ctx.state.elems[offset + i] = Value::text(slot);
+                ctx.state.frame.texts[slot].set(piece);
+                ctx.state.frame.elems[offset + i] = Value::text(kFrameRef | slot);
                 if (hit != std::string_view::npos) at = hit + sep.size();
             }
             return Value::list(offset, pieces, ValueTag::Text);
@@ -703,7 +703,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const Value sorted = copied_list(ctx, view.data, view.count, 1, 0,
                                              list_elem_tag(receiver));
             if (sorted.tag != ValueTag::List) return sorted;
-            Value* begin = ctx.state.elems.data() + sorted.ref;
+            Value* begin = ctx.state.frame.elems.data() + sorted.ref;
             if (numeric_elems)
                 std::sort(begin, begin + view.count, [](const Value& a, const Value& b) {
                     return a.data.num < b.data.num;
@@ -722,7 +722,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const Value copy = copied_list(ctx, view.data, view.count, 1, 0,
                                            list_elem_tag(receiver));
             if (copy.tag != ValueTag::List) return copy;
-            Value* begin = ctx.state.elems.data() + copy.ref;
+            Value* begin = ctx.state.frame.elems.data() + copy.ref;
             std::reverse(begin, begin + view.count);
             return copy;
         }
@@ -1689,7 +1689,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
-                const uint32_t offset = state.alloc_elems(count);
+                const uint32_t offset = state.frame.alloc(count);
                 if (offset == UINT32_MAX) {
                     sp -= count;
                     fail(ins.c);
@@ -1699,7 +1699,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 bool uniform = true;
                 for (uint32_t k = 0; k < count; ++k) {
                     const Value v = state.frame.stack[stack_base + sp - count + k];
-                    state.elems[offset + k] = v;
+                    state.frame.elems[offset + k] = v;
                     if (k == 0) elem = v.tag;
                     else if (v.tag != elem) uniform = false;
                 }
@@ -1753,13 +1753,13 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 uint32_t out_at = UINT32_MAX;
                 uint32_t keys_at = UINT32_MAX;
                 if (!folds_to_bool && !folds) {
-                    out_at = state.alloc_elems(count);
+                    out_at = state.frame.alloc(count);
                     if (out_at == UINT32_MAX) {
                         fail(ins.c);
                         break;
                     }
                     if (mode == IterateMode::SortBy) {
-                        keys_at = state.alloc_elems(count);
+                        keys_at = state.frame.alloc(count);
                         if (keys_at == UINT32_MAX) {
                             fail(ins.c);
                             break;
@@ -1806,13 +1806,13 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                            body's own text slot, so a text result is re-homed into an
                            element slot of its own -- the same hazard Map handles below */
                         if (value.tag == ValueTag::Text) {
-                            const uint32_t slot = state.alloc_elem_text();
+                            const uint32_t slot = state.frame.alloc_text();
                             if (slot == UINT32_MAX) {
                                 body_faulted = true;
                                 break;
                             }
-                            state.texts[slot].set(text_of(ctx, value));
-                            acc = Value::text(slot);
+                            state.frame.texts[slot].set(text_of(ctx, value));
+                            acc = Value::text(kFrameRef | slot);
                         } else {
                             acc = value;
                         }
@@ -1826,17 +1826,17 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                                into its own element text slot, exactly as split does. */
                             Value stored = value;
                             if (value.tag == ValueTag::Text) {
-                                const uint32_t slot = state.alloc_elem_text();
+                                const uint32_t slot = state.frame.alloc_text();
                                 if (slot == UINT32_MAX) {
                                     body_faulted = true;
                                     break;
                                 }
-                                state.texts[slot].set(text_of(ctx, value));
-                                stored = Value::text(slot);
+                                state.frame.texts[slot].set(text_of(ctx, value));
+                                stored = Value::text(kFrameRef | slot);
                             }
                             if (kept == 0) elem_tag = stored.tag;
                             else if (stored.tag != elem_tag) uniform = false;
-                            state.elems[out_at + kept++] = stored;
+                            state.frame.elems[out_at + kept++] = stored;
                             break;
                         }
                         /* the CONDITION modes hold the one unknown rule: a Nil body
@@ -1852,14 +1852,14 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                             if (value_truth(value)) {
                                 if (kept == 0) elem_tag = element.tag;
                                 else if (element.tag != elem_tag) uniform = false;
-                                state.elems[out_at + kept++] = element;
+                                state.frame.elems[out_at + kept++] = element;
                             }
                             break;
                         case IterateMode::SortBy:
                             if (kept == 0) elem_tag = element.tag;
                             else if (element.tag != elem_tag) uniform = false;
-                            state.elems[keys_at + kept] = value;
-                            state.elems[out_at + kept++] = element;
+                            state.frame.elems[keys_at + kept] = value;
+                            state.frame.elems[out_at + kept++] = element;
                             break;
                         case IterateMode::Any:
                             if (value.tag == ValueTag::Nil) condition_unknown = true;
@@ -1885,16 +1885,16 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     /* insertion sort over the two parallel blocks: n is bounded by the
                        trip bound, and this needs no scratch of its own */
                     for (uint32_t i = 1; i < kept; ++i) {
-                        const Value key = state.elems[keys_at + i];
-                        const Value val = state.elems[out_at + i];
+                        const Value key = state.frame.elems[keys_at + i];
+                        const Value val = state.frame.elems[out_at + i];
                         uint32_t j = i;
-                        while (j > 0 && sorts_before(ctx, key, state.elems[keys_at + j - 1])) {
-                            state.elems[keys_at + j] = state.elems[keys_at + j - 1];
-                            state.elems[out_at + j] = state.elems[out_at + j - 1];
+                        while (j > 0 && sorts_before(ctx, key, state.frame.elems[keys_at + j - 1])) {
+                            state.frame.elems[keys_at + j] = state.frame.elems[keys_at + j - 1];
+                            state.frame.elems[out_at + j] = state.frame.elems[out_at + j - 1];
                             --j;
                         }
-                        state.elems[keys_at + j] = key;
-                        state.elems[out_at + j] = val;
+                        state.frame.elems[keys_at + j] = key;
+                        state.frame.elems[out_at + j] = val;
                     }
                 }
                 const bool pushed_ok =
@@ -1966,6 +1966,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
 
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
                    Value arg) noexcept {
+    /* a fresh run enters an empty arena; only resume_pending continues one */
+    state.frame.reset();
     state.args[0] = arg;
     return run_code(program, flow.body.code, &flow, state, Value::nil());
 }
@@ -2000,6 +2002,7 @@ RunResult run_event(const Program& program, RuntimeState& state, uint64_t node_i
 
 RunResult run_slot(const Program& program, const SlotProgram& slot,
                    RuntimeState& state) noexcept {
+    state.frame.reset();
     return run_code(program, slot.body.code, nullptr, state, Value::nil());
 }
 

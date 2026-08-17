@@ -188,12 +188,39 @@ struct RepeatSeat {
 
 /* THE FRAME (stage 6a): the storage a RUN owns, as opposed to the storage a CELL
  * owns. Values at rest live in cell storage; values in flight live here, sized once
- * from the compiler's FrameExtent and reused run after run. The operand stack and
- * the text arena — every text-producing site's fixed result slot, referenced with
- * kFrameRef — live here; the element arena follows as the split lands. */
+ * from the compiler's FrameExtent and reused run after run.
+ *
+ * The text arena is [fixed site slots | element text slots]: every text-producing
+ * site owns the frame-relative slot the compiler assigned it, and the region after
+ * `text_base` is dealt by a cursor to whatever homes text per ELEMENT (split, map's
+ * re-homed results, a fold's carried accumulator). A frame text ref carries
+ * kFrameRef, so nothing at rest can be confused with it. The element arena is the
+ * pool aggregate-producing sites build into, reset at each fresh run's entry. */
 struct Frame {
     std::vector<Value> stack;
     std::vector<FixedText> texts;
+    std::vector<Value> elems;
+    uint32_t elem_cursor = 0;
+    uint32_t text_base = 0;
+    uint32_t text_cursor = 0;
+
+    /* a fresh run starts with an empty arena; a resumed one keeps what it held */
+    void reset() noexcept {
+        elem_cursor = 0;
+        text_cursor = text_base;
+    }
+    /* a run of `count` element slots, or UINT32_MAX when the extent is spent */
+    uint32_t alloc(uint32_t count) noexcept {
+        if (count > elems.size() || elem_cursor > elems.size() - count) return UINT32_MAX;
+        const uint32_t offset = elem_cursor;
+        elem_cursor += count;
+        return offset;
+    }
+    /* one element text slot (a frame index — callers ref it as kFrameRef | slot) */
+    uint32_t alloc_text() noexcept {
+        if (text_cursor >= texts.size()) return UINT32_MAX;
+        return text_cursor++;
+    }
 };
 
 struct PendingState {
@@ -239,14 +266,6 @@ class RuntimeState {
      * (one for x, one per text-shaped field of every struct slot) so held text survives
      * until resume */
     std::vector<uint32_t> pending_texts;               /* [pending site] -> first slot */
-    /* the aggregate scratch pool: list/map elements live here for one run, dealt out
-     * by a cursor that whoever seeds x resets (reset_scratch). Element text rides in
-     * `texts` slots [elem_text_base, elem_text_base + the module's elem_texts). */
-    std::vector<Value> elems;
-    uint32_t elem_cursor = 0;
-    uint32_t elem_text_base = 0;
-    uint32_t elem_text_cursor = 0;
-    uint32_t elem_text_count = 0;
     /* one entry per LIST- or MAP-shaped cell, indexed by CellDef::list_slot — and,
      * appended AFTER those, the MESH AGGREGATE MIRRORS (entity_aggs below) */
     std::vector<ListState> lists;
@@ -367,13 +386,6 @@ class RuntimeState {
     void move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept;
     /* the same move, within the leaf arena */
     void move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept;
-
-    /* aggregate scratch: reset before seeding a run's x, allocate during the run.
-     * alloc_elems returns the pool offset or UINT32_MAX when the layout bound is hit;
-     * alloc_elem_text returns a text slot index or UINT32_MAX. */
-    void reset_scratch() noexcept;
-    uint32_t alloc_elems(uint32_t count) noexcept;
-    uint32_t alloc_elem_text() noexcept;
 };
 
 RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_state,

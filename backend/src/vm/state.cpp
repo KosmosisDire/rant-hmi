@@ -199,14 +199,6 @@ RuntimeState::RuntimeState(const Program& program) {
         pending_texts[i] = static_cast<uint32_t>(texts.size());
         for (uint32_t k = 0; k < per_pending; ++k) texts.emplace_back(kDefaultTextCap);
     }
-    /* the aggregate scratch pool (elements + their text slots) */
-    elems.resize(program.frame.elems, Value::nil());
-    elem_text_base = static_cast<uint32_t>(texts.size());
-    elem_text_cursor = elem_text_base;
-    elem_text_count = program.frame.elem_texts;
-    for (uint32_t i = 0; i < program.frame.elem_texts; ++i)
-        texts.emplace_back(kDefaultTextCap);
-
     /* retained aggregate storage: one slot per list- or map-shaped cell, born EMPTY and
      * grown to whatever the cell actually holds. A cell carries its aggregate across
      * ticks and the pool above does not survive a run, so the two storages are separate
@@ -326,11 +318,16 @@ RuntimeState::RuntimeState(const Program& program) {
     }
 
     frame.stack.resize(std::max<uint32_t>(program.frame.stack, 1), Value::nil());
-    /* the frame's text arena: the fixed result slot every text-producing site owns,
-       compile-assigned frame-relative (kFrameRef marks a ref as the frame's) */
-    frame.texts.reserve(program.frame.texts);
-    for (uint32_t i = 0; i < program.frame.texts; ++i)
+    /* the frame's text arena: the fixed result slot every text-producing site owns
+       (compile-assigned frame-relative; kFrameRef marks a ref as the frame's), then
+       the element text region its cursor deals out */
+    frame.texts.reserve(program.frame.texts + program.frame.elem_texts);
+    for (uint32_t i = 0; i < program.frame.texts + program.frame.elem_texts; ++i)
         frame.texts.emplace_back(kDefaultTextCap);
+    frame.text_base = program.frame.texts;
+    frame.text_cursor = frame.text_base;
+    /* and the element pool aggregate-producing sites build into */
+    frame.elems.resize(program.frame.elems, Value::nil());
     /* aggregate payload capacity: the widest single entity's aggregate fields decide
        what one effect may have to carry (a map's entries interleave, so 2x pairs) */
     uint32_t agg_values_cap = 0, agg_texts_cap = 0;
@@ -408,8 +405,8 @@ AggView RuntimeState::aggregate(const Value& value) const noexcept {
         return {held.elems.data(), count};
     }
     const uint32_t need = value.tag == ValueTag::Map ? count * 2 : count;
-    if (value.ref > elems.size() || need > elems.size() - value.ref) return {};
-    return {elems.data() + value.ref, count};
+    if (value.ref > frame.elems.size() || need > frame.elems.size() - value.ref) return {};
+    return {frame.elems.data() + value.ref, count};
 }
 
 uint32_t RuntimeState::list_text(ListState& held, uint32_t at) noexcept {
@@ -686,17 +683,17 @@ Value stage_row(RuntimeState& state, const Program& program, const Value& value)
     const AggView view = state.aggregate(value);
     const bool row_pairs = value.tag == ValueTag::Map;
     const uint32_t span = row_span(view.count, row_pairs);
-    const uint32_t at = state.alloc_elems(span);
+    const uint32_t at = state.frame.alloc(span);
     if (at == UINT32_MAX) return Value::nil();
     for (uint32_t i = 0; i < span; ++i) {
         Value entry = view.data[i];
         if (entry.tag == ValueTag::Text) {
-            const uint32_t slot = state.alloc_elem_text();
+            const uint32_t slot = state.frame.alloc_text();
             if (slot == UINT32_MAX) return Value::nil();
-            state.texts[slot].set(state.text(program, entry));
-            entry = Value::text(slot);
+            state.frame.texts[slot].set(state.text(program, entry));
+            entry = Value::text(kFrameRef | slot);
         }
-        state.elems[at + i] = entry;
+        state.frame.elems[at + i] = entry;
     }
     return row_pairs ? Value::map(at, view.count)
                      : Value::list(at, view.count, list_elem_tag(value));
@@ -1419,23 +1416,6 @@ void RuntimeState::clear_outputs() noexcept {
        filling the buffer into a spurious fault */
     notice_count = 0;
     fault_count = 0;
-}
-
-void RuntimeState::reset_scratch() noexcept {
-    elem_cursor = 0;
-    elem_text_cursor = elem_text_base;
-}
-
-uint32_t RuntimeState::alloc_elems(uint32_t count) noexcept {
-    if (count > elems.size() || elem_cursor > elems.size() - count) return UINT32_MAX;
-    const uint32_t offset = elem_cursor;
-    elem_cursor += count;
-    return offset;
-}
-
-uint32_t RuntimeState::alloc_elem_text() noexcept {
-    if (elem_text_cursor >= elem_text_base + elem_text_count) return UINT32_MAX;
-    return elem_text_cursor++;
 }
 
 void RuntimeState::fault(uint32_t site) noexcept {

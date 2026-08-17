@@ -2528,7 +2528,6 @@ void test_aggregate_variables() {
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto raise = [&](const char* event) {
-        state.reset_scratch();
         run_event(program, state, instance, event, Value::nil());
     };
 
@@ -2715,7 +2714,6 @@ void test_nested_aggregates() {
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto raise = [&](const char* event) {
-        state.reset_scratch();
         run_event(program, state, instance, event, Value::nil());
     };
 
@@ -2836,7 +2834,6 @@ void test_nested_ring() {
     const uint32_t slot = program.cells[grid].list_slot;
     int faulted_at = -1;
     for (int i = 0; i < 20000 && faulted_at < 0; ++i) {
-        state.reset_scratch();
         if (run_event(program, state, instance, "tap", Value::nil()).faulted) faulted_at = i;
     }
     CHECK_MSG(faulted_at < 0,
@@ -2884,7 +2881,6 @@ void test_nested_ring() {
         const uint32_t wide_slot = built.program.cells[cell].list_slot;
         int stopped = -1;
         for (int i = 0; i < 5000 && stopped < 0; ++i) {
-            wide_state.reset_scratch();
             if (run_event(built.program, wide_state, at, "tap", Value::nil()).faulted)
                 stopped = i;
         }
@@ -3455,7 +3451,6 @@ void test_aggregate_expressions() {
 
     RuntimeState state(program);
     auto raise = [&](const char* event) {
-        state.reset_scratch();
         run_event(program, state, instance, event, Value::nil());
     };
 
@@ -3571,7 +3566,6 @@ void test_aggregate_ceilings() {
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto raise = [&](const char* event) {
-        state.reset_scratch();
         return run_event(program, state, instance, event, Value::nil());
     };
 
@@ -3664,9 +3658,7 @@ void test_map_reduce() {
     RuntimeState state(program);
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
-    state.reset_scratch();
     run_event(program, state, instance, "tap", Value::nil());
-    state.reset_scratch();
     run_event(program, state, instance, "press", Value::nil());
     CHECK_EQ(state.values[named_cell(program, "total")].data.num, 60.0);
     /* SORTED KEYS, always: the fold visits them in one order and only one, which is what
@@ -3731,7 +3723,6 @@ void test_map_replay() {
         RuntimeState state(compiled.program);
         const uint64_t instance =
             json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
-        state.reset_scratch();
         run_event(compiled.program, state, instance, "tap", Value::nil());
         return map_dump(compiled.program, state, named_cell(compiled.program, "table"));
     };
@@ -4030,7 +4021,6 @@ void test_variant_options() {
     const SlotProgram* fill = slot_program_of(compiled.program, id, "options");
     if (!CHECK(fill != nullptr)) return;
     RuntimeState state(compiled.program);
-    state.reset_scratch();
     RunResult seeded = run_slot(compiled.program, *fill, state);
     CHECK(!seeded.faulted);
     const AggView view = state.aggregate(state.values[cell]);
@@ -4067,7 +4057,6 @@ void test_variant_options() {
             slot_program_of(tc.program, only_instance(tdoc), "options");
         if (!CHECK(tcell >= 0 && tfill != nullptr)) return;
         RuntimeState tstate(tc.program);
-        tstate.reset_scratch();
         CHECK(!run_slot(tc.program, *tfill, tstate).faulted);
         const AggView tview = tstate.aggregate(tstate.values[tcell]);
         CHECK(tview.count == 3);

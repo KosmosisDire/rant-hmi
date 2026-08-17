@@ -141,3 +141,12 @@ text_slots
 elem_values
 stack_values
 sub_stack
+
+# stage 6a, the element pool: the run's aggregate scratch and its element text
+# region live in the Frame now, reset at each fresh run's entry — the state-level
+# pool, its cursor pair riding the global text table, and the scheduler-side reset
+# every caller had to remember.
+reset_scratch
+alloc_elems
+alloc_elem_text
+elem_text_base
