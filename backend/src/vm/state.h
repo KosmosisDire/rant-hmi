@@ -237,6 +237,12 @@ struct PendingState {
     /* every struct slot, by value, so a run that parks mid-message re-enters with its
      * own storage and nothing dangles when the scratch resets (spec 5.6) */
     std::vector<StructState> structs;
+    /* THE PARKED FRAME (stage 6a): parking SWAPS the run's frame in here whole —
+     * arena, cursors and all — and resume swaps it back, so held scratch survives
+     * by ownership rather than by deep copy. Values referencing storage OUTSIDE
+     * the frame (a cell's text slot, the input scratch) are pinned into the frame
+     * arena at park, which is the whole of what still copies. */
+    Frame held;
 };
 
 class RuntimeState {
@@ -262,10 +268,6 @@ class RuntimeState {
        homed here at dispatch so `x` can be text without the queue owning storage */
     uint32_t input_scratch = 0;
     std::vector<std::vector<uint32_t>> entity_texts;   /* [entity][field] -> text slot */
-    /* suspension deep-copy storage: each pending site owns a fixed run of text slots
-     * (one for x, one per text-shaped field of every struct slot) so held text survives
-     * until resume */
-    std::vector<uint32_t> pending_texts;               /* [pending site] -> first slot */
     /* one entry per LIST- or MAP-shaped cell, indexed by CellDef::list_slot — and,
      * appended AFTER those, the MESH AGGREGATE MIRRORS (entity_aggs below) */
     std::vector<ListState> lists;

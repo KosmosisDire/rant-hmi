@@ -1278,23 +1278,20 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 pending.wake_tick = state.tick + ins.b;
                 pending.flow = flow->runtime_index;
                 pending.resume_pc = pc;
-                /* deep-copy held TEXT into this site's own fixed slots (the plan's
-                 * suspension rule): a scratch result must not be overwritten by a
-                 * later run before this one resumes. The slot layout is fixed: one
-                 * for x, then one per text-shaped buffer field, in table order. */
-                uint32_t cursor = ins.a < state.pending_texts.size()
-                                      ? state.pending_texts[ins.a]
-                                      : UINT32_MAX;
-                auto hold_text = [&](const Value& value) -> Value {
-                    if (cursor == UINT32_MAX || cursor >= state.texts.size()) return value;
-                    const uint32_t slot = cursor++;
+                /* PIN text referencing storage OUTSIDE the frame (a cell's slot, the
+                 * input scratch) into the frame's own arena: a later run must not
+                 * move a held value under the park. Frame-owned and constant text is
+                 * already frozen, because the frame parks whole below. */
+                auto pin = [&](const Value& value) -> Value {
                     if (value.tag != ValueTag::Text) return value;
-                    if (value.ref != slot)
-                        state.texts[slot].set(state.text(program, value));
-                    return Value::text(slot);
+                    if ((value.ref & (kConstantRef | kFrameRef)) != 0) return value;
+                    const uint32_t slot = state.frame.alloc_text();
+                    if (slot == UINT32_MAX) return value;
+                    state.frame.texts[slot].set(state.text(program, value));
+                    return Value::text(kFrameRef | slot);
                 };
-                pending.x = hold_text(x);
-                pending.arg = hold_text(state.args[0]);
+                pending.x = pin(x);
+                pending.arg = pin(state.args[0]);
                 pending.repeat = state.repeat;
                 /* only TEMPORARIES snapshot: a declared struct variable is stable
                  * storage, and restoring it at resume would roll back writes that
@@ -1309,8 +1306,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     for (uint32_t f = 0; f < defs.size() &&
                                          f < pending.structs[i].fields.size(); ++f)
                         if (defs[f].shape == Shape::Text)
-                            pending.structs[i].fields[f] = hold_text(state.structs[i].fields[f]);
+                            pending.structs[i].fields[f] = pin(state.structs[i].fields[f]);
                 }
+                /* THE PARK: the frame moves into the pending slot whole — arena,
+                 * cursors and all — and the slot's previous buffers become the
+                 * active frame, reset at the next fresh run's entry */
+                std::swap(state.frame, pending.held);
                 result.suspended = true;
                 result.halted = true;
                 break;
@@ -2012,6 +2013,9 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     PendingState& pending = state.pending[pending_slot];
     if (!pending.active || pending.flow >= program.flows.size())
         return RunResult{true, true, false, 0};
+    /* the parked frame returns whole — held refs resolve against it again — and the
+     * run continues its own arena from where it parked (no reset) */
+    std::swap(state.frame, pending.held);
     for (uint32_t i = 0; i < state.structs.size(); ++i) {
         if (i < program.structs.size() && !program.structs[i].temp) continue;
         state.structs[i].type_id = pending.structs[i].type_id;

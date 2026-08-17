@@ -150,3 +150,8 @@ reset_scratch
 alloc_elems
 alloc_elem_text
 elem_text_base
+
+# stage 6a, parking keeps the frame: a suspended run's frame SWAPS into its pending
+# slot whole and swaps back at resume, so held scratch survives by ownership — the
+# per-site runs of deep-copy text slots died with the copying.
+pending_texts

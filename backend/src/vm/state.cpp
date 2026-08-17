@@ -187,18 +187,6 @@ RuntimeState::RuntimeState(const Program& program) {
             texts.emplace_back(kDefaultTextCap);
         }
     }
-    /* suspension deep-copy slots: a fixed run per pending site (x first, then every
-     * text-shaped field of every struct slot, in table order; the Suspend op walks the
-     * same order) */
-    uint32_t per_pending = 2;   /* one for x, one for the event parameter */
-    for (const StructDef& item : program.structs)
-        for (const FieldDef& field : struct_fields(program, item.type_id))
-            if (field.shape == Shape::Text) ++per_pending;
-    pending_texts.resize(program.layout.pending_slots);
-    for (uint32_t i = 0; i < program.layout.pending_slots; ++i) {
-        pending_texts[i] = static_cast<uint32_t>(texts.size());
-        for (uint32_t k = 0; k < per_pending; ++k) texts.emplace_back(kDefaultTextCap);
-    }
     /* retained aggregate storage: one slot per list- or map-shaped cell, born EMPTY and
      * grown to whatever the cell actually holds. A cell carries its aggregate across
      * ticks and the pool above does not survive a run, so the two storages are separate
@@ -328,6 +316,9 @@ RuntimeState::RuntimeState(const Program& program) {
     frame.text_cursor = frame.text_base;
     /* and the element pool aggregate-producing sites build into */
     frame.elems.resize(program.frame.elems, Value::nil());
+    /* every pending site holds a full frame of its own: parking swaps the active
+       frame in whole, so a parked run's scratch survives by ownership */
+    for (PendingState& item : pending) item.held = frame;
     /* aggregate payload capacity: the widest single entity's aggregate fields decide
        what one effect may have to carry (a map's entries interleave, so 2x pairs) */
     uint32_t agg_values_cap = 0, agg_texts_cap = 0;
