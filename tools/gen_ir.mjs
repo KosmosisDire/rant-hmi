@@ -35,8 +35,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OPS = [
   { name: "Const" },
   { name: "LoadX" },
-  { name: "Load" },
-  { name: "LoadField" },
+  {
+    name: "Load",
+    c: `THE ONE LOAD (stage 6c): push what a PLACE holds, the place riding \`small\`
+(a LoadPlace). Cell reads cell \`a\` whole; Field reads field \`b\` of struct
+cell \`a\`; Entity reads field \`b\` of mesh entity \`a\`'s last-value cache (Nil
+until the mesh has delivered once). The reads with tables of their own — a
+timer's fields, the clock, the invocation's arguments — keep their own
+opcodes until their owners become host objects at stage 7.`,
+  },
   { name: "Add" },
   { name: "Sub" },
   { name: "Mul" },
@@ -65,7 +72,6 @@ const OPS = [
 lands a value at a place, MoveOut emits the effect.`,
   },
   { name: "ReadEnt" },
-  { name: "LoadEnt" },
   { name: "MoveOut" },
   {
     name: "Store",
@@ -167,6 +173,15 @@ encode side rewrites that one element over the owner's own bytes (RMW), so the
 rest of the array is preserved untouched; an index past the owner's live count
 is refused at the encode, never a grow.`,
   },
+];
+
+/* Where a Load READS: its \`small\`, whole. The three storage roots one opcode
+ * covers; reads with tables of their own (timers, the clock, the arguments) keep
+ * their own opcodes until stage 7 makes their owners host objects. */
+const LOAD_PLACES = [
+  { name: "Cell", c: "the whole cell `a`" },
+  { name: "Field", c: "field `b` of struct cell `a`" },
+  { name: "Entity", c: "field `b` of mesh entity `a`'s last-value cache" },
 ];
 
 /* Where a Store LANDS and HOW: the two halves of its \`small\` (place low byte, mode
@@ -472,6 +487,14 @@ inline const char* op_name(OpCode op) {
     return index < sizeof(kOpNames) / sizeof(kOpNames[0]) ? kOpNames[index] : "?";
 }
 
+/* where a Load READS: its \`small\`, whole */
+`;
+  out += cEnum(
+    "LoadPlace",
+    "uint16_t",
+    LOAD_PLACES.map((p) => ({ name: p.name, c: p.c })),
+  );
+  out += `
 /* where a Store LANDS and HOW: the two halves of its \`small\` (place low byte,
  * mode high byte) */
 `;

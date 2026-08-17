@@ -358,7 +358,7 @@ Json App::live(bool full) const {
      * of display state and this lane exists to keep it one, so an entity a flow alone
      * reads never rides here. The read set is the display compile's own product
      * (attr_entity_reads_), consulted here rather than stamped into the entity table.
-     * The value is the SAME last-value mirror the flow reads (LoadEnt), which is what
+     * The value is the SAME last-value mirror a flow's entity reads see, which is what
      * makes an attr and a guard agree about a field; an unknown one omits its key,
      * exactly as a Nil cell does, and the view reads Nil for it. */
     for (uint32_t e = 0; e < program.entities.size(); ++e) {

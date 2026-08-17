@@ -24,12 +24,16 @@ namespace hmi {
 /* an enum type's vocabulary: variant name -> backing integer, in declaration order */
 using EnumVariants = std::vector<std::pair<std::string, int64_t>>;
 
-/* one readable place: its type and the instruction that fetches it */
+/* one readable place: its type and the instruction that fetches it. A storage read
+ * is the one Load and `small` says which place (a LoadPlace: the cell whole, a
+ * struct cell's field, an entity's cached field); reads with tables of their own
+ * (a timer, the clock, the arguments) carry their own opcode and leave small 0. */
 struct Place {
     Type type;
     OpCode load = OpCode::Load;
     uint32_t a = 0;
     uint32_t b = 0;
+    uint16_t small = 0;
 };
 
 /* One node of an object's FIELD TREE. A `.` is one postfix op: each member of a

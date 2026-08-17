@@ -184,7 +184,7 @@ class Lower {
         if (place.load == OpCode::ClockRead && place.type.kind == Shape::Text)
             emit(OpCode::ClockRead, place.a, module_.frame.texts++);
         else
-            emit(place.load, place.a, place.b);
+            emit(place.load, place.a, place.b, place.small);
         pushed();
     }
 

@@ -58,15 +58,18 @@ Signature Module::infer_signature(const std::vector<Instruction>& code) const {
         [&](const std::vector<Instruction>& body) {
         for (const Instruction& ins : body) {
             switch (ins.op) {
+                /* an entity-place Load is a mesh read; every other place, and the
+                   timer and clock tables, move with the ticks */
                 case OpCode::Load:
-                case OpCode::LoadField:
+                    if (static_cast<LoadPlace>(ins.small) == LoadPlace::Entity)
+                        note(sig.reads, ins.a);
+                    else
+                        sig.every_tick = true;
+                    break;
                 case OpCode::TmrRead:
                 /* the clock moves every tick by definition */
                 case OpCode::ClockRead:
                     sig.every_tick = true;
-                    break;
-                case OpCode::LoadEnt:
-                    note(sig.reads, ins.a);
                     break;
                 case OpCode::ReadEnt:
                     note(sig.reads, ins.b);

@@ -181,8 +181,8 @@ void Scheduler::on_update(const MeshUpdate& update) {
     const std::vector<FieldDef>& fields = feed_fields(def);
     const uint32_t count =
         std::min<uint32_t>(update.field_count, static_cast<uint32_t>(fields.size()));
-    /* refresh the last-value cache (the seed-from-last / RMW base, and what LoadEnt
-     * reads) from what actually arrived. Delivered text lands in its retained per-field
+    /* refresh the last-value cache (the seed-from-last / RMW base, and what an entity
+     * read serves) from what actually arrived. Delivered text lands in its retained per-field
      * slot, so the cached value stays resolvable and re-sendable. A FUNCTION caches its
      * RESPONSE fields — `fields` is already the response table for one — because a slot
      * expression reads a polled response exactly as it reads a topic. */

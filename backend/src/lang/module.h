@@ -29,7 +29,7 @@ namespace hmi {
 struct Signature {
     /* reads a cell, the clock or a timer: the value can move on any tick */
     bool every_tick = false;
-    /* the entities read (LoadEnt / ReadEnt), in first-encounter order */
+    /* the entities read (the entity-place Load / ReadEnt), in first-encounter order */
     std::vector<uint32_t> reads;
     /* the entities written (MoveOut: write, call, emit) */
     std::vector<uint32_t> writes;

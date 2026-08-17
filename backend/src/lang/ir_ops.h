@@ -15,8 +15,14 @@ namespace hmi {
 enum class OpCode : uint8_t {
     Const,
     LoadX,
+    /* THE ONE LOAD (stage 6c): push what a PLACE holds, the place riding `small`
+     * (a LoadPlace). Cell reads cell `a` whole; Field reads field `b` of struct
+     * cell `a`; Entity reads field `b` of mesh entity `a`'s last-value cache (Nil
+     * until the mesh has delivered once). The reads with tables of their own — a
+     * timer's fields, the clock, the invocation's arguments — keep their own
+     * opcodes until their owners become host objects at stage 7.
+     */
     Load,
-    LoadField,
     Add,
     Sub,
     Mul,
@@ -44,7 +50,6 @@ enum class OpCode : uint8_t {
      */
     New,
     ReadEnt,
-    LoadEnt,
     MoveOut,
     /* THE ONE STORE (stage 6c): land the value at a PLACE with a MODE, both riding
      * `small` (the low byte a StorePlace, the high byte a StoreMode). The root is
@@ -142,7 +147,6 @@ constexpr const char* kOpNames[] = {
     "CONST",
     "LOAD_X",
     "LOAD",
-    "LOAD_FIELD",
     "ADD",
     "SUB",
     "MUL",
@@ -167,7 +171,6 @@ constexpr const char* kOpNames[] = {
     "SUSPEND",
     "NEW",
     "READ_ENT",
-    "LOAD_ENT",
     "MOVE_OUT",
     "STORE",
     "TMR_START",
@@ -191,6 +194,16 @@ inline const char* op_name(OpCode op) {
     const auto index = static_cast<size_t>(op);
     return index < sizeof(kOpNames) / sizeof(kOpNames[0]) ? kOpNames[index] : "?";
 }
+
+/* where a Load READS: its `small`, whole */
+enum class LoadPlace : uint16_t {
+    /* the whole cell `a` */
+    Cell,
+    /* field `b` of struct cell `a` */
+    Field,
+    /* field `b` of mesh entity `a`'s last-value cache */
+    Entity,
+};
 
 /* where a Store LANDS and HOW: the two halves of its `small` (place low byte,
  * mode high byte) */

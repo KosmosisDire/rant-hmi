@@ -72,15 +72,16 @@ uint32_t head_of(const Ast& ast, uint32_t index) {
     }
 }
 
-/* every resolved name read: a Load note whose place is a CELL, traced to the bare
- * identifier at the head of its chain. Lambda parameters (LoadX), host objects and
- * entity reads carry other opcodes and stay out. */
+/* every resolved name read: a Load note whose place is CELL-ROOTED, traced to the
+ * bare identifier at the head of its chain. Lambda parameters (LoadX) and host
+ * objects carry other opcodes; an entity read is the Load whose place is the
+ * entity cache. All stay out. */
 void collect_names(const Ast& ast, const std::vector<Note>& notes,
                    std::vector<NameRef>& out) {
     for (uint32_t i = 0; i < notes.size() && i < ast.nodes.size(); ++i) {
         if (notes[i].op != Note::Op::Load) continue;
-        if (notes[i].place.load != OpCode::Load &&
-            notes[i].place.load != OpCode::LoadField)
+        if (notes[i].place.load != OpCode::Load ||
+            static_cast<LoadPlace>(notes[i].place.small) == LoadPlace::Entity)
             continue;
         const Expr& head = ast.at(head_of(ast, i));
         if (head.kind != ExprKind::Name) continue;

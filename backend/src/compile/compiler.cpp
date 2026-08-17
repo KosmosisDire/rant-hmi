@@ -1338,7 +1338,7 @@ class Compiler {
     /* a struct-typed variable also puts each of its fields in scope, dotted, the same
      * way a struct temporary does (ensure_struct_local): `staged.position` reads like
      * any other name. An AGGREGATE field binds to its DERIVED CELL (real retained
-     * storage) rather than LoadField, so `m.v` reads, appends and element-writes like
+     * storage) rather than the field place, so `m.v` reads, appends and element-writes like
      * any list variable. */
     void bind_variable(Env& scope, const std::string& name, uint32_t cell_index) {
         const CellDef& cell = program_.cells[cell_index];
@@ -1353,8 +1353,9 @@ class Compiler {
                 derived != UINT32_MAX
                     ? Place{Type::list_of(fields[i].shape, fields[i].elem),
                             OpCode::Load, derived, 0}
-                    : Place{Type(fields[i].shape, fields[i].type_id),
-                            OpCode::LoadField, cell_index, i});
+                    : Place{Type(fields[i].shape, fields[i].type_id), OpCode::Load,
+                            cell_index, i,
+                            static_cast<uint16_t>(LoadPlace::Field)});
         }
     }
 
@@ -1755,13 +1756,14 @@ class Compiler {
             if (fields.empty()) continue;
             const std::string base = "@" + def.name;
             if (fields.size() == 1)
-                scope.bind_value(base, Place{entity_field_type(fields[0]),
-                                             OpCode::LoadEnt, e, 0});
+                scope.bind_value(base,
+                                 Place{entity_field_type(fields[0]), OpCode::Load, e, 0,
+                                       static_cast<uint16_t>(LoadPlace::Entity)});
             if (fields.size() == 1 && fields[0].path.empty()) continue;
             for (uint32_t i = 0; i < fields.size(); ++i)
                 scope.bind_field(base, fields[i].path,
-                                 Place{entity_field_type(fields[i]),
-                                       OpCode::LoadEnt, e, i});
+                                 Place{entity_field_type(fields[i]), OpCode::Load, e, i,
+                                       static_cast<uint16_t>(LoadPlace::Entity)});
         }
     }
 
@@ -2694,8 +2696,8 @@ class Compiler {
                 derived != UINT32_MAX
                     ? Place{Type::list_of(fields[i].shape, fields[i].elem),
                             OpCode::Load, derived, 0}
-                    : Place{Type(fields[i].shape, fields[i].type_id),
-                            OpCode::LoadField, cell, i});
+                    : Place{Type(fields[i].shape, fields[i].type_id), OpCode::Load,
+                            cell, i, static_cast<uint16_t>(LoadPlace::Field)});
         }
         return cell;
     }

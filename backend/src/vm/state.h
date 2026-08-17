@@ -288,7 +288,7 @@ class RuntimeState {
     /* MESH AGGREGATE MIRRORS: one retained slot per aggregate-shaped readable entity
      * field, indexed [entity][read-side field] -> `lists`, UINT32_MAX where the field
      * is not an aggregate. A delivery copies the elements in (hold_entity_agg) and the
-     * last-value cache holds the retained Value, so LoadEnt hands a slot expression or
+     * last-value cache holds the retained Value, so an entity read hands a slot expression or
      * a flow the entity's last list/map exactly as the cache hands it a scalar. Empty
      * after a recompile until the mesh re-delivers — the scalar cache's own rule. */
     std::vector<std::vector<uint32_t>> entity_aggs;

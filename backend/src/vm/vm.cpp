@@ -1071,18 +1071,42 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::Arg:
                 if (ins.a >= Frame::kArgs || !push(state.frame.args[ins.a])) fail(ins.c);
                 break;
+            /* THE ONE LOAD: push what the place in `small` holds — the cell whole,
+               one field of a struct cell, or one field of a mesh entity's last-value
+               cache (Nil until the mesh has delivered once) */
             case OpCode::Load:
-                if (ins.a >= state.values.size() || !push(state.values[ins.a])) fail(ins.c);
+                switch (static_cast<LoadPlace>(ins.small)) {
+                    case LoadPlace::Cell:
+                        if (ins.a >= state.values.size() || !push(state.values[ins.a]))
+                            fail(ins.c);
+                        break;
+                    case LoadPlace::Field: {
+                        const Value holder = ins.a < state.values.size()
+                                                 ? state.values[ins.a]
+                                                 : Value::nil();
+                        const StructState* item =
+                            holder.tag == ValueTag::Struct ? state.struct_at(holder.ref)
+                                                           : nullptr;
+                        if (!item || ins.b >= item->fields.size() ||
+                            !push(item->fields[ins.b]))
+                            fail(ins.c);
+                        break;
+                    }
+                    case LoadPlace::Entity: {
+                        if (ins.a >= state.last.size() ||
+                            ins.b >= state.last[ins.a].fields.size()) {
+                            fail(ins.c);
+                            break;
+                        }
+                        const LastValueState& last = state.last[ins.a];
+                        if (!push(last.known ? last.fields[ins.b] : Value::nil()))
+                            fail(ins.c);
+                        break;
+                    }
+                    default:
+                        fail(ins.c);
+                }
                 break;
-            case OpCode::LoadField: {
-                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
-                                                                 : Value::nil();
-                const StructState* item =
-                    holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
-                if (!item || ins.b >= item->fields.size() || !push(item->fields[ins.b]))
-                    fail(ins.c);
-                break;
-            }
             case OpCode::Add:
             case OpCode::Sub:
             case OpCode::Mul:
@@ -1401,15 +1425,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     }
                     item.set[i] = 1;
                 }
-                break;
-            }
-            case OpCode::LoadEnt: {
-                if (ins.a >= state.last.size() || ins.b >= state.last[ins.a].fields.size()) {
-                    fail(ins.c);
-                    break;
-                }
-                const LastValueState& last = state.last[ins.a];
-                if (!push(last.known ? last.fields[ins.b] : Value::nil())) fail(ins.c);
                 break;
             }
             /* the one way a value leaves a flow. The source arrives on the stack, and

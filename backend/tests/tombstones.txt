@@ -192,3 +192,10 @@ append_list
 append_row
 append_leaf
 store_leaf
+
+# stage 6c, the one load: a read is a PLACE riding the one Load's `small` — the cell
+# whole, a struct cell's field, or an entity's cached field — so the field and entity
+# opcodes died into it. The signature asks the place, not the opcode: an entity-place
+# Load is the mesh read, every other place moves with the ticks.
+LoadField
+LoadEnt

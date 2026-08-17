@@ -3304,7 +3304,7 @@ void test_bare_topic_scalars() {
 
 /* ASSIGN'S RVALUE IS AN EXPRESSION AND THE EXPRESSION READS THE MESH: `@a + @b`
  * compiles in a flow exactly as it would in a slot (bind_entities in the flow scope),
- * the LoadEnts land in the flow's signature so the mesh consumes both entities, and a
+ * the entity reads land in the flow's signature so the mesh consumes both entities, and a
  * gate's condition may name an entity the same way. */
 void test_assign_expression_reads_mesh() {
     EntityDef a;
