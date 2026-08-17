@@ -24,6 +24,12 @@ struct Sink {
     std::vector<Diag>* diags = nullptr;
     bool builtin = false;
     std::string component;
+    /* THE REFERENCE INDEX's display-tier channel, when a caller collects one: every
+     * resolved name read lands in `refs` keyed by the owning node and the expression
+     * text, and a compile that FAILED marks its site in `blind` instead — this tier
+     * stops at its first error, so a failed compile's rows would lie by omission. */
+    std::vector<RefRow>* refs = nullptr;
+    std::vector<RefSite>* blind = nullptr;
 
     void report(uint64_t node, const std::string& code, const std::string& message,
                 const std::string& where = "") {
@@ -36,6 +42,16 @@ struct Sink {
         }
         if (diags)
             diags->push_back(Diag{node, DiagGrade::Error, code, message, where});
+    }
+
+    void record(uint64_t node, const std::string& text, const TemplateExprResult& r) {
+        if (!r.ok) {
+            if (blind) blind->push_back(RefSite{node, text});
+            return;
+        }
+        if (refs)
+            for (const TemplateNameRef& name : r.names)
+                refs->push_back(RefRow{node, text, name.at, name.length, name.decl});
     }
 };
 
@@ -124,9 +140,12 @@ void take_vars(const std::vector<VarDecl>& rows, std::vector<TemplateVar>& out) 
 
 /* every attr entry: expression text -> a compiled view program; a bad one is a finding on
  * THIS node, named by the attr, and the attr is simply not served (an absent attr renders
- * its default, so the node degrades instead of vanishing) */
+ * its default, so the node degrades instead of vanishing). `unrecorded` names one key
+ * whose text is NOT the document's (shown_attrs folded it), so its index rows would key a
+ * site that exists nowhere — the caller records the authored text itself. */
 Json compile_attrs(const std::vector<AttrDecl>& attrs, const TemplateScope& scope,
-                   uint64_t node, const std::string& prefix, Sink& sink) {
+                   uint64_t node, const std::string& prefix, Sink& sink,
+                   const char* unrecorded = nullptr) {
     Json out = Json::object();
     for (const AttrDecl& attr : attrs) {
         if (!attr.is_text) {
@@ -135,6 +154,8 @@ Json compile_attrs(const std::vector<AttrDecl>& attrs, const TemplateScope& scop
             continue;
         }
         TemplateExprResult compiled = compile_template_expr(attr.text, scope);
+        if (!unrecorded || attr.key != unrecorded)
+            sink.record(node, attr.text, compiled);
         if (!compiled.ok) {
             sink.report(node, "template_expr", compiled.error, prefix + attr.key);
             continue;
@@ -169,13 +190,16 @@ const Json* const_of(const Json& program) {
     return v == ins.end() ? nullptr : &*v;
 }
 
-/* one TIME: a number, or expression text over `scope`. False = `error` says why. */
+/* one TIME: a number, or expression text over `scope`. False = `error` says why.
+ * `node` keys the index rows a text time records through `sink`. */
 bool compile_transition_time(const NumOrText& raw, const TemplateScope& scope,
-                             Json& program, std::string& error) {
+                             uint64_t node, Sink& sink, Json& program,
+                             std::string& error) {
     if (raw.kind == NumOrText::Kind::Num) {
         program = const_program(raw.raw);
     } else if (raw.kind == NumOrText::Kind::Text) {
         TemplateExprResult compiled = compile_template_expr(raw.text, scope);
+        sink.record(node, raw.text, compiled);
         if (!compiled.ok) {
             error = compiled.error;
             return false;
@@ -198,7 +222,8 @@ bool compile_transition_time(const NumOrText& raw, const TemplateScope& scope,
 
 /* one PROFILE: a bare easing name, or expression text. Empty = none (the view's ease). */
 bool compile_transition_profile(const std::string& raw, const TemplateScope& scope,
-                                Json& program, bool& has, std::string& error) {
+                                uint64_t node, Sink& sink, Json& program, bool& has,
+                                std::string& error) {
     has = false;
     if (raw.empty()) return true;
     if (easing_profile(raw)) {
@@ -207,6 +232,7 @@ bool compile_transition_profile(const std::string& raw, const TemplateScope& sco
         return true;
     }
     TemplateExprResult compiled = compile_template_expr(raw, scope);
+    sink.record(node, raw, compiled);
     if (!compiled.ok) {
         error = compiled.error + " (a profile is linear, ease, ease-in, ease-out or "
                 "ease-in-out, or an expression yielding one)";
@@ -259,15 +285,16 @@ Json compile_transitions(const NodeDecl& node, const std::string& kind,
         }
         Json ms_program;
         std::string error;
-        if (!compile_transition_time(authored.ms, scope, ms_program, error)) {
+        if (!compile_transition_time(authored.ms, scope, node_id, sink, ms_program,
+                                     error)) {
             sink.report(node_id, "transition", error, where);
             continue;
         }
         Json row{{"ms", std::move(ms_program)}};
         Json prof_program;
         bool has_profile = false;
-        if (!compile_transition_profile(authored.profile, scope, prof_program,
-                                        has_profile, error))
+        if (!compile_transition_profile(authored.profile, scope, node_id, sink,
+                                        prof_program, has_profile, error))
             sink.report(node_id, "transition", error, where);
         else if (has_profile)
             row["profile"] = std::move(prof_program);
@@ -310,6 +337,7 @@ Json compile_anchors(const std::vector<AnchorDecl>& anchors, const TemplateScope
                 continue;
             }
             TemplateExprResult compiled = compile_template_expr(field.text, scope);
+            sink.record(node, field.text, compiled);
             if (!compiled.ok) {
                 sink.report(node, "anchor", compiled.error, where + "." + field.key);
                 continue;
@@ -410,11 +438,12 @@ SlotSpec spec_row(const VarDecl& var, const std::string& address) {
     return out;
 }
 
-std::vector<std::string> collect_vars(const std::vector<VarDecl>& rows,
-                                      const std::string& path, bool addressable,
-                                      const TemplateScope& outer, Walk& walk,
-                                      Sink& sink, bool quiet = false) {
-    std::vector<std::string> names;
+/* each declared property as (name, declaring var's document id) — the pair the scope
+ * extends by, so a resolved read can say whose word it was */
+std::vector<std::pair<std::string, uint64_t>> collect_vars(
+    const std::vector<VarDecl>& rows, const std::string& path, bool addressable,
+    const TemplateScope& outer, Walk& walk, Sink& sink, bool quiet = false) {
+    std::vector<std::pair<std::string, uint64_t>> names;
     std::set<std::string> here;
     for (const VarDecl& var : rows) {
         const std::string& name = var.name;
@@ -494,7 +523,7 @@ std::vector<std::string> collect_vars(const std::vector<VarDecl>& rows,
                 walk.sweeps.push_back(SweepRow{path.empty() ? name : path + "." + name,
                                                path, var.smooth, var.profile, var.id});
         }
-        names.push_back(name);
+        names.push_back({name, var.id});
         const std::string address = path.empty() ? name : path + "." + name;
         walk.slots.push_back(var_row(var, address));
         walk.specs.push_back(spec_row(var, address));
@@ -515,10 +544,10 @@ bool declares_shown(const std::vector<VarDecl>& rows) {
 /* pass one: the variables, their addresses and each node's scope */
 void collect_tree(const NodeDecl& node, const std::string& path, bool addressable,
                   const TemplateScope& outer, Walk& walk, Sink& sink, bool quiet = false) {
-    std::vector<std::string> names =
+    std::vector<std::pair<std::string, uint64_t>> names =
         collect_vars(node.locals, path, addressable, outer, walk, sink, quiet);
     if (addressable && !path.empty() && !declares_shown(node.locals)) {
-        names.push_back("shown");
+        names.push_back({"shown", 0});
         walk.slots.push_back(Json{{"name", path + ".shown"},
                                   {"shape", "bool"},
                                   {"default", true},
@@ -533,7 +562,7 @@ void collect_tree(const NodeDecl& node, const std::string& path, bool addressabl
         shown.initial = Json(true);
         walk.specs.push_back(std::move(shown));
     }
-    for (const std::string& name : names)
+    for (const auto& [name, decl] : names)
         walk.addresses->insert(path.empty() ? name : path + "." + name);
 
     const TemplateScope scope = outer.extend(path, names);
@@ -542,9 +571,9 @@ void collect_tree(const NodeDecl& node, const std::string& path, bool addressabl
     /* the variable names stored AT this level (this node's own, plus the component's
        where this is the root): what a child's name would collide with */
     std::set<std::string> level_names;
-    for (const auto& entry : scope.props)
-        if (entry.second == (path.empty() ? entry.first : path + "." + entry.first))
-            level_names.insert(entry.first);
+    for (const TemplateProp& entry : scope.props)
+        if (entry.address == (path.empty() ? entry.name : path + "." + entry.name))
+            level_names.insert(entry.name);
 
     std::set<std::string> sibling_names;
     for (const NodeDecl& child : node.children) {
@@ -584,11 +613,19 @@ void collect_tree(const NodeDecl& node, const std::string& path, bool addressabl
 /* A node's `show` attr, with its own `shown` variable folded in: the variable is the
  * switch, the attr is whatever the type computes, and the node draws when both hold.
  * The view needs no new opcode — `pick` is the conditional it already runs. */
+/* `folded` comes back true when the `show` entry no longer carries the DOCUMENT's text
+ * (the switch got wrapped around it, or synthesized whole): its compile must not record
+ * index rows, and `authored` carries the authored expression the caller records instead
+ * (empty when nothing was authored — a synthesized switch is nobody's reference). */
 std::vector<AttrDecl> shown_attrs(const std::vector<AttrDecl>& attrs,
-                                  const std::string& path, const Walk& walk) {
+                                  const std::string& path, const Walk& walk,
+                                  bool& folded, std::string& authored) {
+    folded = false;
+    authored.clear();
     std::vector<AttrDecl> out = attrs;
     if (path.empty() || !walk.addresses->count(path + ".shown")) return out;
     const std::string shown = path + ".shown";
+    folded = true;
     /* the rows ride in key order (that is how the object iterated), so the folded
        `show` keeps the position an authored one would have compiled at */
     auto at = std::lower_bound(out.begin(), out.end(), std::string("show"),
@@ -596,6 +633,7 @@ std::vector<AttrDecl> shown_attrs(const std::vector<AttrDecl>& attrs,
                                    return row.key < key;
                                });
     if (at != out.end() && at->key == "show") {
+        if (at->is_text) authored = at->text;
         at->text = at->is_text ? "(" + shown + ").pick((" + at->text + "), false)" : shown;
         at->is_text = true;
     } else {
@@ -608,10 +646,10 @@ std::vector<AttrDecl> shown_attrs(const std::vector<AttrDecl>& attrs,
  * node and a page node have in common, which is nearly all of it */
 Json compile_common(const NodeDecl& node, const std::string& kind,
                     const std::vector<AttrDecl>& attrs, const TemplateScope& scope,
-                    uint64_t node_id, Sink& sink) {
+                    uint64_t node_id, Sink& sink, const char* unrecorded = nullptr) {
     Json out{{"kind", kind},
              {"name", node.name},
-             {"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
+             {"attrs", compile_attrs(attrs, scope, node_id, "", sink, unrecorded)}};
     Json transitions = compile_transitions(node, kind, scope, node_id, sink);
     if (!transitions.empty()) out["transitions"] = std::move(transitions);
     if (kind == "path") {
@@ -658,9 +696,17 @@ Json compile_node(const NodeDecl& node, const std::string& path, const Walk& wal
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
     check_attr_names(node.attrs, node.kind, node.id, sink);
-    const std::vector<AttrDecl> attrs = shown_attrs(node.attrs, path, walk);
+    bool folded = false;
+    std::string authored;
+    const std::vector<AttrDecl> attrs =
+        shown_attrs(node.attrs, path, walk, folded, authored);
+    /* the folded `show` compiles with the switch wrapped in; the index rows must
+       speak the DOCUMENT's text, so the authored expression records separately */
+    if (!authored.empty())
+        sink.record(node.id, authored, compile_template_expr(authored, scope));
 
-    Json out = compile_common(node, node.kind, attrs, scope, node.id, sink);
+    Json out = compile_common(node, node.kind, attrs, scope, node.id, sink,
+                              folded ? "show" : nullptr);
     if (node.kind != "frame") {
         /* a leaf holds neither children nor a gesture; the schema already refuses to store
            either, so anything here would be a definition built by hand */
@@ -692,8 +738,14 @@ void emit_node_attrs(const NodeDecl& node, const std::string& path, const Walk& 
     auto found = walk.scopes.find(path);
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
-    const std::vector<AttrDecl> attrs = shown_attrs(node.attrs, path, walk);
-    Json row{{"attrs", compile_attrs(attrs, scope, node.id, "", sink)}};
+    bool folded = false;
+    std::string authored;
+    const std::vector<AttrDecl> attrs =
+        shown_attrs(node.attrs, path, walk, folded, authored);
+    if (!authored.empty())
+        sink.record(node.id, authored, compile_template_expr(authored, scope));
+    Json row{{"attrs",
+              compile_attrs(attrs, scope, node.id, "", sink, folded ? "show" : nullptr)}};
     Json transitions = compile_transitions(node, node.kind, scope, node.id, sink);
     if (!transitions.empty()) row["transitions"] = std::move(transitions);
     if (node.kind == "path")
@@ -780,14 +832,15 @@ Json compile_component(const ComponentDecl& component, Sink& sink) {
             found != walk.scopes.end() ? found->second : walk.scopes.at("");
         Json ms_program;
         std::string error;
-        if (!compile_transition_time(sweep.ms, scope, ms_program, error)) {
+        if (!compile_transition_time(sweep.ms, scope, sweep.var_id, sink, ms_program,
+                                     error)) {
             sink.report(sweep.var_id, "var_smooth", error, "smooth");
             continue;
         }
         Json prof_program;
         bool has_profile = false;
-        const bool prof_ok = compile_transition_profile(sweep.profile, scope,
-                                                        prof_program, has_profile, error);
+        const bool prof_ok = compile_transition_profile(
+            sweep.profile, scope, sweep.var_id, sink, prof_program, has_profile, error);
         if (!prof_ok) sink.report(sweep.var_id, "var_smooth", error, "profile");
         for (Json& slot : walk.slots) {
             if (slot.value("name", "") != sweep.address) continue;
@@ -939,6 +992,7 @@ Json compile_per_copy_slots(const NodeDecl& node,
         if (!per_copy_expression(text)) continue;
         per_copy->insert(std::to_string(id) + "\n" + slot.name);
         TemplateExprResult compiled = compile_template_expr(text, scope);
+        sink.record(id, text, compiled);
         if (!compiled.ok) {
             sink.report(id, "template_expr", compiled.error, slot.name);
             continue;
@@ -1002,11 +1056,15 @@ const Json* authored_slot(const Json& slots, const std::string& address) {
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh,
                         std::set<std::string>* attr_reads,
-                        std::set<std::string>* per_copy) {
+                        std::set<std::string>* per_copy,
+                        std::vector<RefRow>* refs,
+                        std::vector<RefSite>* blind) {
     const Doc doc = decode_document(document);
     Json out = Json::object();
     Sink sink;
     sink.diags = &diags;
+    sink.refs = refs;
+    sink.blind = blind;
     /* the specs the placement rule consults, derived only where a per-copy set is
        collecting at all — a bare compile treats every slot as a standing program */
     std::vector<ComponentSpec> specs;
@@ -1061,6 +1119,11 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
      * Built-ins are deliberately absent — they carry no document ids until forked, which
      * is exactly what makes an unforked built-in's context read-only. */
     Sink quiet;
+    /* the index channel stays live through the quiet pass: a component-internal read
+       resolves to the component's own property, and renaming THAT property needs
+       these rows exactly as a page rename needs the page's */
+    quiet.refs = refs;
+    quiet.blind = blind;
     for (const ComponentDecl& component : doc.components) {
         Walk pass;
         TemplateScope component_root;

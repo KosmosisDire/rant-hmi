@@ -24,8 +24,8 @@ namespace {
 /* an instance-level scope: every name addresses bare, as the component's own props do */
 TemplateScope scope_of(std::initializer_list<const char*> props) {
     TemplateScope scope;
-    std::vector<std::string> names;
-    for (const char* p : props) names.push_back(p);
+    std::vector<std::pair<std::string, uint64_t>> names;
+    for (const char* p : props) names.push_back({p, 0});
     return scope.extend("", names);
 }
 
@@ -1501,12 +1501,80 @@ void test_reference_index() {
     CHECK_EQ(hits, 2);
 }
 
+/* THE DISPLAY TIER'S HALF OF THE INDEX (compile_page_attrs refs/blind): an attr's
+ * variable read records with the DECLARING variable's id — the nearest declaration,
+ * so a shadowing local's read is the local's row, never the global's — a component
+ * internal's bare read records the component's own variable, a folded `show` records
+ * under its AUTHORED text, and a site that failed to compile lands in `blind`. */
+void test_display_reference_index() {
+    Json root = {
+        {"version", 3},
+        {"next_id", 2000},
+        {"globals", Json::array({
+            Json{{"id", 900}, {"name", "flow"}, {"type", "num"}, {"init", 2.0}},
+        })},
+        {"components", Json::array({Json{
+            {"id", 970}, {"name", "Card"},
+            {"locals", Json::array({Json{{"id", 971}, {"name", "value"},
+                                         {"type", "num"}, {"public", true}}})},
+            {"attrs", Json{{"w", "value"}}},
+            {"children", Json::array({
+                Json{{"id", 975}, {"kind", "frame"}, {"name", "bar"},
+                     {"locals", Json::array({Json{{"id", 976}, {"name", "lvl"},
+                                                  {"type", "num"}}})},
+                     {"attrs", Json{{"show", "value > 1"}}}},
+            })}}})},
+        {"pages", Json::array({Json{
+            {"name", "Main"},
+            {"children", Json::array({
+                Json{{"id", 950}, {"kind", "frame"}, {"name", "Zone"},
+                     {"attrs", Json{{"w", "flow * 2"}, {"h", "flow + ("}}},
+                     {"children", Json::array({
+                         Json{{"id", 960}, {"kind", "frame"}, {"name", "Inner"},
+                              {"locals", Json::array({Json{{"id", 961}, {"name", "flow"},
+                                                           {"type", "num"}}})},
+                              {"attrs", Json{{"w", "flow"}}}},
+                     })}},
+            })}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+
+    std::vector<Diag> diags;
+    std::vector<RefRow> refs;
+    std::vector<RefSite> blind;
+    compile_page_attrs(document, diags, nullptr, nullptr, nullptr, &refs, &blind);
+
+    auto rows_of = [&](uint64_t node, const char* text, uint64_t decl,
+                       const char* word) {
+        int hits = 0;
+        for (const RefRow& row : refs)
+            if (row.node == node && row.text == text && row.decl == decl) {
+                ++hits;
+                CHECK(row.text.compare(row.at, row.length, word) == 0);
+            }
+        return hits;
+    };
+    CHECK_EQ(rows_of(950, "flow * 2", 900, "flow"), 1);    /* the global's read */
+    CHECK_EQ(rows_of(960, "flow", 961, "flow"), 1);        /* the shadowing local's own */
+    CHECK_EQ(rows_of(960, "flow", 900, "flow"), 0);        /* never the global's */
+    CHECK_EQ(rows_of(970, "value", 971, "value"), 1);      /* the component's property */
+    CHECK_EQ(rows_of(975, "value > 1", 971, "value"), 1);  /* folded show, AUTHORED text */
+
+    int broken = 0;
+    for (const RefSite& site : blind)
+        if (site.node == 950 && site.text == "flow + (") ++broken;
+    CHECK_EQ(broken, 1);
+}
+
 } // namespace
 
 int main() {
     test_template_expr();
     test_definition_check();
     test_reference_index();
+    test_display_reference_index();
     test_list_vocabulary();
     test_new_vocabulary();
     test_builtins_compile_clean();

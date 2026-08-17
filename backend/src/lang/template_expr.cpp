@@ -85,8 +85,9 @@ class ViewLower {
         code_ = Json::array();
     }
 
-    bool run(Json& program, std::string& error) {
+    bool run(Json& program, std::string& error, std::vector<TemplateNameRef>& names) {
         lower(ast_.root);
+        names = std::move(names_);
         if (!error_.empty()) {
             error = error_;
             return false;
@@ -222,7 +223,7 @@ class ViewLower {
             fail("expected ')'", at(expr.b).after);
             return;
         }
-        if (!resolve_bare(expr.params[0], expr.name_after)) return;
+        if (!resolve_bare(expr.params[0], expr.at, expr.name_after)) return;
         fail(left_over, expr.name_after);
     }
 
@@ -331,8 +332,9 @@ class ViewLower {
     /* What a bare name means, in the order this surface always answered it — also
      * what a misplaced lambda's parameter resolves as. Unbound = nothing answered
      * AND nothing refused: the caller owns the last word (the address walk for a
-     * dotted head, the unknown-name teaching for everything else). */
-    Bare bare(const std::string& name, size_t anchor) {
+     * dotted head, the unknown-name teaching for everything else). `at` is where the
+     * identifier starts — the span a resolved property or variable read records. */
+    Bare bare(const std::string& name, size_t at, size_t anchor) {
         if (name == "true" || name == "false") {
             emit_const(name == "true");
             return Bare::Emitted;
@@ -388,8 +390,9 @@ class ViewLower {
         }
         /* a name in scope is that property, and anything dotted after it is
            ordinary postfix (`value.pick(...)`) */
-        if (scope_.has_prop(name)) {
-            emit_load("slot:" + scope_.address(name));
+        if (const TemplateProp* prop = scope_.prop(name)) {
+            emit_load("slot:" + prop->address);
+            names_.push_back(TemplateNameRef{at, name.size(), prop->decl});
             return Bare::Emitted;
         }
         /* THEN A VARIABLE: a global, or a local declared on this element or on one
@@ -405,6 +408,7 @@ class ViewLower {
                 return Bare::Failed;
             }
             emit_load("var:" + std::to_string(variable->id));
+            names_.push_back(TemplateNameRef{at, name.size(), variable->id});
             return Bare::Emitted;
         }
         return Bare::Unbound;
@@ -419,8 +423,8 @@ class ViewLower {
     }
 
     /* a misplaced lambda's head, resolved as the plain name the grammar took it for */
-    bool resolve_bare(const std::string& name, size_t anchor) {
-        const Bare answer = bare(name, anchor);
+    bool resolve_bare(const std::string& name, size_t at, size_t anchor) {
+        const Bare answer = bare(name, at, anchor);
         if (answer == Bare::Unbound) return unknown_name(name, anchor);
         return answer == Bare::Emitted;
     }
@@ -438,7 +442,7 @@ class ViewLower {
            view's gesture state, and — inside a repeated node — which copy this is */
         if (dotted && (name == "time" || name == "state" || name == "repeat"))
             return input_field(primary, ops, next);
-        const Bare answer = bare(name, head.after);
+        const Bare answer = bare(name, head.at, head.after);
         if (answer != Bare::Unbound) return answer == Bare::Emitted;
         /* otherwise a DOTTED name is an address from the template root: another
            element's property, read where it is needed rather than moved to where
@@ -856,6 +860,8 @@ class ViewLower {
     const TemplateScope& scope_;
     Json code_;
     std::string error_;
+    /* every property and variable read resolved so far, for the reference index */
+    std::vector<TemplateNameRef> names_;
     /* lambda state: in_lambda_ is the no-nesting guard, and the parameter list is
        what a body's bare names resolve against before the property scope gets to
        look */
@@ -877,7 +883,7 @@ TemplateExprResult compile_template_expr(const std::string& text,
         return out;
     }
     ViewLower lower(ast, scope);
-    out.ok = lower.run(out.program, out.error);
+    out.ok = lower.run(out.program, out.error, out.names);
     return out;
 }
 

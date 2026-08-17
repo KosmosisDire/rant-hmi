@@ -96,10 +96,19 @@ std::vector<ComponentSpec> derive_specs(const std::vector<ComponentDecl>& doc_co
  * specs say which slots a placement HAS; with no `per_copy` set collecting, no slot
  * is per copy and every expression stays a standing program, which is what a bare
  * test compile wants. */
+/* `refs` and `blind` are the DISPLAY TIER's half of the reference index (the wire
+ * tier's rides in Program::references): every resolved property or variable read as a
+ * RefRow keyed (owning node, expression text), and every site whose compile FAILED as
+ * a RefSite — this tier stops at its first error, so a failed site's missing rows
+ * prove nothing and a rename touching one must refuse rather than rewrite blind. Doc
+ * component internals record too (their reads resolve to the component's own
+ * variables); a synthesized or folded `show` records under its AUTHORED text only. */
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
                         const std::vector<EntityDef>* mesh = nullptr,
                         std::set<std::string>* attr_reads = nullptr,
-                        std::set<std::string>* per_copy = nullptr);
+                        std::set<std::string>* per_copy = nullptr,
+                        std::vector<RefRow>* refs = nullptr,
+                        std::vector<RefSite>* blind = nullptr);
 
 /* An instance's authored value for one slot ADDRESS (spec 2.3). An instance's `slots`
  * object mirrors the component's elements: a component-level slot is a key, an element's

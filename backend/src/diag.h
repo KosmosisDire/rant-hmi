@@ -16,6 +16,15 @@ struct RefRow {
     uint64_t decl = 0;      /* the node of the declaration it resolved to */
 };
 
+/* One expression site whose analysis BROKE before every name in it got a verdict, so
+ * the absence of an index row there proves nothing. A rename that would touch such a
+ * site refuses rather than rewriting blind. Keyed the way index membership is: a node's
+ * expressions share the node's one scope, so (node, text) names the site. */
+struct RefSite {
+    uint64_t node = 0;
+    std::string text;
+};
+
 struct Diag {
     uint64_t node_id = 0;
     DiagGrade grade = DiagGrade::Error;

@@ -97,9 +97,18 @@ struct TemplateMesh {
  * The lexical chain is FLATTENED as the compiler descends (one map per element, nearest
  * declaration already resolved); `addresses` is the whole component's table, which is
  * why attrs compile in a second pass, after every element's properties are known. */
+/* one property a bare name may mean: its slot address, and the DECLARING variable's
+ * document id (0 = synthesized, like the `shown` nobody declared) — what a reference
+ * index records as the resolution, so a rename can ask "whose word is this" */
+struct TemplateProp {
+    std::string name;
+    std::string address;
+    uint64_t decl = 0;
+};
+
 struct TemplateScope {
     /* property name -> its slot address, in declaration order per element */
-    std::vector<std::pair<std::string, std::string>> props;
+    std::vector<TemplateProp> props;
     /* every property address in the component, for dotted reads */
     std::shared_ptr<const std::set<std::string>> addresses;
     /* the variables in lexical scope here, OUTERMOST FIRST — the globals, then each
@@ -116,10 +125,15 @@ struct TemplateScope {
         return addresses && addresses->count(address) != 0;
     }
 
-    const std::string* find(const std::string& name) const {
-        for (const auto& p : props)
-            if (p.first == name) return &p.second;
+    const TemplateProp* prop(const std::string& name) const {
+        for (const TemplateProp& p : props)
+            if (p.name == name) return &p;
         return nullptr;
+    }
+
+    const std::string* find(const std::string& name) const {
+        const TemplateProp* found = prop(name);
+        return found ? &found->address : nullptr;
     }
 
     bool has_prop(const std::string& name) const { return find(name) != nullptr; }
@@ -155,29 +169,45 @@ struct TemplateScope {
     }
 
     /* the enclosing scope plus one element's own declarations: a name declared here
-     * REPLACES the inherited one in place, keeping the outer position */
+     * REPLACES the inherited one in place, keeping the outer position. Each entry is
+     * (name, declaring variable's document id); 0 marks a synthesized one. */
     TemplateScope extend(const std::string& path,
-                         const std::vector<std::string>& own) const {
+                         const std::vector<std::pair<std::string, uint64_t>>& own) const {
         TemplateScope out = *this;
-        for (const std::string& name : own) {
+        for (const auto& [name, decl] : own) {
             const std::string address = path.empty() ? name : path + "." + name;
             bool replaced = false;
-            for (auto& p : out.props) {
-                if (p.first != name) continue;
-                p.second = address;
+            for (TemplateProp& p : out.props) {
+                if (p.name != name) continue;
+                p.address = address;
+                p.decl = decl;
                 replaced = true;
                 break;
             }
-            if (!replaced) out.props.push_back({name, address});
+            if (!replaced) out.props.push_back({name, address, decl});
         }
         return out;
     }
+};
+
+/* ONE RESOLVED NAME READ, for the caller's reference index (rename): the identifier's
+ * exact span in the source and the DECLARING node's document id — a variable's, or a
+ * property's declaring variable. Only bare-name reads qualify: a dotted address read
+ * (`arc.thickness`) is not a bare word and the rename has never rewritten one, lambda
+ * parameters are not variable words, and the view's own inputs are nobody's. */
+struct TemplateNameRef {
+    size_t at = 0;
+    size_t length = 0;
+    uint64_t decl = 0;
 };
 
 struct TemplateExprResult {
     bool ok = false;
     Json program;        /* {"code": [...]} on success */
     std::string error;   /* what refused to compile, with a column */
+    /* every name resolved BEFORE the first error; complete only when `ok` (this tier
+     * stops at its first refusal, so a failed compile's absence proves nothing) */
+    std::vector<TemplateNameRef> names;
 };
 
 TemplateExprResult compile_template_expr(const std::string& text,
