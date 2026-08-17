@@ -86,3 +86,11 @@ component_registry
 # — for every surface. The per-destination wrapper that restated the render and
 # the check for scalar step destinations.
 push_typed
+
+# stage 5b, the destination as data: lang/ Dest carries the destination's type,
+# label and element declaration into the pipeline, so the fit — the element rules
+# included — is checked at the one boundary. The compiler-side element check, its
+# refusal builder, and the aggregate-permission side channel beside `expected`.
+element_fits
+element_refusal
+allow_agg

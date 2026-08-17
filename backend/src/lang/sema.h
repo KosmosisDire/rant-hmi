@@ -50,12 +50,12 @@ struct Note {
 /* On success `notes` holds one Note per Ast node and `result` the root's type; on
  * refusal `out` holds EVERY independent finding as DATA (expression.h Refusal) —
  * depth-first, left-to-right, so the first entry is the error the surface always
- * led with; a broken subtree still suppresses whatever depended on it. `expected`
- * is the type the DESTINATION declares, where the caller knows one — what a
- * `.variant` literal at the root (or in a ternary arm on the way there) resolves
- * its vocabulary against. */
-bool check_expression(const Ast& ast, ExprTier tier, const Env& env, bool allow_agg,
+ * led with; a broken subtree still suppresses whatever depended on it. `dest` is
+ * the DESTINATION as data: its type is what a `.variant` literal at the root (or
+ * in a ternary arm on the way there) resolves its vocabulary against, and whether
+ * it takes an aggregate is what the wire tier's one-scalar rule reads. */
+bool check_expression(const Ast& ast, ExprTier tier, const Env& env,
                       std::vector<Note>& notes, Type& result,
-                      std::vector<Refusal>& out, const Type& expected = Type());
+                      std::vector<Refusal>& out, const Dest& dest = Dest());
 
 } // namespace hmi

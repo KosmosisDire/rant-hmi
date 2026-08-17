@@ -32,6 +32,9 @@ struct Refusal {
     std::string message;
     size_t at = kNowhere;
     size_t length = 0;
+    /* the finding's code, for the surfaces that key on it: "shape" marks a
+       destination-fit refusal; everything else compiles under the one word */
+    const char* code = "expression";
 };
 
 struct ExpressionResult {
@@ -40,21 +43,38 @@ struct ExpressionResult {
     uint32_t max_stack = 0;
 };
 
-/* `allow_agg` says the DESTINATION is an HMI aggregate — a list/map variable or slot,
- * or one element of one — so an aggregate RESULT is legal here and the CALLER checks
- * the shape, against what that destination declares it holds. Everywhere else the wire
- * tier's one-scalar rule stands: a machine write is one scalar.
+/* THE DESTINATION, AS DATA: what this expression is being compiled INTO. The fit
+ * between what the expression yields and what the destination takes is checked at
+ * the pipeline boundary (compile.cpp), stated ONCE for every surface, and the one
+ * implicit conversion of spec 6.2 lives there with it — a constant text resolves
+ * (or refuses) at an enum destination with dynamic text converting at runtime, and
+ * an enum RENDERS at a text destination as its variant name.
  *
- * `expected` is the DESTINATION's type where the caller knows one — what a `.variant`
- * literal at the root (or in a ternary arm on the way there) resolves against.
- *
- * On refusal `refusals` holds EVERY independent finding (arguments and list elements
+ * `type` is what the destination takes; Unknown = untyped, nothing to fit. It is
+ * also what a `.variant` literal at the root (or in a ternary arm on the way there)
+ * resolves its vocabulary against.
+ * `label` is how a fit refusal names the destination ("this row", "slot 'symbol'").
+ * `aggregate_ok` says a whole list or map may land here — a declared HMI aggregate,
+ * never a mesh destination: the machine takes one scalar per field.
+ * `element` marks ONE ELEMENT of an aggregate as the destination: `type` is then
+ * what the aggregate DECLARES an element to be (Unknown = it never said, and one
+ * scalar of any kind fits), and the fit refusals teach in the declaration's own
+ * words; `append` only picks the verb those refusals speak. */
+struct Dest {
+    Type type;
+    std::string label = "this row";
+    bool aggregate_ok = false;
+    bool element = false;
+    bool append = false;
+};
+
+/* On refusal `refusals` holds EVERY independent finding (arguments and list elements
  * recover; a broken receiver still suppresses what depended on it), depth-first
  * left-to-right, so the first entry is the error the surface always led with. */
 bool compile_expression(const std::string& text, ExprTier tier, const Env& env,
                         Module& module, std::vector<Instruction>& code,
                         ExpressionResult& result, std::vector<Refusal>& refusals,
-                        bool allow_agg = false, const Type& expected = Type());
+                        const Dest& dest = Dest());
 
 /* The language, as data (spec 3.7 / "everything is data"): one row per builtin and
  * method, straight from the tables the checker compiles with (lang/tables.h), so

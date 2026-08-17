@@ -1123,18 +1123,19 @@ class Sema {
 
 } // namespace
 
-bool check_expression(const Ast& ast, ExprTier tier, const Env& env, bool allow_agg,
+bool check_expression(const Ast& ast, ExprTier tier, const Env& env,
                       std::vector<Note>& notes, Type& result,
-                      std::vector<Refusal>& out, const Type& expected) {
+                      std::vector<Refusal>& out, const Dest& dest) {
     Sema sema(ast, tier, env, notes, out);
-    if (!sema.run(result, expected)) return false;
+    if (!sema.run(result, dest.type)) return false;
     /* a MACHINE write is always one scalar (spec 6): aggregates may appear
      * mid-expression (max over a list), never as what goes to the mesh. But a wire
      * expression whose DESTINATION is an HMI aggregate — a list variable, a list
      * slot, one element of either — is building state, not a machine value, so it
-     * passes exactly there and the caller types it. This is the one refusal about
-     * the WHOLE expression, so it carries no position (kNowhere). */
-    if (tier == ExprTier::Wire && !allow_agg &&
+     * passes exactly there and the destination's own fit check types it. This is
+     * the one refusal about the WHOLE expression, so it carries no position
+     * (kNowhere). */
+    if (tier == ExprTier::Wire && !dest.aggregate_ok && !dest.element &&
         (result.kind == Shape::List || result.kind == Shape::Map)) {
         out.push_back(Refusal{
             "a wire value is one scalar; this expression yields a " +

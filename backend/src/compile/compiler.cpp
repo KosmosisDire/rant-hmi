@@ -1501,59 +1501,23 @@ class Compiler {
         }
     }
 
-    /* `agg_ok` says the DESTINATION is a declared HMI aggregate (a list/map variable or
-     * slot), so a wire expression may yield that whole shape. It is never set for a
-     * mesh destination — the machine still takes one scalar per field. `dest` is how
-     * a mismatch names the destination ("slot 'symbol'"). */
+    /* ONE expression toward ONE destination: the checking — the shape fit, the
+     * element rules, the cross-enum refusal, the implicit conversions, the one-scalar
+     * rule — all lives at the pipeline boundary now (lang/compile.cpp), reading the
+     * destination as data. This shim only turns refusals into findings: one diag row
+     * per independent refusal (rule 16), each carrying its span and code as data. */
     bool expression(uint64_t node, const std::string& text, ExprTier tier,
-                    const Env& scope, const Type& expected,
+                    const Env& scope, const Dest& dest,
                     std::vector<Instruction>& code, uint32_t& max_stack,
                     Shape* actual = nullptr, const std::string& where = "",
-                    uint16_t* enum_out = nullptr, bool agg_ok = false,
-                    const std::string& dest = "this row") {
+                    uint16_t* enum_out = nullptr) {
         ExpressionResult result;
         std::vector<Refusal> refusals;
         if (!compile_expression(text, tier, scope, program_, code, result, refusals,
-                                agg_ok, expected)) {
-            /* EVERY independent finding lands as its own row (rule 16), each
-               carrying its span as data */
+                                dest)) {
             for (const Refusal& refusal : refusals)
-                diag_span(node, "expression", refusal.message, DiagGrade::Error,
+                diag_span(node, refusal.code, refusal.message, DiagGrade::Error,
                           where, refusal.at, refusal.length);
-            return false;
-        }
-        /* THE RENDER HALF of the one implicit conversion (spec 6.2), stated once for
-           EVERY text destination: an enum value moved into one reads as its variant
-           name, the way str() would spell it. The reverse half — text into an enum
-           destination — lives at the pipeline boundary (lang/compile.cpp), where a
-           constant name resolves at compile. */
-        if (expected.kind == Shape::Text && result.shape == Shape::Enum) {
-            Instruction name;
-            name.op = OpCode::Method;
-            name.a = program_.text_slots++;
-            name.b = 0;
-            name.small = static_cast<uint16_t>(MethodId::EnumName);
-            code.push_back(name);
-            result.shape = Shape::Text;
-            result.enum_type = 0;
-        }
-        if (expected.kind != Shape::Unknown && result.shape != Shape::Unknown &&
-            result.shape != Shape::Nil && result.shape != expected.kind) {
-            /* text never lands here against an enum destination: the pipeline's
-               boundary (lang/compile.cpp) converted or refused it already */
-            diag(node, "shape",
-                 "expression yields " + std::string(shape_name(result.shape)) +
-                     ", but " + dest + " wants " + shape_name(expected.kind),
-                 DiagGrade::Error, where);
-            return false;
-        }
-        /* a variant resolves against its own enum, so a cross-enum landing here can
-           only be a typed value from somewhere else — refuse it the way any other
-           wrong shape refuses */
-        if (expected.enum_id() && result.shape == Shape::Enum && result.enum_type &&
-            result.enum_type != expected.enum_id()) {
-            diag(node, "shape", "this is a different enum than the destination's",
-                 DiagGrade::Error, where);
             return false;
         }
         if (actual) *actual = result.shape;
@@ -1756,9 +1720,8 @@ class Compiler {
         sp.slot = pending.name;
         sp.cell = pending.cell;
         if (!expression(element.id, pending.text, ExprTier::Display, scope,
-                        Type(wanted), sp.body.code, sp.body.max_stack,
-                        nullptr, pending.name, nullptr, aggregate,
-                        "slot '" + pending.name + "'"))
+                        Dest{Type(wanted), "slot '" + pending.name + "'", aggregate},
+                        sp.body.code, sp.body.max_stack, nullptr, pending.name))
             return;   /* the finding is already pinned to the instance's slot row */
         /* A CONSTANT is the literal it spells: it folds into the cell's start and no
            standing program exists — a quoted caption costs what the raw literal did. */
@@ -1943,8 +1906,8 @@ class Compiler {
             /* a LIST or MAP slot takes a whole aggregate here: this is an HMI cell,
                not a machine, so the one-scalar rule steps aside for exactly its shape */
             const Shape shape = program_.cells[found->second].shape;
-            return push_scalar(element, step, flow, scope, from, Type(shape), nullptr,
-                               aggregate_shape(shape)) &&
+            return push_scalar(element, step, flow, scope, from,
+                               Dest{Type(shape), "this row", aggregate_shape(shape)}) &&
                    emit_store(flow, step_id, found->second);
         }
 
@@ -2000,69 +1963,16 @@ class Compiler {
         return shape == Shape::List || shape == Shape::Map;
     }
 
-    /* WHAT ONE ELEMENT OF THIS CELL IS, in the words it was declared with: "num", or
-     * "list of num" where the elements are rows. Empty where the declaration says
-     * nothing, which is a fact the refusal below has to speak about rather than hide. */
-    std::string element_label(const CellDef& def) const {
-        if (def.elem == Shape::Unknown) return std::string();
-        std::string text = shape_name(def.elem);
-        if ((def.elem == Shape::List || def.elem == Shape::Map) &&
-            def.leaf != Shape::Unknown)
-            text += " of " + std::string(shape_name(def.leaf));
-        return text;
-    }
-
-    /* Does what the expression yields fit ONE ELEMENT of this cell? Unknown is what a
-     * shape the compiler cannot see reads as and Nil is the erase, so both pass — the
-     * runtime is the backstop for those. With the elements UNDECLARED every scalar fits
-     * and no aggregate does: a cell that never said its elements are rows has nowhere to
-     * put one. */
-    static bool element_fits(const CellDef& def, Shape produced) {
-        if (produced == Shape::Unknown || produced == Shape::Nil) return true;
-        if (def.elem == Shape::Unknown)
-            return produced != Shape::List && produced != Shape::Map &&
-                   produced != Shape::Struct;
-        return produced == def.elem;
-    }
-
-    /* the refusal in the destination's own terms: what the list holds, what this
-     * expression yields, and the declaration that would take it */
-    std::string element_refusal(const CellDef& def, Shape produced, bool appends) const {
-        const std::string verb = appends ? "an append" : "an element write";
-        const std::string yields = "; this expression yields " +
-                                   std::string(produced == Shape::Enum ? "an " : "a ") +
-                                   shape_name(produced);
-        const std::string label = element_label(def);
-        if (label.empty()) {
-            std::string out = "'" + def.name + "' does not say what its elements are, so " +
-                              verb + " takes one scalar" + yields;
-            if (produced == Shape::List || produced == Shape::Map)
-                out += ". Declare its elements " + std::string(shape_name(produced)) +
-                       " (the variable's OF row) to make every element a row";
-            return out;
-        }
-        std::string out = "'" + def.name + "' holds " + label + " elements" + yields;
-        const bool rows = def.elem == Shape::List || def.elem == Shape::Map;
-        const bool agg = produced == Shape::List || produced == Shape::Map;
-        if (rows && !agg)
-            out += ". A row is an aggregate itself — [a, b] for a list of them";
-        else if (!rows && agg)
-            out += ". Declare its elements " + std::string(shape_name(produced)) +
-                   " (the variable's OF row) to hold rows";
-        return out;
-    }
-
     /* APPEND, KEYED or INDEXED WRITE into an aggregate cell. All push the ELEMENT
      * first and the bound (keep) or the address (key / index) after it, because the VM
      * pops what was pushed last: one instruction shape, three verbs. The address rides
      * the step's one `key` field either way — a map addresses an entry by text key, a
      * list a position by number index.
      *
-     * THE SOURCE IS ONE ELEMENT, and what one element IS is the destination's own
-     * declaration: a scalar where the elements are scalars, a whole row where they are
-     * declared list or map. So the element is compiled with the one-scalar rule stood
-     * down and TYPE CHECKED here (element_fits), where the refusal can name the list,
-     * what it holds and the declaration that would take what the author wrote. */
+     * THE SOURCE IS ONE ELEMENT: the destination handed to the pipeline is the cell's
+     * own element declaration (Dest with `element` set), so the fit refusal names the
+     * list, says what it holds, and teaches the declaration that would take what the
+     * author wrote. */
     bool aggregate_assign(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
                         Env& scope, uint32_t cell, bool appends,
                         const std::string& keep, const std::string& key) {
@@ -2084,32 +1994,21 @@ class Compiler {
             return false;
         }
         const bool indexed = !appends && def.shape == Shape::List;
-        /* THE ELEMENT'S TYPE, checked against what this destination declares ONE
-         * ELEMENT to be. The one-scalar rule cannot see that declaration, so it steps
-         * aside here (agg_ok) and the check lives where the refusal can name the list,
-         * say what it holds, and teach the declaration that would take what the author
-         * is holding — an author appending a row wants to hear about `elem`, not to be
-         * told that a wire value is one scalar. */
-        Shape produced = Shape::Unknown;
-        if (!push_scalar(element, step, flow, scope, from, Type(), &produced,
-                         /*agg_ok=*/true))
-            return false;
-        /* an enum element writes into a text list as its variant name, the same
-           coercion a text destination gets anywhere else */
-        if (def.elem == Shape::Text && produced == Shape::Enum) {
-            Instruction name;
-            name.op = OpCode::Method;
-            name.a = program_.text_slots++;
-            name.b = 0;
-            name.small = static_cast<uint16_t>(MethodId::EnumName);
-            flow.body.code.push_back(name);
-            produced = Shape::Text;
-        }
-        if (!element_fits(def, produced)) {
-            diag(step_id, "shape", element_refusal(def, produced, appends),
-                 DiagGrade::Error, "from");
-            return false;
-        }
+        /* THE ELEMENT is the destination, and what one element IS is the cell's own
+         * declaration: a scalar where the elements are scalars, a whole row where
+         * they are declared list or map. The destination rides into the pipeline as
+         * data, so the fit refusal can name the list, say what it holds, and teach
+         * the declaration that would take what the author is holding — an author
+         * appending a row wants to hear about `elem`, not that a wire value is one
+         * scalar. */
+        Dest one;
+        one.type = def.elem == Shape::List || def.elem == Shape::Map
+                       ? Type::list_of(def.elem, def.leaf)
+                       : Type(def.elem);
+        one.label = "'" + def.name + "'";
+        one.element = true;
+        one.append = appends;
+        if (!push_scalar(element, step, flow, scope, from, one)) return false;
         if (appends) {
             /* the bound is compiled ON TOP of the element already on the stack, so its
                own depth is one deeper than the expression alone would need */
@@ -2123,8 +2022,9 @@ class Compiler {
                 flow.body.code.push_back(nothing);
                 flow.body.max_stack = std::max(flow.body.max_stack, 2u);
             } else {
-                if (!expression(step_id, keep, ExprTier::Wire, scope, Type(Shape::Num),
-                                flow.body.code, bound_stack, nullptr, "keep"))
+                if (!expression(step_id, keep, ExprTier::Wire, scope,
+                                Dest{Type(Shape::Num)}, flow.body.code, bound_stack,
+                                nullptr, "keep"))
                     return false;
                 flow.body.max_stack = std::max(flow.body.max_stack, bound_stack + 1);
                 /* a COURTESY check: a keep the folder can read that is past what a buffer
@@ -2161,8 +2061,8 @@ class Compiler {
            text key, or a list's number index */
         uint32_t key_stack = 1;
         if (!expression(step_id, key, ExprTier::Wire, scope,
-                        Type(indexed ? Shape::Num : Shape::Text), flow.body.code, key_stack,
-                        nullptr, "key"))
+                        Dest{Type(indexed ? Shape::Num : Shape::Text)}, flow.body.code,
+                        key_stack, nullptr, "key"))
             return false;
         flow.body.max_stack = std::max(flow.body.max_stack, key_stack + 1);
         Instruction ins;
@@ -2197,17 +2097,16 @@ class Compiler {
 
     /* Put ONE value on the stack from an assignment's rvalue. The rvalue is always an
      * EXPRESSION now — a mesh read is `@name` / `@name.field`, bound into the flow's
-     * scope by bind_entities — so this is one compile, one vocabulary. `agg_ok` says
-     * the destination is a declared HMI aggregate, which may take a whole list or map
-     * (copy a variable, rebuild one with a map/filter). */
+     * scope by bind_entities — so this is one compile, one vocabulary, one typed
+     * destination riding in as data. */
     bool push_scalar(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
-                     Env& scope, const FromDecl& from, const Type& expected,
-                     Shape* actual = nullptr, bool agg_ok = false) {
+                     Env& scope, const FromDecl& from, const Dest& dest,
+                     Shape* actual = nullptr) {
         (void)element;
         if (from.has_expr)
             return expression(step.id, from.expr_text ? from.expr : "x", ExprTier::Wire,
-                              scope, expected, flow.body.code, flow.body.max_stack, actual, "from",
-                              nullptr, agg_ok);
+                              scope, dest, flow.body.code, flow.body.max_stack, actual,
+                              "from");
         diag(step.id, "move_source", "this assignment has no value", DiagGrade::Error,
              "from");
         return false;
@@ -2320,7 +2219,7 @@ class Compiler {
             Shape produced = Shape::Unknown;
             uint16_t produced_type = 0;
             if (!expression(step_id, from.expr_text ? from.expr : "x", ExprTier::Wire,
-                            scope, Type(), flow.body.code, flow.body.max_stack, &produced,
+                            scope, Dest{}, flow.body.code, flow.body.max_stack, &produced,
                             "from", &produced_type)) {
                 return false;
             }
@@ -2373,12 +2272,13 @@ class Compiler {
                     return false;
                 }
                 return push_scalar(element, step, flow, scope, from,
-                                   Type(fields[field].shape), nullptr, /*agg_ok=*/true) &&
+                                   Dest{Type(fields[field].shape), "this row",
+                                        /*aggregate_ok=*/true}) &&
                        emit_store(flow, step_id, derived) &&
                        mark_field(flow, derived);
             }
             if (!push_scalar(element, step, flow, scope, from,
-                             Type(fields[field].shape, fields[field].type_id)))
+                             Dest{Type(fields[field].shape, fields[field].type_id)}))
                 return false;
             Instruction set;
             set.op = OpCode::StoreField;
@@ -2446,14 +2346,14 @@ class Compiler {
            machine. */
         if (cell != UINT32_MAX) {
             if (!push_scalar(element, step, flow, scope, from,
-                             Type(wanted, program_.cells[cell].type_id), nullptr,
-                             aggregate_shape(wanted)))
+                             Dest{Type(wanted, program_.cells[cell].type_id), "this row",
+                                  aggregate_shape(wanted)}))
                 return false;
             return emit_store(flow, step_id, cell);
         }
         Shape produced = Shape::Unknown;
         const size_t mark = flow.body.code.size();
-        if (!push_scalar(element, step, flow, scope, from, Type(), &produced)) return false;
+        if (!push_scalar(element, step, flow, scope, from, Dest{}, &produced)) return false;
         if (cell == UINT32_MAX) {
             if (produced == Shape::Unknown || produced == Shape::Nil) {
                 diag(step_id, "temp_shape",
@@ -2583,8 +2483,9 @@ class Compiler {
                              DiagGrade::Error, "to");
                         return false;
                     }
-                    if (!push_scalar(element, step, flow, scope, from, Type(Shape::List),
-                                     nullptr, /*agg_ok=*/true))
+                    if (!push_scalar(element, step, flow, scope, from,
+                                     Dest{Type(Shape::List), "this row",
+                                          /*aggregate_ok=*/true}))
                         return false;
                     out.b = static_cast<uint32_t>(field);
                     flow.body.code.push_back(out);
@@ -2609,11 +2510,12 @@ class Compiler {
                          DiagGrade::Error, "to");
                     return false;
                 }
-                if (!push_scalar(element, step, flow, scope, from, Type(fdef.elem)))
+                if (!push_scalar(element, step, flow, scope, from, Dest{Type(fdef.elem)}))
                     return false;
                 uint32_t key_stack = 1;
-                if (!expression(step_id, key, ExprTier::Wire, scope, Type(Shape::Num),
-                                flow.body.code, key_stack, nullptr, "key"))
+                if (!expression(step_id, key, ExprTier::Wire, scope,
+                                Dest{Type(Shape::Num)}, flow.body.code, key_stack,
+                                nullptr, "key"))
                     return false;
                 flow.body.max_stack = std::max(flow.body.max_stack, key_stack + 1);
                 out.op = OpCode::MoveOutElem;
@@ -2635,7 +2537,7 @@ class Compiler {
                 return false;
             }
             if (!push_scalar(element, step, flow, scope, from,
-                             Type(fdef.shape, fdef.type_id)))
+                             Dest{Type(fdef.shape, fdef.type_id)}))
                 return false;
             out.b = static_cast<uint32_t>(field);
         }
@@ -2740,7 +2642,7 @@ class Compiler {
             !trimmed(step.key).empty())
             return true;                                /* aggregate: plain stand-down */
         if (!push_scalar(element, step, flow, scope, step.from,
-                         Type(def.shape, def.type_id)))
+                         Dest{Type(def.shape, def.type_id)}))
             return false;
         const uint32_t shadow =
             add_temp_cell(flow.flow_id, element.id, "this." + slot + "'", def.shape);
@@ -2800,8 +2702,8 @@ class Compiler {
                      "raise " + name + " needs " + pname, DiagGrade::Error, "args");
                 return false;
             }
-            if (!expression(step_id, text, ExprTier::Wire, scope, Type(shape), flow.body.code,
-                            flow.body.max_stack, nullptr, "args"))
+            if (!expression(step_id, text, ExprTier::Wire, scope, Dest{Type(shape)},
+                            flow.body.code, flow.body.max_stack, nullptr, "args"))
                 return false;
             has_arg = true;
         }
@@ -2838,7 +2740,7 @@ class Compiler {
             return false;
         }
         Shape actual = Shape::Unknown;
-        if (!expression(step_id, text, ExprTier::Display, scope, Type(),
+        if (!expression(step_id, text, ExprTier::Display, scope, Dest{},
                         flow.body.code, flow.body.max_stack, &actual, "text"))
             return false;
         if (actual == Shape::List || actual == Shape::Map) {
@@ -2850,8 +2752,8 @@ class Compiler {
         }
         const std::string ms = trimmed(step.ms);
         if (!ms.empty() &&
-            !expression(step_id, ms, ExprTier::Display, scope, Type(Shape::Num), flow.body.code,
-                        flow.body.max_stack, nullptr, "ms"))
+            !expression(step_id, ms, ExprTier::Display, scope, Dest{Type(Shape::Num)},
+                        flow.body.code, flow.body.max_stack, nullptr, "ms"))
             return false;
         Instruction ins;
         ins.op = OpCode::Notify;
@@ -2914,7 +2816,8 @@ class Compiler {
                 const std::string condition =
                     step.a.kind == NumOrText::Kind::Text ? step.a.text : "";
                 if (!expression(step_id, condition, ExprTier::Wire, scope,
-                                Type(Shape::Bool), flow.body.code, flow.body.max_stack))
+                                Dest{Type(Shape::Bool)}, flow.body.code,
+                                flow.body.max_stack))
                     return false;
                 Instruction gate{OpCode::Gate};
                 /* not a fault: the counter behind this site is how a gate on an
