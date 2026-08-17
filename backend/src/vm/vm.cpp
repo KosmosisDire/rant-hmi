@@ -992,6 +992,10 @@ bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t 
     return copy_effect_text(program, state, effect, value, UINT32_MAX);
 }
 
+/* A whole message goes out AS GIVEN: an UNKNOWN field rides as Nil, which the encode
+ * and the mirror both read as "not given" — the RMW base keeps the owner's own bytes
+ * for it, coherent because a mesh field is not erasable. Un-set-ness IS Nil-ness;
+ * nothing else marks it. */
 bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
                  const StructState& value) noexcept {
     if (state.effect_count >= state.effects.size()) return false;
@@ -1003,15 +1007,18 @@ bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_
     if (value.fields.size() > effect.fields.size()) return false;
     reset_effect_aggs(effect);
     for (uint32_t i = 0; i < value.fields.size(); ++i) {
-        if (value.fields[i].tag == ValueTag::Nil) return false;
         effect.fields[i] = value.fields[i];
-        effect.set[i] = value.set[i];
         if ((value.fields[i].tag == ValueTag::List ||
              value.fields[i].tag == ValueTag::Map) &&
             !copy_effect_agg(program, state, effect, value.fields[i], i))
             return false;
         if (!copy_effect_text(program, state, effect, value.fields[i], i)) return false;
     }
+    /* the record is POOLED: fields past this type's width clear so a stale value from
+       the record's last life can never read as given */
+    for (uint32_t i = static_cast<uint32_t>(value.fields.size());
+         i < effect.fields.size(); ++i)
+        effect.fields[i] = Value::nil();
     ++state.effect_count;
     return true;
 }
@@ -1326,9 +1333,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 result.halted = true;
                 break;
             }
-            /* the cell's DECLARED START: the type's zero with no bit set, then the
-             * cell's authored defaults over it. A typed temporary's declaring row and a
-             * variable's reset are both this one instruction. */
+            /* the cell's DECLARED START: every field UNKNOWN, then the cell's authored
+             * defaults over it. A never-set field holding Nil is the whole of set-ness
+             * — a move out keeps the owner's bytes for it — and an aggregate field's
+             * storage is cleared by the first write that brings the field alive, so
+             * this touches no rows. A typed temporary's declaring row and a variable's
+             * reset are both this one instruction. */
             case OpCode::New: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
@@ -1339,33 +1349,19 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     break;
                 }
                 StructState& item = *slot_item;
-                const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
-                std::fill(item.set.begin(), item.set.end(), uint8_t{0});
-                for (uint32_t i = 0; i < item.fields.size(); ++i)
-                    item.fields[i] = zero_value(i < defs.size() ? defs[i].shape : Shape::Unknown);
+                for (Value& field : item.fields) field = Value::nil();
                 if (ins.a < program.cells.size())
                     for (const auto& start : program.cells[ins.a].struct_init) {
                         if (start.first >= item.fields.size()) continue;
                         item.fields[start.first] = start.second;
-                        item.set[start.first] = 1;
                     }
-                /* aggregate fields reset to their derived cells' EMPTY state and the
-                   handles land back in the fields */
-                if (holder.ref < program.struct_field_cells.size()) {
-                    const std::vector<uint32_t>& row =
-                        program.struct_field_cells[holder.ref];
-                    for (uint32_t i = 0; i < row.size() && i < item.fields.size(); ++i) {
-                        if (row[i] == UINT32_MAX) continue;
-                        state.hold_list(program, state, row[i],
-                                        program.cells[row[i]].list_slot, nullptr, 0,
-                                        program.cells[row[i]].shape == Shape::Map);
-                        item.fields[i] = state.values[row[i]];
-                    }
-                }
                 break;
             }
-            /* `read <entity> -> cell`: the cached last value, every bit set, which is
-             * read-modify-write stated as a line rather than hidden in a seed mode */
+            /* `read <entity> -> cell`: the cached last value — read-modify-write
+             * stated as a line rather than hidden in a seed mode. SCALAR fields only:
+             * a field the cache does not know reads UNKNOWN, and the compiler emits
+             * each AGGREGATE field's copy beside this instruction (an entity-place
+             * Load of the mirror, stored whole into the field's derived cell). */
             case OpCode::ReadEnt: {
                 const Value holder = ins.a < state.values.size() ? state.values[ins.a]
                                                                  : Value::nil();
@@ -1378,39 +1374,9 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 StructState& item = *slot_item;
                 const LastValueState& last = state.last[ins.b];
                 const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
-                const std::vector<uint32_t>* derived_row =
-                    holder.ref < program.struct_field_cells.size()
-                        ? &program.struct_field_cells[holder.ref]
-                        : nullptr;
                 for (uint32_t i = 0; i < item.fields.size(); ++i) {
                     const Shape shape = i < defs.size() ? defs[i].shape : Shape::Unknown;
-                    /* an AGGREGATE field copies the entity's mirror into its derived
-                     * cell. With no delivery to copy, the field stays UNSET so a move
-                     * out keeps the owner's bytes — an invented empty array would
-                     * zero the machine's. */
-                    if (shape == Shape::List || shape == Shape::Map) {
-                        const uint32_t derived =
-                            derived_row && i < derived_row->size() ? (*derived_row)[i]
-                                                                   : UINT32_MAX;
-                        if (derived == UINT32_MAX) {
-                            item.fields[i] = zero_value(shape);
-                            item.set[i] = 0;
-                            continue;
-                        }
-                        const bool pairs = shape == Shape::Map;
-                        const Value mirror = last.known && i < last.fields.size()
-                                                 ? last.fields[i]
-                                                 : Value::nil();
-                        const bool known = value_shape(mirror) == shape;
-                        const AggView view =
-                            known ? state.aggregate(mirror) : AggView{};
-                        state.hold_list(program, state, derived,
-                                        program.cells[derived].list_slot, view.data,
-                                        view.count, pairs);
-                        item.fields[i] = state.values[derived];
-                        item.set[i] = known ? 1 : 0;
-                        continue;
-                    }
+                    if (shape == Shape::List || shape == Shape::Map) continue;
                     item.fields[i] = last.known && i < last.fields.size() ? last.fields[i]
                                                                           : Value::nil();
                     /* re-home cached text into the struct's own slot (the field
@@ -1423,7 +1389,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                             item.fields[i] = Value::text(item.texts[i]);
                         }
                     }
-                    item.set[i] = 1;
                 }
                 break;
             }

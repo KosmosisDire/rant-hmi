@@ -18,16 +18,18 @@ struct FixedText {
     std::string_view view() const noexcept;
 };
 
-/* One struct value's storage: its fields plus a set-bit each. The set bits are what
- * makes read-modify-write honest on the way out (spec 5.8): a fresh value sets none, a
- * read sets all, and a field write sets its own. Text fields own a FixedText slot each
- * (`texts`, UINT32_MAX where the field is not text): text landing in a struct is copied
- * into the struct's own slot, so the value at rest never points into a site's scratch
- * and a declared variable's text can migrate across a recompile. */
+/* One struct value's storage: its fields, where a field NOBODY HAS SET holds Nil —
+ * un-set-ness IS Unknown-ness (stage 6c), which is what makes read-modify-write
+ * honest on the way out (spec 5.8): the encode keeps the owner's own bytes for every
+ * Nil field, coherent because a mesh field is not erasable. A fresh value knows
+ * nothing but its authored defaults; a read fills what the cache knows; a write
+ * fills its field. Text fields own a FixedText slot each (`texts`, UINT32_MAX where
+ * the field is not text): text landing in a struct is copied into the struct's own
+ * slot, so the value at rest never points into a site's scratch and a declared
+ * variable's text can migrate across a recompile. */
 struct StructState {
     uint16_t type_id = 0;
     std::vector<Value> fields;
-    std::vector<uint8_t> set;
     std::vector<uint32_t> texts;
 };
 
@@ -130,8 +132,9 @@ struct EffectRecord {
      * must set it — a stale index would turn the next field write into an element one. */
     uint32_t elem_index = UINT32_MAX;
     Value value = Value::nil();
+    /* the message's fields AS GIVEN: a Nil field was never set, and both the encode
+     * and the mirror leave the owner's own value standing for it */
     std::vector<Value> fields;
-    std::vector<uint8_t> set;
     FixedText bare_text;
     std::vector<FixedText> field_text;
     /* AGGREGATE payloads, deep-copied at EMIT exactly as scalar values are (a later
@@ -341,7 +344,8 @@ class RuntimeState {
      * Elem's index, Key's key, an Append's keep bound, a Leaf's outer address; `step2`
      * is the Leaf place's second (Assign: the inner index or key; Append: the keep).
      * A write that lands in a struct's aggregate-field storage (CellDef::field_of)
-     * refreshes the owner's field — its set bit and its handle — as part of the write.
+     * starts the storage fresh when the field is still Unknown and refreshes the
+     * owner's field handle afterwards, as part of the write.
      * False is a REFUSAL the caller faults on: a foreign element, a miss, a full
      * buffer — never a silent drop. */
     bool write(const Program& program, uint32_t cell, uint32_t field, StorePlace place,
@@ -416,7 +420,5 @@ class RuntimeState {
 
 RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_state,
                            const Program& new_program);
-
-Value zero_value(Shape shape);
 
 } // namespace hmi

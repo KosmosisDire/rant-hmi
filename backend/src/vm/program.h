@@ -294,11 +294,6 @@ struct Program : Module {
      * compiling there). Empty text = every site the node owns. A rename that would
      * touch a blind site refuses rather than rewriting what nothing vouched for. */
     std::vector<RefSite> reference_gaps;
-    /* [struct slot][field] -> the derived cell holding that aggregate field's entries
-     * (UINT32_MAX where the field is scalar). What ReadEnt fills, New clears, and a
-     * move out resolves elements from; a store into a derived cell refreshes the
-     * owner's field on its own. */
-    std::vector<std::vector<uint32_t>> struct_field_cells;
     ProgramLayout layout;
 
     const char* disassemble() const = delete;

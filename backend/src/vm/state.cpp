@@ -117,22 +117,6 @@ std::string_view FixedText::view() const noexcept {
     return bytes.empty() ? std::string_view{} : std::string_view(bytes.data(), length);
 }
 
-Value zero_value(Shape shape) {
-    switch (shape) {
-        case Shape::Num: return Value::number(0);
-        case Shape::Bool: return Value::boolean(false);
-        case Shape::Enum: return Value::enumeration(0, 0);
-        case Shape::Color: return Value::color(0x00000000u);
-        case Shape::Text: return Value::text(kConstantRef);
-        /* aggregates in a struct are inert empty placeholders: never Nil (a move out
-         * must not fault on a field the wire side cannot set anyway; the RMW base
-         * preserves the owner's actual bytes) */
-        case Shape::List: return Value::list(0, 0, ValueTag::Nil);
-        case Shape::Map: return Value::map(0, 0);
-        default: return Value::nil();
-    }
-}
-
 /* An element costs its Value, and a TEXT element costs the text slot that holds its bytes
  * as well — a position that has ever held text keeps one for the buffer's life. An
  * UNDECLARED element is charged as text because it may become one, which is the honest
@@ -246,19 +230,16 @@ RuntimeState::RuntimeState(const Program& program) {
         item.type_id = program.structs[i];
         const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
         const uint32_t n = static_cast<uint32_t>(defs.size());
-        /* born ZEROED with no bit set (spec 2.7): a declared struct variable reads as
-         * its type's zero before anything writes it, and a move out of one carries only
-         * the fields that were actually given */
+        /* born UNKNOWN (spec 2.7): a field nobody has set holds Nil, and a move out
+         * keeps the owner's bytes for every such field — the authored defaults land
+         * over this below */
         item.fields.resize(n, Value::nil());
-        item.set.resize(n, 0);
         item.texts.assign(n, UINT32_MAX);
-        for (uint32_t f = 0; f < n; ++f) {
-            item.fields[f] = zero_value(defs[f].shape);
+        for (uint32_t f = 0; f < n; ++f)
             if (defs[f].shape == Shape::Text) {
                 item.texts[f] = static_cast<uint32_t>(texts.size());
                 texts.emplace_back(kDefaultTextCap);
             }
-        }
     }
     /* THE FRAME: the storage the active run owns. Site text slots first, then the
        frame locals' own field text, then the element text region the cursor deals. */
@@ -274,15 +255,12 @@ RuntimeState::RuntimeState(const Program& program) {
         const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
         const uint32_t n = static_cast<uint32_t>(defs.size());
         item.fields.resize(n, Value::nil());
-        item.set.resize(n, 0);
         item.texts.assign(n, UINT32_MAX);
-        for (uint32_t f = 0; f < n; ++f) {
-            item.fields[f] = zero_value(defs[f].shape);
+        for (uint32_t f = 0; f < n; ++f)
             if (defs[f].shape == Shape::Text) {
                 item.texts[f] = kFrameRef | static_cast<uint32_t>(frame.texts.size());
                 frame.texts.emplace_back(kDefaultTextCap);
             }
-        }
         frame.locals.push_back(std::move(item));
     }
     frame.text_base = static_cast<uint32_t>(frame.texts.size());
@@ -295,7 +273,8 @@ RuntimeState::RuntimeState(const Program& program) {
     /* a struct-shaped cell POINTS at its slot: the Value is the handle, the fields
      * live in the slot's own storage, so a cell read pushes something copyable and a
      * field write lands in exactly one place. A declared variable's authored
-     * DEFAULTS land over the zero. */
+     * DEFAULTS land over the Unknown; every other field — the aggregates included —
+     * stays Nil until something writes it. */
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
         if (cell.shape != Shape::Struct) continue;
@@ -305,19 +284,7 @@ RuntimeState::RuntimeState(const Program& program) {
         for (const auto& start : cell.struct_init) {
             if (start.first >= item->fields.size()) continue;
             item->fields[start.first] = start.second;
-            item->set[start.first] = 1;
         }
-    }
-    /* a struct's AGGREGATE fields mirror their derived cells' handles (born-empty
-       retained lists, seeded just above), replacing the inert scratch placeholder */
-    for (uint32_t i = 0; i < program.cells.size(); ++i) {
-        const CellDef& cell = program.cells[i];
-        if (cell.field_of == UINT32_MAX || cell.field_of >= program.cells.size())
-            continue;
-        StructState* owner = struct_at(program.cells[cell.field_of].struct_slot);
-        if (!owner) continue;
-        if (cell.field_index < owner->fields.size())
-            owner->fields[cell.field_index] = values[i];
     }
 
     last.resize(program.entities.size());
@@ -361,7 +328,6 @@ RuntimeState::RuntimeState(const Program& program) {
     effects.resize(std::max<uint32_t>(program.layout.effect_capacity, 1));
     for (EffectRecord& effect : effects) {
         effect.fields.resize(max_fields, Value::nil());
-        effect.set.resize(max_fields, 0);
         effect.bare_text = FixedText(kDefaultTextCap);
         effect.field_text.reserve(max_fields);
         for (uint32_t i = 0; i < max_fields; ++i)
@@ -1434,31 +1400,29 @@ bool RuntimeState::write_field(const Program& program, uint32_t cell_index, uint
         }
     }
     item->fields[field] = value;
-    item->set[field] = 1;
     return true;
-}
-
-/* A write that landed in a struct's aggregate-field storage refreshes the OWNER: the
- * field's set bit — what decides whether a move out carries these elements or the RMW
- * base keeps the owner's bytes — and the field's handle, which has to name the count
- * this write just made true. Part of the write itself, so no instruction anywhere has
- * to remember to follow a store. */
-static void refresh_owner(const Program& program, RuntimeState& state,
-                          uint32_t cell_index) noexcept {
-    const CellDef& cell = program.cells[cell_index];
-    if (cell.field_of == UINT32_MAX || cell.field_of >= state.values.size()) return;
-    const Value holder = state.values[cell.field_of];
-    StructState* item =
-        holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
-    if (!item || cell.field_index >= item->fields.size()) return;
-    if (cell.field_index < item->set.size()) item->set[cell.field_index] = 1;
-    item->fields[cell.field_index] = state.values[cell_index];
 }
 
 bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
                          StorePlace place, StoreMode mode, Value value, const Value& step,
                          const Value& step2) noexcept {
     if (cell >= values.size() || cell >= program.cells.size()) return false;
+    /* THE OWNER HANDSHAKE, both halves of it: a write landing in a struct's
+     * aggregate-field storage (a derived cell) first STARTS THE STORAGE FRESH when
+     * the field is still Unknown — New leaves the field Nil and touches no rows, so
+     * whatever the slot held in the struct's previous life clears the moment the
+     * field comes alive — and afterwards refreshes the owner's field with the
+     * handle this write just made true. Part of the write itself, so no instruction
+     * anywhere has to remember to follow a store. */
+    const CellDef& def = program.cells[cell];
+    StructState* owner = nullptr;
+    if (def.field_of != UINT32_MAX && def.field_of < values.size()) {
+        const Value holder = values[def.field_of];
+        owner = holder.tag == ValueTag::Struct ? struct_at(holder.ref) : nullptr;
+        if (owner && def.field_index < owner->fields.size() &&
+            owner->fields[def.field_index].tag == ValueTag::Nil)
+            write_whole(program, cell, Value::nil());
+    }
     bool landed = false;
     if (mode == StoreMode::Append) {
         landed = place == StorePlace::Cell
@@ -1478,7 +1442,8 @@ bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
                 break;
         }
     }
-    if (landed) refresh_owner(program, *this, cell);
+    if (landed && owner && def.field_index < owner->fields.size())
+        owner->fields[def.field_index] = values[cell];
     return landed;
 }
 
@@ -1515,15 +1480,15 @@ bool same_struct_type(const Program& a, uint16_t a_type, const Program& b, uint1
 
 /* Carry a declared struct variable's fields into the new run's slot. Values copy
  * directly except text (re-homed into the new slot's own FixedText) and aggregates
- * (they point into the old run's element pool, so they stay the zeroed placeholder);
- * enum values are restamped with the new program's type id. */
+ * (their content migrates by the derived cells' own names, and the re-point pass
+ * below hands the owner the new handles); enum values are restamped with the new
+ * program's type id. A Nil field stays Nil — Unknown migrates as Unknown. */
 void migrate_struct(const Program& old_program, const RuntimeState& old_state,
                     const StructState& src, const Program& new_program,
                     RuntimeState& next, StructState& dst) {
     const std::vector<FieldDef>& defs = struct_fields(new_program, dst.type_id);
     for (uint32_t f = 0; f < defs.size() && f < src.fields.size(); ++f) {
         const Value& value = src.fields[f];
-        dst.set[f] = src.set[f];
         switch (defs[f].shape) {
             case Shape::Text:
                 if (value.tag == ValueTag::Text && f < dst.texts.size() &&

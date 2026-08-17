@@ -1361,40 +1361,41 @@ class Compiler {
         return Type(field.shape, field.type_id);
     }
 
-    /* the derived cell holding one aggregate field of a struct cell, else UINT32_MAX */
+    /* the derived cell holding one aggregate field of a struct cell, else UINT32_MAX.
+     * The map is the COMPILER'S working record (the runtime resolves through the
+     * derived cells' own field_of backpointers and the owner's field handles). */
     uint32_t field_cell(uint32_t struct_cell, uint32_t field) const {
         const uint32_t slot = program_.cells[struct_cell].struct_slot;
-        if (slot >= program_.struct_field_cells.size()) return UINT32_MAX;
-        const std::vector<uint32_t>& row = program_.struct_field_cells[slot];
+        if (slot >= field_cells_.size()) return UINT32_MAX;
+        const std::vector<uint32_t>& row = field_cells_[slot];
         return field < row.size() ? row[field] : UINT32_MAX;
     }
 
     /* Every aggregate field of a fresh struct cell gets a DERIVED CELL of its own
      * ("jogCmd.v"): an ordinary list/map cell — born empty, element-typed by the
-     * field, taking every aggregate write verb, migrating by name — that IS the
-     * field's storage. The struct's own field Value mirrors its handle for a move
-     * out; Program.struct_field_cells is the map every tier resolves through. The
+     * field, migrating by name — that IS the field's storage. Writes land in it and
+     * refresh the owner's field handle themselves; reads go through the field. The
      * cells never publish (field_of marks them; the struct's key would collide). */
     void add_field_cells(CellKind kind, uint64_t owner, uint64_t flow_id,
                          const std::string& name, uint32_t struct_cell) {
         const uint16_t type_id = program_.cells[struct_cell].type_id;
         const uint32_t slot = program_.cells[struct_cell].struct_slot;
         const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
-        if (program_.struct_field_cells.size() <= slot)
-            program_.struct_field_cells.resize(slot + 1);
-        program_.struct_field_cells[slot].assign(fields.size(), UINT32_MAX);
+        if (field_cells_.size() <= slot) field_cells_.resize(slot + 1);
+        field_cells_[slot].assign(fields.size(), UINT32_MAX);
         for (uint32_t i = 0; i < fields.size(); ++i) {
             if (fields[i].shape != Shape::List && fields[i].shape != Shape::Map)
                 continue;
             const uint32_t cell = add_cell(kind, owner, 0, name + "." + fields[i].path,
                                            fields[i].shape, Json(), false);
             CellDef& def = program_.cells[cell];
-            def.has_list = true;   /* born EMPTY: appendable from birth, never UNKNOWN */
+            def.has_list = true;   /* born EMPTY storage; the FIELD stays UNKNOWN until
+                                      something writes it */
             def.elem = fields[i].elem;
             def.field_of = struct_cell;
             def.field_index = static_cast<uint16_t>(i);
             def.owner_flow = flow_id;
-            program_.struct_field_cells[slot][i] = cell;
+            field_cells_[slot][i] = cell;
         }
     }
 
@@ -2020,7 +2021,7 @@ class Compiler {
                 reference(step_id, name, program_.cells[cell].decl);
                 /* a struct value's AGGREGATE FIELD is its derived cell: the same
                    places a list variable takes, and the store itself refreshes the
-                   owner's set bit and handle */
+                   owner's field handle */
                 if (!path.empty()) {
                     const uint32_t derived =
                         resolve_field_cell(cell, name, path, step_id);
@@ -2356,7 +2357,7 @@ class Compiler {
             /* an AGGREGATE field of a struct value is its derived cell: a whole list
                or map lands there exactly as it lands in a declared list variable —
                the one-scalar rule steps aside for a declared HMI aggregate — and the
-               store refreshes the set bit a move out reads */
+               store refreshes the field handle a move out reads */
             if (fields[field].shape == Shape::List || fields[field].shape == Shape::Map) {
                 const uint32_t derived = field_cell(cell, static_cast<uint32_t>(field));
                 if (derived == UINT32_MAX) {
@@ -2419,6 +2420,34 @@ class Compiler {
             ins.b = static_cast<uint32_t>(read_entity);
             ins.c = fault_site(step_id, "move_new", "the value could not be created");
             flow.body.code.push_back(ins);
+            /* each AGGREGATE field's copy compiles beside the read: the entity's
+               cached mirror, stored whole into the field's derived cell — Nil where
+               the cache has never held one, which leaves the field UNKNOWN so a move
+               out keeps the owner's bytes rather than zeroing the machine's array */
+            const std::vector<FieldDef>& fields = struct_fields(program_, struct_type);
+            for (uint32_t i = 0; i < fields.size(); ++i) {
+                if (fields[i].shape != Shape::List && fields[i].shape != Shape::Map)
+                    continue;
+                const uint32_t derived = field_cell(cell, i);
+                if (derived == UINT32_MAX) continue;
+                Instruction mirror;
+                mirror.op = OpCode::Load;
+                mirror.small = static_cast<uint16_t>(LoadPlace::Entity);
+                mirror.a = static_cast<uint32_t>(read_entity);
+                mirror.b = i;
+                mirror.c = fault_site(step_id, "move_new",
+                                      "the entity's cached elements could not be read");
+                flow.body.code.push_back(mirror);
+                flow.body.max_stack = std::max(flow.body.max_stack, 1u);
+                Instruction land;
+                land.op = OpCode::Store;
+                land.a = derived;
+                land.c = fault_site(
+                    step_id, "move_new",
+                    "'" + name + "." + fields[i].path +
+                        "' could not take the entity's cached elements");
+                flow.body.code.push_back(land);
+            }
             return true;
         }
 
@@ -3174,6 +3203,10 @@ class Compiler {
     const MeshPort& mesh_;
     Program program_;
     bool has_errors_ = false;
+    /* [struct slot][field] -> the derived cell holding that aggregate field's
+     * entries (UINT32_MAX where the field is scalar): the compiler's own record of
+     * the storage it allotted, consulted to bind writes and the read-side copies */
+    std::vector<std::vector<uint32_t>> field_cells_;
     std::unordered_map<std::string, uint32_t> globals_;
     std::unordered_map<std::string, std::string> tokens_;     /* token name -> dark value */
     std::unordered_map<std::string, uint16_t> struct_keys_;   /* schema key -> type id */

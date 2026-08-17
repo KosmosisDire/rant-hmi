@@ -82,8 +82,8 @@ needs — an element index, a map key, the append's keep bound — was pushed
 ABOVE the value and pops first. \`c\` is the fault site: a place that refuses
 the value (a foreign element, a miss, a full buffer) faults loudly rather
 than dropping the write. A store that lands in a struct's aggregate-field
-storage refreshes the owner's field — the set bit and the handle — as part
-of the write, so no separate instruction follows a store anywhere.`,
+storage refreshes the owner's field handle as part of the write, so no
+separate instruction follows a store anywhere.`,
   },
   { name: "TmrStart" },
   { name: "TmrCancel" },

@@ -1224,8 +1224,8 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                    bounds are the owner's, and an element write never grows. */
                 if (effect.elem_index == UINT32_MAX) {
                     const bool given =
-                        effect.bare || (effect.set && index < effect.field_count &&
-                                        effect.set[index]);
+                        effect.bare || (effect.fields && index < effect.field_count &&
+                                        effect.fields[index].tag != ValueTag::Nil);
                     const MeshElems* span =
                         effect.elems && index < effect.field_count
                             ? &effect.elems[index]
@@ -1325,8 +1325,8 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                    unforgivable outcome; ungiven, the RMW base keeps the owner's
                    bytes untouched as ever. */
                 const bool given =
-                    !effect.bare && effect.set && index < effect.field_count &&
-                    effect.set[index] && effect.elems && index < effect.field_count &&
+                    !effect.bare && effect.fields && index < effect.field_count &&
+                    effect.fields[index].tag != ValueTag::Nil && effect.elems &&
                     effect.elems[index].data;
                 if (given) {
                     fault = "field '" + enc.path +
@@ -1355,6 +1355,10 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
         const uint32_t count =
             std::min<uint32_t>(effect.field_count, static_cast<uint32_t>(rec.enc.size()));
         for (uint32_t i = 0; i < count; ++i) {
+            /* an UNGIVEN (Nil) field keeps the RMW base's own bytes: what the author
+               never set must not zero the machine's value, and a mesh field is not
+               erasable so there is nothing else Nil could honestly mean here */
+            if (effect.fields[i].tag == ValueTag::Nil) continue;
             const std::string_view text =
                 effect.field_text ? effect.field_text[i].view() : std::string_view{};
             if (!set_one(i, effect.fields[i], text)) return false;

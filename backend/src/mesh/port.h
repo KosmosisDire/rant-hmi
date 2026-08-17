@@ -26,8 +26,9 @@ struct EffectView {
      * own bytes, so the rest of the owner's array rides through untouched. */
     uint32_t elem_index = UINT32_MAX;
     Value value = Value::nil();
+    /* the message's fields AS GIVEN: a Nil field was never set, and the encode keeps
+     * the RMW base's own bytes for it (a mesh field is not erasable) */
     const Value* fields = nullptr;
-    const uint8_t* set = nullptr;
     uint32_t field_count = 0;
     std::string_view bare_text;
     const FixedText* field_text = nullptr;

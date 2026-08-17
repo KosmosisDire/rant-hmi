@@ -199,3 +199,15 @@ store_leaf
 # Load is the mesh read, every other place moves with the ticks.
 LoadField
 LoadEnt
+
+# stage 6c, set-bits are Unknown-ness: a field NOBODY HAS SET holds Nil, and that is
+# the whole of given-ness — the encode and the mirror keep the owner's own value for
+# every Nil field (a mesh field is not erasable, so Nil could mean nothing else on
+# the way out). The struct slot's bit vector, the effect record's copy of it and the
+# program's owner-to-derived-cell table all died structurally with it; the compiler
+# keeps its own map of the storage it allots, and the runtime resolves through the
+# derived cells' field_of backpointers and the owner's field handles. The
+# manufacture-a-zero helper lost its last caller with the rule that made it: a fresh
+# field is UNKNOWN, never an invented zero.
+struct_field_cells
+zero_value

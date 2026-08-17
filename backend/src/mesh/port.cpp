@@ -52,6 +52,9 @@ static void mirror_write(RuntimeState& state, const EffectRecord& record) noexce
     }
     for (uint32_t f = 0; f < last.fields.size(); ++f) {
         const Value value = f < record.fields.size() ? record.fields[f] : Value::nil();
+        /* an UNSET (Nil) field keeps whatever the owner last delivered — the mirror
+           tells the same keep-the-owner's story the encode does */
+        if (value.tag == ValueTag::Nil) continue;
         /* aggregate fields mirrored via mirror_agg; the retained-mirror handle it
            set must survive this scalar sweep */
         if (value.tag == ValueTag::List || value.tag == ValueTag::Map) continue;
@@ -135,9 +138,10 @@ bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
                 spans[f] = MeshElems{record.agg_values.data() + span.first,
                                      views.data() + span.first, span.second};
                 any_aggs = true;
-                /* only what the record marks SET reaches the mirror — an unset
-                   aggregate keeps whatever the owner last delivered */
-                if (record.bare || (f < record.set.size() && record.set[f]))
+                /* only what the record was GIVEN reaches the mirror — an unset
+                   (Nil) aggregate keeps whatever the owner last delivered */
+                if (record.bare || (f < record.fields.size() &&
+                                    record.fields[f].tag != ValueTag::Nil))
                     mirror_agg(program, state, record, f, spans[f]);
             }
         }
@@ -151,7 +155,6 @@ bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
         view.elem_index = record.elem_index;
         view.value = record.value;
         view.fields = record.fields.data();
-        view.set = record.set.data();
         view.field_count = static_cast<uint32_t>(entity.fields.size());
         view.bare_text = record.bare_text.view();
         view.field_text = record.field_text.data();

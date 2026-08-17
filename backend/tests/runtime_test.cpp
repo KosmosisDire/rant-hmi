@@ -598,32 +598,29 @@ void test_typed_variables() {
     CHECK(cell.shape == Shape::Struct);
     CHECK(cell.struct_slot < state.structs.size());
 
-    /* born at its DEFAULTS: enabled true (authored) and marked given, speed zero */
+    /* born at its DEFAULTS: enabled true (authored); a field with no default is
+       UNKNOWN — un-set-ness IS Nil-ness, and a move out keeps the owner's bytes
+       for it */
     CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
-    CHECK(state.structs[cell.struct_slot].set[1] == 1);
-    CHECK(state.structs[cell.struct_slot].set[0] == 0);
+    CHECK(state.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
 
     run_event(compiled.program, state, instance, "input", Value::number(3));
     state.clear_outputs();
     run_event(compiled.program, state, instance, "commit", Value::number(4));
     CHECK(state.structs[cell.struct_slot].fields[0].data.num == 10);
-    CHECK(state.structs[cell.struct_slot].set[0] == 1);
 
-    /* RESET: back to the declared start, not to bare zero */
+    /* RESET: back to the declared start — the default where one is authored, and
+       UNKNOWN where none is, never an invented zero */
     state.clear_outputs();
     run_event(compiled.program, state, instance, "commit", Value::number(-1));
-    CHECK(state.structs[cell.struct_slot].fields[0].data.num == 0);
-    CHECK(state.structs[cell.struct_slot].set[0] == 0);
+    CHECK(state.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
     CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
-    CHECK(state.structs[cell.struct_slot].set[1] == 1);
 
     /* the value survives a recompile while the type still matches: here the post-reset
-       state, so the migrated copy holds the DEFAULTS, not bare zero */
+       state, so the migrated copy holds the DEFAULTS and the Unknown stays Unknown */
     RuntimeState migrated = migrate_state(compiled.program, state, compiled.program);
-    CHECK(migrated.structs[cell.struct_slot].fields[0].data.num == 0);
-    CHECK(migrated.structs[cell.struct_slot].set[0] == 0);
+    CHECK(migrated.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
     CHECK(migrated.structs[cell.struct_slot].fields[1].data.boolean == true);
-    CHECK(migrated.structs[cell.struct_slot].set[1] == 1);
 
     /* a TypeRef that resolves nothing is a finding on the variable, never a silent Nil */
     Document broken = runtime_document();
@@ -677,10 +674,12 @@ void test_typed_temporaries() {
     run_event(compiled.program, state, instance, "input", Value::number(9));
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
     CHECK(mesh.transcript().size() == 2);
-    /* `enabled` is the type's zero BOTH runs: the row re-zeroes, nothing carries */
-    CHECK_MSG(mesh.transcript()[0] == "write V:motor{speed=7,enabled=false}",
+    /* `enabled` was never set EITHER run: the row re-declares and the field rides
+       UNGIVEN (nil), so the real encode keeps the owner's own value rather than
+       zeroing it — un-set-ness is Nil-ness, and it does not carry between runs */
+    CHECK_MSG(mesh.transcript()[0] == "write V:motor{speed=7,enabled=nil}",
               mesh.transcript()[0]);
-    CHECK_MSG(mesh.transcript()[1] == "write V:motor{speed=9,enabled=false}",
+    CHECK_MSG(mesh.transcript()[1] == "write V:motor{speed=9,enabled=nil}",
               mesh.transcript()[1]);
 }
 
