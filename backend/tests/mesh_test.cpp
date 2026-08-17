@@ -153,7 +153,7 @@ int main() {
     CHECK(hist.valid());
 
     /* a forceable bool the document only reads from FLOWS (no feed names it): the
-     * flow_reads subscription is the only thing that can fill its mirror */
+     * flow-signature subscription is the only thing that can fill its mirror */
     auto suck_schema = dart::Schema::compile("Suck { on: bool }");
     CHECK(suck_schema.has_value());
     if (!suck_schema) return check::summary("mesh_test");
@@ -485,7 +485,7 @@ int main() {
     const uint64_t pressure_id = page["children"][7].value("id", 0);
 
     Scheduler sched(std::move(compiled.program), mesh);
-    mesh.apply(sched.program());
+    mesh.apply(sched.program(), {});
     mesh.set_viewed_pages({page_id});
 
     /* ---- THE FIRST WRITE, immediately: the setpoint accessor was created by the
@@ -642,8 +642,8 @@ int main() {
         CHECK(flag_value.load());
     }
 
-    /* the flow-read toggle: the gates only ever pass once the flow_reads subscription
-     * fills the mirror, so a landed force IS the proof of consumption */
+    /* the flow-read toggle: the gates only ever pass once the flow-signature
+     * subscription fills the mirror, so a landed force IS the proof of consumption */
     {
         const uint64_t suction_id = page["children"][6].value("id", 0);
         bool forced_on = false;
@@ -717,7 +717,7 @@ int main() {
         CHECK(swapped.ok);
         if (!swapped.ok) return check::summary("mesh_test");
         Scheduler swapped_sched(std::move(swapped.program), mesh);
-        mesh.apply(swapped_sched.program());
+        mesh.apply(swapped_sched.program(), {});
         mesh.set_viewed_pages({page_id});
 
         const int swapped_cell = cell_of(swapped_sched.program(), gauge_id, "value");
@@ -855,7 +855,7 @@ int main() {
                 next->state() =
                     migrate_state(cur->program(), cur->state(), next->program());
             cur = std::move(next);
-            mesh.apply(cur->program());
+            mesh.apply(cur->program(), {});
             mesh.set_viewed_pages({cy_page_id});
         };
         auto dump_faults = [&](const char* when) {

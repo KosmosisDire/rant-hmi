@@ -822,7 +822,8 @@ bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
     return true;
 }
 
-void DartMesh::apply(const Program& program) {
+void DartMesh::apply(const Program& program,
+                     const std::set<std::string>& display_reads) {
     if (!impl_->node || !impl_->node->valid()) return;
     for (auto& item : impl_->recs) {
         item.second->poll_ms = 0;
@@ -877,8 +878,8 @@ void DartMesh::apply(const Program& program) {
      * never pass. An entity a flow only WRITES needs its accessor standing just as
      * early: one created at the moment of the first effect has no owner matched yet,
      * and that first write would fail. All of it is a QUERY over the procedure
-     * signatures — nothing is stamped per entity; the display tier's attr reads are
-     * the one flag left. */
+     * signatures — nothing is stamped per entity; the DISPLAY tier's reads arrive
+     * by name beside the program. */
     std::vector<uint8_t> engaged(program.entities.size(), 0);
     auto mark = [&](const std::vector<uint32_t>& list) {
         for (uint32_t e : list)
@@ -893,7 +894,7 @@ void DartMesh::apply(const Program& program) {
         mark(slot.body.sig.writes);
     }
     for (uint32_t e = 0; e < program.entities.size(); ++e)
-        if (engaged[e] || program.entities[e].flow_reads)
+        if (engaged[e] || display_reads.count(program.entities[e].name))
             consume(program.entities[e]);
 }
 

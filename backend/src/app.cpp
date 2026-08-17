@@ -228,11 +228,10 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
     const Indexer indexer = [this](const Document& doc) {
         RefIndex index;
         std::vector<Diag> findings;
-        std::set<std::string> reads;
         std::set<std::string> per_copy;
-        compile_page_attrs(doc, findings, &mesh_->reflection(), &reads, &per_copy,
+        compile_page_attrs(doc, findings, &mesh_->reflection(), nullptr, &per_copy,
                            &index.rows, &index.blind);
-        CompileResult compiled = compile_document(doc, *mesh_, &reads, &per_copy);
+        CompileResult compiled = compile_document(doc, *mesh_, &per_copy);
         for (RefRow& row : compiled.program.references)
             index.rows.push_back(std::move(row));
         for (RefSite& gap : compiled.program.reference_gaps)
@@ -358,16 +357,18 @@ Json App::live(bool full) const {
     }
     /* THE MESH FIELDS A PAGE'S ATTRS READ. Only those: the display tier is a compression
      * of display state and this lane exists to keep it one, so an entity a flow alone
-     * reads never rides here. The value is the SAME last-value mirror the flow reads
-     * (LoadEnt), which is what makes an attr and a guard agree about a field; an unknown
-     * one omits its key, exactly as a Nil cell does, and the view reads Nil for it. */
+     * reads never rides here. The read set is the display compile's own product
+     * (attr_entity_reads_), consulted here rather than stamped into the entity table.
+     * The value is the SAME last-value mirror the flow reads (LoadEnt), which is what
+     * makes an attr and a guard agree about a field; an unknown one omits its key,
+     * exactly as a Nil cell does, and the view reads Nil for it. */
     for (uint32_t e = 0; e < program.entities.size(); ++e) {
         const EntityDef& def = program.entities[e];
-        if (def.attr_reads.empty() || e >= state.last.size()) continue;
+        if (e >= state.last.size()) continue;
         const LastValueState& last = state.last[e];
         const std::vector<FieldDef>& fields = feed_fields(def);
-        for (uint32_t i = 0; i < fields.size() && i < def.attr_reads.size(); ++i) {
-            if (!def.attr_reads[i]) continue;
+        for (uint32_t i = 0; i < fields.size(); ++i) {
+            if (!attr_entity_reads_.count(def.name + "\n" + fields[i].path)) continue;
             const std::string key = mesh_cell(def.name, fields[i].path);
             if (fields[i].shape == Shape::List || fields[i].shape == Shape::Map) {
                 const uint32_t mirror = e < state.entity_aggs.size() &&
@@ -511,10 +512,11 @@ void App::compile_runtime() {
     /* A PAGE COMPILES TOO. Its nodes are the same nodes a component's are, so their attrs
      * are lowered by the same compiler into the same view programs, and the renderer runs
      * one interpreter over both. This is the whole of what "one tree" costs the backend. */
-    /* THE ATTRS COMPILE FIRST, and what they read of the mesh goes into the program
-     * compile behind them: a display-tier `@entity.field` has to be consumed and
-     * published like any other read, and this is the one seam where the two compilers
-     * meet. A page's expressions see the mesh; a component's deliberately do not. */
+    /* THE ATTRS COMPILE FIRST. What they read of the mesh stays THEIR product
+     * (attr_entity_reads_): the live frame serves exactly those fields, and the mesh is
+     * handed the read entities at apply() beside the program — nothing display-tier is
+     * stamped into the wire compile. A page's expressions see the mesh; a component's
+     * deliberately do not. */
     attr_entity_reads_.clear();
     per_copy_slots_.clear();
     node_attrs_ = compile_page_attrs(doc_, component_diags_, &mesh_->reflection(),
@@ -523,8 +525,7 @@ void App::compile_runtime() {
        tier just checked their attrs: off the definition, findings only */
     for (Diag& diag : check_component_definitions(doc_, *mesh_))
         component_diags_.push_back(std::move(diag));
-    CompileResult compiled =
-        compile_document(doc_, *mesh_, &attr_entity_reads_, &per_copy_slots_);
+    CompileResult compiled = compile_document(doc_, *mesh_, &per_copy_slots_);
     auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);
     if (scheduler_)
         next->state() = migrate_state(scheduler_->program(), scheduler_->state(),
@@ -537,7 +538,12 @@ void App::compile_runtime() {
     /* fault sites renumber with the program: drop the coalescing rows (a still-faulting
        site simply announces itself again, which after an edit is the right thing) */
     fault_sites_.clear();
-    mesh_->apply(scheduler_->program());
+    /* the entities the display tier reads, by name: the mesh consumes them exactly as
+       it consumes what the procedure signatures read */
+    std::set<std::string> display_reads;
+    for (const std::string& key : attr_entity_reads_)
+        display_reads.insert(key.substr(0, key.find('\n')));
+    mesh_->apply(scheduler_->program(), display_reads);
     update_viewed_pages();
     if (server_.sessions())
         server_.broadcast(Json{{"type", "diag"}, {"compile", diagnostics()}});

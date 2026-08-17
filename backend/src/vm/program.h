@@ -49,17 +49,6 @@ struct EntityDef {
     std::vector<FieldDef> fields;
     /* FUNCTION only: the response fields (what a function feed reads and decodes) */
     std::vector<FieldDef> rsp_fields;
-    /* stamped when the DISPLAY tier reads this entity — the wire tier's reads and
-     * writes are queries over the procedure signatures now, and this flag is the
-     * display product's one remaining stamp until its reads ride to the mesh as
-     * their own fact */
-    bool flow_reads = false;
-    /* stamped when a display-tier ATTR reads a field of this entity, one flag per
-     * read-side field (parallel to feed_fields, empty where nothing reads it): the mesh
-     * must consume the entity like any other read, AND the live frame carries the marked
-     * fields' mirrors under `mesh:<name>[.<path>]` so a view program can load them. A
-     * read nobody published would draw UNKNOWN forever. */
-    std::vector<uint8_t> attr_reads;
 };
 
 /* the field table a FEED reads from: the response side of a function, else the value */

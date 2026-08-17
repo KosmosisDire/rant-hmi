@@ -7,6 +7,7 @@
 
 #include "vm/state.h"
 
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -87,10 +88,16 @@ class MeshPort {
     virtual void drain(MeshSink& sink) { (void)sink; }
 
     /* Reconcile subscriptions and function polls with a freshly compiled program:
-     * which entities its programs read (flow reads and slot expressions alike), and at
-     * what rate a function a slot expression calls is polled.
+     * which entities its procedures read and write (a query over their signatures),
+     * at what rate a function a slot expression calls is polled, and — until the view
+     * programs carry signatures of their own — which entities the DISPLAY tier reads,
+     * handed by name in `display_reads`.
      * Called after every accepted compile, on the logic thread. */
-    virtual void apply(const Program& program) { (void)program; }
+    virtual void apply(const Program& program,
+                       const std::set<std::string>& display_reads) {
+        (void)program;
+        (void)display_reads;
+    }
 
     /* The pages at least one visible session is viewing; a function feed on any other
      * page stops polling (the spec's visibility rule, page-scoped). */

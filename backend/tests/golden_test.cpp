@@ -64,7 +64,7 @@ std::string dump_document(const std::string& doc_path, std::string& err) {
     std::set<std::string> per_copy;
     Json node_attrs = compile_page_attrs(document, diags, &mesh.reflection(), &attr_reads,
                                          &per_copy);
-    CompileResult compiled = compile_document(document, mesh, &attr_reads, &per_copy);
+    CompileResult compiled = compile_document(document, mesh, &per_copy);
 
     std::ostringstream out;
     out << "== diagnostics ==\n";

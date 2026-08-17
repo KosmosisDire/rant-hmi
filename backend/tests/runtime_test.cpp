@@ -3318,8 +3318,8 @@ void test_bare_topic_scalars() {
 
 /* ASSIGN'S RVALUE IS AN EXPRESSION AND THE EXPRESSION READS THE MESH: `@a + @b`
  * compiles in a flow exactly as it would in a slot (bind_entities in the flow scope),
- * the LoadEnts stamp flow_reads so the mesh consumes both entities, and a gate's
- * condition may name an entity the same way. */
+ * the LoadEnts land in the flow's signature so the mesh consumes both entities, and a
+ * gate's condition may name an entity the same way. */
 void test_assign_expression_reads_mesh() {
     EntityDef a;
     a.kind = EntityKind::Variable;
@@ -3370,13 +3370,13 @@ void test_assign_expression_reads_mesh() {
 
     /* the expression-borne reads subscribe exactly as structural reads did — the
        flow signatures the mesh queries carry them */
-    auto flow_reads_entity = [&](int entity) {
+    auto subscribed = [&](int entity) {
         for (const FlowProgram& flow : program.flows)
             if (flow.body.sig.reads_entity(static_cast<uint32_t>(entity))) return true;
         return false;
     };
-    CHECK(flow_reads_entity(a_at));
-    CHECK(flow_reads_entity(b_at));
+    CHECK(subscribed(a_at));
+    CHECK(subscribed(b_at));
 
     RuntimeState state(program);
     state.last[a_at].known = true;

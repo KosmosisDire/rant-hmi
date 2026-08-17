@@ -120,3 +120,10 @@ scan_slot_deps
 stamp_flow_reads
 dep_entities
 flow_writes
+
+# stage 5c, the display reads leave the Module: the attr compile's read set stays
+# ITS product — the app serves the live frame off it and hands the read entities
+# to the mesh at apply() — so the per-entity read flag and the per-field flag
+# vector stamped into the wire compile's entity table restated a fact whose owner
+# already held it.
+flow_reads

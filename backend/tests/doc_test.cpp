@@ -22,12 +22,11 @@ namespace {
 RefIndex index_document(const Document& doc) {
     RefIndex index;
     std::vector<Diag> findings;
-    std::set<std::string> reads;
     std::set<std::string> per_copy;
-    compile_page_attrs(doc, findings, nullptr, &reads, &per_copy, &index.rows,
+    compile_page_attrs(doc, findings, nullptr, nullptr, &per_copy, &index.rows,
                        &index.blind);
     FakeMesh mesh;
-    CompileResult compiled = compile_document(doc, mesh, &reads, &per_copy);
+    CompileResult compiled = compile_document(doc, mesh, &per_copy);
     for (RefRow& row : compiled.program.references) index.rows.push_back(std::move(row));
     for (RefSite& gap : compiled.program.reference_gaps)
         index.blind.push_back(std::move(gap));

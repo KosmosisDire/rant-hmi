@@ -535,8 +535,8 @@ void test_timer_reads() {
 
 /* A FLOW that reads an entity (the read -> gate -> force/unforce toggle-off-the-plant
  * idiom): the read takes the last-value mirror, so the mirror must fill from arrivals
- * even though NO slot expression names the entity. The compiler stamps `flow_reads` so
- * the mesh adapter subscribes it exactly like a bound one. */
+ * even though NO slot expression names the entity. The read rides the flow's
+ * signature, so the mesh adapter subscribes it exactly like a bound one. */
 void test_flow_entity_read() {
     Json button = {
         {"kind", "frame"},

@@ -88,9 +88,10 @@ std::vector<ComponentSpec> derive_specs(const std::vector<ComponentDecl>& doc_co
  *
  * `mesh` is the reflection a PAGE node's expressions may name (a component's may not —
  * strict isolation), and every `@entity.field` one of them reads is recorded in
- * `attr_reads` as "<entity>\n<path>": the document compiler stamps those entities so the
- * mesh consumes them and the live frame carries their mirrors. Both are optional so a
- * test can compile a page's attrs with no mesh at all. */
+ * `attr_reads` as "<entity>\n<path>". The set stays the display product's own: the app
+ * serves the live frame off it and hands the read entities to the mesh at apply() —
+ * nothing is stamped into the wire compile. Both params are optional so a test can
+ * compile a page's attrs with no mesh at all. */
 /* `per_copy` is the other half of that seam, and it is THE PLACEMENT RULE
  * (lang/template_expr.h per_copy_expression): a slot expression that names the view's
  * own inputs is compiled here into a view program served in the instance's row under

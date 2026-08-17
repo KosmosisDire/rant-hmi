@@ -36,7 +36,8 @@ class DartMesh final : public MeshPort {
     const std::vector<EntityDef>& reflection() const noexcept override;
     bool execute(const EffectView& effect, std::string& fault) noexcept override;
     void drain(MeshSink& sink) override;
-    void apply(const Program& program) override;
+    void apply(const Program& program,
+               const std::set<std::string>& display_reads) override;
     void set_viewed_pages(const std::vector<uint64_t>& pages) override;
     bool refresh() override;
     void take_logs(std::vector<MeshLogLine>& out) override;

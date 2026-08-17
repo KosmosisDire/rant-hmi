@@ -1055,37 +1055,10 @@ void test_page_universe() {
     CHECK(reads.count(std::string("cage/sensor\n")) == 1);
     CHECK(reads.count(std::string("cage/motor\nspeed")) == 1);
 
-    /* THE STAMP: the program compile behind the attrs marks exactly those fields, and
-       marks the entity as read so the mesh consumes it — the attr's picture and a
-       flow's guard fill from ONE mirror */
-    FakeMesh mesh(mesh_defs);
-    CompileResult compiled = compile_document(document, mesh, &reads);
-    auto entity_named = [&](const char* name) -> const EntityDef* {
-        for (const EntityDef& def : compiled.program.entities)
-            if (def.name == name) return &def;
-        return nullptr;
-    };
-    const EntityDef* sensor = entity_named("cage/sensor");
-    CHECK(sensor != nullptr);
-    if (sensor) {
-        CHECK(sensor->flow_reads);
-        CHECK_EQ(sensor->attr_reads.size(), size_t(1));
-        if (!sensor->attr_reads.empty()) CHECK_EQ(int(sensor->attr_reads[0]), 1);
-    }
-    const EntityDef* motor = entity_named("cage/motor");
-    CHECK(motor != nullptr);
-    if (motor) {
-        CHECK(motor->flow_reads);
-        CHECK_EQ(motor->attr_reads.size(), size_t(2));
-        if (motor->attr_reads.size() == 2) {
-            CHECK_EQ(int(motor->attr_reads[0]), 1);   /* speed is read */
-            CHECK_EQ(int(motor->attr_reads[1]), 0);   /* enabled is not */
-        }
-    }
-    /* nothing stamped without the reads: a document whose attrs name no mesh leaves the
-       consume list exactly where the flows put it */
-    CompileResult bare = compile_document(document, mesh);
-    for (const EntityDef& def : bare.program.entities) CHECK(def.attr_reads.empty());
+    /* THE READ SET IS THE DISPLAY PRODUCT'S OWN: nothing is stamped into the wire
+       compile — the app serves the live frame off this set and hands the entity names
+       to the mesh at apply(). The wire compile takes the document and the mesh, full
+       stop. */
 
     /* THE KEY IS ONE SPELLING, shared by the compiler that emits the load and the live
        frame that fills it (lang/template_expr.h) */
@@ -1183,8 +1156,7 @@ void test_per_copy_slots() {
     /* AND THE WIRE TIER BUILDS NO STANDING PROGRAM FOR IT. Exactly one survives — the
        ordinary instance's — so a per-copy slot costs the backend nothing at all. */
     FakeMesh mesh;
-    CompileResult compiled =
-        compile_document(document, mesh, &reads, &per_copy);
+    CompileResult compiled = compile_document(document, mesh, &per_copy);
     uint64_t standing_for = 0;
     size_t standing = 0;
     for (const SlotProgram& sp : compiled.program.slot_programs)
