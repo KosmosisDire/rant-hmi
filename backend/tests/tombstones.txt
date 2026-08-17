@@ -80,3 +80,9 @@ decode_spec
 spec_text
 decode_armed
 component_registry
+
+# stage 5b, the typed destination: the expression wrapper states the destination
+# rule ONCE — the shape fit, the cross-enum refusal, and the enum-into-text RENDER
+# — for every surface. The per-destination wrapper that restated the render and
+# the check for scalar step destinations.
+push_typed

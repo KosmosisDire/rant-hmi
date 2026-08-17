@@ -1503,12 +1503,14 @@ class Compiler {
 
     /* `agg_ok` says the DESTINATION is a declared HMI aggregate (a list/map variable or
      * slot), so a wire expression may yield that whole shape. It is never set for a
-     * mesh destination — the machine still takes one scalar per field. */
+     * mesh destination — the machine still takes one scalar per field. `dest` is how
+     * a mismatch names the destination ("slot 'symbol'"). */
     bool expression(uint64_t node, const std::string& text, ExprTier tier,
                     const Env& scope, const Type& expected,
                     std::vector<Instruction>& code, uint32_t& max_stack,
                     Shape* actual = nullptr, const std::string& where = "",
-                    uint16_t* enum_out = nullptr, bool agg_ok = false) {
+                    uint16_t* enum_out = nullptr, bool agg_ok = false,
+                    const std::string& dest = "this row") {
         ExpressionResult result;
         std::vector<Refusal> refusals;
         if (!compile_expression(text, tier, scope, program_, code, result, refusals,
@@ -1520,13 +1522,28 @@ class Compiler {
                           where, refusal.at, refusal.length);
             return false;
         }
+        /* THE RENDER HALF of the one implicit conversion (spec 6.2), stated once for
+           EVERY text destination: an enum value moved into one reads as its variant
+           name, the way str() would spell it. The reverse half — text into an enum
+           destination — lives at the pipeline boundary (lang/compile.cpp), where a
+           constant name resolves at compile. */
+        if (expected.kind == Shape::Text && result.shape == Shape::Enum) {
+            Instruction name;
+            name.op = OpCode::Method;
+            name.a = program_.text_slots++;
+            name.b = 0;
+            name.small = static_cast<uint16_t>(MethodId::EnumName);
+            code.push_back(name);
+            result.shape = Shape::Text;
+            result.enum_type = 0;
+        }
         if (expected.kind != Shape::Unknown && result.shape != Shape::Unknown &&
             result.shape != Shape::Nil && result.shape != expected.kind) {
             /* text never lands here against an enum destination: the pipeline's
                boundary (lang/compile.cpp) converted or refused it already */
             diag(node, "shape",
                  "expression yields " + std::string(shape_name(result.shape)) +
-                     ", but this row wants " + shape_name(expected.kind),
+                     ", but " + dest + " wants " + shape_name(expected.kind),
                  DiagGrade::Error, where);
             return false;
         }
@@ -1738,31 +1755,11 @@ class Compiler {
         sp.page_id = element.page;
         sp.slot = pending.name;
         sp.cell = pending.cell;
-        Shape produced = Shape::Unknown;
         if (!expression(element.id, pending.text, ExprTier::Display, scope,
-                        aggregate ? Type(wanted) : Type(), sp.body.code, sp.body.max_stack,
-                        &produced, pending.name, nullptr, aggregate))
+                        Type(wanted), sp.body.code, sp.body.max_stack,
+                        nullptr, pending.name, nullptr, aggregate,
+                        "slot '" + pending.name + "'"))
             return;   /* the finding is already pinned to the instance's slot row */
-        /* the one automatic coercion (spec 6.2): an enum-yielding expression filling a
-           text slot reads as its variant name, so a Dropdown bound to an enum field
-           needs no authored transform */
-        if (!aggregate && produced == Shape::Enum && wanted == Shape::Text) {
-            Instruction as_name;
-            as_name.op = OpCode::Method;
-            as_name.a = program_.text_slots++;
-            as_name.b = 0;
-            as_name.small = static_cast<uint16_t>(MethodId::EnumName);
-            sp.body.code.push_back(as_name);
-            produced = Shape::Text;
-        }
-        if (!aggregate && wanted != Shape::Unknown && produced != Shape::Unknown &&
-            produced != Shape::Nil && produced != wanted) {
-            diag(element.id, "shape",
-                 "the expression yields " + std::string(shape_name(produced)) +
-                     ", but slot '" + pending.name + "' wants " + shape_name(wanted),
-                 DiagGrade::Error, pending.name);
-            return;
-        }
         /* A CONSTANT is the literal it spells: it folds into the cell's start and no
            standing program exists — a quoted caption costs what the raw literal did. */
         if (sp.body.code.size() == 1 && sp.body.code[0].op == OpCode::Const) {
@@ -1946,8 +1943,8 @@ class Compiler {
             /* a LIST or MAP slot takes a whole aggregate here: this is an HMI cell,
                not a machine, so the one-scalar rule steps aside for exactly its shape */
             const Shape shape = program_.cells[found->second].shape;
-            return push_typed(element, step, flow, scope, from, shape, 0,
-                              aggregate_shape(shape)) &&
+            return push_scalar(element, step, flow, scope, from, Type(shape), nullptr,
+                               aggregate_shape(shape)) &&
                    emit_store(flow, step_id, found->second);
         }
 
@@ -2216,41 +2213,6 @@ class Compiler {
         return false;
     }
 
-    /* push_scalar toward one typed destination. An enum destination hands the
-     * expression its OWN type, so `.variant` resolves against the right vocabulary
-     * at compile — the runtime text->enum coercion opcode is dead. The one insertion
-     * left is a RENDER, not a coercion: an enum moved into a text destination reads
-     * as its variant name, the way str() would spell it. */
-    bool push_typed(const ElementInfo& element, const StepDecl& step, FlowProgram& flow,
-                    Env& scope, const FromDecl& from, Shape wanted,
-                    uint16_t type_id, bool agg_ok = false) {
-        if (wanted == Shape::Text) {
-            Shape produced = Shape::Unknown;
-            if (!push_scalar(element, step, flow, scope, from, Type(), &produced))
-                return false;
-            if (produced == Shape::Enum) {
-                Instruction name;
-                name.op = OpCode::Method;
-                name.a = program_.text_slots++;
-                name.b = 0;
-                name.small = static_cast<uint16_t>(MethodId::EnumName);
-                flow.body.code.push_back(name);
-                return true;
-            }
-            if (produced != Shape::Unknown && produced != Shape::Nil &&
-                produced != Shape::Text) {
-                diag(step.id, "shape",
-                     "the source is " + std::string(shape_name(produced)) +
-                         ", but this destination wants text",
-                     DiagGrade::Error, "from");
-                return false;
-            }
-            return true;
-        }
-        return push_scalar(element, step, flow, scope, from, Type(wanted, type_id),
-                           nullptr, agg_ok);
-    }
-
     /* `-> local`: the destination names a variable in scope, or declares a temporary by
      * using it (spec 2.7). A whole-struct destination is filled by New or ReadEnt; a
      * field of one by StoreField; a scalar by Store. */
@@ -2410,13 +2372,13 @@ class Compiler {
                          DiagGrade::Error, "to");
                     return false;
                 }
-                return push_typed(element, step, flow, scope, from,
-                                  fields[field].shape, 0, /*agg_ok=*/true) &&
+                return push_scalar(element, step, flow, scope, from,
+                                   Type(fields[field].shape), nullptr, /*agg_ok=*/true) &&
                        emit_store(flow, step_id, derived) &&
                        mark_field(flow, derived);
             }
-            if (!push_typed(element, step, flow, scope, from, fields[field].shape,
-                            fields[field].type_id))
+            if (!push_scalar(element, step, flow, scope, from,
+                             Type(fields[field].shape, fields[field].type_id)))
                 return false;
             Instruction set;
             set.op = OpCode::StoreField;
@@ -2483,8 +2445,9 @@ class Compiler {
            declared LIST or MAP variable takes a whole aggregate — an HMI cell, not a
            machine. */
         if (cell != UINT32_MAX) {
-            if (!push_typed(element, step, flow, scope, from, wanted,
-                            program_.cells[cell].type_id, aggregate_shape(wanted)))
+            if (!push_scalar(element, step, flow, scope, from,
+                             Type(wanted, program_.cells[cell].type_id), nullptr,
+                             aggregate_shape(wanted)))
                 return false;
             return emit_store(flow, step_id, cell);
         }
@@ -2620,8 +2583,8 @@ class Compiler {
                              DiagGrade::Error, "to");
                         return false;
                     }
-                    if (!push_typed(element, step, flow, scope, from, Shape::List, 0,
-                                    /*agg_ok=*/true))
+                    if (!push_scalar(element, step, flow, scope, from, Type(Shape::List),
+                                     nullptr, /*agg_ok=*/true))
                         return false;
                     out.b = static_cast<uint32_t>(field);
                     flow.body.code.push_back(out);
@@ -2646,7 +2609,7 @@ class Compiler {
                          DiagGrade::Error, "to");
                     return false;
                 }
-                if (!push_typed(element, step, flow, scope, from, fdef.elem, 0))
+                if (!push_scalar(element, step, flow, scope, from, Type(fdef.elem)))
                     return false;
                 uint32_t key_stack = 1;
                 if (!expression(step_id, key, ExprTier::Wire, scope, Type(Shape::Num),
@@ -2671,7 +2634,8 @@ class Compiler {
                      DiagGrade::Error, "key");
                 return false;
             }
-            if (!push_typed(element, step, flow, scope, from, fdef.shape, fdef.type_id))
+            if (!push_scalar(element, step, flow, scope, from,
+                             Type(fdef.shape, fdef.type_id)))
                 return false;
             out.b = static_cast<uint32_t>(field);
         }
@@ -2775,7 +2739,8 @@ class Compiler {
         if (def.shape == Shape::List || def.shape == Shape::Map || step.mode == "append" ||
             !trimmed(step.key).empty())
             return true;                                /* aggregate: plain stand-down */
-        if (!push_typed(element, step, flow, scope, step.from, def.shape, def.type_id))
+        if (!push_scalar(element, step, flow, scope, step.from,
+                         Type(def.shape, def.type_id)))
             return false;
         const uint32_t shadow =
             add_temp_cell(flow.flow_id, element.id, "this." + slot + "'", def.shape);
