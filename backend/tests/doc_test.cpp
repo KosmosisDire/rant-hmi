@@ -1,16 +1,44 @@
 /* Stage 1: the document round trip. Load, mutate by ops, save, reload, compare;
  * plus op validation, batch atomicity and rename fan-out. */
 #include "check.h"
+#include "compile/compiler.h"
+#include "compile/components.h"
 #include "doc/doc.h"
 #include "doc/ops.h"
 #include "doc/refs.h"
 #include "doc/store.h"
+#include "mesh/fake.h"
 
 #include <cstdio>
 
 using namespace hmi;
 
 namespace {
+
+/* THE INDEXER, bound the way the app binds it: the three compiles' reference rows and
+ * blind sites over whatever document the op layer hands in. A variable rename resolves
+ * against exactly this — so these tests exercise the production path, mesh-less (an
+ * unresolved entity is a finding, and the names beside it still resolve). */
+RefIndex index_document(const Document& doc) {
+    RefIndex index;
+    std::vector<Diag> findings;
+    std::set<std::string> reads;
+    std::set<std::string> per_copy;
+    compile_page_attrs(doc, findings, nullptr, &reads, &per_copy, &index.rows,
+                       &index.blind);
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(doc, mesh, &reads, &per_copy);
+    for (RefRow& row : compiled.program.references) index.rows.push_back(std::move(row));
+    for (RefSite& gap : compiled.program.reference_gaps)
+        index.blind.push_back(std::move(gap));
+    check_component_definitions(doc, mesh, &index.rows, &index.blind);
+    return index;
+}
+
+/* every apply in this file rides the bound indexer */
+bool apply_batch(Document& d, const Json& ops, ApplyResult& r, std::string& err) {
+    return hmi::apply_ops(d, ops, r, err, index_document);
+}
 
 Json ops_of(std::initializer_list<Json> ops) {
     Json out = Json::array();
@@ -20,7 +48,7 @@ Json ops_of(std::initializer_list<Json> ops) {
 
 bool apply(Document& d, std::initializer_list<Json> ops, std::string& err) {
     ApplyResult r;
-    return apply_ops(d, ops_of(ops), r, err);
+    return apply_batch(d, ops_of(ops), r, err);
 }
 
 /* The default page is a TREE of frames now, so a demo instance is found by its LABEL
@@ -152,7 +180,7 @@ void test_round_trip() {
                                    {"list", "children"},
                                    {"index", 0},
                                    {"node", {{"kind", "frame"}, {"type", "Label"}, {"name", "New"}}}}});
-    CHECK_MSG(apply_ops(d, batch, r, err), err);
+    CHECK_MSG(apply_batch(d, batch, r, err), err);
     CHECK(r.version == 3);
     CHECK(r.ops.size() == 1);
     const uint64_t new_id = r.ops[0]["node"]["id"].get<uint64_t>();
@@ -267,7 +295,7 @@ void test_structure_ops() {
                                    {"parent", flow},
                                    {"list", "do"},
                                    {"node", {{"kind", "delay"}, {"a", 250}}}}});
-    CHECK_MSG(apply_ops(d, batch, r, err), err);
+    CHECK_MSG(apply_batch(d, batch, r, err), err);
     const uint64_t step = r.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", step}, {"key", "kind"}, {"value", "assign"}}},
                     err),
@@ -293,7 +321,7 @@ void test_rename() {
                                  {"node", {{"kind", "assign"},
                                            {"from", {{"expr", "flow * 2 + flowRate"}}},
                                            {"to", {{"local", "x"}, {"path", ""}}}}}}});
-    CHECK_MSG(apply_ops(d, add, r, err), err);
+    CHECK_MSG(apply_batch(d, add, r, err), err);
     const uint64_t step = r.ops[0]["node"]["id"].get<uint64_t>();
 
     Json* var = global_named(d, "flow");
@@ -303,7 +331,7 @@ void test_rename() {
 
     ApplyResult rr;
     Json rename = Json::array({Json{{"op", "rename"}, {"node", var_id}, {"name", "flowRate"}}});
-    CHECK_MSG(apply_ops(d, rename, rr, err), err);
+    CHECK_MSG(apply_batch(d, rename, rr, err), err);
 
     CHECK(global_named(d, "flowRate") != nullptr);
     CHECK(global_named(d, "flow") == nullptr);
@@ -332,11 +360,11 @@ void test_rename() {
                                    {"parent", instance},
                                    {"list", "locals"},
                                    {"node", {{"name", "flowRate"}, {"type", "num"}}}}});
-    CHECK_MSG(apply_ops(d, local, lr, err), err);
+    CHECK_MSG(apply_batch(d, local, lr, err), err);
     ApplyResult br;
     Json shadowed = Json::array({Json{{"op", "rename"}, {"node", var_id}, {"name", "capture"}}});
     /* the global renames fine: this instance shadows it, so it holds no reference to it */
-    CHECK_MSG(apply_ops(d, shadowed, br, err), err);
+    CHECK_MSG(apply_batch(d, shadowed, br, err), err);
     CHECK((*d.node(step))["from"]["expr"] == "flowRate * 2 + flowRate");   /* untouched: shadowed */
 }
 
@@ -366,7 +394,7 @@ void test_rename_scope() {
                       {"do", Json::array({Json{{"kind", "assign"},
                                                {"from", {{"expr", "flow + 1"}}},
                                                {"to", {{"local", "seen"}, {"path", ""}}}}})}}})}}}}});
-    CHECK_MSG(apply_ops(d, zone_op, r, err), err);
+    CHECK_MSG(apply_batch(d, zone_op, r, err), err);
     const uint64_t zone = r.ops[0]["node"]["id"].get<uint64_t>();
 
     /* a nested element that REDECLARES the name owns everything below it */
@@ -376,7 +404,7 @@ void test_rename_scope() {
         {"node", {{"kind", "frame"}, {"name", "Shadow"},
                   {"attrs", {{"w", "flow"}}},
                   {"locals", Json::array({Json{{"name", "flow"}, {"type", "num"}}})}}}}});
-    CHECK_MSG(apply_ops(d, shadow_op, sr, err), err);
+    CHECK_MSG(apply_batch(d, shadow_op, sr, err), err);
     const uint64_t shadow = sr.ops[0]["node"]["id"].get<uint64_t>();
 
     /* a path's anchors are coordinate rows of expression text */
@@ -385,7 +413,7 @@ void test_rename_scope() {
         {"op", "insert"}, {"parent", page}, {"list", "children"},
         {"node", {{"kind", "path"}, {"name", "Ink"},
                   {"anchors", Json::array({Json{{"x", "flow"}, {"y", "0"}}})}}}}});
-    CHECK_MSG(apply_ops(d, ink_op, pr, err), err);
+    CHECK_MSG(apply_batch(d, ink_op, pr, err), err);
     const uint64_t ink = pr.ops[0]["node"]["id"].get<uint64_t>();
 
     /* a COMPONENT whose own variable is called `flow`: a page's variable rename must
@@ -396,7 +424,7 @@ void test_rename_scope() {
         {"node", {{"name", "Sealed"}, {"attrs", {{"w", "flow"}}},
                   {"locals", Json::array({Json{{"name", "flow"}, {"type", "num"},
                                                {"public", true}}})}}}}});
-    CHECK_MSG(apply_ops(d, comp_op, cr, err), err);
+    CHECK_MSG(apply_batch(d, comp_op, cr, err), err);
     const uint64_t sealed = cr.ops[0]["node"]["id"].get<uint64_t>();
 
     const uint64_t var_id = id_of(*global_named(d, "flow"));
@@ -425,7 +453,7 @@ void test_rename_scope() {
         {"node", {{"kind", "frame"}, {"name", "Deep"},
                   {"attrs", {{"w", "rate"}}},
                   {"locals", Json::array({Json{{"name", "speed"}, {"type", "num"}}})}}}}});
-    CHECK_MSG(apply_ops(d, deep_op, dr, err), err);
+    CHECK_MSG(apply_batch(d, deep_op, dr, err), err);
     const uint64_t deep = dr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(!apply(d, {Json{{"op", "rename"}, {"node", var_id}, {"name", "speed"}}}, err));
     CHECK(err.find(std::to_string(deep)) != std::string::npos);
@@ -437,7 +465,7 @@ void test_rename_scope() {
     Json local_op = Json::array({Json{
         {"op", "insert"}, {"parent", zone}, {"list", "locals"},
         {"node", {{"name", "hits"}, {"type", "num"}}}}});
-    CHECK_MSG(apply_ops(d, local_op, lr, err), err);
+    CHECK_MSG(apply_batch(d, local_op, lr, err), err);
     const uint64_t hits = lr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", zone}, {"key", "attrs"},
                              {"value", {{"left", "10"}, {"w", "hits"}}}}}, err), err);
@@ -446,26 +474,101 @@ void test_rename_scope() {
         {"op", "insert"}, {"parent", shadow}, {"list", "children"},
         {"node", {{"kind", "frame"}, {"name", "Kid"}, {"attrs", {{"w", "hits"}}},
                   {"locals", Json::array({Json{{"name", "hits"}, {"type", "num"}}})}}}}});
-    CHECK_MSG(apply_ops(d, kid_op, kr, err), err);
+    CHECK_MSG(apply_batch(d, kid_op, kr, err), err);
     const uint64_t kid = kr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", hits}, {"name", "taps"}}}, err), err);
     CHECK((*d.node(zone))["attrs"]["w"] == "taps");
     CHECK((*d.node(kid))["attrs"]["w"] == "hits");
 }
 
-void test_expr_rewrite() {
-    CHECK(rewrite_ident("x + flow", "flow", "rate") == "x + rate");
-    CHECK(rewrite_ident("x.flow", "flow", "rate") == "x.flow");          /* a field */
-    CHECK(rewrite_ident("flow(x)", "flow", "rate") == "flow(x)");        /* a builtin */
-    CHECK(rewrite_ident("\"flow\" + flow", "flow", "rate") == "\"flow\" + rate");
-    CHECK(rewrite_ident("flowing + flow", "flow", "rate") == "flowing + rate");
-    CHECK(!expr_uses("x.flow", "flow"));
+/* THE INDEX-DRIVEN RENAME's own ground: an unplaced component's definition follows
+ * its variable's rename by the definition check's exported rows, while its behavior's
+ * `this.<name>` reads stay UNREWRITTEN (the known gap, kept until its own decision —
+ * and exempt from the binding verify, since no rename can capture a reserved word);
+ * a site whose analysis broke refuses rather than rewriting blind; and renaming ONTO
+ * a flow temporary's name is caught by the recompile — the write would silently
+ * repoint to the variable, which no locals-list check could ever see. */
+void test_rename_by_index() {
+    Document d = Document::make_default();
+    std::string err;
+
+    /* an UNPLACED component: an attr reads the variable bare, behavior via this. */
+    ApplyResult cr;
+    Json comp_op = Json::array({Json{
+        {"op", "insert"}, {"parent", 0}, {"list", "components"},
+        {"node", {{"name", "Counter"},
+                  {"attrs", {{"w", "count"}}},
+                  {"interact", {{"primitive", "press"}}},
+                  {"locals", Json::array({Json{{"name", "count"}, {"type", "num"},
+                                               {"public", true}}})},
+                  {"behavior", Json::array({Json{
+                      {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                      {"do", Json::array({Json{{"kind", "assign"},
+                                               {"from", {{"expr", "this.count + 1"}}},
+                                               {"to", {{"slot", "count"}}}}})}}})}}}}});
+    CHECK_MSG(apply_batch(d, comp_op, cr, err), err);
+    const uint64_t counter = cr.ops[0]["node"]["id"].get<uint64_t>();
+    const uint64_t count_id = id_of((*d.node(counter))["locals"][0]);
+    CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", count_id}, {"name", "tally"}}},
+                    err), err);
+    CHECK((*d.node(counter))["locals"][0]["name"] == "tally");
+    CHECK((*d.node(counter))["attrs"]["w"] == "tally");
+    CHECK((*d.node(counter))["behavior"][0]["do"][0]["from"]["expr"] == "this.count + 1");
+
+    /* a page attr that does not parse: the compile could not vouch for the name
+       inside it, so the rename refuses whole, saying where */
+    const uint64_t page = id_of(d.root["pages"][0]);
+    ApplyResult br;
+    Json broken_op = Json::array({Json{
+        {"op", "insert"}, {"parent", page}, {"list", "children"},
+        {"node", {{"kind", "frame"}, {"name", "Cracked"},
+                  {"attrs", {{"w", "flow + ("}}}}}}});
+    CHECK_MSG(apply_batch(d, broken_op, br, err), err);
+    const uint64_t cracked = br.ops[0]["node"]["id"].get<uint64_t>();
+    const uint64_t flow_id = id_of(*global_named(d, "flow"));
+    CHECK(!apply(d, {Json{{"op", "rename"}, {"node", flow_id}, {"name", "rate"}}}, err));
+    CHECK(err.find(std::to_string(cracked)) != std::string::npos);
+    CHECK(global_named(d, "flow") != nullptr);   /* refused whole */
+
+    /* a flow declares a temporary `scratch`; renaming a global onto that name would
+       turn the temp's declaring write into a write of the GLOBAL (a declared name
+       outranks a fresh temporary), so the recompile refuses it */
+    ApplyResult tr;
+    Json temp_op = Json::array({Json{
+        {"op", "insert"}, {"parent", page}, {"list", "children"},
+        {"node", {{"kind", "frame"}, {"name", "Temps"},
+                  {"interact", {{"primitive", "press"}}},
+                  {"flows", Json::array({Json{
+                      {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                      {"do", Json::array({Json{{"kind", "assign"},
+                                               {"from", {{"expr", "1"}}},
+                                               {"to", {{"local", "scratch"},
+                                                       {"path", ""}}}}})}}})}}}}});
+    CHECK_MSG(apply_batch(d, temp_op, tr, err), err);
+    const uint64_t setpoint = id_of(*global_named(d, "setpoint"));
+    CHECK(!apply(d, {Json{{"op", "rename"}, {"node", setpoint}, {"name", "scratch"}}},
+                 err));
+    CHECK(global_named(d, "setpoint") != nullptr);
+}
+
+/* THE DETECTOR: is a name lexically present as a bare identifier? The rewrite itself
+ * follows the index's spans now, so this is the one question the doc side still asks
+ * text — where it says yes and no row explains the occurrence, the rename refuses or
+ * skips by what the compile vouched for. */
+void test_expr_uses() {
+    CHECK(expr_uses("x + flow", "flow"));
+    CHECK(!expr_uses("x.flow", "flow"));          /* a field */
+    CHECK(!expr_uses("flow(x)", "flow"));         /* a builtin */
+    CHECK(expr_uses("\"flow\" + flow", "flow"));
+    CHECK(!expr_uses("\"flow\"", "flow"));        /* a string is not an identifier */
+    CHECK(expr_uses("flowing + flow", "flow"));
+    CHECK(!expr_uses("flowing", "flow"));
     CHECK(expr_uses("clamp(flow, 0, 1)", "flow"));
     /* the scan is THE LEXER's: what it owns whole is not an identifier, so a mesh
        path, a number's exponent and a color literal keep their spelling however a
        variable is named */
-    CHECK(rewrite_ident("@flow.rate + flow", "flow", "lpm") == "@flow.rate + lpm");
-    CHECK(rewrite_ident("1e5 + e5", "e5", "n") == "1e5 + n");
+    CHECK(!expr_uses("@flow.rate", "flow"));
+    CHECK(!expr_uses("1e5", "e5"));
     CHECK(!expr_uses("#f00", "f00"));
 }
 
@@ -481,7 +584,7 @@ void test_retype() {
     const uint64_t id = id_of(*setpoint);
     std::string err;
     ApplyResult r;
-    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+    CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
                                     {"value", "bool"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == true);   /* 42 is not zero */
@@ -492,7 +595,7 @@ void test_retype() {
     CHECK(echoed);
 
     /* and back: a bool becomes a number again, so nothing is stuck in the wrong shape */
-    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+    CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
                                     {"value", "num"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == 1.0);
@@ -519,15 +622,15 @@ void test_retype() {
     /* LIST AND MAP ARE VARIABLE TYPES: a declared buffer a flow appends to or writes by
        key. Retyping into one starts it EMPTY rather than carrying the scalar it left
        behind, which nothing could hold; retyping back restores the scalar's own start. */
-    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+    CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
                                     {"value", "list"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == Json::array());
-    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+    CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
                                     {"value", "map"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == Json::object());
-    CHECK(apply_ops(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
+    CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
                                     {"value", "num"}}}),
                     r, err));
     /* nothing about a map is a number, so the number's own default stands */
@@ -584,7 +687,7 @@ void test_aggregate_move_props() {
                                  {"list", "flows"},
                                  {"node", Json{{"when", Json::array({Json{
                                                    {"kind", "every"}, {"ms", 100}}})}}}}});
-    CHECK_MSG(apply_ops(d, add, r, err), err);
+    CHECK_MSG(apply_batch(d, add, r, err), err);
     const uint64_t flow = r.ops[0]["node"]["id"].get<uint64_t>();
     Json row = Json::array({Json{{"op", "insert"},
                                  {"parent", flow},
@@ -594,7 +697,7 @@ void test_aggregate_move_props() {
                                                {"to", Json{{"local", "log"}}},
                                                {"mode", "append"},
                                                {"keep", "60"}}}}});
-    CHECK_MSG(apply_ops(d, row, r, err), err);
+    CHECK_MSG(apply_batch(d, row, r, err), err);
     const uint64_t moved = r.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(d.node(moved)->at("mode") == "append");
     CHECK(d.node(moved)->at("keep") == "60");
@@ -654,7 +757,7 @@ void test_tokens() {
                                  {"parent", kDocId},
                                  {"list", "tokens"},
                                  {"node", {{"name", "alarm"}, {"dark", "#ff0000"}}}}});
-    CHECK_MSG(apply_ops(d, add, r, err), err);
+    CHECK_MSG(apply_batch(d, add, r, err), err);
     const uint64_t alarm_id = r.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(d.node(alarm_id)->at("group") == "core");
     CHECK(d.node(alarm_id)->at("light") == "#000000");
@@ -678,7 +781,7 @@ void test_tokens() {
               err);
     ApplyResult rr;
     Json rename = Json::array({Json{{"op", "rename"}, {"node", accent_id}, {"name", "brand"}}});
-    CHECK_MSG(apply_ops(d, rename, rr, err), err);
+    CHECK_MSG(apply_batch(d, rename, rr, err), err);
     CHECK(token_named(d, "brand") != nullptr);
     CHECK(token_named(d, "accent") == nullptr);
     CHECK(labelled(d, "Title")["slots"]["text_color"] == "$brand");
@@ -703,7 +806,7 @@ void test_tokens() {
     Json pane = Json::array({Json{{"op", "rename"},
                                   {"node", id_of(*token_named(d, "surface"))},
                                   {"name", "pane"}}});
-    CHECK_MSG(apply_ops(d, pane, fr, err), err);
+    CHECK_MSG(apply_batch(d, pane, fr, err), err);
     CHECK(named_frame(d, "Main")["attrs"]["surface"] == "$pane");
     CHECK(named_frame(d, "Header")["attrs"]["surface"] == "$surface-2");
     bool echoed_frame = false;
@@ -762,7 +865,7 @@ void test_frames() {
                                            {"name", "Fresh"},
                                            {"children", Json::array({
                                                Json{{"kind", "frame"}, {"type", "Label"}}})}}}}});
-    CHECK_MSG(apply_ops(d, add, r, err), err);
+    CHECK_MSG(apply_batch(d, add, r, err), err);
     const uint64_t frame_id = r.ops[0]["node"]["id"].get<uint64_t>();
     const Json& frame = *d.node(frame_id);
     CHECK(frame["kind"] == "frame");
@@ -790,7 +893,7 @@ void test_frames() {
                                   {"parent", frame_id},
                                   {"list", "children"},
                                   {"node", {{"kind", "frame"}, {"type", "Button"}}}}});
-    CHECK_MSG(apply_ops(d, add2, r2, err), err);
+    CHECK_MSG(apply_batch(d, add2, r2, err), err);
     CHECK((*d.node(frame_id))["children"].size() == 2);
 
     /* move within the heterogeneous list: reordering one of a frame's own children uses
@@ -811,7 +914,7 @@ void test_frames() {
     ApplyResult plain;
     Json bare = ops_of({Json{{"op", "insert"}, {"parent", page_id}, {"list", "children"},
                              {"node", {{"name", "No kind"}}}}});
-    CHECK_MSG(apply_ops(d, bare, plain, err), err);
+    CHECK_MSG(apply_batch(d, bare, plain, err), err);
     CHECK(plain.ops[0]["node"]["kind"] == "frame");
 
     /* an unrecognised variant is rejected, naming what was given */
@@ -836,7 +939,7 @@ void test_frames() {
     ApplyResult leafy;
     Json leaf = ops_of({Json{{"op", "insert"}, {"parent", page_id}, {"list", "children"},
                              {"node", {{"kind", "frame"}, {"name", "Ink"}}}}});
-    CHECK_MSG(apply_ops(d, leaf, leafy, err), err);
+    CHECK_MSG(apply_batch(d, leaf, leafy, err), err);
     const uint64_t ink = leafy.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", ink}, {"key", "kind"},
                              {"value", "path"}}}, err), err);
@@ -880,7 +983,7 @@ void test_reparent() {
        ends of the journey are touched */
     ApplyResult out;
     Json up = ops_of({Json{{"op", "move"}, {"node", pump}, {"parent", page_id}, {"index", 0}}});
-    CHECK_MSG(apply_ops(d, up, out, err), err);
+    CHECK_MSG(apply_batch(d, up, out, err), err);
     CHECK(id_of(d.root["pages"][0]["children"][0]) == pump);
     CHECK((*d.node(main_col))["children"].size() == 5);
     CHECK(out.ops.size() == 1);
@@ -892,7 +995,7 @@ void test_reparent() {
     /* and back down into a different frame, at a position of its own */
     ApplyResult down;
     Json into = ops_of({Json{{"op", "move"}, {"node", pump}, {"parent", lamps}, {"index", 1}}});
-    CHECK_MSG(apply_ops(d, into, down, err), err);
+    CHECK_MSG(apply_batch(d, into, down, err), err);
     CHECK(id_of((*d.node(lamps))["children"][1]) == pump);
     CHECK((*d.node(lamps))["children"].size() == 3);
     CHECK(d.root["pages"][0]["children"].size() == 4);   /* the page is frames again */
@@ -919,7 +1022,7 @@ void test_reparent() {
                             {"list", "children"},
                             {"index", 0},
                             {"node", {{"kind", "frame"}, {"type", "Label"}, {"name", "Loose"}}}}});
-    CHECK_MSG(apply_ops(d, add, made, err), err);
+    CHECK_MSG(apply_batch(d, add, made, err), err);
     const uint64_t loose = made.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(id_of(d.root["pages"][0]["children"][0]) == loose);
     CHECK_MSG(apply(d, {Json{{"op", "move"}, {"node", loose}, {"parent", lamps}, {"index", 0}}}, err),
@@ -956,11 +1059,11 @@ void test_reparent() {
     ApplyResult fresh;
     Json add_page = ops_of({Json{{"op", "insert"}, {"parent", kDocId}, {"list", "pages"},
                                  {"node", {{"name", "Second"}}}}});
-    CHECK_MSG(apply_ops(d, add_page, fresh, err), err);
+    CHECK_MSG(apply_batch(d, add_page, fresh, err), err);
     const uint64_t second = fresh.ops[0]["node"]["id"].get<uint64_t>();
     ApplyResult shuffled;
     Json reorder = ops_of({Json{{"op", "move"}, {"node", page_id}, {"index", 1}}});
-    CHECK_MSG(apply_ops(d, reorder, shuffled, err), err);
+    CHECK_MSG(apply_batch(d, reorder, shuffled, err), err);
     CHECK(id_of(d.root["pages"][0]) == second && id_of(d.root["pages"][1]) == page_id);
     /* and its echo names the document itself as the parent, so the mirror needs no
        special case for the one list that hangs off the root */
@@ -991,7 +1094,7 @@ void test_group() {
                               {"nodes", Json::array({flow, setpoint})},
                               {"attrs", Json{{"left", "22"}, {"top", "110"},
                                              {"w", "836"}, {"h", "264"}}}}});
-    CHECK_MSG(apply_ops(d, batch, r, err), err);
+    CHECK_MSG(apply_batch(d, batch, r, err), err);
     const Json& main_kids = (*d.node(main_col))["children"];
     CHECK(main_kids.size() == 5);
     CHECK(id_of(main_kids[0]) == pump && id_of(main_kids[2]) == reset);
@@ -1054,7 +1157,7 @@ void test_component_design_frame() {
                                  {"parent", kDocId},
                                  {"list", "components"},
                                  {"node", {{"name", "Comp1"}}}}});
-    CHECK_MSG(apply_ops(d, add, r, err), err);
+    CHECK_MSG(apply_batch(d, add, r, err), err);
     const uint64_t comp_id = r.ops[0]["node"]["id"].get<uint64_t>();
     const Json& comp = *d.node(comp_id);
     CHECK(comp["design_w"] == 240);
@@ -1090,7 +1193,8 @@ int main() {
     test_group();
     test_rename();
     test_rename_scope();
-    test_expr_rewrite();
+    test_rename_by_index();
+    test_expr_uses();
     test_retype();
     test_aggregate_move_props();
     test_var_types();

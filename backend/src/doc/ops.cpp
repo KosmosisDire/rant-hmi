@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 
 namespace hmi {
 namespace {
@@ -474,11 +475,73 @@ bool rename_token(Document& d, NodeEntry& e, uint64_t id, const std::string& nam
     return true;
 }
 
+/* BINDING PRESERVATION — the one rule the old capture and shadow pre-checks folded
+ * into. Every reference the compile resolved BEFORE the rename, on a site the pass
+ * walked, must resolve to the same declaration AFTER it: the rewritten occurrences to
+ * the renamed variable, everything else unchanged. A NEW resolution appearing is
+ * allowed (renaming can give a previously-unresolved name a meaning — the author
+ * picked the name); a binding that flips or disappears is a capture, and the rename
+ * refuses whole. Spans are mapped through the rewrites, so an occurrence is held to
+ * its OWN binding, not to a count. */
+bool bindings_hold(const RefIndex& before, const RefIndex& after,
+                   const RenameOutcome& outcome, const RenamePlan& plan,
+                   std::string& err) {
+    std::map<std::pair<uint64_t, std::string>, std::vector<const RefRow*>> now;
+    for (const RefRow& row : after.rows) now[{row.node, row.text}].push_back(&row);
+    std::map<std::pair<uint64_t, std::string>, const RewrittenSite*> rewritten;
+    for (const RewrittenSite& site : outcome.rewrites)
+        rewritten[{site.node, site.before}] = &site;
+
+    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(plan.to.size()) -
+                                 static_cast<std::ptrdiff_t>(plan.from.size());
+    for (const RefRow& row : before.rows) {
+        if (!outcome.visited.count({row.node, row.text})) continue;
+        /* a `this.<name>` read records under the reserved word, which no variable
+           rename can capture — its binding moves only because the DECLARATION's name
+           changed, the one breakage this op has always allowed (the rename never
+           rewrote `this.<name>`; fixing that gap is its own decision) */
+        if (row.text.compare(row.at, row.length, "this") == 0) continue;
+        std::string text = row.text;
+        size_t at = row.at;
+        size_t length = row.length;
+        if (auto found = rewritten.find({row.node, row.text}); found != rewritten.end()) {
+            const RewrittenSite& site = *found->second;
+            std::ptrdiff_t shifted = 0;
+            bool renamed_here = false;
+            for (size_t span : site.spans) {
+                if (span < row.at) ++shifted;
+                if (span == row.at) renamed_here = true;
+            }
+            at = static_cast<size_t>(static_cast<std::ptrdiff_t>(row.at) + delta * shifted);
+            if (renamed_here) length = plan.to.size();
+            text = site.after;
+        }
+        bool held = false;
+        if (auto rows = now.find({row.node, text}); rows != now.end())
+            for (const RefRow* candidate : rows->second)
+                if (candidate->at == at && candidate->length == length &&
+                    candidate->decl == row.decl) {
+                    held = true;
+                    break;
+                }
+        if (!held) {
+            err = "renaming '" + plan.from + "' to '" + plan.to + "' would change what '" +
+                  row.text.substr(row.at, row.length) + "' means on node " +
+                  std::to_string(row.node);
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Rename a variable and rewrite every reference to it, in one transaction (spec 2.7).
- * Rejected when the new name collides with a sibling, or when it would capture a
- * reference that currently resolves to a different variable. Dispatches on the node's
- * kind: a theme token has its own fan-out (rename_token). */
-bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
+ * Rejected when the new name collides with a sibling, when a site nothing analyzed
+ * contains the name, or when any binding would change (bindings_hold above). Which
+ * occurrences are the variable's is THE INDEX's answer, never a scope rule restated
+ * here. Dispatches on the node's kind: a theme token has its own fan-out
+ * (rename_token). */
+bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err,
+               const Indexer& indexer) {
     uint64_t id = 0;
     if (!id_field(op, "node", id, err)) return false;
     const std::string name = str_field(op, "name");
@@ -498,49 +561,49 @@ bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
         err = "'" + name + "' is already taken in this scope";
         return false;
     }
+    if (!indexer) {
+        err = "a variable rename needs the document compiler bound";
+        return false;
+    }
 
     const std::string from = str_field(*e->node, "name");
-    std::vector<RefEdit> edits;
+    const RefIndex before = indexer(d);
+    RenamePlan plan;
+    plan.rows = &before.rows;
+    plan.blind = &before.blind;
+    plan.decl = id;
+    plan.from = from;
+    plan.to = name;
 
-    /* THE FAN-OUT FOLLOWS THE LEXICAL SCOPE, which is why neither branch walks a flat
-     * subtree. A GLOBAL is in scope on every element of every page — not only on the
-     * instances, which is all this reached while an instance was the only node that could
-     * hold a variable — and it stops wherever an element declares the name itself. A
-     * COMPONENT is never walked at all: nothing inside one can name a page's variable
-     * (strict isolation), so a bare word in there is a property and renaming it would be
-     * rewriting an unrelated language. */
+    /* WHAT IS WALKED is only an ADDRESSING question now (which subtrees could hold a
+     * reference at all): a global reaches every element of every page and never a
+     * component's inside (strict isolation), an element's or a component's variable
+     * reaches its declaring subtree — a component definition walked by its OWN spec,
+     * which is what brings `behavior` along. Which occurrences inside those sites are
+     * the variable's is the index's answer alone. */
+    std::vector<RefEdit> edits;
+    RenameOutcome outcome;
     if (global) {
         auto pages = d.root.find("pages");
-        std::vector<Json*> roots;
         if (pages != d.root.end() && pages->is_array())
             for (Json& page : *pages) {
                 auto kids = page.find("children");
                 if (kids == page.end() || !kids->is_array()) continue;
-                for (Json& child : *kids) roots.push_back(&child);
+                for (Json& child : *kids)
+                    if (!rename_pass(Kind::Node, child, plan, &edits, outcome, err))
+                        return false;
             }
-        for (Json* root : roots)
-            if (uint64_t at = capture_site(*root, from, name, false)) {
-                err = "'" + name + "' is a local of node " + std::to_string(at) +
-                      " and would capture it";
-                return false;
-            }
-        for (Json* root : roots) rename_scoped(*root, from, name, &edits, false);
     } else {
-        Json& w = *pe->node;
-        const Json* globals = d.root.find("globals") == d.root.end() ? nullptr : &d.root["globals"];
-        int uses_new = 0;
-        if (globals && has_var(*globals, name)) {
-            std::vector<RefEdit> none;
-            uses_new = rename_scoped(w, name, "", &none, false);
-        }
-        if (uses_new > 0) {
-            err = "'" + name + "' is a global this element already uses";
-            return false;
-        }
-        rename_scoped(w, from, name, &edits, true);
+        if (!rename_pass(pe->kind, *pe->node, plan, &edits, outcome, err)) return false;
     }
 
     (*e->node)["name"] = name;
+
+    /* the one check, AFTER the rewrite, on the scratch document a refused batch
+       discards: recompile and hold every walked binding to what it meant */
+    const RefIndex after = indexer(d);
+    if (!bindings_hold(before, after, outcome, plan, err)) return false;
+
     r.ops.push_back(Json{{"op", "rename"}, {"node", id}, {"name", name}});
     r.touched.push_back(id);
     for (const RefEdit& edit : edits) {
@@ -553,7 +616,8 @@ bool op_rename(Document& d, const Json& op, ApplyResult& r, std::string& err) {
 
 } // namespace
 
-bool apply_ops(Document& doc, const Json& ops, ApplyResult& out, std::string& err) {
+bool apply_ops(Document& doc, const Json& ops, ApplyResult& out, std::string& err,
+               const Indexer& indexer) {
     if (!ops.is_array()) { err = "ops must be an array"; return false; }
     if (ops.empty()) { err = "empty op batch"; return false; }
 
@@ -571,7 +635,7 @@ bool apply_ops(Document& doc, const Json& ops, ApplyResult& out, std::string& er
         else if (kind == "remove") ok = op_remove(scratch, op, r, err);
         else if (kind == "move") ok = op_move(scratch, op, r, err);
         else if (kind == "group") ok = op_group(scratch, op, r, err);
-        else if (kind == "rename") ok = op_rename(scratch, op, r, err);
+        else if (kind == "rename") ok = op_rename(scratch, op, r, err, indexer);
         else err = "unknown op '" + kind + "'";
         if (!ok) return false;
         scratch.reindex();   /* ids stay, positions and pointers do not */

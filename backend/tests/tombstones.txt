@@ -100,3 +100,14 @@ allow_agg
 # the corruption the scope rule exists to prevent, so the pair stays dead.
 rename_refs
 count_refs
+
+# the rename cutover: THE INDEX decides membership (the compile records every
+# resolved name; the rename asks it which occurrences are its variable's) and
+# BINDING PRESERVATION replaces the hand checks (recompile after, refuse unless
+# every walked reference kept its declaration). The scoped walk that restated the
+# scope rules, its shadow-pruned pass, the capture pre-check it fed, and the blind
+# identifier rewrite that renamed by spelling rather than by resolution.
+rename_scoped
+scoped_pass
+capture_site
+rewrite_ident

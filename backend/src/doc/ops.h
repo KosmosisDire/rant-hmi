@@ -6,7 +6,10 @@
  * broadcast: a client applies ops mechanically and holds no rule. */
 #pragma once
 
+#include "diag.h"
 #include "doc.h"
+
+#include <functional>
 
 namespace hmi {
 
@@ -16,6 +19,20 @@ struct ApplyResult {
     std::vector<uint64_t> touched;      /* node ids this batch affected */
 };
 
-bool apply_ops(Document& doc, const Json& ops, ApplyResult& out, std::string& err);
+/* THE REFERENCE INDEX a rename resolves against: every resolved name over one document
+ * (rows) and every site whose analysis broke (blind), produced by the COMPILERS. The
+ * op layer never compiles anything itself — doc/ must not include compile/ — so the
+ * app INJECTS an indexer here and a rename asks it twice: once for membership before
+ * rewriting, once to verify every binding held after. Without one bound, a variable
+ * rename refuses. */
+struct RefIndex {
+    std::vector<RefRow> rows;
+    std::vector<RefSite> blind;
+};
+
+using Indexer = std::function<RefIndex(const Document&)>;
+
+bool apply_ops(Document& doc, const Json& ops, ApplyResult& out, std::string& err,
+               const Indexer& indexer = {});
 
 } // namespace hmi

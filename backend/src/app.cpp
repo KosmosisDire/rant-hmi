@@ -222,7 +222,25 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
 
     ApplyResult applied;
     std::string err;
-    if (!apply_ops(doc_, ops, applied, err)) { reject(session, err); return; }
+    /* THE INDEXER a rename resolves against: the same three compiles compile_runtime
+     * runs, over whatever document the op layer hands in (the scratch mid-batch), rows
+     * and blind sites only. Bound here because doc/ must not include compile/. */
+    const Indexer indexer = [this](const Document& doc) {
+        RefIndex index;
+        std::vector<Diag> findings;
+        std::set<std::string> reads;
+        std::set<std::string> per_copy;
+        compile_page_attrs(doc, findings, &mesh_->reflection(), &reads, &per_copy,
+                           &index.rows, &index.blind);
+        CompileResult compiled = compile_document(doc, *mesh_, &reads, &per_copy);
+        for (RefRow& row : compiled.program.references)
+            index.rows.push_back(std::move(row));
+        for (RefSite& gap : compiled.program.reference_gaps)
+            index.blind.push_back(std::move(gap));
+        check_component_definitions(doc, *mesh_, &index.rows, &index.blind);
+        return index;
+    };
+    if (!apply_ops(doc_, ops, applied, err, indexer)) { reject(session, err); return; }
 
     remember(applied.version, applied.touched);
     ++edits_;

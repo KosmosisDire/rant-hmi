@@ -7,6 +7,7 @@
 #include "lang/lexer.h"
 #include "lang/template_expr.h"
 
+#include <algorithm>
 #include <functional>
 
 namespace hmi {
@@ -18,10 +19,7 @@ bool ident_char(char c) { return ident_start(c) || (c >= '0' && c <= '9'); }
 /* Call fn(start, len) for every bare identifier — THE LEXER's identifiers (spans and
  * all), never a private spelling of them: a name after '.' is a field or method, a
  * name followed by '(' is a call, and what the lexer owns whole (strings, numbers,
- * colors, `@entity` paths, `$tokens`, the word operators) is no identifier at all.
- * The hand scan this replaced disagreed on exactly those — it saw an identifier
- * inside `@motor.speed`, `1e5` and `#f00`, so a rename could corrupt an entity
- * reference or a literal that happened to spell the variable's name. */
+ * colors, `@entity` paths, `$tokens`, the word operators) is no identifier at all. */
 void scan_idents(const std::string& s, const std::function<void(size_t, size_t)>& fn) {
     Lexer lexer(s);
     TokenKind before = TokenKind::End;
@@ -39,12 +37,11 @@ void scan_idents(const std::string& s, const std::function<void(size_t, size_t)>
 using Site = std::function<void(uint64_t, const std::string&, Role, Json&)>;
 
 /* Visit every reference-carrying prop value THIS ELEMENT OWNS, tagged with its role —
- * its attrs, its gestures, its locals' initialisers, its flows and their steps — never
- * the elements nested inside it. Stopping at the element boundary is what lets the
- * caller (scoped_pass) apply the LEXICAL SCOPE rule, which no walk over a flat subtree
- * could: a child that redeclares the name owns everything below it. Only `children`
- * holds elements, so only a Node list is pruned; a flow's steps and a variable's
- * initialiser belong to this element and always ride along. */
+ * its attrs, its gestures, its flows and their steps — never the elements nested inside
+ * it. Only `children` holds elements, so only a Node list is pruned; a flow's steps
+ * belong to this element and always ride along. The element boundary matters to the
+ * caller's EDIT granularity (one set_prop per prop) and to nothing else now: what a
+ * name inside a value means is the index's to say, not the walk's. */
 void walk_refs(Kind kind, Json& node, const Site& visit) {
     if (!node.is_object()) return;
     const NodeSpec& spec = node_spec(kind);
@@ -65,45 +62,127 @@ void walk_refs(Kind kind, Json& node, const Site& visit) {
     }
 }
 
-/* does this element declare a variable of its own by this name? The one question the
- * scope rule turns on: below such an element the word means something else. */
-bool declares_var(const Json& element, const std::string& name) {
-    auto it = element.find("locals");
-    if (it == element.end() || !it->is_array()) return false;
-    for (const Json& var : *it)
-        if (var.is_object() && var.value("name", "") == name) return true;
-    return false;
+/* ---- THE MEMBERSHIP PASS: one site at a time, the index deciding everything ---- */
+
+struct Pass {
+    const RenamePlan* plan = nullptr;
+    RenameOutcome* out = nullptr;
+    std::string* err = nullptr;
+    bool refused = false;
+
+    void refuse(uint64_t node) {
+        if (refused) return;
+        refused = true;
+        *err = "node " + std::to_string(node) + " does not fully compile where it "
+               "names '" + plan->from + "'; fix it before renaming";
+    }
+
+    /* the renamed variable's own occurrences in this site: rows resolving to the
+     * declaration AND spelling the old name — a `this.value` read resolves to the
+     * variable but spells `this`, and the rename must leave that span alone */
+    std::vector<size_t> member_spans(uint64_t node, const std::string& text) const {
+        std::vector<size_t> spans;
+        const std::string& from = plan->from;
+        for (const RefRow& row : *plan->rows) {
+            if (row.node != node || row.decl != plan->decl || row.text != text) continue;
+            if (row.length != from.size() || text.compare(row.at, row.length, from) != 0)
+                continue;
+            spans.push_back(row.at);
+        }
+        std::sort(spans.begin(), spans.end());
+        spans.erase(std::unique(spans.begin(), spans.end()), spans.end());
+        return spans;
+    }
+
+    bool blind_site(uint64_t node, const std::string& text) const {
+        for (const RefSite& gap : *plan->blind)
+            if (gap.node == node && gap.text == text) return true;
+        return false;
+    }
+
+    /* empty text = the compile abandoned the node whole (a failing step) */
+    bool blind_node(uint64_t node) const { return blind_site(node, ""); }
+};
+
+/* the rewritten text: every span replaced, everything between kept byte for byte */
+std::string splice(const std::string& text, const std::vector<size_t>& spans,
+                   size_t length, const std::string& to) {
+    std::string out;
+    size_t copied = 0;
+    for (size_t at : spans) {
+        out.append(text, copied, at - copied);
+        out.append(to);
+        copied = at + length;
+    }
+    out.append(text, copied, std::string::npos);
+    return out;
 }
 
-/* one reference site, reduced to "does it name this variable" plus "rename it" */
-void visit_site(Role role, Json& value, const std::string& from, const std::string& to,
-                int& hits) {
+/* one EXPRESSION site: the rows say exactly which occurrences are the variable's (a
+ * lambda parameter spelling the same word has no row and keeps its name); a site with
+ * no rows refuses only where nothing vouched for it, and skips where the analysis DID
+ * run — then the word is somebody else's (a shadow, a parameter). A site the index
+ * marked blind by TEXT is partially analyzed at best, so its rows may lie by omission
+ * and the name inside it refuses outright. */
+void rename_expr(Pass& pass, uint64_t node, Json& value) {
+    if (!value.is_string()) return;
+    const std::string text = value.get<std::string>();
+    pass.out->visited.insert({node, text});
+    if (!expr_uses(text, pass.plan->from)) return;
+    if (pass.blind_site(node, text)) {
+        pass.refuse(node);
+        return;
+    }
+    const std::vector<size_t> spans = pass.member_spans(node, text);
+    if (spans.empty()) {
+        if (pass.blind_node(node)) pass.refuse(node);
+        return;
+    }
+    const std::string after = splice(text, spans, pass.plan->from.size(), pass.plan->to);
+    value = after;
+    ++pass.out->hits;
+    pass.out->rewrites.push_back(RewrittenSite{node, text, after, spans});
+}
+
+/* one WHOLE-WORD site (a move's `local`, a timer's name): atomic, so a row means the
+ * whole site resolved and rows outrank a node-level blind mark */
+void rename_word(Pass& pass, uint64_t node, Json& value) {
+    if (!value.is_string()) return;
+    const std::string word = value.get<std::string>();
+    pass.out->visited.insert({node, word});
+    if (word != pass.plan->from) return;
+    if (!pass.member_spans(node, word).empty()) {
+        value = pass.plan->to;
+        ++pass.out->hits;
+        pass.out->rewrites.push_back(
+            RewrittenSite{node, word, pass.plan->to, {0}});
+        return;
+    }
+    if (pass.blind_site(node, word) || pass.blind_node(node)) pass.refuse(node);
+}
+
+void rename_site(Pass& pass, uint64_t node, Role role, Json& value) {
     switch (role) {
         case Role::VarName:
-            if (value.is_string() && value.get<std::string>() == from) {
-                ++hits;
-                if (!to.empty()) value = to;
-            }
+            rename_word(pass, node, value);
             return;
         case Role::EntityRef: {
+            /* {kind:"L", name}: a variable spelled as an entity target — a form the
+               compiler refuses outright, so no row can ever vouch for it; where it
+               names the variable, the site is exactly the blind case */
             if (!value.is_object()) return;
             auto kind = value.find("kind");
             auto name = value.find("name");
             if (kind == value.end() || name == value.end()) return;
             if (!kind->is_string() || kind->get<std::string>() != "L") return;
-            if (!name->is_string() || name->get<std::string>() != from) return;
-            ++hits;
-            if (!to.empty()) *name = to;
+            if (!name->is_string()) return;
+            pass.out->visited.insert({node, name->get<std::string>()});
+            if (name->get<std::string>() == pass.plan->from) pass.refuse(node);
             return;
         }
-        case Role::Expr: {
-            if (!value.is_string()) return;
-            const std::string expr = value.get<std::string>();
-            if (!expr_uses(expr, from)) return;
-            ++hits;
-            if (!to.empty()) value = rewrite_ident(expr, from, to);
+        case Role::Expr:
+            rename_expr(pass, node, value);
             return;
-        }
         case Role::Triggers: {
             if (!value.is_array()) return;
             for (Json& trigger : value) {
@@ -114,37 +193,34 @@ void visit_site(Role role, Json& value, const std::string& from, const std::stri
                     continue;
                 auto var = trigger.find("var");
                 if (var == trigger.end() || !var->is_string()) continue;
-                if (var->get<std::string>() != from) continue;
-                ++hits;
-                if (!to.empty()) *var = to;
+                rename_word(pass, node, *var);
             }
             return;
         }
         /* A move's `from` / `to` is one object carrying whichever form it is (spec 2.6),
-           so the site dispatches on the key present and reuses the three roles above:
-           there is no fourth kind of reference, only a fourth place to find one. */
+           so the site dispatches on the key present and reuses the roles above: there is
+           no fourth kind of reference, only a fourth place to find one. */
         case Role::MoveRef: {
             if (!value.is_object()) return;
             if (auto expr = value.find("expr"); expr != value.end())
-                visit_site(Role::Expr, *expr, from, to, hits);
+                rename_expr(pass, node, *expr);
             if (auto local = value.find("local"); local != value.end())
-                visit_site(Role::VarName, *local, from, to, hits);
-            if (value.contains("kind")) visit_site(Role::EntityRef, value, from, to, hits);
+                rename_word(pass, node, *local);
+            if (value.contains("kind")) rename_site(pass, node, Role::EntityRef, value);
             return;
         }
         /* every STRING LEAF is an expression (a number or a bool is a degenerate literal
            with nothing to rename), through objects and arrays alike: an instance's
            `slots` nests one object per element, a node's `attrs` is flat, a path's
-           `anchors` is an array of coordinate rows with an `arc` object inside. One
-           traversal, because they are one thing — a tree of code. */
+           `anchors` is an array of coordinate rows with an `arc` object inside. */
         case Role::ExprTree: {
             if (value.is_string()) {
-                visit_site(Role::Expr, value, from, to, hits);
+                rename_expr(pass, node, value);
                 return;
             }
             if (!value.is_object() && !value.is_array()) return;
             for (auto& item : value.items())
-                visit_site(Role::ExprTree, item.value(), from, to, hits);
+                rename_site(pass, node, Role::ExprTree, item.value());
             return;
         }
         /* {attr: {ms, profile?}}: the TIME is an expression whenever it is text (a plain
@@ -156,11 +232,11 @@ void visit_site(Role role, Json& value, const std::string& from, const std::stri
             for (auto& row : value.items()) {
                 if (!row.value().is_object()) continue;
                 if (auto ms = row.value().find("ms"); ms != row.value().end())
-                    visit_site(Role::Expr, *ms, from, to, hits);
+                    rename_expr(pass, node, *ms);
                 auto profile = row.value().find("profile");
                 if (profile == row.value().end() || !profile->is_string()) continue;
                 if (easing_profile(profile->get<std::string>())) continue;
-                visit_site(Role::Expr, *profile, from, to, hits);
+                rename_expr(pass, node, *profile);
             }
             return;
         }
@@ -170,12 +246,26 @@ void visit_site(Role role, Json& value, const std::string& from, const std::stri
         case Role::Interact: {
             if (!value.is_object()) return;
             if (auto params = value.find("params"); params != value.end())
-                visit_site(Role::ExprTree, *params, from, to, hits);
+                rename_site(pass, node, Role::ExprTree, *params);
             return;
         }
         case Role::Plain:
             return;
     }
+}
+
+void rename_tree(Kind kind, Json& element, Pass& pass, std::vector<RefEdit>* edits) {
+    if (!element.is_object()) return;
+    walk_refs(kind, element,
+              [&](uint64_t owner, const std::string& key, Role role, Json& value) {
+                  const int before = pass.out->hits;
+                  rename_site(pass, owner, role, value);
+                  if (pass.out->hits != before && edits)
+                      edits->push_back(RefEdit{owner, key, value});
+              });
+    auto children = element.find("children");
+    if (children == element.end() || !children->is_array()) return;
+    for (Json& child : *children) rename_tree(Kind::Node, child, pass, edits);
 }
 
 } // namespace
@@ -188,67 +278,14 @@ bool expr_uses(const std::string& expr, const std::string& name) {
     return found;
 }
 
-std::string rewrite_ident(const std::string& expr, const std::string& from,
-                          const std::string& to) {
-    std::string out;
-    size_t copied = 0;
-    scan_idents(expr, [&](size_t start, size_t len) {
-        if (len != from.size() || expr.compare(start, len, from) != 0) return;
-        out.append(expr, copied, start - copied);
-        out.append(to);
-        copied = start + len;
-    });
-    out.append(expr, copied, std::string::npos);
-    return out;
-}
-
-namespace {
-
-/* ONE ELEMENT AND EVERYTHING IT LEXICALLY OWNS. `declared_here` marks the element that
- * declares the variable being renamed — its own declaration is not a shadow of itself.
- * `capture` names a second word to watch for: where an element declares THAT, everything
- * below it would be swallowed by the rename, and the first such element is reported.
- *
- * The pruning is the whole point. A rename is a scope operation, and a flat walk over a
- * subtree rewrites references that belong to somebody else's variable of the same name. */
-void scoped_pass(Json& element, const std::string& from, const std::string& to,
-                 std::vector<RefEdit>* edits, const std::string& capture,
-                 bool shadowed, bool declared_here, int& hits, uint64_t& captured_by) {
-    if (!element.is_object()) return;
-    if (!declared_here && declares_var(element, from)) return;   /* not our variable */
-    const bool swallows =
-        shadowed || (!capture.empty() && !declared_here && declares_var(element, capture));
-    const int before = hits;
-    walk_refs(Kind::Node, element,
-              [&](uint64_t owner, const std::string& key, Role role, Json& value) {
-                  const int at = hits;
-                  visit_site(role, value, from, to, hits);
-                  if (hits != at && edits) edits->push_back(RefEdit{owner, key, value});
-              });
-    if (hits != before && swallows && !captured_by)
-        captured_by = json_u64_or(element.value("id", Json(0)), 0);
-    auto children = element.find("children");
-    if (children == element.end() || !children->is_array()) return;
-    for (Json& child : *children)
-        scoped_pass(child, from, to, edits, capture, swallows, false, hits, captured_by);
-}
-
-} // namespace
-
-int rename_scoped(Json& element, const std::string& from, const std::string& to,
-                  std::vector<RefEdit>* edits, bool declared_here) {
-    int hits = 0;
-    uint64_t captured_by = 0;
-    scoped_pass(element, from, to, edits, "", false, declared_here, hits, captured_by);
-    return hits;
-}
-
-uint64_t capture_site(Json& element, const std::string& from, const std::string& name,
-                      bool declared_here) {
-    int hits = 0;
-    uint64_t captured_by = 0;
-    scoped_pass(element, from, "", nullptr, name, false, declared_here, hits, captured_by);
-    return captured_by;
+bool rename_pass(Kind kind, Json& element, const RenamePlan& plan,
+                 std::vector<RefEdit>* edits, RenameOutcome& outcome, std::string& err) {
+    Pass pass;
+    pass.plan = &plan;
+    pass.out = &outcome;
+    pass.err = &err;
+    rename_tree(kind, element, pass, edits);
+    return !pass.refused;
 }
 
 bool valid_name(const std::string& name) {
