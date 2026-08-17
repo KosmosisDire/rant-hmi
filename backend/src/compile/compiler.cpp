@@ -1337,26 +1337,28 @@ class Compiler {
 
     /* a struct-typed variable also puts each of its fields in scope, dotted, the same
      * way a struct temporary does (ensure_struct_local): `staged.position` reads like
-     * any other name. An AGGREGATE field binds to its DERIVED CELL (real retained
-     * storage) rather than the field place, so `m.v` reads, appends and element-writes like
-     * any list variable. */
+     * any other name. EVERY field reads through the FIELD PLACE — an aggregate field's
+     * handle is kept current by the store's owner refresh, so the read through the
+     * field sees exactly what the derived storage holds; writes still land in the
+     * derived cell, which is where the storage lives. */
     void bind_variable(Env& scope, const std::string& name, uint32_t cell_index) {
         const CellDef& cell = program_.cells[cell_index];
         scope.bind_value(name,
                          Place{Type(cell.shape, cell.type_id), OpCode::Load, cell_index, 0});
         if (cell.shape != Shape::Struct) return;
         const std::vector<FieldDef>& fields = struct_fields(program_, cell.type_id);
-        for (uint32_t i = 0; i < fields.size(); ++i) {
-            const uint32_t derived = field_cell(cell_index, i);
-            scope.bind_field(
-                name, fields[i].path,
-                derived != UINT32_MAX
-                    ? Place{Type::list_of(fields[i].shape, fields[i].elem),
-                            OpCode::Load, derived, 0}
-                    : Place{Type(fields[i].shape, fields[i].type_id), OpCode::Load,
-                            cell_index, i,
-                            static_cast<uint16_t>(LoadPlace::Field)});
-        }
+        for (uint32_t i = 0; i < fields.size(); ++i)
+            scope.bind_field(name, fields[i].path,
+                             Place{field_place_type(fields[i]), OpCode::Load, cell_index,
+                                   i, static_cast<uint16_t>(LoadPlace::Field)});
+    }
+
+    /* a struct field's Type as its place reads it: an aggregate carries its declared
+     * element, a scalar its enum id */
+    static Type field_place_type(const FieldDef& field) {
+        if (field.shape == Shape::List || field.shape == Shape::Map)
+            return Type::list_of(field.shape, field.elem);
+        return Type(field.shape, field.type_id);
     }
 
     /* the derived cell holding one aggregate field of a struct cell, else UINT32_MAX */
@@ -2689,16 +2691,10 @@ class Compiler {
         locals[name] = cell;
         add_field_cells(CellKind::Temp, element.id, flow.flow_id, name, cell);
         const std::vector<FieldDef>& fields = struct_fields(program_, type_id);
-        for (uint32_t i = 0; i < fields.size(); ++i) {
-            const uint32_t derived = field_cell(cell, i);
-            scope.bind_field(
-                name, fields[i].path,
-                derived != UINT32_MAX
-                    ? Place{Type::list_of(fields[i].shape, fields[i].elem),
-                            OpCode::Load, derived, 0}
-                    : Place{Type(fields[i].shape, fields[i].type_id), OpCode::Load,
-                            cell, i, static_cast<uint16_t>(LoadPlace::Field)});
-        }
+        for (uint32_t i = 0; i < fields.size(); ++i)
+            scope.bind_field(name, fields[i].path,
+                             Place{field_place_type(fields[i]), OpCode::Load, cell, i,
+                                   static_cast<uint16_t>(LoadPlace::Field)});
         return cell;
     }
 
