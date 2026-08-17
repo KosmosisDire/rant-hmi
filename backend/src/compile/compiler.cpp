@@ -215,6 +215,78 @@ class Compiler {
         return out;
     }
 
+    /* THE STANDALONE DEFINITION CHECK: a component's behavior is checked off the
+     * DEFINITION, so its author hears about a broken flow before any instance
+     * exists. Components the document places somewhere are skipped — their
+     * per-instance compile already reports on these same definition ids, and one
+     * finding must not double. This runs INSTEAD of run(), on a scratch Compiler:
+     * the cells, sites and groups allocated here never serve, and only the
+     * findings travel. Inner elements' flows are not checked because nothing runs
+     * them — the behavior list is a component's one wire surface. */
+    std::vector<Diag> check_definitions() {
+        copy_entities();
+        /* the schema copy above may re-report what the real compile already said;
+           only what the DEFINITIONS say is this pass's product */
+        const size_t said = program_.diagnostics.size();
+        const std::set<std::string> placed = placed_types();
+        for (const ComponentDecl& component : doc_.components) {
+            if (component.name.empty() || placed.count(component.name)) continue;
+            if (component.behavior_decls.empty()) continue;
+            const ComponentSpec* spec = type_named(component.name);
+            if (!spec) continue;
+            ElementInfo info;
+            info.id = component.root.id;
+            info.node = &component.root;
+            info.type = spec;
+            /* the slots exist so `this.<slot>` reads with its declared shape —
+               scratch cells, exactly what bind_own_props reads off an instance */
+            for (const SlotSpec& slot : spec->slots) {
+                const Shape shape = var_shape(slot.shape);
+                const uint32_t cell = add_cell(CellKind::Slot, info.id, info.id,
+                                               slot.name, shape, Json(), false);
+                if (shape == Shape::List || shape == Shape::Map) {
+                    program_.cells[cell].elem = var_shape(slot.elem);
+                    program_.cells[cell].leaf = var_shape(slot.leaf);
+                }
+                info.slots[slot.name] = cell;
+            }
+            const uint32_t index = static_cast<uint32_t>(elements_.size());
+            elements_.push_back(std::move(info));
+            ElementInfo& element = elements_[index];
+            /* armed the way an instance is, so a behavior trigger validates the
+               same way it would validate placed */
+            collect_armed(spec->tmpl, "", element);
+            for (const FlowDecl& node : component.behavior_decls) {
+                for (const TriggerDecl& trigger : node.when) {
+                    FlowProgram flow;
+                    flow.node_id = element.id;
+                    flow.flow_id = element.id;
+                    flow.group = program_.layout.fired_groups++;
+                    EventParam param;
+                    bool has_param = false;
+                    std::string copyless;
+                    if (trigger.kind == "every") {
+                        if (!cadence_trigger(element, trigger, element.id, flow))
+                            continue;
+                        copyless = "an `every` trigger";
+                    } else {
+                        flow.event = trigger.name;
+                        flow.element = trigger.element;
+                        if (!event_signature(element, flow.event, flow.element,
+                                             element.id, /*in_behavior=*/true, param,
+                                             has_param))
+                            continue;
+                    }
+                    compile_steps(element, node, flow, has_param ? &param : nullptr,
+                                  nullptr, /*in_component=*/true, copyless);
+                }
+            }
+        }
+        program_.diagnostics.erase(program_.diagnostics.begin(),
+                                   program_.diagnostics.begin() + said);
+        return std::move(program_.diagnostics);
+    }
+
   private:
     /* an authored slot EXPRESSION, held from build_cells (where the cell is made) to
      * build_slot_programs (when every cell the expression could read exists) */
@@ -1393,6 +1465,18 @@ class Compiler {
         scope.refuse("repeat",
                      "there is no copy behind " + what + ": `repeat` names the copy an "
                      "EVENT arrived on, so it reads in a flow some event triggers");
+    }
+
+    /* every component name the document places somewhere */
+    std::set<std::string> placed_types() const {
+        std::set<std::string> out;
+        std::function<void(const NodeDecl&)> walk = [&](const NodeDecl& node) {
+            if (!node.type.empty()) out.insert(node.type);
+            for (const NodeDecl& child : node.children) walk(child);
+        };
+        for (const PageDecl& page : doc_.pages)
+            for (const NodeDecl& child : page.children) walk(child);
+        return out;
     }
 
     /* the elements enclosing this one, OUTERMOST FIRST — the page's own children at the
@@ -3091,6 +3175,11 @@ CompileResult compile_document(const Document& document, const MeshPort& mesh,
                                const std::set<std::string>* attr_reads,
                                const std::set<std::string>* per_copy_slots) {
     return Compiler(document, mesh, attr_reads, per_copy_slots).run();
+}
+
+std::vector<Diag> check_component_definitions(const Document& document,
+                                              const MeshPort& mesh) {
+    return Compiler(document, mesh).check_definitions();
 }
 
 } // namespace hmi

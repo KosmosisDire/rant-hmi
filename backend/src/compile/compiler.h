@@ -26,6 +26,14 @@ CompileResult compile_document(const Document& document, const MeshPort& mesh,
                                const std::set<std::string>* attr_reads = nullptr,
                                const std::set<std::string>* per_copy_slots = nullptr);
 
+/* THE STANDALONE DEFINITION CHECK: every component the document does NOT place
+ * has its behavior flows checked off the definition, so a broken flow is a
+ * finding before the first instance exists (a placed component's per-instance
+ * compile already reports on the same definition ids). Findings only — nothing
+ * this pass compiles is served or run. */
+std::vector<Diag> check_component_definitions(const Document& document,
+                                              const MeshPort& mesh);
+
 Shape shape_from_name(const std::string& name);
 
 } // namespace hmi

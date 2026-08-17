@@ -501,6 +501,10 @@ void App::compile_runtime() {
     per_copy_slots_.clear();
     node_attrs_ = compile_page_attrs(doc_, component_diags_, &mesh_->reflection(),
                                      &attr_entity_reads_, &per_copy_slots_);
+    /* the WIRE tier checks unplaced components' behavior the same way the display
+       tier just checked their attrs: off the definition, findings only */
+    for (Diag& diag : check_component_definitions(doc_, *mesh_))
+        component_diags_.push_back(std::move(diag));
     CompileResult compiled =
         compile_document(doc_, *mesh_, &attr_entity_reads_, &per_copy_slots_);
     auto next = std::make_unique<Scheduler>(std::move(compiled.program), *mesh_);

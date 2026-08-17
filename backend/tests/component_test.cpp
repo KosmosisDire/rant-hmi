@@ -1406,10 +1406,71 @@ void test_transitions() {
     }
 }
 
+/* THE STANDALONE DEFINITION CHECK: an UNPLACED component's behavior is checked
+ * off the definition — its author hears about a broken flow before the first
+ * instance exists — while a placed component is skipped whole, because its
+ * per-instance compile already reports on the same definition ids and one
+ * finding must not double. */
+void test_definition_check() {
+    Json lonely = {
+        {"id", 300},
+        {"name", "Lonely"},
+        {"locals", Json::array({
+            Json{{"id", 301}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+                 {"group", "value"}, {"public", true}},
+        })},
+        {"interact", Json{{"primitive", "press"}}},
+        {"behavior", Json::array({
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"do", Json::array({Json{{"id", 310}, {"kind", "assign"},
+                                          {"from", {{"expr", "this.value + nope"}}},
+                                          {"to", {{"slot", "value"}}}}})}},
+        })},
+    };
+    Json placed = {
+        {"id", 400},
+        {"name", "Placed"},
+        {"locals", Json::array({
+            Json{{"id", 401}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+                 {"group", "value"}, {"public", true}},
+        })},
+        {"interact", Json{{"primitive", "press"}}},
+        {"behavior", Json::array({
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"do", Json::array({Json{{"id", 410}, {"kind", "assign"},
+                                          {"from", {{"expr", "this.value + alsoNope"}}},
+                                          {"to", {{"slot", "value"}}}}})}},
+        })},
+    };
+    Json root = {
+        {"version", 3},
+        {"next_id", 1000},
+        {"components", Json::array({std::move(lonely), std::move(placed)})},
+        {"pages", Json::array({Json{
+            {"name", "Main"},
+            {"children", Json::array({
+                Json{{"kind", "frame"}, {"type", "Placed"}, {"name", "P"},
+                     {"slots", Json::object()}},
+            })}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+
+    FakeMesh mesh;
+    std::vector<Diag> diags = check_component_definitions(document, mesh);
+    CHECK_EQ(diags.size(), size_t(1));
+    if (!diags.empty()) {
+        CHECK_EQ(diags[0].node_id, uint64_t(310));
+        CHECK(diags[0].message.find("nope") != std::string::npos);
+    }
+}
+
 } // namespace
 
 int main() {
     test_template_expr();
+    test_definition_check();
     test_list_vocabulary();
     test_new_vocabulary();
     test_builtins_compile_clean();
