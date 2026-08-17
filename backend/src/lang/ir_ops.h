@@ -106,9 +106,12 @@ enum class OpCode : uint8_t {
     ToEnum,
     /* push INVOCATION ARGUMENT `a` off the frame's argument slots: the context a run
      * was CALLED with, as opposed to state it reads. `0` is the triggering event's
-     * declared parameter, bound by the parameter's name at compile. Frame-resident
-     * rather than a run_code register so a lambda body reads it without colliding with
-     * its own x2/x3 — and so a park keeps it by keeping the frame.
+     * declared parameter, bound by the parameter's name at compile; `1`..`3` are the
+     * repeat copy the event arrived on (index, count, fraction — Nil where no copy is
+     * behind the run, exactly as the view's `repeat:` cells read outside a repeat).
+     * Frame-resident rather than a run_code register so a lambda body reads them
+     * without colliding with its own x2/x3 — and so a park keeps them by keeping the
+     * frame.
      */
     Arg,
     /* RAISE the event in Program.raises[`a`] (`b`: 1 = pop one argument value off the
@@ -124,14 +127,6 @@ enum class OpCode : uint8_t {
      * fixed slot `b` reserved at compile, like any text-producing site.
      */
     ClockRead,
-    /* push REPEAT FIELD `a` (0 = index, 1 = count, 2 = fraction) of the copy the running
-     * event arrived on, or Nil where no copy is behind this run. A repeated element is
-     * ONE element the backend holds one set of cells for, so the copy is an index that
-     * rides the input frame rather than storage — which is what makes
-     * `@arr[repeat.index] = x` write the pressed copy's own element. Shaped exactly like
-     * ClockRead: a field read off the state with no operand of its own.
-     */
-    RepeatRead,
     /* NOTIFY every connected view (`b`: 1 = pop an explicit ms duration first, 0 =
      * the view derives one from the message's length; `c`: the fault site). Pops the
      * message, renders it as str() renders any scalar, and queues a NoticeRecord the
@@ -214,7 +209,6 @@ constexpr const char* kOpNames[] = {
     "ARG",
     "RAISE",
     "CLOCK_READ",
-    "REPEAT_READ",
     "NOTIFY",
     "STORE_INDEX",
     "MOVE_OUT_ELEM",

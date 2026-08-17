@@ -1471,13 +1471,13 @@ class Compiler {
     }
 
     /* WHICH COPY OF A `repeat` RAISED THIS: the same three fields the view answers, off
-     * the copy that rides the input frame. Bound only where an event can carry one — see
-     * refuse_repeat for the other half. Reserved like `time`, by landing last: no
-     * variable can shadow it. */
+     * the argument slots the invocation seeded (frame.args[1..3]). Bound only where an
+     * event can carry one — see refuse_repeat for the other half. Reserved like `time`,
+     * by landing last: no variable can shadow it. */
     void bind_repeat(Env& scope) {
-        scope.bind_field("repeat", "index", Place{Type(Shape::Num), OpCode::RepeatRead, 0, 0});
-        scope.bind_field("repeat", "count", Place{Type(Shape::Num), OpCode::RepeatRead, 1, 0});
-        scope.bind_field("repeat", "fraction", Place{Type(Shape::Num), OpCode::RepeatRead, 2, 0});
+        scope.bind_field("repeat", "index", Place{Type(Shape::Num), OpCode::Arg, 1, 0});
+        scope.bind_field("repeat", "count", Place{Type(Shape::Num), OpCode::Arg, 2, 0});
+        scope.bind_field("repeat", "fraction", Place{Type(Shape::Num), OpCode::Arg, 3, 0});
     }
 
     /* A CADENCE HAS NO COPY. `every` and a timer fire for the ELEMENT — one element, one

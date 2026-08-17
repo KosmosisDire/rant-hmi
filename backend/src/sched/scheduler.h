@@ -68,14 +68,16 @@ class Scheduler final : private MeshSink {
     };
 
     bool accept_sequence(uint64_t session, uint64_t sequence);
-    /* `copy` is which repeat copy raised it, seeded on the state for the whole run (and
-       for anything it raises) — default-constructed where nothing drove it from a copy */
+    /* `copy` is which repeat copy raised it, riding every invocation this dispatch
+       makes (and anything they raise) as the frame's repeat arguments —
+       default-constructed where nothing drove it from a copy */
     void dispatch(uint64_t node, const std::string& element, const std::string& event,
                   Value arg, RepeatSeat copy = RepeatSeat{});
-    void run_one(uint32_t flow, Value value);
-    /* dispatch every event the runs so far RAISED, in order; a raise during the drain
-       joins the same queue, bounded by the raise buffer's own capacity */
-    void drain_raised();
+    void run_one(uint32_t flow, Value value, const RepeatSeat& copy);
+    /* dispatch every event the runs so far RAISED, in order, each as the copy whose
+       dispatch queued it; a raise during the drain joins the same queue, bounded by
+       the raise buffer's own capacity */
+    void drain_raised(const RepeatSeat& copy);
     void on_press(const InputEvent& event);
     void on_release(const InputEvent& event);
     /* the STANDING slot expressions: every one once on the first pass (the seed), the

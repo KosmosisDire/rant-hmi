@@ -31,21 +31,21 @@ bool Scheduler::accept_sequence(uint64_t session, uint64_t sequence) {
     return true;
 }
 
-void Scheduler::run_one(uint32_t index, Value value) {
+void Scheduler::run_one(uint32_t index, Value value, const RepeatSeat& copy) {
     if (index >= program_.flows.size()) return;
     const FlowProgram& flow = program_.flows[index];
     if (flow.first_only && flow.group < state_.fired.size() && state_.fired[flow.group])
         return;
     if (flow.first_only && flow.group < state_.fired.size()) state_.fired[flow.group] = 1;
-    run_flow(program_, flow, state_, value);
-    drain_raised();
+    run_flow(program_, flow, state_, value, copy);
+    drain_raised(copy);
 }
 
 /* Dispatch every RAISED event the runs so far queued, in order, on the raising
  * instance's own channel. A raise during the drain appends to the same queue; the queue's
  * capacity (one slot per Raise instruction, never compacted mid-drain) is what bounds a
  * cascade — a raise loop fills it and the Raise op faults, it cannot spin. */
-void Scheduler::drain_raised() {
+void Scheduler::drain_raised(const RepeatSeat& copy) {
     if (draining_) return;   /* the outermost run owns the drain */
     draining_ = true;
     for (uint32_t at = 0; at < state_.raised_count; ++at) {
@@ -59,11 +59,13 @@ void Scheduler::drain_raised() {
             state_.texts[state_.input_scratch].set(record.text.view());
             value = Value::text(state_.input_scratch);
         }
+        /* a raised run inherits the drain's copy untouched, which is right — an
+           event raised from a copy's own run is that copy speaking */
         for (uint32_t i = 0; i < program_.flows.size(); ++i) {
             const FlowProgram& flow = program_.flows[i];
             if (flow.node_id == def.node_id && flow.event == def.event &&
                 flow.element.empty())
-                run_one(i, value);
+                run_one(i, value, copy);
         }
     }
     state_.raised_count = 0;
@@ -72,14 +74,13 @@ void Scheduler::drain_raised() {
 
 void Scheduler::dispatch(uint64_t node, const std::string& element,
                          const std::string& event, Value arg, RepeatSeat copy) {
-    /* WHICH COPY, for the whole dispatch: every flow this event reaches runs as the copy
-       that raised it, and so does anything they raise (drain_raised leaves it standing). */
-    state_.repeat = copy;
+    /* WHICH COPY, for the whole dispatch: every flow this event reaches is invoked as
+       the copy that raised it, and so is anything they raise (drain_raised carries it). */
     for (uint32_t i = 0; i < program_.flows.size(); ++i) {
         const FlowProgram& flow = program_.flows[i];
         if (flow.node_id != node || flow.event != event) continue;
         if (!element_reaches(program_, node, flow.element, element)) continue;
-        run_one(i, arg);
+        run_one(i, arg, copy);
     }
 }
 
@@ -262,17 +263,15 @@ bool Scheduler::tick(std::string& fault) {
         if (state_.pending[i].active && state_.pending[i].wake_tick <= state_.tick)
             resume_pending(program_, state_, i);
 
-    /* THE CLOCK-DRIVEN RUNS CARRY NO COPY, and say so on the state: a timer and a
-       cadence fire for the element, not for one of the pictures of it. `repeat` is
-       refused at compile in these flows, so this only has to keep a stale seat from
-       standing — a raise out of a cadence must not inherit the last press's copy. */
+    /* THE CLOCK-DRIVEN RUNS CARRY NO COPY: a timer and a cadence fire for the
+       element, not for one of the pictures of it. `repeat` is refused at compile in
+       these flows, and the empty seat rides their raises too — a raise out of a
+       cadence must not inherit some press's copy. */
     for (uint32_t timer : ended_) {
         const TimerDef& def = program_.timers[timer];
         for (uint32_t i = 0; i < program_.flows.size(); ++i)
-            if (program_.flows[i].event == def.event) {
-                state_.repeat = RepeatSeat{};
-                run_one(i, Value::nil());
-            }
+            if (program_.flows[i].event == def.event)
+                run_one(i, Value::nil(), RepeatSeat{});
     }
 
     for (const InputEvent& event : inbound_) {
@@ -298,8 +297,7 @@ bool Scheduler::tick(std::string& fault) {
         /* held() is nullary — the firing IS the information; a flow reads the
            instance's own slots for values. The copy is the one the press landed on:
            a finger held down is still on the picture it went down on. */
-        state_.repeat = hold.copy;
-        run_one(hold.flow, Value::nil());
+        run_one(hold.flow, Value::nil(), hold.copy);
         if (hold.repeat) {
             hold.next_tick += hold.repeat;
             ++i;
@@ -325,8 +323,7 @@ bool Scheduler::tick(std::string& fault) {
         uint64_t& next = cadence_next_[i];
         if (next == 0) next = state_.tick;
         if (state_.tick < next) continue;
-        state_.repeat = RepeatSeat{};
-        run_one(i, Value::nil());
+        run_one(i, Value::nil(), RepeatSeat{});
         next += cadence;
         if (next <= state_.tick) next = state_.tick + 1;
     }

@@ -136,9 +136,12 @@ which is why it is dead and this one is not it.`,
     name: "Arg",
     c: `push INVOCATION ARGUMENT \`a\` off the frame's argument slots: the context a run
 was CALLED with, as opposed to state it reads. \`0\` is the triggering event's
-declared parameter, bound by the parameter's name at compile. Frame-resident
-rather than a run_code register so a lambda body reads it without colliding with
-its own x2/x3 — and so a park keeps it by keeping the frame.`,
+declared parameter, bound by the parameter's name at compile; \`1\`..\`3\` are the
+repeat copy the event arrived on (index, count, fraction — Nil where no copy is
+behind the run, exactly as the view's \`repeat:\` cells read outside a repeat).
+Frame-resident rather than a run_code register so a lambda body reads them
+without colliding with its own x2/x3 — and so a park keeps them by keeping the
+frame.`,
   },
   {
     name: "Raise",
@@ -154,15 +157,6 @@ started (the tick counter, so replay stays deterministic), everything else is th
 wall clock the scheduler stamped at the top of this tick — one sample per tick, so
 a run can never see the second flip under it. The two TEXT fields render into the
 fixed slot \`b\` reserved at compile, like any text-producing site.`,
-  },
-  {
-    name: "RepeatRead",
-    c: `push REPEAT FIELD \`a\` (0 = index, 1 = count, 2 = fraction) of the copy the running
-event arrived on, or Nil where no copy is behind this run. A repeated element is
-ONE element the backend holds one set of cells for, so the copy is an index that
-rides the input frame rather than storage — which is what makes
-\`@arr[repeat.index] = x\` write the pressed copy's own element. Shaped exactly like
-ClockRead: a field read off the state with no operand of its own.`,
   },
   {
     name: "Notify",

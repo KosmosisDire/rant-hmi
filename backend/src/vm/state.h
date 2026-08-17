@@ -174,12 +174,14 @@ struct TimerState {
     uint32_t remaining = 0;
 };
 
-/* WHICH COPY OF A `repeat` A RUN BELONGS TO. A repeated element is ONE element the view
+/* WHICH COPY OF A `repeat` A RUN BELONGS TO — the HOST'S record of the occurrence
+ * (an input event carries one, a hold remembers the press's), converted into the
+ * frame's repeat arguments at invocation. A repeated element is ONE element the view
  * draws N times, so the backend keeps one set of cells and the copy is not a runtime
- * instance — it is an INDEX, and it arrives with the event the copy raised. `live` false
- * is an honest "there is no copy behind this run": a cadence or a timer fires for the
- * element, not for a copy of it, and RepeatRead answers Nil exactly as the view's
- * `repeat:` cells do outside a repeat. */
+ * instance — it is an INDEX, and it arrives with the event the copy raised. `live`
+ * false is an honest "there is no copy behind this run": a cadence or a timer fires
+ * for the element, not for a copy of it, and the repeat arguments seed Nil exactly
+ * as the view's `repeat:` cells read outside a repeat. */
 struct RepeatSeat {
     bool live = false;
     uint32_t index = 0;
@@ -198,8 +200,8 @@ struct RepeatSeat {
  * pool aggregate-producing sites build into, reset at each fresh run's entry. */
 struct Frame {
     /* how many argument slots every frame carries (the vocabulary is fixed: one
-     * declared parameter per event, enforced at compile) */
-    static constexpr uint32_t kArgs = 1;
+     * declared parameter per event — enforced at compile — plus the copy context) */
+    static constexpr uint32_t kArgs = 4;
 
     std::vector<Value> stack;
     /* [fixed site slots | frame locals' field texts | element text region] */
@@ -210,10 +212,12 @@ struct Frame {
      * here is struct slot layout.state_structs + k. */
     std::vector<StructState> locals;
     /* THE INVOCATION'S ARGUMENTS: what this run was CALLED with, seeded by the
-     * invoker and read by Arg — [0] the triggering event's declared parameter.
-     * Frame-resident so a lambda body reads them without touching its own x2/x3
-     * registers, and so a park keeps them by keeping the frame. */
-    Value args[kArgs] = {Value::nil()};
+     * invoker and read by Arg — [0] the triggering event's declared parameter,
+     * [1..3] the repeat copy the event arrived on (index, count, fraction; Nil
+     * where no copy is behind the run). Frame-resident so a lambda body reads
+     * them without touching its own x2/x3 registers, and so a park keeps them by
+     * keeping the frame. */
+    Value args[kArgs] = {Value::nil(), Value::nil(), Value::nil(), Value::nil()};
     uint32_t elem_cursor = 0;
     uint32_t text_base = 0;
     uint32_t text_cursor = 0;
@@ -245,14 +249,13 @@ struct PendingState {
     uint32_t flow = 0;
     uint32_t resume_pc = 0;
     Value x = Value::nil();
-    /* and which copy it arrived on: a run that parks in a debounce must wake as the same
-       copy it was pressed on, or the delay would silently move the write elsewhere */
-    RepeatSeat repeat;
     /* THE PARKED FRAME (stage 6a): parking SWAPS the run's frame in here whole —
      * arena, cursors, arguments and all — and resume swaps it back, so held scratch
-     * survives by ownership rather than by deep copy. Values referencing storage
-     * OUTSIDE the frame (a cell's text slot, the input scratch) are pinned into the
-     * frame arena at park, which is the whole of what still copies. */
+     * survives by ownership rather than by deep copy. A run that parks in a debounce
+     * wakes as the same copy it was pressed on because the repeat arguments ride
+     * the frame. Values referencing storage OUTSIDE the frame (a cell's text slot,
+     * the input scratch) are pinned into the frame arena at park, which is the
+     * whole of what still copies. */
     Frame held;
 };
 
@@ -302,10 +305,6 @@ class RuntimeState {
     Frame frame;
     std::vector<EffectRecord> effects;
     uint32_t effect_count = 0;
-    /* THE COPY THIS RUN IS: seeded by whoever drove the run (an input event carries one,
-     * a cadence does not), read by RepeatRead. A raise inherits it untouched, which is
-     * right — an event raised from a copy's own run is that copy speaking. */
-    RepeatSeat repeat;
     /* raised events queued during a run, dispatched by the scheduler AFTER it halts */
     std::vector<RaisedRecord> raised;
     uint32_t raised_count = 0;

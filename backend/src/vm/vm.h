@@ -13,11 +13,13 @@ struct RunResult {
     uint32_t steps = 0;
 };
 
-/* Runs one flow with `arg` as the event's parameter (frame.args[0], read by Arg
- * under the parameter's declared name). The pipeline register x starts Nil: an event is
- * a function call, and what it passed in arrives as a named parameter, never as x. */
+/* Runs one flow with `arg` as the event's parameter and `seat` as the repeat copy the
+ * event arrived on — both seeded into the frame's argument slots, read by Arg (the
+ * parameter under its declared name, the copy as repeat.index / .count / .fraction).
+ * The pipeline register x starts Nil: an event is a function call, and what it passed
+ * in arrives as a named parameter, never as x. */
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
-                   Value arg) noexcept;
+                   Value arg, const RepeatSeat& seat = RepeatSeat{}) noexcept;
 
 /* Does a flow listening on `flow_element` hear an event raised from `element`? An empty
  * flow_element is the instance-level channel: the root's own events plus every BUBBLING

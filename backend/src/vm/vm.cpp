@@ -1294,10 +1294,9 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 };
                 pending.x = pin(x);
                 state.frame.args[0] = pin(state.frame.args[0]);
-                pending.repeat = state.repeat;
                 /* THE PARK: the frame moves into the pending slot whole — arena,
-                 * cursors and all — and the slot's previous buffers become the
-                 * active frame, reset at the next fresh run's entry */
+                 * cursors, arguments and all — and the slot's previous buffers
+                 * become the active frame, reset at the next fresh run's entry */
                 std::swap(state.frame, pending.held);
                 result.suspended = true;
                 result.halted = true;
@@ -1586,28 +1585,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     : field == ClockField::Hour    ? parts.tm_hour
                     : field == ClockField::Minute  ? parts.tm_min
                                                    : parts.tm_sec;
-                if (!push(Value::number(number))) fail(ins.c);
-                break;
-            }
-            /* WHICH COPY: the index the event arrived on, the copy count beside it, and
-             * the fraction of the way through (0 at the first, 1 at the last — the same
-             * arithmetic the view's `repeat:` cells do, because it is the same question
-             * asked from the other side). No copy behind this run reads Nil rather than
-             * a zero that would look like the first copy. */
-            case OpCode::RepeatRead: {
-                if (!state.repeat.live) {
-                    if (!push(Value::nil())) fail(ins.c);
-                    break;
-                }
-                const uint32_t index = state.repeat.index;
-                const uint32_t count = state.repeat.count;
-                const double number =
-                    ins.a == 0 ? static_cast<double>(index)
-                    : ins.a == 1
-                        ? static_cast<double>(count)
-                        : (count > 1 ? static_cast<double>(index) /
-                                           static_cast<double>(count - 1)
-                                     : 0.0);
                 if (!push(Value::number(number))) fail(ins.c);
                 break;
             }
@@ -1962,10 +1939,23 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
 }
 
 RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
-                   Value arg) noexcept {
+                   Value arg, const RepeatSeat& seat) noexcept {
     /* a fresh run enters an empty arena; only resume_pending continues one */
     state.frame.reset();
     state.frame.args[0] = arg;
+    /* the copy the event arrived on, as arguments: index, count, and the fraction of
+     * the way through (0 at the first copy, 1 at the last — the same arithmetic the
+     * view's `repeat:` cells do, because it is the same question asked from the
+     * other side). No copy behind the run seeds Nil rather than a zero that would
+     * look like the first copy. */
+    if (seat.live) {
+        state.frame.args[1] = Value::number(static_cast<double>(seat.index));
+        state.frame.args[2] = Value::number(static_cast<double>(seat.count));
+        state.frame.args[3] = Value::number(
+            seat.count > 1 ? static_cast<double>(seat.index) /
+                                 static_cast<double>(seat.count - 1)
+                           : 0.0);
+    }
     return run_code(program, flow.body.code, &flow, state, Value::nil());
 }
 
@@ -2016,7 +2006,6 @@ RunResult resume_pending(const Program& program, RuntimeState& state,
     const uint32_t flow_index = pending.flow;
     const uint32_t pc = pending.resume_pc;
     const Value x = pending.x;
-    state.repeat = pending.repeat;
     pending.active = false;
     const FlowProgram& flow = program.flows[flow_index];
     return run_code(program, flow.body.code, &flow, state, x, pc);

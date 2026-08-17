@@ -167,3 +167,10 @@ StructDef
 # state) and the pending slot's per-field copy of it died — a park keeps the
 # argument because it keeps the frame, and the pin happens in place.
 LoadArg
+
+# stage 6b, the copy rides the frame arguments: which repeat copy a run belongs to
+# is seeded into the frame's argument slots at invocation (the fraction computed at
+# the seed, once, by the same arithmetic), so the copy-field opcode, the
+# state-resident seat register, the pending slot's copy of it, and the scheduler's
+# four stampings all died — the seat is invocation data the host records carry.
+RepeatRead
