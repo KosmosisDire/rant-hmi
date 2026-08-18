@@ -224,9 +224,17 @@ class ViewLower {
             case ExprKind::Text:
                 emit_const(expr.text);
                 return;
-            case ExprKind::ColorLit:
-                emit_const(expr.text);
+            case ExprKind::ColorLit: {
+                /* ONE SPELLING ON THE WIRE: the authored literal normalizes through
+                   the house parse/format pair, so #F00 and #ff0000 are the same
+                   constant everywhere — equality is textual on this tier, and the
+                   scalar tier normalizes at parse, so the two must agree here or a
+                   shared fixture's color comes out spelled two ways */
+                bool ok = false;
+                const uint32_t rgba = parse_color(expr.text, ok);
+                emit_const(ok ? format_color(rgba) : expr.text);
                 return;
+            }
             case ExprKind::BoolLit:
                 emit_const(expr.number != 0);
                 return;
