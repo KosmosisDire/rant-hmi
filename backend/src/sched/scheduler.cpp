@@ -48,8 +48,8 @@ void Scheduler::run_one(uint32_t index, Value value, const RepeatSeat& copy) {
 void Scheduler::drain_raised(const RepeatSeat& copy) {
     if (draining_) return;   /* the outermost run owns the drain */
     draining_ = true;
-    for (uint32_t at = 0; at < state_.raised_count; ++at) {
-        const RaisedRecord& record = state_.raised[at];
+    for (uint32_t at = 0; at < state_.out.raised_count; ++at) {
+        const RaisedRecord& record = state_.out.raised[at];
         if (record.def >= program_.raises.size()) continue;
         const RaiseDef& def = program_.raises[record.def];
         Value value = record.value;
@@ -68,7 +68,7 @@ void Scheduler::drain_raised(const RepeatSeat& copy) {
                 run_one(i, value, copy);
         }
     }
-    state_.raised_count = 0;
+    state_.out.raised_count = 0;
     draining_ = false;
 }
 
@@ -243,7 +243,7 @@ bool Scheduler::tick(std::string& fault) {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch())
                 .count());
-    state_.clear_outputs();
+    state_.out.clear();
 
     /* tick step 1: the mesh's arrivals, decoded, before anything time-driven runs */
     mesh_.drain(*this);

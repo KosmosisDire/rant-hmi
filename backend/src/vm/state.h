@@ -246,6 +246,43 @@ struct Frame {
     }
 };
 
+/* THE OUTBOX (stage 7): what the system SAYS. Every message leaving a run passes
+ * through here and nowhere else — the mesh port flushes the effects, the scheduler
+ * dispatches the raises, the App broadcasts the notices — which is what makes "effects
+ * run once, centrally" a structure rather than a discipline. The queue counts reset at
+ * each tick's start; the fault log's per-site records accumulate instead, because a
+ * log COALESCES (one row per site, counted) where a mailbox drains. */
+struct Outbox {
+    std::vector<EffectRecord> effects;
+    uint32_t effect_count = 0;
+    /* raised events queued during a run, dispatched by the scheduler AFTER it halts */
+    std::vector<RaisedRecord> raised;
+    uint32_t raised_count = 0;
+    /* notifications queued during this tick, drained by the App after it */
+    std::vector<NoticeRecord> notices;
+    uint32_t notice_count = 0;
+    std::vector<RuntimeFault> faults;
+    uint32_t fault_count = 0;
+
+    /* a fresh tick starts with empty queues. The notice reset only matters to a
+       harness that ticks the scheduler bare, where an undrained notice dies quietly
+       instead of filling the buffer into a spurious fault. */
+    void clear() noexcept {
+        effect_count = 0;
+        raised_count = 0;
+        notice_count = 0;
+        fault_count = 0;
+    }
+    /* count one runtime finding at `site`, stamped with the host's tick */
+    void fault(uint32_t site, uint64_t tick) noexcept {
+        if (site >= faults.size()) return;
+        faults[site].site = site;
+        faults[site].tick = tick;
+        ++faults[site].count;
+        ++fault_count;
+    }
+};
+
 struct PendingState {
     bool active = false;
     uint64_t wake_tick = 0;
@@ -304,16 +341,8 @@ class RuntimeState {
     std::vector<uint8_t> fired;
     /* the active run's frame: every run enters it, and nothing at rest points into it */
     Frame frame;
-    std::vector<EffectRecord> effects;
-    uint32_t effect_count = 0;
-    /* raised events queued during a run, dispatched by the scheduler AFTER it halts */
-    std::vector<RaisedRecord> raised;
-    uint32_t raised_count = 0;
-    /* notifications queued during this tick, drained by the App after it */
-    std::vector<NoticeRecord> notices;
-    uint32_t notice_count = 0;
-    std::vector<RuntimeFault> faults;
-    uint32_t fault_count = 0;
+    /* every message out: the mesh effects, the raises, the notices, the fault log */
+    Outbox out;
 
     std::string_view text(const Program& program, const Value& value) const noexcept;
     /* the storage behind a struct handle: a declared variable's slot is the state's,
@@ -349,8 +378,8 @@ class RuntimeState {
     bool write(const Program& program, uint32_t cell, uint32_t field, StorePlace place,
                StoreMode mode, Value value, const Value& step = Value::nil(),
                const Value& step2 = Value::nil()) noexcept;
-    void clear_outputs() noexcept;
-    void fault(uint32_t site) noexcept;
+    /* one runtime finding, stamped with this state's own tick */
+    void fault(uint32_t site) noexcept { out.fault(site, tick); }
 
     /* the elements behind a list or a map, whichever storage it names */
     AggView aggregate(const Value& value) const noexcept;

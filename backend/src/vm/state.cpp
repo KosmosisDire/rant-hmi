@@ -323,8 +323,8 @@ RuntimeState::RuntimeState(const Program& program) {
         agg_values_cap = std::max(agg_values_cap, values_here);
         agg_texts_cap = std::max(agg_texts_cap, texts_here);
     }
-    effects.resize(std::max<uint32_t>(program.layout.effect_capacity, 1));
-    for (EffectRecord& effect : effects) {
+    out.effects.resize(std::max<uint32_t>(program.layout.effect_capacity, 1));
+    for (EffectRecord& effect : out.effects) {
         effect.fields.resize(max_fields, Value::nil());
         effect.bare_text = FixedText(kDefaultTextCap);
         effect.field_text.reserve(max_fields);
@@ -336,13 +336,13 @@ RuntimeState::RuntimeState(const Program& program) {
         for (uint32_t i = 0; i < agg_texts_cap; ++i)
             effect.agg_texts.emplace_back(kDefaultTextCap);
     }
-    raised.resize(std::max<uint32_t>(program.layout.raise_capacity, 1));
-    for (RaisedRecord& record : raised) record.text = FixedText(kDefaultTextCap);
-    notices.resize(std::max<uint32_t>(program.layout.notice_capacity, 1));
-    for (NoticeRecord& record : notices) record.text = FixedText(kDefaultTextCap);
-    faults.resize(std::max<size_t>(program.runtime_faults.size(), 1));
+    out.raised.resize(std::max<uint32_t>(program.layout.raise_capacity, 1));
+    for (RaisedRecord& record : out.raised) record.text = FixedText(kDefaultTextCap);
+    out.notices.resize(std::max<uint32_t>(program.layout.notice_capacity, 1));
+    for (NoticeRecord& record : out.notices) record.text = FixedText(kDefaultTextCap);
+    out.faults.resize(std::max<size_t>(program.runtime_faults.size(), 1));
     for (uint32_t i = 0; i < program.runtime_faults.size(); ++i)
-        faults[i].site = i;
+        out.faults[i].site = i;
 }
 
 std::string_view RuntimeState::text(const Program& program, const Value& value) const noexcept {
@@ -1443,24 +1443,6 @@ bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
     if (landed && owner && def.field_index < owner->fields.size())
         owner->fields[def.field_index] = values[cell];
     return landed;
-}
-
-void RuntimeState::clear_outputs() noexcept {
-    effect_count = 0;
-    raised_count = 0;
-    /* the App drains notices between ticks; this reset only matters to a harness that
-       ticks the scheduler bare, where an undrained notice dies quietly instead of
-       filling the buffer into a spurious fault */
-    notice_count = 0;
-    fault_count = 0;
-}
-
-void RuntimeState::fault(uint32_t site) noexcept {
-    if (site >= faults.size()) return;
-    faults[site].site = site;
-    faults[site].tick = tick;
-    ++faults[site].count;
-    ++fault_count;
 }
 
 namespace {

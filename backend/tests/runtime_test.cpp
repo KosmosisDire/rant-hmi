@@ -328,7 +328,7 @@ void test_compile_and_run() {
     const uint64_t after_run = allocation_count.load(std::memory_order_relaxed);
     CHECK(after_run == before_run);
     CHECK(!input.faulted);
-    CHECK(state.effect_count == 1);
+    CHECK(state.out.effect_count == 1);
     const int setpoint = cell_named(compiled.program, "setpoint");
     CHECK(setpoint >= 0);
     CHECK(setpoint >= 0 && state.values[setpoint].data.num == 6);
@@ -338,11 +338,11 @@ void test_compile_and_run() {
     CHECK(mesh.transcript().size() == 1);
     CHECK(mesh.transcript()[0] == "publish T:command.value=6");
 
-    state.clear_outputs();
+    state.out.clear();
     RunResult commit =
         run_event(compiled.program, state, instance, "commit", Value::number(4));
     CHECK(!commit.faulted);
-    CHECK(state.effect_count == 1);
+    CHECK(state.out.effect_count == 1);
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
     CHECK(mesh.transcript().size() == 2);
     CHECK(mesh.transcript()[1] == "write V:motor{speed=10,enabled=true}");
@@ -523,8 +523,8 @@ void test_replay() {
     const Value events[] = {Value::number(2), Value::number(7), Value::number(11)};
     std::string fault;
     for (const Value& value : events) {
-        first.clear_outputs();
-        second.clear_outputs();
+        first.out.clear();
+        second.out.clear();
         run_event(compiled.program, first, instance, "input", value);
         run_event(compiled.program, second, instance, "input", value);
         CHECK(flush_effects(compiled.program, first, first_mesh, fault));
@@ -605,13 +605,13 @@ void test_typed_variables() {
     CHECK(state.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
 
     run_event(compiled.program, state, instance, "input", Value::number(3));
-    state.clear_outputs();
+    state.out.clear();
     run_event(compiled.program, state, instance, "commit", Value::number(4));
     CHECK(state.structs[cell.struct_slot].fields[0].data.num == 10);
 
     /* RESET: back to the declared start — the default where one is authored, and
        UNKNOWN where none is, never an invented zero */
-    state.clear_outputs();
+    state.out.clear();
     run_event(compiled.program, state, instance, "commit", Value::number(-1));
     CHECK(state.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
     CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
@@ -670,7 +670,7 @@ void test_typed_temporaries() {
 
     run_event(compiled.program, state, instance, "input", Value::number(7));
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
-    state.clear_outputs();
+    state.out.clear();
     run_event(compiled.program, state, instance, "input", Value::number(9));
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
     CHECK(mesh.transcript().size() == 2);
@@ -826,7 +826,7 @@ void test_enum_names() {
     CHECK_MSG(eerror.find("write Gear.mode.variants()") != std::string::npos, eerror);
 
     /* writing the variant lands the value */
-    state.clear_outputs();
+    state.out.clear();
     RunResult tap = run_event(compiled.program, state, instance, "tap", Value::nil());
     CHECK(!tap.faulted);
     std::string fault;
@@ -874,7 +874,7 @@ void test_enum_names() {
     CHECK(gear_mode >= 0);
     CHECK(state.values[gear_mode].tag == ValueTag::Enum);
     CHECK(state.values[gear_mode].data.integer == 2);
-    state.clear_outputs();
+    state.out.clear();
     RunResult release = run_event(compiled.program, state, instance, "release", Value::nil());
     CHECK(!release.faulted);
     CHECK(state.values[gear_mode].tag == ValueTag::Enum);
@@ -888,7 +888,7 @@ void test_enum_names() {
             compiled.program.cells[i].name == "text")
             text_cell = static_cast<int>(i);
     CHECK(text_cell >= 0);
-    state.clear_outputs();
+    state.out.clear();
     RunResult held = run_event(compiled.program, state, instance, "held", Value::nil());
     CHECK(!held.faulted);
     CHECK(state.text(compiled.program, state.values[text_cell]) == "run");
@@ -906,7 +906,7 @@ void test_enum_names() {
     const int gear_bad = local_cell("gearBad");
     const int gear_const = local_cell("gearConst");
     CHECK(gear_bad >= 0 && gear_const >= 0);
-    state.clear_outputs();
+    state.out.clear();
     RunResult press = run_event(compiled.program, state, instance, "press", Value::nil());
     CHECK(!press.faulted);
     CHECK(state.values[gear_mode].tag == ValueTag::Enum);
@@ -1180,7 +1180,7 @@ void test_compile_fault() {
     RunResult result =
         run_event(compiled.program, state, slider_id(document), "input", Value::number(1));
     CHECK(result.faulted);
-    CHECK(state.effect_count == 0);
+    CHECK(state.out.effect_count == 0);
 }
 
 /* DEFAULT BEHAVIOR: a control works the moment it is placed, and stands down where
@@ -1216,7 +1216,7 @@ void test_default_behavior() {
     CHECK(!has_diag(fed_compiled, "behavior_inactive"));
     RuntimeState fed_state(fed_compiled.program);
     run_event(fed_compiled.program, fed_state, only_instance(fed), "tap", Value::boolean(true));
-    CHECK(fed_state.effect_count == 0);   /* nothing ran: the default stood down */
+    CHECK(fed_state.out.effect_count == 0);   /* nothing ran: the default stood down */
 
     /* an authored flow writing the same slot wins over the default, silently: the
        precedence is deterministic and the author asked for the winner */
@@ -1251,8 +1251,8 @@ void test_default_behavior() {
 /* the scheduler's drain, in miniature, for tests that run events directly: dispatch
  * every raised record on its instance's own channel, in order */
 void drain_raised(const Program& program, RuntimeState& state) {
-    for (uint32_t at = 0; at < state.raised_count; ++at) {
-        const RaisedRecord& record = state.raised[at];
+    for (uint32_t at = 0; at < state.out.raised_count; ++at) {
+        const RaisedRecord& record = state.out.raised[at];
         if (record.def >= program.raises.size()) continue;
         const RaiseDef& def = program.raises[record.def];
         Value value = record.value;
@@ -1262,7 +1262,7 @@ void drain_raised(const Program& program, RuntimeState& state) {
         }
         run_event(program, state, def.node_id, def.event, value);
     }
-    state.raised_count = 0;
+    state.out.raised_count = 0;
 }
 
 /* NOTIFY IS A STEP: the flow renders the message as str() renders any scalar and
@@ -1290,14 +1290,14 @@ void test_notify() {
     RuntimeState state(compiled.program);
     const uint64_t id = only_instance(document);
     run_event(compiled.program, state, id, "tap", Value::nil());
-    CHECK(state.notice_count == 2);
-    CHECK(state.notices[0].text.view() == "line 1");
-    CHECK(state.notices[0].ms == 0);
-    CHECK(state.notices[1].text.view() == "hold");
-    CHECK(state.notices[1].ms == 2500);
+    CHECK(state.out.notice_count == 2);
+    CHECK(state.out.notices[0].text.view() == "line 1");
+    CHECK(state.out.notices[0].ms == 0);
+    CHECK(state.out.notices[1].text.view() == "hold");
+    CHECK(state.out.notices[1].ms == 2500);
     /* the next tick's clear (the App drains between ticks) empties the buffer */
-    state.clear_outputs();
-    CHECK(state.notice_count == 0);
+    state.out.clear();
+    CHECK(state.out.notice_count == 0);
 
     /* a message-less notify refuses at compile: there is nothing to say */
     Document empty_message = instance_document(
@@ -1338,15 +1338,15 @@ void test_events_are_calls() {
     /* tap() carries nothing; the toggle's behavior flips its value and SPEAKS it */
     run_event(compiled.program, state, id, "tap", Value::nil());
     drain_raised(compiled.program, state);
-    CHECK(state.effect_count == 1);
-    CHECK(state.effects[0].value.tag == ValueTag::Bool);
-    CHECK(state.effects[0].value.data.boolean == true);
+    CHECK(state.out.effect_count == 1);
+    CHECK(state.out.effects[0].value.tag == ValueTag::Bool);
+    CHECK(state.out.effects[0].value.data.boolean == true);
 
-    state.clear_outputs();
+    state.out.clear();
     run_event(compiled.program, state, id, "tap", Value::nil());
     drain_raised(compiled.program, state);
-    CHECK(state.effect_count == 1);
-    CHECK(state.effects[0].value.data.boolean == false);
+    CHECK(state.out.effect_count == 1);
+    CHECK(state.out.effects[0].value.data.boolean == false);
     const uint32_t slot = [&] {
         for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
             if (compiled.program.cells[i].kind == CellKind::Slot &&
@@ -1385,9 +1385,9 @@ void test_events_are_calls() {
     /* the local echo stood down (the expression owns the slot)... */
     CHECK(fed_state.values[fed_slot].data.boolean == true);
     /* ...but changed(false) still went out with the proposal */
-    CHECK(fed_state.effect_count == 1);
-    CHECK(fed_state.effects[0].value.tag == ValueTag::Bool);
-    CHECK(fed_state.effects[0].value.data.boolean == false);
+    CHECK(fed_state.out.effect_count == 1);
+    CHECK(fed_state.out.effects[0].value.tag == ValueTag::Bool);
+    CHECK(fed_state.out.effects[0].value.data.boolean == false);
 
     /* a drag's parameter IS the value in motion: input(value) fills the slot and the
        pair speaks it */
@@ -1414,8 +1414,8 @@ void test_events_are_calls() {
     RuntimeState jog_state(jog_compiled.program);
     run_event(jog_compiled.program, jog_state, only_instance(jog), "pressrelease",
               Value::boolean(true));
-    CHECK(jog_state.effect_count == 1);
-    CHECK(jog_state.effects[0].value.data.boolean == true);
+    CHECK(jog_state.out.effect_count == 1);
+    CHECK(jog_state.out.effects[0].value.data.boolean == true);
 
     /* THE SHADOW: a component's behavior writes its fed slot and then reads it — and
        must see ITS OWN write within the run. Program order does not lie on a fed
@@ -1473,13 +1473,13 @@ void test_events_are_calls() {
         return UINT32_MAX;
     }();
     shadow_state.write(shadow_compiled.program, shadow_slot, 0, StorePlace::Cell, StoreMode::Assign, Value::boolean(true));
-    shadow_state.clear_outputs();
+    shadow_state.out.clear();
     run_event(shadow_compiled.program, shadow_state, shadow_id, "tap", Value::nil());
     drain_raised(shadow_compiled.program, shadow_state);
     /* the raise read the SHADOW (false), not the fed cell... */
-    CHECK(shadow_state.effect_count == 1);
-    CHECK(shadow_state.effects[0].value.tag == ValueTag::Bool);
-    CHECK(shadow_state.effects[0].value.data.boolean == false);
+    CHECK(shadow_state.out.effect_count == 1);
+    CHECK(shadow_state.out.effects[0].value.tag == ValueTag::Bool);
+    CHECK(shadow_state.out.effects[0].value.data.boolean == false);
     /* ...and the fed cell itself never moved */
     CHECK(shadow_state.values[shadow_slot].data.boolean == true);
 
@@ -3020,20 +3020,20 @@ void test_indexed_writes() {
     CHECK(state.lists[buf_slot].total == 3);
 
     /* past the window: faulted, nothing changed */
-    const uint32_t faults_before = state.fault_count;
+    const uint32_t faults_before = state.out.fault_count;
     press("press", Value::boolean(true));
     CHECK_EQ(list_dump(program, state, buf), "10,99,30");
-    CHECK(state.fault_count > faults_before);
+    CHECK(state.out.fault_count > faults_before);
 
     /* the same element again: silent — the generation stands still */
     press("release", Value::boolean(false));
     CHECK(state.lists[buf_slot].gen == 1);
 
     /* a whole store of text into a list of numbers: refused at the write, faulted */
-    const uint32_t held_faults = state.fault_count;
+    const uint32_t held_faults = state.out.fault_count;
     press("held", Value::boolean(true));
     CHECK_EQ(list_dump(program, state, nums), "1,2");
-    CHECK(state.fault_count > held_faults);
+    CHECK(state.out.fault_count > held_faults);
 
     /* the entity element write went out over the owner's bytes, and the mirror took
        it too: the next read of @plant.temps[1] is the write, without an owner echo */
@@ -3277,7 +3277,7 @@ void test_bare_topic_scalars() {
     CHECK(state.values[lit].data.boolean == false);
 
     /* and the variable goes back out as the anonymous value */
-    state.clear_outputs();
+    state.out.clear();
     run_event(program, state, instance, "release", Value::nil());
     std::string fault;
     CHECK_MSG(flush_effects(program, state, mesh, fault), fault);
@@ -3573,8 +3573,8 @@ void test_aggregate_ceilings() {
     CHECK(state.lists[program.cells[unbounded].list_slot].count == fits);
     /* the finding names the variable and the way out of it */
     std::string named;
-    for (uint32_t i = 0; i < state.faults.size(); ++i)
-        if (state.faults[i].count && i < program.runtime_faults.size())
+    for (uint32_t i = 0; i < state.out.faults.size(); ++i)
+        if (state.out.faults[i].count && i < program.runtime_faults.size())
             named = program.runtime_faults[i].message;
     CHECK(named.find("'unbounded'") != std::string::npos);
     CHECK(named.find("keep") != std::string::npos);

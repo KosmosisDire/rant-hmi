@@ -135,7 +135,7 @@ size_t App::poll() {
                 if (opts_.verbose)
                     std::printf("hmi: effect fault: %s\n", fault.c_str());
             }
-            /* before the next tick's clear_outputs erases them */
+            /* before the next tick clears the outbox */
             drain_notices();
             next_tick_ += std::chrono::milliseconds(1);
         }
@@ -676,8 +676,8 @@ Json App::diagnostics() const {
 void App::drain_notices() {
     if (!scheduler_) return;
     RuntimeState& state = scheduler_->state();
-    for (uint32_t i = 0; i < state.notice_count && i < state.notices.size(); ++i) {
-        const NoticeRecord& record = state.notices[i];
+    for (uint32_t i = 0; i < state.out.notice_count && i < state.out.notices.size(); ++i) {
+        const NoticeRecord& record = state.out.notices[i];
         Json entry{{"level", "notify"},
                    {"node", "hmi"},
                    {"text", std::string(record.text.view())},
@@ -685,10 +685,10 @@ void App::drain_notices() {
         if (record.ms) entry["ms"] = record.ms;
         fresh_log_.push_back(std::move(entry));
     }
-    state.notice_count = 0;
+    state.out.notice_count = 0;
 }
 
-/* RUNTIME FAULTS INTO THE LOG, coalesced per site. state.faults keeps one cumulative
+/* RUNTIME FAULTS INTO THE LOG, coalesced per site. The outbox keeps one cumulative
  * counter per compiled fault site (the diagnostics live in program.runtime_faults);
  * this drain diffs each counter against what it last saw, logs a site's FIRST fault
  * immediately, and from then on logs that site at most once per window with the count
@@ -713,9 +713,9 @@ void App::drain_faults() {
         row.pending = 0;
         row.emit_tick = now + kFaultWindowTicks;
     };
-    for (uint32_t i = 0; i < fault_sites_.size() && i < state.faults.size(); ++i) {
+    for (uint32_t i = 0; i < fault_sites_.size() && i < state.out.faults.size(); ++i) {
         PendingFault& row = fault_sites_[i];
-        const uint32_t count = state.faults[i].count;
+        const uint32_t count = state.out.faults[i].count;
         if (count != row.seen) {
             /* != rather than >: a counter that restarted (a migrated state) reads as
                its new value's worth of faults instead of a silent stall */

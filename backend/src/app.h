@@ -117,8 +117,8 @@ class App {
     /* everything the log gained this pass — the mesh's @dart/log arrivals and the
      * notify steps' notices — into the ring and out to every session as one frame */
     void publish_log();
-    /* the notify steps' records, captured AFTER each tick (the next tick's
-     * clear_outputs would erase them) into the pending frame */
+    /* the notify steps' records, captured AFTER each tick (the next tick clears
+     * the outbox) into the pending frame */
     void drain_notices();
     /* runtime + effect faults into the log, COALESCED PER SITE: the first fault of a
      * site logs immediately, after which that site logs at most once per window with

@@ -861,11 +861,11 @@ int main() {
         auto dump_faults = [&](const char* when) {
             const RuntimeState& state = cur->state();
             for (uint32_t i = 0;
-                 i < state.faults.size() && i < cur->program().runtime_faults.size(); ++i)
-                if (state.faults[i].count)
+                 i < state.out.faults.size() && i < cur->program().runtime_faults.size(); ++i)
+                if (state.out.faults[i].count)
                     std::printf("cycle faults %s: %s (x%u)\n", when,
                                 cur->program().runtime_faults[i].message.c_str(),
-                                state.faults[i].count);
+                                state.out.faults[i].count);
         };
         auto dump_diags = [&](const char* when) {
             for (const Diag& diag : cur->program().diagnostics)

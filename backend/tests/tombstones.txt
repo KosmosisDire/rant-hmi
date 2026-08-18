@@ -245,3 +245,9 @@ TmrCancel
 # field is UNKNOWN, never an invented zero.
 struct_field_cells
 zero_value
+
+# ---- stage 7: the split (ExecState + Store + Outbox behind the host) ----
+# The outbox: effects, raises, notices and the fault log grouped behind ONE record
+# whose clear() is the tick's reset — the "mailbox" half of the database-with-a-
+# mailbox reading of RuntimeState. clear_outputs was the loose spelling.
+clear_outputs

@@ -110,8 +110,8 @@ bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
      * largest this program's effects can carry and reused across the loop */
     std::vector<MeshElems> spans;
     std::vector<std::string_view> views;
-    for (uint32_t i = 0; i < state.effect_count; ++i) {
-        const EffectRecord& record = state.effects[i];
+    for (uint32_t i = 0; i < state.out.effect_count; ++i) {
+        const EffectRecord& record = state.out.effects[i];
         if (record.entity >= program.entities.size()) {
             fault = "effect names an invalid entity";
             ok = false;

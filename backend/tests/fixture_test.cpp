@@ -371,8 +371,8 @@ void run_case(const FixtureCase& item) {
         if (!CHECK_MSG(run.faulted, where + "  ran clean, expected fault " + item.fault))
             return;
         std::string codes;
-        for (uint32_t i = 0; i < state.faults.size(); ++i) {
-            if (!state.faults[i].count) continue;
+        for (uint32_t i = 0; i < state.out.faults.size(); ++i) {
+            if (!state.out.faults[i].count) continue;
             const std::string& code_name =
                 i < program.runtime_faults.size() ? program.runtime_faults[i].code
                                                   : std::string("(unregistered)");

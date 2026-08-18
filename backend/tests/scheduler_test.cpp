@@ -376,7 +376,7 @@ void test_scheduler_speaks() {
 /* A RAISE OUT OF A RESUMED RUN drains the same tick (stage 6d): the wake loop
  * drains raises after each resume, so a parked behavior that speaks on waking is
  * heard even when nothing else runs that tick. Before the drain, the raise sat in
- * the queue and the next tick's clear_outputs silently dropped it. */
+ * the queue and the next tick's outbox clear silently dropped it. */
 void test_resumed_raise_drains() {
     Json component = {
         {"name", "Delayed"},
@@ -960,11 +960,11 @@ void test_repeat_copy() {
 
     /* NO COPY BEHIND THE EVENT reads Nil, not a zero that would pass for the first copy,
        and the element write that needed an index FAULTS rather than landing somewhere */
-    const uint32_t faults = scheduler.state().fault_count;
+    const uint32_t faults = scheduler.state().out.fault_count;
     scheduler.post(on_copy(instance, "tap", 4, 0, 0));
     tick(scheduler, 1);
     CHECK(scheduler.state().values[mark].tag == ValueTag::Nil);
-    CHECK(scheduler.state().fault_count > faults);
+    CHECK(scheduler.state().out.fault_count > faults);
     CHECK(element_at(scheduler.state(), slots, 0) == 100);
 
     /* A HELD FIRES LATER, BUT FIRES FOR THE COPY THE FINGER WENT DOWN ON — proved by

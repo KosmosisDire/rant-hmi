@@ -976,8 +976,8 @@ void reset_effect_aggs(EffectRecord& effect) noexcept {
 bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
                uint32_t field, const Value& value,
                uint32_t elem_index = UINT32_MAX) noexcept {
-    if (value.tag == ValueTag::Nil || state.effect_count >= state.effects.size()) return false;
-    EffectRecord& effect = state.effects[state.effect_count++];
+    if (value.tag == ValueTag::Nil || state.out.effect_count >= state.out.effects.size()) return false;
+    EffectRecord& effect = state.out.effects[state.out.effect_count++];
     effect.verb = verb;
     effect.entity = entity;
     effect.bare = true;
@@ -998,8 +998,8 @@ bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t 
  * nothing else marks it. */
 bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
                  const StructState& value) noexcept {
-    if (state.effect_count >= state.effects.size()) return false;
-    EffectRecord& effect = state.effects[state.effect_count];
+    if (state.out.effect_count >= state.out.effects.size()) return false;
+    EffectRecord& effect = state.out.effects[state.out.effect_count];
     effect.verb = verb;
     effect.entity = entity;
     effect.bare = false;
@@ -1019,7 +1019,7 @@ bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_
     for (uint32_t i = static_cast<uint32_t>(value.fields.size());
          i < effect.fields.size(); ++i)
         effect.fields[i] = Value::nil();
-    ++state.effect_count;
+    ++state.out.effect_count;
     return true;
 }
 
@@ -1340,11 +1340,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     case SendTarget::Entity: {
                         const Verb verb = static_cast<Verb>(verb_code);
                         if (verb == Verb::Unforce || ins.b == UINT32_MAX) {
-                            if (state.effect_count >= state.effects.size()) {
+                            if (state.out.effect_count >= state.out.effects.size()) {
                                 fail(ins.c);
                                 break;
                             }
-                            EffectRecord& effect = state.effects[state.effect_count++];
+                            EffectRecord& effect = state.out.effects[state.out.effect_count++];
                             effect.verb = verb;
                             effect.entity = ins.a;
                             effect.bare = true;
@@ -1390,11 +1390,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     case SendTarget::Self: {
                         const Value argument = ins.b ? pop() : Value::nil();
                         if (ins.a >= program.raises.size() ||
-                            state.raised_count >= state.raised.size()) {
+                            state.out.raised_count >= state.out.raised.size()) {
                             fail(ins.c);
                             break;
                         }
-                        RaisedRecord& record = state.raised[state.raised_count++];
+                        RaisedRecord& record = state.out.raised[state.out.raised_count++];
                         record.def = ins.a;
                         record.value = argument;
                         if (argument.tag == ValueTag::Text) {
@@ -1414,12 +1414,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         if (message.tag == ValueTag::Nil ||
                             message.tag == ValueTag::List ||
                             message.tag == ValueTag::Map ||
-                            state.notice_count >= state.notices.size()) {
+                            state.out.notice_count >= state.out.notices.size()) {
                             fail(ins.c);
                             break;
                         }
                         char buffer[64];
-                        NoticeRecord& record = state.notices[state.notice_count++];
+                        NoticeRecord& record = state.out.notices[state.out.notice_count++];
                         record.text.set(
                             scalar_text(ctx, message, buffer, sizeof(buffer)));
                         record.ms =
