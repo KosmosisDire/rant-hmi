@@ -116,7 +116,7 @@ class MeshPort {
     virtual void take_logs(std::vector<MeshLogLine>& out) { (void)out; }
 };
 
-bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
+bool flush_effects(const Program& program, Host& state, MeshPort& mesh,
                    std::string& fault) noexcept;
 
 } // namespace hmi

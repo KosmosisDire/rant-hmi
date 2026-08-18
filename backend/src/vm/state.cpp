@@ -129,7 +129,7 @@ uint32_t buffer_capacity(Shape shape) noexcept {
     return static_cast<uint32_t>(fits > UINT32_MAX ? UINT32_MAX : fits);
 }
 
-RuntimeState::RuntimeState(const Program& program) {
+Host::Host(const Program& program) {
     store.values.resize(program.cells.size(), Value::nil());
     store.texts.reserve(program.layout.cell_texts);
     for (uint32_t i = 0; i < program.layout.cell_texts; ++i)
@@ -243,10 +243,10 @@ RuntimeState::RuntimeState(const Program& program) {
     }
     /* THE FRAME: the storage the active run owns. Site text slots first, then the
        frame locals' own field text, then the element text region the cursor deals. */
-    frame.stack.resize(std::max<uint32_t>(program.frame.stack, 1), Value::nil());
-    frame.texts.reserve(program.frame.texts + program.frame.elem_texts);
+    exec.frame.stack.resize(std::max<uint32_t>(program.frame.stack, 1), Value::nil());
+    exec.frame.texts.reserve(program.frame.texts + program.frame.elem_texts);
     for (uint32_t i = 0; i < program.frame.texts; ++i)
-        frame.texts.emplace_back(kDefaultTextCap);
+        exec.frame.texts.emplace_back(kDefaultTextCap);
     /* FLOW TEMPORARIES are frame locals: a parked message buffer survives by the
        frame's ownership, and nothing snapshots or restores field by field */
     for (uint32_t i = state_structs; i < program.structs.size(); ++i) {
@@ -258,17 +258,17 @@ RuntimeState::RuntimeState(const Program& program) {
         item.texts.assign(n, UINT32_MAX);
         for (uint32_t f = 0; f < n; ++f)
             if (defs[f].shape == Shape::Text) {
-                item.texts[f] = kFrameRef | static_cast<uint32_t>(frame.texts.size());
-                frame.texts.emplace_back(kDefaultTextCap);
+                item.texts[f] = kFrameRef | static_cast<uint32_t>(exec.frame.texts.size());
+                exec.frame.texts.emplace_back(kDefaultTextCap);
             }
-        frame.locals.push_back(std::move(item));
+        exec.frame.locals.push_back(std::move(item));
     }
-    frame.text_base = static_cast<uint32_t>(frame.texts.size());
-    frame.text_cursor = frame.text_base;
+    exec.frame.text_base = static_cast<uint32_t>(exec.frame.texts.size());
+    exec.frame.text_cursor = exec.frame.text_base;
     for (uint32_t i = 0; i < program.frame.elem_texts; ++i)
-        frame.texts.emplace_back(kDefaultTextCap);
+        exec.frame.texts.emplace_back(kDefaultTextCap);
     /* and the element pool aggregate-producing sites build into */
-    frame.elems.resize(program.frame.elems, Value::nil());
+    exec.frame.elems.resize(program.frame.elems, Value::nil());
 
     /* a struct-shaped cell POINTS at its slot: the Value is the handle, the fields
      * live in the slot's own storage, so a cell read pushes something copyable and a
@@ -298,10 +298,10 @@ RuntimeState::RuntimeState(const Program& program) {
 
     timers.resize(program.timers.size());
     fired.resize(program.layout.fired_groups, 0);
-    pending.resize(program.layout.pending_slots);
+    exec.pending.resize(program.layout.pending_slots);
     /* every pending site holds a full frame of its own: parking swaps the active
        frame in whole, so a parked run's scratch survives by ownership */
-    for (PendingState& item : pending) item.held = frame;
+    for (PendingState& item : exec.pending) item.held = exec.frame;
     /* aggregate payload capacity: the widest single entity's aggregate fields decide
        what one effect may have to carry (a map's entries interleave, so 2x pairs) */
     uint32_t agg_values_cap = 0, agg_texts_cap = 0;
@@ -345,7 +345,7 @@ RuntimeState::RuntimeState(const Program& program) {
         out.faults[i].site = i;
 }
 
-std::string_view RuntimeState::text(const Program& program, const Value& value) const noexcept {
+std::string_view Host::text(const Program& program, const Value& value) const noexcept {
     if (value.tag != ValueTag::Text) return {};
     if ((value.ref & kConstantRef) != 0) {
         const uint32_t at = value.ref & ~kConstantRef;
@@ -354,12 +354,12 @@ std::string_view RuntimeState::text(const Program& program, const Value& value) 
     /* in flight: the producing site's slot in the active run's frame */
     if ((value.ref & kFrameRef) != 0) {
         const uint32_t at = value.ref & ~kFrameRef;
-        return at < frame.texts.size() ? frame.texts[at].view() : std::string_view{};
+        return at < exec.frame.texts.size() ? exec.frame.texts[at].view() : std::string_view{};
     }
     return value.ref < store.texts.size() ? store.texts[value.ref].view() : std::string_view{};
 }
 
-AggView RuntimeState::aggregate(const Value& value) const noexcept {
+AggView Host::aggregate(const Value& value) const noexcept {
     const uint32_t count = agg_count(value);
     if (value_retained(value) &&
         (value.tag == ValueTag::List || value.tag == ValueTag::Map)) {
@@ -378,8 +378,8 @@ AggView RuntimeState::aggregate(const Value& value) const noexcept {
         return {held.elems.data(), count};
     }
     const uint32_t need = value.tag == ValueTag::Map ? count * 2 : count;
-    if (value.ref > frame.elems.size() || need > frame.elems.size() - value.ref) return {};
-    return {frame.elems.data() + value.ref, count};
+    if (value.ref > exec.frame.elems.size() || need > exec.frame.elems.size() - value.ref) return {};
+    return {exec.frame.elems.data() + value.ref, count};
 }
 
 uint32_t Store::list_text(ListState& held, uint32_t at) noexcept {
@@ -447,7 +447,7 @@ inline uint32_t row_span(uint32_t count, bool row_pairs) noexcept {
  * cursor and re-point its row at where it landed. The extents are walked in START order,
  * never row order — a relocated row sits at the tail while later rows still sit below it,
  * and sliding out of order would write over an extent that has not been read yet. */
-void compact_leaves(RuntimeState& state, ListState& held, bool pairs) noexcept {
+void compact_leaves(Host& state, ListState& held, bool pairs) noexcept {
     std::vector<uint32_t> order;
     order.reserve(held.count);
     for (uint32_t row = 0; row < held.count; ++row) {
@@ -480,7 +480,7 @@ void compact_leaves(RuntimeState& state, ListState& held, bool pairs) noexcept {
  * when the holes have matched it — and again at the budget itself, where collecting them is
  * the only way to make room. The small-arena floor keeps a three-element buffer from
  * sorting and reallocating on every append for no gain. */
-bool arena_room(RuntimeState& state, ListState& held, bool pairs, uint32_t span) noexcept {
+bool arena_room(Host& state, ListState& held, bool pairs, uint32_t span) noexcept {
     const uint64_t arena = held.leaf_capacity();
     const uint32_t holes = held.leaf_used - held.leaf_live;
     if (static_cast<uint64_t>(held.leaf_used) + span > arena ||
@@ -493,7 +493,7 @@ bool arena_room(RuntimeState& state, ListState& held, bool pairs, uint32_t span)
  * still inside its capacity does not move at all — which is what makes an append into a
  * settled row free — and one that has outgrown it is relocated whole to the tail with its
  * capacity doubled, paying its own length rather than every later row's. */
-uint32_t reserve_row(RuntimeState& state, ListState& held, uint32_t row, bool pairs,
+uint32_t reserve_row(Host& state, ListState& held, uint32_t row, bool pairs,
                      uint32_t want) noexcept {
     if (row >= held.count || row >= held.row_cap.size()) return UINT32_MAX;
     const bool row_pairs = held.elems[row_at(row, pairs)].tag == ValueTag::Map;
@@ -535,7 +535,7 @@ void release_row(ListState& held, uint32_t row, bool pairs) noexcept {
  * map by text key, each exactly as the cell itself is. UINT32_MAX where the address is the
  * wrong kind or names no row — a row is grown by writing the OUTER entry, never by
  * reaching into a position that is not there. */
-uint32_t find_row(const Program& program, const RuntimeState& state, const ListState& held,
+uint32_t find_row(const Program& program, const Host& state, const ListState& held,
                   bool pairs, const Value& outer) noexcept {
     if (pairs) {
         if (outer.tag != ValueTag::Text) return UINT32_MAX;
@@ -562,7 +562,7 @@ uint32_t keep_window(const Value& keep, uint32_t cap) noexcept {
 /* Trim a LIST cell's window to `window` entries from the FRONT, which is the whole of what
  * `keep` does. A nested cell gives up the dropped rows' extents on the way past — a
  * released extent is the arena's only notice that a row has gone. */
-void trim_front(RuntimeState& state, ListState& held, uint32_t window) noexcept {
+void trim_front(Host& state, ListState& held, uint32_t window) noexcept {
     if (window == UINT32_MAX || held.count <= window) return;
     const uint32_t drop = held.count - window;
     if (held.nested()) {
@@ -587,7 +587,7 @@ void trim_front(RuntimeState& state, ListState& held, uint32_t window) noexcept 
  *
  * A map row is re-sorted by key for the reason the outer map is: deterministic iteration
  * is what keeps a replay byte-identical. */
-bool place_row(RuntimeState& state, const Program& source_program, const RuntimeState& source,
+bool place_row(Host& state, const Program& source_program, const Host& source,
                ListState& held, uint32_t list_slot, uint32_t row, bool pairs,
                const Value* data, uint32_t count, bool row_pairs, Shape leaf) noexcept {
     if (row >= held.row_cap.size() || row_at(row, pairs) >= held.elems.size()) return false;
@@ -652,28 +652,28 @@ bool place_row(RuntimeState& state, const Program& source_program, const Runtime
  * run's scratch pool first. Nothing else can be said honestly about such a source: the
  * write is free to relocate extents and re-home text inside this arena, and a view into
  * it taken beforehand would be describing storage that has since moved. */
-Value stage_row(RuntimeState& state, const Program& program, const Value& value) noexcept {
+Value stage_row(Host& state, const Program& program, const Value& value) noexcept {
     const AggView view = state.aggregate(value);
     const bool row_pairs = value.tag == ValueTag::Map;
     const uint32_t span = row_span(view.count, row_pairs);
-    const uint32_t at = state.frame.alloc(span);
+    const uint32_t at = state.exec.frame.alloc(span);
     if (at == UINT32_MAX) return Value::nil();
     for (uint32_t i = 0; i < span; ++i) {
         Value entry = view.data[i];
         if (entry.tag == ValueTag::Text) {
-            const uint32_t slot = state.frame.alloc_text();
+            const uint32_t slot = state.exec.frame.alloc_text();
             if (slot == UINT32_MAX) return Value::nil();
-            state.frame.texts[slot].set(state.text(program, entry));
+            state.exec.frame.texts[slot].set(state.text(program, entry));
             entry = Value::text(kFrameRef | slot);
         }
-        state.frame.elems[at + i] = entry;
+        state.exec.frame.elems[at + i] = entry;
     }
     return row_pairs ? Value::map(at, view.count)
                      : Value::list(at, view.count, list_elem_tag(value));
 }
 
 /* the same staging, applied only where it is needed: a source that names THIS slot */
-Value settled_row(RuntimeState& state, const Program& program, uint32_t list_slot,
+Value settled_row(Host& state, const Program& program, uint32_t list_slot,
                   const Value& value) noexcept {
     if (!value_retained(value) || value.ref != list_slot) return value;
     return stage_row(state, program, value);
@@ -694,7 +694,7 @@ static Value retained_value(const ListState& held, uint32_t list_slot, bool pair
     return Value::retained_list(list_slot, held.count, uniform ? elem : ValueTag::Nil);
 }
 
-bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& source,
+bool Host::hold_list(const Program& source_program, const Host& source,
                              uint32_t cell_index, uint32_t list_slot, const Value* data,
                              uint32_t count, bool pairs) noexcept {
     if (list_slot >= store.lists.size() || cell_index >= store.values.size()) return false;
@@ -781,7 +781,7 @@ bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& 
     return true;
 }
 
-void RuntimeState::seed_nested(const Program& program, uint32_t cell_index,
+void Host::seed_nested(const Program& program, uint32_t cell_index,
                                const CellDef& cell) noexcept {
     if (cell.list_slot >= store.lists.size() || cell_index >= store.values.size()) return;
     ListState& held = store.lists[cell.list_slot];
@@ -878,7 +878,7 @@ Value Store::hold_entity_agg(uint32_t list_slot, const Value* data,
                  : Value::retained_list(list_slot, count, elem);
 }
 
-bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Value value,
+bool Host::write_append(const Program& program, uint32_t cell_index, Value value,
                                 const Value& keep) noexcept {
     if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
@@ -930,7 +930,7 @@ bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Val
  * append grows one — an entry, a capacity, a cursor — and the row's own elements are laid
  * into the arena beside every other row's. A Nil row appends as a Nil entry with no extent
  * at all, which is the same gap a Nil scalar leaves and reads the same way. */
-bool RuntimeState::write_row(const Program& program, uint32_t cell_index, Value value,
+bool Host::write_row(const Program& program, uint32_t cell_index, Value value,
                              const Value& keep) noexcept {
     const CellDef& cell = program.cells[cell_index];
     ListState& held = store.lists[cell.list_slot];
@@ -968,7 +968,7 @@ bool RuntimeState::write_row(const Program& program, uint32_t cell_index, Value 
     return true;
 }
 
-bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const Value& key,
+bool Host::write_key(const Program& program, uint32_t cell_index, const Value& key,
                              Value value) noexcept {
     if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
@@ -1065,7 +1065,7 @@ bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const 
 
 /* wire-visible equality between two aggregate elements, each resolved through the same
    run: what the aggs lane would serialize identically is what counts as unchanged */
-static bool same_element(const Program& program, const RuntimeState& state,
+static bool same_element(const Program& program, const Host& state,
                          const Value& a, const Value& b) noexcept {
     if (a.tag != b.tag) return false;
     switch (a.tag) {
@@ -1097,7 +1097,7 @@ static bool same_element(const Program& program, const RuntimeState& state,
     }
 }
 
-bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
+bool Host::write_whole(const Program& program, uint32_t cell_index,
                                const Value& value) noexcept {
     if (cell_index >= store.values.size()) return false;
     const CellDef& cell = program.cells[cell_index];
@@ -1180,7 +1180,7 @@ bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
     return true;
 }
 
-bool RuntimeState::write_elem(const Program& program, uint32_t cell_index,
+bool Host::write_elem(const Program& program, uint32_t cell_index,
                               const Value& index, Value value) noexcept {
     if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
@@ -1237,7 +1237,7 @@ bool RuntimeState::write_elem(const Program& program, uint32_t cell_index,
     return true;
 }
 
-bool RuntimeState::write_leaf_append(const Program& program, uint32_t cell_index,
+bool Host::write_leaf_append(const Program& program, uint32_t cell_index,
                                      const Value& outer, Value value,
                                      const Value& keep) noexcept {
     if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
@@ -1285,7 +1285,7 @@ bool RuntimeState::write_leaf_append(const Program& program, uint32_t cell_index
     return true;
 }
 
-bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const Value& outer,
+bool Host::write_leaf(const Program& program, uint32_t cell_index, const Value& outer,
                               const Value& inner, Value value) noexcept {
     if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
@@ -1382,7 +1382,7 @@ bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const
     return true;
 }
 
-bool RuntimeState::write_field(const Program& program, uint32_t cell_index, uint32_t field,
+bool Host::write_field(const Program& program, uint32_t cell_index, uint32_t field,
                                Value value) noexcept {
     const Value holder = store.values[cell_index];
     StructState* item = holder.tag == ValueTag::Struct ? struct_at(holder.ref) : nullptr;
@@ -1401,7 +1401,7 @@ bool RuntimeState::write_field(const Program& program, uint32_t cell_index, uint
     return true;
 }
 
-bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
+bool Host::write(const Program& program, uint32_t cell, uint32_t field,
                          StorePlace place, StoreMode mode, Value value, const Value& step,
                          const Value& step2) noexcept {
     if (cell >= store.values.size() || cell >= program.cells.size()) return false;
@@ -1463,9 +1463,9 @@ bool same_struct_type(const Program& a, uint16_t a_type, const Program& b, uint1
  * (their content migrates by the derived cells' own names, and the re-point pass
  * below hands the owner the new handles); enum values are restamped with the new
  * program's type id. A Nil field stays Nil — Unknown migrates as Unknown. */
-void migrate_struct(const Program& old_program, const RuntimeState& old_state,
+void migrate_struct(const Program& old_program, const Host& old_state,
                     const StructState& src, const Program& new_program,
-                    RuntimeState& next, StructState& dst) {
+                    Host& next, StructState& dst) {
     const std::vector<FieldDef>& defs = struct_fields(new_program, dst.type_id);
     for (uint32_t f = 0; f < defs.size() && f < src.fields.size(); ++f) {
         const Value& value = src.fields[f];
@@ -1493,9 +1493,9 @@ void migrate_struct(const Program& old_program, const RuntimeState& old_state,
 
 } // namespace
 
-RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_state,
+Host migrate_state(const Program& old_program, const Host& old_state,
                            const Program& new_program) {
-    RuntimeState next(new_program);
+    Host next(new_program);
     next.tick = old_state.tick;
     for (uint32_t n = 0; n < new_program.cells.size(); ++n) {
         const CellDef& wanted = new_program.cells[n];

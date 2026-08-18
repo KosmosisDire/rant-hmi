@@ -264,7 +264,7 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
 }
 
 /* the run's result, rendered in the fixture spelling for the failure report */
-std::string render(const Program& program, const RuntimeState& state, const Value& value) {
+std::string render(const Program& program, const Host& state, const Value& value) {
     switch (value.tag) {
         case ValueTag::Nil: return "nil";
         case ValueTag::Num: {
@@ -288,7 +288,7 @@ std::string render(const Program& program, const RuntimeState& state, const Valu
     }
 }
 
-bool value_matches(const Program& program, const RuntimeState& state, const Value& value,
+bool value_matches(const Program& program, const Host& state, const Value& value,
                    const std::string& type, const std::string& want) {
     if (type == "nil") return value.tag == ValueTag::Nil;
     if (type == "num") {
@@ -364,7 +364,7 @@ void run_case(const FixtureCase& item) {
     code.push_back(halt);
     SlotProgram slot;
     slot.body.code = code;
-    RuntimeState state(program);
+    Host state(program);
     const RunResult run = run_slot(program, slot, state);
 
     if (item.has_fault) {
@@ -385,7 +385,7 @@ void run_case(const FixtureCase& item) {
     if (!CHECK_MSG(!run.faulted, where + "  faulted, expected " + item.want_type + " " +
                                      item.want))
         return;
-    const Value& value = state.frame.stack.empty() ? Value::nil() : state.frame.stack[0];
+    const Value& value = state.exec.frame.stack.empty() ? Value::nil() : state.exec.frame.stack[0];
     CHECK_MSG(value_matches(program, state, value, item.want_type, item.want),
               where + "  came to " + render(program, state, value) + ", expected " +
                   item.want_type + " " + item.want);

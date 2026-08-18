@@ -259,14 +259,14 @@ bool Scheduler::tick(std::string& fault) {
         }
     }
 
-    for (uint32_t i = 0; i < state_.pending.size(); ++i) {
-        if (!state_.pending[i].active || state_.pending[i].wake_tick > state_.tick)
+    for (uint32_t i = 0; i < state_.exec.pending.size(); ++i) {
+        if (!state_.exec.pending[i].active || state_.exec.pending[i].wake_tick > state_.tick)
             continue;
         /* the parked frame carries its own repeat copy in the argument slots; a
            raise out of the resumed run inherits it, exactly as a raise out of any
            run inherits its dispatch's copy */
-        const Value& index = state_.pending[i].held.args[1];
-        const Value& count = state_.pending[i].held.args[2];
+        const Value& index = state_.exec.pending[i].held.args[1];
+        const Value& count = state_.exec.pending[i].held.args[2];
         RepeatSeat seat;
         if (index.tag == ValueTag::Num && count.tag == ValueTag::Num) {
             seat.live = true;

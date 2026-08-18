@@ -274,7 +274,7 @@ void App::on_apply_ops(uint64_t session, const Json& frame) {
  * vocabulary the author picked it by; a value outside it shows its integer). Null for
  * anything that is not a scalar — an aggregate rides as an aggregate (wire_element), and
  * a value that is neither is a gap. */
-static Json wire_scalar(const Program& program, const RuntimeState& state,
+static Json wire_scalar(const Program& program, const Host& state,
                         const Value& value) {
     switch (value.tag) {
         case ValueTag::Num: return value.data.num;
@@ -300,7 +300,7 @@ static Json wire_scalar(const Program& program, const RuntimeState& state,
  * not a shortcut: a leaf edit or a leaf append moves the CELL's generation (there is no
  * in-place-edit vocabulary on the aggs lane), and a moved generation already resends the
  * whole window — so a per-row delta would have nothing left to save. */
-static Json wire_element(const Program& program, const RuntimeState& state,
+static Json wire_element(const Program& program, const Host& state,
                          const Value& value) {
     if (value.tag != ValueTag::List && value.tag != ValueTag::Map)
         return wire_scalar(program, state, value);
@@ -324,7 +324,7 @@ Json App::live(bool full) const {
     if (!scheduler_)
         return Json{{"epoch", epoch_}, {"values", values}, {"aggs", aggs}};
     const Program& program = scheduler_->program();
-    const RuntimeState& state = scheduler_->state();
+    const Host& state = scheduler_->state();
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
         /* a struct value's derived field cell never publishes: it has no key of its
@@ -430,7 +430,7 @@ Json App::live(bool full) const {
  * append order, so it goes whole on any change at all. */
 Json App::agg_entry(uint32_t list_slot, Shape shape, const Value& value, bool full) const {
     const Program& program = scheduler_->program();
-    const RuntimeState& state = scheduler_->state();
+    const Host& state = scheduler_->state();
     if (list_slot >= state.store.lists.size()) return Json();
     const ListState& held = state.store.lists[list_slot];
     const AggCursor cursor =
@@ -675,7 +675,7 @@ Json App::diagnostics() const {
  * absence IS the "scale with the length" instruction to the view. */
 void App::drain_notices() {
     if (!scheduler_) return;
-    RuntimeState& state = scheduler_->state();
+    Host& state = scheduler_->state();
     for (uint32_t i = 0; i < state.out.notice_count && i < state.out.notices.size(); ++i) {
         const NoticeRecord& record = state.out.notices[i];
         Json entry{{"level", "notify"},
@@ -698,7 +698,7 @@ void App::drain_notices() {
 void App::drain_faults() {
     if (!scheduler_) return;
     const Program& program = scheduler_->program();
-    const RuntimeState& state = scheduler_->state();
+    const Host& state = scheduler_->state();
     const uint64_t now = state.tick;
     if (fault_sites_.size() != program.runtime_faults.size())
         fault_sites_.assign(program.runtime_faults.size(), PendingFault{});
@@ -762,7 +762,7 @@ void App::publish_live() {
     frame["type"] = "live";
     /* the cursors advance ONLY here: a snapshot is one session's whole picture and must
        not tell the broadcast that everyone has seen it */
-    const RuntimeState& state = scheduler_->state();
+    const Host& state = scheduler_->state();
     agg_published_.assign(state.store.lists.size(), AggCursor{});
     for (uint32_t i = 0; i < state.store.lists.size(); ++i)
         agg_published_[i] = AggCursor{state.store.lists[i].gen, state.store.lists[i].total};

@@ -7,7 +7,7 @@ namespace hmi {
  * (the PLC-scan rule): every flow in the tick that produced the effect read the
  * tick-start snapshot. Delivered text is re-homed into the entity's retained slot,
  * exactly as an arrival is (Scheduler::on_update); aggregates stay out. */
-static void mirror_write(RuntimeState& state, const EffectRecord& record) noexcept {
+static void mirror_write(Host& state, const EffectRecord& record) noexcept {
     if (record.verb == Verb::Unforce || record.entity >= state.store.last.size()) return;
     LastValueState& last = state.store.last[record.entity];
     auto rehome = [&](Value value, std::string_view text, uint32_t field) -> Value {
@@ -71,7 +71,7 @@ static void mirror_write(RuntimeState& state, const EffectRecord& record) noexce
  * a delivery's would (hold_entity_agg re-homes text and sorts a map's pairs). The
  * mirror tables are the READ side's, so only V and T — whose value and feed tables
  * are the same table — take one. */
-static void mirror_agg(const Program& program, RuntimeState& state,
+static void mirror_agg(const Program& program, Host& state,
                        const EffectRecord& record, uint32_t field,
                        const MeshElems& span) noexcept {
     const EntityDef& entity = program.entities[record.entity];
@@ -99,7 +99,7 @@ static void mirror_agg(const Program& program, RuntimeState& state,
     }
 }
 
-bool flush_effects(const Program& program, RuntimeState& state, MeshPort& mesh,
+bool flush_effects(const Program& program, Host& state, MeshPort& mesh,
                    std::string& fault) noexcept {
     /* every effect gets its attempt: one entity's failed send (its node down, say)
      * must not swallow the tick's writes to everything else. The last failure's

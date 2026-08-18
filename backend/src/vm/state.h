@@ -353,9 +353,32 @@ struct PendingState {
     Frame held;
 };
 
-class RuntimeState {
+/* THE EXECUTION STATE (stage 7): the MACHINE's half — the active run's frame and the
+ * parked ones. This is what the theory's `run(Procedure, Frame, Host)` calls the
+ * frame side: storage a RUN owns, reused run after run, swapped whole into a pending
+ * site at a park. It lives beside the store and the outbox on the host because the
+ * host decides WHEN a parked run wakes — but nothing in here is a value at rest, and
+ * nothing at rest points into it. */
+struct ExecState {
+    /* the active run's frame: every run enters it, and nothing at rest points into it */
+    Frame frame;
+    /* the parked runs, one site per Park instruction: per-site state, the machine's
+       own — the wake tick inside is the one field the host's fold reads */
+    std::vector<PendingState> pending;
+};
+
+/* THE HOST STATE (stage 7): what Host was, named for what it is. The "HMI
+ * runtime" half was never a runtime — it is a store plus queues plus a clock, a
+ * database with a mailbox — so the split is naming, not surgery: the STORE (values at
+ * rest), the OUTBOX (messages out), the EXEC state (the machine's frames) and the
+ * host's own clock and timers, housed together. The verbs on this class are the
+ * routing surface the interpreter consumes: a write may land in the store or in the
+ * active frame (a flow temporary), text and aggregates resolve against either, and a
+ * fault stamps the host's clock — every route between the halves is stated here and
+ * nowhere else. */
+class Host {
   public:
-    explicit RuntimeState(const Program& program);
+    explicit Host(const Program& program);
 
     uint64_t tick = 0;
     /* THE WALL CLOCK, epoch milliseconds, stamped by the scheduler at the top of each
@@ -365,15 +388,14 @@ class RuntimeState {
      * wall_pinned and writing wall_ms by hand. */
     double wall_ms = 0;
     bool wall_pinned = false;
-    /* every value at rest: the cells' storage and the mesh mirrors */
-    Store store;
-    std::vector<PendingState> pending;
     std::vector<TimerState> timers;
     std::vector<uint8_t> fired;
-    /* the active run's frame: every run enters it, and nothing at rest points into it */
-    Frame frame;
+    /* every value at rest: the cells' storage and the mesh mirrors */
+    Store store;
     /* every message out: the mesh effects, the raises, the notices, the fault log */
     Outbox out;
+    /* the machine's half: the active frame and the parked ones */
+    ExecState exec;
 
     std::string_view text(const Program& program, const Value& value) const noexcept;
     /* the storage behind a struct handle: a declared variable's slot is the state's,
@@ -381,19 +403,19 @@ class RuntimeState {
     StructState* struct_at(uint32_t slot) noexcept {
         if (slot < store.structs.size()) return &store.structs[slot];
         const uint32_t local = slot - static_cast<uint32_t>(store.structs.size());
-        return local < frame.locals.size() ? &frame.locals[local] : nullptr;
+        return local < exec.frame.locals.size() ? &exec.frame.locals[local] : nullptr;
     }
     const StructState* struct_at(uint32_t slot) const noexcept {
         if (slot < store.structs.size()) return &store.structs[slot];
         const uint32_t local = slot - static_cast<uint32_t>(store.structs.size());
-        return local < frame.locals.size() ? &frame.locals[local] : nullptr;
+        return local < exec.frame.locals.size() ? &exec.frame.locals[local] : nullptr;
     }
     /* the FixedText behind a struct field's own text slot, wherever it lives
      * (kFrameRef marks a frame local's; UINT32_MAX resolves to nowhere) */
     FixedText* field_text(uint32_t ref) noexcept {
         if ((ref & kFrameRef) != 0) {
             const uint32_t at = ref & ~kFrameRef;
-            return at < frame.texts.size() ? &frame.texts[at] : nullptr;
+            return at < exec.frame.texts.size() ? &exec.frame.texts[at] : nullptr;
         }
         return ref < store.texts.size() ? &store.texts[ref] : nullptr;
     }
@@ -421,7 +443,7 @@ class RuntimeState {
      * DISCONTINUITY: gen bumps and total restarts at the new element count. `pairs`
      * says the run is a map's interleaved entries, which are re-sorted by key here
      * because the source may be a scratch map the mesh built in arrival order. */
-    bool hold_list(const Program& source_program, const RuntimeState& source,
+    bool hold_list(const Program& source_program, const Host& source,
                    uint32_t cell, uint32_t list_slot, const Value* data,
                    uint32_t count, bool pairs = false) noexcept;
     /* the same start, for a cell whose elements are ROWS: the authored rows live on the
@@ -458,7 +480,7 @@ class RuntimeState {
                            Value value, const Value& keep) noexcept;
 };
 
-RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_state,
+Host migrate_state(const Program& old_program, const Host& old_state,
                            const Program& new_program);
 
 } // namespace hmi

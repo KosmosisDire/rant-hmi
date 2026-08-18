@@ -270,7 +270,7 @@ const SlotProgram* slot_program_of(const Program& program, uint64_t instance,
 }
 
 /* seed one entity's scalar cache field, the way a delivery would */
-void seed_entity(RuntimeState& state, const Program& program, const std::string& name,
+void seed_entity(Host& state, const Program& program, const std::string& name,
                  uint32_t field, Value value) {
     for (uint32_t i = 0; i < program.entities.size(); ++i) {
         if (program.entities[i].name != name) continue;
@@ -281,7 +281,7 @@ void seed_entity(RuntimeState& state, const Program& program, const std::string&
 }
 
 /* seed one entity's TEXT cache field through its retained slot */
-void seed_entity_text(RuntimeState& state, const Program& program,
+void seed_entity_text(Host& state, const Program& program,
                       const std::string& name, uint32_t field, const char* value) {
     for (uint32_t i = 0; i < program.entities.size(); ++i) {
         if (program.entities[i].name != name) continue;
@@ -306,7 +306,7 @@ void test_compile_and_run() {
     CHECK(sizeof(Value) == 16);
     CHECK(compiled.program.disassembly().find("worst ") != std::string::npos);
 
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
 
     /* the computed binding: no mesh dep, a cell dep makes it an every-tick program */
     const uint64_t instance = slider_id(document);
@@ -517,8 +517,8 @@ void test_replay() {
     CompileResult compiled = compile_document(document, first_mesh);
     CHECK(compiled.ok);
 
-    RuntimeState first(compiled.program);
-    RuntimeState second(compiled.program);
+    Host first(compiled.program);
+    Host second(compiled.program);
     const uint64_t instance = slider_id(document);
     const Value events[] = {Value::number(2), Value::number(7), Value::number(11)};
     std::string fault;
@@ -540,7 +540,7 @@ void test_migration() {
     Document document = runtime_document();
     FakeMesh mesh(reflection());
     CompileResult compiled = compile_document(document, mesh);
-    RuntimeState old_state(compiled.program);
+    Host old_state(compiled.program);
     const int setpoint = cell_named(compiled.program, "setpoint");
     const int note = cell_named(compiled.program, "note");
     CHECK(setpoint >= 0 && note >= 0);
@@ -548,13 +548,13 @@ void test_migration() {
 
     Program same = compiled.program;
     same.cells[setpoint].initial = Value::number(3);
-    RuntimeState migrated = migrate_state(compiled.program, old_state, same);
+    Host migrated = migrate_state(compiled.program, old_state, same);
     CHECK(migrated.store.values[setpoint].data.num == 77);
     CHECK(migrated.text(same, migrated.store.values[note]) == "ready");
 
     Program renamed = same;
     renamed.cells[setpoint].name = "other";
-    RuntimeState reset = migrate_state(compiled.program, old_state, renamed);
+    Host reset = migrate_state(compiled.program, old_state, renamed);
     CHECK(reset.store.values[setpoint].data.num == 3);
 
     /* A SLOT is the other case. A variable's init is not its value, so editing the init
@@ -571,10 +571,10 @@ void test_migration() {
 
     Program reslotted = compiled.program;
     reslotted.cells[slot].initial = Value::number(9);
-    RuntimeState authored = migrate_state(compiled.program, old_state, reslotted);
+    Host authored = migrate_state(compiled.program, old_state, reslotted);
     CHECK(authored.store.values[slot].data.num == 9);
 
-    RuntimeState untouched = migrate_state(compiled.program, old_state, compiled.program);
+    Host untouched = migrate_state(compiled.program, old_state, compiled.program);
     CHECK(untouched.store.values[slot].data.num == 41);
 }
 
@@ -585,7 +585,7 @@ void test_typed_variables() {
     FakeMesh mesh(reflection());
     CompileResult compiled = compile_document(document, mesh);
     CHECK(compiled.ok);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     const uint64_t instance = slider_id(document);
 
     int msg = -1;
@@ -618,7 +618,7 @@ void test_typed_variables() {
 
     /* the value survives a recompile while the type still matches: here the post-reset
        state, so the migrated copy holds the DEFAULTS and the Unknown stays Unknown */
-    RuntimeState migrated = migrate_state(compiled.program, state, compiled.program);
+    Host migrated = migrate_state(compiled.program, state, compiled.program);
     CHECK(migrated.store.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
     CHECK(migrated.store.structs[cell.struct_slot].fields[1].data.boolean == true);
 
@@ -665,7 +665,7 @@ void test_typed_temporaries() {
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
     const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     std::string fault;
 
     run_event(compiled.program, state, instance, "input", Value::number(7));
@@ -754,7 +754,7 @@ void test_enum_names() {
                                : compiled.program.diagnostics[0].message);
     const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     const uint64_t fmt_id = json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
 
     /* the binding carries no authored render; the compiler appended the .name read */
     CHECK(compiled.program.slot_programs.size() == 3);
@@ -991,7 +991,7 @@ void test_slot_conditionals() {
         if (compiled.program.entities[i].name == "gear") gear = static_cast<int>(i);
     CHECK(gear >= 0);
     const uint16_t mode_type = compiled.program.entities[gear].fields[0].type_id;
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     if (!CHECK(compiled.program.slot_programs.size() == 1)) return;
     const SlotProgram& feed = compiled.program.slot_programs[0];
     const char* said[] = {"Halted", "Turning", "Flying"};
@@ -1004,7 +1004,7 @@ void test_slot_conditionals() {
                   std::string(state.text(compiled.program, state.store.values[feed.cell])));
     }
     /* UNKNOWN in, UNKNOWN out: no fault, no stale match */
-    RuntimeState fresh(compiled.program);
+    Host fresh(compiled.program);
     RunResult nil_run = run_slot(compiled.program, feed, fresh);
     CHECK(!nil_run.faulted);
     CHECK(fresh.store.values[feed.cell].tag == ValueTag::Nil);
@@ -1014,7 +1014,7 @@ void test_slot_conditionals() {
         "text", "@gear.mode == .stop ? \"Halted\" : @gear.mode.name()");
     CompileResult passing = compile_document(through, mesh);
     CHECK(passing.ok);
-    RuntimeState passed(passing.program);
+    Host passed(passing.program);
     seed_entity(passed, passing.program, "gear", 0, Value::enumeration(2, mode_type));
     RunResult rest = run_slot(passing.program, passing.program.slot_programs[0], passed);
     CHECK(!rest.faulted);
@@ -1027,7 +1027,7 @@ void test_slot_conditionals() {
         "@gear.mode == .stop ? #888888 : @gear.mode == .run ? #7fc4a0 : #444444");
     CompileResult covered = compile_document(forgiven, mesh);
     CHECK(covered.ok);
-    RuntimeState fallback(covered.program);
+    Host fallback(covered.program);
     seed_entity(fallback, covered.program, "gear", 0, Value::enumeration(2, mode_type));
     RunResult other = run_slot(covered.program, covered.program.slot_programs[0],
                                fallback);
@@ -1073,7 +1073,7 @@ void test_standing_slots() {
     if (!CHECK(decimals >= 0 && value >= 0)) return;
 
     Scheduler scheduler(std::move(compiled.program), mesh);
-    const RuntimeState& state = scheduler.state();
+    const Host& state = scheduler.state();
     std::string fault;
     scheduler.tick(fault);
     CHECK(state.store.values[decimals].data.num == 2);
@@ -1108,7 +1108,7 @@ void test_standing_slots() {
     CHECK(pinned);
     const int broken_cell = slot_cell_of(failed.program, only_instance(broken), "value");
     CHECK(broken_cell >= 0);
-    RuntimeState empty(failed.program);
+    Host empty(failed.program);
     CHECK(broken_cell >= 0 && empty.store.values[broken_cell].tag == ValueTag::Nil);
 }
 
@@ -1138,7 +1138,7 @@ void test_whole_source() {
     const SlotProgram& feed = compiled.program.slot_programs[0];
     CHECK(feed.body.sig.reads.size() == 1);
 
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     int motor = -1;
     for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
         if (compiled.program.entities[i].name == "motor") motor = static_cast<int>(i);
@@ -1176,7 +1176,7 @@ void test_compile_fault() {
         if (diag.code == "unresolved_entity") found = true;
     CHECK(found);
 
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     RunResult result =
         run_event(compiled.program, state, slider_id(document), "input", Value::number(1));
     CHECK(result.faulted);
@@ -1191,7 +1191,7 @@ void test_default_behavior() {
     Document bare = instance_document("Toggle", Json{{"value", false}});
     CompileResult compiled = compile_document(bare, mesh);
     CHECK(compiled.ok);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     const uint64_t id = only_instance(bare);
     CHECK(state.store.values[0].tag != ValueTag::Nil);   /* a bool slot starts from its value */
     run_event(compiled.program, state, id, "tap", Value::boolean(true));
@@ -1214,7 +1214,7 @@ void test_default_behavior() {
     /* standing down is deterministic and silent: the binding is what the author
        asked for */
     CHECK(!has_diag(fed_compiled, "behavior_inactive"));
-    RuntimeState fed_state(fed_compiled.program);
+    Host fed_state(fed_compiled.program);
     run_event(fed_compiled.program, fed_state, only_instance(fed), "tap", Value::boolean(true));
     CHECK(fed_state.out.effect_count == 0);   /* nothing ran: the default stood down */
 
@@ -1229,7 +1229,7 @@ void test_default_behavior() {
     CompileResult authored_compiled = compile_document(authored, mesh);
     CHECK(authored_compiled.ok);
     CHECK(!has_diag(authored_compiled, "behavior_inactive"));
-    RuntimeState authored_state(authored_compiled.program);
+    Host authored_state(authored_compiled.program);
     const uint64_t authored_id = only_instance(authored);
     run_event(authored_compiled.program, authored_state, authored_id, "tap",
               Value::boolean(true));
@@ -1250,7 +1250,7 @@ void test_default_behavior() {
 
 /* the scheduler's drain, in miniature, for tests that run events directly: dispatch
  * every raised record on its instance's own channel, in order */
-void drain_raised(const Program& program, RuntimeState& state) {
+void drain_raised(const Program& program, Host& state) {
     for (uint32_t at = 0; at < state.out.raised_count; ++at) {
         const RaisedRecord& record = state.out.raised[at];
         if (record.def >= program.raises.size()) continue;
@@ -1287,7 +1287,7 @@ void test_notify() {
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
     CHECK(compiled.program.layout.notice_capacity == 2);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     const uint64_t id = only_instance(document);
     run_event(compiled.program, state, id, "tap", Value::nil());
     CHECK(state.out.notice_count == 2);
@@ -1332,7 +1332,7 @@ void test_events_are_calls() {
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
                                : compiled.program.diagnostics[0].message);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     const uint64_t id = only_instance(document);
 
     /* tap() carries nothing; the toggle's behavior flips its value and SPEAKS it */
@@ -1370,7 +1370,7 @@ void test_events_are_calls() {
     CHECK_MSG(fed_compiled.ok, fed_compiled.program.diagnostics.empty()
                                    ? "compile failed without a diagnostic"
                                    : fed_compiled.program.diagnostics[0].message);
-    RuntimeState fed_state(fed_compiled.program);
+    Host fed_state(fed_compiled.program);
     const uint64_t fed_id = only_instance(fed);
     const uint32_t fed_slot = [&] {
         for (uint32_t i = 0; i < fed_compiled.program.cells.size(); ++i)
@@ -1393,7 +1393,7 @@ void test_events_are_calls() {
        pair speaks it */
     Document slider = instance_document("Slider", Json{{"value", 0}, {"min", 0}, {"max", 100}});
     CompileResult slider_compiled = compile_document(slider, mesh);
-    RuntimeState slider_state(slider_compiled.program);
+    Host slider_state(slider_compiled.program);
     run_event(slider_compiled.program, slider_state, only_instance(slider), "input",
               Value::number(62.5));
     for (uint32_t i = 0; i < slider_compiled.program.cells.size(); ++i)
@@ -1411,7 +1411,7 @@ void test_events_are_calls() {
     CHECK_MSG(jog_compiled.ok, jog_compiled.program.diagnostics.empty()
                                    ? "compile failed without a diagnostic"
                                    : jog_compiled.program.diagnostics[0].message);
-    RuntimeState jog_state(jog_compiled.program);
+    Host jog_state(jog_compiled.program);
     run_event(jog_compiled.program, jog_state, only_instance(jog), "pressrelease",
               Value::boolean(true));
     CHECK(jog_state.out.effect_count == 1);
@@ -1462,7 +1462,7 @@ void test_events_are_calls() {
     CHECK_MSG(shadow_compiled.ok, shadow_compiled.program.diagnostics.empty()
                                       ? "compile failed without a diagnostic"
                                       : shadow_compiled.program.diagnostics[0].message);
-    RuntimeState shadow_state(shadow_compiled.program);
+    Host shadow_state(shadow_compiled.program);
     const uint64_t shadow_id = only_instance(shadow_doc);
     const uint32_t shadow_slot = [&] {
         for (uint32_t i = 0; i < shadow_compiled.program.cells.size(); ++i)
@@ -1552,7 +1552,7 @@ void test_colors() {
         if (diag.grade == DiagGrade::Error)
             std::printf("colors compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     const uint64_t id = only_instance(document);
 
     auto rgba_of = [&](const SlotProgram* feed) {
@@ -1632,7 +1632,7 @@ void test_colors() {
     CompileResult folded_compiled = compile_document(folded, mesh);
     CHECK(folded_compiled.ok);
     CHECK(folded_compiled.program.slot_programs.size() == 2);
-    RuntimeState folded_state(folded_compiled.program);
+    Host folded_state(folded_compiled.program);
     const SlotProgram* scaled = slot_program_of(
         folded_compiled.program, only_instance(folded), "reading.text_color");
     const SlotProgram* inverted = slot_program_of(
@@ -1711,7 +1711,7 @@ void test_tonemaps() {
     CHECK(compiled.ok);
     if (!CHECK(compiled.program.slot_programs.size() == 6)) return;
     const Program& program = compiled.program;
-    RuntimeState state(program);
+    Host state(program);
     const Json& kids = document.root["pages"][0]["children"];
     const uint64_t a_id = json_u64_or(kids[0]["id"], 0);
     const uint64_t b_id = json_u64_or(kids[1]["id"], 0);
@@ -1810,7 +1810,7 @@ void test_text_and_enums() {
             std::printf("text compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
     if (!CHECK(compiled.program.slot_programs.size() == 9)) return;
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
 
     const Program& program = compiled.program;
     const Json& kids = document.root["pages"][0]["children"];
@@ -1996,7 +1996,7 @@ void test_lists_and_maps() {
                     {"speed", "mode", "fast"});
     std::string fault;
     scheduler.tick(fault);
-    const RuntimeState& state = scheduler.state();
+    const Host& state = scheduler.state();
 
     const Json& kids = document.root["pages"][0]["children"];
     auto wid = [&](uint32_t at) { return json_u64_or(kids[at]["id"], 0); };
@@ -2178,7 +2178,7 @@ void test_reduce() {
     mesh.push_elems(1, {Value::text(0), Value::text(1), Value::text(2)}, {"b", "c", "a"});
     std::string fault;
     scheduler.tick(fault);
-    const RuntimeState& state = scheduler.state();
+    const Host& state = scheduler.state();
 
     const Json& kids = document.root["pages"][0]["children"];
     auto wid = [&](uint32_t at) { return json_u64_or(kids[at]["id"], 0); };
@@ -2322,7 +2322,7 @@ void test_list_cells() {
 
     Scheduler scheduler(std::move(compiled.program), mesh);
     const Program& program = scheduler.program();
-    const RuntimeState& state = scheduler.state();
+    const Host& state = scheduler.state();
     auto joined = [&](int cell) {
         const Value& value = state.store.values[cell];
         if (value.tag != ValueTag::List) return std::string("<not a list>");
@@ -2371,7 +2371,7 @@ void test_list_cells() {
 
     /* a recompile carries a list cell exactly as it carries text: by value, into the
        new run's own storage, so nothing points at the run being retired */
-    RuntimeState migrated = migrate_state(program, state, program);
+    Host migrated = migrate_state(program, state, program);
     auto migrated_joined = [&](int cell) {
         const Value& value = migrated.store.values[cell];
         if (value.tag != ValueTag::List) return std::string("<not a list>");
@@ -2391,7 +2391,7 @@ void test_list_cells() {
     Program restated = program;
     restated.cells[authored_at].list_init = {
         Value::text(restated.add_text("one")), Value::text(restated.add_text("two"))};
-    RuntimeState edited = migrate_state(program, state, restated);
+    Host edited = migrate_state(program, state, restated);
     const AggView after = edited.aggregate(edited.store.values[authored_at]);
     CHECK(after.count == 2);
     CHECK(after.count == 2 && edited.text(restated, after.data[0]) == "one");
@@ -2412,7 +2412,7 @@ int named_cell(const Program& program, const std::string& name) {
 }
 
 /* a list cell's elements, joined, so a check reads as the value the author would see */
-std::string list_dump(const Program& program, const RuntimeState& state, int cell) {
+std::string list_dump(const Program& program, const Host& state, int cell) {
     const Value& value = state.store.values[cell];
     if (value.tag != ValueTag::List) return "<not a list>";
     const AggView view = state.aggregate(value);
@@ -2435,7 +2435,7 @@ std::string list_dump(const Program& program, const RuntimeState& state, int cel
 }
 
 /* a map cell's pairs, in the order it holds them: the check IS the sorted-keys rule */
-std::string map_dump(const Program& program, const RuntimeState& state, int cell) {
+std::string map_dump(const Program& program, const Host& state, int cell) {
     const Value& value = state.store.values[cell];
     if (value.tag != ValueTag::Map) return "<not a map>";
     const AggView view = state.aggregate(value);
@@ -2517,7 +2517,7 @@ void test_aggregate_variables() {
     CHECK(program.cells[table].has_list && program.cells[table].list_init.size() == 4);
     CHECK(program.cells[table].list_slot != UINT32_MAX);
 
-    RuntimeState state(program);
+    Host state(program);
     const uint32_t log_slot = program.cells[log].list_slot;
     const uint32_t table_slot = program.cells[table].list_slot;
     CHECK_EQ(list_dump(program, state, log), "");
@@ -2567,7 +2567,7 @@ void test_aggregate_variables() {
 
     /* a recompile carries BOTH shapes by value, into the new run's own storage, and
        moves the generation: a recompile is a new baseline */
-    RuntimeState migrated = migrate_state(program, state, program);
+    Host migrated = migrate_state(program, state, program);
     CHECK_EQ(list_dump(program, migrated, log), "7,8");
     CHECK_EQ(list_dump(program, migrated, words), "3,4,5");
     CHECK_EQ(map_dump(program, migrated, table), "a=1,aa=6,zz=tail");
@@ -2580,14 +2580,14 @@ void test_aggregate_variables() {
     Program restated = compiled.program;
     restated.cells[table].list_init = {Value::text(restated.add_text("q")),
                                        Value::number(5)};
-    RuntimeState edited = migrate_state(program, state, restated);
+    Host edited = migrate_state(program, state, restated);
     CHECK_EQ(map_dump(restated, edited, table), "a=1,aa=6,zz=tail");
 }
 
 /* ---- nested aggregates ---- */
 
 /* one ROW, rendered as its author would read it */
-std::string row_text(const Program& program, const RuntimeState& state, const Value& row) {
+std::string row_text(const Program& program, const Host& state, const Value& row) {
     if (row.tag != ValueTag::List && row.tag != ValueTag::Map) return "?";
     const AggView view = state.aggregate(row);
     const bool pairs = row.tag == ValueTag::Map;
@@ -2614,7 +2614,7 @@ std::string row_text(const Program& program, const RuntimeState& state, const Va
 }
 
 /* a NESTED cell, rows separated by | so the check reads as the whole picture */
-std::string nested_dump(const Program& program, const RuntimeState& state, int cell) {
+std::string nested_dump(const Program& program, const Host& state, int cell) {
     const Value& value = state.store.values[cell];
     if (value.tag != ValueTag::List && value.tag != ValueTag::Map) return "<not nested>";
     const AggView view = state.aggregate(value);
@@ -2703,7 +2703,7 @@ void test_nested_aggregates() {
     CHECK(program.cells[by_name].row_init.size() == 2);
     CHECK(program.cells[by_name].list_init.size() == 4);
 
-    RuntimeState state(program);
+    Host state(program);
     const uint32_t grid_slot = program.cells[grid].list_slot;
     CHECK_EQ(nested_dump(program, state, grid), "[1,2]|[3]");
     CHECK_EQ(nested_dump(program, state, by_name), "a:[1,2]|b:[4]");
@@ -2772,14 +2772,14 @@ void test_nested_aggregates() {
     /* CLEARED releases the arena with the entries: an extent nothing names is hole, and a
        cell still counting the cleared rows as live would refuse the next append for room
        it is holding */
-    RuntimeState blank(program);
+    Host blank(program);
     CHECK(blank.write(program, grid, 0, StorePlace::Cell, StoreMode::Assign, Value::nil()));
     CHECK(blank.store.lists[grid_slot].leaf_live == 0 && blank.store.lists[grid_slot].row_cap.empty());
     CHECK(blank.write(program, grid, 0, StorePlace::Cell, StoreMode::Append, Value::list(0, 0, ValueTag::Nil), Value::nil()));
     CHECK_EQ(nested_dump(program, blank, grid), "[]");
 
     /* a recompile carries the rows by value into the new run's own arena */
-    RuntimeState migrated = migrate_state(program, state, program);
+    Host migrated = migrate_state(program, state, program);
     CHECK_EQ(nested_dump(program, migrated, grid), "[9]|[5,8,42]|[296,297,298,299]");
     CHECK_EQ(nested_dump(program, migrated, by_name), "b:[4]|c:[5,6]");
     CHECK_EQ(nested_dump(program, migrated, rows), "[z=zz]");
@@ -2818,7 +2818,7 @@ void test_nested_ring() {
     const Program& program = compiled.program;
     const int grid = named_cell(program, "grid");
     if (!CHECK(grid >= 0)) return;
-    RuntimeState state(program);
+    Host state(program);
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     const uint32_t slot = program.cells[grid].list_slot;
@@ -2866,7 +2866,7 @@ void test_nested_ring() {
         CHECK(built.ok);
         const int cell = named_cell(built.program, "grid");
         if (!CHECK(cell >= 0)) return;
-        RuntimeState wide_state(built.program);
+        Host wide_state(built.program);
         const uint64_t at = json_u64_or(doc2.root["pages"][0]["children"][0]["id"], 0);
         const uint32_t wide_slot = built.program.cells[cell].list_slot;
         int stopped = -1;
@@ -3000,7 +3000,7 @@ void test_indexed_writes() {
     mesh.push_elems(0, {Value::number(1), Value::number(2), Value::number(3)});
     std::string fault;
     scheduler.tick(fault);
-    const RuntimeState& state = scheduler.state();
+    const Host& state = scheduler.state();
     const uint32_t buf_slot = program.cells[buf].list_slot;
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
@@ -3051,7 +3051,7 @@ void test_indexed_writes() {
 
     /* direct refusals the flows above cannot spell: a non-number index, a foreign
        element on a typed cell, an aggregate element */
-    RuntimeState& mut = const_cast<RuntimeState&>(state);
+    Host& mut = const_cast<Host&>(state);
     CHECK(!mut.write(program, buf, 0, StorePlace::Elem, StoreMode::Assign, Value::number(1), Value::text(0)));
     CHECK(!mut.write(program, buf, 0, StorePlace::Elem, StoreMode::Assign, Value::number(1), Value::number(-1)));
     CHECK(!mut.write(program, nums, 0, StorePlace::Elem, StoreMode::Assign, state.store.values[words], Value::number(0)));
@@ -3161,7 +3161,7 @@ void test_struct_agg_fields() {
         std::string one;
         scheduler.tick(one);
     };
-    const RuntimeState& state = scheduler.state();
+    const Host& state = scheduler.state();
 
     /* whole list into the field, whole message out: the transcript carries the
        ELEMENTS, and the unwritten scalar rides as the struct's zero */
@@ -3263,7 +3263,7 @@ void test_bare_topic_scalars() {
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     if (!CHECK(lit >= 0 && flag_at >= 0 && instance)) return;
 
-    RuntimeState state(program);
+    Host state(program);
     state.store.last[flag_at].known = true;
     state.store.last[flag_at].fields[0] = Value::boolean(true);
 
@@ -3363,7 +3363,7 @@ void test_assign_expression_reads_mesh() {
     CHECK(subscribed(a_at));
     CHECK(subscribed(b_at));
 
-    RuntimeState state(program);
+    Host state(program);
     state.store.last[a_at].known = true;
     state.store.last[a_at].fields[0] = Value::number(3);
     state.store.last[b_at].known = true;
@@ -3438,7 +3438,7 @@ void test_aggregate_expressions() {
             options = static_cast<int>(i);
     if (!CHECK(src >= 0 && dst >= 0 && copy >= 0 && options >= 0)) return;
 
-    RuntimeState state(program);
+    Host state(program);
     auto raise = [&](const char* event) {
         run_event(program, state, instance, event, Value::nil());
     };
@@ -3551,7 +3551,7 @@ void test_aggregate_ceilings() {
     const int folded = named_cell(program, "folded");
     if (!CHECK(unbounded >= 0 && bounded >= 0)) return;
 
-    RuntimeState state(program);
+    Host state(program);
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     auto raise = [&](const char* event) {
@@ -3644,7 +3644,7 @@ void test_map_reduce() {
                         diag.message.c_str());
     CHECK(compiled.ok);
     const Program& program = compiled.program;
-    RuntimeState state(program);
+    Host state(program);
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     run_event(program, state, instance, "tap", Value::nil());
@@ -3709,7 +3709,7 @@ void test_map_replay() {
     auto run = [&](Document& document) {
         CompileResult compiled = compile_document(document, mesh);
         CHECK(compiled.ok);
-        RuntimeState state(compiled.program);
+        Host state(compiled.program);
         const uint64_t instance =
             json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
         run_event(compiled.program, state, instance, "tap", Value::nil());
@@ -3950,7 +3950,7 @@ void test_color_element_variables() {
 
     std::string fault;
     scheduler.tick(fault);
-    const RuntimeState& state = scheduler.state();
+    const Host& state = scheduler.state();
     /* the authored start is COLOURS, not the strings it was written as — alpha kept
        where it was spelled, and "$accent" resolved to the token's dark value */
     CHECK_EQ(list_dump(program, state, swatches), "#ff0000,#00ff0080,#334455");
@@ -4009,7 +4009,7 @@ void test_variant_options() {
        deps): the seed pass runs it once at start */
     const SlotProgram* fill = slot_program_of(compiled.program, id, "options");
     if (!CHECK(fill != nullptr)) return;
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     RunResult seeded = run_slot(compiled.program, *fill, state);
     CHECK(!seeded.faulted);
     const AggView view = state.aggregate(state.store.values[cell]);
@@ -4045,7 +4045,7 @@ void test_variant_options() {
         const SlotProgram* tfill =
             slot_program_of(tc.program, only_instance(tdoc), "options");
         if (!CHECK(tcell >= 0 && tfill != nullptr)) return;
-        RuntimeState tstate(tc.program);
+        Host tstate(tc.program);
         CHECK(!run_slot(tc.program, *tfill, tstate).faulted);
         const AggView tview = tstate.aggregate(tstate.store.values[tcell]);
         CHECK(tview.count == 3);
@@ -4087,7 +4087,7 @@ void test_variant_options() {
                 bad_cell = static_cast<int>(i);
         if (!CHECK(bad_cell >= 0)) continue;
         CHECK(!failed.program.cells[bad_cell].has_list);
-        RuntimeState empty(failed.program);
+        Host empty(failed.program);
         CHECK(empty.store.values[bad_cell].tag == ValueTag::Nil);
     }
 }
@@ -4121,13 +4121,13 @@ void test_park_holds_text() {
         if (diag.grade == DiagGrade::Error)
             std::printf("suspend compile: [%s] %s\n", diag.code.c_str(), diag.message.c_str());
     CHECK(compiled.ok);
-    RuntimeState state(compiled.program);
+    Host state(compiled.program);
     const uint64_t node_id = only_instance(document);
 
     RunResult run = run_event(compiled.program, state, node_id, "press",
                               Value::boolean(true));
     CHECK(!run.faulted);
-    if (!CHECK(!state.pending.empty() && state.pending[0].active)) return;
+    if (!CHECK(!state.exec.pending.empty() && state.exec.pending[0].active)) return;
 
     /* move the source variable while the run is parked */
     const int note = cell_named(compiled.program, "note");
@@ -4154,7 +4154,7 @@ void test_step_budget() {
     flow.body.max_stack = 1;
     CHECK(Module::bad_jump(flow.body.code) == 0);
 
-    RuntimeState state(program);
+    Host state(program);
     const RunResult result = run_flow(program, flow, state, Value::nil());
     CHECK(result.faulted);
     CHECK(result.steps > kStepCeiling);
@@ -4323,7 +4323,7 @@ void test_clock() {
 
     Scheduler scheduler(std::move(compiled.program), mesh);
     const Program& program = scheduler.program();
-    RuntimeState& state = scheduler.state();
+    Host& state = scheduler.state();
     /* pin the wall: 2026-02-02T01:20:00Z-ish, civil expectations computed through the
        very localtime the VM uses so the test holds in any zone */
     state.wall_pinned = true;
@@ -4437,7 +4437,7 @@ void test_icon() {
 
     Scheduler scheduler(std::move(compiled.program), mesh);
     const Program& program = scheduler.program();
-    RuntimeState& state = scheduler.state();
+    Host& state = scheduler.state();
     std::string fault;
     scheduler.tick(fault);
 

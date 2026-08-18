@@ -36,8 +36,8 @@ class Scheduler final : private MeshSink {
 
     const Program& program() const { return program_; }
     Program& program() { return program_; }
-    const RuntimeState& state() const { return state_; }
-    RuntimeState& state() { return state_; }
+    const Host& state() const { return state_; }
+    Host& state() { return state_; }
 
     void post(InputEvent event);
     void release_session(uint64_t session);
@@ -88,7 +88,7 @@ class Scheduler final : private MeshSink {
     void on_update(const MeshUpdate& update) override;
 
     Program program_;
-    RuntimeState state_;
+    Host state_;
     MeshPort& mesh_;
     std::vector<InputEvent> inbound_;
     std::vector<Pressed> pressed_;

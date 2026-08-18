@@ -830,7 +830,7 @@ void DartMesh::apply(const Program& program,
         item.second->pages.clear();
     }
     /* consume one entity, returning its rec. A recompile starts from a fresh
-     * RuntimeState: re-deliver the variable state we already hold, so its cells and
+     * Host: re-deliver the variable state we already hold, so its cells and
      * RMW seed refill on the next drain instead of waiting for the owner's next write */
     auto consume = [&](const EntityDef& def) -> Rec* {
         Rec* rec = impl_->ensure_rec(def);

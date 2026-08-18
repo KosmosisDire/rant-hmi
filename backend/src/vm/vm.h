@@ -17,7 +17,7 @@ struct RunResult {
  * parameter under its declared name, the copy as repeat.index / .count / .fraction).
  * The pipeline register x starts Nil: an event is a function call, and what it passed
  * in arrives as a named parameter, never as x. */
-RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
+RunResult run_flow(const Program& program, const FlowProgram& flow, Host& state,
                    Value arg, const RepeatSeat& seat = RepeatSeat{}) noexcept;
 
 /* Does a flow listening on `flow_element` hear an event raised from `element`? An empty
@@ -29,15 +29,15 @@ bool element_reaches(const Program& program, uint64_t node, const std::string& f
 
 /* every flow of `node_id` triggered on `event` from `element`, in program order —
  * the test-facing single call; the scheduler's dispatch adds the queue semantics */
-RunResult run_event(const Program& program, RuntimeState& state, uint64_t node_id,
+RunResult run_event(const Program& program, Host& state, uint64_t node_id,
                     const std::string& event, Value arg,
                     const std::string& element = std::string()) noexcept;
 
 /* one standing slot expression, re-evaluated into its cell; x is always Nil here */
 RunResult run_slot(const Program& program, const SlotProgram& slot,
-                   RuntimeState& state) noexcept;
+                   Host& state) noexcept;
 
-RunResult resume_pending(const Program& program, RuntimeState& state,
+RunResult resume_pending(const Program& program, Host& state,
                          uint32_t pending_slot) noexcept;
 
 } // namespace hmi

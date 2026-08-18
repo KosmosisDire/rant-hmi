@@ -859,7 +859,7 @@ int main() {
             mesh.set_viewed_pages({cy_page_id});
         };
         auto dump_faults = [&](const char* when) {
-            const RuntimeState& state = cur->state();
+            const Host& state = cur->state();
             for (uint32_t i = 0;
                  i < state.out.faults.size() && i < cur->program().runtime_faults.size(); ++i)
                 if (state.out.faults[i].count)

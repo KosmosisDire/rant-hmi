@@ -251,3 +251,7 @@ zero_value
 # whose clear() is the tick's reset — the "mailbox" half of the database-with-a-
 # mailbox reading of RuntimeState. clear_outputs was the loose spelling.
 clear_outputs
+# The one class that interleaved two runtimes died into its named halves: Store
+# (values at rest), Outbox (messages out), ExecState (the machine's frames) — housed
+# by the Host, whose verb surface is the one routing between them.
+RuntimeState

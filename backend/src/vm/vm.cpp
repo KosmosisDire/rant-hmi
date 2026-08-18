@@ -17,7 +17,7 @@ namespace {
  * slot in the instruction (ins.a), so no allocation and no cursor exist at runtime. */
 struct ExecContext {
     const Program& program;
-    RuntimeState& state;
+    Host& state;
 };
 
 std::string_view text_of(const ExecContext& ctx, const Value& value) noexcept {
@@ -25,8 +25,8 @@ std::string_view text_of(const ExecContext& ctx, const Value& value) noexcept {
 }
 
 Value text_result(const ExecContext& ctx, uint32_t site, std::string_view view) noexcept {
-    if (site >= ctx.state.frame.texts.size()) return Value::nil();
-    ctx.state.frame.texts[site].set(view);
+    if (site >= ctx.state.exec.frame.texts.size()) return Value::nil();
+    ctx.state.exec.frame.texts[site].set(view);
     return Value::text(kFrameRef | site);
 }
 
@@ -116,10 +116,10 @@ bool sorts_before(const ExecContext& ctx, const Value& a, const Value& b) noexce
 /* copy `count` values taken every `stride` entries from src into a fresh pool range */
 Value copied_list(const ExecContext& ctx, const Value* src, uint32_t count,
                   uint32_t stride, uint32_t first, ValueTag elem) noexcept {
-    const uint32_t offset = ctx.state.frame.alloc(count);
+    const uint32_t offset = ctx.state.exec.frame.alloc(count);
     if (offset == UINT32_MAX) return Value::nil();
     for (uint32_t i = 0; i < count; ++i)
-        ctx.state.frame.elems[offset + i] = src[first + i * stride];
+        ctx.state.exec.frame.elems[offset + i] = src[first + i * stride];
     return Value::list(offset, count, elem);
 }
 
@@ -588,7 +588,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
                     at = hit + sep.size();
                 }
             }
-            const uint32_t offset = ctx.state.frame.alloc(pieces);
+            const uint32_t offset = ctx.state.exec.frame.alloc(pieces);
             if (offset == UINT32_MAX) return Value::nil();
             size_t at = 0;
             for (uint32_t i = 0; i < pieces; ++i) {
@@ -598,10 +598,10 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
                 const std::string_view piece =
                     hit == std::string_view::npos ? view.substr(at)
                                                   : view.substr(at, hit - at);
-                const uint32_t slot = ctx.state.frame.alloc_text();
+                const uint32_t slot = ctx.state.exec.frame.alloc_text();
                 if (slot == UINT32_MAX) return Value::nil();
-                ctx.state.frame.texts[slot].set(piece);
-                ctx.state.frame.elems[offset + i] = Value::text(kFrameRef | slot);
+                ctx.state.exec.frame.texts[slot].set(piece);
+                ctx.state.exec.frame.elems[offset + i] = Value::text(kFrameRef | slot);
                 if (hit != std::string_view::npos) at = hit + sep.size();
             }
             return Value::list(offset, pieces, ValueTag::Text);
@@ -703,7 +703,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const Value sorted = copied_list(ctx, view.data, view.count, 1, 0,
                                              list_elem_tag(receiver));
             if (sorted.tag != ValueTag::List) return sorted;
-            Value* begin = ctx.state.frame.elems.data() + sorted.ref;
+            Value* begin = ctx.state.exec.frame.elems.data() + sorted.ref;
             if (numeric_elems)
                 std::sort(begin, begin + view.count, [](const Value& a, const Value& b) {
                     return a.data.num < b.data.num;
@@ -722,7 +722,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
             const Value copy = copied_list(ctx, view.data, view.count, 1, 0,
                                            list_elem_tag(receiver));
             if (copy.tag != ValueTag::List) return copy;
-            Value* begin = ctx.state.frame.elems.data() + copy.ref;
+            Value* begin = ctx.state.exec.frame.elems.data() + copy.ref;
             std::reverse(begin, begin + view.count);
             return copy;
         }
@@ -922,7 +922,7 @@ Value method(const ExecContext& ctx, MethodId method, uint32_t site,
     return Value::nil();
 }
 
-bool copy_effect_text(const Program& program, RuntimeState& state, EffectRecord& effect,
+bool copy_effect_text(const Program& program, Host& state, EffectRecord& effect,
                       Value value, uint32_t field) noexcept {
     if (value.tag != ValueTag::Text) return true;
     if (field == UINT32_MAX) {
@@ -938,7 +938,7 @@ bool copy_effect_text(const Program& program, RuntimeState& state, EffectRecord&
  * exactly as a scalar's value is copied: a later write in this same tick must not
  * retro-edit an effect already recorded. Text elements re-home into agg_texts and
  * ref that LOCAL index (these Values never re-enter the VM; the flush resolves them). */
-bool copy_effect_agg(const Program& program, RuntimeState& state, EffectRecord& effect,
+bool copy_effect_agg(const Program& program, Host& state, EffectRecord& effect,
                      const Value& value, uint32_t field) noexcept {
     (void)program;
     if (field >= effect.agg_span.size()) return false;
@@ -973,7 +973,7 @@ void reset_effect_aggs(EffectRecord& effect) noexcept {
 
 /* effect records are POOLED and reused, so every emit path restates elem_index — a
  * stale element position would quietly turn the next field write into an element one */
-bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
+bool emit_bare(const Program& program, Host& state, Verb verb, uint32_t entity,
                uint32_t field, const Value& value,
                uint32_t elem_index = UINT32_MAX) noexcept {
     if (value.tag == ValueTag::Nil || state.out.effect_count >= state.out.effects.size()) return false;
@@ -996,7 +996,7 @@ bool emit_bare(const Program& program, RuntimeState& state, Verb verb, uint32_t 
  * and the mirror both read as "not given" — the RMW base keeps the owner's own bytes
  * for it, coherent because a mesh field is not erasable. Un-set-ness IS Nil-ness;
  * nothing else marks it. */
-bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_t entity,
+bool emit_struct(const Program& program, Host& state, Verb verb, uint32_t entity,
                  const StructState& value) noexcept {
     if (state.out.effect_count >= state.out.effects.size()) return false;
     EffectRecord& effect = state.out.effects[state.out.effect_count];
@@ -1037,7 +1037,7 @@ bool emit_struct(const Program& program, RuntimeState& state, Verb verb, uint32_
  * it reads x -- by position, through LoadX -- and nothing else in the language has more
  * than one implicit value. Nil for every run that is not a body. */
 static RunResult run_code(const Program& program, const std::vector<Instruction>& code,
-                          const FlowProgram* flow, RuntimeState& state, Value event_value,
+                          const FlowProgram* flow, Host& state, Value event_value,
                           uint32_t start_pc = 0, Value* out_x = nullptr,
                           uint32_t stack_base = 0, Value x2 = Value::nil(),
                           Value x3 = Value::nil()) noexcept {
@@ -1047,12 +1047,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
     uint32_t sp = 0;
     uint32_t pc = start_pc;
     auto push = [&](Value value) {
-        if (stack_base + sp >= state.frame.stack.size()) return false;
-        state.frame.stack[stack_base + sp++] = value;
+        if (stack_base + sp >= state.exec.frame.stack.size()) return false;
+        state.exec.frame.stack[stack_base + sp++] = value;
         return true;
     };
     auto pop = [&]() {
-        return sp ? state.frame.stack[stack_base + --sp] : Value::nil();
+        return sp ? state.exec.frame.stack[stack_base + --sp] : Value::nil();
     };
     auto fail = [&](uint32_t site) {
         state.fault(site);
@@ -1082,7 +1082,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             /* an INVOCATION ARGUMENT: frame-resident so a lambda body reads it without
                colliding with its own x2/x3 registers, and so a park keeps it */
             case OpCode::Arg:
-                if (ins.a >= Frame::kArgs || !push(state.frame.args[ins.a])) fail(ins.c);
+                if (ins.a >= Frame::kArgs || !push(state.exec.frame.args[ins.a])) fail(ins.c);
                 break;
             /* THE ONE LOAD: push what the place in `small` holds — the cell whole,
                one field of a struct cell, or one field of a mesh entity's last-value
@@ -1178,7 +1178,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                it and fall through. What `??` compiles to, and how && / || step around
                an unknown condition instead of faulting on it. */
             case OpCode::JmpNil: {
-                if (sp && state.frame.stack[stack_base + sp - 1].tag == ValueTag::Nil) {
+                if (sp && state.exec.frame.stack[stack_base + sp - 1].tag == ValueTag::Nil) {
                     --sp;
                     if (ins.a < code.size()) pc = ins.a;
                     else fail(ins.c);
@@ -1194,7 +1194,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 /* with no arguments the slice would start one past the end when the
                    stack is exactly full: never form that address */
                 const Value value = call(ctx, static_cast<Builtin>(ins.small), ins.a,
-                                         argc ? &state.frame.stack[stack_base + sp - argc] : nullptr, argc);
+                                         argc ? &state.exec.frame.stack[stack_base + sp - argc] : nullptr, argc);
                 sp -= argc;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -1208,8 +1208,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const uint32_t receiver_at = stack_base + sp - argc - 1;
                 const Value value =
                     method(ctx, static_cast<MethodId>(ins.small), ins.a,
-                           state.frame.stack[receiver_at],
-                           argc ? &state.frame.stack[receiver_at + 1] : nullptr, argc);
+                           state.exec.frame.stack[receiver_at],
+                           argc ? &state.exec.frame.stack[receiver_at + 1] : nullptr, argc);
                 sp = sp - argc - 1;
                 if (!push(value)) fail(ins.c);
                 break;
@@ -1223,11 +1223,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
              * wake and simply ends this one, so a delayed continuation is never
              * cancelled by a later arrival. */
             case OpCode::Park: {
-                if (!flow || ins.a >= state.pending.size()) {
+                if (!flow || ins.a >= state.exec.pending.size()) {
                     fail(ins.c);
                     break;
                 }
-                PendingState& pending = state.pending[ins.a];
+                PendingState& pending = state.exec.pending[ins.a];
                 if (static_cast<ParkPolicy>(ins.small) == ParkPolicy::Keep &&
                     pending.active) {
                     result.halted = true;
@@ -1246,17 +1246,17 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 auto pin = [&](const Value& value) -> Value {
                     if (value.tag != ValueTag::Text) return value;
                     if ((value.ref & (kConstantRef | kFrameRef)) != 0) return value;
-                    const uint32_t slot = state.frame.alloc_text();
+                    const uint32_t slot = state.exec.frame.alloc_text();
                     if (slot == UINT32_MAX) return value;
-                    state.frame.texts[slot].set(state.text(program, value));
+                    state.exec.frame.texts[slot].set(state.text(program, value));
                     return Value::text(kFrameRef | slot);
                 };
                 pending.x = pin(x);
-                state.frame.args[0] = pin(state.frame.args[0]);
+                state.exec.frame.args[0] = pin(state.exec.frame.args[0]);
                 /* THE PARK: the frame moves into the pending slot whole — arena,
                  * cursors, arguments and all — and the slot's previous buffers
                  * become the active frame, reset at the next fresh run's entry */
-                std::swap(state.frame, pending.held);
+                std::swap(state.exec.frame, pending.held);
                 result.halted = true;
                 break;
             }
@@ -1520,7 +1520,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     break;
                 }
                 if (field == ClockField::Text || field == ClockField::Date) {
-                    if (ins.b >= state.frame.texts.size()) {
+                    if (ins.b >= state.exec.frame.texts.size()) {
                         fail(ins.c);
                         break;
                     }
@@ -1532,7 +1532,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
                                       parts.tm_year + 1900, parts.tm_mon + 1,
                                       parts.tm_mday);
-                    state.frame.texts[ins.b].set(buffer);
+                    state.exec.frame.texts[ins.b].set(buffer);
                     if (!push(Value::text(kFrameRef | ins.b))) fail(ins.c);
                     break;
                 }
@@ -1556,7 +1556,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
-                const uint32_t offset = state.frame.alloc(count);
+                const uint32_t offset = state.exec.frame.alloc(count);
                 if (offset == UINT32_MAX) {
                     sp -= count;
                     fail(ins.c);
@@ -1565,8 +1565,8 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 ValueTag elem = ValueTag::Nil;
                 bool uniform = true;
                 for (uint32_t k = 0; k < count; ++k) {
-                    const Value v = state.frame.stack[stack_base + sp - count + k];
-                    state.frame.elems[offset + k] = v;
+                    const Value v = state.exec.frame.stack[stack_base + sp - count + k];
+                    state.exec.frame.elems[offset + k] = v;
                     if (k == 0) elem = v.tag;
                     else if (v.tag != elem) uniform = false;
                 }
@@ -1620,13 +1620,13 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 uint32_t out_at = UINT32_MAX;
                 uint32_t keys_at = UINT32_MAX;
                 if (!folds_to_bool && !folds) {
-                    out_at = state.frame.alloc(count);
+                    out_at = state.exec.frame.alloc(count);
                     if (out_at == UINT32_MAX) {
                         fail(ins.c);
                         break;
                     }
                     if (mode == IterateMode::SortBy) {
-                        keys_at = state.frame.alloc(count);
+                        keys_at = state.exec.frame.alloc(count);
                         if (keys_at == UINT32_MAX) {
                             fail(ins.c);
                             break;
@@ -1667,18 +1667,18 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     /* a body is ONE expression, so it leaves exactly one value at the
                        bottom of its own frame */
                     const Value value =
-                        frame < state.frame.stack.size() ? state.frame.stack[frame] : Value::nil();
+                        frame < state.exec.frame.stack.size() ? state.exec.frame.stack[frame] : Value::nil();
                     if (folds) {
                         /* the accumulator has to survive the NEXT iteration writing the
                            body's own text slot, so a text result is re-homed into an
                            element slot of its own -- the same hazard Map handles below */
                         if (value.tag == ValueTag::Text) {
-                            const uint32_t slot = state.frame.alloc_text();
+                            const uint32_t slot = state.exec.frame.alloc_text();
                             if (slot == UINT32_MAX) {
                                 body_faulted = true;
                                 break;
                             }
-                            state.frame.texts[slot].set(text_of(ctx, value));
+                            state.exec.frame.texts[slot].set(text_of(ctx, value));
                             acc = Value::text(kFrameRef | slot);
                         } else {
                             acc = value;
@@ -1693,17 +1693,17 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                                into its own element text slot, exactly as split does. */
                             Value stored = value;
                             if (value.tag == ValueTag::Text) {
-                                const uint32_t slot = state.frame.alloc_text();
+                                const uint32_t slot = state.exec.frame.alloc_text();
                                 if (slot == UINT32_MAX) {
                                     body_faulted = true;
                                     break;
                                 }
-                                state.frame.texts[slot].set(text_of(ctx, value));
+                                state.exec.frame.texts[slot].set(text_of(ctx, value));
                                 stored = Value::text(kFrameRef | slot);
                             }
                             if (kept == 0) elem_tag = stored.tag;
                             else if (stored.tag != elem_tag) uniform = false;
-                            state.frame.elems[out_at + kept++] = stored;
+                            state.exec.frame.elems[out_at + kept++] = stored;
                             break;
                         }
                         /* the CONDITION modes hold the one unknown rule: a Nil body
@@ -1719,14 +1719,14 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                             if (value_truth(value)) {
                                 if (kept == 0) elem_tag = element.tag;
                                 else if (element.tag != elem_tag) uniform = false;
-                                state.frame.elems[out_at + kept++] = element;
+                                state.exec.frame.elems[out_at + kept++] = element;
                             }
                             break;
                         case IterateMode::SortBy:
                             if (kept == 0) elem_tag = element.tag;
                             else if (element.tag != elem_tag) uniform = false;
-                            state.frame.elems[keys_at + kept] = value;
-                            state.frame.elems[out_at + kept++] = element;
+                            state.exec.frame.elems[keys_at + kept] = value;
+                            state.exec.frame.elems[out_at + kept++] = element;
                             break;
                         case IterateMode::Any:
                             if (value.tag == ValueTag::Nil) condition_unknown = true;
@@ -1752,16 +1752,16 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     /* insertion sort over the two parallel blocks: n is bounded by the
                        trip bound, and this needs no scratch of its own */
                     for (uint32_t i = 1; i < kept; ++i) {
-                        const Value key = state.frame.elems[keys_at + i];
-                        const Value val = state.frame.elems[out_at + i];
+                        const Value key = state.exec.frame.elems[keys_at + i];
+                        const Value val = state.exec.frame.elems[out_at + i];
                         uint32_t j = i;
-                        while (j > 0 && sorts_before(ctx, key, state.frame.elems[keys_at + j - 1])) {
-                            state.frame.elems[keys_at + j] = state.frame.elems[keys_at + j - 1];
-                            state.frame.elems[out_at + j] = state.frame.elems[out_at + j - 1];
+                        while (j > 0 && sorts_before(ctx, key, state.exec.frame.elems[keys_at + j - 1])) {
+                            state.exec.frame.elems[keys_at + j] = state.exec.frame.elems[keys_at + j - 1];
+                            state.exec.frame.elems[out_at + j] = state.exec.frame.elems[out_at + j - 1];
                             --j;
                         }
-                        state.frame.elems[keys_at + j] = key;
-                        state.frame.elems[out_at + j] = val;
+                        state.exec.frame.elems[keys_at + j] = key;
+                        state.exec.frame.elems[out_at + j] = val;
                     }
                 }
                 const bool pushed_ok =
@@ -1783,7 +1783,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     fail(ins.c);
                     break;
                 }
-                Value& top = state.frame.stack[stack_base + sp - 1];
+                Value& top = state.exec.frame.stack[stack_base + sp - 1];
                 Value converted = Value::nil();
                 if (top.tag == ValueTag::Text && ins.b < program.types.size()) {
                     const std::string_view name = state.text(program, top);
@@ -1835,20 +1835,20 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
     return result;
 }
 
-RunResult run_flow(const Program& program, const FlowProgram& flow, RuntimeState& state,
+RunResult run_flow(const Program& program, const FlowProgram& flow, Host& state,
                    Value arg, const RepeatSeat& seat) noexcept {
     /* a fresh run enters an empty arena; only resume_pending continues one */
-    state.frame.reset();
-    state.frame.args[0] = arg;
+    state.exec.frame.reset();
+    state.exec.frame.args[0] = arg;
     /* the copy the event arrived on, as arguments: index, count, and the fraction of
      * the way through (0 at the first copy, 1 at the last — the same arithmetic the
      * view's `repeat:` cells do, because it is the same question asked from the
      * other side). No copy behind the run seeds Nil rather than a zero that would
      * look like the first copy. */
     if (seat.live) {
-        state.frame.args[1] = Value::number(static_cast<double>(seat.index));
-        state.frame.args[2] = Value::number(static_cast<double>(seat.count));
-        state.frame.args[3] = Value::number(
+        state.exec.frame.args[1] = Value::number(static_cast<double>(seat.index));
+        state.exec.frame.args[2] = Value::number(static_cast<double>(seat.count));
+        state.exec.frame.args[3] = Value::number(
             seat.count > 1 ? static_cast<double>(seat.index) /
                                  static_cast<double>(seat.count - 1)
                            : 0.0);
@@ -1866,7 +1866,7 @@ bool element_reaches(const Program& program, uint64_t node,
     return true;   /* an unlisted element bubbles: robust to a view naming a stale one */
 }
 
-RunResult run_event(const Program& program, RuntimeState& state, uint64_t node_id,
+RunResult run_event(const Program& program, Host& state, uint64_t node_id,
                     const std::string& event, Value arg,
                     const std::string& element) noexcept {
     RunResult total;
@@ -1885,21 +1885,21 @@ RunResult run_event(const Program& program, RuntimeState& state, uint64_t node_i
 }
 
 RunResult run_slot(const Program& program, const SlotProgram& slot,
-                   RuntimeState& state) noexcept {
-    state.frame.reset();
+                   Host& state) noexcept {
+    state.exec.frame.reset();
     return run_code(program, slot.body.code, nullptr, state, Value::nil());
 }
 
-RunResult resume_pending(const Program& program, RuntimeState& state,
+RunResult resume_pending(const Program& program, Host& state,
                          uint32_t pending_slot) noexcept {
-    if (pending_slot >= state.pending.size()) return RunResult{true, true, 0};
-    PendingState& pending = state.pending[pending_slot];
+    if (pending_slot >= state.exec.pending.size()) return RunResult{true, true, 0};
+    PendingState& pending = state.exec.pending[pending_slot];
     if (!pending.active || pending.flow >= program.flows.size())
         return RunResult{true, true, 0};
     /* the parked frame returns whole — held refs, temporaries, the arguments and
      * all resolve against it again — and the run continues its own arena from
      * where it parked (no reset) */
-    std::swap(state.frame, pending.held);
+    std::swap(state.exec.frame, pending.held);
     const uint32_t flow_index = pending.flow;
     const uint32_t pc = pending.resume_pc;
     const Value x = pending.x;

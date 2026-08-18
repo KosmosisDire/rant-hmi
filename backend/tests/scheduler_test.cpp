@@ -858,7 +858,7 @@ InputEvent on_copy(uint64_t node, const char* event, uint64_t seq, uint32_t inde
     return input;
 }
 
-double element_at(const RuntimeState& state, int cell, uint32_t at) {
+double element_at(const Host& state, int cell, uint32_t at) {
     const AggView view = state.aggregate(state.store.values[cell]);
     if (at >= view.count || view.data[at].tag != ValueTag::Num) return -1.0;
     return view.data[at].data.num;
