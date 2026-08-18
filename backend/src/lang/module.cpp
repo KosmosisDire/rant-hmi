@@ -74,9 +74,15 @@ Signature Module::infer_signature(const std::vector<Instruction>& code) const {
                 case OpCode::ReadEnt:
                     note(sig.reads, ins.b);
                     break;
-                case OpCode::MoveOut:
-                    note(sig.writes, ins.a);
+                /* a Send at a mesh target is the entity write; the element form
+                   counts the same way (it writes the same entity), and the raise,
+                   notify and timer families touch no accessor */
+                case OpCode::Send: {
+                    const SendTarget target = static_cast<SendTarget>(ins.small & 0xffu);
+                    if (target == SendTarget::Entity || target == SendTarget::Elem)
+                        note(sig.writes, ins.a);
                     break;
+                }
                 case OpCode::Iterate:
                     if (ins.a < subs.size()) walk(subs[ins.a].code);
                     break;

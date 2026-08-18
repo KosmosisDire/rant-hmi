@@ -7908,7 +7908,7 @@ flow 116 node 116 event select worst 5
   0 ARG 0 0 50
   1 STORE 46 0 51
   2 ARG 0 0 52
-  3 RAISE 0 1 53
+  3 SEND small 2 0 1 53
   4 HALT
 flow 138 node 138 event tap worst 8
   0 LOAD 77 0 54
@@ -7917,25 +7917,25 @@ flow 138 node 138 event tap worst 8
   3 LOAD 209 0 57
   4 STORE 77 0 58
   5 LOAD 209 0 59
-  6 RAISE 1 1 60
+  6 SEND small 2 1 1 60
   7 HALT
 flow 610 node 610 event select worst 5
   0 ARG 0 0 61
   1 STORE 117 0 62
   2 ARG 0 0 63
-  3 RAISE 2 1 64
+  3 SEND small 2 2 1 64
   4 HALT
 flow 613 node 613 event input worst 5
   0 ARG 0 0 65
   1 STORE 128 0 66
   2 ARG 0 0 67
-  3 RAISE 3 1 68
+  3 SEND small 2 3 1 68
   4 HALT
 flow 613 node 613 event commit worst 5
   0 ARG 0 0 69
   1 STORE 128 0 70
   2 ARG 0 0 71
-  3 RAISE 4 1 72
+  3 SEND small 2 4 1 72
   4 HALT
 flow 567 node 567 event every:567 worst 6
   0 LOAD 196 0 73
@@ -7964,7 +7964,7 @@ flow 118 node 116 event changed worst 3
   1 STORE 210 0 88
   2 HALT
 flow 192 node 186 event release worst 2
-  0 TMR_CANCEL 0 0 89
+  0 SEND small 260 0 0 89
   1 HALT
 flow 193 node 186 event press worst 2
   0 FAULT 92 0 0
@@ -8007,7 +8007,7 @@ flow 460 node 366 event pressrelease worst 11
   9 STORE small 2 0 0 121
   10 HALT
 flow 583 node 581 event release worst 2
-  0 TMR_CANCEL 2 0 122
+  0 SEND small 260 2 0 122
   1 HALT
 flow 585 node 581 event press worst 2
   0 FAULT 125 0 0
@@ -8047,7 +8047,7 @@ flow 508 node 462 event release worst 2
 flow 667 node 462 event press worst 4
   0 CONST 24 0 144
   1 CONST 25 0 145
-  2 NOTIFY 0 1 146
+  2 SEND small 3 0 1 146
   3 HALT
 flow 571 node 570 event tap worst 2
   0 FAULT 147 0 0

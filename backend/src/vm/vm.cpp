@@ -1211,48 +1211,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::StoreX:
                 x = pop();
                 break;
-            /* queue one raised event: the scheduler dispatches it AFTER this run halts,
-               so a raise never re-enters the VM under the raising flow. Text arguments
-               copy into the record's own storage — the scratch they came from resets
-               before the dispatch happens. */
-            case OpCode::Raise: {
-                const Value argument = ins.b ? pop() : Value::nil();
-                if (ins.a >= program.raises.size() ||
-                    state.raised_count >= state.raised.size()) {
-                    fail(ins.c);
-                    break;
-                }
-                RaisedRecord& record = state.raised[state.raised_count++];
-                record.def = ins.a;
-                record.value = argument;
-                if (argument.tag == ValueTag::Text) {
-                    record.text.set(state.text(program, argument));
-                    record.value = Value::text(UINT32_MAX);   /* resolved from record.text */
-                }
-                break;
-            }
-            /* queue one notification: the message renders as str() renders any scalar
-               (a human reads it, so the formatting vocabulary IS the contract), the
-               record owns its text, and the App drains the buffer after the tick. A
-               Nil message is refused like a Nil send: UNKNOWN must not pop up as "". */
-            case OpCode::Notify: {
-                const Value ms_value = ins.b ? pop() : Value::nil();
-                const Value message = pop();
-                if (message.tag == ValueTag::Nil || message.tag == ValueTag::List ||
-                    message.tag == ValueTag::Map ||
-                    state.notice_count >= state.notices.size()) {
-                    fail(ins.c);
-                    break;
-                }
-                char buffer[64];
-                NoticeRecord& record = state.notices[state.notice_count++];
-                record.text.set(scalar_text(ctx, message, buffer, sizeof(buffer)));
-                record.ms = ms_value.tag == ValueTag::Num && ms_value.data.num > 0
-                                ? static_cast<uint32_t>(
-                                      std::min(ms_value.data.num, 600000.0))
-                                : 0;
-                break;
-            }
             case OpCode::Gate: {
                 const Value value = pop();
                 if (value.tag == ValueTag::Nil) {
@@ -1392,56 +1350,136 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 break;
             }
-            /* the one way a value leaves a flow. The source arrives on the stack, and
-             * whether it is a struct decides between a whole message and one field;
-             * unforce carries no source at all (spec 2.6). */
-            case OpCode::MoveOut: {
-                const Verb verb = static_cast<Verb>(ins.small);
-                if (verb == Verb::Unforce) {
-                    if (state.effect_count >= state.effects.size()) {
-                        fail(ins.c);
+            /* THE ONE SEND: every outbound effect is one verb spoken AT a host
+             * object — the object family in `small`'s low byte, the verb in its high
+             * byte, in the family's own vocabulary. The record queues on the state's
+             * mailbox (effects, raised, notices, the timer table) and the host acts
+             * after the run — an effect never re-enters the VM under the run that
+             * spoke it. */
+            case OpCode::Send: {
+                const SendTarget target = static_cast<SendTarget>(ins.small & 0xffu);
+                const uint8_t verb_code = static_cast<uint8_t>(ins.small >> 8);
+                switch (target) {
+                    /* the mesh: whether the source is a struct decides between a whole
+                       message and one field; unforce and a parameterless call/emit
+                       carry no source at all (spec 2.6). The last-value mirror takes a
+                       write when the effect FLUSHES (end of tick, flush_effects),
+                       never here: every flow that runs in this tick reads the
+                       tick-start snapshot (the PLC-scan rule), so a second flow on the
+                       same event can gate on the value the event found, and the next
+                       tick still reads its own write without an owner echo. */
+                    case SendTarget::Entity: {
+                        const Verb verb = static_cast<Verb>(verb_code);
+                        if (verb == Verb::Unforce || ins.b == UINT32_MAX) {
+                            if (state.effect_count >= state.effects.size()) {
+                                fail(ins.c);
+                                break;
+                            }
+                            EffectRecord& effect = state.effects[state.effect_count++];
+                            effect.verb = verb;
+                            effect.entity = ins.a;
+                            effect.bare = true;
+                            effect.field = UINT32_MAX;
+                            effect.elem_index = UINT32_MAX;
+                            effect.value = Value::nil();
+                            reset_effect_aggs(effect);
+                            break;
+                        }
+                        const Value source = pop();
+                        if (source.tag == ValueTag::Struct) {
+                            const StructState* item = state.struct_at(source.ref);
+                            if (!item ||
+                                !emit_struct(program, state, verb, ins.a, *item))
+                                fail(ins.c);
+                        } else if (!emit_bare(program, state, verb, ins.a, ins.b,
+                                              source)) {
+                            fail(ins.c);
+                        }
                         break;
                     }
-                    EffectRecord& effect = state.effects[state.effect_count++];
-                    effect.verb = Verb::Unforce;
-                    effect.entity = ins.a;
-                    effect.bare = true;
-                    effect.elem_index = UINT32_MAX;
-                    effect.value = Value::nil();
-                    reset_effect_aggs(effect);
-                    break;
-                }
-                if (ins.b == UINT32_MAX) {
-                    /* a parameterless send (call/emit with no request fields): nothing
-                       was pushed, nothing pops; the default message goes as-is */
-                    if (state.effect_count >= state.effects.size()) {
-                        fail(ins.c);
+                    /* one ELEMENT of a mesh entity's array field: [value, index],
+                       index off first, having been pushed last. The index resolves
+                       here (a whole non-negative number); the bounds live at the
+                       ENCODE, against the owner's own bytes, because only the RMW
+                       base knows how long the array really is. */
+                    case SendTarget::Elem: {
+                        const Value index = pop();
+                        const Value value = pop();
+                        if (index.tag != ValueTag::Num || !(index.data.num >= 0.0)) {
+                            fail(ins.c);
+                            break;
+                        }
+                        if (!emit_bare(program, state, static_cast<Verb>(verb_code),
+                                       ins.a, ins.b, value,
+                                       static_cast<uint32_t>(index.data.num)))
+                            fail(ins.c);
                         break;
                     }
-                    EffectRecord& effect = state.effects[state.effect_count++];
-                    effect.verb = verb;
-                    effect.entity = ins.a;
-                    effect.bare = true;
-                    effect.field = UINT32_MAX;
-                    effect.elem_index = UINT32_MAX;
-                    effect.value = Value::nil();
-                    reset_effect_aggs(effect);
-                    break;
-                }
-                /* the last-value mirror takes this write when the effect FLUSHES (end
-                 * of tick, flush_effects), never here: every flow that runs in this
-                 * tick reads the tick-start snapshot (the PLC-scan rule), so a second
-                 * flow on the same event can gate on the value the event found, and
-                 * the next tick still reads its own write without an owner echo */
-                const Value source = pop();
-                if (source.tag == ValueTag::Struct) {
-                    const StructState* item = state.struct_at(source.ref);
-                    if (!item || !emit_struct(program, state, verb, ins.a, *item)) {
-                        fail(ins.c);
+                    /* queue one raised event: the scheduler dispatches it AFTER this
+                       run halts. Text arguments copy into the record's own storage —
+                       the scratch they came from resets before the dispatch happens. */
+                    case SendTarget::Self: {
+                        const Value argument = ins.b ? pop() : Value::nil();
+                        if (ins.a >= program.raises.size() ||
+                            state.raised_count >= state.raised.size()) {
+                            fail(ins.c);
+                            break;
+                        }
+                        RaisedRecord& record = state.raised[state.raised_count++];
+                        record.def = ins.a;
+                        record.value = argument;
+                        if (argument.tag == ValueTag::Text) {
+                            record.text.set(state.text(program, argument));
+                            record.value = Value::text(UINT32_MAX);   /* from record.text */
+                        }
                         break;
                     }
-                } else if (!emit_bare(program, state, verb, ins.a, ins.b, source)) {
-                    fail(ins.c);
+                    /* queue one notification: the message renders as str() renders any
+                       scalar (a human reads it, so the formatting vocabulary IS the
+                       contract), the record owns its text, and the App drains the
+                       buffer after the tick. A Nil message is refused like a Nil send:
+                       UNKNOWN must not pop up as "". */
+                    case SendTarget::System: {
+                        const Value ms_value = ins.b ? pop() : Value::nil();
+                        const Value message = pop();
+                        if (message.tag == ValueTag::Nil ||
+                            message.tag == ValueTag::List ||
+                            message.tag == ValueTag::Map ||
+                            state.notice_count >= state.notices.size()) {
+                            fail(ins.c);
+                            break;
+                        }
+                        char buffer[64];
+                        NoticeRecord& record = state.notices[state.notice_count++];
+                        record.text.set(
+                            scalar_text(ctx, message, buffer, sizeof(buffer)));
+                        record.ms =
+                            ms_value.tag == ValueTag::Num && ms_value.data.num > 0
+                                ? static_cast<uint32_t>(
+                                      std::min(ms_value.data.num, 600000.0))
+                                : 0;
+                        break;
+                    }
+                    /* the timer table: verb 0 starts timer `a` at its declared
+                       duration, 1 cancels it, and either one re-arms the first-of
+                       groups the timer's own firing gates */
+                    case SendTarget::Timer: {
+                        if (ins.a >= state.timers.size() ||
+                            ins.a >= program.timers.size()) {
+                            fail(ins.c);
+                            break;
+                        }
+                        TimerState& timer = state.timers[ins.a];
+                        timer.running = verb_code == 0;
+                        timer.remaining =
+                            timer.running ? program.timers[ins.a].duration_ticks : 0;
+                        for (uint32_t group : program.timers[ins.a].rearm_groups) {
+                            if (flow && flow->first_only && group == flow->group)
+                                continue;
+                            if (group < state.fired.size()) state.fired[group] = 0;
+                        }
+                        break;
+                    }
                 }
                 break;
             }
@@ -1459,21 +1497,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const Value value = pop();
                 if (!state.write(program, ins.a, ins.b, place, mode, value, step))
                     fail(ins.c);
-                break;
-            }
-            case OpCode::TmrStart:
-            case OpCode::TmrCancel: {
-                if (ins.a >= state.timers.size() || ins.a >= program.timers.size()) {
-                    fail(ins.c);
-                    break;
-                }
-                TimerState& timer = state.timers[ins.a];
-                timer.running = ins.op == OpCode::TmrStart;
-                timer.remaining = timer.running ? program.timers[ins.a].duration_ticks : 0;
-                for (uint32_t group : program.timers[ins.a].rearm_groups) {
-                    if (flow && flow->first_only && group == flow->group) continue;
-                    if (group < state.fired.size()) state.fired[group] = 0;
-                }
                 break;
             }
             case OpCode::TmrRead: {
@@ -1553,23 +1576,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                     : field == ClockField::Minute  ? parts.tm_min
                                                    : parts.tm_sec;
                 if (!push(Value::number(number))) fail(ins.c);
-                break;
-            }
-            /* one ELEMENT of a mesh entity's array field: [value, index], index off
-             * first, having been pushed last. The index resolves here (it must be a
-             * whole non-negative number); the bounds live at the ENCODE, against the
-             * owner's own bytes, because only the RMW base knows how long the array
-             * really is. */
-            case OpCode::MoveOutElem: {
-                const Value index = pop();
-                const Value value = pop();
-                if (index.tag != ValueTag::Num || !(index.data.num >= 0.0)) {
-                    fail(ins.c);
-                    break;
-                }
-                if (!emit_bare(program, state, static_cast<Verb>(ins.small), ins.a,
-                               ins.b, value, static_cast<uint32_t>(index.data.num)))
-                    fail(ins.c);
                 break;
             }
             case OpCode::MakeList: {

@@ -27,9 +27,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /* ---------------------------------------------------------------- the tables */
 
 /* One wart, named rather than hidden: OpCode carries both banks (spec 5.4) — the
- * expression opcodes the language emits, and the EFFECT opcodes (MoveOut, CallEnt,
- * TmrStart, Suspend, Fault, Halt) that only the DO-list lowering in compile/ emits and
- * only the VM executes. Splitting the enum means touching the VM's dispatch switch and
+ * expression opcodes the language emits, and the EFFECT opcodes (Send, Suspend,
+ * Fault, Halt) that only the DO-list lowering in compile/ emits and only the VM
+ * executes. Splitting the enum means touching the VM's dispatch switch and
  * Instruction's encoding for no behavioural gain, so the language declares opcodes it
  * never emits. */
 const OPS = [
@@ -69,10 +69,21 @@ opcodes until their owners become host objects at stage 7.`,
   {
     name: "New",
     c: `the move step's forms (spec 5.4): New and ReadEnt fill a struct cell, Store
-lands a value at a place, MoveOut emits the effect.`,
+lands a value at a place, Send emits the effect.`,
   },
   { name: "ReadEnt" },
-  { name: "MoveOut" },
+  {
+    name: "Send",
+    c: `THE ONE SEND (stage 6d): every outbound effect is one verb spoken AT a host
+object, the object family and the verb riding \`small\` (the low byte a
+SendTarget, the high byte the verb in that family's own vocabulary — a mesh
+target's is Verb, a timer's is 0 start / 1 cancel, raise and notify have one
+verb each). \`a\` names the object in its family's table, \`b\` carries the
+target's detail (see each target), and \`c\` is the fault site. Whatever the
+message needs was pushed before it and pops here; the record queues on the
+state's mailbox and the host flushes it after the run — an effect never
+re-enters the VM under the run that spoke it.`,
+  },
   {
     name: "Store",
     c: `THE ONE STORE (stage 6c): land the value at a PLACE with a MODE, both riding
@@ -85,8 +96,6 @@ than dropping the write. A store that lands in a struct's aggregate-field
 storage refreshes the owner's field handle as part of the write, so no
 separate instruction follows a store anywhere.`,
   },
-  { name: "TmrStart" },
-  { name: "TmrCancel" },
   { name: "Fault" },
   { name: "Halt" },
   { name: "Index" },
@@ -143,13 +152,6 @@ without colliding with its own x2/x3 — and so a park keeps them by keeping the
 frame.`,
   },
   {
-    name: "Raise",
-    c: `RAISE the event in Program.raises[\`a\`] (\`b\`: 1 = pop one argument value off the
-stack, 0 = nullary; \`c\`: the fault site for a full raise buffer). The record is
-queued on the state and the scheduler dispatches it AFTER this run halts — a raise
-never re-enters the VM under the raising flow.`,
-  },
-  {
     name: "ClockRead",
     c: `push CLOCK FIELD \`a\` (a ClockField below): \`time.now\` is seconds since the program
 started (the tick counter, so replay stays deterministic), everything else is the
@@ -157,21 +159,44 @@ wall clock the scheduler stamped at the top of this tick — one sample per tick
 a run can never see the second flip under it. The two TEXT fields render into the
 fixed slot \`b\` reserved at compile, like any text-producing site.`,
   },
+];
+
+/* Where a Send SPEAKS: the low byte of its \`small\` names the object family, and
+ * the high byte the verb in that family's own vocabulary. One opcode covers every
+ * outbound effect because dispatching the mailbox is the state's one concern, not
+ * an opcode family's — the families become served host-object descriptors at
+ * stage 7. */
+const SEND_TARGETS = [
   {
-    name: "Notify",
-    c: `NOTIFY every connected view (\`b\`: 1 = pop an explicit ms duration first, 0 =
-the view derives one from the message's length; \`c\`: the fault site). Pops the
-message, renders it as str() renders any scalar, and queues a NoticeRecord the
-App drains after the tick and broadcasts — the VM never sees a session.`,
+    name: "Entity",
+    c: `a mesh entity: \`a\` the entity, the verb a Verb (write / force / publish /
+call / emit / unforce). \`b\` names the field a bare send fills; UINT32_MAX
+sends the message whole — a struct handle pops as the message, or nothing
+pops at all for a parameterless call/emit and for unforce`,
   },
   {
-    name: "MoveOutElem",
-    c: `WRITE ONE ELEMENT of a mesh entity's array field: entity \`a\`, field \`b\`,
-verb in \`small\`, fault site in \`c\`. The stack reads [value, index], index off
-first, having been pushed last. The effect carries the element position and the
-encode side rewrites that one element over the owner's own bytes (RMW), so the
-rest of the array is preserved untouched; an index past the owner's live count
-is refused at the encode, never a grow.`,
+    name: "Elem",
+    c: `one element of mesh entity \`a\`'s array field \`b\`: [value, index] pop, index
+off first, and the encode rewrites that one element over the owner's own
+bytes (RMW) — an index past the owner's live count is refused at the encode,
+never a grow`,
+  },
+  {
+    name: "Self",
+    c: `raise the event in raises[\`a\`] on the speaking instance (\`b\`: 1 = pop the
+argument, 0 = nullary). The record queues and the scheduler dispatches it
+AFTER this run halts`,
+  },
+  {
+    name: "System",
+    c: `notify every connected view: pops the message, renders it as str() renders
+any scalar (\`b\`: 1 = pop an explicit ms duration first, 0 = the view scales
+the time with the message's length)`,
+  },
+  {
+    name: "Timer",
+    c: `timer \`a\`: verb 0 starts it at its declared duration, 1 cancels it — and
+either one re-arms the first-of groups the timer's own firing gates`,
   },
 ];
 
@@ -515,6 +540,22 @@ inline const char* op_name(OpCode op) {
 constexpr uint16_t store_small(StorePlace place, StoreMode mode) {
     return static_cast<uint16_t>(static_cast<uint16_t>(place) |
                                  (static_cast<uint16_t>(mode) << 8));
+}
+
+/* where a Send SPEAKS: the low byte of its \`small\` names the object family,
+ * the high byte the verb in that family's own vocabulary */
+`;
+  out += cEnum(
+    "SendTarget",
+    "uint8_t",
+    SEND_TARGETS.map((t) => ({ name: t.name, c: t.c })),
+  );
+  out += `
+/* the one Send's \`small\`, assembled — the verb in the target's own vocabulary
+ * (a mesh target's is Verb, a timer's 0 start / 1 cancel) */
+constexpr uint16_t send_small(SendTarget target, uint8_t verb) {
+    return static_cast<uint16_t>(static_cast<uint16_t>(target) |
+                                 (static_cast<uint16_t>(verb) << 8));
 }
 
 /* the fields \`time\` reads by — ONE table, so the scalar tier's bindings, the template

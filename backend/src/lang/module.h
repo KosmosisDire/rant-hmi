@@ -31,7 +31,7 @@ struct Signature {
     bool every_tick = false;
     /* the entities read (the entity-place Load / ReadEnt), in first-encounter order */
     std::vector<uint32_t> reads;
-    /* the entities written (MoveOut: write, call, emit) */
+    /* the entities written (a Send at a mesh target: write, call, emit) */
     std::vector<uint32_t> writes;
 
     bool reads_entity(uint32_t entity) const {

@@ -2513,10 +2513,10 @@ class Compiler {
         }
 
         Instruction out;
-        out.op = OpCode::MoveOut;
+        out.op = OpCode::Send;
         out.a = static_cast<uint32_t>(entity);
         out.b = 0;
-        out.small = static_cast<uint16_t>(verb);
+        out.small = send_small(SendTarget::Entity, static_cast<uint8_t>(verb));
         out.c = fault_site(step_id, "assign_out", "UNKNOWN was not sent");
 
         if (verb == Verb::Unforce) {
@@ -2651,7 +2651,7 @@ class Compiler {
                                 nullptr, "key"))
                     return false;
                 flow.body.max_stack = std::max(flow.body.max_stack, key_stack + 1);
-                out.op = OpCode::MoveOutElem;
+                out.small = send_small(SendTarget::Elem, static_cast<uint8_t>(verb));
                 out.b = static_cast<uint32_t>(field);
                 out.c = fault_site(step_id, "assign_out",
                                    "@" + target.name + "." + fdef.path +
@@ -2844,7 +2844,8 @@ class Compiler {
             at = static_cast<uint32_t>(program_.raises.size() - 1);
         }
         Instruction ins;
-        ins.op = OpCode::Raise;
+        ins.op = OpCode::Send;
+        ins.small = send_small(SendTarget::Self, 0);
         ins.a = at;
         ins.b = has_arg ? 1 : 0;
         ins.c = fault_site(step_id, "raise",
@@ -2883,7 +2884,8 @@ class Compiler {
                         flow.body.code, flow.body.max_stack, nullptr, "ms"))
             return false;
         Instruction ins;
-        ins.op = OpCode::Notify;
+        ins.op = OpCode::Send;
+        ins.small = send_small(SendTarget::System, 0);
         ins.b = ms.empty() ? 0 : 1;
         ins.c = fault_site(step_id, "notify", "notify needs a message it can render");
         flow.body.code.push_back(ins);
@@ -2999,7 +3001,8 @@ class Compiler {
                 } else {
                     reference(step_id, step.timer, program_.timers[timer].node_id);
                     Instruction ins;
-                    ins.op = kind == "tmr_start" ? OpCode::TmrStart : OpCode::TmrCancel;
+                    ins.op = OpCode::Send;
+                    ins.small = send_small(SendTarget::Timer, kind == "tmr_start" ? 0 : 1);
                     ins.a = static_cast<uint32_t>(timer);
                     ins.c = fault_site(step_id, "timer", "timer state is invalid");
                     flow.body.code.push_back(ins);

@@ -200,6 +200,18 @@ store_leaf
 LoadField
 LoadEnt
 
+# stage 6d, the one send: every outbound effect is one verb spoken AT a host object —
+# the family and the verb ride the one Send's `small`, and the six per-effect opcodes
+# (the mesh move and its element form, the raise, the notification, the timer pair)
+# died into its one VM case. The raise and notify opcodes by their qualified
+# spellings, since the bare words name the step kinds and the queues that live on.
+MoveOut
+MoveOutElem
+OpCode::Raise
+OpCode::Notify
+TmrStart
+TmrCancel
+
 # stage 6c, set-bits are Unknown-ness: a field NOBODY HAS SET holds Nil, and that is
 # the whole of given-ness — the encode and the mirror keep the owner's own value for
 # every Nil field (a mesh field is not erasable, so Nil could mean nothing else on
