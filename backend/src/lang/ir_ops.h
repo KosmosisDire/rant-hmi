@@ -343,19 +343,19 @@ enum class IterateMode : uint16_t {
 };
 
 /* the iterating methods by the name both surface grammars spell them, each with
- * its wire spelling (the view dialect's ITERATE mode) */
+ * the mode its Iterate carries */
 struct IterateModeDef {
     const char* call;
-    const char* wire;
+    IterateMode mode;
 };
 
 constexpr IterateModeDef kIterateModes[] = {
-    {"map", "MAP"},
-    {"filter", "FILTER"},
-    {"any", "ANY"},
-    {"all", "ALL"},
-    {"sortBy", "SORT_BY"},
-    {"reduce", "REDUCE"},
+    {"map", IterateMode::Map},
+    {"filter", IterateMode::Filter},
+    {"any", IterateMode::Any},
+    {"all", IterateMode::All},
+    {"sortBy", IterateMode::SortBy},
+    {"reduce", IterateMode::Reduce},
 };
 
 enum class Builtin : uint16_t {
@@ -400,9 +400,14 @@ enum class Builtin : uint16_t {
     Acos,
     Atan2,
     Known,
-    /* the no-scalar-id marker VIEW-ONLY table rows carry: no VM case dispatches
-     * it, so a bug that routes one to the scalar dispatcher faults instead of
-     * silently computing some borrowed builtin
+    /* view-only, id'd at the table's end so naming it renumbered nothing: the
+     * estimated rendered width the view answers (no VM case dispatches it)
+     */
+    Measure,
+    Anchor,
+    /* the no-scalar-id marker bespoke VIEW-ONLY table rows carry: no VM case
+     * dispatches it, so a bug that routes one to the scalar dispatcher answers Nil
+     * instead of silently computing some borrowed builtin
      */
     None,
 };
@@ -469,5 +474,134 @@ enum class MethodId : uint16_t {
     ColorDiv,
     ColorInvert,
 };
+
+/* the disassembly spelling of every id, derived from the enum names like kOpNames */
+constexpr const char* kBuiltinNames[] = {
+    "CLAMP",
+    "MAP_RANGE",
+    "ROUND_TO",
+    "LERP",
+    "ABS",
+    "ROUND",
+    "FLOOR",
+    "CEIL",
+    "SQRT",
+    "POW",
+    "MIN",
+    "MAX",
+    "INT",
+    "NUM",
+    "RGB",
+    "HSV",
+    "STR",
+    "NAME",
+    "FMT_TIME",
+    "FMT_DURATION",
+    "COLOR",
+    "JET",
+    "HOT",
+    "COOL_WARM",
+    "VIRIDIS",
+    "GRAYSCALE",
+    "VALUES",
+    "KEYS",
+    "INVERT",
+    "SIN",
+    "COS",
+    "TAN",
+    "ASIN",
+    "ACOS",
+    "ATAN2",
+    "KNOWN",
+    "MEASURE",
+    "ANCHOR",
+    "NONE",
+};
+
+inline const char* builtin_name(Builtin id) {
+    const auto index = static_cast<size_t>(id);
+    return index < sizeof(kBuiltinNames) / sizeof(kBuiltinNames[0])
+               ? kBuiltinNames[index]
+               : "?";
+}
+
+constexpr const char* kMethodNames[] = {
+    "NUM_ROUND",
+    "NUM_FLOOR",
+    "NUM_CEIL",
+    "NUM_ABS",
+    "NUM_CLAMP",
+    "NUM_MAP_RANGE",
+    "NUM_SIGN",
+    "BOOL_INT",
+    "BOOL_NOT",
+    "BOOL_PICK",
+    "COLOR_R",
+    "COLOR_G",
+    "COLOR_B",
+    "COLOR_A",
+    "COLOR_ALPHA",
+    "COLOR_MIX",
+    "NUM_TO_FIXED",
+    "TEXT_LENGTH",
+    "TEXT_UPPER",
+    "TEXT_LOWER",
+    "TEXT_TITLE",
+    "TEXT_TRIM",
+    "TEXT_SLICE",
+    "TEXT_STARTS_WITH",
+    "TEXT_ENDS_WITH",
+    "TEXT_CONTAINS",
+    "TEXT_REPLACE",
+    "TEXT_PAD_START",
+    "ENUM_INT",
+    "ENUM_NAME",
+    "ENUM_VARIANTS",
+    "TEXT_SPLIT",
+    "LIST_LENGTH",
+    "LIST_FIRST",
+    "LIST_LAST",
+    "LIST_SUM",
+    "LIST_AVG",
+    "LIST_MAX",
+    "LIST_MIN",
+    "LIST_JOIN",
+    "LIST_SORT",
+    "LIST_REVERSE",
+    "LIST_SLICE",
+    "LIST_CONTAINS",
+    "LIST_INDEX_OF",
+    "MAP_LENGTH",
+    "MAP_KEYS",
+    "MAP_VALUES",
+    "MAP_HAS",
+    "MAP_GET",
+    "TEXT_CONCAT",
+    "COLOR_SCALE",
+    "COLOR_DIV",
+    "COLOR_INVERT",
+};
+
+inline const char* method_name(MethodId id) {
+    const auto index = static_cast<size_t>(id);
+    return index < sizeof(kMethodNames) / sizeof(kMethodNames[0]) ? kMethodNames[index]
+                                                                  : "?";
+}
+
+constexpr const char* kIterateModeNames[] = {
+    "MAP",
+    "FILTER",
+    "ANY",
+    "ALL",
+    "SORT_BY",
+    "REDUCE",
+};
+
+inline const char* iterate_mode_name(IterateMode mode) {
+    const auto index = static_cast<size_t>(mode);
+    return index < sizeof(kIterateModeNames) / sizeof(kIterateModeNames[0])
+               ? kIterateModeNames[index]
+               : "?";
+}
 
 } // namespace hmi

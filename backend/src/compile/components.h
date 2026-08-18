@@ -80,7 +80,8 @@ struct ComponentSpec {
  * already pins every component finding, and one mistake gets one finding. */
 std::vector<ComponentSpec> derive_specs(const std::vector<ComponentDecl>& doc_components);
 
-/* Every PAGE node's attrs, compiled: {"<node id>": {"<attr>": {"code": [...]}}} — and
+/* Every PAGE node's attrs, compiled to packed view programs (template_expr.h):
+ * {"<node id>": {"<attr>": {"i": [...], ...}}} — and
  * every DOC COMPONENT node's too, keyed the same way (ids are globally unique). The
  * renderer walks the document tree it already holds and pulls each node's programs from
  * here, so a page and an entered component render through one path. Component findings

@@ -10,19 +10,18 @@
 #include "lang/lexer.h"
 #include "lang/parser.h"
 
-#include <cstring>
-
 namespace hmi {
 namespace {
 
-/* The view interpreter's opcode inventory (frontend/src/program.ts). Every op this
- * emitter produces is in that list; anything the surface grammar can say that does not
- * lower into it is refused with an error naming the limitation.
+/* The view emitter produces the language's ONE instruction form (lang/ir.h), packed
+ * into the envelope template_expr.h documents; anything the surface grammar can say
+ * that does not lower into the view-legal slice of the shared tables is refused with
+ * an error naming the limitation.
  *
  * There is no parser here. The text goes through THE parser (lang/parser.h) — the same
  * one the scalar tier compiles with — and this file only walks the AST, resolving names
- * against the TemplateScope and emitting the Json view dialect. One grammar, two
- * emitters, so the tiers can never drift at the syntax level. */
+ * against the TemplateScope and emitting instructions. One grammar, two emitters over
+ * one IR, so the tiers can never drift at the syntax level or the encoding level. */
 
 const char* kStates[] = {"pressed", "dragging", "open", "hover"};
 /* the easing vocabulary a transition takes (a node's `transitions` metadata, a
@@ -53,13 +52,22 @@ std::string no_display_reading(const std::string& name, const std::string& type)
            "put the field the picture needs in a variable of its own";
 }
 
-/* the iterating methods and their view mode spellings, from the generated
- * table (lang/ir_ops.h kIterateModes); nullptr = not one of them */
-const char* iterate_mode(const std::string& name) {
+/* the iterating methods and their modes, from the generated table
+ * (lang/ir_ops.h kIterateModes); nullptr = not one of them */
+const IterateModeDef* iterate_mode(const std::string& name) {
     for (const IterateModeDef& mode : kIterateModes)
-        if (name == mode.call) return mode.wire;
+        if (name == mode.call) return &mode;
     return nullptr;
 }
+
+/* THE TRIP BOUND every view Iterate carries — how many elements one loop will walk,
+ * served in the instruction so the one authority is the emitter. The view's bound is
+ * larger than the scalar tier's 512-element ceiling (a trend keeps thousands of
+ * samples) and total rather than faulting: past it the interpreter simply stops,
+ * which is bounded work and a short answer rather than a hung frame. It is FAR above
+ * what a screen can show — a cell's own bound is bytes, and a frame budget is the
+ * only thing this number was ever about. */
+constexpr uint32_t kViewTripBound = 65536;
 
 /* does this chain lead with a name (its leftmost leaf is an identifier)? What the
  * old grammar would have taken for a lambda's parameter decides which refusal an
@@ -81,9 +89,7 @@ bool leads_with_name(const Ast& ast, uint32_t index) {
 
 class ViewLower {
   public:
-    ViewLower(const Ast& ast, const TemplateScope& scope) : ast_(ast), scope_(scope) {
-        code_ = Json::array();
-    }
+    ViewLower(const Ast& ast, const TemplateScope& scope) : ast_(ast), scope_(scope) {}
 
     bool run(Json& program, std::string& error, std::vector<TemplateNameRef>& names) {
         lower(ast_.root);
@@ -92,7 +98,7 @@ class ViewLower {
             error = error_;
             return false;
         }
-        program = Json{{"code", std::move(code_)}};
+        program = encode();
         return true;
     }
 
@@ -105,12 +111,45 @@ class ViewLower {
         return false;
     }
 
-    void emit(const char* op) { code_.push_back(Json{{"op", op}}); }
+    /* ---- the instruction buffer and the program's pools ----
+     *
+     * Instructions are the real thing (lang/ir.h); the envelope packs them at the
+     * end (encode below). Constants and cell addresses land in per-program pools,
+     * deduplicated, and the instruction carries the index — which is what keeps a
+     * packed instruction four plain words with nothing variable-width inside it. */
+
+    void emit(OpCode op, uint16_t small = 0, uint32_t a = 0, uint32_t b = 0) {
+        Instruction ins;
+        ins.op = op;
+        ins.small = small;
+        ins.a = a;
+        ins.b = b;
+        code_.push_back(ins);
+    }
     void emit_const(Json v) {
-        code_.push_back(Json{{"op", "CONST"}, {"v", std::move(v)}});
+        for (uint32_t i = 0; i < consts_.size(); ++i)
+            if (consts_[i] == v) {
+                emit(OpCode::Const, 0, i);
+                return;
+            }
+        consts_.push_back(std::move(v));
+        emit(OpCode::Const, 0, static_cast<uint32_t>(consts_.size() - 1));
     }
     void emit_load(const std::string& cell) {
-        code_.push_back(Json{{"op", "LOAD"}, {"cell", cell}});
+        for (uint32_t i = 0; i < cells_.size(); ++i)
+            if (cells_[i] == cell) {
+                emit(OpCode::Load, static_cast<uint16_t>(LoadPlace::Cell), i);
+                return;
+            }
+        cells_.push_back(cell);
+        emit(OpCode::Load, static_cast<uint16_t>(LoadPlace::Cell),
+             static_cast<uint32_t>(cells_.size() - 1));
+    }
+    void emit_call(Builtin id, uint32_t argc) {
+        emit(OpCode::Call, static_cast<uint16_t>(id), 0, argc);
+    }
+    void emit_method(MethodId id, uint32_t argc) {
+        emit(OpCode::Method, static_cast<uint16_t>(id), 0, argc);
     }
 
     /* Lower ONE node into its OWN instruction buffer instead of straight into
@@ -120,17 +159,49 @@ class ViewLower {
      * to a stack DUP opcode the view has never needed -- since the argument is short
      * and pure, re-emitting its program costs nothing a real DUP would have saved,
      * and it needs no VM change. A lambda body rides the same mechanism into the
-     * ITERATE instruction. */
-    Json capture(uint32_t index) {
-        Json saved = std::move(code_);
-        code_ = Json::array();
+     * sub-program table Iterate names. */
+    std::vector<Instruction> capture(uint32_t index) {
+        std::vector<Instruction> saved = std::move(code_);
+        code_ = {};
         argument(index);
-        Json out = std::move(code_);
+        std::vector<Instruction> out = std::move(code_);
         code_ = std::move(saved);
         return out;
     }
-    void splice(const Json& captured) {
-        for (const Json& ins : captured) code_.push_back(ins);
+    /* jump targets are instruction indexes within the buffer they were emitted
+     * into, so splicing a captured fragment at a new base relocates them */
+    void splice(const std::vector<Instruction>& captured) {
+        const uint32_t base = static_cast<uint32_t>(code_.size());
+        for (Instruction ins : captured) {
+            if (ins.op == OpCode::Jmp || ins.op == OpCode::JmpNil ||
+                ins.op == OpCode::JmpFalse)
+                ins.a += base;
+            code_.push_back(ins);
+        }
+    }
+
+    /* the envelope (template_expr.h): four plain words per instruction, the pools
+     * beside them, absent where empty */
+    static Json pack(const std::vector<Instruction>& code) {
+        Json out = Json::array();
+        for (const Instruction& ins : code) {
+            out.push_back(static_cast<uint32_t>(ins.op));
+            out.push_back(ins.small);
+            out.push_back(ins.a);
+            out.push_back(ins.b);
+        }
+        return out;
+    }
+    Json encode() {
+        Json out{{"i", pack(code_)}};
+        if (!consts_.empty()) out["k"] = std::move(consts_);
+        if (!cells_.empty()) out["c"] = cells_;
+        if (!subs_.empty()) {
+            Json subs = Json::array();
+            for (const std::vector<Instruction>& body : subs_) subs.push_back(pack(body));
+            out["s"] = std::move(subs);
+        }
+        return out;
     }
 
     /* one call argument: a lambda here is the old grammar's unbound name, refused
@@ -173,8 +244,7 @@ class ViewLower {
                     lower(child);
                     if (!error_.empty()) return;
                 }
-                code_.push_back(Json{{"op", "MAKE_LIST"},
-                                     {"n", static_cast<uint32_t>(expr.args.size())}});
+                emit(OpCode::MakeList, 0, 0, static_cast<uint32_t>(expr.args.size()));
                 return;
             }
             case ExprKind::Variant:
@@ -188,19 +258,19 @@ class ViewLower {
             case ExprKind::Prefix:
                 lower(expr.a);
                 if (error_.empty())
-                    emit(expr.op == TokenKind::Minus ? "NEG" : "NOT");
+                    emit(expr.op == TokenKind::Minus ? OpCode::Neg : OpCode::Not);
                 return;
             case ExprKind::Binary:
                 binary(index);
                 return;
             case ExprKind::Ternary:
-                /* `c ? a : b` lowers to the PICK this tier already used for
-                   `.pick()` — the same sugar, over the same opcode, as the scalar
-                   tier's */
+                /* `c ? a : b` lowers to the pick this tier already used for
+                   `.pick()` — the same sugar, over the same method id, as the
+                   scalar tier's */
                 lower(expr.a);
                 lower(expr.b);
                 lower(expr.c);
-                if (error_.empty()) emit("PICK");
+                if (error_.empty()) emit_method(MethodId::BoolPick, 2);
                 return;
             case ExprKind::Call:
                 call(index);
@@ -227,26 +297,33 @@ class ViewLower {
         fail(left_over, expr.name_after);
     }
 
-    /* The view has no jumps, so the boolean operators lower to PICK, which evaluates
-     * both sides. Fine for styling: there is nothing to short-circuit AROUND (no
-     * effects, no faults), and Nil still poisons through the picked side. */
+    /* The boolean operators lower to pick, which evaluates both sides. Fine for
+     * styling: there is nothing to short-circuit AROUND (no effects, no faults),
+     * and Nil still poisons through the picked side. */
     void binary(uint32_t index) {
         const Expr& expr = at(index);
         const TokenKind op = expr.op;
-        /* `a ?? b`: both sides evaluate (this tier has no jumps — the PICK rule)
-           and COALESCE keeps a unless it is Nil */
+        /* `a ?? b`: keep a unless it is Nil — the scalar tier's own lowering
+           (JmpNil pops the Nil and lands on b; a known a jumps past it), the one
+           place a view program jumps, and forward only like every jump here */
         if (op == TokenKind::Coalesce) {
             lower(expr.a);
             if (!error_.empty()) return;
+            const uint32_t taken = static_cast<uint32_t>(code_.size());
+            emit(OpCode::JmpNil);
+            const uint32_t past = static_cast<uint32_t>(code_.size());
+            emit(OpCode::Jmp);
+            code_[taken].a = static_cast<uint32_t>(code_.size());
             lower(expr.b);
-            if (error_.empty()) emit("COALESCE");
+            if (!error_.empty()) return;
+            code_[past].a = static_cast<uint32_t>(code_.size());
             return;
         }
         if (op == TokenKind::OrOr || op == TokenKind::KwOr) {
             lower(expr.a);
             if (error_.empty()) emit_const(true);   /* a || b == a.pick(true, b) */
             lower(expr.b);
-            if (error_.empty()) emit("PICK");
+            if (error_.empty()) emit_method(MethodId::BoolPick, 2);
             return;
         }
         if (op == TokenKind::AndAnd || op == TokenKind::KwAnd) {
@@ -254,7 +331,7 @@ class ViewLower {
             lower(expr.b);                          /* a && b == a.pick(b, false) */
             if (!error_.empty()) return;
             emit_const(false);
-            emit("PICK");
+            emit_method(MethodId::BoolPick, 2);
             return;
         }
         lower(expr.a);
@@ -266,17 +343,17 @@ class ViewLower {
         lower(expr.b);
         if (!error_.empty()) return;
         switch (op) {
-            case TokenKind::EqEq: emit("EQ"); break;
-            case TokenKind::Ne: emit("NE"); break;
-            case TokenKind::Lt: emit("LT"); break;
-            case TokenKind::Le: emit("LE"); break;
-            case TokenKind::Gt: emit("GT"); break;
-            case TokenKind::Ge: emit("GE"); break;
-            case TokenKind::Plus: emit("ADD"); break;
-            case TokenKind::Minus: emit("SUB"); break;
-            case TokenKind::Star: emit("MUL"); break;
-            case TokenKind::Slash: emit("DIV"); break;
-            default: emit("MOD"); break;
+            case TokenKind::EqEq: emit(OpCode::Eq); break;
+            case TokenKind::Ne: emit(OpCode::Ne); break;
+            case TokenKind::Lt: emit(OpCode::Lt); break;
+            case TokenKind::Le: emit(OpCode::Le); break;
+            case TokenKind::Gt: emit(OpCode::Gt); break;
+            case TokenKind::Ge: emit(OpCode::Ge); break;
+            case TokenKind::Plus: emit(OpCode::Add); break;
+            case TokenKind::Minus: emit(OpCode::Sub); break;
+            case TokenKind::Star: emit(OpCode::Mul); break;
+            case TokenKind::Slash: emit(OpCode::Div); break;
+            default: emit(OpCode::Mod); break;
         }
     }
 
@@ -320,7 +397,7 @@ class ViewLower {
                    one expression; off the end reads Nil, the honest gap */
                 lower(op.b);
                 if (!error_.empty()) return;
-                emit("INDEX");
+                emit(OpCode::Index);
             } else {
                 if (!apply_member(ops[next])) return;
             }
@@ -370,13 +447,14 @@ class ViewLower {
                  anchor);
             return Bare::Failed;
         }
-        /* inside a lambda body the PARAMETERS resolve next: an ARG load of the
-           loop's per-element bindings, in declaration order */
+        /* inside a lambda body the PARAMETERS resolve next: a LoadX of the loop's
+           per-element bindings, in declaration order — the very registers the
+           scalar VM's Iterate seeds its body with, so one Iterate case runs both
+           tiers' bodies */
         if (in_lambda_)
             for (size_t i = 0; i < lambda_params_.size(); ++i)
                 if (lambda_params_[i] == name) {
-                    code_.push_back(
-                        Json{{"op", "ARG"}, {"i", static_cast<uint32_t>(i)}});
+                    emit(OpCode::LoadX, 0, static_cast<uint32_t>(i));
                     return Bare::Emitted;
                 }
         /* THE PREFIX MOVED: `widget.<slot>` is `this.<slot>` now, and inside a
@@ -526,8 +604,8 @@ class ViewLower {
             }
         /* the view holds no types by design: a mesh read is the served CELL the
            spelled address names, so the members extend the ADDRESS until a served
-           row answers (the scalar tier's field TREE has no counterpart here — this
-           whole dialect dies at stage 7) */
+           row answers (the scalar tier's field TREE has no counterpart here — the
+           cell table IS this tier's whole address space) */
         std::string address = name;
         while (next < ops.size() && at(ops[next]).kind == ExprKind::Member) {
             const Expr& member = at(ops[next]);
@@ -558,7 +636,7 @@ class ViewLower {
     bool apply_member(uint32_t index) {
         const Expr& expr = at(index);
         const std::string& name = expr.text;
-        if (const char* mode = iterate_mode(name))
+        if (const IterateModeDef* mode = iterate_mode(name))
             return apply_iterate(index, name, mode);
         if (name == "smooth" || name == "transition")
             /* A TRANSITION IS NO PART OF THE EXPRESSION: the expression computes the
@@ -569,34 +647,33 @@ class ViewLower {
                         "the transition button beside the field",
                         expr.name_after);
         if (name == "clamp") {
-            /* x.clamp(lo, hi): MAX then MIN, the same fold the builtin uses. Kept as
+            /* x.clamp(lo, hi): Max then Min, the same fold the builtin uses. Kept as
                its own case rather than going through view_method()'s bespoke flag:
                the receiver is already on the stack, so the fold only ever needs each
-               argument once and a plain interleaved MAX/MIN costs less than
+               argument once and a plain interleaved Max/Min costs less than
                capturing and splicing would. */
             if (!expr.called || expr.args.size() != 2)
                 return fail("clamp takes 2 arguments", expr.name_after);
             argument(expr.args[0]);
             if (!error_.empty()) return false;
-            emit("MAX");
+            emit_call(Builtin::Max, 2);
             argument(expr.args[1]);
             if (!error_.empty()) return false;
-            emit("MIN");
+            emit_call(Builtin::Min, 2);
             return true;
         }
         /* every other view-encoded method (pick, toFixed, the color accessors
-           r/g/b/a, alpha, mix) is a direct opcode with a fixed arity, read off the
-           SAME table (lang/tables.cpp) view_builtin() reads for free functions -- so
-           this dispatch cannot drift from what language_reference() reports as
+           r/g/b/a, alpha, mix) is a direct row — a Method of its own id — read off
+           the SAME table (lang/tables.cpp) view_builtin() reads for free functions,
+           so this dispatch cannot drift from what language_reference() reports as
            view-legal for autocomplete. */
         const ViewMethod view = view_method(name);
         /* `known` alone is not enough to proceed: it is also true for a method the
            SCALAR table has under this name but the view does not (mapRange, upper,
            ...), matching view_builtin()'s meaning for free functions exactly. A
-           bespoke row (view.op empty, view.bespoke true) is not reachable here
-           either -- the one bespoke method, clamp, is handled by name above -- so a
-           plain "has an opcode" check is the whole gate. */
-        if (!view.known || !view.op[0])
+           bespoke row is not reachable here either -- the one bespoke method,
+           clamp, is handled by name above -- so `direct` is the whole gate. */
+        if (!view.known || !view.direct)
             return fail("'" + name + "' has no encoding in the view; template "
                         "expressions are limited to pick / toFixed / clamp, the "
                         "color accessors (r / g / b / a / alpha / mix), the numeric "
@@ -617,24 +694,25 @@ class ViewLower {
             argument(arg);
             if (!error_.empty()) return false;
         }
-        emit(view.op);
+        emit_method(view.id, static_cast<uint32_t>(expr.args.size()));
         return true;
     }
 
     /* `list.<mode>(v => body)` — and the two widened heads the scalar tier also
      * takes, map's `(v, i)` and reduce's `(acc, v[, i])` with its seed as a second
-     * argument. The body lowers into its OWN instruction list, carried inside the
-     * ITERATE instruction and run once per element by the view; a parameter
-     * reference in the body is an ARG load of the loop's per-element bindings. The
-     * scalar rules hold here too: one level of iteration ever, and a body is ONE
-     * expression. */
-    bool apply_iterate(uint32_t index, const std::string& name, const char* mode) {
+     * argument. The body lowers into its OWN instruction list, carried in the
+     * program's sub-table and named by the Iterate that runs it once per element; a
+     * parameter reference in the body is a LoadX of the loop's per-element
+     * bindings. The scalar rules hold here too: one level of iteration ever, and a
+     * body is ONE expression. */
+    bool apply_iterate(uint32_t index, const std::string& name,
+                       const IterateModeDef* mode) {
         const Expr& expr = at(index);
         if (in_lambda_)
             return fail("a lambda body may not contain another lambda: one level of "
                         "iteration, ever",
                         expr.name_after);
-        const bool reduces = std::strcmp(mode, "REDUCE") == 0;
+        const bool reduces = mode->mode == IterateMode::Reduce;
         const size_t least = reduces ? 2 : 1;
         const size_t most = reduces ? 3 : (name == "map" ? 2 : 1);
         const std::string usage =
@@ -685,7 +763,7 @@ class ViewLower {
         }
         in_lambda_ = true;
         lambda_params_ = params;
-        Json body = capture(lambda.a);
+        std::vector<Instruction> body = capture(lambda.a);
         in_lambda_ = false;
         lambda_params_.clear();
         if (!error_.empty()) return false;
@@ -702,8 +780,9 @@ class ViewLower {
         } else if (expr.args.size() > 1) {
             return fail("expected ')' after the lambda", lambda.after);
         }
-        code_.push_back(
-            Json{{"op", "ITERATE"}, {"mode", mode}, {"body", std::move(body)}});
+        subs_.push_back(std::move(body));
+        emit(OpCode::Iterate, static_cast<uint16_t>(mode->mode),
+             static_cast<uint32_t>(subs_.size() - 1), kViewTripBound);
         return true;
     }
 
@@ -745,12 +824,17 @@ class ViewLower {
             return;
         }
         const ViewBuiltin view = view_builtin(name);
-        if (view.known && view.op[0]) {
-            /* every direct-opcode builtin the view has is fixed-arity, so min == max
-               and one arity serves both the check and the message */
-            if (expr.args.size() != view.min_args) {
-                fail(name + " takes " + std::to_string(view.min_args) + " argument" +
-                         (view.min_args == 1 ? "" : "s"),
+        if (view.known && view.direct) {
+            /* a direct row is a Call of its own id, argc riding the instruction —
+               which is what lets rgb/hsv keep their optional alpha with no default
+               pushed here: the builtin itself accepts 3 or 4 */
+            if (expr.args.size() < view.min_args || expr.args.size() > view.max_args) {
+                fail(name + " takes " +
+                         (view.min_args == view.max_args
+                              ? std::to_string(view.min_args)
+                              : std::to_string(view.min_args) + " or " +
+                                    std::to_string(view.max_args)) +
+                         " argument" + (view.max_args == 1 ? "" : "s"),
                      expr.name_after);
                 return;
             }
@@ -758,27 +842,37 @@ class ViewLower {
                 argument(arg);
                 if (!error_.empty()) return;
             }
-            emit(view.op);
+            emit_call(view.id, static_cast<uint32_t>(expr.args.size()));
             return;
         }
         if (view.known && view.bespoke) {
-            /* rgb/hsv are the one variable-arity pair here (alpha optional), which is
-               exactly what makes a direct opcode wrong for them: the opcode always
-               wants four channels, so a 3-argument call pushes a default alpha of 1
-               (fully opaque) before it. Neither needs an argument twice, so these
-               lower straight into `code_` rather than through capture/splice. */
-            if (name == "rgb" || name == "hsv") {
-                if (expr.args.size() < 3 || expr.args.size() > 4) {
-                    fail(name + " takes 3 or 4 arguments", expr.name_after);
+            /* the single-use folds first: each argument lowers once, straight into
+               `code_`, so none of these needs capture/splice */
+            if (name == "clamp01" || name == "sign" || name == "mod") {
+                const size_t single = name == "mod" ? 2 : 1;
+                if (expr.args.size() != single) {
+                    fail(name + " takes " + std::to_string(single) + " argument" +
+                             (single == 1 ? "" : "s"),
+                         expr.name_after);
                     return;
                 }
                 for (uint32_t arg : expr.args) {
                     argument(arg);
                     if (!error_.empty()) return;
                 }
-                if (expr.args.size() == 3)
-                    emit_const(1.0);   /* default alpha: fully opaque */
-                emit(name == "rgb" ? "RGB" : "HSV");
+                if (name == "clamp01") {
+                    /* clamp01(x) == clamp(x, 0, 1), the same Max/Min fold */
+                    emit_const(0.0);
+                    emit_call(Builtin::Max, 2);
+                    emit_const(1.0);
+                    emit_call(Builtin::Min, 2);
+                } else if (name == "sign") {
+                    /* the free spelling of the num.sign method */
+                    emit_method(MethodId::NumSign, 0);
+                } else {
+                    /* the free spelling of `%` */
+                    emit(OpCode::Mod);
+                }
                 return;
             }
             /* everything else here is a fixed-arity arithmetic fold: each argument
@@ -792,7 +886,7 @@ class ViewLower {
                      expr.name_after);
                 return;
             }
-            std::vector<Json> a;
+            std::vector<std::vector<Instruction>> a;
             for (uint32_t arg : expr.args) {
                 a.push_back(capture(arg));
                 if (!error_.empty()) return;
@@ -801,49 +895,49 @@ class ViewLower {
                 /* clamp(x, lo, hi) == min(max(x, lo), hi) */
                 splice(a[0]);
                 splice(a[1]);
-                emit("MAX");
+                emit_call(Builtin::Max, 2);
                 splice(a[2]);
-                emit("MIN");
+                emit_call(Builtin::Min, 2);
             } else if (name == "mapRange") {
-                /* outLo + (x - inLo) * (outHi - outLo) / (inHi - inLo). DIV already
+                /* outLo + (x - inLo) * (outHi - outLo) / (inHi - inLo). Div already
                    yields Nil on a zero divisor, so an inHi == inLo call poisons the
                    same way the scalar builtin's explicit guard does, for free. */
-                splice(a[3]);                            /* outLo */
-                splice(a[0]); splice(a[1]); emit("SUB"); /* x - inLo */
-                splice(a[4]); splice(a[3]); emit("SUB"); /* outHi - outLo */
-                emit("MUL");
-                splice(a[2]); splice(a[1]); emit("SUB"); /* inHi - inLo */
-                emit("DIV");
-                emit("ADD");
+                splice(a[3]);                                    /* outLo */
+                splice(a[0]); splice(a[1]); emit(OpCode::Sub);   /* x - inLo */
+                splice(a[4]); splice(a[3]); emit(OpCode::Sub);   /* outHi - outLo */
+                emit(OpCode::Mul);
+                splice(a[2]); splice(a[1]); emit(OpCode::Sub);   /* inHi - inLo */
+                emit(OpCode::Div);
+                emit(OpCode::Add);
             } else if (name == "roundTo") {
-                /* round(x * scale) / scale, scale = 10^dp. POW's result is pushed
-                   through num(), which already refuses a non-finite value, and DIV
-                   already refuses a zero divisor -- the same two guards the scalar
-                   builtin spells out explicitly fall out of the opcodes' own Nil
-                   rules with no extra check here. */
+                /* round(x * scale) / scale, scale = 10^dp. The Pow call's result
+                   goes through the numeric coercion, which already refuses a
+                   non-finite value, and Div already refuses a zero divisor -- the
+                   same two guards the scalar builtin spells out explicitly fall out
+                   of the shared rules with no extra check here. */
                 auto scale = [&] {
                     emit_const(10.0);
                     splice(a[1]);
-                    emit("POW");
+                    emit_call(Builtin::Pow, 2);
                 };
                 scale();
                 splice(a[0]);
-                emit("MUL");
-                emit("ROUND");
+                emit(OpCode::Mul);
+                emit_call(Builtin::Round, 1);
                 scale();
-                emit("DIV");
+                emit(OpCode::Div);
             } else if (name == "lerp") {
                 /* a + (b - a) * t */
                 splice(a[0]);
-                splice(a[1]); splice(a[0]); emit("SUB");
-                splice(a[2]); emit("MUL");
-                emit("ADD");
+                splice(a[1]); splice(a[0]); emit(OpCode::Sub);
+                splice(a[2]); emit(OpCode::Mul);
+                emit(OpCode::Add);
             } else if (name == "hypot") {
                 /* sqrt(a*a + b*b) */
-                splice(a[0]); splice(a[0]); emit("MUL");
-                splice(a[1]); splice(a[1]); emit("MUL");
-                emit("ADD");
-                emit("SQRT");
+                splice(a[0]); splice(a[0]); emit(OpCode::Mul);
+                splice(a[1]); splice(a[1]); emit(OpCode::Mul);
+                emit(OpCode::Add);
+                emit_call(Builtin::Sqrt, 1);
             }
             return;
         }
@@ -858,7 +952,11 @@ class ViewLower {
 
     const Ast& ast_;
     const TemplateScope& scope_;
-    Json code_;
+    /* the instruction buffer and the program's pools (encode() packs them) */
+    std::vector<Instruction> code_;
+    std::vector<Json> consts_;
+    std::vector<std::string> cells_;
+    std::vector<std::vector<Instruction>> subs_;
     std::string error_;
     /* every property and variable read resolved so far, for the reference index */
     std::vector<TemplateNameRef> names_;
@@ -877,8 +975,8 @@ TemplateExprResult compile_template_expr(const std::string& text,
     Ast ast;
     Refusal broken;
     if (!parse_expression(text, ast, broken)) {
-        /* this dialect's errors stay strings until the whole dialect dies (stage 7),
-           so the parser's data-refusal renders here the way it always read */
+        /* this surface's errors are strings (one refusal, first wins), so the
+           parser's data-refusal renders here the way it always read */
         out.error = broken.message + " at column " + std::to_string(broken.at + 1);
         return out;
     }

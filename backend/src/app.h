@@ -69,8 +69,14 @@ namespace hmi {
  * component's own storage, served (its cell and address are real) but never offered.
  * `type` and `shape` are ONE vocabulary now — `f64`/`str` are spelled `num`/`text`,
  * `color` is a variable type, and a `text` with `variants` is what `enum` was — so a
- * served row carries {shape, default, public, elem?} where a PropDef's did */
-constexpr int kProto = 18;
+ * served row carries {shape, default, public, elem?} where a PropDef's did;
+ * 19: THE VIEW DIALECT DIED INTO THE SERVED IR — a view program is the language's one
+ * instruction form, packed: {"i": [op, small, a, b, ...] flat, "k": consts, "c": the
+ * cell address table Load indexes, "s": lambda sub-programs}, every ordinal the
+ * generated vocabulary both ends emit from one table (tools/gen_ir.mjs). The named-op
+ * Json rows ({"op": "CONST", ...}) are gone, and frontend/src/program.ts is the second
+ * interpreter of the same IR rather than a dialect of its own */
+constexpr int kProto = 19;
 
 struct AppOptions {
     ServerOptions server;

@@ -3,6 +3,7 @@
 #include "doc/decode.h"
 #include "registry/attrs.h"
 #include "registry/registry.h"
+#include "lang/ir.h"
 #include "lang/template_expr.h"
 
 #include <algorithm>
@@ -176,18 +177,23 @@ Json compile_attrs(const std::vector<AttrDecl>& attrs, const TemplateScope& scop
  * literal typo still teaches; a runtime value that comes out wrong renders NO
  * transition (the picture snaps) rather than a wrong sweep. */
 
+/* one Const of `v`, in the packed envelope (template_expr.h): the degenerate
+ * program a literal time/profile serves */
 Json const_program(Json v) {
-    return Json{{"code", Json::array({Json{{"op", "CONST"}, {"v", std::move(v)}}})}};
+    return Json{{"i", Json::array({static_cast<uint32_t>(OpCode::Const), 0, 0, 0})},
+                {"k", Json::array({std::move(v)})}};
 }
 
-/* the single-CONST fold of a compiled program, or null where it computes */
+/* the single-Const fold of a compiled program, or null where it computes */
 const Json* const_of(const Json& program) {
-    auto code = program.find("code");
-    if (code == program.end() || !code->is_array() || code->size() != 1) return nullptr;
-    const Json& ins = code->front();
-    if (ins.value("op", "") != "CONST") return nullptr;
-    auto v = ins.find("v");
-    return v == ins.end() ? nullptr : &*v;
+    auto code = program.find("i");
+    if (code == program.end() || !code->is_array() || code->size() != 4) return nullptr;
+    if ((*code)[0].get<uint32_t>() != static_cast<uint32_t>(OpCode::Const))
+        return nullptr;
+    auto pool = program.find("k");
+    if (pool == program.end() || !pool->is_array()) return nullptr;
+    const uint32_t at = (*code)[2].get<uint32_t>();
+    return at < pool->size() ? &(*pool)[at] : nullptr;
 }
 
 /* one TIME: a number, or expression text over `scope`. False = `error` says why.

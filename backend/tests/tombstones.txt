@@ -255,3 +255,13 @@ clear_outputs
 # (values at rest), Outbox (messages out), ExecState (the machine's frames) — housed
 # by the Host, whose verb surface is the one routing between them.
 RuntimeState
+
+# ---- stage 7: the port (the view dialect dies into the served IR) ----
+# The named-op Json view dialect: a served program is the language's one instruction
+# form packed as plain words ({"i","k","c","s"}), so the view-only opcode spellings
+# died with the second dialect they belonged to. CLAMP01 folds onto Max/Min under
+# the shared ids; the string mode set ITERATE_MODES died with the string modes
+# themselves (Iterate carries the generated ordinal, and the frontend mirror carries
+# the whole numeric vocabulary instead).
+CLAMP01
+ITERATE_MODES

@@ -120,11 +120,13 @@ struct LangRow {
 const std::vector<LangRow>& language_reference();
 
 /* What the VIEW tier may do with a builtin name, read off the same table the checker
- * compiles with (lang/tables.cpp). */
+ * compiles with (lang/tables.cpp). `direct` rows lower to a Call of the row's own
+ * enum id; `bespoke` rows the template compiler folds itself over other ids. */
 struct ViewBuiltin {
     bool known = false;        /* names a builtin at all (else "unknown function") */
-    const char* op = "";       /* the view opcode; "" = no view encoding */
-    bool bespoke = false;      /* the template compiler folds this one itself (clamp) */
+    bool direct = false;       /* "=": Call of `id` */
+    bool bespoke = false;      /* "@": the template compiler folds this one itself */
+    Builtin id = Builtin::None;
     uint32_t min_args = 0;
     uint32_t max_args = 0;
 };
@@ -132,12 +134,14 @@ struct ViewBuiltin {
 ViewBuiltin view_builtin(const std::string& name);
 
 /* The method-table twin of view_builtin(), keyed on the NAME alone: for a receiver
- * like `x[i]` the view carries no shape to check against. Safe today because every
- * view-encoded method is a name unique across the whole table. */
+ * like `x[i]` the view carries no shape to check against. The namesake rows
+ * (length on text/list/map) all carry "=" and the view interpreter answers them
+ * receiver-blind, so the first match's id is as good as any. */
 struct ViewMethod {
     bool known = false;
-    const char* op = "";
+    bool direct = false;
     bool bespoke = false;
+    MethodId id{};             /* meaningful only when `direct` */
     uint32_t args = 0;
 };
 

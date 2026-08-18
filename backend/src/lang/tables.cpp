@@ -107,7 +107,8 @@ ViewBuiltin view_builtin(const std::string& name) {
     const BuiltinSpec& spec = found->second;
     out.known = true;
     out.bespoke = spec.view[0] == '@';
-    out.op = out.bespoke ? "" : spec.view;
+    out.direct = spec.view[0] == '=';
+    out.id = spec.builtin;
     out.min_args = spec.min_args;
     out.max_args = spec.max_args;
     return out;
@@ -119,7 +120,8 @@ ViewMethod view_method(const std::string& name) {
         if (name != spec.name) continue;
         out.known = true;
         out.bespoke = spec.view[0] == '@';
-        out.op = out.bespoke ? "" : spec.view;
+        out.direct = spec.view[0] == '=';
+        out.id = spec.method;
         out.args = spec.args;
         break;
     }

@@ -1,19 +1,30 @@
 /* The view emitter: the one surface grammar (spec 6.2), parsed by THE parser
- * (lang/parser.h) and lowered from its AST to VIEW PROGRAMS — the Json
- * {"code":[{"op":...}...]} form the frontend's stack interpreter
- * (frontend/src/program.ts) executes over symbolic cells. This is how a component's
- * template attrs are authored as text ("value.pick(fill_color, track_color)") and
- * served compiled, with the view still never parsing anything.
+ * (lang/parser.h) and lowered from its AST to the language's ONE instruction form
+ * (lang/ir.h), served packed. A view program is Json only as far as its envelope:
  *
- * The vocabulary is exactly what that interpreter can run: scalar and list literals,
- * property / state / theme loads, arithmetic, comparisons, and/or/not, pick, toFixed,
- * the numeric builtins with a view opcode, and the list vocabulary — indexing, length /
- * indexOf / sum / avg / max / min, anchor(), and the iterating methods (map / filter /
- * any / all / sortBy / reduce) whose lambda bodies ride inside the ITERATE instruction.
- * Everything else in the scalar language (text methods, timing) has no view encoding
- * and is refused at compile time with an error that says so. Shape discipline is
- * deliberately light: this is display-tier styling code, and the view's Nil-poisoning
- * renders a wrong shape as UNKNOWN rather than a wrong pixel. */
+ *   { "i": [op, small, a, b, ...],   four plain words per instruction, flat
+ *     "k": [...],                    the constant pool Const's `a` indexes
+ *     "c": ["slot:...", ...],        the CELL ADDRESS TABLE Load's `a` indexes
+ *     "s": [[...], ...] }            lambda bodies, each packed like "i"
+ *
+ * (absent keys are empty), and every ordinal is the generated vocabulary both ends
+ * share — the C++ enums in lang/ir_ops.h and the frontend mirror frontend/src/ir.ts,
+ * emitted from the ONE table in tools/gen_ir.mjs. The frontend's interpreter
+ * (frontend/src/program.ts) is the second implementation of the same IR, executing
+ * over the symbolic cells the table names. This is how a component's template attrs
+ * are authored as text ("value.pick(fill_color, track_color)") and served compiled,
+ * with the view still never parsing anything.
+ *
+ * The vocabulary is the view-legal slice of the shared tables: scalar and list
+ * literals, property / state / theme loads, arithmetic, comparisons, and/or/not,
+ * pick, toFixed, the color and numeric builtins, and the list vocabulary — indexing,
+ * length / indexOf / sum / avg / max / min, anchor(), and the iterating methods
+ * (map / filter / any / all / sortBy / reduce) whose lambda bodies ride as
+ * sub-programs Iterate names. Everything else in the scalar language (text methods,
+ * timing) has no view encoding and is refused at compile time with an error that
+ * says so. Shape discipline is deliberately light: this is display-tier styling
+ * code, and the view's Nil-poisoning renders a wrong shape as UNKNOWN rather than a
+ * wrong pixel. */
 #pragma once
 
 #include <nlohmann/json.hpp>
@@ -203,7 +214,7 @@ struct TemplateNameRef {
 
 struct TemplateExprResult {
     bool ok = false;
-    Json program;        /* {"code": [...]} on success */
+    Json program;        /* the packed form (the header's envelope) on success */
     std::string error;   /* what refused to compile, with a column */
     /* every name resolved BEFORE the first error; complete only when `ok` (this tier
      * stops at its first refusal, so a failed compile's absence proves nothing) */

@@ -22,14 +22,17 @@ struct BuiltinSpec {
     Shape params[5];
     Shape result;
     bool display_only;
-    /* The VIEW's encoding of this builtin: the opcode frontend/src/program.ts executes,
-     * "" where the view has none (a template expression refuses it by name and says to
-     * bind through a feed instead), "@" where the template compiler folds it itself.
-     * This column is why there is one builtin table and not two. */
+    /* The VIEW's encoding of this builtin: "=" a Call of the row's own id (what the
+     * view interpreter dispatches), "@" a fold the template compiler spells itself
+     * over other ids, "" no view encoding at all (a template expression refuses it
+     * by name and says to bind through a feed instead). This column is why there is
+     * one builtin table and not two. */
     const char* view = "";
-    /* a builtin the VIEW has and the scalar language does not (clamp01). The checker
-     * skips these rows, so one table describes both vocabularies without inventing a
-     * scalar builtin that has no Builtin id and no VM implementation. */
+    /* a builtin the VIEW has and the scalar language does not (clamp01, measure).
+     * The checker skips these rows, so one table describes both vocabularies. A
+     * bespoke view-only row carries Builtin::None (no id exists); a direct one
+     * (Measure, Anchor) carries a real id that only the view interpreter
+     * dispatches — no VM case exists, so a bug that routes it there answers Nil. */
     bool view_only = false;
 };
 
@@ -41,8 +44,9 @@ struct MethodSpec {
     Shape params[4];
     Shape result;
     bool display_only;
-    /* the VIEW's encoding of this method, read by view_method() — "" = none, "@" =
-     * the template compiler folds it itself (clamp's min/max fold). */
+    /* the VIEW's encoding of this method, read by view_method() — "=" a Method of
+     * the row's own id, "@" a fold the template compiler spells itself (clamp's
+     * Max/Min fold), "" none. */
     const char* view = "";
 };
 

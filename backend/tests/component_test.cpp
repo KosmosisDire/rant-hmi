@@ -29,23 +29,67 @@ TemplateScope scope_of(std::initializer_list<const char*> props) {
     return scope.extend("", names);
 }
 
-/* the compiled code as "OP OP(operand) ..." so a lowering pins in one readable line;
- * an ITERATE prints its mode and its body's own line in braces, so a lambda pins whole */
-std::string ops_of(const Json& program) {
+/* The packed program (template_expr.h's envelope) as "OP OP(operand) ..." so a
+ * lowering pins in one readable line: the pools resolve inline (a Const shows its
+ * constant, a Load its cell), a Call/Method shows its id's generated name plus argc,
+ * an Iterate prints its mode and its sub-program's own line in braces so a lambda
+ * pins whole, and a lambda binding renders ARG(i) (the LoadX registers). */
+std::string render_code(const Json& program, const Json& words) {
+    static const Json empty = Json::array();
+    const Json& pool = program.contains("k") ? program["k"] : empty;
+    const Json& cells = program.contains("c") ? program["c"] : empty;
+    const Json& subs = program.contains("s") ? program["s"] : empty;
     std::string out;
-    if (!program.is_object() || !program.contains("code")) return "(no program)";
-    for (const Json& ins : program["code"]) {
+    for (size_t at = 0; at + 3 < words.size(); at += 4) {
+        const OpCode op = static_cast<OpCode>(words[at].get<uint32_t>());
+        const uint16_t small = words[at + 1].get<uint16_t>();
+        const uint32_t a = words[at + 2].get<uint32_t>();
+        const uint32_t b = words[at + 3].get<uint32_t>();
         if (!out.empty()) out += " ";
-        out += ins.value("op", "?");
-        if (ins.contains("cell")) out += "(" + ins["cell"].get<std::string>() + ")";
-        else if (ins.contains("v")) out += "(" + ins["v"].dump() + ")";
-        else if (ins.contains("n")) out += "(" + ins["n"].dump() + ")";
-        else if (ins.contains("i")) out += "(" + ins["i"].dump() + ")";
-        if (ins.contains("mode"))
-            out += "[" + ins["mode"].get<std::string>() + "]{" +
-                   ops_of(Json{{"code", ins.value("body", Json::array())}}) + "}";
+        switch (op) {
+            case OpCode::Const:
+                out += "CONST(" + (a < pool.size() ? pool[a].dump() : "?") + ")";
+                break;
+            case OpCode::Load:
+                out += "LOAD(" +
+                       (a < cells.size() ? cells[a].get<std::string>() : "?") + ")";
+                break;
+            case OpCode::LoadX:
+                out += "ARG(" + std::to_string(a) + ")";
+                break;
+            case OpCode::MakeList:
+                out += "MAKE_LIST(" + std::to_string(b) + ")";
+                break;
+            case OpCode::Call:
+                out += std::string("CALL(") + builtin_name(static_cast<Builtin>(small)) +
+                       "," + std::to_string(b) + ")";
+                break;
+            case OpCode::Method:
+                out += std::string("METHOD(") + method_name(static_cast<MethodId>(small)) +
+                       "," + std::to_string(b) + ")";
+                break;
+            case OpCode::Iterate:
+                out += std::string("ITERATE[") +
+                       iterate_mode_name(static_cast<IterateMode>(small)) + "]{" +
+                       (a < subs.size() ? render_code(program, subs[a]) : "?") + "}";
+                break;
+            case OpCode::Jmp:
+                out += "JMP(" + std::to_string(a) + ")";
+                break;
+            case OpCode::JmpNil:
+                out += "JMP_NIL(" + std::to_string(a) + ")";
+                break;
+            default:
+                out += op_name(op);
+                break;
+        }
     }
     return out;
+}
+
+std::string ops_of(const Json& program) {
+    if (!program.is_object() || !program.contains("i")) return "(no program)";
+    return render_code(program, program["i"]);
 }
 
 std::string lower(const char* text, const TemplateScope& scope) {
@@ -85,52 +129,64 @@ void test_template_expr() {
     CHECK_EQ(lower("text != ''", scope), "LOAD(slot:text) CONST(\"\") NE");
     CHECK_EQ(lower("value % 2", scope), "LOAD(slot:value) CONST(2.0) MOD");
 
-    /* the view has no jumps: and/or lower to PICK (both sides evaluate; display tier) */
+    /* and/or lower to pick — both sides evaluate; there is nothing to
+       short-circuit around on this tier (no effects, no faults) */
     CHECK_EQ(lower("value && min > 0", scope),
-             "LOAD(slot:value) LOAD(slot:min) CONST(0.0) GT CONST(false) PICK");
+             "LOAD(slot:value) LOAD(slot:min) CONST(0.0) GT CONST(false) "
+             "METHOD(BOOL_PICK,2)");
     CHECK_EQ(lower("value or min > 0", scope),
-             "LOAD(slot:value) CONST(true) LOAD(slot:min) CONST(0.0) GT PICK");
+             "LOAD(slot:value) CONST(true) LOAD(slot:min) CONST(0.0) GT "
+             "METHOD(BOOL_PICK,2)");
+    /* `??` is the scalar tier's own jump lowering: JmpNil pops the Nil and lands on
+       the default, a known value jumps past it — the one place a view program jumps,
+       forward only */
+    CHECK_EQ(lower("value ?? 0", scope),
+             "LOAD(slot:value) JMP_NIL(3) JMP(4) CONST(0.0)");
 
     /* the method/builtin encodings the view executes */
     CHECK_EQ(lower("value.pick(fill_color, track_color)", scope),
-             "LOAD(slot:value) LOAD(slot:fill_color) LOAD(slot:track_color) PICK");
+             "LOAD(slot:value) LOAD(slot:fill_color) LOAD(slot:track_color) "
+             "METHOD(BOOL_PICK,2)");
     CHECK_EQ(lower("value.toFixed(decimals)", scope),
-             "LOAD(slot:value) LOAD(slot:decimals) TO_FIXED");
+             "LOAD(slot:value) LOAD(slot:decimals) METHOD(NUM_TO_FIXED,1)");
     CHECK_EQ(lower("clamp01((value - min) / (max - min))", scope),
              "LOAD(slot:value) LOAD(slot:min) SUB LOAD(slot:max) LOAD(slot:min) SUB "
-             "DIV CLAMP01");
+             "DIV CONST(0.0) CALL(MAX,2) CONST(1.0) CALL(MIN,2)");
     CHECK_EQ(lower("clamp(value, 0, 100)", scope),
-             "LOAD(slot:value) CONST(0.0) MAX CONST(100.0) MIN");
-    CHECK_EQ(lower("min(value, 10)", scope), "LOAD(slot:value) CONST(10.0) MIN");
+             "LOAD(slot:value) CONST(0.0) CALL(MAX,2) CONST(100.0) CALL(MIN,2)");
+    CHECK_EQ(lower("min(value, 10)", scope),
+             "LOAD(slot:value) CONST(10.0) CALL(MIN,2)");
 
-    /* `c ? a : b` is sugar over the PICK `.pick()` already lowered to, so the two
+    /* `c ? a : b` is sugar over the pick `.pick()` already lowered to, so the two
        spellings must produce byte-identical programs */
     CHECK_EQ(lower("value > 0 ? fill_color : track_color", scope),
              "LOAD(slot:value) CONST(0.0) GT LOAD(slot:fill_color) "
-             "LOAD(slot:track_color) PICK");
+             "LOAD(slot:track_color) METHOD(BOOL_PICK,2)");
     CHECK_EQ(lower("(value > 0).pick(fill_color, track_color)", scope),
              lower("value > 0 ? fill_color : track_color", scope));
     /* right-associative: the second conditional is the FALSE arm of the first */
     CHECK_EQ(lower("value > 2 ? 'hi' : value > 1 ? 'mid' : 'lo'", scope),
              "LOAD(slot:value) CONST(2.0) GT CONST(\"hi\") "
-             "LOAD(slot:value) CONST(1.0) GT CONST(\"mid\") CONST(\"lo\") PICK PICK");
+             "LOAD(slot:value) CONST(1.0) GT CONST(\"mid\") CONST(\"lo\") "
+             "METHOD(BOOL_PICK,2) METHOD(BOOL_PICK,2)");
     /* it binds looser than everything else, so the arms need no parentheses */
     CHECK_EQ(lower("value > 0 ? min + 1 : max * 2", scope),
              "LOAD(slot:value) CONST(0.0) GT LOAD(slot:min) CONST(1.0) ADD "
-             "LOAD(slot:max) CONST(2.0) MUL PICK");
+             "LOAD(slot:max) CONST(2.0) MUL METHOD(BOOL_PICK,2)");
     CHECK(refuses("value > 0 ? 1", scope, "expected ':'"));
 
-    /* lambdas ride the view now: the body is its own instruction list carried INSIDE
-       the one ITERATE instruction, and a parameter reference is an ARG load of the
-       loop's per-element bindings — element then index, in declaration order */
+    /* lambdas ride the view now: the body is its own sub-program named by the one
+       Iterate instruction, and a parameter reference is a LoadX of the loop's
+       per-element bindings (rendered ARG) — element then index, in declaration
+       order, the same registers the scalar VM seeds */
     CHECK_EQ(lower("options.map(v => v)", scope),
              "LOAD(slot:options) ITERATE[MAP]{ARG(0)}");
     CHECK_EQ(lower("options.map((v, i) => i)", scope),
              "LOAD(slot:options) ITERATE[MAP]{ARG(1)}");
     /* a bare arrow outside an iterating method is still nothing */
     CHECK(refuses("value => value", scope, "unexpected"));
-    CHECK_EQ(lower("pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) POW");
-    CHECK_EQ(lower("floor(value)", scope), "LOAD(slot:value) FLOOR");
+    CHECK_EQ(lower("pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) CALL(POW,2)");
+    CHECK_EQ(lower("floor(value)", scope), "LOAD(slot:value) CALL(FLOOR,1)");
 
     /* the cell-addressing builtins are gone whole: the sampling ring became an ordinary
        list PROPERTY and the option resolvers ordinary list arithmetic, so every one of
@@ -182,26 +238,30 @@ void test_list_vocabulary() {
     CHECK_EQ(lower("options[0][1]", scope),
              "LOAD(slot:options) CONST(0.0) INDEX CONST(1.0) INDEX");
 
-    /* the encoded methods: length, the aggregates and indexOf are all CALLS —
-       exactly the scalar tier's spellings */
-    CHECK_EQ(lower("options.length()", scope), "LOAD(slot:options) LENGTH");
+    /* the encoded methods: length, the aggregates and indexOf are all CALLED —
+       exactly the scalar tier's spellings. The length family is receiver-blind:
+       the untyped emitter picks the first namesake row's id (TEXT_LENGTH) and the
+       interpreter answers text, list and map alike under it. */
+    CHECK_EQ(lower("options.length()", scope),
+             "LOAD(slot:options) METHOD(TEXT_LENGTH,0)");
     CHECK_EQ(lower("options.indexOf(value)", scope),
-             "LOAD(slot:options) LOAD(slot:value) INDEX_OF");
+             "LOAD(slot:options) LOAD(slot:value) METHOD(LIST_INDEX_OF,1)");
     /* a past is an ordinary LIST property now, so the aggregates are called on it */
-    CHECK_EQ(lower("history.max()", scope), "LOAD(slot:history) LIST_MAX");
-    CHECK_EQ(lower("history.min()", scope), "LOAD(slot:history) LIST_MIN");
-    CHECK_EQ(lower("history.sum()", scope), "LOAD(slot:history) LIST_SUM");
-    CHECK_EQ(lower("history.avg()", scope), "LOAD(slot:history) LIST_AVG");
+    CHECK_EQ(lower("history.max()", scope), "LOAD(slot:history) METHOD(LIST_MAX,0)");
+    CHECK_EQ(lower("history.min()", scope), "LOAD(slot:history) METHOD(LIST_MIN,0)");
+    CHECK_EQ(lower("history.sum()", scope), "LOAD(slot:history) METHOD(LIST_SUM,0)");
+    CHECK_EQ(lower("history.avg()", scope), "LOAD(slot:history) METHOD(LIST_AVG,0)");
     CHECK(refuses("options.length", scope, "call it with parentheses"));
 
     /* the Selector's needle fraction, whole: what optfrac used to be, as arithmetic */
     CHECK_EQ(lower("max(options.indexOf(value), 0) / max(options.length() - 1, 1)", scope),
-             "LOAD(slot:options) LOAD(slot:value) INDEX_OF CONST(0.0) MAX "
-             "LOAD(slot:options) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV");
+             "LOAD(slot:options) LOAD(slot:value) METHOD(LIST_INDEX_OF,1) CONST(0.0) "
+             "CALL(MAX,2) LOAD(slot:options) METHOD(TEXT_LENGTH,0) CONST(1.0) SUB "
+             "CONST(1.0) CALL(MAX,2) DIV");
 
     /* anchor() builds one point of a computed path */
     CHECK_EQ(lower("anchor(0.5, value)", scope),
-             "CONST(0.5) LOAD(slot:value) ANCHOR");
+             "CONST(0.5) LOAD(slot:value) CALL(ANCHOR,2)");
 
     /* the Trend's whole plot: a map from its own history LIST to anchors, the seed of
        the no-privileged-renderer-paths acceptance test */
@@ -209,9 +269,10 @@ void test_list_vocabulary() {
                    "i / max(history.length() - 1, 1), "
                    "1 - (v - min) / (max - min)))", scope),
              "LOAD(slot:history) ITERATE[MAP]{"
-             "ARG(1) LOAD(slot:history) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
+             "ARG(1) LOAD(slot:history) METHOD(TEXT_LENGTH,0) CONST(1.0) SUB "
+             "CONST(1.0) CALL(MAX,2) DIV "
              "CONST(1.0) ARG(0) LOAD(slot:min) SUB "
-             "LOAD(slot:max) LOAD(slot:min) SUB DIV SUB ANCHOR}");
+             "LOAD(slot:max) LOAD(slot:min) SUB DIV SUB CALL(ANCHOR,2)}");
 
     /* reduce carries its seed after the lambda, landing above the list on the stack */
     CHECK_EQ(lower("options.reduce((acc, v) => acc + v, '')", scope),
@@ -219,7 +280,8 @@ void test_list_vocabulary() {
     CHECK_EQ(lower("options.reduce((acc, v, i) => acc + i, 0)", scope),
              "LOAD(slot:options) CONST(0.0) ITERATE[REDUCE]{ARG(0) ARG(2) ADD}");
     CHECK_EQ(lower("options.filter(v => v != '').length()", scope),
-             "LOAD(slot:options) ITERATE[FILTER]{ARG(0) CONST(\"\") NE} LENGTH");
+             "LOAD(slot:options) ITERATE[FILTER]{ARG(0) CONST(\"\") NE} "
+             "METHOD(TEXT_LENGTH,0)");
     CHECK_EQ(lower("options.any(v => v == value)", scope),
              "LOAD(slot:options) ITERATE[ANY]{ARG(0) LOAD(slot:value) EQ}");
     CHECK_EQ(lower("options.sortBy(v => v)", scope),
@@ -253,20 +315,21 @@ void test_new_vocabulary() {
         scope_of({"value", "min", "max", "fill_color", "track_color", "text",
                   "decimals", "options"});
 
-    /* trigonometry: direct opcodes, degrees in and out */
-    CHECK_EQ(lower("sin(value)", scope), "LOAD(slot:value) SIN");
-    CHECK_EQ(lower("cos(value)", scope), "LOAD(slot:value) COS");
-    CHECK_EQ(lower("tan(value)", scope), "LOAD(slot:value) TAN");
-    CHECK_EQ(lower("asin(value)", scope), "LOAD(slot:value) ASIN");
-    CHECK_EQ(lower("acos(value)", scope), "LOAD(slot:value) ACOS");
-    CHECK_EQ(lower("atan2(value, min)", scope), "LOAD(slot:value) LOAD(slot:min) ATAN2");
+    /* trigonometry: direct calls of the shared ids, degrees in and out */
+    CHECK_EQ(lower("sin(value)", scope), "LOAD(slot:value) CALL(SIN,1)");
+    CHECK_EQ(lower("cos(value)", scope), "LOAD(slot:value) CALL(COS,1)");
+    CHECK_EQ(lower("tan(value)", scope), "LOAD(slot:value) CALL(TAN,1)");
+    CHECK_EQ(lower("asin(value)", scope), "LOAD(slot:value) CALL(ASIN,1)");
+    CHECK_EQ(lower("acos(value)", scope), "LOAD(slot:value) CALL(ACOS,1)");
+    CHECK_EQ(lower("atan2(value, min)", scope),
+             "LOAD(slot:value) LOAD(slot:min) CALL(ATAN2,2)");
 
-    /* SIGN and MOD already existed as program.ts opcodes; only the free-function
-       spelling was missing */
-    CHECK_EQ(lower("sign(value)", scope), "LOAD(slot:value) SIGN");
+    /* the view-only free spellings fold onto ids that already exist: sign onto the
+       num.sign method, mod onto the Mod opcode `%` lowers to */
+    CHECK_EQ(lower("sign(value)", scope), "LOAD(slot:value) METHOD(NUM_SIGN,0)");
     CHECK_EQ(lower("mod(value, 2)", scope), "LOAD(slot:value) CONST(2.0) MOD");
 
-    /* mapRange/roundTo/lerp/hypot: bespoke folds onto arithmetic opcodes that already
+    /* mapRange/roundTo/lerp/hypot: bespoke folds onto arithmetic that already
        existed, each argument captured once and spliced as many times as the formula
        needs it (mapRange needs inLo and outLo twice, lerp needs its start twice,
        hypot needs each leg twice) */
@@ -274,34 +337,39 @@ void test_new_vocabulary() {
              "CONST(100.0) LOAD(slot:value) CONST(10.0) SUB CONST(200.0) CONST(100.0) "
              "SUB MUL CONST(20.0) CONST(10.0) SUB DIV ADD");
     CHECK_EQ(lower("roundTo(value, 2)", scope),
-             "CONST(10.0) CONST(2.0) POW LOAD(slot:value) MUL ROUND CONST(10.0) "
-             "CONST(2.0) POW DIV");
+             "CONST(10.0) CONST(2.0) CALL(POW,2) LOAD(slot:value) MUL CALL(ROUND,1) "
+             "CONST(10.0) CONST(2.0) CALL(POW,2) DIV");
     CHECK_EQ(lower("lerp(min, max, value)", scope),
              "LOAD(slot:min) LOAD(slot:max) LOAD(slot:min) SUB LOAD(slot:value) MUL ADD");
     CHECK_EQ(lower("hypot(value, min)", scope),
              "LOAD(slot:value) LOAD(slot:value) MUL LOAD(slot:min) LOAD(slot:min) MUL "
-             "ADD SQRT");
+             "ADD CALL(SQRT,1)");
 
-    /* string building: `+` concatenates when either side is text (the ADD opcode
+    /* string building: `+` concatenates when either side is text (the Add case
        decides that at RUN time, since this tier tracks no shapes to decide it at
-       compile), str() and measure() are direct opcodes */
+       compile), str() and measure() are direct calls */
     CHECK_EQ(lower("'x = ' + value", scope), "CONST(\"x = \") LOAD(slot:value) ADD");
-    CHECK_EQ(lower("str(value)", scope), "LOAD(slot:value) STR");
-    CHECK_EQ(lower("measure(text, 14)", scope), "LOAD(slot:text) CONST(14.0) MEASURE");
+    CHECK_EQ(lower("str(value)", scope), "LOAD(slot:value) CALL(STR,1)");
+    CHECK_EQ(lower("measure(text, 14)", scope),
+             "LOAD(slot:text) CONST(14.0) CALL(MEASURE,2)");
 
-    /* color arithmetic: constructors take 3 or 4 arguments (alpha defaults to fully
-       opaque), the accessors read BARE like the scalar tier's, alpha/mix are called */
-    CHECK_EQ(lower("rgb(1, 0, 0)", scope), "CONST(1.0) CONST(0.0) CONST(0.0) CONST(1.0) RGB");
+    /* color arithmetic: the constructors take 3 or 4 arguments with argc riding the
+       call (the builtin itself defaults a missing alpha to fully opaque), the
+       accessors read BARE like the scalar tier's, alpha/mix are called */
+    CHECK_EQ(lower("rgb(1, 0, 0)", scope),
+             "CONST(1.0) CONST(0.0) CONST(0.0) CALL(RGB,3)");
     CHECK_EQ(lower("rgb(1, 0, 0, 0.5)", scope),
-             "CONST(1.0) CONST(0.0) CONST(0.0) CONST(0.5) RGB");
-    CHECK_EQ(lower("hsv(120, 1, 1)", scope), "CONST(120.0) CONST(1.0) CONST(1.0) CONST(1.0) HSV");
-    CHECK_EQ(lower("#ff0000.r()", scope), "CONST(\"#ff0000\") COLOR_R");
-    CHECK_EQ(lower("#ff0000.g()", scope), "CONST(\"#ff0000\") COLOR_G");
-    CHECK_EQ(lower("#ff0000.b()", scope), "CONST(\"#ff0000\") COLOR_B");
-    CHECK_EQ(lower("#ff0000.a()", scope), "CONST(\"#ff0000\") COLOR_A");
-    CHECK_EQ(lower("#ff0000.alpha(0.5)", scope), "CONST(\"#ff0000\") CONST(0.5) COLOR_ALPHA");
+             "CONST(1.0) CONST(0.0) CONST(0.0) CONST(0.5) CALL(RGB,4)");
+    CHECK_EQ(lower("hsv(120, 1, 1)", scope),
+             "CONST(120.0) CONST(1.0) CONST(1.0) CALL(HSV,3)");
+    CHECK_EQ(lower("#ff0000.r()", scope), "CONST(\"#ff0000\") METHOD(COLOR_R,0)");
+    CHECK_EQ(lower("#ff0000.g()", scope), "CONST(\"#ff0000\") METHOD(COLOR_G,0)");
+    CHECK_EQ(lower("#ff0000.b()", scope), "CONST(\"#ff0000\") METHOD(COLOR_B,0)");
+    CHECK_EQ(lower("#ff0000.a()", scope), "CONST(\"#ff0000\") METHOD(COLOR_A,0)");
+    CHECK_EQ(lower("#ff0000.alpha(0.5)", scope),
+             "CONST(\"#ff0000\") CONST(0.5) METHOD(COLOR_ALPHA,1)");
     CHECK_EQ(lower("#ff0000.mix(#0000ff, 0.5)", scope),
-             "CONST(\"#ff0000\") CONST(\"#0000ff\") CONST(0.5) COLOR_MIX");
+             "CONST(\"#ff0000\") CONST(\"#0000ff\") CONST(0.5) METHOD(COLOR_MIX,2)");
     CHECK(refuses("#ff0000.r", scope, "is a method"));
     /* invert() is scalar/wire-tier color vocabulary; it stays out of the view (spec
        6.2 -- nothing in this task's fixed list asks for it) */
@@ -313,52 +381,97 @@ void test_new_vocabulary() {
        checks the string it produces ("M 50 50 L 70.00 15.36") any more. */
     CHECK_EQ(lower("'M 50 50 L ' + (50 + 40 * sin(value)).toFixed(2) + ' ' + "
                    "(50 - 40 * cos(value)).toFixed(2)", scope),
-             "CONST(\"M 50 50 L \") CONST(50.0) CONST(40.0) LOAD(slot:value) SIN MUL ADD "
-             "CONST(2.0) TO_FIXED ADD CONST(\" \") ADD CONST(50.0) CONST(40.0) "
-             "LOAD(slot:value) COS MUL SUB CONST(2.0) TO_FIXED ADD");
+             "CONST(\"M 50 50 L \") CONST(50.0) CONST(40.0) LOAD(slot:value) "
+             "CALL(SIN,1) MUL ADD CONST(2.0) METHOD(NUM_TO_FIXED,1) ADD CONST(\" \") "
+             "ADD CONST(50.0) CONST(40.0) LOAD(slot:value) CALL(COS,1) MUL SUB "
+             "CONST(2.0) METHOD(NUM_TO_FIXED,1) ADD");
 }
 
-/* every op the view interpreter's switch executes (frontend/src/program.ts); an op
- * outside this list would render as UNKNOWN on every client */
-const std::set<std::string>& view_ops() {
-    static const std::set<std::string> ops = {
-        "CONST",  "LOAD",   "PICK",   "ADD",    "SUB",     "MUL",    "DIV",   "NEG",
-        "EQ",     "NE",     "LT",     "LE",     "GT",      "GE",     "NOT",   "CLAMP01",
-        "ABS",    "ROUND",  "FLOOR",  "CEIL",   "SQRT",    "INT",    "SIGN",  "POW",
-        "MIN",    "MAX",    "MOD",    "TO_FIXED",
-        /* trigonometry (spec 6.2), degrees in and out */
-        "SIN",    "COS",    "TAN",    "ASIN",   "ACOS",    "ATAN2",
-        /* string building */
-        "STR",    "MEASURE",
-        /* color arithmetic */
-        "RGB",    "HSV",    "COLOR_R", "COLOR_G", "COLOR_B", "COLOR_A", "COLOR_ALPHA",
-        "COLOR_MIX",
-        /* the list vocabulary (display-tier lists) */
-        "MAKE_LIST", "INDEX", "LENGTH", "INDEX_OF",
-        "LIST_SUM",  "LIST_AVG", "LIST_MAX", "LIST_MIN",
-        "ANCHOR", "ARG", "ITERATE",
-    };
-    return ops;
+/* THE VIEW'S EXECUTABLE SURFACE, mirrored from the second interpreter's dispatch
+ * (frontend/src/program.ts): the instructions its switch runs, and within Call and
+ * Method the ids it implements. An instruction outside this surface would render as
+ * UNKNOWN on every client, so every built-in's compiled attr is walked against it. */
+bool view_runs_op(OpCode op) {
+    switch (op) {
+        case OpCode::Const: case OpCode::Load: case OpCode::LoadX:
+        case OpCode::Jmp: case OpCode::JmpNil:
+        case OpCode::Add: case OpCode::Sub: case OpCode::Mul: case OpCode::Div:
+        case OpCode::Mod: case OpCode::Neg:
+        case OpCode::Eq: case OpCode::Ne:
+        case OpCode::Lt: case OpCode::Le: case OpCode::Gt: case OpCode::Ge:
+        case OpCode::Not: case OpCode::MakeList: case OpCode::Index:
+        case OpCode::Call: case OpCode::Method: case OpCode::Iterate:
+            return true;
+        default:
+            return false;
+    }
 }
 
-/* an op in a lambda body would render UNKNOWN exactly as one at the top would, so the
- * walk descends into every ITERATE's carried body */
-void check_ops(const std::string& type, const std::string& attr, const Json& code) {
-    for (const Json& ins : code) {
-        CHECK_MSG(view_ops().count(ins.value("op", "")) == 1,
-                  type + ": attr '" + attr + "' uses op '" + ins.value("op", "") +
-                      "' the view cannot run");
-        if (ins.contains("body") && ins["body"].is_array())
-            check_ops(type, attr, ins["body"]);
+bool view_runs_call(Builtin id) {
+    switch (id) {
+        case Builtin::Abs: case Builtin::Round: case Builtin::Floor:
+        case Builtin::Ceil: case Builtin::Sqrt: case Builtin::Pow:
+        case Builtin::Min: case Builtin::Max: case Builtin::Int:
+        case Builtin::Sin: case Builtin::Cos: case Builtin::Tan:
+        case Builtin::Asin: case Builtin::Acos: case Builtin::Atan2:
+        case Builtin::Rgb: case Builtin::Hsv: case Builtin::Str:
+        case Builtin::Known: case Builtin::Measure: case Builtin::Anchor:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool view_runs_method(MethodId id) {
+    switch (id) {
+        case MethodId::BoolPick: case MethodId::NumSign: case MethodId::NumToFixed:
+        case MethodId::ColorR: case MethodId::ColorG: case MethodId::ColorB:
+        case MethodId::ColorA: case MethodId::ColorAlpha: case MethodId::ColorMix:
+        case MethodId::TextLength: case MethodId::ListLength: case MethodId::MapLength:
+        case MethodId::ListIndexOf: case MethodId::ListSum: case MethodId::ListAvg:
+        case MethodId::ListMax: case MethodId::ListMin:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* an instruction in a lambda body would render UNKNOWN exactly as one at the top
+ * would, so the walk descends into every Iterate's sub-program */
+void check_ops(const std::string& type, const std::string& attr, const Json& program,
+               const Json& words) {
+    for (size_t at = 0; at + 3 < words.size(); at += 4) {
+        const OpCode op = static_cast<OpCode>(words[at].get<uint32_t>());
+        const uint16_t small = words[at + 1].get<uint16_t>();
+        CHECK_MSG(view_runs_op(op), type + ": attr '" + attr + "' uses op '" +
+                                        op_name(op) + "' the view cannot run");
+        if (op == OpCode::Call)
+            CHECK_MSG(view_runs_call(static_cast<Builtin>(small)),
+                      type + ": attr '" + attr + "' calls '" +
+                          builtin_name(static_cast<Builtin>(small)) +
+                          "' the view cannot run");
+        if (op == OpCode::Method)
+            CHECK_MSG(view_runs_method(static_cast<MethodId>(small)),
+                      type + ": attr '" + attr + "' invokes '" +
+                          method_name(static_cast<MethodId>(small)) +
+                          "' the view cannot run");
+        if (op == OpCode::Iterate) {
+            static const Json empty = Json::array();
+            const uint32_t sub = words[at + 2].get<uint32_t>();
+            const Json& subs = program.contains("s") ? program["s"] : empty;
+            CHECK_MSG(sub < subs.size(),
+                      type + ": attr '" + attr + "' names a missing sub-program");
+            if (sub < subs.size()) check_ops(type, attr, program, subs[sub]);
+        }
     }
 }
 
 void check_attrs(const std::string& type, const Json& attrs) {
     CHECK_MSG(attrs.is_object(), type + ": attrs is not an object");
     for (auto it = attrs.begin(); it != attrs.end(); ++it) {
-        CHECK_MSG(it->is_object() && it->contains("code") && (*it)["code"].is_array(),
+        CHECK_MSG(it->is_object() && it->contains("i") && (*it)["i"].is_array(),
                   type + ": attr '" + it.key() + "' is not a compiled program");
-        check_ops(type, it.key(), (*it)["code"]);
+        check_ops(type, it.key(), *it, (*it)["i"]);
     }
 }
 
@@ -445,7 +558,7 @@ void test_builtins_compile_clean() {
        the component's own — stays bare */
     CHECK_EQ(ops_of(pill["attrs"]["surface"]),
              "LOAD(slot:value) LOAD(slot:pill.fill_color) "
-             "LOAD(slot:pill.track_color) PICK");
+             "LOAD(slot:pill.track_color) METHOD(BOOL_PICK,2)");
     CHECK(pill["interact"]["primitive"] == "press");
     /* the control pair is DECLARED; gesture events never are (the primitive brings
        them), and the toggle's logic lives in visible behavior, not a derivation */
@@ -460,7 +573,7 @@ void test_builtins_compile_clean() {
     const Json& fill = slider["template"]["children"][0]["children"][0];
     CHECK_EQ(ops_of(fill["attrs"]["w"]),
              "LOAD(slot:value) LOAD(slot:min) SUB LOAD(slot:max) LOAD(slot:min) SUB "
-             "DIV CLAMP01");
+             "DIV CONST(0.0) CALL(MAX,2) CONST(1.0) CALL(MIN,2)");
     /* A SCALE IS `repeat` OVER A NODE THAT PLACES ITSELF, where a shared JS body used to
        draw every tick of every type */
     const Json& mark = slider["template"]["children"][1]["children"][0];
@@ -473,9 +586,10 @@ void test_builtins_compile_clean() {
     const Json& trend = registry["components"][7];
     CHECK_EQ(ops_of(trend["template"]["children"][0]["attrs"]["points"]),
              "LOAD(slot:history) ITERATE[MAP]{"
-             "ARG(1) LOAD(slot:history) LENGTH CONST(1.0) SUB CONST(1.0) MAX DIV "
+             "ARG(1) LOAD(slot:history) METHOD(TEXT_LENGTH,0) CONST(1.0) SUB "
+             "CONST(1.0) CALL(MAX,2) DIV "
              "CONST(1.0) ARG(0) LOAD(slot:plot.min) SUB "
-             "LOAD(slot:plot.max) LOAD(slot:plot.min) SUB DIV SUB ANCHOR}");
+             "LOAD(slot:plot.max) LOAD(slot:plot.min) SUB DIV SUB CALL(ANCHOR,2)}");
     /* THE PAST IS AUTHORED: `history` is an ordinary list slot and the sampler is an
        ordinary cadence flow, so the whole of what the backend used to do privately is
        readable here, in the served type */
@@ -498,19 +612,19 @@ void test_builtins_compile_clean() {
 
     const Json& readout = registry["components"][8];
     CHECK_EQ(ops_of(readout["template"]["children"][0]["attrs"]["text"]),
-             "LOAD(slot:value) LOAD(slot:reading.decimals) TO_FIXED");
+             "LOAD(slot:value) LOAD(slot:reading.decimals) METHOD(NUM_TO_FIXED,1)");
 
     /* the Selector's detents count the list, the labels index it, and the needle
        rides indexOf — the resolver cells are gone whole */
     const Json& selector = registry["components"][6];
     const Json& dial = selector["template"]["children"][0];
     CHECK_EQ(ops_of(dial["children"][1]["attrs"]["repeat"]),
-             "LOAD(slot:options) LENGTH");
+             "LOAD(slot:options) METHOD(TEXT_LENGTH,0)");
     CHECK_EQ(ops_of(dial["children"][2]["attrs"]["text"]),
              "LOAD(slot:options) LOAD(repeat:index) INDEX");
     CHECK(ops_of(dial["children"][3]["attrs"]["rotate"])
-              .find("LOAD(slot:options) LOAD(slot:value) INDEX_OF CONST(0.0) MAX") !=
-          std::string::npos);
+              .find("LOAD(slot:options) LOAD(slot:value) METHOD(LIST_INDEX_OF,1) "
+                    "CONST(0.0) CALL(MAX,2)") != std::string::npos);
 
     /* AN ARC IS A PATH: its anchors are the trig the language already had, so the corner
        of the annulus is a compiled program like any other field */
@@ -519,7 +633,7 @@ void test_builtins_compile_clean() {
     CHECK(track["kind"] == "path" && track["closed"] == true);
     CHECK_EQ(track["anchors"].size(), size_t(4));
     CHECK(track["anchors"][1].contains("arc"));
-    CHECK(ops_of(track["anchors"][0]["x"]).find("SIN") != std::string::npos);
+    CHECK(ops_of(track["anchors"][0]["x"]).find("CALL(SIN,1)") != std::string::npos);
 
     /* the interface EXTRAS round-trip: fine steps, bounds, editors — and an address that
        says which element owns what */
@@ -641,7 +755,8 @@ void test_doc_components() {
     /* the node's own `shown` switch is folded into whatever the type computes: it draws
        when both hold */
     CHECK_EQ(ops_of(face["attrs"]["show"]),
-             "LOAD(slot:face.shown) LOAD(slot:value) CONST(10.0) GT CONST(false) PICK");
+             "LOAD(slot:face.shown) LOAD(slot:value) CONST(10.0) GT CONST(false) "
+             "METHOD(BOOL_PICK,2)");
     CHECK(!face["attrs"].contains("radius"));   /* the broken attr is not served */
 
     /* the shadow really replaced the built-in template and props */

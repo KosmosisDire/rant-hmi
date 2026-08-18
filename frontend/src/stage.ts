@@ -52,7 +52,7 @@ import { armInteract } from "./gestures.js";
 import { HANDLE_MARGIN, handleMarkup, handlesOff } from "./handles.js";
 import { iconMarkup } from "./icons.js";
 import { armStage, repaintFree, stageBusy } from "./manipulate.js";
-import { attrText, Cells, run } from "./program.js";
+import { attrText, ViewHost, run } from "./program.js";
 import { operable, typeOf } from "./slots.js";
 import {
   Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, CompiledTransitionMap, Interact, isInstance,
@@ -736,7 +736,7 @@ function scheduleTime(host: HTMLElement, editor: Editor): void {
  * in flight keeps the duration it started with). Plain numbers/names pass through for
  * leniency (old fixtures, hand-built rows). */
 function specValue(state: StageState, program: Program | number | string | undefined,
-                  cells: Cells): Json {
+                  cells: ViewHost): Json {
   if (program === undefined || program === null) return null;
   if (typeof program === "number" || typeof program === "string") return program;
   const rec = state.recording;
@@ -751,7 +751,7 @@ function specValue(state: StageState, program: Program | number | string | undef
 
 /* the evaluated time: a finite number of ms in (0, 600000], else null = no transition */
 function specMs(state: StageState, program: Program | number | string | undefined,
-                cells: Cells): number | null {
+                cells: ViewHost): number | null {
   const value = specValue(state, program, cells);
   const ms = typeof value === "number" && Number.isFinite(value) ? value : null;
   return ms !== null && ms > 0 ? Math.min(ms, 600000) : null;
@@ -762,7 +762,7 @@ const EASING_NAMES = new Set(["linear", "ease", "ease-in", "ease-out", "ease-in-
 /* the evaluated profile: a known easing name, else the default — a wrong profile is a
    cosmetic miss and falls back rather than killing the sweep (the align precedent) */
 function specProfile(state: StageState, program: Program | string | undefined,
-                     cells: Cells): string {
+                     cells: ViewHost): string {
   const value = specValue(state, program, cells);
   return typeof value === "string" && EASING_NAMES.has(value) ? value : "ease";
 }
@@ -819,7 +819,7 @@ const TRANSITION_ON_PATH = new Set(["fill", "stroke", "stroke_w", "points"]);
  * land on box-shadow); ink turns a box-shadow entry into a filter one, except the
  * INSET ink shadow, whose url(#) filter has nothing the browser can blend. */
 function transitionCss(state: StageState, node: ViewNode, inkInset: boolean,
-                       cells: Cells): { el: string; path: string } {
+                       cells: ViewHost): { el: string; path: string } {
   const rows = node.transitions;
   if (!rows) return { el: "", path: "" };
   const ink = node.kind !== "frame" && !node.instance;
@@ -935,7 +935,7 @@ function liveCell(state: StageState, editor: Editor, key: string): Json {
  * the cell the runtime publishes, else what this placement authors, else the type's
  * default, which is the whole of what makes a bound surface a working lamp. */
 function cellsFor(state: StageState, editor: Editor, node: ViewNode,
-                  repeat: RepeatCopy | null): Cells {
+                  repeat: RepeatCopy | null): ViewHost {
   /* NAMED, because it reads through itself: a slot's declared sweep evaluates its ms
      and profile programs over these same cells (specValue's guard keeps those reads
      un-eased, which is also what makes the recursion bottom out) */
@@ -1060,7 +1060,7 @@ function markNow(editor: Editor, key: string): string {
   return JSON.stringify(editor.live?.values?.[key] ?? null);
 }
 
-function attrOf(node: ViewNode, name: string, cells: Cells): Json {
+function attrOf(node: ViewNode, name: string, cells: ViewHost): Json {
   const program = node.attrs?.[name] as Program | undefined;
   return program ? run(program, cells) : undefined;
 }
@@ -1108,7 +1108,7 @@ function gestureStateWriter(state: StageState, editor: Editor, bind: Bind) {
  * edges pin when nothing on the axis is set, which is why an overlay needs nothing said
  * about it. `min_w`/`max_w`/`min_h`/`max_h` clamp whatever the axis derives — an authored
  * size, pinned edges, or an aspect ratio. */
-function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
+function place(el: HTMLElement, node: ViewNode, cells: ViewHost): void {
   el.style.position = "absolute";
   /* which unit system this node's numbers are in: page nodes are canvas px, a
      component's internals are fractions of their parent (the builder said which) */
@@ -1218,7 +1218,7 @@ function place(el: HTMLElement, node: ViewNode, cells: Cells): void {
  * other value decides, `true` clipping to the box and a number also rounding it. The
  * `authored` half is what lets an explicit `clip: false` turn OFF a clip the kind applies
  * by itself — a text's ellipsis is the only one there is. */
-function clipOf(node: ViewNode, cells: Cells): {
+function clipOf(node: ViewNode, cells: ViewHost): {
   authored: boolean; on: boolean; radius: number | null;
 } {
   const value = attrOf(node, "clip", cells);
@@ -1235,7 +1235,7 @@ function clipOf(node: ViewNode, cells: Cells): {
  * VERTICAL case, because a list of rows is what asks for this; a word the vocabulary does
  * not know falls the same way rather than rendering nothing, exactly as a text's `align`
  * does with its own. */
-function scrollOf(node: ViewNode, cells: Cells):
+function scrollOf(node: ViewNode, cells: ViewHost):
   { axes: string; x: boolean; y: boolean } | null {
   const value = attrOf(node, "scroll", cells);
   if (value === undefined || value === null || !truthy(value)) return null;
@@ -1257,7 +1257,7 @@ function scrollOf(node: ViewNode, cells: Cells):
  * properties AND its scroll offsets — an offset on an axis that no longer scrolls is a
  * displaced picture with nothing left to put it back (overflow: hidden keeps whatever
  * scrollTop it was left holding). */
-function scrollbar(el: HTMLElement, node: ViewNode, cells: Cells,
+function scrollbar(el: HTMLElement, node: ViewNode, cells: ViewHost,
                    scroll: { axes: string; x: boolean; y: boolean } | null): void {
   const setVar = (name: string, value: string | null) => {
     if (value === null) el.style.removeProperty(name);
@@ -1337,7 +1337,7 @@ function turnOf(state: StageState, editor: Editor, bind: Bind | null): number {
 }
 
 function shadowOf(state: StageState, editor: Editor, bind: Bind, node: ViewNode,
-                  cells: Cells): Shadow | null {
+                  cells: ViewHost): Shadow | null {
   const color = attrOf(node, "shadow", cells);
   /* THE COLOUR IS THE SWITCH, the same rule `surface` and `border` follow */
   if (!paints(color)) return null;
@@ -1452,7 +1452,7 @@ function inkShadow(state: StageState, bind: Bind, shadow: Shadow | null): void {
 }
 
 /* the dressing every box wears, whatever holds it */
-function dress(el: HTMLElement, node: ViewNode, cells: Cells,
+function dress(el: HTMLElement, node: ViewNode, cells: ViewHost,
                shadow: Shadow | null): void {
   const surface = attrOf(node, "surface", cells);
   el.style.background = paints(surface) ? cssColor(surface) : "";
@@ -1489,7 +1489,7 @@ function dress(el: HTMLElement, node: ViewNode, cells: Cells,
     : "";
 }
 
-function applyText(el: HTMLElement, node: ViewNode, cells: Cells): void {
+function applyText(el: HTMLElement, node: ViewNode, cells: ViewHost): void {
   const value = attrOf(node, "text", cells);
   /* UNKNOWN renders the unknown treatment, never a fabricated value */
   const text = attrText(value);
@@ -1517,7 +1517,7 @@ function applyText(el: HTMLElement, node: ViewNode, cells: Cells): void {
   el.style.textOverflow = clipped && !wrap ? "ellipsis" : "";
 }
 
-function applyIcon(bind: Bind, node: ViewNode, cells: Cells): void {
+function applyIcon(bind: Bind, node: ViewNode, cells: ViewHost): void {
   const el = bind.el;
   const name = attrText(attrOf(node, "name", cells)) ?? "";
   const stroke = num(attrOf(node, "stroke_w", cells)) ?? 1.5;
@@ -1541,13 +1541,13 @@ function applyIcon(bind: Bind, node: ViewNode, cells: Cells): void {
  * none` is deliberate — the box is the coordinate system — and a shape that must stay
  * round (a dial) says so with `aspect: 1` rather than by hoping. The stroke is exempted
  * from that scaling (`non-scaling-stroke`), because a line's weight is a pixel fact. */
-function anchorPoint(anchor: CompiledAnchor, cells: Cells): { x: number; y: number } | null {
+function anchorPoint(anchor: CompiledAnchor, cells: ViewHost): { x: number; y: number } | null {
   const x = num(anchor.x ? run(anchor.x, cells) : null);
   const y = num(anchor.y ? run(anchor.y, cells) : null);
   return x === null || y === null ? null : { x, y };
 }
 
-function pathData(node: ViewNode, cells: Cells): string {
+function pathData(node: ViewNode, cells: ViewHost): string {
   /* COMPUTED ANCHORS: `points` is a LIST OF POINTS the expression folded itself -- a map
      over a trend cell, scaled by whatever the author wrote -- so the shape of a plot is
      ordinary language work rather than a privileged attr the renderer knows the meaning
@@ -1596,7 +1596,7 @@ function pathData(node: ViewNode, cells: Cells): string {
 /* A PLOT IS AN ORDINARY BIND. A path whose `points` reads a trend cell records that cell
  * like any other program, and a live frame re-runs exactly this — one `d` rewritten, no
  * element touched. There is no plot list and no hist-only branch any more. */
-function applyPath(path: SVGPathElement, node: ViewNode, cells: Cells): void {
+function applyPath(path: SVGPathElement, node: ViewNode, cells: ViewHost): void {
   const d = pathData(node, cells);
   path.setAttribute("d", d);
   /* a TRANSITIONED outline rides the CSS `d` property (a style, so the browser sees a
@@ -1640,7 +1640,7 @@ function applyPath(path: SVGPathElement, node: ViewNode, cells: Cells): void {
  * FAIL-SAFE, and only in a mode that operates: a disabled control is dimmed everywhere,
  * and inert only where a pointer would be operating it. In EDIT mode it still takes the
  * pointer, because a control you cannot operate is not a control you cannot select. */
-function regime(el: HTMLElement, node: ViewNode, editor: Editor, cells: Cells): void {
+function regime(el: HTMLElement, node: ViewNode, editor: Editor, cells: ViewHost): void {
   const enabled = attrOf(node, "enabled", cells);
   const disabled = enabled !== undefined && !truthy(enabled);
   el.classList.toggle("disabled", disabled);

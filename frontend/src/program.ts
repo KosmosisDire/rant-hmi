@@ -1,19 +1,35 @@
-/* The attribute interpreter: a small stack machine over the programs the backend ships
- * in the registry. This is the one place a view computes anything, and it is rendering,
- * not truth: inputs are backend-authoritative slot values plus this view's own
- * interaction state, outputs are visual attributes only.
+/* THE SECOND INTERPRETER. The backend ships view programs as the language's one
+ * instruction form, packed (types.ts Program): four plain words per instruction whose
+ * ordinals are the generated vocabulary in ir.ts — the same table the backend's own
+ * enums are emitted from — so there is no dialect to translate, only the IR to run.
+ * This is the one place a view computes anything, and it is rendering, not truth:
+ * inputs are backend-authoritative slot values plus this view's own interaction
+ * state, outputs are visual attributes only.
  *
- * Every operation is total. Nil (null) poisons: any operation on it yields Nil, and a
- * Nil attribute renders the UNKNOWN treatment rather than a fabricated value. */
+ * THE VIEW HOST is the one verb a program runs over: `load` answers a symbolic cell
+ * by its address-table spelling ("slot:...", "var:<id>", "time:now", ...). What the
+ * host does BESIDE answering is its own business — the renderer's host records every
+ * key it answers (the deps/marks that make a live delta re-run exactly the binds
+ * that read it), the conformance runner's is a plain map. The interpreter stays
+ * semantics-only, which is what lets one fixture suite pin it against the backend VM
+ * (the first interpreter, backend/src/vm/vm.cpp) forever.
+ *
+ * A view program never stores, sends or faults — the placement rule keeps effects on
+ * the backend — so `load` plus the pure ops IS the complete implementation, and
+ * every operation is total. Nil (null) poisons: any operation on it yields Nil, and
+ * a Nil attribute renders the UNKNOWN treatment rather than a fabricated value. An
+ * instruction this view has no case for — a Store a bug routed here, an ordinal from
+ * a future table — fails the whole program as UNKNOWN, never as a wrong pixel. */
 
-import { ITERATE_MODES } from "./ir.js";
-import { Instr, Json, Program } from "./types.js";
+import { BuiltinId, IterateMode, LoadPlace, MethodId, Op } from "./ir.js";
+import { Json, Program } from "./types.js";
 
-export type Cells = (cell: string) => Json;
+/* the ViewHost's one verb: answer a cell by its served spelling */
+export type ViewHost = (cell: string) => Json;
 
 const NIL: Json = null;
 
-/* degrees, both ways: every trig opcode takes and returns degrees, the project-wide angle
+/* degrees, both ways: every trig id takes and returns degrees, the project-wide angle
  * convention (degrees, 0 = up, clockwise). These are the ordinary trig functions
  * (sin(0) == 0, cos(0) == 1), with the polar half of that convention left to whoever calls
  * them, exactly as on the scalar tier (backend/src/vm/vm.cpp) */
@@ -80,7 +96,7 @@ function mixRgba(from: number[], to: number[], t: number): string {
 
 /* hsv -> rgb, ported from the same switch vm.cpp's Builtin::Hsv runs -- h wraps at
  * 360 (negative wraps positive), s/v saturate to 0..1, a passes through unclamped
- * here since the caller (HSV below) already clamped it via channelByte */
+ * here since the caller (Hsv below) already clamped it via channelByte */
 function hsvToRgba(hDeg: number, s: number, v: number, a: number): string {
   let h = hDeg % 360;
   if (h < 0) h += 360;
@@ -126,13 +142,12 @@ function parseColorBytes(text: Json): number[] | null {
   return null;
 }
 
-/* MEASURE's estimator: 0.58 x size per character, the constant the SVG renderer used to
+/* Measure's estimator: 0.58 x size per character, the constant the SVG renderer used to
  * fit text into a box. It is a guess and always was — it cannot see the font, so it cannot
  * be right — and it is PROVISIONAL here: the whole reason a declarative renderer needed an
  * estimator is that it could not ask the browser. Once text is real DOM the browser
  * measures it, and this collapses into asking. It stays meanwhile so an expression using
- * measure() keeps computing something rather than failing. (It used to discount rich.ts's
- * underscore markup, which went with the SVG text renderer that drew it.) */
+ * measure() keeps computing something rather than failing. */
 function measureText(text: string, size: number): number {
   if (!text.length) return 0;
   let longest = 0;
@@ -154,15 +169,7 @@ function measureText(text: string, size: number): number {
  * over the samples around it. The one thing this tier is stricter about is a non-finite
  * number, which the view's own num() has never accepted as a number at all. */
 
-/* how many elements one ITERATE will walk. The view's ring is larger than the scalar
- * tier's 512-element ceiling (a trend keeps thousands of samples), so this is its own
- * number; past it the loop simply stops, which is bounded work and a short answer rather
- * than a hung frame. It is FAR above what a screen can show — a path with this many points
- * is already more than the renderer wants — because a cell's own bound is bytes now, and a
- * frame budget is the only thing this one was ever really about. */
-const ITERATE_CAP = 65536;
-
-/* nothing outside an ITERATE body has arguments to read, so ARG there is Nil */
+/* nothing outside an Iterate body has bindings to read, so LoadX there is Nil */
 const NO_ARGS: Json[] = [];
 
 /* a MAP value in this tier is a plain object (the aggs lane delivers it as one). The
@@ -173,7 +180,7 @@ function isMapValue(value: Json): value is Record<string, Json> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/* the ordering SORT_BY imposes on the keys a body produced: numbers first and ascending,
+/* the ordering SortBy imposes on the keys a body produced: numbers first and ascending,
  * then text lexicographically, then everything a key has no order in (Nil, an object, a
  * bool) in the order it already stood. Nil LAST is vm.cpp's sorts_before rule -- an UNKNOWN
  * never quietly leads the list. */
@@ -192,220 +199,131 @@ function keysBefore(a: Json, b: Json): number {
   return 0;
 }
 
-export function run(program: Program | undefined, cells: Cells): Json {
-  if (!program || !Array.isArray(program.code)) return NIL;
-  return exec(program.code, cells, NO_ARGS);
+export function run(program: Program | undefined, load: ViewHost): Json {
+  if (!program || !Array.isArray(program.i)) return NIL;
+  return exec(program, program.i, load, NO_ARGS);
 }
 
-/* One run of one instruction list. The body of an ITERATE is a list like any other, so it
- * runs here too, on its own stack, with the loop's per-element values in `args` (what ARG
- * reads). */
-function exec(code: Instr[], cells: Cells, args: Json[]): Json {
+/* the whole-program poison: what exec returns through when an instruction has no
+ * case here, so a malformed or future program fails as UNKNOWN, never as a wrong
+ * pixel. A unique object so no legal Json can collide with it. */
+const POISONED: Json = Symbol("poisoned");
+
+/* One run of one instruction list. The body of an Iterate is a sub-program sharing
+ * this program's pools, so it runs here too, on its own stack, with the loop's
+ * per-element bindings in `args` (what LoadX reads — the same registers the scalar
+ * VM's Iterate seeds). */
+function exec(program: Program, code: number[], load: ViewHost, args: Json[]): Json {
   const stack: Json[] = [];
   const pop = (): Json => (stack.length ? stack.pop() : NIL);
+  const consts = program.k ?? [];
+  const cells = program.c ?? [];
 
-  /* ADD is handled above this function's one caller (text concatenation needs the raw,
-     un-num()'d operands to tell a string apart from a number), so it never reaches here */
-  const arith = (op: string): Json => {
+  /* Add is handled in its own case (text concatenation needs the raw, un-num()'d
+     operands to tell a string apart from a number); these are the numeric pairs */
+  const arith = (op: number): Json => {
     const b = num(pop());
     const a = num(pop());
     if (a === null || b === null) return NIL;
     switch (op) {
-      case "SUB": return a - b;
-      case "MUL": return a * b;
-      case "DIV": return b === 0 ? NIL : a / b;
-      case "LT": return a < b;
-      case "LE": return a <= b;
-      case "GT": return a > b;
-      case "GE": return a >= b;
+      case Op.Sub: return a - b;
+      case Op.Mul: return a * b;
+      case Op.Div: return b === 0 ? NIL : a / b;
+      case Op.Mod: return b === 0 ? NIL : a % b;
+      case Op.Lt: return a < b;
+      case Op.Le: return a <= b;
+      case Op.Gt: return a > b;
+      case Op.Ge: return a >= b;
     }
     return NIL;
   };
 
-  for (const instr of code) {
-    switch (instr.op) {
-      case "CONST":
-        stack.push(instr.v === undefined ? NIL : instr.v);
+  const end = code.length - (code.length % 4);
+  for (let pc = 0; pc < end; ) {
+    const op = code[pc];
+    const small = code[pc + 1];
+    const a = code[pc + 2];
+    const b = code[pc + 3];
+    pc += 4;
+    switch (op) {
+      case Op.Const:
+        stack.push(consts[a] === undefined ? NIL : consts[a]);
         break;
-      case "LOAD":
-        stack.push(cells(instr.cell ?? ""));
+      case Op.Load:
+        /* the one place a value enters: the host answers the address-table cell
+           (and records the read, if answering is not all it does) */
+        stack.push(small === LoadPlace.Cell ? load(cells[a] ?? "") : NIL);
         break;
-      case "PICK": {
-        const b = pop();
-        const a = pop();
-        const c = truthy(pop());
-        stack.push(c === null ? NIL : c ? a : b);
+      /* a lambda binding, by declaration order — [element, index] for the plain
+         modes, [acc, element, index] for reduce */
+      case Op.LoadX:
+        stack.push(args[a] ?? NIL);
         break;
-      }
-      /* `a ?? b`: keep a unless it is Nil — the one place Nil is stepped around
-         rather than poisoning through */
-      case "COALESCE": {
-        const b = pop();
-        const a = pop();
-        stack.push(nil(a) ? b : a);
+      /* the two jumps `??` lowers to, FORWARD ONLY here as in the verifier: a
+         backward target would be a hung frame, so it poisons instead */
+      case Op.Jmp:
+        if (a * 4 < pc) return NIL;
+        pc = a * 4;
         break;
-      }
-      /* the UNKNOWN test: the one operation that ASKS about Nil */
-      case "KNOWN":
-        stack.push(!nil(pop()));
+      /* the unknown test: when the top is Nil, pop it and jump (to the default's
+         start); otherwise keep it and fall through (past the default) */
+      case Op.JmpNil:
+        if (stack.length && nil(stack[stack.length - 1])) {
+          if (a * 4 < pc) return NIL;
+          stack.pop();
+          pc = a * 4;
+        }
         break;
-      case "ADD": {
+      case Op.Add: {
         /* `+` CONCATENATES when either side is text — the language's own rule on both
          * tiers, not a view convenience — rendering the other operand the way
          * str()/attrText() renders it -- a number as its plain string, a bool as
          * true/false -- so the two spellings can never disagree.
          * Numeric addition is unchanged: neither side being a string is the ordinary
-         * case and falls straight through to the existing arith() path below. */
-        const b = pop();
-        const a = pop();
-        if (typeof a === "string" || typeof b === "string") {
-          const ta = attrText(a);
-          const tb = attrText(b);
-          stack.push(ta === null || tb === null ? NIL : ta + tb);
+         * case and falls straight through to the arith path. */
+        const right = pop();
+        const left = pop();
+        if (typeof left === "string" || typeof right === "string") {
+          const tl = attrText(left);
+          const tr = attrText(right);
+          stack.push(tl === null || tr === null ? NIL : tl + tr);
         } else {
-          const an = num(a);
-          const bn = num(b);
-          stack.push(an === null || bn === null ? NIL : an + bn);
+          const ln = num(left);
+          const rn = num(right);
+          stack.push(ln === null || rn === null ? NIL : ln + rn);
         }
         break;
       }
-      case "SUB": case "MUL": case "DIV":
-      case "LT": case "LE": case "GT": case "GE":
-        stack.push(arith(instr.op));
+      case Op.Sub: case Op.Mul: case Op.Div: case Op.Mod:
+      case Op.Lt: case Op.Le: case Op.Gt: case Op.Ge:
+        stack.push(arith(op));
         break;
-      case "NEG": {
-        const a = num(pop());
-        stack.push(a === null ? NIL : -a);
-        break;
-      }
-      case "EQ": case "NE": {
-        const b = pop();
-        const a = pop();
-        if (nil(a) || nil(b)) { stack.push(NIL); break; }
-        const equal = a === b;
-        stack.push(instr.op === "EQ" ? equal : !equal);
+      case Op.Neg: {
+        const value = num(pop());
+        stack.push(value === null ? NIL : -value);
         break;
       }
-      case "NOT": {
-        const a = truthy(pop());
-        stack.push(a === null ? NIL : !a);
+      case Op.Eq: case Op.Ne: {
+        const right = pop();
+        const left = pop();
+        if (nil(left) || nil(right)) { stack.push(NIL); break; }
+        const equal = left === right;
+        stack.push(op === Op.Eq ? equal : !equal);
         break;
       }
-      case "CLAMP01": {
-        const a = num(pop());
-        stack.push(a === null ? NIL : a < 0 ? 0 : a > 1 ? 1 : a);
-        break;
-      }
-      case "ABS": case "ROUND": case "FLOOR": case "CEIL": case "SQRT": case "INT":
-      case "SIGN": case "SIN": case "COS": case "TAN": case "ASIN": case "ACOS": {
-        const a = num(pop());
-        if (a === null) { stack.push(NIL); break; }
-        if (instr.op === "ABS") stack.push(Math.abs(a));
-        else if (instr.op === "ROUND") stack.push(Math.round(a));
-        else if (instr.op === "FLOOR") stack.push(Math.floor(a));
-        else if (instr.op === "CEIL") stack.push(Math.ceil(a));
-        else if (instr.op === "SQRT") stack.push(a < 0 ? NIL : Math.sqrt(a));
-        else if (instr.op === "INT") stack.push(Math.trunc(a));
-        else if (instr.op === "SIGN") stack.push(Math.sign(a));
-        /* ordinary trig, degrees in and out (see DEG above): sin(0) === 0, cos(0) === 1 */
-        else if (instr.op === "SIN") stack.push(Math.sin(a * DEG));
-        else if (instr.op === "COS") stack.push(Math.cos(a * DEG));
-        else if (instr.op === "TAN") stack.push(Math.tan(a * DEG));
-        else if (instr.op === "ASIN") stack.push(a < -1 || a > 1 ? NIL : Math.asin(a) / DEG);
-        else stack.push(a < -1 || a > 1 ? NIL : Math.acos(a) / DEG);
-        break;
-      }
-      case "POW": case "MIN": case "MAX": case "MOD": case "ATAN2": {
-        const b = num(pop());
-        const a = num(pop());
-        if (a === null || b === null) { stack.push(NIL); break; }
-        if (instr.op === "POW") stack.push(Math.pow(a, b));
-        else if (instr.op === "MIN") stack.push(Math.min(a, b));
-        else if (instr.op === "MAX") stack.push(Math.max(a, b));
-        else if (instr.op === "MOD") stack.push(b === 0 ? NIL : a % b);
-        /* atan2(y, x): a is the first argument (y), b the second (x) -- the same
-           argument order the scalar tier's Builtin::Atan2 takes */
-        else stack.push(Math.atan2(a, b) / DEG);
-        break;
-      }
-      case "TO_FIXED": {
-        const dp = num(pop());
-        const a = num(pop());
-        stack.push(a === null ? NIL : a.toFixed(Math.max(0, Math.min(12, dp ?? 0))));
-        break;
-      }
-      case "STR": {
-        const t = attrText(pop());
-        stack.push(t === null ? NIL : t);
-        break;
-      }
-      case "MEASURE": {
-        const size = num(pop());
-        const text = attrText(pop());
-        stack.push(size === null || text === null ? NIL : measureText(text, size));
-        break;
-      }
-      case "RGB": {
-        /* every channel FRACTIONAL 0..1 — the convention rgb()/hsv() take on both tiers,
-           never 0..255 — pushed r, g, b, a in that order (template_expr.cpp defaults the
-           4th to 1 when a call omits it) */
-        const a = num(pop());
-        const b = num(pop());
-        const g = num(pop());
-        const r = num(pop());
-        stack.push(
-          r === null || g === null || b === null || a === null
-            ? NIL
-            : packRgba(r * 255, g * 255, b * 255, a),
-        );
-        break;
-      }
-      case "HSV": {
-        const a = num(pop());
-        const v = num(pop());
-        const s = num(pop());
-        const h = num(pop());
-        stack.push(
-          h === null || s === null || v === null || a === null
-            ? NIL
-            : hsvToRgba(h, s, v, a),
-        );
-        break;
-      }
-      case "COLOR_R": case "COLOR_G": case "COLOR_B": case "COLOR_A": {
-        const bytes = parseColorBytes(pop());
-        if (!bytes) { stack.push(NIL); break; }
-        const channel = instr.op === "COLOR_R" ? bytes[0]
-                       : instr.op === "COLOR_G" ? bytes[1]
-                       : instr.op === "COLOR_B" ? bytes[2] : bytes[3] / 255;
-        stack.push(channel);
-        break;
-      }
-      case "COLOR_ALPHA": {
-        const a = num(pop());
-        const bytes = parseColorBytes(pop());
-        if (!bytes || a === null) { stack.push(NIL); break; }
-        const aa = a < 0 ? 0 : a > 1 ? 1 : a;
-        stack.push(formatRgba(bytes[0], bytes[1], bytes[2], channelByte(aa * 255)));
-        break;
-      }
-      case "COLOR_MIX": {
-        const t = num(pop());
-        const to = parseColorBytes(pop());
-        const from = parseColorBytes(pop());
-        stack.push(!from || !to || t === null ? NIL : mixRgba(from, to, t));
+      case Op.Not: {
+        const value = truthy(pop());
+        stack.push(value === null ? NIL : !value);
         break;
       }
       /* the elements were pushed left to right, so the tail of the stack IS the list in
          order; a Nil among them stays exactly where it was pushed */
-      case "MAKE_LIST": {
-        const want = typeof instr.n === "number" && Number.isFinite(instr.n)
-          ? Math.max(0, Math.trunc(instr.n)) : 0;
-        const take = Math.min(want, stack.length);
+      case Op.MakeList: {
+        const take = Math.min(b, stack.length);
         stack.push(stack.splice(stack.length - take, take));
         break;
       }
-      case "INDEX": {
+      case Op.Index: {
         const at = pop();
         const list = pop();
         /* a MAP indexes by its text key; an absent key is Nil, the same honest miss an
@@ -424,125 +342,250 @@ function exec(code: Instr[], cells: Cells, args: Json[]): Json {
         );
         break;
       }
-      case "LENGTH": {
-        const value = pop();
-        if (isMapValue(value)) {
-          stack.push(Object.keys(value as Record<string, Json>).length);
-          break;
-        }
-        stack.push(typeof value === "string" || Array.isArray(value) ? value.length : NIL);
+      case Op.Call: {
+        const value = call(small, b, stack);
+        if (value === POISONED) return NIL;
+        stack.push(value);
         break;
       }
-      /* -1 for "not in the list" is the scalar VM's own answer (MethodId::ListIndexOf), so
-         the two tiers spell a miss the same way. A Nil NEEDLE misses everything, including
-         a gap in the list: the scalar tier's same_value calls two Nils identical, but a
-         value that is not known is not a value to search for. */
-      case "INDEX_OF": {
-        const needle = pop();
-        const list = pop();
-        if (!Array.isArray(list)) { stack.push(NIL); break; }
-        stack.push(nil(needle) ? -1 : list.findIndex((elem) => elem === needle));
+      case Op.Method: {
+        const value = method(small, b, stack);
+        if (value === POISONED) return NIL;
+        stack.push(value);
         break;
       }
-      case "LIST_SUM": case "LIST_AVG": case "LIST_MAX": case "LIST_MIN": {
-        const list = pop();
-        if (!Array.isArray(list)) { stack.push(NIL); break; }
-        if (!list.length) { stack.push(instr.op === "LIST_SUM" ? 0 : NIL); break; }
-        let sum = 0;
-        let low = 0;
-        let high = 0;
-        let ok = true;
-        for (let at = 0; at < list.length && ok; at++) {
-          const v = list[at];
-          if (typeof v !== "number" || !Number.isFinite(v)) { ok = false; break; }
-          sum += v;
-          if (at === 0 || v < low) low = v;
-          if (at === 0 || v > high) high = v;
-        }
-        stack.push(!ok ? NIL
-                 : instr.op === "LIST_SUM" ? sum
-                 : instr.op === "LIST_AVG" ? sum / list.length
-                 : instr.op === "LIST_MAX" ? high : low);
-        break;
-      }
-      /* a point of a path, in the fractions of the box the renderer draws in. Either
-         coordinate missing makes the whole anchor Nil, which is the GAP a plot draws as a
-         break in the line rather than as a point at zero (stage.ts). */
-      case "ANCHOR": {
-        const y = num(pop());
-        const x = num(pop());
-        stack.push(x === null || y === null ? NIL : { x, y });
-        break;
-      }
-      case "ARG":
-        stack.push(typeof instr.i === "number" ? args[instr.i] ?? NIL : NIL);
-        break;
-      /* THE ONE LOOP, over one list, running `body` per element. REDUCE takes its seed on
-         top of the list (the emitter pushes the list, then the init); every other mode
-         takes the list alone. What the body sees is `args`: [element, index], and for
-         REDUCE [acc, element, index]. */
-      case "ITERATE": {
-        const mode = instr.mode ?? "";
-        const seed = mode === "REDUCE" ? pop() : NIL;
-        const list = pop();
-        const body = Array.isArray(instr.body) ? instr.body : [];
-        /* a mode this view does not know: fail as UNKNOWN before running a single body,
-           never as a wrong picture */
-        if (!ITERATE_MODES.has(mode)) return NIL;
-        /* REDUCE is the one loop a MAP takes, per sorted key so the answer is the same
-           on every view: the body sees [acc, key, value]. The other modes have no
-           settled result shape over a map and the compiler refuses them. */
-        if (mode === "REDUCE" && isMapValue(list)) {
-          const keys = Object.keys(list).sort();
-          const pairs = Math.min(keys.length, ITERATE_CAP);
-          let acc = seed;
-          for (let at = 0; at < pairs; at++)
-            acc = exec(body, cells, [acc, keys[at], list[keys[at]] ?? NIL]);
-          stack.push(acc);
-          break;
-        }
-        if (!Array.isArray(list)) { stack.push(NIL); break; }
-        const count = Math.min(list.length, ITERATE_CAP);
-        if (mode === "REDUCE") {
-          let acc = seed;
-          for (let at = 0; at < count; at++) acc = exec(body, cells, [acc, list[at], at]);
-          stack.push(acc);
-          break;
-        }
-        const results: Json[] = [];
-        for (let at = 0; at < count; at++) results.push(exec(body, cells, [list[at], at]));
-        /* the CONDITION modes hold the one unknown rule: a Nil body result poisons
-           the whole answer instead of quietly reading as false — the scalar VM's
-           exact behavior, pinned by the shared fixtures */
-        if ((mode === "FILTER" || mode === "ANY" || mode === "ALL") &&
-            results.some((r) => nil(r))) {
-          stack.push(NIL);
-        }
-        else if (mode === "MAP") stack.push(results);
-        else if (mode === "FILTER")
-          stack.push(list.slice(0, count).filter((_, at) => truthy(results[at]) === true));
-        else if (mode === "ANY") stack.push(results.some((r) => truthy(r) === true));
-        else if (mode === "ALL") stack.push(results.every((r) => truthy(r) === true));
-        else {
-          /* SORT_BY: the ELEMENTS travel, ordered by the keys the body made, and the sort
-             is stable -- equal keys leave the list in the order it arrived */
-          const order = results.map((key, at) => ({ key, at }));
-          order.sort((a, b) => keysBefore(a.key, b.key));
-          stack.push(order.map((row) => list[row.at]));
-        }
+      case Op.Iterate: {
+        const value = iterate(program, small, a, b, load, stack);
+        if (value === POISONED) return NIL;
+        stack.push(value);
         break;
       }
       default:
-        /* an opcode this view does not know: fail as UNKNOWN, never as a wrong pixel */
+        /* an instruction this view has no case for: fail as UNKNOWN, never as a
+           wrong pixel */
         return NIL;
     }
   }
   return stack.length ? stack[stack.length - 1] : NIL;
 }
 
+/* one Call: `id` from the shared table, `argc` popped above nothing else (a builtin
+ * has no receiver). An id with no case here is the whole-program poison. */
+function call(id: number, argc: number, stack: Json[]): Json {
+  const args = stack.splice(Math.max(0, stack.length - argc), argc);
+  while (args.length < argc) args.unshift(NIL);
+  const one = (): number | null => num(args[0]);
+  const pair = (): [number, number] | null => {
+    const a = num(args[0]);
+    const b = num(args[1]);
+    return a === null || b === null ? null : [a, b];
+  };
+  switch (id) {
+    case BuiltinId.Abs: { const a = one(); return a === null ? NIL : Math.abs(a); }
+    case BuiltinId.Round: { const a = one(); return a === null ? NIL : Math.round(a); }
+    case BuiltinId.Floor: { const a = one(); return a === null ? NIL : Math.floor(a); }
+    case BuiltinId.Ceil: { const a = one(); return a === null ? NIL : Math.ceil(a); }
+    case BuiltinId.Int: { const a = one(); return a === null ? NIL : Math.trunc(a); }
+    case BuiltinId.Sqrt: {
+      const a = one();
+      return a === null || a < 0 ? NIL : Math.sqrt(a);
+    }
+    /* ordinary trig, degrees in and out (see DEG above): sin(0) === 0, cos(0) === 1 */
+    case BuiltinId.Sin: { const a = one(); return a === null ? NIL : Math.sin(a * DEG); }
+    case BuiltinId.Cos: { const a = one(); return a === null ? NIL : Math.cos(a * DEG); }
+    case BuiltinId.Tan: { const a = one(); return a === null ? NIL : Math.tan(a * DEG); }
+    case BuiltinId.Asin: {
+      const a = one();
+      return a === null || a < -1 || a > 1 ? NIL : Math.asin(a) / DEG;
+    }
+    case BuiltinId.Acos: {
+      const a = one();
+      return a === null || a < -1 || a > 1 ? NIL : Math.acos(a) / DEG;
+    }
+    case BuiltinId.Pow: { const p = pair(); return p === null ? NIL : Math.pow(p[0], p[1]); }
+    case BuiltinId.Min: { const p = pair(); return p === null ? NIL : Math.min(p[0], p[1]); }
+    case BuiltinId.Max: { const p = pair(); return p === null ? NIL : Math.max(p[0], p[1]); }
+    case BuiltinId.Atan2: {
+      /* atan2(y, x) -- the same argument order the scalar tier's Builtin::Atan2 takes */
+      const p = pair();
+      return p === null ? NIL : Math.atan2(p[0], p[1]) / DEG;
+    }
+    case BuiltinId.Rgb: case BuiltinId.Hsv: {
+      /* every channel FRACTIONAL 0..1 — the convention rgb()/hsv() take on both
+         tiers, never 0..255 — with the alpha argument optional (argc 3), defaulting
+         to fully opaque, exactly as the scalar builtin accepts it */
+      const c1 = num(args[0]);
+      const c2 = num(args[1]);
+      const c3 = num(args[2]);
+      const alpha = argc === 4 ? num(args[3]) : 1;
+      if (c1 === null || c2 === null || c3 === null || alpha === null) return NIL;
+      return id === BuiltinId.Rgb
+        ? packRgba(c1 * 255, c2 * 255, c3 * 255, alpha)
+        : hsvToRgba(c1, c2, c3, alpha);
+    }
+    case BuiltinId.Str: {
+      const text = attrText(args[0]);
+      return text === null ? NIL : text;
+    }
+    /* the unknown test: the one operation that ASKS about Nil */
+    case BuiltinId.Known:
+      return !nil(args[0]);
+    case BuiltinId.Measure: {
+      const text = attrText(args[0]);
+      const size = num(args[1]);
+      return text === null || size === null ? NIL : measureText(text, size);
+    }
+    /* a point of a path, in the fractions of the box the renderer draws in. Either
+       coordinate missing makes the whole anchor Nil, which is the GAP a plot draws as
+       a break in the line rather than as a point at zero (stage.ts). */
+    case BuiltinId.Anchor: {
+      const x = num(args[0]);
+      const y = num(args[1]);
+      return x === null || y === null ? NIL : { x, y };
+    }
+    default:
+      return POISONED;
+  }
+}
+
+/* one Method: the receiver sits below `argc` arguments. The length family is
+ * receiver-blind — the untyped emitter picks whichever namesake id comes first, and
+ * text, list and map all answer under any of the three. */
+function method(id: number, argc: number, stack: Json[]): Json {
+  const args = stack.splice(Math.max(0, stack.length - argc), argc);
+  while (args.length < argc) args.unshift(NIL);
+  const receiver = stack.length ? stack.pop() : NIL;
+  switch (id) {
+    case MethodId.BoolPick: {
+      const c = truthy(receiver);
+      return c === null ? NIL : c ? args[0] : args[1];
+    }
+    case MethodId.NumSign: {
+      const a = num(receiver);
+      return a === null ? NIL : Math.sign(a);
+    }
+    case MethodId.NumToFixed: {
+      const a = num(receiver);
+      const dp = num(args[0]);
+      return a === null ? NIL : a.toFixed(Math.max(0, Math.min(12, dp ?? 0)));
+    }
+    case MethodId.ColorR: case MethodId.ColorG:
+    case MethodId.ColorB: case MethodId.ColorA: {
+      const bytes = parseColorBytes(receiver);
+      if (!bytes) return NIL;
+      return id === MethodId.ColorR ? bytes[0]
+           : id === MethodId.ColorG ? bytes[1]
+           : id === MethodId.ColorB ? bytes[2] : bytes[3] / 255;
+    }
+    case MethodId.ColorAlpha: {
+      const bytes = parseColorBytes(receiver);
+      const alpha = num(args[0]);
+      if (!bytes || alpha === null) return NIL;
+      const aa = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+      return formatRgba(bytes[0], bytes[1], bytes[2], channelByte(aa * 255));
+    }
+    case MethodId.ColorMix: {
+      const from = parseColorBytes(receiver);
+      const to = parseColorBytes(args[0]);
+      const t = num(args[1]);
+      return !from || !to || t === null ? NIL : mixRgba(from, to, t);
+    }
+    case MethodId.TextLength: case MethodId.ListLength: case MethodId.MapLength: {
+      if (isMapValue(receiver)) return Object.keys(receiver).length;
+      return typeof receiver === "string" || Array.isArray(receiver)
+        ? receiver.length
+        : NIL;
+    }
+    /* -1 for "not in the list" is the scalar VM's own answer (MethodId::ListIndexOf), so
+       the two tiers spell a miss the same way. A Nil NEEDLE misses everything, including
+       a gap in the list: the scalar tier's same_value calls two Nils identical, but a
+       value that is not known is not a value to search for. */
+    case MethodId.ListIndexOf: {
+      if (!Array.isArray(receiver)) return NIL;
+      const needle = args[0];
+      return nil(needle) ? -1 : receiver.findIndex((elem) => elem === needle);
+    }
+    case MethodId.ListSum: case MethodId.ListAvg:
+    case MethodId.ListMax: case MethodId.ListMin: {
+      if (!Array.isArray(receiver)) return NIL;
+      if (!receiver.length) return id === MethodId.ListSum ? 0 : NIL;
+      let sum = 0;
+      let low = 0;
+      let high = 0;
+      for (let at = 0; at < receiver.length; at++) {
+        const v = receiver[at];
+        if (typeof v !== "number" || !Number.isFinite(v)) return NIL;
+        sum += v;
+        if (at === 0 || v < low) low = v;
+        if (at === 0 || v > high) high = v;
+      }
+      return id === MethodId.ListSum ? sum
+           : id === MethodId.ListAvg ? sum / receiver.length
+           : id === MethodId.ListMax ? high : low;
+    }
+    default:
+      return POISONED;
+  }
+}
+
+/* THE ONE LOOP, over one list, running sub-program `sub` once per element. Reduce
+ * takes its seed on top of the list (the emitter pushes the list, then the init);
+ * every other mode takes the list alone. What the body sees is its LoadX bindings:
+ * [element, index], and for reduce [acc, element, index] — over a map, reduce reads
+ * [acc, key, value], per sorted key so the answer is the same on every view. `bound`
+ * is the trip bound the emitter served: past it the loop simply stops, bounded work
+ * and a short answer rather than a hung frame. */
+function iterate(program: Program, mode: number, sub: number, bound: number,
+                 load: ViewHost, stack: Json[]): Json {
+  const body = program.s?.[sub];
+  if (!Array.isArray(body)) return POISONED;
+  const seed = mode === IterateMode.Reduce ? (stack.length ? stack.pop() : NIL) : NIL;
+  const list = stack.length ? stack.pop() : NIL;
+  /* Reduce is the one loop a MAP takes: the body sees [acc, key, value]. The other
+     modes have no settled result shape over a map and the compiler refuses them. */
+  if (mode === IterateMode.Reduce && isMapValue(list)) {
+    const keys = Object.keys(list).sort();
+    const pairs = Math.min(keys.length, bound);
+    let acc = seed;
+    for (let at = 0; at < pairs; at++)
+      acc = exec(program, body, load, [acc, keys[at], list[keys[at]] ?? NIL]);
+    return acc;
+  }
+  if (!Array.isArray(list)) return NIL;
+  const count = Math.min(list.length, bound);
+  if (mode === IterateMode.Reduce) {
+    let acc = seed;
+    for (let at = 0; at < count; at++) acc = exec(program, body, load, [acc, list[at], at]);
+    return acc;
+  }
+  if (mode !== IterateMode.Map && mode !== IterateMode.Filter &&
+      mode !== IterateMode.Any && mode !== IterateMode.All &&
+      mode !== IterateMode.SortBy)
+    return POISONED;
+  const results: Json[] = [];
+  for (let at = 0; at < count; at++) results.push(exec(program, body, load, [list[at], at]));
+  /* the CONDITION modes hold the one unknown rule: a Nil body result poisons
+     the whole answer instead of quietly reading as false — the scalar VM's
+     exact behavior, pinned by the shared fixtures */
+  if ((mode === IterateMode.Filter || mode === IterateMode.Any ||
+       mode === IterateMode.All) &&
+      results.some((r) => nil(r)))
+    return NIL;
+  if (mode === IterateMode.Map) return results;
+  if (mode === IterateMode.Filter)
+    return list.slice(0, count).filter((_, at) => truthy(results[at]) === true);
+  if (mode === IterateMode.Any) return results.some((r) => truthy(r) === true);
+  if (mode === IterateMode.All) return results.every((r) => truthy(r) === true);
+  /* SortBy: the ELEMENTS travel, ordered by the keys the body made, and the sort
+     is stable -- equal keys leave the list in the order it arrived */
+  const order = results.map((key, at) => ({ key, at }));
+  order.sort((a, b) => keysBefore(a.key, b.key));
+  return order.map((row) => list[row.at]);
+}
+
 /* An attribute read as TEXT, or null where it is Nil. The num/bool/color coercers that
  * stood beside this went with the renderer that took their fallbacks; this one stays
- * because the interpreter itself needs it — STR, MEASURE and text-side ADD all render an
+ * because the interpreter itself needs it — Str, Measure and text-side Add all render an
  * operand through it, so the two spellings of "make this a string" cannot disagree. */
 export function attrText(value: Json): string | null {
   if (nil(value)) return null;

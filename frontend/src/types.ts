@@ -3,18 +3,24 @@
 
 export type Json = any;
 
-/* 18: A PROPERTY IS A PUBLIC VARIABLE — the `props` list and the PropDef row left the
+/* 19: THE VIEW DIALECT DIED INTO THE SERVED IR — a view program is the language's one
+ * instruction form, packed: `i` four plain words per instruction (op, small, a, b),
+ * `k` the constant pool, `c` the cell address table a Load indexes, `s` lambda
+ * sub-programs. Every ordinal is the generated vocabulary in ir.ts, emitted from the
+ * same table as the backend's enums, and program.ts is the second interpreter of the
+ * same IR rather than a dialect of its own. The named-op rows ({op: "CONST"}) are gone.
+ * (18: A PROPERTY IS A PUBLIC VARIABLE — the `props` list and the PropDef row left the
  * document. A component declares `locals` like every other element, and `public` on one
  * is what an instance fills in; a private one is served (its cell and address are real,
  * and the component's own pictures read it) but never offered. `type` and `shape` are one
  * vocabulary now — `num`/`text` where `f64`/`str` stood, `color` a real type, and a
  * `text` carrying `variants` is what `enum` was.
- * (17: THE COPY RIDES THE EVENT — an `input` frame raised from inside a `repeat` carries
+ * 17: THE COPY RIDES THE EVENT — an `input` frame raised from inside a `repeat` carries
  * `repeat: {index, count}`, and carries the key at all only when there IS a copy. The
  * backend holds one set of cells for a repeated element however many times this view
  * drew it, so the copy exists nowhere but on the event: a flow reads it as
  * `repeat.index` / `.count` / `.fraction` and writes the pressed copy's own element.
- * (16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — a PAGE element's attrs name the
+ * 16: THE DISPLAY TIER GETS THE WHOLE UNIVERSE — a PAGE element's attrs name the
  * variables in their lexical scope and the mesh, exactly as a flow on that element does.
  * A served view program carries two more cell kinds, `var:<id>` (read from the
  * variable's own `v<id>` live value) and `mesh:<entity>[.<field>]`, and a live frame
@@ -29,7 +35,7 @@ export type Json = any;
  * spelled `this.<slot>` in both tiers.
  * 14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
  * the step kind `notify` broadcasts a notification to every session.) */
-export const PROTO = 18;
+export const PROTO = 19;
 
 /* WHICH COPY of a `repeat` a gesture came from, as it rides the wire and as the renderer
  * holds it. One shape in one place: the stage's binds, the gesture seat and the `input`
@@ -372,19 +378,19 @@ export interface Doc {
 
 /* ---- registry ---- */
 
-export type Program = { code: Instr[] };
-/* One instruction. Most ops carry nothing; the fields below belong to exactly one family
-   each and are absent everywhere else: `v` a CONST's literal, `cell` a LOAD's cell name,
-   `n` how many values MAKE_LIST takes, `i` which binding an ARG reads, `mode` and `body`
-   the loop ITERATE runs per element (program.ts holds the contract). */
-export type Instr = {
-  op: string;
-  v?: Json;
-  cell?: string;
-  n?: number;
-  i?: number;
-  mode?: string;
-  body?: Instr[];
+/* One compiled view program, packed (the backend's template_expr.h documents the
+   envelope): `i` is the instruction stream, FOUR PLAIN WORDS per instruction —
+   op, small, a, b — flat; `k` the constant pool a Const's `a` indexes; `c` the CELL
+   ADDRESS TABLE a Load's `a` indexes ("slot:...", "var:<id>", "mesh:...", "theme:...",
+   "state:...", "repeat:...", "time:..."); `s` lambda sub-programs an Iterate's `a`
+   names, each packed like `i` and sharing the program's `k`/`c`. Absent keys are
+   empty. Every ordinal is the generated vocabulary in ir.ts (program.ts holds the
+   execution contract). */
+export type Program = {
+  i: number[];
+  k?: Json[];
+  c?: string[];
+  s?: number[][];
 };
 
 /* ONE OF A COMPONENT'S VARIABLES, as the registry serves it. The document declares

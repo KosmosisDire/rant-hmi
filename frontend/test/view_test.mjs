@@ -29,6 +29,44 @@ const mod = (name) => pathToFileURL(join(dist, name)).href;
 const { DocStore } = await import(mod("doc.js"));
 const { foldAggs } = await import(mod("editor.js"));
 const { run } = await import(mod("program.js"));
+const { Op, LoadPlace, IterateMode, BuiltinId, MethodId } = await import(mod("ir.js"));
+
+/* ---- a tiny assembler for hand-built PACKED programs (types.ts Program) ----
+   Each row is a function that emits into the program under assembly: `lit` pools a
+   constant, `loadCell` pools a cell address, `over` assembles a lambda body into the
+   sub-program table, `ins` is a raw four-word instruction. asm(...) yields the
+   {i,k,c,s} envelope run() executes — the same shape the backend serves. */
+const pooled = (pool, value) => {
+  const key = JSON.stringify(value);
+  let at = pool.findIndex((held) => JSON.stringify(held) === key);
+  if (at < 0) {
+    at = pool.length;
+    pool.push(value);
+  }
+  return at;
+};
+const ins = (op, small = 0, a = 0, b = 0) => (p) => { p.i.push(op, small, a, b); };
+const lit = (v) => (p) => { p.i.push(Op.Const, 0, pooled(p.k, v), 0); };
+const loadCell = (cell) => (p) => {
+  p.i.push(Op.Load, LoadPlace.Cell, pooled(p.c, cell), 0);
+};
+const arg = (i) => ins(Op.LoadX, 0, i);
+const callOf = (id, argc) => ins(Op.Call, id, 0, argc);
+const methodOf = (id, argc) => ins(Op.Method, id, 0, argc);
+const over = (mode, body, bound = 65536) => (p) => {
+  const saved = p.i;
+  p.i = [];
+  for (const row of body) row(p);
+  const sub = p.i;
+  p.i = saved;
+  p.s.push(sub);
+  p.i.push(Op.Iterate, mode, p.s.length - 1, bound);
+};
+const asm = (...rows) => {
+  const p = { i: [], k: [], c: [], s: [] };
+  for (const row of rows) row(p);
+  return p;
+};
 const { syncUrl } = await import(mod("endpoint.js"));
 const { Panel } = await import(mod("reconcile.js"));
 const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
@@ -129,7 +167,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 18, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 19, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.components.length === 12, "twelve components");
@@ -152,7 +190,7 @@ check(Array.isArray(snapshot.builtins[0]?.children) && !snapshot.builtins[0]?.te
 /* EVERY PAGE NODE'S ATTRS ARE COMPILED TOO: the same programs a component's are, which is
    what lets one renderer draw a page and an instance's internals */
 const headerNode = snapshot.doc.pages[0].children[0];
-check(snapshot.node_attrs?.[String(headerNode.id)]?.attrs?.surface?.code?.[0]?.op === "LOAD",
+check(snapshot.node_attrs?.[String(headerNode.id)]?.attrs?.surface?.i?.[0] === Op.Load,
       "a page node's own attrs arrive compiled, keyed by node id");
 const interactionOf = (node) =>
   node?.interact ?? (node?.children ?? []).map(interactionOf).find(Boolean) ?? null;
@@ -320,12 +358,12 @@ check(!!pill && typeof pill.id === "number", "the component insert echoed with i
 let refreshed = await next("snapshot");
 while (!refreshed.node_attrs?.[String(pill.id)]) refreshed = await next("snapshot");
 const pillBody = pill.children[0];
-check((refreshed.node_attrs?.[String(pill.id)]?.attrs?.surface?.code?.length ?? 0) > 0,
+check((refreshed.node_attrs?.[String(pill.id)]?.attrs?.surface?.i?.length ?? 0) > 0,
       "a doc component's ROOT compiles into node_attrs under its own id");
-check(refreshed.node_attrs?.[String(pillBody.id)]?.attrs?.left?.code?.[0]?.op === "CONST",
+check(refreshed.node_attrs?.[String(pillBody.id)]?.attrs?.left?.i?.[0] === Op.Const,
       "and its internal nodes too: an entered instance renders through the page's path");
-check(refreshed.node_attrs?.[String(pillBody.children[0].id)]?.attrs?.text?.code?.[0]?.op
-        === "LOAD",
+check(refreshed.node_attrs?.[String(pillBody.children[0].id)]?.attrs?.text?.i?.[0]
+        === Op.Load,
       "a prop reference compiles to the same cell load the template serves");
 
 /* everything below this point simulates further edits as LOCAL-ONLY echoes (store.apply
@@ -525,16 +563,28 @@ check(document.activeElement === slotInput("radius"), "and the caret is still in
 document.activeElement = null;
 
 /* the interpreter's own rules: Nil poisons, division by zero is Nil, not a trap */
-check(run({ code: [{ op: "CONST", v: null }, { op: "CONST", v: 2 }, { op: "MUL" }] }, () => null) === null,
+check(run(asm(lit(null), lit(2), ins(Op.Mul)), () => null) === null,
       "Nil poisons arithmetic");
-check(run({ code: [{ op: "CONST", v: 1 }, { op: "CONST", v: 0 }, { op: "DIV" }] }, () => null) === null,
+check(run(asm(lit(1), lit(0), ins(Op.Div)), () => null) === null,
       "division by zero is Nil");
-check(run({ code: [{ op: "LOAD", cell: "slot:x" }] }, () => 5) === 5, "LOAD reads a cell");
-check(run({ code: [{ op: "CONST", v: -3 }, { op: "ABS" }] }, () => null) === 3,
-      "the full scalar interpreter runs ABS");
-check(run({ code: [{ op: "CONST", v: 7 }, { op: "CONST", v: 3 }, { op: "MOD" }] }, () => null) === 1,
-      "the full scalar interpreter runs MOD");
-check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is UNKNOWN");
+check(run(asm(loadCell("slot:x")), () => 5) === 5, "Load reads a cell");
+check(run(asm(lit(-3), callOf(BuiltinId.Abs, 1)), () => null) === 3,
+      "the interpreter dispatches a Call by its id");
+check(run(asm(lit(7), lit(3), ins(Op.Mod)), () => null) === 1,
+      "and runs the Mod opcode");
+check(run(asm(ins(99)), () => null) === null, "an unknown opcode is UNKNOWN");
+check(run(asm(lit(1), callOf(BuiltinId.None, 1)), () => null) === null,
+      "and so is a call id the view does not implement");
+/* `??` is the jump pair: JmpNil pops the Nil onto the default, a known value jumps
+   past it — and a BACKWARD jump is refused as UNKNOWN, never a hung frame */
+check(run(asm(lit(null), ins(Op.JmpNil, 0, 3), ins(Op.Jmp, 0, 4), lit(42)),
+          () => null) === 42,
+      "coalesce takes the default on Nil");
+check(run(asm(lit(7), ins(Op.JmpNil, 0, 3), ins(Op.Jmp, 0, 4), lit(42)),
+          () => null) === 7,
+      "and keeps a known value");
+check(run(asm(lit(1), ins(Op.Jmp, 0, 0)), () => null) === null,
+      "a backward jump poisons instead of spinning");
 
 /* ---- DISPLAY-TIER LISTS: the opcode family a list expression compiles to ----
    A list is an ordinary value on the stack, and a Nil ELEMENT is a value the list HOLDS --
@@ -545,136 +595,150 @@ check(run({ code: [{ op: "WAT" }] }, () => null) === null, "an unknown opcode is
    whole aggregate to Nil rather than averaging over the samples around a gap. */
 {
   const nothing = () => null;
-  const vm = (...code) => run({ code }, nothing);
-  const lit = (v) => ({ op: "CONST", v });
+  const vm = (...rows) => run(asm(...rows), nothing);
   const json = (v) => JSON.stringify(v);
-  const arg = (i) => ({ op: "ARG", i });
-  const over = (mode, body) => ({ op: "ITERATE", mode, body });
+  const list = (n) => ins(Op.MakeList, 0, 0, n);
+  const index = ins(Op.Index);
+  const length = methodOf(MethodId.ListLength, 0);
+  const indexOf = methodOf(MethodId.ListIndexOf, 1);
 
-  check(json(vm(lit(1), lit(2), lit(3), { op: "MAKE_LIST", n: 3 })) === "[1,2,3]",
-        "MAKE_LIST takes its values in the order they were pushed");
-  check(json(vm(lit(1), lit(null), lit(3), { op: "MAKE_LIST", n: 3 })) === "[1,null,3]",
+  check(json(vm(lit(1), lit(2), lit(3), list(3))) === "[1,2,3]",
+        "MakeList takes its values in the order they were pushed");
+  check(json(vm(lit(1), lit(null), lit(3), list(3))) === "[1,null,3]",
         "and a Nil element stays put: a gap does not poison the list holding it");
 
-  const three = [lit(10), lit(20), lit(30), { op: "MAKE_LIST", n: 3 }];
-  check(vm(...three, lit(1), { op: "INDEX" }) === 20, "INDEX reads the element it names");
-  check(vm(...three, lit(3), { op: "INDEX" }) === null, "past the end is Nil, never a wrap");
-  check(vm(...three, lit(-1), { op: "INDEX" }) === null, "and so is a negative index");
-  check(vm(...three, lit(1.5), { op: "INDEX" }) === null,
+  const three = [lit(10), lit(20), lit(30), list(3)];
+  check(vm(...three, lit(1), index) === 20, "Index reads the element it names");
+  check(vm(...three, lit(3), index) === null, "past the end is Nil, never a wrap");
+  check(vm(...three, lit(-1), index) === null, "and so is a negative index");
+  check(vm(...three, lit(1.5), index) === null,
         "a fractional index names no element, so it is Nil rather than truncated");
-  check(vm(lit(7), lit(0), { op: "INDEX" }) === null, "and indexing a non-list is Nil");
+  check(vm(lit(7), lit(0), index) === null, "and indexing a non-list is Nil");
 
-  check(vm(lit("abc"), { op: "LENGTH" }) === 3, "LENGTH counts a string's characters");
-  check(vm(...three, { op: "LENGTH" }) === 3, "and a list's elements");
-  check(vm(lit(5), { op: "LENGTH" }) === null, "a number has no length: Nil");
+  /* length is receiver-blind: any of the three namesake ids answers text, list
+     and map alike, exactly as the untyped emitter needs */
+  check(vm(lit("abc"), methodOf(MethodId.TextLength, 0)) === 3,
+        "length counts a string's characters");
+  check(vm(...three, length) === 3, "and a list's elements");
+  check(vm(lit(5), length) === null, "a number has no length: Nil");
 
   /* A ROW IS AN ORDINARY ELEMENT. A nested cell arrives with its rows whole inside the
-     `values` array (backend/src/app.cpp, wire_element), so reading one is INDEX twice and
-     counting one is LENGTH on what the first INDEX gave back — a multi-series plot is
+     `values` array (backend/src/app.cpp, wire_element), so reading one is Index twice and
+     counting one is length on what the first Index gave back — a multi-series plot is
      `history[i][series]` and nothing else. */
-  const rows = [lit([1, 2]), lit([3]), { op: "MAKE_LIST", n: 2 }];
-  check(vm(...rows, lit(0), { op: "INDEX" }, lit(1), { op: "INDEX" }) === 2,
+  const rows = [lit([1, 2]), lit([3]), list(2)];
+  check(vm(...rows, lit(0), index, lit(1), index) === 2,
         "indexing a row reaches the leaf");
-  check(vm(...rows, lit(0), { op: "INDEX" }, { op: "LENGTH" }) === 2,
-        "and LENGTH over a row counts its leaves — the series count a repeat reads");
-  check(vm(...rows, lit(1), { op: "INDEX" }, lit(1), { op: "INDEX" }) === null,
+  check(vm(...rows, lit(0), index, length) === 2,
+        "and length over a row counts its leaves — the series count a repeat reads");
+  check(vm(...rows, lit(1), index, lit(1), index) === null,
         "a leaf a shorter row does not have is Nil, not a wrap into the next row");
-  const keyed = [lit({ a: 1 }), { op: "MAKE_LIST", n: 1 }];
-  check(vm(...keyed, lit(0), { op: "INDEX" }, lit("a"), { op: "INDEX" }) === 1,
+  const keyed = [lit({ a: 1 }), list(1)];
+  check(vm(...keyed, lit(0), index, lit("a"), index) === 1,
         "a MAP row reads by key the same way");
 
-  const names = [lit("a"), lit("b"), { op: "MAKE_LIST", n: 2 }];
-  check(vm(...names, lit("b"), { op: "INDEX_OF" }) === 1, "INDEX_OF finds the first match");
-  check(vm(...names, lit("z"), { op: "INDEX_OF" }) === -1,
+  const names = [lit("a"), lit("b"), list(2)];
+  check(vm(...names, lit("b"), indexOf) === 1, "indexOf finds the first match");
+  check(vm(...names, lit("z"), indexOf) === -1,
         "a miss is -1, the scalar VM's own answer");
-  check(vm(...names, lit(null), { op: "INDEX_OF" }) === -1,
+  check(vm(...names, lit(null), indexOf) === -1,
         "and a Nil needle matches nothing at all");
-  check(vm(lit("ab"), lit("a"), { op: "INDEX_OF" }) === null, "INDEX_OF on a non-list is Nil");
+  check(vm(lit("ab"), lit("a"), indexOf) === null, "indexOf on a non-list is Nil");
 
-  const nums = [lit(1), lit(2), lit(6), { op: "MAKE_LIST", n: 3 }];
-  const gap = [lit(1), lit(null), lit(6), { op: "MAKE_LIST", n: 3 }];
-  const empty = [{ op: "MAKE_LIST", n: 0 }];
-  check(vm(...nums, { op: "LIST_SUM" }) === 9 && vm(...nums, { op: "LIST_AVG" }) === 3,
-        "LIST_SUM and LIST_AVG over the elements");
-  check(vm(...nums, { op: "LIST_MAX" }) === 6 && vm(...nums, { op: "LIST_MIN" }) === 1,
-        "LIST_MAX and LIST_MIN too");
-  check(vm(...empty, { op: "LIST_SUM" }) === 0,
+  const nums = [lit(1), lit(2), lit(6), list(3)];
+  const gap = [lit(1), lit(null), lit(6), list(3)];
+  const empty = [list(0)];
+  const agg = (id) => methodOf(id, 0);
+  check(vm(...nums, agg(MethodId.ListSum)) === 9 &&
+          vm(...nums, agg(MethodId.ListAvg)) === 3,
+        "sum and avg over the elements");
+  check(vm(...nums, agg(MethodId.ListMax)) === 6 &&
+          vm(...nums, agg(MethodId.ListMin)) === 1,
+        "max and min too");
+  check(vm(...empty, agg(MethodId.ListSum)) === 0,
         "an EMPTY list sums to 0 -- the VM's own answer, not Nil");
-  check(vm(...empty, { op: "LIST_AVG" }) === null && vm(...empty, { op: "LIST_MAX" }) === null &&
-          vm(...empty, { op: "LIST_MIN" }) === null,
+  check(vm(...empty, agg(MethodId.ListAvg)) === null &&
+          vm(...empty, agg(MethodId.ListMax)) === null &&
+          vm(...empty, agg(MethodId.ListMin)) === null,
         "while its average, maximum and minimum are Nil: there is nothing to report");
-  check(vm(...gap, { op: "LIST_SUM" }) === null && vm(...gap, { op: "LIST_AVG" }) === null &&
-          vm(...gap, { op: "LIST_MAX" }) === null && vm(...gap, { op: "LIST_MIN" }) === null,
+  check(vm(...gap, agg(MethodId.ListSum)) === null &&
+          vm(...gap, agg(MethodId.ListAvg)) === null &&
+          vm(...gap, agg(MethodId.ListMax)) === null &&
+          vm(...gap, agg(MethodId.ListMin)) === null,
         "one gap takes the whole aggregate to Nil, again matching the VM");
-  check(vm(lit(3), { op: "LIST_SUM" }) === null, "and a non-list aggregates to Nil");
+  check(vm(lit(3), agg(MethodId.ListSum)) === null, "and a non-list aggregates to Nil");
 
-  check(json(vm(lit(0.5), lit(0.25), { op: "ANCHOR" })) === '{"x":0.5,"y":0.25}',
-        "ANCHOR builds a point from x then y");
-  check(vm(lit(0.5), lit(null), { op: "ANCHOR" }) === null,
+  check(json(vm(lit(0.5), lit(0.25), callOf(BuiltinId.Anchor, 2))) === '{"x":0.5,"y":0.25}',
+        "anchor builds a point from x then y");
+  check(vm(lit(0.5), lit(null), callOf(BuiltinId.Anchor, 2)) === null,
         "a missing coordinate makes the whole anchor a gap");
 
-  /* ITERATE: one loop, one body, the mode saying what to do with what the body returned.
-     ARG 0 is the element and ARG 1 its index -- for REDUCE, ARG 0 is the accumulator and
-     the pair shifts up one. */
-  check(json(vm(...three, over("MAP", [arg(0), arg(1), { op: "ADD" }]))) === "[10,21,32]",
-        "MAP runs the body per element, with the index beside it");
-  check(json(vm(lit(1), lit(2), lit(6), { op: "MAKE_LIST", n: 3 },
-                over("FILTER", [arg(0), lit(2), { op: "GE" }]))) === "[2,6]",
-        "FILTER keeps what the body called true");
+  /* Iterate: one loop, one sub-program body, the mode saying what to do with what the
+     body returned. The body's LoadX 0 is the element and 1 its index -- for reduce,
+     0 is the accumulator and the pair shifts up one. */
+  check(json(vm(...three, over(IterateMode.Map, [arg(0), arg(1), ins(Op.Add)]))) ===
+          "[10,21,32]",
+        "Map runs the body per element, with the index beside it");
+  check(json(vm(lit(1), lit(2), lit(6), list(3),
+                over(IterateMode.Filter, [arg(0), lit(2), ins(Op.Ge)]))) === "[2,6]",
+        "Filter keeps what the body called true");
   /* the one unknown rule (spec 2.4): a Nil condition result poisons the whole
      answer — dropping the element would be the unknown silently reading as false */
-  check(json(vm(lit(1), lit(null), lit(2), lit(6), { op: "MAKE_LIST", n: 4 },
-                over("FILTER", [arg(0), lit(2), { op: "GE" }]))) === "null",
-        "FILTER: an unknown condition poisons the answer");
-  check(vm(lit(0), lit(1), { op: "MAKE_LIST", n: 2 }, over("ANY", [arg(0)])) === true &&
-          vm(lit(0), lit(1), { op: "MAKE_LIST", n: 2 }, over("ALL", [arg(0)])) === false,
-        "ANY and ALL answer over the same body");
-  check(vm(...empty, over("ANY", [arg(0)])) === false &&
-          vm(...empty, over("ALL", [arg(0)])) === true,
-        "and an empty list answers ANY false, ALL true");
-  check(json(vm(lit(3), lit(1), lit(4), lit(1), lit(5), { op: "MAKE_LIST", n: 5 },
-                over("SORT_BY", [arg(0), lit(2), { op: "MOD" }]))) === "[4,3,1,1,5]",
-        "SORT_BY moves the ELEMENTS by the body's key, and equal keys keep their order");
-  check(json(vm(lit(1), lit(2), lit(3), { op: "MAKE_LIST", n: 3 },
-                over("SORT_BY", [arg(0), lit(2), { op: "EQ" }, lit(null), arg(0),
-                                 { op: "PICK" }]))) === "[1,3,2]",
+  check(json(vm(lit(1), lit(null), lit(2), lit(6), list(4),
+                over(IterateMode.Filter, [arg(0), lit(2), ins(Op.Ge)]))) === "null",
+        "Filter: an unknown condition poisons the answer");
+  check(vm(lit(0), lit(1), list(2), over(IterateMode.Any, [arg(0)])) === true &&
+          vm(lit(0), lit(1), list(2), over(IterateMode.All, [arg(0)])) === false,
+        "Any and All answer over the same body");
+  check(vm(...empty, over(IterateMode.Any, [arg(0)])) === false &&
+          vm(...empty, over(IterateMode.All, [arg(0)])) === true,
+        "and an empty list answers Any false, All true");
+  check(json(vm(lit(3), lit(1), lit(4), lit(1), lit(5), list(5),
+                over(IterateMode.SortBy, [arg(0), lit(2), ins(Op.Mod)]))) === "[4,3,1,1,5]",
+        "SortBy moves the ELEMENTS by the body's key, and equal keys keep their order");
+  check(json(vm(lit(1), lit(2), lit(3), list(3),
+                over(IterateMode.SortBy, [arg(0), lit(2), ins(Op.Eq), lit(null), arg(0),
+                                          methodOf(MethodId.BoolPick, 2)]))) === "[1,3,2]",
         "a key with no order to it sorts last, so an UNKNOWN never leads the list");
-  check(vm(lit(1), lit(2), lit(3), { op: "MAKE_LIST", n: 3 }, lit(0),
-           over("REDUCE", [arg(0), arg(1), { op: "ADD" }])) === 6,
-        "REDUCE folds the list into its accumulator");
-  check(vm(...empty, lit(7), over("REDUCE", [arg(0), arg(1), { op: "ADD" }])) === 7,
+  check(vm(lit(1), lit(2), lit(3), list(3), lit(0),
+           over(IterateMode.Reduce, [arg(0), arg(1), ins(Op.Add)])) === 6,
+        "Reduce folds the list into its accumulator");
+  check(vm(...empty, lit(7), over(IterateMode.Reduce, [arg(0), arg(1), ins(Op.Add)])) === 7,
         "over an empty list it is the seed it started from");
-  check(vm(lit("a"), lit("b"), { op: "MAKE_LIST", n: 2 }, lit(""),
-           over("REDUCE", [arg(0), arg(1), { op: "ADD" }])) === "ab",
+  check(vm(lit("a"), lit("b"), list(2), lit(""),
+           over(IterateMode.Reduce, [arg(0), arg(1), ins(Op.Add)])) === "ab",
         "and it builds text as readily as a number, since + concatenates");
-  check(vm(lit(5), over("MAP", [arg(0)])) === null, "iterating a non-list is Nil");
-  check(vm(...three, { op: "ITERATE", mode: "WAT", body: [arg(0)] }) === null,
+  check(vm(lit(5), over(IterateMode.Map, [arg(0)])) === null, "iterating a non-list is Nil");
+  check(vm(...three, over(99, [arg(0)])) === null,
         "and a mode this view does not know fails as UNKNOWN");
 
-  /* the loop is BOUNDED, but by a FRAME's worth of work rather than by a cell's length: a
-     retained list is bounded in bytes now, so a long history walks in full and only a
-     picture no screen could draw stops short */
-  const long = vm(lit(Array.from({ length: 5000 }, (_, i) => i)), over("MAP", [arg(0)]));
+  /* the loop is BOUNDED by the trip bound the emitter serves in the instruction — a
+     frame's worth of work rather than a cell's length: a retained list is bounded in
+     bytes now, so a long history walks in full and only a picture no screen could
+     draw stops short */
+  const long = vm(lit(Array.from({ length: 5000 }, (_, i) => i)),
+                  over(IterateMode.Map, [arg(0)]));
   check(Array.isArray(long) && long.length === 5000,
         "a five-thousand-sample history maps whole, got " + (long ?? []).length);
-  const huge = vm(lit(Array.from({ length: 70000 }, (_, i) => i)), over("MAP", [arg(0)]));
+  const huge = vm(lit(Array.from({ length: 70000 }, (_, i) => i)),
+                  over(IterateMode.Map, [arg(0)]));
   check(Array.isArray(huge) && huge.length === 65536,
-        "and the frame budget still stops somewhere, got " + (huge ?? []).length);
+        "and the served trip bound still stops somewhere, got " + (huge ?? []).length);
 
-  /* A MAP takes the same vocabulary where it has an honest answer: LENGTH counts its
-     pairs, INDEX looks a text key up, and REDUCE walks (acc, key, value) per SORTED key
+  /* A MAP takes the same vocabulary where it has an honest answer: length counts its
+     pairs, Index looks a text key up, and reduce walks (acc, key, value) per SORTED key
      -- the same deterministic order the backend iterates in, so every view folds the
      same answer. The other loops have no settled result shape over a map: Nil. */
   const modes = lit({ low: 1, high: 2 });
-  check(vm(modes, { op: "LENGTH" }) === 2, "LENGTH counts a map's pairs");
-  check(vm(modes, lit("high"), { op: "INDEX" }) === 2, "INDEX reads the key it names");
-  check(vm(modes, lit("off"), { op: "INDEX" }) === null, "an absent key is Nil");
-  check(vm(modes, lit(0), { op: "INDEX" }) === null, "and a map takes no numeric index");
+  check(vm(modes, length) === 2, "length counts a map's pairs");
+  check(vm(modes, lit("high"), index) === 2, "Index reads the key it names");
+  check(vm(modes, lit("off"), index) === null, "an absent key is Nil");
+  check(vm(modes, lit(0), index) === null, "and a map takes no numeric index");
   check(vm(modes, lit(""),
-           over("REDUCE", [arg(0), arg(1), { op: "ADD" }, arg(2), { op: "ADD" }])) ===
+           over(IterateMode.Reduce, [arg(0), arg(1), ins(Op.Add), arg(2), ins(Op.Add)])) ===
           "high2low1",
-        "REDUCE walks a map as (acc, key, value), per sorted key");
-  check(vm(modes, over("MAP", [arg(0)])) === null,
+        "reduce walks a map as (acc, key, value), per sorted key");
+  check(vm(modes, over(IterateMode.Map, [arg(0)])) === null,
         "while the other loops refuse a map as UNKNOWN");
 }
 
@@ -1512,8 +1576,8 @@ stageStore.load({
    both with the same compiler, and this is the wire form it serves them in. A literal is
    the degenerate program, which is why one CONST covers most of a page. Page nodes are
    CANVAS PX of the artboard; the instances' internals below them are fractions. */
-const prog = (v) => ({ code: [{ op: "CONST", v }] });
-const loads = (cell) => ({ code: [{ op: "LOAD", cell }] });
+const prog = (v) => asm(lit(v));
+const loads = (cell) => asm(loadCell(cell));
 const stageAttrs = {
   "901": { attrs: { left: prog(22), top: prog(22), w: prog(440), h: prog(220),
                     radius: prog(3), surface: loads("theme:accent") } },
@@ -1658,7 +1722,8 @@ check(label.style.width === "176px",
    what the program indexes, and what is RECORDED is the copy's version */
 stageAggs.set("v520", { version: 1, values: [11, 22, 33] });
 stageAttrs["904"].attrs = { left: prog(242), top: prog(22), h: prog(110),
-                            w: { code: [{ op: "LOAD", cell: "var:520" }, { op: "LENGTH" }] } };
+                            w: asm(loadCell("var:520"),
+                                   methodOf(MethodId.ListLength, 0)) };
 stageEditor.live = { epoch: 34, values: {} };
 drawStage();
 check(label.style.width === "3px",
@@ -1962,12 +2027,11 @@ check(stageNode("frame", 901) === heldAgain &&
   document.addEventListener ??= () => undefined;
   document.removeEventListener ??= () => undefined;
 
-  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  const cell = (c) => asm(loadCell(c));
   /* pressed ? green : blue — the view-local gesture state, bound the way a real instance
      binds it, so a press has something to move */
-  const pressedTint = { code: [{ op: "LOAD", cell: "state:pressed" },
-                               { op: "CONST", v: "#00ff00" }, { op: "CONST", v: "#0000ff" },
-                               { op: "PICK" }] };
+  const pressedTint = asm(loadCell("state:pressed"), lit("#00ff00"), lit("#0000ff"),
+                          methodOf(MethodId.BoolPick, 2));
   const rigType = {
     name: "Rig", design_w: 220, design_h: 110, events: [],
     slots: [{ name: "tint", default: "#000000" }, { name: "on", default: 1 },
@@ -2195,7 +2259,7 @@ check(stageNode("frame", 901) === heldAgain &&
    the served template changes — the component still reads `slot:value` and does not know
    which side of the wire the number came from. */
 {
-  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  const cell = (c) => asm(loadCell(c));
   const pcType = {
     name: "Cellule", design_w: 120, design_h: 40, events: [],
     slots: [{ name: "value", shape: "num", default: 0 }],
@@ -2216,8 +2280,7 @@ check(stageNode("frame", 901) === heldAgain &&
     "710": {
       attrs: { left: prog(11), top: prog(11), w: prog(120), h: prog(40),
                repeat: prog(3) },
-      slots: { value: { code: [{ op: "LOAD", cell: "repeat:index" },
-                               { op: "CONST", v: 100 }, { op: "MUL" }] } },
+      slots: { value: asm(loadCell("repeat:index"), lit(100), ins(Op.Mul)) },
     },
   };
   const pView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
@@ -2247,7 +2310,8 @@ check(stageNode("frame", 901) === heldAgain &&
 
   /* the served template did not change: the component reads `slot:value` exactly as it
      does for an ordinary property, so a component never knows which tier answered */
-  check(pcType.template.children[0].attrs.text.code[0].cell === "slot:value",
+  const pcText = pcType.template.children[0].attrs.text;
+  check(pcText.i[0] === Op.Load && pcText.c[pcText.i[2]] === "slot:value",
         "the component still reads slot:value — the tier is the compiler's business");
 }
 
@@ -2260,7 +2324,7 @@ check(stageNode("frame", 901) === heldAgain &&
    loop (stepped here on a hand clock): retargets start from what is shown, structure
    reads truth, Nil snaps. */
 {
-  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  const cell = (c) => asm(loadCell(c));
   /* a type whose `value` PROPERTY declares the transition: the bar's position and the
      gate's visibility both read the same slot, and only the PICTURE of it may sweep.
      The bar ALSO carries attr-transition metadata of its own (width), pinning that a
@@ -2274,12 +2338,10 @@ check(stageNode("frame", 901) === heldAgain &&
          it must read is the TRUE value, never the eased picture of it */
       { kind: "frame", name: "bar", attrs: { left: cell("slot:value"), w: prog(0.1),
                                              h: prog(0.5) },
-        transitions: { w: { ms: { code: [{ op: "LOAD", cell: "slot:value" },
-                                         { op: "CONST", v: 1000 },
-                                         { op: "MUL" }] } } } },
+        transitions: { w: { ms: asm(loadCell("slot:value"), lit(1000),
+                                    ins(Op.Mul)) } } },
       { kind: "frame", name: "gate",
-        attrs: { show: { code: [{ op: "LOAD", cell: "slot:value" },
-                                { op: "CONST", v: 0.9 }, { op: "GT" }] },
+        attrs: { show: asm(loadCell("slot:value"), lit(0.9), ins(Op.Gt)),
                  surface: prog("#111111"), w: prog(0.1), h: prog(0.1) } },
     ] },
   };
@@ -2425,7 +2487,7 @@ check(stageNode("frame", 901) === heldAgain &&
    has its OWN ticker (stepTime): it re-runs exactly the binds whose time cell moved,
    and the wire's live diff never touches a time cell. */
 {
-  const cell = (c) => ({ code: [{ op: "LOAD", cell: c }] });
+  const cell = (c) => asm(loadCell(c));
   const kStore = new DocStore();
   kStore.load({
     version: 1, next_id: 999, globals: [], tokens: [], components: [],
@@ -2438,8 +2500,7 @@ check(stageNode("frame", 901) === heldAgain &&
     "730": { attrs: { left: prog(11), top: prog(11), w: prog(220), h: prog(44),
                       text: cell("time:text") } },
     "731": { attrs: { top: prog(110), w: prog(110), h: prog(110),
-                      left: { code: [{ op: "LOAD", cell: "time:now" },
-                                     { op: "CONST", v: 100 }, { op: "MUL" }] } } },
+                      left: asm(loadCell("time:now"), lit(100), ins(Op.Mul)) } },
   };
   const kView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
   const kHost = new Element("section");
@@ -3015,7 +3076,7 @@ check(stageNode("frame", 901) === heldAgain &&
         slots: {}, locals: [], feeds: [], flows: [] },
     ] }],
   });
-  const prog2 = (v) => ({ code: [{ op: "CONST", v }] });
+  const prog2 = (v) => asm(lit(v));
   const ctxAttrs = {
     "941": { attrs: { left: prog2(22), top: prog2(22), w: prog2(440), h: prog2(220) } },
     "950": { attrs: { surface: prog2("#333333") } },
@@ -3143,19 +3204,15 @@ check(stageNode("frame", 901) === heldAgain &&
         attrs: {}, slots: {}, locals: [], feeds: [], flows: [] },
     ] }],
   });
-  const K = (v) => ({ op: "CONST", v });
-  const A = (i) => ({ op: "ARG", i });
   /* x is the element's index, y its value: one map over the slot, one anchor each */
-  const pointsProgram = { code: [
-    { op: "LOAD", cell: "slot:history" },
-    { op: "ITERATE", mode: "MAP", body: [A(1), A(0), { op: "ANCHOR" }] },
-  ] };
+  const pointsProgram = asm(
+    loadCell("slot:history"),
+    over(IterateMode.Map, [arg(1), arg(0), callOf(BuiltinId.Anchor, 2)]));
   /* the LAST element, read by index off the same slot */
-  const lastProgram = { code: [
-    { op: "LOAD", cell: "slot:history" },
-    { op: "LOAD", cell: "slot:history" }, { op: "LENGTH" }, K(1), { op: "SUB" },
-    { op: "INDEX" }, { op: "STR" },
-  ] };
+  const lastProgram = asm(
+    loadCell("slot:history"),
+    loadCell("slot:history"), methodOf(MethodId.ListLength, 0), lit(1), ins(Op.Sub),
+    ins(Op.Index), callOf(BuiltinId.Str, 1));
   const trace = { kind: "path", name: "trace", attrs: { points: pointsProgram },
                   anchors: [], closed: false };
   const plotType = {
@@ -3226,9 +3283,9 @@ check(stageNode("frame", 901) === heldAgain &&
 
   /* `points` that is not a list at all falls through to the authored anchors, which is
      how every ordinary shape is still drawn */
-  trace.attrs.points = { code: [K("nope")] };
-  trace.anchors = [{ x: { code: [K(0)] }, y: { code: [K(0)] } },
-                   { x: { code: [K(1)] }, y: { code: [K(1)] } }];
+  trace.attrs.points = asm(lit("nope"));
+  trace.anchors = [{ x: asm(lit(0)), y: asm(lit(0)) },
+                   { x: asm(lit(1)), y: asm(lit(1)) }];
   plotEditor.live = { epoch: 4, values: {} };
   drawPlot();
   check(traceD() === "M0 0 L1 1",
@@ -3297,7 +3354,7 @@ check(stageNode("frame", 901) === heldAgain &&
         slots: {}, locals: [], feeds: [], flows: [] },
     ] }],
   });
-  const prog3 = (v) => ({ code: [{ op: "CONST", v }] });
+  const prog3 = (v) => asm(lit(v));
   const boxOf = (x, y, w, h) =>
     ({ attrs: { left: prog3(x), top: prog3(y), w: prog3(w), h: prog3(h) } });
   const tHost = new Element("section");

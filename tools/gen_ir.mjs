@@ -15,7 +15,7 @@
  * hand edit to either generated file fails the check.
  *
  * Spellings are derived mechanically: an entry named LoadX disassembles as
- * LOAD_X, an iterate mode SortBy rides the wire as SORT_BY. A `c` field is the
+ * LOAD_X; everything crosses the wire as its plain ordinal. A `c` field is the
  * entry's comment, emitted verbatim above it. */
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -283,7 +283,7 @@ const CLOCK_FIELDS = [
 
 /* what Iterate does with each element's body result (rides Instruction::small);
  * `call` is the method name both surface grammars spell it by */
-const ITERATE_MODES = [
+const ITERATE_ROWS = [
   { name: "Map", call: "map", c: "the body result becomes the element        -> list" },
   { name: "Filter", call: "filter", c: "keep the element where the body is true    -> list" },
   { name: "Any", call: "any", c: "true if the body is true for any element   -> bool" },
@@ -301,47 +301,42 @@ result shape is the body's rather than the receiver's.`,
 
 /* One row per BUILTIN: the enum id (`name`, emitted in this order), the surface
  * spelling (`fn`), the signature (min/max arity, parameter shapes, result shape),
- * `display` (display vocabulary, refused on the wire), and the VIEW column — the
- * program.ts opcode, "@" where the template emitter folds it itself, "" where the
- * view has none. A row with no `name` is VIEW-ONLY: it never reaches the scalar
+ * `display` (display vocabulary, refused on the wire), and the VIEW column — how
+ * the template emitter lowers the row: "=" a Call of the row's own enum id, "@" a
+ * bespoke fold over other opcodes (template_expr.cpp owns the recipe), "" no view
+ * encoding at all. A row with no `name` is VIEW-ONLY: it never reaches the scalar
  * dispatcher, so its table row carries Builtin::None — the honest "no scalar id",
- * which faults loudly if a bug ever routes one to the VM instead of silently
+ * which answers Nil if a bug ever routes one to the VM instead of silently
  * computing a borrowed builtin. `c` comments the enum entry, `rc` the table row. */
 const BUILTINS = [
   { name: "Clamp", fn: "clamp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
   {
     name: "MapRange", fn: "mapRange", min: 5, max: 5, params: ["Num", "Num", "Num", "Num", "Num"], result: "Num", view: "@",
-    rc: `mapRange/roundTo/lerp: pure arithmetic, so the view folds each onto the
-existing ADD/SUB/MUL/DIV/POW/ROUND opcodes (template_expr.cpp) rather than
-gaining an opcode of its own -- "@" is the same bespoke marker \`clamp\` uses`,
+    rc: `mapRange/roundTo/lerp: pure arithmetic, so the view emitter folds each onto
+the existing Add/Sub/Mul/Div and the Pow/Round calls (template_expr.cpp)
+rather than gaining an id of its own -- "@" is the same bespoke marker
+\`clamp\` uses`,
   },
   { name: "RoundTo", fn: "roundTo", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@" },
   { name: "Lerp", fn: "lerp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
-  { name: "Abs", fn: "abs", min: 1, max: 1, params: ["Num"], result: "Num", view: "ABS" },
-  { name: "Round", fn: "round", min: 1, max: 1, params: ["Num"], result: "Num", view: "ROUND" },
-  { name: "Floor", fn: "floor", min: 1, max: 1, params: ["Num"], result: "Num", view: "FLOOR" },
-  { name: "Ceil", fn: "ceil", min: 1, max: 1, params: ["Num"], result: "Num", view: "CEIL" },
-  { name: "Sqrt", fn: "sqrt", min: 1, max: 1, params: ["Num"], result: "Num", view: "SQRT" },
-  { name: "Pow", fn: "pow", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "POW" },
-  { name: "Min", fn: "min", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MIN" },
-  { name: "Max", fn: "max", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MAX" },
-  { name: "Int", fn: "int", min: 1, max: 1, params: ["Unknown"], result: "Num", view: "INT" },
+  { name: "Abs", fn: "abs", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Round", fn: "round", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Floor", fn: "floor", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Ceil", fn: "ceil", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Sqrt", fn: "sqrt", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Pow", fn: "pow", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
+  { name: "Min", fn: "min", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
+  { name: "Max", fn: "max", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
+  { name: "Int", fn: "int", min: 1, max: 1, params: ["Unknown"], result: "Num", view: "=" },
   { name: "Num", fn: "num", min: 1, max: 1, params: ["Unknown"], result: "Num" },
   {
-    fn: "clamp01", min: 1, max: 1, params: ["Num"], result: "Num", view: "CLAMP01", viewOnly: true,
+    fn: "clamp01", min: 1, max: 1, params: ["Num"], result: "Num", view: "@", viewOnly: true,
     rc: `view-only: the template tier's saturating 0..1 fold, which the scalar language
-spells clamp(x, 0, 1) and has no separate opcode for`,
+spells clamp(x, 0, 1) -- the emitter folds it onto Max/Min the same way`,
   },
-  { name: "Rgb", fn: "rgb", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "@" },
-  { name: "Hsv", fn: "hsv", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "@" },
-  { name: "Str", fn: "str", min: 1, max: 1, params: ["Unknown"], result: "Text", view: "STR" },
-  {
-    fn: "measure", min: 2, max: 2, params: ["Text", "Num"], result: "Num", display: true, view: "MEASURE", viewOnly: true,
-    rc: `view-only: the estimated rendered width of TEXT at SIZE, in artboard units --
-the same estimator drawText/richUnits use, so an author's own layout maths
-agrees with what actually renders. No wire meaning (a machine does not care
-how wide a label draws), so it never had a scalar Builtin to begin with.`,
-  },
+  { name: "Rgb", fn: "rgb", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "=" },
+  { name: "Hsv", fn: "hsv", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "=" },
+  { name: "Str", fn: "str", min: 1, max: 1, params: ["Unknown"], result: "Text", view: "=" },
   { name: "Name", fn: "name", min: 1, max: 1, params: ["Unknown"], result: "Text" },
   { name: "FmtTime", fn: "fmtTime", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
   { name: "FmtDuration", fn: "fmtDuration", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
@@ -355,7 +350,7 @@ how wide a label draws), so it never had a scalar Builtin to begin with.`,
   { name: "Keys", fn: "keys", min: 1, max: 1, params: ["Unknown"], result: "List" },
   { name: "Invert", fn: "invert", min: 1, max: 1, params: ["Color"], result: "Color", display: true },
   {
-    name: "Sin", fn: "sin", min: 1, max: 1, params: ["Num"], result: "Num", view: "SIN",
+    name: "Sin", fn: "sin", min: 1, max: 1, params: ["Num"], result: "Num", view: "=",
     c: `ordinary trigonometry, degrees in and out (the project-wide angle convention):
 both tiers gain these together, which is the piece that unblocks authoring a
 needle's capsule or an arc's annular sector as arithmetic instead of a hard-coded
@@ -364,45 +359,55 @@ draw kind`,
 project-wide angle convention (degrees, 0 = up, clockwise) rather than
 inventing a radians dialect nothing else in the document uses`,
   },
-  { name: "Cos", fn: "cos", min: 1, max: 1, params: ["Num"], result: "Num", view: "COS" },
-  { name: "Tan", fn: "tan", min: 1, max: 1, params: ["Num"], result: "Num", view: "TAN" },
-  { name: "Asin", fn: "asin", min: 1, max: 1, params: ["Num"], result: "Num", view: "ASIN" },
-  { name: "Acos", fn: "acos", min: 1, max: 1, params: ["Num"], result: "Num", view: "ACOS" },
-  { name: "Atan2", fn: "atan2", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "ATAN2" },
+  { name: "Cos", fn: "cos", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Tan", fn: "tan", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Asin", fn: "asin", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Acos", fn: "acos", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Atan2", fn: "atan2", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
   {
-    fn: "sign", min: 1, max: 1, params: ["Num"], result: "Num", view: "SIGN", viewOnly: true,
-    rc: `view-only: SIGN and MOD already exist as program.ts opcodes (SIGN backs
-num.sign, MOD backs \`%\`) but neither had a free-function spelling in the
-surface grammar; giving them one costs nothing since the opcodes are already
-proven. hypot is new to both tiers but stays view-only here (nothing in the
-fixed vocabulary asks for it on the wire), folding onto MUL/ADD/SQRT the way
-mapRange folds onto arithmetic. Builtin::None marks each view-only row: no
-scalar id exists, and view_only rows never reach the dispatcher that would
-want one.`,
+    fn: "sign", min: 1, max: 1, params: ["Num"], result: "Num", view: "@", viewOnly: true,
+    rc: `view-only free-function spellings the surface grammar offers beside the
+methods: sign folds onto the NumSign method, mod onto the Mod opcode, hypot
+onto Mul/Add and the Sqrt call -- each a bespoke lowering over ids that
+already exist, so none needs a scalar Builtin. Builtin::None marks each
+view-only bespoke row: no scalar id exists, and view_only rows never reach
+the dispatcher that would want one.`,
   },
-  { fn: "mod", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "MOD", viewOnly: true },
+  { fn: "mod", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
   { fn: "hypot", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
   {
-    fn: "anchor", min: 2, max: 2, params: ["Num", "Num"], result: "Struct", display: true, view: "ANCHOR", viewOnly: true,
-    rc: `view-only: one point of a computed path, in fractions of the node's box —
-what a \`points\` attr's map produces per sample. No wire meaning (a machine
-has no boxes), so it never had a scalar Builtin, and its row says so.`,
-  },
-  {
-    name: "Known", fn: "known", min: 1, max: 1, params: ["Unknown"], result: "Bool", view: "KNOWN",
+    name: "Known", fn: "known", min: 1, max: 1, params: ["Unknown"], result: "Bool", view: "=",
     rc: `THE UNKNOWN TEST (spec 2.4): true when the value is not UNKNOWN. The one
 place the language ASKS about Nil instead of propagating it — == cannot test
 for it (an unknown comparison is unknown), so this is the honest spelling,
 beside \`??\` for the default-value case. Wire-legal: a gate may guard on it.`,
   },
+  {
+    name: "Measure", fn: "measure", min: 2, max: 2, params: ["Text", "Num"], result: "Num", display: true, view: "=", viewOnly: true,
+    c: `view-only, id'd at the table's end so naming it renumbered nothing: the
+estimated rendered width the view answers (no VM case dispatches it)`,
+    rc: `view-only WITH an id: the estimated rendered width of TEXT at SIZE, in
+artboard units -- the same estimator the text renderer uses, so an author's
+own layout maths agrees with what actually renders. No wire meaning and no
+VM case (a machine does not care how wide a label draws): only the view
+interpreter dispatches the id, and view_only keeps it out of the scalar
+compiler, so a bug that routes it to the VM answers Nil.`,
+  },
+  {
+    name: "Anchor", fn: "anchor", min: 2, max: 2, params: ["Num", "Num"], result: "Struct", display: true, view: "=", viewOnly: true,
+    rc: `view-only WITH an id, like measure: one point of a computed path, in
+fractions of the node's box — what a \`points\` attr's map produces per
+sample. No wire meaning and no VM case (a machine has no boxes).`,
+  },
 ];
 
 /* One row per METHOD: the enum id (`name`, emitted in this order), the receiver
  * shape (`recv`), the surface spelling (`m`), the signature, `display` and the
- * view opcode. Every method is CALLED — plain after a dot is a field, parens is
- * work — so there is no bare-reading column. A row with no `recv` is enum-only:
- * an id the emitter uses directly (TextConcat, the color arithmetic) with no
- * surface method behind it. */
+ * VIEW column ("=" a Method of the row's own enum id, "@" a bespoke fold, "" no
+ * view encoding). Every method is CALLED — plain after a dot is a field, parens
+ * is work — so there is no bare-reading column. A row with no `recv` is
+ * enum-only: an id the emitter uses directly (TextConcat, the color arithmetic)
+ * with no surface method behind it. */
 const METHODS = [
   { name: "NumRound", recv: "Num", m: "round", args: 1, params: ["Num"], result: "Num" },
   { name: "NumFloor", recv: "Num", m: "floor", args: 0, params: [], result: "Num" },
@@ -413,16 +418,16 @@ const METHODS = [
   { name: "NumSign", recv: "Num", m: "sign", args: 0, params: [], result: "Num" },
   { name: "BoolInt", recv: "Bool", m: "int", args: 0, params: [], result: "Num" },
   { name: "BoolNot", recv: "Bool", m: "not", args: 0, params: [], result: "Bool" },
-  { name: "BoolPick", recv: "Bool", m: "pick", args: 2, params: ["Unknown", "Unknown"], result: "Unknown", view: "PICK" },
-  { name: "ColorR", recv: "Color", m: "r", args: 0, params: [], result: "Num", view: "COLOR_R" },
-  { name: "ColorG", recv: "Color", m: "g", args: 0, params: [], result: "Num", view: "COLOR_G" },
-  { name: "ColorB", recv: "Color", m: "b", args: 0, params: [], result: "Num", view: "COLOR_B" },
-  { name: "ColorA", recv: "Color", m: "a", args: 0, params: [], result: "Num", view: "COLOR_A" },
-  { name: "ColorAlpha", recv: "Color", m: "alpha", args: 1, params: ["Num"], result: "Color", display: true, view: "COLOR_ALPHA" },
-  { name: "ColorMix", recv: "Color", m: "mix", args: 2, params: ["Color", "Num"], result: "Color", display: true, view: "COLOR_MIX" },
-  { name: "NumToFixed", recv: "Num", m: "toFixed", args: 1, params: ["Num"], result: "Text", display: true, view: "TO_FIXED" },
+  { name: "BoolPick", recv: "Bool", m: "pick", args: 2, params: ["Unknown", "Unknown"], result: "Unknown", view: "=" },
+  { name: "ColorR", recv: "Color", m: "r", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorG", recv: "Color", m: "g", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorB", recv: "Color", m: "b", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorA", recv: "Color", m: "a", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorAlpha", recv: "Color", m: "alpha", args: 1, params: ["Num"], result: "Color", display: true, view: "=" },
+  { name: "ColorMix", recv: "Color", m: "mix", args: 2, params: ["Color", "Num"], result: "Color", display: true, view: "=" },
+  { name: "NumToFixed", recv: "Num", m: "toFixed", args: 1, params: ["Num"], result: "Text", display: true, view: "=" },
   {
-    name: "TextLength", recv: "Text", m: "length", args: 0, params: [], result: "Num", view: "LENGTH",
+    name: "TextLength", recv: "Text", m: "length", args: 0, params: [], result: "Num", view: "=",
     rc: `text: the predicates and length are wire-legal (a gate may test an alarm
 code); everything text-PRODUCING is formatting and stays display-side`,
   },
@@ -447,26 +452,26 @@ The options spelling — myMode.variants(), filterable like any list.`,
   },
   { name: "TextSplit", recv: "Text", m: "split", args: 1, params: ["Text"], result: "List", display: true },
   {
-    name: "ListLength", recv: "List", m: "length", args: 0, params: [], result: "Num", view: "LENGTH",
+    name: "ListLength", recv: "List", m: "length", args: 0, params: [], result: "Num", view: "=",
     rc: `aggregates ride mid-expression on either tier (max over a list is a wire
 value); the wire-result rule alone keeps a LIST from going to a machine.
-LENGTH is receiver-blind in the view: one opcode answers text, list and map
-alike, so the three namesake rows must all carry it -- view_method() is keyed
-on the name alone.`,
+length is receiver-blind in the view: the untyped emitter picks the first
+namesake row's id and the view interpreter answers text, list and map alike
+under any of the three, so all three rows carry "=".`,
   },
   { name: "ListFirst", recv: "List", m: "first", args: 0, params: [], result: "Unknown" },
   { name: "ListLast", recv: "List", m: "last", args: 0, params: [], result: "Unknown" },
-  { name: "ListSum", recv: "List", m: "sum", args: 0, params: [], result: "Num", view: "LIST_SUM" },
-  { name: "ListAvg", recv: "List", m: "avg", args: 0, params: [], result: "Num", view: "LIST_AVG" },
-  { name: "ListMax", recv: "List", m: "max", args: 0, params: [], result: "Num", view: "LIST_MAX" },
-  { name: "ListMin", recv: "List", m: "min", args: 0, params: [], result: "Num", view: "LIST_MIN" },
+  { name: "ListSum", recv: "List", m: "sum", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ListAvg", recv: "List", m: "avg", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ListMax", recv: "List", m: "max", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ListMin", recv: "List", m: "min", args: 0, params: [], result: "Num", view: "=" },
   { name: "ListJoin", recv: "List", m: "join", args: 1, params: ["Text"], result: "Text", display: true },
   { name: "ListSort", recv: "List", m: "sort", args: 0, params: [], result: "List" },
   { name: "ListReverse", recv: "List", m: "reverse", args: 0, params: [], result: "List" },
   { name: "ListSlice", recv: "List", m: "slice", args: 2, params: ["Num", "Num"], result: "List" },
   { name: "ListContains", recv: "List", m: "contains", args: 1, params: ["Unknown"], result: "Bool" },
-  { name: "ListIndexOf", recv: "List", m: "indexOf", args: 1, params: ["Unknown"], result: "Num", view: "INDEX_OF" },
-  { name: "MapLength", recv: "Map", m: "length", args: 0, params: [], result: "Num", view: "LENGTH" },
+  { name: "ListIndexOf", recv: "List", m: "indexOf", args: 1, params: ["Unknown"], result: "Num", view: "=" },
+  { name: "MapLength", recv: "Map", m: "length", args: 0, params: [], result: "Num", view: "=" },
   { name: "MapKeys", recv: "Map", m: "keys", args: 0, params: [], result: "List" },
   { name: "MapValues", recv: "Map", m: "values", args: 0, params: [], result: "List" },
   { name: "MapHas", recv: "Map", m: "has", args: 1, params: ["Text"], result: "Bool" },
@@ -619,35 +624,72 @@ constexpr ClockFieldDef kClockFields[] = {
   out += cEnum(
     "IterateMode",
     "uint16_t",
-    ITERATE_MODES.map((m) => ({ name: m.name, c: m.c })),
+    ITERATE_ROWS.map((m) => ({ name: m.name, c: m.c })),
   );
   out += `
 /* the iterating methods by the name both surface grammars spell them, each with
- * its wire spelling (the view dialect's ITERATE mode) */
+ * the mode its Iterate carries */
 struct IterateModeDef {
     const char* call;
-    const char* wire;
+    IterateMode mode;
 };
 
 constexpr IterateModeDef kIterateModes[] = {
 `;
-  for (const m of ITERATE_MODES) out += `    {"${m.call}", "${snake(m.name)}"},\n`;
+  for (const m of ITERATE_ROWS) out += `    {"${m.call}", IterateMode::${m.name}},\n`;
   out += `};
 
 `;
-  out += cEnum("Builtin", "uint16_t", [
+  const builtinRows = [
     ...BUILTINS.filter((b) => b.name),
     {
       name: "None",
-      c: `the no-scalar-id marker VIEW-ONLY table rows carry: no VM case dispatches
-it, so a bug that routes one to the scalar dispatcher faults instead of
-silently computing some borrowed builtin`,
+      c: `the no-scalar-id marker bespoke VIEW-ONLY table rows carry: no VM case
+dispatches it, so a bug that routes one to the scalar dispatcher answers Nil
+instead of silently computing some borrowed builtin`,
     },
-  ]);
+  ];
+  out += cEnum("Builtin", "uint16_t", builtinRows);
   out += `
 `;
   out += cEnum("MethodId", "uint16_t", METHODS);
   out += `
+/* the disassembly spelling of every id, derived from the enum names like kOpNames */
+constexpr const char* kBuiltinNames[] = {
+`;
+  for (const b of builtinRows) out += `    "${snake(b.name)}",\n`;
+  out += `};
+
+inline const char* builtin_name(Builtin id) {
+    const auto index = static_cast<size_t>(id);
+    return index < sizeof(kBuiltinNames) / sizeof(kBuiltinNames[0])
+               ? kBuiltinNames[index]
+               : "?";
+}
+
+constexpr const char* kMethodNames[] = {
+`;
+  for (const m of METHODS) out += `    "${snake(m.name)}",\n`;
+  out += `};
+
+inline const char* method_name(MethodId id) {
+    const auto index = static_cast<size_t>(id);
+    return index < sizeof(kMethodNames) / sizeof(kMethodNames[0]) ? kMethodNames[index]
+                                                                  : "?";
+}
+
+constexpr const char* kIterateModeNames[] = {
+`;
+  for (const m of ITERATE_ROWS) out += `    "${snake(m.name)}",\n`;
+  out += `};
+
+inline const char* iterate_mode_name(IterateMode mode) {
+    const auto index = static_cast<size_t>(mode);
+    return index < sizeof(kIterateModeNames) / sizeof(kIterateModeNames[0])
+               ? kIterateModeNames[index]
+               : "?";
+}
+
 } // namespace hmi
 `;
   return out;
@@ -693,19 +735,41 @@ function emitTablesInc() {
   return out;
 }
 
+/* one TS numeric-id table: { Name: ordinal } in row order, mirroring the C++ enum */
+function tsIds(name, rows, comment) {
+  let out = `/* ${comment} */\nexport const ${name} = {\n`;
+  rows.forEach((row, i) => (out += `  ${row}: ${i},\n`));
+  return out + `} as const;\n`;
+}
+
 function emitIrTs() {
   let out = `/* GENERATED by tools/gen_ir.mjs — DO NOT EDIT. Edit the tables there and
  * regenerate; the ir_gen ctest fails on any drift between this file and them.
  *
- * The view's copy of the shared vocabulary: what the backend can emit is what
- * these tables say, from the same source its own enums are emitted from. */
+ * The view's copy of the shared NUMERIC vocabulary — the same ordinals the C++
+ * enums (lang/ir_ops.h) carry, from the same table, which is what lets a served
+ * program be plain packed numbers with nothing to translate at either end. The
+ * view interpreter (program.ts) dispatches on these; the ids it has no case for
+ * simply answer Nil there, so the mirror carries the WHOLE table rather than a
+ * curated subset. */
 
-/* the ITERATE modes the view dialect can carry (program.ts) */
-export const ITERATE_MODES = new Set<string>([
 `;
-  for (const m of ITERATE_MODES) out += `  "${snake(m.name)}",\n`;
-  out += `]);
-
+  out += tsIds("Op", OPS.map((o) => o.name),
+               "the opcodes (OpCode): a packed instruction's first word");
+  out += "\n";
+  out += tsIds("LoadPlace", LOAD_PLACES.map((p) => p.name),
+               "where a Load reads: its `small`, whole");
+  out += "\n";
+  out += tsIds("IterateMode", ITERATE_ROWS.map((m) => m.name),
+               "what Iterate does with each body result: its `small`");
+  out += "\n";
+  out += tsIds("BuiltinId",
+               [...BUILTINS.filter((b) => b.name).map((b) => b.name), "None"],
+               "a Call's `small`: the builtin ids (Builtin)");
+  out += "\n";
+  out += tsIds("MethodId", METHODS.map((m) => m.name),
+               "a Method's `small`: the method ids (MethodId)");
+  out += `
 /* the fields \`time\` reads by (lang/ir.h kClockFields) */
 export const TIME_FIELDS: { path: string; shape: string }[] = [
 `;

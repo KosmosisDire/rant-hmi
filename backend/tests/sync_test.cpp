@@ -5,6 +5,7 @@
 #include "check.h"
 #include "doc/ops.h"
 #include "doc/store.h"
+#include "lang/ir.h"
 
 #include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
@@ -179,8 +180,11 @@ int main() {
        variables in scope and the mesh, so a view program carries `var:<id>` and
        `mesh:<entity>[.<field>]` cells and a live frame carries the read mesh fields;
        17: THE COPY RIDES THE EVENT — an `input` frame raised inside a `repeat` carries
-       `repeat: {index, count}`, and carries the key only where there is a copy) */
-    CHECK(kProto == 18);
+       `repeat: {index, count}`, and carries the key only where there is a copy;
+       18: A PROPERTY IS A PUBLIC VARIABLE — served slot rows read off `public` locals;
+       19: THE VIEW DIALECT DIED INTO THE SERVED IR — a view program is packed
+       {"i","k","c","s"} in the generated numeric vocabulary, not named-op rows) */
+    CHECK(kProto == 19);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
@@ -229,11 +233,13 @@ int main() {
     CHECK(!(*snapshot)["builtins"][0].contains("template"));
     CHECK(!(*snapshot)["builtins"][0].contains("id"));
 
-    /* every template attribute arrives as a compiled program */
+    /* every template attribute arrives as a compiled PACKED program: the first word
+       of the Button label's `i` stream is a Load of its text slot */
     const Json& button = (*snapshot)["registry"]["components"][0];
     CHECK(button["name"] == "Button");
     CHECK(button["slots"].size() > 8);   /* base slots composed in */
-    CHECK(button["template"]["children"][0]["attrs"]["text"]["code"][0]["op"] == "LOAD");
+    CHECK(button["template"]["children"][0]["attrs"]["text"]["i"][0] ==
+          static_cast<uint32_t>(OpCode::Load));
     CHECK(button["template"]["interact"]["primitive"] == "press");
 
     /* a second view sees the first view's edit, and both see the same version */
@@ -575,9 +581,10 @@ int main() {
         CHECK((*pushed)["registry"]["components"].size() == 13);
         const Json& lamp = (*pushed)["registry"]["components"][12];
         CHECK(lamp["name"] == "Lamp");
-        /* the good attr compiled to a view program; the bad one is not served */
+        /* the good attr compiled to a packed view program; the bad one is not served */
         const Json& lamp_part = lamp["template"]["children"][0];
-        CHECK(lamp_part["attrs"]["surface"]["code"][0]["op"] == "LOAD");
+        CHECK(lamp_part["attrs"]["surface"]["i"][0] ==
+              static_cast<uint32_t>(OpCode::Load));
         CHECK(!lamp_part["attrs"].contains("radius"));
         /* the finding is pinned to the node the ECHO issued, at the attr */
         const uint64_t part_id =
