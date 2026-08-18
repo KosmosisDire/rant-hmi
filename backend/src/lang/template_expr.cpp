@@ -32,18 +32,16 @@ namespace {
 const char* kProfiles[] = {"linear", "ease", "ease-in", "ease-out", "ease-in-out"};
 
 /* WHICH DECLARED TYPES HAVE NO DISPLAY-TIER READING, and why — empty where the variable
- * is legal here. A timer and a whole struct are read BY FIELD, and a view program's LOAD
- * hands back one value per cell; rather than compile a reference that draws UNKNOWN
- * forever, both are refused by name with what to write instead. Everything else a
- * variable can be — the scalars, an icon, an enum TypeRef (dotted), a list, a map — rides
- * the wire already and costs this tier nothing but the load. */
+ * is legal here. A whole struct is read BY FIELD, and a view program's Load hands back
+ * one value per cell; rather than compile a reference that draws UNKNOWN forever, it is
+ * refused by name with what to write instead. Everything else a variable can be — the
+ * scalars, an icon, an enum TypeRef (dotted), a list, a map, and a TIMER (whose fields
+ * resolve to the renderer-answered "tmr:" cells in resolve_head) — rides the wire
+ * already and costs this tier nothing but the load. */
 std::string no_display_reading(const std::string& name, const std::string& type) {
-    if (type == "timer")
-        return "'" + name + "' is a timer, and a timer reads by field, which an attr has "
-               "no encoding for: carry what the picture needs in a variable of its own";
     if (type.empty() || type == "num" || type == "bool" || type == "text" ||
         type == "color" || type == "icon" || type == "list" || type == "map" ||
-        type.find('.') != std::string::npos)
+        type == "timer" || type.find('.') != std::string::npos)
         return "";
     return "'" + name + "' is a whole " + type + " message, and an attr reads one value: "
            "put the field the picture needs in a variable of its own";
@@ -485,6 +483,14 @@ class ViewLower {
            arrange: inside a component there are no variables, and on a page no
            properties. */
         if (const TemplateVar* variable = scope_.variable(name)) {
+            /* a timer only exists by field (the dotted reads resolve in timer_field,
+               ahead of this) — the same line the scalar checker holds */
+            if (variable->type == "timer") {
+                fail("'" + name + "' is a timer; read a field (" +
+                         object_field_list(name.c_str(), kTimerFields) + ")",
+                     anchor);
+                return Bare::Failed;
+            }
             const std::string refused = no_display_reading(name, variable->type);
             if (!refused.empty()) {
                 fail(refused, anchor);
@@ -525,6 +531,14 @@ class ViewLower {
            view's gesture state, and — inside a repeated node — which copy this is */
         if (dotted && (name == "time" || name == "state" || name == "repeat"))
             return input_field(primary, ops, next);
+        /* A TIMER READS BY FIELD, off the renderer-answered "tmr:" cells derived from
+           the served {running, deadline, duration} record — which is how
+           `cook.remaining` counts down at the view's own frame rate with nothing
+           published per tick. Behind the property scope, like every variable. */
+        if (dotted && !scope_.has_prop(name))
+            if (const TemplateVar* variable = scope_.variable(name))
+                if (variable->type == "timer")
+                    return timer_field(primary, *variable, ops, next);
         const Bare answer = bare(name, head.at, head.after);
         if (answer != Bare::Unbound) return answer == Bare::Emitted;
         /* otherwise a DOTTED name is an address from the template root: another
@@ -532,6 +546,26 @@ class ViewLower {
            every reader can see it */
         if (dotted) return address_walk(primary, ops, next);
         return unknown_name(name, head.after);
+    }
+
+    /* one timer field: the cell the renderer answers per frame from the timer's
+     * served record (stage.ts "tmr:" cells), validated against the descriptor the
+     * scalar tier binds from */
+    bool timer_field(uint32_t primary, const TemplateVar& variable,
+                     const std::vector<uint32_t>& ops, size_t& next) {
+        const Expr& head = at(primary);
+        const Expr& member = at(ops[0]);
+        const std::string& field = member.text;
+        bool known = false;
+        for (const ObjectFieldDef& f : kTimerFields) known = known || field == f.name;
+        if (!known)
+            return fail("unknown field '" + variable.name + "." + field + "'",
+                        member.name_at);
+        if (member.called) return fail("unexpected '('", member.name_after);
+        emit_load("tmr:" + std::to_string(variable.id) + ":" + field);
+        names_.push_back(TemplateNameRef{head.at, variable.name.size(), variable.id});
+        next = 1;
+        return true;
     }
 
     /* time / state / repeat: a LOAD of a symbolic cell the renderer answers —

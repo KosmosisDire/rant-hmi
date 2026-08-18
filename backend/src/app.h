@@ -75,7 +75,11 @@ namespace hmi {
  * cell address table Load indexes, "s": lambda sub-programs}, every ordinal the
  * generated vocabulary both ends emit from one table (tools/gen_ir.mjs). The named-op
  * Json rows ({"op": "CONST", ...}) are gone, and frontend/src/program.ts is the second
- * interpreter of the same IR rather than a dialect of its own */
+ * interpreter of the same IR rather than a dialect of its own. `lang` serves the
+ * host-object roster (`objects`: time / state / repeat / timer field tables) so the
+ * scope offering reads what it once mirrored, and a timer's live record serves its
+ * DEADLINE ({running, deadline (wall ms), duration (s)}): the view derives the
+ * countdown per frame, and an attr reads `myTimer.remaining` through a "tmr:" cell */
 constexpr int kProto = 19;
 
 struct AppOptions {

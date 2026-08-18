@@ -355,10 +355,14 @@ export function liveText(live: Live | null, cell: string): string {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return String(Math.round(value * 1000) / 1000);
   if (typeof value === "object") {
-    /* a timer reads as its time left; the card's `on` treatment says running */
-    const remaining = (value as Json).remaining;
-    if (typeof remaining === "number")
-      return String(Math.round(remaining * 1000) / 1000) + " s";
+    /* a timer reads as its time left, derived from the served deadline (the record
+       is {running, deadline, duration} now); the card's `on` treatment says running */
+    const deadline = (value as Json).deadline;
+    if (typeof deadline === "number") {
+      const left = (value as Json).running === true
+        ? Math.max(0, deadline - Date.now()) / 1000 : 0;
+      return String(Math.round(left * 1000) / 1000) + " s";
+    }
     return "--";
   }
   return String(value);

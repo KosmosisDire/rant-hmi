@@ -2550,6 +2550,29 @@ check(stageNode("frame", 901) === heldAgain &&
         "a live frame does not advance the clock: the ticker owns time cells, got " +
           kNode(731).style.left);
 
+  /* ---- A TIMER'S FACE counts down on the same ticker ----
+     The backend serves {running, deadline (wall ms), duration (s)} under the timer's
+     own v<id> record — a record that only changes when the timer starts, cancels or
+     expires — and the "tmr:<id>:<field>" cells derive remaining/progress per frame
+     from the deadline, so a countdown costs nothing on the wire. */
+  kAttrs["731"].attrs.left =
+    asm(loadCell("tmr:88:remaining"), lit(10), ins(Op.Mul));
+  kEditor.live = { epoch: 2, values: {
+    v88: { running: true, deadline: kwall + 5000, duration: 8 } } };
+  renderStage(kHost, kEditor);
+  check(kNode(731).style.left === "50px",
+        "remaining derives from the served deadline, got " + kNode(731).style.left);
+  kwall += 2000;
+  stepTime(kHost, kEditor);
+  check(kNode(731).style.left === "30px",
+        "and counts down on the frame ticker, got " + kNode(731).style.left);
+  /* expiry is the BACKEND'S truth: the record flipping idle reads 0, however the
+     viewer's own clock stands */
+  kEditor.live = { epoch: 3, values: { v88: { running: false, deadline: 0, duration: 8 } } };
+  renderStage(kHost, kEditor);
+  check(kNode(731).style.left === "0px",
+        "an idle timer reads remaining 0, got " + kNode(731).style.left);
+
   setTransitionClock(null);
   setWallClock(null);
 }

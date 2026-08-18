@@ -585,6 +585,36 @@ function timeField(name: string): Json {
   }
 }
 
+/* ---- the timer cells ----
+ *
+ * A TIMER'S FACE, derived per frame from the served record: the backend publishes
+ * {running, deadline (wall ms), duration (s)} under the timer's own `v<id>` value —
+ * a record that only changes when the timer starts, cancels or expires — and the
+ * countdown is arithmetic over the deadline at this view's frame rate ("tmr:<id>:
+ * <field>" cells, the descriptor vocabulary in registry/objects.h). Rendering, not
+ * truth: expiry is the backend's one comparison; a viewer's clock skew can tilt the
+ * picture's countdown, never when the timer actually fires. The derivations match
+ * the scalar tier's TmrRead exactly — idle reads remaining 0 and progress 1. */
+function timerField(editor: Editor, spec: string): Json {
+  const colon = spec.indexOf(":");
+  if (colon < 0) return null;
+  const rec = editor.live?.values?.["v" + spec.slice(0, colon)];
+  if (!rec || typeof rec !== "object") return null;
+  const field = spec.slice(colon + 1);
+  const running = (rec as Json).running === true;
+  const duration = typeof (rec as Json).duration === "number"
+    ? (rec as Json).duration : null;
+  if (field === "running") return running;
+  if (field === "duration") return duration;
+  const deadline = typeof (rec as Json).deadline === "number" ? (rec as Json).deadline : 0;
+  const wall = wallClock ? wallClock() : Date.now();
+  const left = running ? Math.max(0, deadline - wall) / 1000 : 0;
+  if (field === "remaining") return left;
+  if (field === "progress")
+    return duration === null ? null : duration ? 1 - left / duration : 0;
+  return null;
+}
+
 function advanceTween(t: Tween, now: number): void {
   if (t.done) return;
   const at = t.ms > 0 ? (now - t.start) / t.ms : 1;
@@ -674,8 +704,11 @@ export function stepTransitions(host: HTMLElement, editor: Editor, now?: number)
  * `time.now` moves every frame, the wall fields once a second, and a picture reading
  * only `time.hour` repaints once an hour. */
 function timeLive(state: StageState): boolean {
-  for (const key of state.byDep.keys()) if (key.startsWith("time:")) return true;
-  for (const key of state.byKid.keys()) if (key.startsWith("time:")) return true;
+  /* a timer's cells ride the same frame loop: the countdown derives per frame from
+     the served deadline, exactly as time.now derives from the frame clock */
+  const ticking = (key: string) => key.startsWith("time:") || key.startsWith("tmr:");
+  for (const key of state.byDep.keys()) if (ticking(key)) return true;
+  for (const key of state.byKid.keys()) if (ticking(key)) return true;
   return false;
 }
 
@@ -685,8 +718,12 @@ export function stepTime(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   const moved = new Map<string, string>();
   const look = (key: string) => {
-    if (!key.startsWith("time:") || moved.has(key)) return;
-    const mark = JSON.stringify(timeField(key.slice(5)));
+    if (moved.has(key)) return;
+    const value = key.startsWith("time:") ? timeField(key.slice(5))
+                : key.startsWith("tmr:") ? timerField(editor, key.slice(4))
+                : undefined;
+    if (value === undefined) return;
+    const mark = JSON.stringify(value);
     if (mark !== state.marks.get(key)) moved.set(key, mark);
   };
   for (const key of state.byDep.keys()) look(key);
@@ -1039,6 +1076,13 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
       case "time": {
         const value = timeField(name);
         sawCell(state, "time:" + name, JSON.stringify(value));
+        return value;
+      }
+      /* a timer's face (timerField above): derived per frame from the served
+         deadline record, recorded and ticked exactly like a time cell */
+      case "tmr": {
+        const value = timerField(editor, name);
+        sawCell(state, "tmr:" + name, JSON.stringify(value));
         return value;
       }
       /* optcount/optnames/optfrac: an option list is a value now -- the `options` param

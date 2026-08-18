@@ -629,15 +629,16 @@ function owningComponent(editor: Editor, id: number): ComponentDef | null {
   return null;
 }
 
-/* CAN AN ATTR READ THIS VARIABLE AT ALL? A timer and a whole struct are read BY FIELD,
- * and a view program's cell load hands back one value — the compiler refuses both by name
- * (lang/template_expr.cpp no_display_reading), so the browse tree does not offer them.
- * Everything else — the scalars, an icon, an enum (a dotted TypeRef), a list, a map —
- * rides the wire already. */
+/* CAN AN ATTR READ THIS VARIABLE AT ALL? A whole struct is read BY FIELD, and a view
+ * program's cell load hands back one value — the compiler refuses it by name
+ * (lang/template_expr.cpp no_display_reading), so the browse tree does not offer it.
+ * Everything else — the scalars, an icon, an enum (a dotted TypeRef), a list, a map,
+ * and a TIMER (whose fields resolve to renderer-answered "tmr:" cells that count down
+ * per frame off the served deadline) — rides the wire already. */
 function displayReadable(variable: Var): boolean {
-  if (variable.type === "timer") return false;
-  return SCALAR_TYPES.has(variable.type) || variable.type === "list" ||
-         variable.type === "map" || variable.type.includes(".");
+  return SCALAR_TYPES.has(variable.type) || variable.type === "timer" ||
+         variable.type === "list" || variable.type === "map" ||
+         variable.type.includes(".");
 }
 
 function attrRoots(editor: Editor, node: Node): BrowseRow[] {

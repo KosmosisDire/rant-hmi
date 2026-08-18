@@ -397,19 +397,18 @@ Json App::live(bool full) const {
     for (uint32_t i = 0; i < program.timers.size(); ++i) {
         const TimerDef& def = program.timers[i];
         const TimerState& timer = state.timers[i];
-        /* remaining derives off the schedule here exactly as TmrRead derives it —
-           the served numbers are unchanged; serving the deadline itself (and letting
-           the view count down between frames) is the port's wire change, not this
-           one's */
+        /* THE DEADLINE ITSELF RIDES THE WIRE, translated onto the wall clock the
+           viewer can read: the record only changes when the timer starts, cancels or
+           expires, and the view derives remaining/progress from it at its own frame
+           rate — a countdown at 60fps with no per-tick publish. Expiry stays the
+           backend's one comparison; the view's countdown is rendering, not truth. */
         const double left = timer.running && timer.deadline > state.tick
                                 ? static_cast<double>(timer.deadline - state.tick)
                                 : 0.0;
         values["v" + std::to_string(def.node_id)] =
             Json{{"running", timer.running},
-                 {"remaining", left / 1000.0},
-                 {"duration", static_cast<double>(def.duration_ticks) / 1000.0},
-                 {"progress", def.duration_ticks ? 1.0 - left / def.duration_ticks
-                                                 : 0.0}};
+                 {"deadline", timer.running ? state.wall_ms + left : 0.0},
+                 {"duration", static_cast<double>(def.duration_ticks) / 1000.0}};
     }
     return Json{{"epoch", epoch_},
                 {"values", std::move(values)},

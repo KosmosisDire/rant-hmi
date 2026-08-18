@@ -9,6 +9,9 @@ export type Json = any;
  * sub-programs. Every ordinal is the generated vocabulary in ir.ts, emitted from the
  * same table as the backend's enums, and program.ts is the second interpreter of the
  * same IR rather than a dialect of its own. The named-op rows ({op: "CONST"}) are gone.
+ * `lang` serves the host-object roster (`objects`) so the scope offering reads what it
+ * once mirrored, and a timer's live record serves its DEADLINE ({running, deadline
+ * (wall ms), duration (s)}): the view counts down per frame through "tmr:" cells.
  * (18: A PROPERTY IS A PUBLIC VARIABLE — the `props` list and the PropDef row left the
  * document. A component declares `locals` like every other element, and `public` on one
  * is what an instance fills in; a private one is served (its cell and address are real,

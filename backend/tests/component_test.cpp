@@ -1135,11 +1135,13 @@ void test_page_universe() {
     if (no_field)
         CHECK(no_field->message.find("unknown field '@cage/motor.torque'") !=
               std::string::npos);
-    /* a timer and a whole message read BY FIELD, which one cell cannot answer: refused
-       by name with what to write instead, never compiled into a forever-UNKNOWN load */
+    /* a timer and a whole message read BY FIELD, which one cell cannot answer: the
+       BARE mention is refused with the descriptor's own vocabulary (the fields
+       themselves are legal attr reads now — test_timer_fields), never compiled into
+       a forever-UNKNOWN load */
     const Diag* timer = finding(130, "w");
     CHECK(timer != nullptr);
-    if (timer) CHECK(timer->message.find("reads by field") != std::string::npos);
+    if (timer) CHECK(timer->message.find("read a field") != std::string::npos);
     const Diag* whole = finding(130, "h");
     CHECK(whole != nullptr);
     if (whole) CHECK(whole->message.find("whole Motor message") != std::string::npos);
@@ -1494,6 +1496,27 @@ void test_transitions() {
  * instance exists — while a placed component is skipped whole, because its
  * per-instance compile already reports on the same definition ids and one
  * finding must not double. */
+/* TIMER FIELDS IN AN ATTR: the display-tier refusal died at the port — a timer reads
+ * by field through the renderer-answered "tmr:<id>:<field>" cells (derived per frame
+ * from the served deadline record), validated against the same descriptor the scalar
+ * tier binds from (registry/objects.h kTimerFields). Bare and unknown-field reads
+ * hold the scalar tier's own lines. */
+void test_timer_fields() {
+    TemplateScope scope = scope_of({"value"});
+    scope.vars.push_back(TemplateVar{"cook", 77, "timer"});
+    CHECK_EQ(lower("cook.remaining", scope), "LOAD(tmr:77:remaining)");
+    CHECK_EQ(lower("cook.running", scope), "LOAD(tmr:77:running)");
+    CHECK_EQ(lower("cook.duration", scope), "LOAD(tmr:77:duration)");
+    CHECK_EQ(lower("1 - cook.progress", scope),
+             "CONST(1.0) LOAD(tmr:77:progress) SUB");
+    /* ordinary postfix still applies above the field read */
+    CHECK_EQ(lower("cook.remaining.toFixed(1)", scope),
+             "LOAD(tmr:77:remaining) CONST(1.0) METHOD(NUM_TO_FIXED,1)");
+    CHECK(refuses("cook", scope, "read a field"));
+    CHECK(refuses("cook.blah", scope, "unknown field 'cook.blah'"));
+    CHECK(refuses("cook.remaining()", scope, "unexpected '('"));
+}
+
 void test_definition_check() {
     Json lonely = {
         {"id", 300},
@@ -1749,6 +1772,7 @@ int main() {
     test_display_reference_index();
     test_list_vocabulary();
     test_new_vocabulary();
+    test_timer_fields();
     test_builtins_compile_clean();
     test_doc_components();
     test_part_properties();
