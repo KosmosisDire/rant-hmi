@@ -294,7 +294,33 @@ function exec(program: Program, code: number[], load: ViewHost, args: Json[]): J
         }
         break;
       }
-      case Op.Sub: case Op.Mul: case Op.Div: case Op.Mod:
+      case Op.Mul: case Op.Div: {
+        /* COLOR CHANNEL ARITHMETIC first, the scalar tier's own rule (vm.cpp
+           MethodId::ColorScale/ColorDiv — the typed compiler emits those ids where
+           this untyped tier emits Mul/Div, so the VALUE must agree here): `color * n`
+           scales r,g,b either way round and keeps alpha; division reads only one
+           way — the color came first — and a zero divisor is Nil */
+        const right = stack.length ? stack[stack.length - 1] : NIL;
+        const left = stack.length > 1 ? stack[stack.length - 2] : NIL;
+        const lc = parseColorBytes(left);
+        const rc = op === Op.Mul ? parseColorBytes(right) : null;
+        if (lc || rc) {
+          pop();
+          pop();
+          const bytes = lc ?? rc!;
+          const factor = num(lc ? right : left);
+          const f = op === Op.Div
+            ? factor === null || factor === 0 ? null : 1 / factor
+            : factor;
+          stack.push(f === null ? NIL
+            : formatRgba(channelByte(bytes[0] * f), channelByte(bytes[1] * f),
+                         channelByte(bytes[2] * f), bytes[3]));
+          break;
+        }
+        stack.push(arith(op));
+        break;
+      }
+      case Op.Sub: case Op.Mod:
       case Op.Lt: case Op.Le: case Op.Gt: case Op.Ge:
         stack.push(arith(op));
         break;
@@ -385,7 +411,17 @@ function call(id: number, argc: number, stack: Json[]): Json {
     case BuiltinId.Round: { const a = one(); return a === null ? NIL : Math.round(a); }
     case BuiltinId.Floor: { const a = one(); return a === null ? NIL : Math.floor(a); }
     case BuiltinId.Ceil: { const a = one(); return a === null ? NIL : Math.ceil(a); }
-    case BuiltinId.Int: { const a = one(); return a === null ? NIL : Math.trunc(a); }
+    case BuiltinId.Int: {
+      /* int PARSES text, exactly as the scalar builtin does (vm.cpp Builtin::Int):
+         the whole trimmed string or nothing */
+      if (typeof args[0] === "string") {
+        const trimmed = args[0].trim();
+        const parsed = trimmed.length ? Number(trimmed) : NaN;
+        return Number.isFinite(parsed) ? Math.trunc(parsed) : NIL;
+      }
+      const a = one();
+      return a === null ? NIL : Math.trunc(a);
+    }
     case BuiltinId.Sqrt: {
       const a = one();
       return a === null || a < 0 ? NIL : Math.sqrt(a);
