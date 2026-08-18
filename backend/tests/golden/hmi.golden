@@ -9,6 +9,7 @@ node 605 error [template_expr] text: unknown field '@gp12/robotState.alarm' at c
 node 162 error [template_expr] surface: unknown field '@cage/plc/gSafetyStatus.xLampGreen' at column 37
 node 165 error [template_expr] surface: unknown field '@cage/plc/gSafetyStatus.xLampRed' at column 34
 node 570 error [template_expr] surface: unknown field '@cage/plc/gSafetyCmd.xSlowMode' at column 32
+node 670 error [template_expr] points: unknown field '@badapple.map' at column 14
 node 120 error [unresolved_type] type: variable 'selectedJob' has type 'JobCmd.jobName', which is not a type in the mesh
 node 609 error [unresolved_type] type: variable 'jogCmd' has type 'JogCmd', which is not a type in the mesh
 node 70 error [expression] leftPos: unknown entity '@cage/plc/IO/wDistanceSensorD' at column 31
@@ -60,9 +61,11 @@ node 183 error [expression] from: unknown entity '@cage/plc/IO/xGripperSuction' 
 node 182 error [unresolved_entity] to: mesh entity V:cage/plc/IO/xGripperSuction is not reflected
 node 479 error [move_dest] to: 'jogCmd' has no value yet at this row
 node 480 error [unresolved_entity] to: mesh entity T:gp12/jogCmd is not reflected
+node 665 error [unresolved_entity] to: mesh entity F:gp12/setServo is not reflected
 node 507 error [unresolved_entity] to: mesh entity F:gp12/runJob is not reflected
 node 509 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflected
 node 510 error [unresolved_entity] to: mesh entity F:gp12/setHold is not reflected
+node 666 error [unresolved_entity] to: mesh entity F:gp12/setServo is not reflected
 node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not reflected
 == attr reads ==
 == node_attrs ==
@@ -4173,7 +4176,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 6.0
+            "v": 7.0
           }
         ]
       },
@@ -5792,7 +5795,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 473.0
+            "v": 0.0
           }
         ]
       },
@@ -5800,7 +5803,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 55.0
+            "v": 0.0
           }
         ]
       },
@@ -6186,7 +6189,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 33.0
+            "v": 44.0
           }
         ]
       },
@@ -6202,7 +6205,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
         "code": [
           {
             "op": "CONST",
-            "v": 54.0
+            "v": 43.0
           }
         ]
       },
@@ -6593,7 +6596,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           },
           {
             "op": "CONST",
-            "v": 0.02
+            "v": 0.05
           },
           {
             "op": "SUB"
@@ -6776,7 +6779,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           },
           {
             "op": "CONST",
-            "v": 0.02
+            "v": 0.05
           },
           {
             "op": "ADD"
@@ -7138,6 +7141,51 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
   },
   "67": {
     "attrs": {}
+  },
+  "670": {
+    "anchors": [],
+    "attrs": {
+      "fill": {
+        "code": [
+          {
+            "cell": "theme:ink",
+            "op": "LOAD"
+          }
+        ]
+      },
+      "h": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 297.0
+          }
+        ]
+      },
+      "left": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 451.0
+          }
+        ]
+      },
+      "top": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 66.0
+          }
+        ]
+      },
+      "w": {
+        "code": [
+          {
+            "op": "CONST",
+            "v": 297.0
+          }
+        ]
+      }
+    }
   },
   "70": {
     "attrs": {
@@ -7990,14 +8038,19 @@ flow 464 node 462 event pressrelease worst 3
 flow 472 node 462 event held worst 2
   0 FAULT 139 0 0
   1 HALT
-flow 506 node 462 event press worst 2
+flow 506 node 462 event held worst 2
   0 FAULT 140 0 0
   1 HALT
 flow 508 node 462 event release worst 2
   0 FAULT 143 0 0
   1 HALT
+flow 667 node 462 event press worst 4
+  0 CONST 24 0 144
+  1 CONST 25 0 145
+  2 NOTIFY 0 1 146
+  3 HALT
 flow 571 node 570 event tap worst 2
-  0 FAULT 144 0 0
+  0 FAULT 147 0 0
   1 HALT
 slot node 70 moving cell 8 every_tick
   0 LOAD 4 0 0
