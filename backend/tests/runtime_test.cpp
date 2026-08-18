@@ -4092,9 +4092,9 @@ void test_variant_options() {
     }
 }
 
-/* A suspension captures text BY VALUE: what was held at the delay is what resumes,
- * even if the variable it came from moves meanwhile (the plan's deep-copy rule). */
-void test_suspend_holds_text() {
+/* A park captures text BY VALUE: what was held at the delay is what resumes,
+ * even if the variable it came from moves meanwhile (the pin at the park). */
+void test_park_holds_text() {
     Json flow = Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
                      {"when_mode", "any"},
                      {"do", Json::array({
@@ -4501,7 +4501,7 @@ int main() {
     RUN(test_aggregate_refusals);
     RUN(test_color_element_variables);
     RUN(test_variant_options);
-    RUN(test_suspend_holds_text);
+    RUN(test_park_holds_text);
     RUN(test_document_tolerance);
     RUN(test_theme_tokens);
     RUN(test_clock);

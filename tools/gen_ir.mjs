@@ -27,7 +27,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /* ---------------------------------------------------------------- the tables */
 
 /* One wart, named rather than hidden: OpCode carries both banks (spec 5.4) — the
- * expression opcodes the language emits, and the EFFECT opcodes (Send, Suspend,
+ * expression opcodes the language emits, and the EFFECT opcodes (Send, Park,
  * Fault, Halt) that only the DO-list lowering in compile/ emits and only the VM
  * executes. Splitting the enum means touching the VM's dispatch switch and
  * Instruction's encoding for no behavioural gain, so the language declares opcodes it
@@ -62,7 +62,18 @@ opcodes until their owners become host objects at stage 7.`,
   { name: "Call" },
   { name: "Method" },
   { name: "StoreX" },
-  { name: "Suspend" },
+  {
+    name: "Park",
+    c: `THE ONE ASYNC PRIMITIVE (stage 6d): park this run at pending site \`a\` and wake
+it \`b\` ticks from now, the invocation policy riding \`small\` (a ParkPolicy).
+The frame swaps into the site WHOLE — arena, arguments, temporaries — and
+swaps back at the wake, so held scratch survives by ownership. Replace
+re-parks an occupied site with THIS run and resets the clock (debounce: the
+last arrival speaks); Keep leaves the parked run its wake and simply ends
+this one (delay: the first arrival's continuation is not cancelled by a
+second). Parked frames die at recompile — cells migrate by name,
+continuations never.`,
+  },
   {
     name: "New",
     c: `the move step's forms (spec 5.4): New and ReadEnt fill a struct cell, Store
@@ -229,6 +240,20 @@ key is absent" would otherwise be two spellings of one thing.`,
   },
   { name: "Leaf", c: "inside one row of nested cell `a`: outer then inner, both popped" },
 ];
+/* how a Park treats an OCCUPIED site — the whole of the debounce/delay
+ * distinction, restored as data after the runtime lost it (the old opcode
+ * stamped the kind and nothing read it: both behaved as debounce) */
+const PARK_POLICIES = [
+  {
+    name: "Replace",
+    c: "re-park the site with THIS run; the wake clock resets (debounce)",
+  },
+  {
+    name: "Keep",
+    c: "the parked run keeps the site and its wake; this run just ends (delay)",
+  },
+];
+
 const STORE_MODES = [
   { name: "Assign", c: "replace what the place holds; an element edit never grows" },
   {
@@ -560,6 +585,15 @@ constexpr uint16_t send_small(SendTarget target, uint8_t verb) {
     return static_cast<uint16_t>(static_cast<uint16_t>(target) |
                                  (static_cast<uint16_t>(verb) << 8));
 }
+
+/* how a Park treats an occupied pending site: its \`small\`, whole */
+`;
+  out += cEnum(
+    "ParkPolicy",
+    "uint16_t",
+    PARK_POLICIES.map((p) => ({ name: p.name, c: p.c })),
+  );
+  out += `
 
 /* the fields \`time\` reads by — ONE table, so the scalar tier's bindings, the template
  * tier's vocabulary, the VM's dispatch and the view's scope offering can never drift */

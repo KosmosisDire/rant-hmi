@@ -256,6 +256,20 @@ void test_filters() {
     CHECK(scheduler.state().values[cell].data.num == 22);
     tick(scheduler, 2);
     CHECK(scheduler.state().values[cell].data.num == 122);
+
+    /* THE KEEP POLICY (stage 6d): a delay keeps the FIRST parked run and its wake —
+       a second commit during the park simply ends, neither resetting the clock nor
+       replacing the continuation (that cancellation is what debounce is). The +100
+       lands exactly two ticks after the FIRST commit, and lands once. */
+    scheduler.post(InputEvent{1, instance, "commit", Value::number(7), 5});
+    tick(scheduler, 1);
+    scheduler.post(InputEvent{1, instance, "commit", Value::number(8), 6});
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[cell].data.num == 122);
+    tick(scheduler, 1);
+    CHECK(scheduler.state().values[cell].data.num == 222);
+    tick(scheduler, 3);
+    CHECK(scheduler.state().values[cell].data.num == 222);
 }
 
 void test_first_of_rearm() {

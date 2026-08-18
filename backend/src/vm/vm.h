@@ -9,7 +9,6 @@ namespace hmi {
 struct RunResult {
     bool halted = false;
     bool faulted = false;
-    bool suspended = false;
     uint32_t steps = 0;
 };
 

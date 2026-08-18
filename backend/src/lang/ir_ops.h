@@ -41,7 +41,17 @@ enum class OpCode : uint8_t {
     Call,
     Method,
     StoreX,
-    Suspend,
+    /* THE ONE ASYNC PRIMITIVE (stage 6d): park this run at pending site `a` and wake
+     * it `b` ticks from now, the invocation policy riding `small` (a ParkPolicy).
+     * The frame swaps into the site WHOLE — arena, arguments, temporaries — and
+     * swaps back at the wake, so held scratch survives by ownership. Replace
+     * re-parks an occupied site with THIS run and resets the clock (debounce: the
+     * last arrival speaks); Keep leaves the parked run its wake and simply ends
+     * this one (delay: the first arrival's continuation is not cancelled by a
+     * second). Parked frames die at recompile — cells migrate by name,
+     * continuations never.
+     */
+    Park,
     /* the move step's forms (spec 5.4): New and ReadEnt fill a struct cell, Store
      * lands a value at a place, Send emits the effect.
      */
@@ -155,7 +165,7 @@ constexpr const char* kOpNames[] = {
     "CALL",
     "METHOD",
     "STORE_X",
-    "SUSPEND",
+    "PARK",
     "NEW",
     "READ_ENT",
     "SEND",
@@ -259,6 +269,15 @@ constexpr uint16_t send_small(SendTarget target, uint8_t verb) {
     return static_cast<uint16_t>(static_cast<uint16_t>(target) |
                                  (static_cast<uint16_t>(verb) << 8));
 }
+
+/* how a Park treats an occupied pending site: its `small`, whole */
+enum class ParkPolicy : uint16_t {
+    /* re-park the site with THIS run; the wake clock resets (debounce) */
+    Replace,
+    /* the parked run keeps the site and its wake; this run just ends (delay) */
+    Keep,
+};
+
 
 /* the fields `time` reads by — ONE table, so the scalar tier's bindings, the template
  * tier's vocabulary, the VM's dispatch and the view's scope offering can never drift */

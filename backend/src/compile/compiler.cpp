@@ -1879,8 +1879,8 @@ class Compiler {
 
     /* A struct-shaped cell owns one of the run's struct slots: the cell's Value is the
      * handle, the fields live in that slot (spec 5.2). A flow temporary and a declared
-     * struct variable differ only in kind and lifetime: a temporary's slot is snapshot
-     * around suspensions, a variable's is stable storage. */
+     * struct variable differ only in kind and lifetime: a temporary's slot parks with
+     * its run's frame, a variable's is stable storage. */
     uint32_t add_struct_cell(CellKind kind, uint64_t owner_node, uint64_t flow_id,
                              uint64_t node_id, const std::string& name, uint16_t type_id) {
         CellDef cell;
@@ -3047,13 +3047,17 @@ class Compiler {
                 }
                 flow.body.max_stack = std::max(flow.body.max_stack, 2u);
             } else if (kind == "debounce" || kind == "delay") {
+                /* one Park each; the POLICY is the whole difference — debounce
+                   replaces an occupied site (the last arrival speaks), delay keeps
+                   it (the first arrival's continuation holds its wake) */
                 const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
-                ins.op = OpCode::Suspend;
+                ins.op = OpCode::Park;
                 ins.a = program_.layout.pending_slots++;
                 ins.b = static_cast<uint32_t>(std::max(0.0, a));
-                ins.small = kind == "debounce" ? 1 : 0;
-                ins.c = fault_site(step_id, "suspend", "suspension state is invalid");
+                ins.small = static_cast<uint16_t>(
+                    kind == "debounce" ? ParkPolicy::Replace : ParkPolicy::Keep);
+                ins.c = fault_site(step_id, "park", "park state is invalid");
                 flow.body.code.push_back(ins);
             } else if (kind == "tmr_start" || kind == "tmr_cancel") {
                 const int timer =

@@ -1211,12 +1211,22 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::StoreX:
                 x = pop();
                 break;
-            case OpCode::Suspend: {
+            /* THE PARK: policy in `small` decides what an OCCUPIED site means — the
+             * whole of the debounce/delay distinction. Replace re-parks the site
+             * with THIS run and resets the clock; Keep leaves the parked run its
+             * wake and simply ends this one, so a delayed continuation is never
+             * cancelled by a later arrival. */
+            case OpCode::Park: {
                 if (!flow || ins.a >= state.pending.size()) {
                     fail(ins.c);
                     break;
                 }
                 PendingState& pending = state.pending[ins.a];
+                if (static_cast<ParkPolicy>(ins.small) == ParkPolicy::Keep &&
+                    pending.active) {
+                    result.halted = true;
+                    break;
+                }
                 pending.active = true;
                 pending.wake_tick = state.tick + ins.b;
                 pending.flow = flow->runtime_index;
@@ -1241,7 +1251,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                  * cursors, arguments and all — and the slot's previous buffers
                  * become the active frame, reset at the next fresh run's entry */
                 std::swap(state.frame, pending.held);
-                result.suspended = true;
                 result.halted = true;
                 break;
             }
@@ -1877,10 +1886,10 @@ RunResult run_slot(const Program& program, const SlotProgram& slot,
 
 RunResult resume_pending(const Program& program, RuntimeState& state,
                          uint32_t pending_slot) noexcept {
-    if (pending_slot >= state.pending.size()) return RunResult{true, true, false, 0};
+    if (pending_slot >= state.pending.size()) return RunResult{true, true, 0};
     PendingState& pending = state.pending[pending_slot];
     if (!pending.active || pending.flow >= program.flows.size())
-        return RunResult{true, true, false, 0};
+        return RunResult{true, true, 0};
     /* the parked frame returns whole — held refs, temporaries, the arguments and
      * all resolve against it again — and the run continues its own arena from
      * where it parked (no reset) */

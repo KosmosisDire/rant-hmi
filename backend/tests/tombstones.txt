@@ -200,6 +200,14 @@ store_leaf
 LoadField
 LoadEnt
 
+# stage 6d, Park replaces the old parking opcode: the invocation policy (replace =
+# debounce, keep = delay) is DATA in `small`, restoring a distinction the runtime had
+# lost — the old opcode stamped the kind and nothing read it, so both behaved as
+# debounce. The old opcode's name in both cases, and the run-result flag nothing read.
+Suspend
+suspended
+suspension
+
 # stage 6d, the site filters are lowerings: gate, deadband and throttle compile onto
 # the ordinary opcodes — jumps, arithmetic, a compare, a Halt that can SAY WHY — with
 # each filter's memory in one hidden per-step cell that migrates like any cell. The
