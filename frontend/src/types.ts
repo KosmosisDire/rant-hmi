@@ -118,9 +118,18 @@ export interface LangEntry {
   receiver?: string;   /* method rows only */
 }
 
+/* ONE HOST OBJECT'S FACE: an ambient value read by field — the clock, the view's own
+   inputs (state, repeat), a timer. Served from the backend's descriptor tables
+   (registry/objects.h), so the scope offering READS the vocabulary it once mirrored. */
+export interface LangObject {
+  name: string;
+  fields: MeshField[];
+}
+
 export interface Lang {
   builtins: LangEntry[];
   methods: LangEntry[];
+  objects: LangObject[];
 }
 
 /* ---- the closed attr vocabulary, as a served table ----

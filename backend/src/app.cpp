@@ -6,6 +6,7 @@
 #include "lang/template_expr.h"
 #include "doc/ops.h"
 #include "registry/attrs.h"
+#include "registry/objects.h"
 #include "registry/registry.h"
 
 #include <algorithm>
@@ -645,7 +646,25 @@ Json App::lang_json() {
             builtins.push_back(std::move(entry));
         }
     }
-    return Json{{"builtins", std::move(builtins)}, {"methods", std::move(methods)}};
+    /* THE HOST-OBJECT ROSTER (registry/objects.h): the ambient by-field vocabularies
+       — time, the view's own inputs, a timer's face — served so the frontend's scope
+       offering READS them instead of mirroring them. Adding an ambient value is a
+       descriptor row; every view learns it with the next snapshot. */
+    Json objects = Json::array();
+    auto object = [&](const char* name, const ObjectFieldDef* fields, size_t count) {
+        Json rows = Json::array();
+        for (size_t i = 0; i < count; ++i)
+            rows.push_back(Json{{"path", fields[i].name},
+                                {"shape", shape_name(fields[i].shape)}});
+        objects.push_back(Json{{"name", name}, {"fields", std::move(rows)}});
+    };
+    object("time", kClockFields, std::size(kClockFields));
+    object("state", kStateFields, std::size(kStateFields));
+    object("repeat", kRepeatFields, std::size(kRepeatFields));
+    object("timer", kTimerFields, std::size(kTimerFields));
+    return Json{{"builtins", std::move(builtins)},
+                {"methods", std::move(methods)},
+                {"objects", std::move(objects)}};
 }
 
 Json App::diagnostics() const {

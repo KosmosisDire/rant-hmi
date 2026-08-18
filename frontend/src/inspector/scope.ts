@@ -16,7 +16,6 @@
 
 import { TokenAccess } from "../colorpicker.js";
 import { Editor } from "../editor.js";
-import { TIME_FIELDS } from "../ir.js";
 import { resolveColor, resolveTypeRef } from "../slots.js";
 import { ComponentDef, Flow, Json, Lang, MeshEntity, MeshField, Node,
          SCALAR_TYPES, Var } from "../types.js";
@@ -167,35 +166,23 @@ export function ownLocals(editor: Editor, id: number): Var[] {
    TypeRef (see SCALAR_TYPES in types.ts) */
 const scalarShape = (type: string) => (SCALAR_TYPES.has(type) ? type : undefined);
 
-/* a timer reads by field: what the dot offers on one */
-const TIMER_FIELDS: MeshField[] = [
-  { path: "running", shape: "bool" },
-  { path: "remaining", shape: "num" },
-  { path: "duration", shape: "num" },
-  { path: "progress", shape: "num" },
-];
-
-/* the clock reads by field too (TIME_FIELDS, the generated vocabulary in ir.ts),
- * offered on every expression surface: the scalar tiers bind it in scope_for, the
- * template tier answers "time:" cells. `now` is the animation clock. */
-
-/* WHICH COPY of a `repeat` — read by field on both tiers that can answer: an attr, which
- * is evaluated per copy, and a flow AN EVENT TRIGGERED, which is handed the copy that
- * raised it. One list, because it is one fact. */
-const REPEAT_FIELDS: MeshField[] = [
-  { path: "index", shape: "num" },
-  { path: "count", shape: "num" },
-  { path: "fraction", shape: "num" },
-];
+/* ONE AMBIENT OBJECT'S FIELD TABLE, read off the SERVED roster (lang.objects — the
+ * backend's registry/objects.h, the same tables its compilers bind and check with).
+ * The clock, the view's own inputs (state, repeat) and a timer all read by field,
+ * and what the dot offers on each is exactly what the descriptor says — the hand
+ * mirrors this file kept beside the generated vocabulary died into these reads. */
+function objectFields(editor: Editor, name: string): MeshField[] {
+  return editor.lang?.objects?.find((row) => row.name === name)?.fields ?? [];
+}
 
 /* the standing `time` folder: not itself pickable (time reads by field), its leaves
- * inserting the dotted spellings */
-function timeRow(prefix: string): BrowseRow {
+ * inserting the dotted spellings. `now` is the animation clock. */
+function timeRow(editor: Editor, prefix: string): BrowseRow {
   return {
     key: prefix + "/time",
     label: "time",
     icon: "clock",
-    children: TIME_FIELDS.map((field) => ({
+    children: objectFields(editor, "time").map((field) => ({
       key: prefix + "/time." + field.path,
       label: field.path,
       shape: field.shape,
@@ -232,7 +219,7 @@ function hmiRows(editor: Editor, instance: Node | null,
      universe always offers it. `extra` is what only SOME surfaces bind — `repeat` on a
      flow an event can trigger — and it sits here rather than beside the roots because a
      reserved view input is part of the hmi universe wherever it is legal at all. */
-  rows.push(timeRow("hmi"));
+  rows.push(timeRow(editor, "hmi"));
   rows.push(...extra);
   return rows;
 }
@@ -258,7 +245,7 @@ function variableRows(editor: Editor, element: Node | null, prefix: string,
     const scalar = scalarShape(variable.type);
     const isEnum = !scalar && variable.type !== "timer" && variable.type.includes(".");
     const fields =
-      variable.type === "timer" ? TIMER_FIELDS
+      variable.type === "timer" ? objectFields(editor, "timer")
       : scalar || isEnum ? []
       : editor.mesh.types.find((t) => t.name === variable.type)?.fields ?? [];
     buckets[note].push({
@@ -406,7 +393,7 @@ export function pageScope(editor: Editor, instance: Node | null): Scope {
  * trigger anywhere in the list means one of those compiles has no copy — and the row is
  * offered only when every trigger carries one, which is exactly what the compiler will
  * accept. Not offering it is how the rule teaches before the refusal has to. */
-function repeatRow(flow: Flow | null): BrowseRow[] {
+function repeatRow(editor: Editor, flow: Flow | null): BrowseRow[] {
   const when = (flow?.when ?? []) as Json[];
   if (!when.length) return [];
   if (when.some((t) => t?.kind === "every" || t?.kind === "timer")) return [];
@@ -414,7 +401,7 @@ function repeatRow(flow: Flow | null): BrowseRow[] {
     key: "hmi/repeat",
     label: "repeat",
     icon: "copy",
-    children: REPEAT_FIELDS.map((field) => ({
+    children: objectFields(editor, "repeat").map((field) => ({
       key: "hmi/repeat." + field.path,
       label: field.path,
       shape: field.shape,
@@ -482,7 +469,7 @@ export function flowScope(editor: Editor, instance: Node | null, flow: Flow, ste
     tier: "wire",
     lang: () => editor.lang,
     names: () => {
-      const rows = projectNames(hmiRoot(editor, instance, repeatRow(at())));
+      const rows = projectNames(hmiRoot(editor, instance, repeatRow(editor, at())));
       const declared = new Set(rows.map((r) => r.label));
       for (const local of scopeAt(editor, instance, at(), stepId).locals) {
         if (!declared.has(local.name))
@@ -505,7 +492,7 @@ export function flowScope(editor: Editor, instance: Node | null, flow: Flow, ste
       return rows.concat(projectNames(dartRoot(editor)));
     },
     x,
-    roots: () => flowRoot().concat(slotRoots(editor, instance, repeatRow(at()))),
+    roots: () => flowRoot().concat(slotRoots(editor, instance, repeatRow(editor, at()))),
   };
 }
 
@@ -625,13 +612,6 @@ export function optionsSlotScope(editor: Editor, instance: Node | null): Scope {
  * the same names a flow on that element reads. Inside a component neither is offered,
  * which is where isolation shows in the UI. */
 
-const STATE_FIELDS: MeshField[] = [
-  { path: "pressed", shape: "bool" },
-  { path: "dragging", shape: "bool" },
-  { path: "open", shape: "bool" },
-  { path: "hover", shape: "bool" },
-];
-
 /* the component whose tree holds this node, or null for a page's node.
  *
  * Matched by IDENTITY, not by id: this now decides what a whole surface may reference, so
@@ -676,9 +656,9 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
     })),
   });
   const rows: BrowseRow[] = [
-    viewInput("state", "this view", STATE_FIELDS),
-    viewInput("repeat", "this copy", REPEAT_FIELDS),
-    timeRow("attr"),
+    viewInput("state", "this view", objectFields(editor, "state")),
+    viewInput("repeat", "this copy", objectFields(editor, "repeat")),
+    timeRow(editor, "attr"),
   ];
   const comp = owningComponent(editor, node.id);
   /* ON A PAGE: the variables in lexical scope and the whole mesh, which is what an

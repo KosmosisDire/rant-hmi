@@ -4,11 +4,13 @@
 /* for view_builtin()/view_method(): the builtin vocabulary is one table, shared with
  * the scalar tier */
 #include "lang/expression.h"
-/* for kClockFields / kIterateModes: the `time` and iterate vocabularies are one table
- * each, shared with the scalar tier */
+/* for kIterateModes: the iterate vocabulary is one table, shared with the scalar tier */
 #include "lang/ir.h"
 #include "lang/lexer.h"
 #include "lang/parser.h"
+/* the ambient by-field vocabularies (time, state, repeat) are HOST descriptors, read
+ * where every other consumer reads them so none can drift */
+#include "registry/objects.h"
 
 namespace hmi {
 namespace {
@@ -23,16 +25,11 @@ namespace {
  * against the TemplateScope and emitting instructions. One grammar, two emitters over
  * one IR, so the tiers can never drift at the syntax level or the encoding level. */
 
-const char* kStates[] = {"pressed", "dragging", "open", "hover"};
 /* the easing vocabulary a transition takes (a node's `transitions` metadata, a
  * property's declared sweep): the CSS names, verbatim, because the attr mechanism hands
  * the profile straight to a CSS transition and the property tween reproduces the same
  * named curves — one vocabulary, whichever mechanism draws it */
 const char* kProfiles[] = {"linear", "ease", "ease-in", "ease-out", "ease-in-out"};
-/* the three cells a repeated node's copy answers: 0-based index, the total copy count,
- * and index / (count - 1) (0 when count < 2, never NaN). `repeat` needs no opcode of its
- * own — like `state`, it is a LOAD of a symbolic cell the renderer answers per copy. */
-const char* kRepeatFields[] = {"index", "count", "fraction"};
 
 /* WHICH DECLARED TYPES HAVE NO DISPLAY-TIER READING, and why — empty where the variable
  * is legal here. A timer and a whole struct are read BY FIELD, and a view program's LOAD
@@ -438,20 +435,20 @@ class ViewLower {
             return Bare::Failed;
         }
         /* the clock and the view's own inputs read by FIELD; a bare mention teaches
-           the vocabulary (the dotted reads resolve in input_field, ahead of this) */
+           the vocabulary — spelled from the descriptor tables, so the teaching can
+           never lag the vocabulary (the dotted reads resolve in input_field, ahead
+           of this) */
         if (name == "time") {
-            fail("'time' reads by field (time.now / time.unix / time.year / "
-                 "time.month / time.day / time.weekday / time.hour / time.minute / "
-                 "time.second / time.text / time.date)",
+            fail("'time' reads by field (" + object_field_list("time", kClockFields) +
+                     ")",
                  anchor);
             return Bare::Failed;
         }
         if (name == "state" || name == "repeat") {
             fail("'" + name + "' reads by field (" +
-                     (name == "repeat"
-                          ? std::string("repeat.index / repeat.count / repeat.fraction")
-                          : std::string("state.pressed / state.dragging / "
-                                        "state.open / state.hover")) + ")",
+                     (name == "repeat" ? object_field_list("repeat", kRepeatFields)
+                                       : object_field_list("state", kStateFields)) +
+                     ")",
                  anchor);
             return Bare::Failed;
         }
@@ -548,11 +545,11 @@ class ViewLower {
         const std::string& field = member.text;
         bool known = false;
         if (name == "time") {
-            for (const ClockFieldDef& f : kClockFields) known = known || field == f.name;
+            for (const ObjectFieldDef& f : kClockFields) known = known || field == f.name;
         } else if (name == "repeat") {
-            for (const char* f : kRepeatFields) known = known || field == f;
+            for (const ObjectFieldDef& f : kRepeatFields) known = known || field == f.name;
         } else {
-            for (const char* f : kStates) known = known || field == f;
+            for (const ObjectFieldDef& f : kStateFields) known = known || field == f.name;
         }
         if (!known)
             return fail("unknown field '" + name + "." + field + "'", member.name_at);

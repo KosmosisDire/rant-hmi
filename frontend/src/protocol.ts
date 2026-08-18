@@ -140,7 +140,7 @@ export class Connection {
         this.version = frame.version;
         this.handlers.snapshot(frame.doc, frame.registry, frame.live,
           frame.diag?.compile ?? [], frame.mesh ?? { entities: [] },
-          frame.lang ?? { builtins: [], methods: [] },
+          frame.lang ?? { builtins: [], methods: [], objects: [] },
           frame.attr_table ?? { kinds: [], common: [], perKind: {} },
           frame.builtins ?? [],
           frame.node_attrs ?? {});

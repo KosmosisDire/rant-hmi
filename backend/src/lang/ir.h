@@ -1,6 +1,9 @@
 /* The language's INSTRUCTION FORM: the ceilings, the instruction struct every tier is
  * lowered to, and (through ir_ops.h, GENERATED from tools/gen_ir.mjs) the opcode,
- * clock-field, iterate-mode, builtin and method vocabularies.
+ * iterate-mode, builtin and method vocabularies. The ambient by-field vocabularies
+ * (the clock, the view inputs, a timer's face) are HOST descriptors and live outside
+ * the language, in registry/objects.h — adding an ambient value is a descriptor row
+ * and zero lang/ edits.
  *
  * This lives with the language rather than with the VM because the language DEFINES the
  * IR and the VM merely executes it — so the dependency runs vm/ -> lang/ and never the

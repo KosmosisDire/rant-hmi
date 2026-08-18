@@ -6,6 +6,7 @@
 #include "lang/expression.h"
 #include "lang/parser.h"
 #include "lang/template_expr.h"
+#include "registry/objects.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1457,40 +1458,41 @@ class Compiler {
     }
 
     /* a timer variable reads by FIELD (`blink.running`, `blink.remaining`): the state
-     * lives in the timer table, not the cell, so its bindings load from there */
+     * lives in the timer table, not the cell, so its bindings load from there — the
+     * descriptor's row order IS TmrRead's operand vocabulary */
     void bind_timer(Env& scope, const std::string& name, uint32_t index) {
-        scope.bind_field(name, "running", Place{Type(Shape::Bool), OpCode::TmrRead, index, 0});
-        scope.bind_field(name, "remaining", Place{Type(Shape::Num), OpCode::TmrRead, index, 1});
-        scope.bind_field(name, "progress", Place{Type(Shape::Num), OpCode::TmrRead, index, 3});
-        scope.bind_field(name, "duration", Place{Type(Shape::Num), OpCode::TmrRead, index, 2});
+        constexpr uint32_t count = sizeof(kTimerFields) / sizeof(kTimerFields[0]);
+        for (uint32_t i = 0; i < count; ++i)
+            scope.bind_field(name, kTimerFields[i].name,
+                             Place{Type(kTimerFields[i].shape), OpCode::TmrRead, index, i});
         scope.objects[name].bare_refusal =
-            "'" + name + "' is a timer; read a field (" + name +
-            ".running / .remaining / .duration / .progress)";
+            "'" + name + "' is a timer; read a field (" +
+            object_field_list(name.c_str(), kTimerFields) + ")";
     }
 
-    /* the system clock, in every scalar scope: `time` reads by field, off the one table
-       the VM dispatches on. Bound FIRST-AS-RESERVED: it lands after every variable and
-       timer, so `time.*` is always the clock — the same reservation the display tier
-       makes by checking `time` before the property scope. */
+    /* the system clock, in every scalar scope: `time` reads by field, off the served
+       descriptor the VM dispatches on. Bound FIRST-AS-RESERVED: it lands after every
+       variable and timer, so `time.*` is always the clock — the same reservation the
+       display tier makes by checking `time` before the property scope. */
     void bind_clock(Env& scope) {
         constexpr uint32_t count = sizeof(kClockFields) / sizeof(kClockFields[0]);
         for (uint32_t i = 0; i < count; ++i)
             scope.bind_field("time", kClockFields[i].name,
                              Place{Type(kClockFields[i].shape), OpCode::ClockRead, i, 0});
         scope.objects["time"].bare_refusal =
-            "'time' reads by field (time.now / time.unix / time.year / time.month / "
-            "time.day / time.weekday / time.hour / time.minute / time.second / "
-            "time.text / time.date)";
+            "'time' reads by field (" + object_field_list("time", kClockFields) + ")";
     }
 
     /* WHICH COPY OF A `repeat` RAISED THIS: the same three fields the view answers, off
-     * the argument slots the invocation seeded (frame.args[1..3]). Bound only where an
-     * event can carry one — see refuse_repeat for the other half. Reserved like `time`,
-     * by landing last: no variable can shadow it. */
+     * the argument slots the invocation seeded — the descriptor's row order is the
+     * frame.args[1..3] order. Bound only where an event can carry one — see
+     * refuse_repeat for the other half. Reserved like `time`, by landing last: no
+     * variable can shadow it. */
     void bind_repeat(Env& scope) {
-        scope.bind_field("repeat", "index", Place{Type(Shape::Num), OpCode::Arg, 1, 0});
-        scope.bind_field("repeat", "count", Place{Type(Shape::Num), OpCode::Arg, 2, 0});
-        scope.bind_field("repeat", "fraction", Place{Type(Shape::Num), OpCode::Arg, 3, 0});
+        constexpr uint32_t count = sizeof(kRepeatFields) / sizeof(kRepeatFields[0]);
+        for (uint32_t i = 0; i < count; ++i)
+            scope.bind_field("repeat", kRepeatFields[i].name,
+                             Place{Type(kRepeatFields[i].shape), OpCode::Arg, i + 1, 0});
     }
 
     /* A CADENCE HAS NO COPY. `every` and a timer fire for the ELEMENT — one element, one

@@ -165,18 +165,3 @@ export const MethodId = {
   ColorDiv: 52,
   ColorInvert: 53,
 } as const;
-
-/* the fields `time` reads by (lang/ir.h kClockFields) */
-export const TIME_FIELDS: { path: string; shape: string }[] = [
-  { path: "now", shape: "num" },
-  { path: "unix", shape: "num" },
-  { path: "year", shape: "num" },
-  { path: "month", shape: "num" },
-  { path: "day", shape: "num" },
-  { path: "weekday", shape: "num" },
-  { path: "hour", shape: "num" },
-  { path: "minute", shape: "num" },
-  { path: "second", shape: "num" },
-  { path: "text", shape: "text" },
-  { path: "date", shape: "text" },
-];

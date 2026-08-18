@@ -386,7 +386,9 @@ const editor = {
   registry: snapshot.registry,
   live: { epoch: 1, values: {} },
   mesh: { entities: [], types: [] },
-  lang: null,
+  /* the served language tables ride the editor: the scope offering READS the
+     host-object roster (lang.objects) instead of mirroring it */
+  lang: snapshot.lang ?? null,
   attrTable: snapshot.attr_table ?? { kinds: [], common: [], perKind: {} },
   builtins: snapshot.builtins ?? [],
   componentSel: null,

@@ -1,5 +1,9 @@
 #include "vm.h"
 
+/* the clock's field vocabulary is a HOST descriptor (the language's own tables carry
+ * no HMI object); ClockRead's operand dispatches over it here */
+#include "registry/objects.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>

@@ -278,50 +278,6 @@ enum class ParkPolicy : uint16_t {
     Keep,
 };
 
-
-/* the fields `time` reads by — ONE table, so the scalar tier's bindings, the template
- * tier's vocabulary, the VM's dispatch and the view's scope offering can never drift */
-enum class ClockField : uint16_t {
-    /* seconds since the HMI started, fractional: the animation clock */
-    Now,
-    /* whole seconds since the epoch */
-    Unix,
-    Year,
-    /* 1..12 */
-    Month,
-    /* 1..31 */
-    Day,
-    /* 0 = Sunday .. 6 = Saturday */
-    Weekday,
-    /* 0..23 */
-    Hour,
-    Minute,
-    Second,
-    /* "HH:MM:SS", local time */
-    Text,
-    /* "YYYY-MM-DD", local time */
-    Date,
-};
-
-struct ClockFieldDef {
-    const char* name;
-    Shape shape;
-};
-
-constexpr ClockFieldDef kClockFields[] = {
-    {"now", Shape::Num},
-    {"unix", Shape::Num},
-    {"year", Shape::Num},
-    {"month", Shape::Num},
-    {"day", Shape::Num},
-    {"weekday", Shape::Num},
-    {"hour", Shape::Num},
-    {"minute", Shape::Num},
-    {"second", Shape::Num},
-    {"text", Shape::Text},
-    {"date", Shape::Text},
-};
-
 /* what Iterate does with each element's body result (rides Instruction::small) */
 enum class IterateMode : uint16_t {
     /* the body result becomes the element        -> list */
