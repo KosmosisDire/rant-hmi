@@ -41,9 +41,6 @@ enum class OpCode : uint8_t {
     Call,
     Method,
     StoreX,
-    Gate,
-    Deadband,
-    Throttle,
     Suspend,
     /* the move step's forms (spec 5.4): New and ReadEnt fill a struct cell, Store
      * lands a value at a place, Send emits the effect.
@@ -73,6 +70,11 @@ enum class OpCode : uint8_t {
      */
     Store,
     Fault,
+    /* end the run — and SAY WHY when `small` is 1: fault site `a` counts into the
+     * log without the run being a fault, which is how a lowered gate on an UNKNOWN
+     * condition reports that the flow did not run. A bare Halt is every flow's
+     * silent ending, and what a gate's untaken branch jumps to.
+     */
     Halt,
     Index,
     /* THE UNKNOWN TEST (spec 2.4): when the top of stack is Nil, pop it and jump to
@@ -153,9 +155,6 @@ constexpr const char* kOpNames[] = {
     "CALL",
     "METHOD",
     "STORE_X",
-    "GATE",
-    "DEADBAND",
-    "THROTTLE",
     "SUSPEND",
     "NEW",
     "READ_ENT",

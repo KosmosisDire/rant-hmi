@@ -296,8 +296,6 @@ RuntimeState::RuntimeState(const Program& program) {
                                        feed_fields(program.entities[i]).size()),
                               Value::nil());
 
-    deadband.resize(program.layout.deadband_slots, Value::nil());
-    throttle.resize(program.layout.throttle_slots, UINT64_MAX);
     timers.resize(program.timers.size());
     fired.resize(program.layout.fired_groups, 0);
     pending.resize(program.layout.pending_slots);

@@ -1211,52 +1211,6 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::StoreX:
                 x = pop();
                 break;
-            case OpCode::Gate: {
-                const Value value = pop();
-                if (value.tag == ValueTag::Nil) {
-                    /* the ONE unknown rule: a guard on an unknown condition does not
-                       run and SAYS SO — the site's counter feeds the log, and the
-                       run stops without being a fault */
-                    state.fault(ins.c);
-                    result.halted = true;
-                    break;
-                }
-                if (value.tag != ValueTag::Bool || !value.data.boolean) result.halted = true;
-                break;
-            }
-            case OpCode::Deadband: {
-                /* the value a deadband watches is what the EVENT passed in (the
-                   parameter argument) — x is the pipeline's and starts Nil */
-                const Value& watched = state.frame.args[0];
-                if (ins.a >= state.deadband.size() || watched.tag != ValueTag::Num) {
-                    fail(ins.c);
-                    break;
-                }
-                const Value threshold =
-                    ins.b < program.constants.size() ? program.constants[ins.b] : Value::nil();
-                if (threshold.tag != ValueTag::Num) {
-                    fail(ins.c);
-                    break;
-                }
-                Value& previous = state.deadband[ins.a];
-                if (previous.tag == ValueTag::Num &&
-                    std::fabs(watched.data.num - previous.data.num) < threshold.data.num) {
-                    result.halted = true;
-                } else {
-                    previous = watched;
-                }
-                break;
-            }
-            case OpCode::Throttle:
-                if (ins.a >= state.throttle.size()) {
-                    fail(ins.c);
-                } else if (state.throttle[ins.a] != UINT64_MAX &&
-                           state.tick - state.throttle[ins.a] < ins.b) {
-                    result.halted = true;
-                } else {
-                    state.throttle[ins.a] = state.tick;
-                }
-                break;
             case OpCode::Suspend: {
                 if (!flow || ins.a >= state.pending.size()) {
                     fail(ins.c);
@@ -1852,7 +1806,11 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::Fault:
                 fail(ins.a);
                 break;
+            /* end the run — and SAY WHY when `small` is 1: fault site `a` counts into
+               the log without the run being a fault, which is how a lowered gate on an
+               UNKNOWN condition reports that the flow did not run */
             case OpCode::Halt:
+                if (ins.small) state.fault(ins.a);
                 result.halted = true;
                 break;
         }

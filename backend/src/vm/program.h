@@ -178,15 +178,6 @@ struct TimerDef {
     std::vector<uint32_t> rearm_groups;
 };
 
-enum class StateSiteKind : uint8_t { Deadband, Throttle, Suspend };
-
-struct StateSite {
-    StateSiteKind kind = StateSiteKind::Deadband;
-    uint64_t flow_id = 0;
-    uint64_t row_id = 0;
-    uint32_t slot = 0;
-};
-
 /* One RAISED event's identity: which instance speaks and what it says. A Raise
  * instruction indexes this table; the scheduler dispatches the queued record after the
  * raising run halts, on the instance-level channel. */
@@ -235,8 +226,6 @@ struct ProgramLayout {
      * effect records are */
     uint32_t notice_capacity = 0;
     uint32_t max_entity_fields = 1;
-    uint32_t deadband_slots = 0;
-    uint32_t throttle_slots = 0;
     uint32_t pending_slots = 0;
     uint32_t fired_groups = 0;
     /* struct storage: the widest field table any struct slot holds, so the effect
@@ -278,7 +267,6 @@ struct Program : Module {
     std::vector<RaiseDef> raises;
     std::vector<ArmedElement> armed_elements;
     std::vector<TimerDef> timers;
-    std::vector<StateSite> state_sites;
     std::vector<Diag> diagnostics;
     /* THE REFERENCE INDEX: every bare variable name the compile RESOLVED, as
      * (node whose prop holds the text, the text itself, the identifier's span,

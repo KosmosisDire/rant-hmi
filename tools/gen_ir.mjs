@@ -62,9 +62,6 @@ opcodes until their owners become host objects at stage 7.`,
   { name: "Call" },
   { name: "Method" },
   { name: "StoreX" },
-  { name: "Gate" },
-  { name: "Deadband" },
-  { name: "Throttle" },
   { name: "Suspend" },
   {
     name: "New",
@@ -97,7 +94,13 @@ storage refreshes the owner's field handle as part of the write, so no
 separate instruction follows a store anywhere.`,
   },
   { name: "Fault" },
-  { name: "Halt" },
+  {
+    name: "Halt",
+    c: `end the run — and SAY WHY when \`small\` is 1: fault site \`a\` counts into the
+log without the run being a fault, which is how a lowered gate on an UNKNOWN
+condition reports that the flow did not run. A bare Halt is every flow's
+silent ending, and what a gate's untaken branch jumps to.`,
+  },
   { name: "Index" },
   {
     name: "JmpNil",

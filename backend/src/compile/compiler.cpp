@@ -1857,13 +1857,15 @@ class Compiler {
         flow.worst_steps = 2;
     }
 
-    uint32_t state_site(StateSiteKind kind, uint64_t flow, uint64_t row) {
-        uint32_t slot = 0;
-        if (kind == StateSiteKind::Deadband) slot = program_.layout.deadband_slots++;
-        else if (kind == StateSiteKind::Throttle) slot = program_.layout.throttle_slots++;
-        else slot = program_.layout.pending_slots++;
-        program_.state_sites.push_back(StateSite{kind, flow, row, slot});
-        return slot;
+    /* A SITE FILTER'S MEMORY IS ONE HIDDEN CELL (stage 6d): deadband and throttle
+     * each keep one Num cell — named by the step, so a recompile carries the site's
+     * memory exactly as it carries any cell, and un-authorable (`~` never lexes as a
+     * name) so it can shadow nothing. The cell starts UNKNOWN, and unknown-ness IS
+     * the "never armed yet" state: the lowered compare yields Nil and the flow runs. */
+    uint32_t site_cell(const ElementInfo& element, uint64_t step_id, const char* what) {
+        return add_cell(CellKind::Local, element.id, step_id,
+                        std::string("~") + what + ":" + std::to_string(step_id),
+                        Shape::Num, Json(), false);
     }
 
     /* A DECLARED name in this instance's scope: its own local variable, else a global.
@@ -2959,36 +2961,96 @@ class Compiler {
                                      Dest{Type(Shape::Bool)}, flow.body.code,
                                      flow.body.max_stack);
                 if (step_ok) {
-                    Instruction gate{OpCode::Gate};
-                    /* not a fault: the counter behind this site is how a gate on an
-                       UNKNOWN condition says it did not run (the log drains it) */
-                    gate.c = fault_site(step_id, "gate_unknown",
-                                        "this gate's condition is UNKNOWN, so the flow "
-                                        "did not run; guard with known(...) or give the "
-                                        "value a default with ??");
-                    flow.body.code.push_back(gate);
+                    /* THE GATE IS A LOWERING (stage 6d): unknown says so and halts,
+                       false halts silently, true steps over both endings. The saying
+                       Halt counts this site, which is how a gate on an UNKNOWN
+                       condition reports that the flow did not run (the log drains
+                       it) — the one unknown rule, in three jumps. */
+                    const uint32_t site = fault_site(
+                        step_id, "gate_unknown",
+                        "this gate's condition is UNKNOWN, so the flow "
+                        "did not run; guard with known(...) or give the "
+                        "value a default with ??");
+                    const uint32_t at = static_cast<uint32_t>(flow.body.code.size());
+                    Instruction unknown{OpCode::JmpNil};
+                    unknown.a = at + 3;
+                    unknown.c = site;
+                    flow.body.code.push_back(unknown);
+                    Instruction untaken{OpCode::JmpFalse};
+                    untaken.a = at + 4;
+                    untaken.c = site;
+                    flow.body.code.push_back(untaken);
+                    Instruction over{OpCode::Jmp};
+                    over.a = at + 5;
+                    over.c = site;
+                    flow.body.code.push_back(over);
+                    Instruction say{OpCode::Halt};
+                    say.small = 1;
+                    say.a = site;
+                    flow.body.code.push_back(say);
+                    flow.body.code.push_back(Instruction{OpCode::Halt});
                 }
-            } else if (kind == "deadband") {
+            } else if (kind == "deadband" || kind == "throttle") {
+                /* THE SITE FILTERS ARE LOWERINGS (stage 6d) over one hidden cell:
+                   probe the watched quantity, compare it to the site's memory, halt
+                   inside the band (or the period), and remember the probe on the way
+                   through. The first run finds the memory UNKNOWN — the compare
+                   yields Nil and JmpNil steps to the store — so "never armed yet"
+                   needs no sentinel. A non-numeric probe rides the same road:
+                   unknown propagates and the flow RUNS (the old opcode faulted). */
+                const bool band = kind == "deadband";
                 const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
-                Instruction ins;
-                ins.op = OpCode::Deadband;
-                ins.a = state_site(StateSiteKind::Deadband, flow.flow_id, step_id);
-                ins.b = program_.add_constant(Value::number(a));
-                ins.c = fault_site(step_id, "deadband", "deadband needs a numeric value");
-                flow.body.code.push_back(ins);
-            } else if (kind == "throttle") {
-                const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
-                Instruction ins;
-                ins.op = OpCode::Throttle;
-                ins.a = state_site(StateSiteKind::Throttle, flow.flow_id, step_id);
-                ins.b = static_cast<uint32_t>(std::max(0.0, a));
-                ins.c = fault_site(step_id, "throttle", "throttle state is invalid");
-                flow.body.code.push_back(ins);
+                const uint32_t cell = site_cell(element, step_id, kind.c_str());
+                const uint32_t site = fault_site(
+                    step_id, kind, band ? "the deadband's site memory is invalid"
+                                        : "the throttle's site memory is invalid");
+                std::vector<Instruction>& code = flow.body.code;
+                auto emit = [&](OpCode op, uint32_t ia = 0, uint32_t ib = 0,
+                                uint16_t small = 0) {
+                    Instruction one{op};
+                    one.a = ia;
+                    one.b = ib;
+                    one.small = small;
+                    one.c = site;
+                    code.push_back(one);
+                };
+                /* deadband watches the EVENT's parameter argument; throttle watches
+                   the tick clock. The throttle threshold carries a half-millisecond
+                   slack: ticks are milliseconds, so a true elapsed is a whole count
+                   and the float compare can never land inside the slack — elapsed
+                   stays exactly ">= the authored period" with no integer clock. */
+                const uint32_t at = static_cast<uint32_t>(code.size());
+                if (band) {
+                    emit(OpCode::Arg, 0);
+                    emit(OpCode::Load, cell);
+                    emit(OpCode::Sub);
+                    emit(OpCode::Call, 0, 1, static_cast<uint16_t>(Builtin::Abs));
+                    emit(OpCode::Const, program_.add_constant(Value::number(a)));
+                    emit(OpCode::Lt);
+                    emit(OpCode::JmpNil, at + 9);
+                    emit(OpCode::JmpFalse, at + 9);
+                    emit(OpCode::Halt);
+                    emit(OpCode::Arg, 0);
+                    emit(OpCode::Store, cell);
+                } else {
+                    emit(OpCode::ClockRead, static_cast<uint32_t>(ClockField::Now));
+                    emit(OpCode::Load, cell);
+                    emit(OpCode::Sub);
+                    emit(OpCode::Const, program_.add_constant(Value::number(
+                                            (std::max(0.0, a) - 0.5) / 1000.0)));
+                    emit(OpCode::Lt);
+                    emit(OpCode::JmpNil, at + 8);
+                    emit(OpCode::JmpFalse, at + 8);
+                    emit(OpCode::Halt);
+                    emit(OpCode::ClockRead, static_cast<uint32_t>(ClockField::Now));
+                    emit(OpCode::Store, cell);
+                }
+                flow.body.max_stack = std::max(flow.body.max_stack, 2u);
             } else if (kind == "debounce" || kind == "delay") {
                 const double a = step.a.kind == NumOrText::Kind::Num ? step.a.num : 0.0;
                 Instruction ins;
                 ins.op = OpCode::Suspend;
-                ins.a = state_site(StateSiteKind::Suspend, flow.flow_id, step_id);
+                ins.a = program_.layout.pending_slots++;
                 ins.b = static_cast<uint32_t>(std::max(0.0, a));
                 ins.small = kind == "debounce" ? 1 : 0;
                 ins.c = fault_site(step_id, "suspend", "suspension state is invalid");

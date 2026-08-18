@@ -8045,8 +8045,8 @@ flow 508 node 462 event release worst 2
   0 FAULT 143 0 0
   1 HALT
 flow 667 node 462 event press worst 4
-  0 CONST 24 0 144
-  1 CONST 25 0 145
+  0 CONST 25 0 144
+  1 CONST 26 0 145
   2 SEND small 3 0 1 146
   3 HALT
 flow 571 node 570 event tap worst 2

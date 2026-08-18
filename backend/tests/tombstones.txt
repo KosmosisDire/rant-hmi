@@ -200,6 +200,20 @@ store_leaf
 LoadField
 LoadEnt
 
+# stage 6d, the site filters are lowerings: gate, deadband and throttle compile onto
+# the ordinary opcodes — jumps, arithmetic, a compare, a Halt that can SAY WHY — with
+# each filter's memory in one hidden per-step cell that migrates like any cell. The
+# three opcodes died with their VM cases, and the per-kind state vectors, their layout
+# counters and the write-only site table died with the storage. The opcodes by their
+# qualified spellings, since the bare words name the step kinds that live on.
+OpCode::Gate
+OpCode::Deadband
+OpCode::Throttle
+StateSite
+state_sites
+deadband_slots
+throttle_slots
+
 # stage 6d, the one send: every outbound effect is one verb spoken AT a host object —
 # the family and the verb ride the one Send's `small`, and the six per-effect opcodes
 # (the mesh move and its element form, the raise, the notification, the timer pair)

@@ -299,8 +299,6 @@ class RuntimeState {
      * frame.locals (struct_at routes a handle to whichever owns it) */
     std::vector<StructState> structs;
     std::vector<LastValueState> last;
-    std::vector<Value> deadband;
-    std::vector<uint64_t> throttle;
     std::vector<PendingState> pending;
     std::vector<TimerState> timers;
     std::vector<uint8_t> fired;
