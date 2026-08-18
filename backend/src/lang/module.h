@@ -88,6 +88,12 @@ struct Module {
      * (an Iterate's sub can read the mesh too) */
     Signature infer_signature(const std::vector<Instruction>& code) const;
 
+    /* THE VERIFIER's one question (stage 6d, rule 14): the pc of the first jump
+     * that fails to land strictly FORWARD, or -1. The IR has no loops — Iterate is
+     * the one bounded repetition — so a backward or self target is a malformed
+     * emit, refused at compile rather than left to the step budget. */
+    static int bad_jump(const std::vector<Instruction>& code);
+
     /* intern a constant / a text literal, returning its pool index */
     uint32_t add_text(const std::string& text);
     uint32_t add_constant(Value value);

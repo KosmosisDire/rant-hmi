@@ -43,6 +43,14 @@ constexpr uint32_t kDeliveryCeiling = 4096;
  * every run, not kept. */
 constexpr uint64_t kBufferBytes = 100ull * 1024 * 1024;
 
+/* THE STEP BUDGET (stage 6d; rule 14 — a claimed bound is an enforced bound): the
+ * dispatch loop counts every instruction, lambda bodies included, and FAULTS a run
+ * past this ceiling. Forward-only jumps (the verifier at compile) and the
+ * schema-bounded Iterate trips already make every legitimate run finite; this is
+ * the backstop that turns a malformed program into a loud fault instead of a hung
+ * tick, set orders of magnitude above any real run's count. */
+constexpr uint32_t kStepCeiling = 1u << 27;
+
 struct Instruction {
     OpCode op = OpCode::Halt;
     uint8_t flags = 0;

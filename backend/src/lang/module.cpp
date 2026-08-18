@@ -42,6 +42,17 @@ uint32_t Module::add_fault_site(const std::string& code, const std::string& mess
     return static_cast<uint32_t>(runtime_faults.size() - 1);
 }
 
+int Module::bad_jump(const std::vector<Instruction>& code) {
+    for (size_t pc = 0; pc < code.size(); ++pc) {
+        const Instruction& ins = code[pc];
+        if (ins.op != OpCode::Jmp && ins.op != OpCode::JmpFalse &&
+            ins.op != OpCode::JmpNil)
+            continue;
+        if (ins.a <= pc) return static_cast<int>(pc);
+    }
+    return -1;
+}
+
 /* One walk states every read and write the code performs: a cell or clock/timer
  * read can move on any tick (the scheduling class), an entity read fills off a
  * live subscription, an entity write needs its accessor standing before the

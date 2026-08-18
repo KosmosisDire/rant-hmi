@@ -218,10 +218,31 @@ class Compiler {
         program_.frame.elem_texts += program_.layout.pending_slots * 2;
         program_.frame.stack = std::max<uint32_t>(program_.frame.stack, 1);
         program_.layout.effect_capacity = std::max<uint32_t>(program_.layout.effect_capacity, 1);
+        /* THE VERIFIER (rule 14): every jump in every finished body lands strictly
+           FORWARD. The emitters only produce forward jumps, so a hit is an internal
+           error — the document refuses rather than trusting a malformed body to
+           the runtime's step budget. */
+        verify_jumps();
         CompileResult out;
         out.ok = !has_errors_;
         out.program = std::move(program_);
         return out;
+    }
+
+    void verify_jumps() {
+        auto check_body = [&](const std::vector<Instruction>& code, const char* what) {
+            const int at = Module::bad_jump(code);
+            if (at < 0) return;
+            diag(0, "verifier",
+                 std::string("internal: ") + what + " jumps backward at instruction " +
+                     std::to_string(at) + "; the document is refused");
+        };
+        for (const FlowProgram& flow : program_.flows)
+            check_body(flow.body.code, "a flow body");
+        for (const SlotProgram& slot : program_.slot_programs)
+            check_body(slot.body.code, "a slot expression");
+        for (const Procedure& sub : program_.subs)
+            check_body(sub.code, "a lambda body");
     }
 
     /* THE STANDALONE DEFINITION CHECK: a component's behavior is checked off the

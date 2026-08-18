@@ -4141,6 +4141,33 @@ void test_park_holds_text() {
     CHECK_EQ(std::string(state.text(compiled.program, state.values[out])), "first");
 }
 
+/* THE STEP BUDGET IS ENFORCED (stage 6d, rule 14): a body that jumps backward
+ * cannot spin the tick — the dispatch loop faults it at the ceiling. The compiler's
+ * verifier (Module::bad_jump) refuses such a body up front; this drives the runtime
+ * backstop behind it, and pins the verifier's answer on both a backward and a
+ * forward jump. */
+void test_step_budget() {
+    Program program;
+    program.runtime_faults.push_back(Diag{0, DiagGrade::Error, "spin", "the run spun"});
+    FlowProgram flow;
+    flow.body.code.push_back(Instruction{OpCode::Jmp});   /* a = 0: jumps to itself */
+    flow.body.max_stack = 1;
+    CHECK(Module::bad_jump(flow.body.code) == 0);
+
+    RuntimeState state(program);
+    const RunResult result = run_flow(program, flow, state, Value::nil());
+    CHECK(result.faulted);
+    CHECK(result.steps > kStepCeiling);
+
+    std::vector<Instruction> forward;
+    Instruction over{OpCode::Jmp};
+    over.a = 2;
+    forward.push_back(over);
+    forward.push_back(Instruction{OpCode::Halt});
+    forward.push_back(Instruction{OpCode::Halt});
+    CHECK(Module::bad_jump(forward) == -1);
+}
+
 /* A FUNCTION dep's poll cadence rides the instance's `poll` map (spec D1): absent, the
  * 2 Hz default stands; authored, the slot's own rate does. Junk in the map is read
  * tolerantly — the default stands, nothing throws. */
@@ -4502,6 +4529,7 @@ int main() {
     RUN(test_color_element_variables);
     RUN(test_variant_options);
     RUN(test_park_holds_text);
+    RUN(test_step_budget);
     RUN(test_document_tolerance);
     RUN(test_theme_tokens);
     RUN(test_clock);

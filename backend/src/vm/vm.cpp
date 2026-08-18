@@ -1062,7 +1062,13 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
 
     while (pc < code.size() && !result.halted) {
         const Instruction& ins = code[pc++];
-        ++result.steps;
+        /* the step budget, enforced (rule 14): a run past the ceiling faults at
+           the instruction that crossed it — a malformed program halts loudly
+           instead of spinning the tick */
+        if (++result.steps > kStepCeiling) {
+            fail(ins.c);
+            break;
+        }
         switch (ins.op) {
             case OpCode::Const:
                 if (ins.a >= program.constants.size() || !push(program.constants[ins.a])) fail(ins.c);
