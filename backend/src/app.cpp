@@ -330,7 +330,7 @@ Json App::live(bool full) const {
         /* a struct value's derived field cell never publishes: it has no key of its
            own and the struct's would collide */
         if (cell.field_of != UINT32_MAX) continue;
-        const Value& value = state.values[i];
+        const Value& value = state.store.values[i];
         const std::string key =
             cell.kind == CellKind::Slot
                 ? std::to_string(cell.owner_node) + "." + cell.name
@@ -363,16 +363,16 @@ Json App::live(bool full) const {
      * exactly as a Nil cell does, and the view reads Nil for it. */
     for (uint32_t e = 0; e < program.entities.size(); ++e) {
         const EntityDef& def = program.entities[e];
-        if (e >= state.last.size()) continue;
-        const LastValueState& last = state.last[e];
+        if (e >= state.store.last.size()) continue;
+        const LastValueState& last = state.store.last[e];
         const std::vector<FieldDef>& fields = feed_fields(def);
         for (uint32_t i = 0; i < fields.size(); ++i) {
             if (!attr_entity_reads_.count(def.name + "\n" + fields[i].path)) continue;
             const std::string key = mesh_cell(def.name, fields[i].path);
             if (fields[i].shape == Shape::List || fields[i].shape == Shape::Map) {
-                const uint32_t mirror = e < state.entity_aggs.size() &&
-                                                i < state.entity_aggs[e].size()
-                                            ? state.entity_aggs[e][i]
+                const uint32_t mirror = e < state.store.entity_aggs.size() &&
+                                                i < state.store.entity_aggs[e].size()
+                                            ? state.store.entity_aggs[e][i]
                                             : UINT32_MAX;
                 if (mirror == UINT32_MAX) continue;
                 Json entry = agg_entry(mirror, fields[i].shape,
@@ -431,8 +431,8 @@ Json App::live(bool full) const {
 Json App::agg_entry(uint32_t list_slot, Shape shape, const Value& value, bool full) const {
     const Program& program = scheduler_->program();
     const RuntimeState& state = scheduler_->state();
-    if (list_slot >= state.lists.size()) return Json();
-    const ListState& held = state.lists[list_slot];
+    if (list_slot >= state.store.lists.size()) return Json();
+    const ListState& held = state.store.lists[list_slot];
     const AggCursor cursor =
         list_slot < agg_published_.size() ? agg_published_[list_slot] : AggCursor{};
     const bool moved = cursor.gen != held.gen || cursor.total != held.total;
@@ -532,7 +532,7 @@ void App::compile_runtime() {
     ++epoch_;
     /* resend every aggregate whole on the next live frame: a migrated cell's generation
        moved, and a client holding the old one has to replace rather than append */
-    agg_published_.assign(scheduler_->state().lists.size(), AggCursor{});
+    agg_published_.assign(scheduler_->state().store.lists.size(), AggCursor{});
     /* fault sites renumber with the program: drop the coalescing rows (a still-faulting
        site simply announces itself again, which after an edit is the right thing) */
     fault_sites_.clear();
@@ -763,9 +763,9 @@ void App::publish_live() {
     /* the cursors advance ONLY here: a snapshot is one session's whole picture and must
        not tell the broadcast that everyone has seen it */
     const RuntimeState& state = scheduler_->state();
-    agg_published_.assign(state.lists.size(), AggCursor{});
-    for (uint32_t i = 0; i < state.lists.size(); ++i)
-        agg_published_[i] = AggCursor{state.lists[i].gen, state.lists[i].total};
+    agg_published_.assign(state.store.lists.size(), AggCursor{});
+    for (uint32_t i = 0; i < state.store.lists.size(); ++i)
+        agg_published_[i] = AggCursor{state.store.lists[i].gen, state.store.lists[i].total};
     server_.broadcast(frame);
 }
 

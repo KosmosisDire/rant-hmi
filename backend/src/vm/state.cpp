@@ -130,45 +130,45 @@ uint32_t buffer_capacity(Shape shape) noexcept {
 }
 
 RuntimeState::RuntimeState(const Program& program) {
-    values.resize(program.cells.size(), Value::nil());
-    texts.reserve(program.layout.cell_texts);
+    store.values.resize(program.cells.size(), Value::nil());
+    store.texts.reserve(program.layout.cell_texts);
     for (uint32_t i = 0; i < program.layout.cell_texts; ++i)
-        texts.emplace_back(kDefaultTextCap);
+        store.texts.emplace_back(kDefaultTextCap);
 
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
         if (cell.shape != Shape::Text) {
-            values[i] = cell.initial;
+            store.values[i] = cell.initial;
             continue;
         }
         const uint32_t slot = cell.text_slot;
-        if (slot >= texts.size()) continue;
-        texts[slot] = FixedText(cell.text_cap ? cell.text_cap : kDefaultTextCap);
+        if (slot >= store.texts.size()) continue;
+        store.texts[slot] = FixedText(cell.text_cap ? cell.text_cap : kDefaultTextCap);
         if (cell.initial.tag == ValueTag::Text &&
             (cell.initial.ref & kConstantRef) != 0) {
             const uint32_t at = cell.initial.ref & ~kConstantRef;
-            if (at < program.texts.size()) texts[slot].set(program.texts[at]);
+            if (at < program.texts.size()) store.texts[slot].set(program.texts[at]);
         }
-        values[i] = Value::text(slot);
+        store.values[i] = Value::text(slot);
     }
     /* mesh-inbound text storage (see the header): the scratch slot, then one retained
      * slot per text-shaped entity field. Delivered strings land in ordinary FixedText
      * slots, so they resolve through the standard text machinery: a feed's store copies
      * them into the destination cell, and a `seed: last` build can re-send them. */
-    mesh_scratch = static_cast<uint32_t>(texts.size());
-    texts.emplace_back(kDefaultTextCap);
-    input_scratch = static_cast<uint32_t>(texts.size());
-    texts.emplace_back(kDefaultTextCap);
-    entity_texts.resize(program.entities.size());
+    store.mesh_scratch = static_cast<uint32_t>(store.texts.size());
+    store.texts.emplace_back(kDefaultTextCap);
+    store.input_scratch = static_cast<uint32_t>(store.texts.size());
+    store.texts.emplace_back(kDefaultTextCap);
+    store.entity_texts.resize(program.entities.size());
     for (uint32_t e = 0; e < program.entities.size(); ++e) {
         /* the READ side's table: a function's response fields — what a delivery
            carries, what the cache holds, and what a slot expression loads */
         const std::vector<FieldDef>& entity_fields = feed_fields(program.entities[e]);
-        entity_texts[e].assign(entity_fields.size(), UINT32_MAX);
+        store.entity_texts[e].assign(entity_fields.size(), UINT32_MAX);
         for (uint32_t f = 0; f < entity_fields.size(); ++f) {
             if (entity_fields[f].shape != Shape::Text) continue;
-            entity_texts[e][f] = static_cast<uint32_t>(texts.size());
-            texts.emplace_back(kDefaultTextCap);
+            store.entity_texts[e][f] = static_cast<uint32_t>(store.texts.size());
+            store.texts.emplace_back(kDefaultTextCap);
         }
     }
     /* retained aggregate storage: one slot per list- or map-shaped cell, born EMPTY and
@@ -176,19 +176,19 @@ RuntimeState::RuntimeState(const Program& program) {
      * ticks and the pool above does not survive a run, so the two storages are separate
      * and only this one is stable. Element text slots are appended to `texts` on first
      * use (list_text), after the pool's own run, so nothing above is disturbed. */
-    lists.resize(program.layout.list_slots);
+    store.lists.resize(program.layout.list_slots);
     /* the MESH AGGREGATE MIRRORS ride the same vector, after the cells' slots: one
        empty retained slot per aggregate-shaped read-side entity field, filled by
        deliveries (hold_entity_agg) and handed out through the last-value cache */
-    entity_aggs.resize(program.entities.size());
+    store.entity_aggs.resize(program.entities.size());
     for (uint32_t e = 0; e < program.entities.size(); ++e) {
         const std::vector<FieldDef>& read_fields = feed_fields(program.entities[e]);
-        entity_aggs[e].assign(read_fields.size(), UINT32_MAX);
+        store.entity_aggs[e].assign(read_fields.size(), UINT32_MAX);
         for (uint32_t f = 0; f < read_fields.size(); ++f) {
             if (read_fields[f].shape != Shape::List && read_fields[f].shape != Shape::Map)
                 continue;
-            entity_aggs[e][f] = static_cast<uint32_t>(lists.size());
-            lists.emplace_back();
+            store.entity_aggs[e][f] = static_cast<uint32_t>(store.lists.size());
+            store.lists.emplace_back();
         }
     }
     /* EVERY aggregate cell tells its slot what shape it is, authored start or not: the
@@ -197,16 +197,16 @@ RuntimeState::RuntimeState(const Program& program) {
        the only thing in reach that knows */
     for (const CellDef& cell : program.cells) {
         if (cell.shape != Shape::List && cell.shape != Shape::Map) continue;
-        if (cell.list_slot >= lists.size()) continue;
-        lists[cell.list_slot].elem = cell.elem;
-        lists[cell.list_slot].leaf = cell.leaf;
+        if (cell.list_slot >= store.lists.size()) continue;
+        store.lists[cell.list_slot].elem = cell.elem;
+        store.lists[cell.list_slot].leaf = cell.leaf;
     }
     for (uint32_t i = 0; i < program.cells.size(); ++i) {
         const CellDef& cell = program.cells[i];
         if (!cell.has_list) continue;
         if (cell.shape != Shape::List && cell.shape != Shape::Map) continue;
         const bool pairs = cell.shape == Shape::Map;
-        if (cell.list_slot < lists.size() && lists[cell.list_slot].nested()) {
+        if (cell.list_slot < store.lists.size() && store.lists[cell.list_slot].nested()) {
             seed_nested(program, i, cell);
             continue;
         }
@@ -216,7 +216,7 @@ RuntimeState::RuntimeState(const Program& program) {
         /* a fresh run's baseline is generation ZERO: hold_list bumps gen because a
            whole store is a discontinuity, and there is nothing here to be discontinuous
            from */
-        if (cell.list_slot < lists.size()) lists[cell.list_slot].gen = 0;
+        if (cell.list_slot < store.lists.size()) store.lists[cell.list_slot].gen = 0;
     }
 
     uint32_t max_fields = std::max<uint32_t>(program.layout.max_entity_fields, 1);
@@ -224,9 +224,9 @@ RuntimeState::RuntimeState(const Program& program) {
        the frame's, built with it below. */
     const uint32_t state_structs = std::min<uint32_t>(
         program.layout.state_structs, static_cast<uint32_t>(program.structs.size()));
-    structs.resize(state_structs);
+    store.structs.resize(state_structs);
     for (uint32_t i = 0; i < state_structs; ++i) {
-        StructState& item = structs[i];
+        StructState& item = store.structs[i];
         item.type_id = program.structs[i];
         const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
         const uint32_t n = static_cast<uint32_t>(defs.size());
@@ -237,8 +237,8 @@ RuntimeState::RuntimeState(const Program& program) {
         item.texts.assign(n, UINT32_MAX);
         for (uint32_t f = 0; f < n; ++f)
             if (defs[f].shape == Shape::Text) {
-                item.texts[f] = static_cast<uint32_t>(texts.size());
-                texts.emplace_back(kDefaultTextCap);
+                item.texts[f] = static_cast<uint32_t>(store.texts.size());
+                store.texts.emplace_back(kDefaultTextCap);
             }
     }
     /* THE FRAME: the storage the active run owns. Site text slots first, then the
@@ -280,19 +280,19 @@ RuntimeState::RuntimeState(const Program& program) {
         if (cell.shape != Shape::Struct) continue;
         StructState* item = struct_at(cell.struct_slot);
         if (!item) continue;
-        values[i] = Value::structure(cell.struct_slot, cell.type_id);
+        store.values[i] = Value::structure(cell.struct_slot, cell.type_id);
         for (const auto& start : cell.struct_init) {
             if (start.first >= item->fields.size()) continue;
             item->fields[start.first] = start.second;
         }
     }
 
-    last.resize(program.entities.size());
+    store.last.resize(program.entities.size());
     for (uint32_t i = 0; i < program.entities.size(); ++i)
         /* sized for BOTH tables: a function's mirror holds its response (what a slot
            expression reads), while ReadEnt walks the value/request table — the wider
            run keeps either read in bounds and the unused tail stays Nil */
-        last[i].fields.resize(std::max(program.entities[i].fields.size(),
+        store.last[i].fields.resize(std::max(program.entities[i].fields.size(),
                                        feed_fields(program.entities[i]).size()),
                               Value::nil());
 
@@ -356,15 +356,15 @@ std::string_view RuntimeState::text(const Program& program, const Value& value) 
         const uint32_t at = value.ref & ~kFrameRef;
         return at < frame.texts.size() ? frame.texts[at].view() : std::string_view{};
     }
-    return value.ref < texts.size() ? texts[value.ref].view() : std::string_view{};
+    return value.ref < store.texts.size() ? store.texts[value.ref].view() : std::string_view{};
 }
 
 AggView RuntimeState::aggregate(const Value& value) const noexcept {
     const uint32_t count = agg_count(value);
     if (value_retained(value) &&
         (value.tag == ValueTag::List || value.tag == ValueTag::Map)) {
-        if (value.ref >= lists.size()) return {};
-        const ListState& held = lists[value.ref];
+        if (value.ref >= store.lists.size()) return {};
+        const ListState& held = store.lists[value.ref];
         /* ONE ROW of a nested cell: its entries are in the slot's LEAF arena at the start
            the value carries, not among the slot's outer entries */
         if (value_row(value)) {
@@ -382,7 +382,7 @@ AggView RuntimeState::aggregate(const Value& value) const noexcept {
     return {frame.elems.data() + value.ref, count};
 }
 
-uint32_t RuntimeState::list_text(ListState& held, uint32_t at) noexcept {
+uint32_t Store::list_text(ListState& held, uint32_t at) noexcept {
     /* a map's entries interleave, so the widest position an aggregate can name is twice
        its entry budget: one text slot per key AND one per text value */
     if (at >= static_cast<uint64_t>(held.capacity()) * 2) return UINT32_MAX;
@@ -397,7 +397,7 @@ uint32_t RuntimeState::list_text(ListState& held, uint32_t at) noexcept {
  * value's bytes move into the destination POSITION's own slot, because element text is
  * homed per position. Erasing shifts DOWN (ascending destinations) and inserting shifts
  * UP (descending), which is what keeps a source from being overwritten before it is read. */
-void RuntimeState::move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept {
+void Store::move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept {
     if (dst == src || src >= held.elems.size() || dst >= held.elems.size()) return;
     Value value = held.elems[src];
     if (value.tag == ValueTag::Text) {
@@ -410,7 +410,7 @@ void RuntimeState::move_entry(ListState& held, uint32_t dst, uint32_t src) noexc
     held.elems[dst] = value;
 }
 
-uint32_t RuntimeState::leaf_text(ListState& held, uint32_t at) noexcept {
+uint32_t Store::leaf_text(ListState& held, uint32_t at) noexcept {
     if (at >= static_cast<uint64_t>(held.leaf_capacity()) * 2) return UINT32_MAX;
     while (held.leaf_texts.size() <= at) {
         held.leaf_texts.push_back(static_cast<uint32_t>(texts.size()));
@@ -419,7 +419,7 @@ uint32_t RuntimeState::leaf_text(ListState& held, uint32_t at) noexcept {
     return held.leaf_texts[at];
 }
 
-void RuntimeState::move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept {
+void Store::move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept {
     if (dst == src || src >= held.leaves.size() || dst >= held.leaves.size()) return;
     Value value = held.leaves[src];
     if (value.tag == ValueTag::Text) {
@@ -466,7 +466,7 @@ void compact_leaves(RuntimeState& state, ListState& held, bool pairs) noexcept {
         const bool row_pairs = entry.tag == ValueTag::Map;
         const uint32_t used = row_span(count, row_pairs);
         if (start != cursor)
-            for (uint32_t i = 0; i < used; ++i) state.move_leaf(held, cursor + i, start + i);
+            for (uint32_t i = 0; i < used; ++i) state.store.move_leaf(held, cursor + i, start + i);
         entry = Value::retained_row(entry.ref, cursor, count, list_elem_tag(entry), row_pairs);
         cursor += row < held.row_cap.size() ? held.row_cap[row] : used;
     }
@@ -513,7 +513,7 @@ uint32_t reserve_row(RuntimeState& state, ListState& held, uint32_t row, bool pa
     const uint32_t used = row_span(agg_count(entry), row_pairs);
     const uint32_t dst = held.leaf_used;
     if (held.leaves.size() < dst + cap) held.leaves.resize(dst + cap, Value::nil());
-    for (uint32_t i = 0; i < used; ++i) state.move_leaf(held, dst + i, start + i);
+    for (uint32_t i = 0; i < used; ++i) state.store.move_leaf(held, dst + i, start + i);
     held.leaf_used = dst + cap;
     held.leaf_live = held.leaf_live - was + cap;
     held.row_cap[row] = cap;
@@ -569,7 +569,7 @@ void trim_front(RuntimeState& state, ListState& held, uint32_t window) noexcept 
         for (uint32_t row = 0; row < drop; ++row) release_row(held, row, false);
         held.row_cap.erase(held.row_cap.begin(), held.row_cap.begin() + drop);
     }
-    for (uint32_t i = 0; i + drop < held.count; ++i) state.move_entry(held, i, i + drop);
+    for (uint32_t i = 0; i + drop < held.count; ++i) state.store.move_entry(held, i, i + drop);
     held.count = window;
 }
 
@@ -624,12 +624,12 @@ bool place_row(RuntimeState& state, const Program& source_program, const Runtime
         }
     for (uint32_t i = 0; i < span; ++i) {
         if (held.leaves[dst + i].tag != ValueTag::Text) continue;
-        const uint32_t slot = state.leaf_text(held, dst + i);
+        const uint32_t slot = state.store.leaf_text(held, dst + i);
         if (slot == UINT32_MAX) return false;
         /* a slot index only means the same storage when the source IS this run: across
            two states the same number names two different buffers, so the copy stands */
         if (&source != &state || held.leaves[dst + i].ref != slot)
-            state.texts[slot].set(source.text(source_program, held.leaves[dst + i]));
+            state.store.texts[slot].set(source.text(source_program, held.leaves[dst + i]));
         held.leaves[dst + i] = Value::text(slot);
     }
     held.leaf_used = dst + span;
@@ -697,8 +697,8 @@ static Value retained_value(const ListState& held, uint32_t list_slot, bool pair
 bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& source,
                              uint32_t cell_index, uint32_t list_slot, const Value* data,
                              uint32_t count, bool pairs) noexcept {
-    if (list_slot >= lists.size() || cell_index >= values.size()) return false;
-    ListState& held = lists[list_slot];
+    if (list_slot >= store.lists.size() || cell_index >= store.values.size()) return false;
+    ListState& held = store.lists[list_slot];
     if (count > held.capacity()) count = held.capacity();
     if (!data && count) return false;
     /* grow to what this store actually holds, once; a slot that only ever carries three
@@ -740,12 +740,12 @@ bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& 
         }
     for (uint32_t i = 0; i < span; ++i) {
         if (held.elems[i].tag != ValueTag::Text) continue;
-        const uint32_t slot = list_text(held, i);
+        const uint32_t slot = store.list_text(held, i);
         if (slot == UINT32_MAX) return false;
         /* a slot index only means the same storage when the source IS this run: across
            two states the same number names two different buffers, so the copy stands */
         if (&source != this || held.elems[i].ref != slot)
-            texts[slot].set(source.text(source_program, held.elems[i]));
+            store.texts[slot].set(source.text(source_program, held.elems[i]));
         held.elems[i] = Value::text(slot);
     }
     held.count = count;
@@ -777,14 +777,14 @@ bool RuntimeState::hold_list(const Program& source_program, const RuntimeState& 
        generation moves and the append cursor restarts at what is now there */
     ++held.gen;
     held.total = count;
-    values[cell_index] = retained_value(held, list_slot, pairs);
+    store.values[cell_index] = retained_value(held, list_slot, pairs);
     return true;
 }
 
 void RuntimeState::seed_nested(const Program& program, uint32_t cell_index,
                                const CellDef& cell) noexcept {
-    if (cell.list_slot >= lists.size() || cell_index >= values.size()) return;
-    ListState& held = lists[cell.list_slot];
+    if (cell.list_slot >= store.lists.size() || cell_index >= store.values.size()) return;
+    ListState& held = store.lists[cell.list_slot];
     const bool pairs = cell.shape == Shape::Map;
     const bool row_pairs = cell.elem == Shape::Map;
     uint32_t count = static_cast<uint32_t>(cell.row_init.size());
@@ -804,9 +804,9 @@ void RuntimeState::seed_nested(const Program& program, uint32_t cell_index,
             const uint32_t key_at = row * 2;
             const Value key =
                 key_at < cell.list_init.size() ? cell.list_init[key_at] : Value::nil();
-            const uint32_t slot = list_text(held, key_at);
+            const uint32_t slot = store.list_text(held, key_at);
             if (slot == UINT32_MAX) break;
-            texts[slot].set(text(program, key));
+            store.texts[slot].set(text(program, key));
             held.elems[key_at] = Value::text(slot);
         }
         const std::vector<Value>& elements = cell.row_init[row];
@@ -819,10 +819,10 @@ void RuntimeState::seed_nested(const Program& program, uint32_t cell_index,
        discontinuous from */
     held.gen = 0;
     held.total = count;
-    values[cell_index] = retained_value(held, cell.list_slot, pairs);
+    store.values[cell_index] = retained_value(held, cell.list_slot, pairs);
 }
 
-Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
+Value Store::hold_entity_agg(uint32_t list_slot, const Value* data,
                                     const std::string_view* elem_texts,
                                     uint32_t delivered, bool pairs, ValueTag elem,
                                     uint32_t bound) noexcept {
@@ -880,9 +880,9 @@ Value RuntimeState::hold_entity_agg(uint32_t list_slot, const Value* data,
 
 bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Value value,
                                 const Value& keep) noexcept {
-    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
-    if (cell.shape != Shape::List || cell.list_slot >= lists.size()) return false;
+    if (cell.shape != Shape::List || cell.list_slot >= store.lists.size()) return false;
     /* a struct is not an element on any tier: it has no wire form here and no leaf shape
        could describe it */
     if (value.tag == ValueTag::Struct) return false;
@@ -892,7 +892,7 @@ bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Val
        undeclared cell still takes only scalars, because a row with no declared shape
        would be a nesting nobody wrote down. */
     if (!elem_fits(cell.elem, value.tag)) return false;
-    ListState& held = lists[cell.list_slot];
+    ListState& held = store.lists[cell.list_slot];
     if (!held.nested() && (value.tag == ValueTag::List || value.tag == ValueTag::Map))
         return false;
     /* the runaway case: with nothing bounding the ring, the buffer's own budget is the
@@ -903,14 +903,14 @@ bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Val
        tick, and rescanning four thousand elements for a fact one comparison settles is
        exactly the per-tick cost this tier does not pay. Mixed reads as Nil, which is
        what a scan would have reported anyway. */
-    const Value& current = values[cell_index];
+    const Value& current = store.values[cell_index];
     const ValueTag was = current.tag == ValueTag::List && held.count
                              ? list_elem_tag(current)
                              : value.tag;
     if (value.tag == ValueTag::Text) {
-        const uint32_t slot = list_text(held, held.count);
+        const uint32_t slot = store.list_text(held, held.count);
         if (slot == UINT32_MAX) return false;
-        if (value.ref != slot) texts[slot].set(text(program, value));
+        if (value.ref != slot) store.texts[slot].set(text(program, value));
         value = Value::text(slot);
     }
     /* push_back only where the slot has not yet reached its working width: once a ring
@@ -921,7 +921,7 @@ bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Val
     ++held.count;
     ++held.total;
     trim_front(*this, held, keep_window(keep, held.capacity()));
-    values[cell_index] = Value::retained_list(
+    store.values[cell_index] = Value::retained_list(
         cell.list_slot, held.count, was == value.tag ? was : ValueTag::Nil);
     return true;
 }
@@ -933,7 +933,7 @@ bool RuntimeState::write_append(const Program& program, uint32_t cell_index, Val
 bool RuntimeState::write_row(const Program& program, uint32_t cell_index, Value value,
                              const Value& keep) noexcept {
     const CellDef& cell = program.cells[cell_index];
-    ListState& held = lists[cell.list_slot];
+    ListState& held = store.lists[cell.list_slot];
     if (value.tag != ValueTag::Nil && held.row_pairs() != (value.tag == ValueTag::Map))
         return false;
     /* a row of THIS slot is staged before the arena can move under it */
@@ -941,7 +941,7 @@ bool RuntimeState::write_row(const Program& program, uint32_t cell_index, Value 
         value = stage_row(*this, program, value);
         if (value.tag == ValueTag::Nil) return false;
     }
-    const Value& current = values[cell_index];
+    const Value& current = store.values[cell_index];
     const ValueTag was = current.tag == ValueTag::List && held.count
                              ? list_elem_tag(current)
                              : value.tag;
@@ -963,22 +963,22 @@ bool RuntimeState::write_row(const Program& program, uint32_t cell_index, Value 
     }
     ++held.total;
     trim_front(*this, held, keep_window(keep, held.capacity()));
-    values[cell_index] = Value::retained_list(
+    store.values[cell_index] = Value::retained_list(
         cell.list_slot, held.count, was == value.tag ? was : ValueTag::Nil);
     return true;
 }
 
 bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const Value& key,
                              Value value) noexcept {
-    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
-    if (cell.shape != Shape::Map || cell.list_slot >= lists.size()) return false;
+    if (cell.shape != Shape::Map || cell.list_slot >= store.lists.size()) return false;
     if (key.tag != ValueTag::Text) return false;
     if (value.tag == ValueTag::Struct) return false;
     /* Nil ERASES below, so it passes; anything else must fit the declared value shape —
        which is a whole ROW where the cell declares a nested one */
     if (!elem_fits(cell.elem, value.tag)) return false;
-    ListState& held = lists[cell.list_slot];
+    ListState& held = store.lists[cell.list_slot];
     if (!held.nested() && (value.tag == ValueTag::List || value.tag == ValueTag::Map))
         return false;
     if (held.nested() && value.tag != ValueTag::Nil) {
@@ -1016,10 +1016,10 @@ bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const 
             release_row(held, at, true);
             held.row_cap.erase(held.row_cap.begin() + at);
         }
-        for (uint32_t p = at * 2; p + 2 < held.count * 2; ++p) move_entry(held, p, p + 2);
+        for (uint32_t p = at * 2; p + 2 < held.count * 2; ++p) store.move_entry(held, p, p + 2);
         --held.count;
         ++held.total;
-        values[cell_index] = Value::retained_map(cell.list_slot, held.count);
+        store.values[cell_index] = Value::retained_map(cell.list_slot, held.count);
         return true;
     }
 
@@ -1029,7 +1029,7 @@ bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const 
         if (held.count >= held.capacity()) return false;
         const uint32_t span = (held.count + 1) * 2;
         if (held.elems.size() < span) held.elems.resize(span, Value::nil());
-        for (uint32_t p = span; p-- > at * 2 + 2;) move_entry(held, p, p - 2);
+        for (uint32_t p = span; p-- > at * 2 + 2;) store.move_entry(held, p, p - 2);
         ++held.count;
         /* the shifted-up copy at the new pair still names the row BELOW it; the entry is
            blank until the placement writes it, and its capacity starts at nothing */
@@ -1037,9 +1037,9 @@ bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const 
             held.elems[at * 2 + 1] = Value::nil();
             held.row_cap.insert(held.row_cap.begin() + at, 0);
         }
-        const uint32_t slot = list_text(held, at * 2);
+        const uint32_t slot = store.list_text(held, at * 2);
         if (slot == UINT32_MAX) return false;
-        texts[slot].set(wanted);
+        store.texts[slot].set(wanted);
         held.elems[at * 2] = Value::text(slot);
     }
     if (held.nested()) {
@@ -1048,18 +1048,18 @@ bool RuntimeState::write_key(const Program& program, uint32_t cell_index, const 
                        view.count, held.row_pairs(), held.leaf))
             return false;
         ++held.total;
-        values[cell_index] = Value::retained_map(cell.list_slot, held.count);
+        store.values[cell_index] = Value::retained_map(cell.list_slot, held.count);
         return true;
     }
     if (value.tag == ValueTag::Text) {
-        const uint32_t slot = list_text(held, at * 2 + 1);
+        const uint32_t slot = store.list_text(held, at * 2 + 1);
         if (slot == UINT32_MAX) return false;
-        if (value.ref != slot) texts[slot].set(text(program, value));
+        if (value.ref != slot) store.texts[slot].set(text(program, value));
         value = Value::text(slot);
     }
     held.elems[at * 2 + 1] = value;
     ++held.total;
-    values[cell_index] = Value::retained_map(cell.list_slot, held.count);
+    store.values[cell_index] = Value::retained_map(cell.list_slot, held.count);
     return true;
 }
 
@@ -1099,7 +1099,7 @@ static bool same_element(const Program& program, const RuntimeState& state,
 
 bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
                                const Value& value) noexcept {
-    if (cell_index >= values.size()) return false;
+    if (cell_index >= store.values.size()) return false;
     const CellDef& cell = program.cells[cell_index];
     /* a struct cell's Value is its handle and is fixed for the run: it is filled by New
      * or ReadEnt and edited field by field, never replaced wholesale */
@@ -1114,11 +1114,11 @@ bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
         if (value.tag == ValueTag::Nil) {
             /* already UNKNOWN: re-storing Nil every tick (a computed binding whose
                expression keeps failing) is not a change the wire should see */
-            if (values[cell_index].tag == ValueTag::Nil) return true;
+            if (store.values[cell_index].tag == ValueTag::Nil) return true;
             /* CLEARED is a discontinuity like any other whole store, and the wire has to
                see it as one: the cell reads UNKNOWN and its generation moves */
-            if (cell.list_slot < lists.size()) {
-                ListState& held = lists[cell.list_slot];
+            if (cell.list_slot < store.lists.size()) {
+                ListState& held = store.lists[cell.list_slot];
                 held.count = 0;
                 ++held.gen;
                 held.total = 0;
@@ -1129,7 +1129,7 @@ bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
                 held.leaf_used = 0;
                 held.leaf_live = 0;
             }
-            values[cell_index] = Value::nil();
+            store.values[cell_index] = Value::nil();
             return true;
         }
         /* a cell fed from its own value: the copy would read the slot it is writing, so
@@ -1137,7 +1137,7 @@ bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
            NOT that — `grid = grid[0]` is a real (and refused) reshape, not a no-op — so
            the shortcut is the whole cell's alone. */
         if (value_retained(value) && !value_row(value) && value.ref == cell.list_slot) {
-            values[cell_index] = value;
+            store.values[cell_index] = value;
             return true;
         }
         const AggView view = aggregate(value);
@@ -1156,9 +1156,9 @@ bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
            second for nothing. The compare is bounded by the window and costs less than
            the copy it skips. Only a cell already HOLDING this shape can be unchanged —
            an empty list stored over UNKNOWN is a real change. */
-        if (cell.list_slot < lists.size() &&
-            value_shape(values[cell_index]) == cell.shape) {
-            const ListState& held = lists[cell.list_slot];
+        if (cell.list_slot < store.lists.size() &&
+            value_shape(store.values[cell_index]) == cell.shape) {
+            const ListState& held = store.lists[cell.list_slot];
             if (held.count == view.count) {
                 const uint32_t entries = pairs ? view.count * 2 : view.count;
                 bool same = view.data != nullptr || entries == 0;
@@ -1171,24 +1171,24 @@ bool RuntimeState::write_whole(const Program& program, uint32_t cell_index,
                          view.count, pairs);
     }
     if (cell.shape != Shape::Text || value.tag == ValueTag::Nil) {
-        values[cell_index] = value;
+        store.values[cell_index] = value;
         return true;
     }
-    if (cell.text_slot >= texts.size()) return false;
-    texts[cell.text_slot].set(text(program, value));
-    values[cell_index] = Value::text(cell.text_slot);
+    if (cell.text_slot >= store.texts.size()) return false;
+    store.texts[cell.text_slot].set(text(program, value));
+    store.values[cell_index] = Value::text(cell.text_slot);
     return true;
 }
 
 bool RuntimeState::write_elem(const Program& program, uint32_t cell_index,
                               const Value& index, Value value) noexcept {
-    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
-    if (cell.shape != Shape::List || cell.list_slot >= lists.size()) return false;
+    if (cell.shape != Shape::List || cell.list_slot >= store.lists.size()) return false;
     if (index.tag != ValueTag::Num) return false;
     if (value.tag == ValueTag::Struct) return false;
     if (!elem_fits(cell.elem, value.tag)) return false;
-    ListState& held = lists[cell.list_slot];
+    ListState& held = store.lists[cell.list_slot];
     if (!held.nested() && (value.tag == ValueTag::List || value.tag == ValueTag::Map))
         return false;
     if (held.nested() && value.tag != ValueTag::Nil &&
@@ -1219,13 +1219,13 @@ bool RuntimeState::write_elem(const Program& program, uint32_t cell_index,
         }
         ++held.gen;
         held.total = held.count;
-        values[cell_index] = retained_value(held, cell.list_slot, false);
+        store.values[cell_index] = retained_value(held, cell.list_slot, false);
         return true;
     }
     if (value.tag == ValueTag::Text) {
-        const uint32_t slot = list_text(held, at);
+        const uint32_t slot = store.list_text(held, at);
         if (slot == UINT32_MAX) return false;
-        if (value.ref != slot) texts[slot].set(text(program, value));
+        if (value.ref != slot) store.texts[slot].set(text(program, value));
         value = Value::text(slot);
     }
     held.elems[at] = value;
@@ -1233,17 +1233,17 @@ bool RuntimeState::write_elem(const Program& program, uint32_t cell_index,
        generation moves and the window goes out whole on the next publish */
     ++held.gen;
     held.total = held.count;
-    values[cell_index] = retained_value(held, cell.list_slot, false);
+    store.values[cell_index] = retained_value(held, cell.list_slot, false);
     return true;
 }
 
 bool RuntimeState::write_leaf_append(const Program& program, uint32_t cell_index,
                                      const Value& outer, Value value,
                                      const Value& keep) noexcept {
-    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
-    if (cell.list_slot >= lists.size()) return false;
-    ListState& held = lists[cell.list_slot];
+    if (cell.list_slot >= store.lists.size()) return false;
+    ListState& held = store.lists[cell.list_slot];
     /* only a LIST row grows by appending — a map row grows by being written a new key,
        which is the leaf assign's verb, exactly as it is one level up */
     if (!held.nested() || held.row_pairs()) return false;
@@ -1263,9 +1263,9 @@ bool RuntimeState::write_leaf_append(const Program& program, uint32_t cell_index
     const uint32_t start = reserve_row(*this, held, row, pairs, count + 1);
     if (start == UINT32_MAX) return false;
     if (value.tag == ValueTag::Text) {
-        const uint32_t slot = leaf_text(held, start + count);
+        const uint32_t slot = store.leaf_text(held, start + count);
         if (slot == UINT32_MAX) return false;
-        if (value.ref != slot) texts[slot].set(text(program, value));
+        if (value.ref != slot) store.texts[slot].set(text(program, value));
         value = Value::text(slot);
     }
     held.leaves[start + count] = value;
@@ -1274,23 +1274,23 @@ bool RuntimeState::write_leaf_append(const Program& program, uint32_t cell_index
     const uint32_t window = keep_window(keep, held.leaf_capacity());
     if (window != UINT32_MAX && now > window) {
         const uint32_t drop = now - window;
-        for (uint32_t i = 0; i + drop < now; ++i) move_leaf(held, start + i, start + i + drop);
+        for (uint32_t i = 0; i + drop < now; ++i) store.move_leaf(held, start + i, start + i + drop);
         now = window;
     }
     held.elems[row_at(row, pairs)] = Value::retained_row(
         cell.list_slot, start, now, was == value.tag ? was : ValueTag::Nil, false);
     ++held.gen;
     held.total = held.count;
-    values[cell_index] = retained_value(held, cell.list_slot, pairs);
+    store.values[cell_index] = retained_value(held, cell.list_slot, pairs);
     return true;
 }
 
 bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const Value& outer,
                               const Value& inner, Value value) noexcept {
-    if (cell_index >= values.size() || cell_index >= program.cells.size()) return false;
+    if (cell_index >= store.values.size() || cell_index >= program.cells.size()) return false;
     const CellDef& cell = program.cells[cell_index];
-    if (cell.list_slot >= lists.size()) return false;
-    ListState& held = lists[cell.list_slot];
+    if (cell.list_slot >= store.lists.size()) return false;
+    ListState& held = store.lists[cell.list_slot];
     if (!held.nested()) return false;
     /* the bottom of the nesting is scalars: there is no third level for this to address */
     if (value.tag == ValueTag::List || value.tag == ValueTag::Map ||
@@ -1313,9 +1313,9 @@ bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const
         if (same_element(program, *this, held.leaves[start + at], value)) return true;
         const ValueTag was = list_elem_tag(held.elems[entry_at]);
         if (value.tag == ValueTag::Text) {
-            const uint32_t slot = leaf_text(held, start + at);
+            const uint32_t slot = store.leaf_text(held, start + at);
             if (slot == UINT32_MAX) return false;
-            if (value.ref != slot) texts[slot].set(text(program, value));
+            if (value.ref != slot) store.texts[slot].set(text(program, value));
             value = Value::text(slot);
         }
         held.leaves[start + at] = value;
@@ -1342,7 +1342,7 @@ bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const
         if (value.tag == ValueTag::Nil) {
             if (!found) return true;
             for (uint32_t p = at * 2; p + 2 < count * 2; ++p)
-                move_leaf(held, start + p, start + p + 2);
+                store.move_leaf(held, start + p, start + p + 2);
             held.elems[entry_at] =
                 Value::retained_row(cell.list_slot, start, count - 1, ValueTag::Nil, true);
         } else {
@@ -1353,17 +1353,17 @@ bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const
                 base = reserve_row(*this, held, row, pairs, count + 1);
                 if (base == UINT32_MAX) return false;
                 for (uint32_t p = (count + 1) * 2; p-- > at * 2 + 2;)
-                    move_leaf(held, base + p, base + p - 2);
-                const uint32_t slot = leaf_text(held, base + at * 2);
+                    store.move_leaf(held, base + p, base + p - 2);
+                const uint32_t slot = store.leaf_text(held, base + at * 2);
                 if (slot == UINT32_MAX) return false;
-                texts[slot].set(wanted);
+                store.texts[slot].set(wanted);
                 held.leaves[base + at * 2] = Value::text(slot);
                 now = count + 1;
             }
             if (value.tag == ValueTag::Text) {
-                const uint32_t slot = leaf_text(held, base + at * 2 + 1);
+                const uint32_t slot = store.leaf_text(held, base + at * 2 + 1);
                 if (slot == UINT32_MAX) return false;
-                if (value.ref != slot) texts[slot].set(text(program, value));
+                if (value.ref != slot) store.texts[slot].set(text(program, value));
                 value = Value::text(slot);
             }
             held.leaves[base + at * 2 + 1] = value;
@@ -1378,13 +1378,13 @@ bool RuntimeState::write_leaf(const Program& program, uint32_t cell_index, const
        down changes nothing about that */
     ++held.gen;
     held.total = held.count;
-    values[cell_index] = retained_value(held, cell.list_slot, pairs);
+    store.values[cell_index] = retained_value(held, cell.list_slot, pairs);
     return true;
 }
 
 bool RuntimeState::write_field(const Program& program, uint32_t cell_index, uint32_t field,
                                Value value) noexcept {
-    const Value holder = values[cell_index];
+    const Value holder = store.values[cell_index];
     StructState* item = holder.tag == ValueTag::Struct ? struct_at(holder.ref) : nullptr;
     if (!item || field >= item->fields.size()) return false;
     /* text is copied into the struct's OWN slot, so the value at rest never points
@@ -1404,7 +1404,7 @@ bool RuntimeState::write_field(const Program& program, uint32_t cell_index, uint
 bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
                          StorePlace place, StoreMode mode, Value value, const Value& step,
                          const Value& step2) noexcept {
-    if (cell >= values.size() || cell >= program.cells.size()) return false;
+    if (cell >= store.values.size() || cell >= program.cells.size()) return false;
     /* THE OWNER HANDSHAKE, both halves of it: a write landing in a struct's
      * aggregate-field storage (a derived cell) first STARTS THE STORAGE FRESH when
      * the field is still Unknown — New leaves the field Nil and touches no rows, so
@@ -1414,8 +1414,8 @@ bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
      * anywhere has to remember to follow a store. */
     const CellDef& def = program.cells[cell];
     StructState* owner = nullptr;
-    if (def.field_of != UINT32_MAX && def.field_of < values.size()) {
-        const Value holder = values[def.field_of];
+    if (def.field_of != UINT32_MAX && def.field_of < store.values.size()) {
+        const Value holder = store.values[def.field_of];
         owner = holder.tag == ValueTag::Struct ? struct_at(holder.ref) : nullptr;
         if (owner && def.field_index < owner->fields.size() &&
             owner->fields[def.field_index].tag == ValueTag::Nil)
@@ -1441,7 +1441,7 @@ bool RuntimeState::write(const Program& program, uint32_t cell, uint32_t field,
         }
     }
     if (landed && owner && def.field_index < owner->fields.size())
-        owner->fields[def.field_index] = values[cell];
+        owner->fields[def.field_index] = store.values[cell];
     return landed;
 }
 
@@ -1472,8 +1472,8 @@ void migrate_struct(const Program& old_program, const RuntimeState& old_state,
         switch (defs[f].shape) {
             case Shape::Text:
                 if (value.tag == ValueTag::Text && f < dst.texts.size() &&
-                    dst.texts[f] < next.texts.size()) {
-                    next.texts[dst.texts[f]].set(old_state.text(old_program, value));
+                    dst.texts[f] < next.store.texts.size()) {
+                    next.store.texts[dst.texts[f]].set(old_state.text(old_program, value));
                     dst.fields[f] = Value::text(dst.texts[f]);
                 }
                 break;
@@ -1511,11 +1511,11 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                 if (!same_cell(wanted, before)) continue;
                 if (same_struct_type(old_program, before.type_id, new_program,
                                      wanted.type_id) &&
-                    wanted.struct_slot < next.structs.size() &&
-                    before.struct_slot < old_state.structs.size())
+                    wanted.struct_slot < next.store.structs.size() &&
+                    before.struct_slot < old_state.store.structs.size())
                     migrate_struct(old_program, old_state,
-                                   old_state.structs[before.struct_slot], new_program,
-                                   next, next.structs[wanted.struct_slot]);
+                                   old_state.store.structs[before.struct_slot], new_program,
+                                   next, next.store.structs[wanted.struct_slot]);
                 break;
             }
             continue;
@@ -1530,11 +1530,11 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                the same way — a list of numbers is not a list of text, at either depth */
             if (wanted.elem != old_program.cells[o].elem) break;
             if (wanted.leaf != old_program.cells[o].leaf) break;
-            const Value& value = old_state.values[o];
+            const Value& value = old_state.store.values[o];
             if (wanted.shape == Shape::Text && value.tag == ValueTag::Text) {
-                if (wanted.text_slot < next.texts.size()) {
-                    next.texts[wanted.text_slot].set(old_state.text(old_program, value));
-                    next.values[n] = Value::text(wanted.text_slot);
+                if (wanted.text_slot < next.store.texts.size()) {
+                    next.store.texts[wanted.text_slot].set(old_state.text(old_program, value));
+                    next.store.values[n] = Value::text(wanted.text_slot);
                 }
             } else if (wanted.shape == Shape::List || wanted.shape == Shape::Map) {
                 /* a retained aggregate carries over BY VALUE, exactly as text does: the
@@ -1545,9 +1545,9 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                 const bool pairs = wanted.shape == Shape::Map;
                 const ValueTag holds = pairs ? ValueTag::Map : ValueTag::List;
                 if (value.tag != holds) {
-                    next.values[n] = Value::nil();
-                    if (wanted.list_slot < next.lists.size()) {
-                        ListState& blank = next.lists[wanted.list_slot];
+                    next.store.values[n] = Value::nil();
+                    if (wanted.list_slot < next.store.lists.size()) {
+                        ListState& blank = next.store.lists[wanted.list_slot];
                         blank.count = 0;
                         /* the rows go with the entries: an arena nothing names is hole,
                            and the seed it was born with is no longer what it holds */
@@ -1561,17 +1561,17 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
                                    view.count, pairs);
                 }
                 const uint32_t was_slot = old_program.cells[o].list_slot;
-                if (wanted.list_slot < next.lists.size() &&
-                    was_slot < old_state.lists.size()) {
-                    ListState& now = next.lists[wanted.list_slot];
-                    now.gen = old_state.lists[was_slot].gen + 1;
-                    now.total = old_state.lists[was_slot].total;
+                if (wanted.list_slot < next.store.lists.size() &&
+                    was_slot < old_state.store.lists.size()) {
+                    ListState& now = next.store.lists[wanted.list_slot];
+                    now.gen = old_state.store.lists[was_slot].gen + 1;
+                    now.total = old_state.store.lists[was_slot].total;
                 }
             } else if (wanted.shape == Shape::Enum && value.tag == ValueTag::Enum) {
                 /* the type table is rebuilt per program, so the stamp is re-issued */
-                next.values[n] = Value::enumeration(value.data.integer, wanted.type_id);
+                next.store.values[n] = Value::enumeration(value.data.integer, wanted.type_id);
             } else {
-                next.values[n] = value;
+                next.store.values[n] = value;
             }
             break;
         }
@@ -1584,9 +1584,9 @@ RuntimeState migrate_state(const Program& old_program, const RuntimeState& old_s
         if (cell.field_of == UINT32_MAX || cell.field_of >= new_program.cells.size())
             continue;
         const uint32_t slot = new_program.cells[cell.field_of].struct_slot;
-        if (slot >= next.structs.size()) continue;
-        if (cell.field_index < next.structs[slot].fields.size())
-            next.structs[slot].fields[cell.field_index] = next.values[n];
+        if (slot >= next.store.structs.size()) continue;
+        if (cell.field_index < next.store.structs[slot].fields.size())
+            next.store.structs[slot].fields[cell.field_index] = next.store.values[n];
     }
     return next;
 }

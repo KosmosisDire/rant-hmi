@@ -204,24 +204,24 @@ void test_timing() {
     tick(scheduler, 1);
     CHECK(scheduler.state().timers[0].running);
     tick(scheduler, 2);
-    CHECK(scheduler.state().values[cell].data.num == 100);
+    CHECK(scheduler.state().store.values[cell].data.num == 100);
     tick(scheduler, 3);
-    CHECK(scheduler.state().values[cell].data.num == 1200);
+    CHECK(scheduler.state().store.values[cell].data.num == 1200);
 
     scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 2});
     tick(scheduler, 1);
     CHECK(!scheduler.state().timers[0].running);
-    const double released = scheduler.state().values[cell].data.num;
+    const double released = scheduler.state().store.values[cell].data.num;
     tick(scheduler, 8);
-    CHECK(scheduler.state().values[cell].data.num == released);
+    CHECK(scheduler.state().store.values[cell].data.num == released);
 
     scheduler.post(InputEvent{1, instance, "tap", Value::boolean(true), 3});
     tick(scheduler, 1);
     scheduler.post(InputEvent{1, instance, "tap", Value::boolean(true), 4});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == released);
+    CHECK(scheduler.state().store.values[cell].data.num == released);
     tick(scheduler, 2);
-    CHECK(scheduler.state().values[cell].data.num == released + 5);
+    CHECK(scheduler.state().store.values[cell].data.num == released + 5);
 
     scheduler.post(InputEvent{2, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
@@ -242,20 +242,20 @@ void test_filters() {
 
     scheduler.post(InputEvent{1, instance, "input", Value::number(0), 1});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 11);
+    CHECK(scheduler.state().store.values[cell].data.num == 11);
     scheduler.post(InputEvent{1, instance, "input", Value::number(2), 2});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 11);
+    CHECK(scheduler.state().store.values[cell].data.num == 11);
     tick(scheduler, 1);
     scheduler.post(InputEvent{1, instance, "input", Value::number(6), 3});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 22);
+    CHECK(scheduler.state().store.values[cell].data.num == 22);
 
     scheduler.post(InputEvent{1, instance, "commit", Value::number(6), 4});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 22);
+    CHECK(scheduler.state().store.values[cell].data.num == 22);
     tick(scheduler, 2);
-    CHECK(scheduler.state().values[cell].data.num == 122);
+    CHECK(scheduler.state().store.values[cell].data.num == 122);
 
     /* THE KEEP POLICY (stage 6d): a delay keeps the FIRST parked run and its wake —
        a second commit during the park simply ends, neither resetting the clock nor
@@ -265,11 +265,11 @@ void test_filters() {
     tick(scheduler, 1);
     scheduler.post(InputEvent{1, instance, "commit", Value::number(8), 6});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 122);
+    CHECK(scheduler.state().store.values[cell].data.num == 122);
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 222);
+    CHECK(scheduler.state().store.values[cell].data.num == 222);
     tick(scheduler, 3);
-    CHECK(scheduler.state().values[cell].data.num == 222);
+    CHECK(scheduler.state().store.values[cell].data.num == 222);
 }
 
 void test_first_of_rearm() {
@@ -286,23 +286,23 @@ void test_first_of_rearm() {
     tick(scheduler, 1);
     scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 2});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 1);
+    CHECK(scheduler.state().store.values[cell].data.num == 1);
     tick(scheduler, 5);
-    CHECK(scheduler.state().values[cell].data.num == 1);
+    CHECK(scheduler.state().store.values[cell].data.num == 1);
 
     scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 3});
     tick(scheduler, 1);
     tick(scheduler, 3);
-    CHECK(scheduler.state().values[cell].data.num == 2);
+    CHECK(scheduler.state().store.values[cell].data.num == 2);
     scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 4});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 2);
+    CHECK(scheduler.state().store.values[cell].data.num == 2);
 
     scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 5});
     tick(scheduler, 1);
     scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 6});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[cell].data.num == 3);
+    CHECK(scheduler.state().store.values[cell].data.num == 3);
 }
 
 /* THE SCHEDULER SPEAKS: a bound control's tap raises changed(value) from its behavior
@@ -347,7 +347,7 @@ void test_scheduler_speaks() {
 
     mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(false)});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[slot].data.boolean == false);
+    CHECK(scheduler.state().store.values[slot].data.boolean == false);
 
     /* the tap: the behavior's local echo stands down (the expression owns `value`) but the
        raise beside it still speaks — the SCHEDULER drains changed(true) into the
@@ -362,7 +362,7 @@ void test_scheduler_speaks() {
     /* the machine's echo lands and the toggle shows true */
     mesh.push_update(EntityKind::Variable, "switch", {Value::boolean(true)});
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[slot].data.boolean == true);
+    CHECK(scheduler.state().store.values[slot].data.boolean == true);
 
     /* the next tap proposes against the SHOWN value: changed(false) goes out */
     scheduler.post(InputEvent{1, instance, "press", Value::nil(), 4});
@@ -430,9 +430,9 @@ void test_resumed_raise_drains() {
 
     scheduler.post(InputEvent{1, instance_id, "tap", Value::nil(), 1});
     tick(scheduler, 1);   /* the behavior parks */
-    CHECK(scheduler.state().values[cell].data.num == 0);
+    CHECK(scheduler.state().store.values[cell].data.num == 0);
     tick(scheduler, 2);   /* the wake: the raise drains this same tick */
-    CHECK(scheduler.state().values[cell].data.num == 1);
+    CHECK(scheduler.state().store.values[cell].data.num == 1);
 }
 
 /* HOLD-TO-TOGGLE: held() is a MOMENT — it carries nothing, and the flow reads the
@@ -476,19 +476,19 @@ void test_held_nullary() {
     tick(scheduler, 2);
     scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 2});
     tick(scheduler, 8);
-    CHECK(scheduler.state().values[state_cell].data.boolean == false);
+    CHECK(scheduler.state().store.values[state_cell].data.boolean == false);
 
     /* held past the threshold commits the press-time proposal (!false = true) */
     scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 3});
     tick(scheduler, 8);
-    CHECK(scheduler.state().values[state_cell].data.boolean == true);
+    CHECK(scheduler.state().store.values[state_cell].data.boolean == true);
     scheduler.post(InputEvent{1, instance, "release", Value::boolean(false), 4});
     tick(scheduler, 1);
 
     /* the second hold proposes against the new shown value: it writes FALSE */
     scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 5});
     tick(scheduler, 8);
-    CHECK(scheduler.state().values[state_cell].data.boolean == false);
+    CHECK(scheduler.state().store.values[state_cell].data.boolean == false);
 }
 
 /* TIMER FIELDS in expressions: `blink.running` / `.remaining` / `.duration` read the
@@ -561,32 +561,32 @@ void test_timer_reads() {
         static_cast<uint32_t>(cell_of(scheduler.program(), toggle_id, "pill.track_color"));
 
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
-    CHECK(scheduler.state().values[remaining].data.num == 0);
-    CHECK(scheduler.state().values[duration].data.num == 4);
+    CHECK(scheduler.state().store.values[surface].data.rgba == 0x102030ffu);
+    CHECK(scheduler.state().store.values[remaining].data.num == 0);
+    CHECK(scheduler.state().store.values[duration].data.num == 4);
     /* an idle timer's remaining is zero, so it reads as finished */
-    CHECK(scheduler.state().values[progress].data.num == 1);
-    CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
+    CHECK(scheduler.state().store.values[progress].data.num == 1);
+    CHECK(scheduler.state().store.values[track_color].data.rgba == 0x2e2e2effu);
 
     scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(scheduler.state().timers[0].running);
-    CHECK(scheduler.state().values[surface].data.rgba == 0x00ff00ffu);
-    CHECK(scheduler.state().values[track_color].data.rgba == 0x885a1fffu);
-    const double started = scheduler.state().values[remaining].data.num;
+    CHECK(scheduler.state().store.values[surface].data.rgba == 0x00ff00ffu);
+    CHECK(scheduler.state().store.values[track_color].data.rgba == 0x885a1fffu);
+    const double started = scheduler.state().store.values[remaining].data.num;
     CHECK(started >= 3 && started <= 4);
     /* progress tracks remaining with no knowledge of the total */
-    CHECK(scheduler.state().values[progress].data.num == 1.0 - started / 4.0);
+    CHECK(scheduler.state().store.values[progress].data.num == 1.0 - started / 4.0);
     tick(scheduler, 2);
-    CHECK(scheduler.state().values[remaining].data.num == started - 2);
-    CHECK(scheduler.state().values[progress].data.num == 1.0 - (started - 2) / 4.0);
+    CHECK(scheduler.state().store.values[remaining].data.num == started - 2);
+    CHECK(scheduler.state().store.values[progress].data.num == 1.0 - (started - 2) / 4.0);
 
     tick(scheduler, 6);
     CHECK(!scheduler.state().timers[0].running);
-    CHECK(scheduler.state().values[surface].data.rgba == 0x102030ffu);
-    CHECK(scheduler.state().values[remaining].data.num == 0);
-    CHECK(scheduler.state().values[progress].data.num == 1);
-    CHECK(scheduler.state().values[track_color].data.rgba == 0x2e2e2effu);
+    CHECK(scheduler.state().store.values[surface].data.rgba == 0x102030ffu);
+    CHECK(scheduler.state().store.values[remaining].data.num == 0);
+    CHECK(scheduler.state().store.values[progress].data.num == 1);
+    CHECK(scheduler.state().store.values[track_color].data.rgba == 0x2e2e2effu);
 
     /* a BARE timer has no scalar to be, an unknown field is named, and x means
        nothing in a slot expression at all */
@@ -753,19 +753,19 @@ void test_cadence_flows() {
 
     /* the first firing is at the seeding tick, then one per cadence: ticks 1, 11, 21 */
     tick(scheduler, 30);
-    CHECK(scheduler.state().lists[fast_slot].total == 3);
-    CHECK(scheduler.state().lists[slow_slot].total == 1);
-    CHECK(scheduler.state().lists[fast_slot].count == 3);
+    CHECK(scheduler.state().store.lists[fast_slot].total == 3);
+    CHECK(scheduler.state().store.lists[slow_slot].total == 1);
+    CHECK(scheduler.state().store.lists[fast_slot].count == 3);
     /* the appended value is what the cell held when the flow ran, not an event's x */
-    const AggView view = scheduler.state().aggregate(scheduler.state().values[fast]);
+    const AggView view = scheduler.state().aggregate(scheduler.state().store.values[fast]);
     if (!CHECK(view.count == 3)) return;
     CHECK(view.data[0].data.num == 7.0);
 
     /* the keep window is a CEILING the ring settles at: past it, appends replace, and
        `total` keeps counting them (ticks 31..121 is ten more firings) */
     tick(scheduler, 100);
-    CHECK(scheduler.state().lists[fast_slot].count == 4);
-    CHECK(scheduler.state().lists[fast_slot].total == 13);
+    CHECK(scheduler.state().store.lists[fast_slot].count == 4);
+    CHECK(scheduler.state().store.lists[fast_slot].total == 13);
 
     /* STEADY STATE: with both rings at their window, a tick that appends allocates
        nothing — the slot's storage reached its working width and stays there */
@@ -775,7 +775,7 @@ void test_cadence_flows() {
     for (int i = 0; i < 20; ++i) scheduler.tick(fault);
     allocation_trace = false;
     const uint64_t after = allocation_count.load(std::memory_order_relaxed);
-    CHECK(scheduler.state().lists[fast_slot].total > 13);
+    CHECK(scheduler.state().store.lists[fast_slot].total > 13);
     CHECK(after == before);
 }
 
@@ -821,22 +821,22 @@ void test_trend_samples() {
 
     /* no arrival yet: the flow still runs, and it appends UNKNOWN — an honest gap */
     tick(scheduler, 25);
-    CHECK(scheduler.state().lists[slot].total == 3);
-    const AggView gaps = scheduler.state().aggregate(scheduler.state().values[history]);
+    CHECK(scheduler.state().store.lists[slot].total == 3);
+    const AggView gaps = scheduler.state().aggregate(scheduler.state().store.values[history]);
     if (!CHECK(gaps.count == 3)) return;
     CHECK(gaps.data[0].tag == ValueTag::Nil);
 
     /* an arrival fills the value cell, and the next cadence tick appends it */
     mesh.push_update(EntityKind::Variable, "temp", {Value::number(42.5)});
     tick(scheduler, 11);
-    const AggView after = scheduler.state().aggregate(scheduler.state().values[history]);
+    const AggView after = scheduler.state().aggregate(scheduler.state().store.values[history]);
     if (!CHECK(after.count >= 4)) return;
     CHECK(after.data[after.count - 1].data.num == 42.5);
 
     /* rate x window is the keep: 100 samples, and the ring settles there */
     tick(scheduler, 1200);
-    CHECK(scheduler.state().lists[slot].count == 100);
-    CHECK(scheduler.state().lists[slot].total > 100);
+    CHECK(scheduler.state().store.lists[slot].count == 100);
+    CHECK(scheduler.state().store.lists[slot].total > 100);
 }
 
 /* ---- THE COPY RIDES THE EVENT (proto 17) ----
@@ -859,7 +859,7 @@ InputEvent on_copy(uint64_t node, const char* event, uint64_t seq, uint32_t inde
 }
 
 double element_at(const RuntimeState& state, int cell, uint32_t at) {
-    const AggView view = state.aggregate(state.values[cell]);
+    const AggView view = state.aggregate(state.store.values[cell]);
     if (at >= view.count || view.data[at].tag != ValueTag::Num) return -1.0;
     return view.data[at].data.num;
 }
@@ -943,18 +943,18 @@ void test_repeat_copy() {
     CHECK(element_at(scheduler.state(), slots, 4) == 0);
     /* the fraction is the view's own arithmetic asked from the other side: 0 at the
        first copy, 1 at the last */
-    CHECK(scheduler.state().values[mark].data.num == 0.5);
-    CHECK(scheduler.state().values[span].data.num == 5);
+    CHECK(scheduler.state().store.values[mark].data.num == 0.5);
+    CHECK(scheduler.state().store.values[span].data.num == 5);
 
     scheduler.post(on_copy(instance, "tap", 2, 0, 5));
     tick(scheduler, 1);
     CHECK(element_at(scheduler.state(), slots, 0) == 100);
-    CHECK(scheduler.state().values[mark].data.num == 0);
+    CHECK(scheduler.state().store.values[mark].data.num == 0);
 
     scheduler.post(on_copy(instance, "tap", 3, 4, 5));
     tick(scheduler, 1);
     CHECK(element_at(scheduler.state(), slots, 4) == 104);
-    CHECK(scheduler.state().values[mark].data.num == 1);
+    CHECK(scheduler.state().store.values[mark].data.num == 1);
     /* three taps on three copies, three elements: nothing overwrote anything */
     CHECK(element_at(scheduler.state(), slots, 2) == 102);
 
@@ -963,7 +963,7 @@ void test_repeat_copy() {
     const uint32_t faults = scheduler.state().out.fault_count;
     scheduler.post(on_copy(instance, "tap", 4, 0, 0));
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[mark].tag == ValueTag::Nil);
+    CHECK(scheduler.state().store.values[mark].tag == ValueTag::Nil);
     CHECK(scheduler.state().out.fault_count > faults);
     CHECK(element_at(scheduler.state(), slots, 0) == 100);
 
@@ -973,7 +973,7 @@ void test_repeat_copy() {
     tick(scheduler, 1);
     scheduler.post(on_copy(instance, "tap", 6, 0, 5));
     tick(scheduler, 4);
-    CHECK(scheduler.state().values[held_at].data.num == 3);
+    CHECK(scheduler.state().store.values[held_at].data.num == 3);
 
     /* AND A RUN THAT PARKS IN A DELAY WAKES AS ITS OWN COPY. The pending record carries
        the seat exactly as it carries the event parameter — so ANOTHER COPY IS TAPPED
@@ -981,12 +981,12 @@ void test_repeat_copy() {
        released. Without that, the parked run would wake as whatever ran last. */
     scheduler.post(on_copy(instance, "release", 7, 1, 5));
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[late].data.num == 0);
+    CHECK(scheduler.state().store.values[late].data.num == 0);
     scheduler.post(on_copy(instance, "tap", 8, 4, 5));
     tick(scheduler, 1);
-    CHECK(scheduler.state().values[late].data.num == 0);
+    CHECK(scheduler.state().store.values[late].data.num == 0);
     tick(scheduler, 8);
-    CHECK(scheduler.state().values[late].data.num == 1);
+    CHECK(scheduler.state().store.values[late].data.num == 1);
 }
 
 /* A CADENCE HAS NO COPY, and the refusal says so at compile: `every` fires for the

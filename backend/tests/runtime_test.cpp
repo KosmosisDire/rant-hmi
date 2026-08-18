@@ -274,8 +274,8 @@ void seed_entity(RuntimeState& state, const Program& program, const std::string&
                  uint32_t field, Value value) {
     for (uint32_t i = 0; i < program.entities.size(); ++i) {
         if (program.entities[i].name != name) continue;
-        state.last[i].fields[field] = value;
-        state.last[i].known = true;
+        state.store.last[i].fields[field] = value;
+        state.store.last[i].known = true;
         return;
     }
 }
@@ -285,10 +285,10 @@ void seed_entity_text(RuntimeState& state, const Program& program,
                       const std::string& name, uint32_t field, const char* value) {
     for (uint32_t i = 0; i < program.entities.size(); ++i) {
         if (program.entities[i].name != name) continue;
-        const uint32_t slot = state.entity_texts[i][field];
-        state.texts[slot].set(value);
-        state.last[i].fields[field] = Value::text(slot);
-        state.last[i].known = true;
+        const uint32_t slot = state.store.entity_texts[i][field];
+        state.store.texts[slot].set(value);
+        state.store.last[i].fields[field] = Value::text(slot);
+        state.store.last[i].known = true;
         return;
     }
 }
@@ -318,7 +318,7 @@ void test_compile_and_run() {
     CHECK(computed->body.sig.every_tick && computed->body.sig.reads.empty());
     RunResult stood = run_slot(compiled.program, *computed, state);
     CHECK(!stood.faulted);
-    CHECK(state.values[computed->cell].data.num == 20);
+    CHECK(state.store.values[computed->cell].data.num == 20);
     const std::string input_event = "input";
     const uint64_t before_run = allocation_count.load(std::memory_order_relaxed);
     allocation_trace = true;
@@ -331,7 +331,7 @@ void test_compile_and_run() {
     CHECK(state.out.effect_count == 1);
     const int setpoint = cell_named(compiled.program, "setpoint");
     CHECK(setpoint >= 0);
-    CHECK(setpoint >= 0 && state.values[setpoint].data.num == 6);
+    CHECK(setpoint >= 0 && state.store.values[setpoint].data.num == 6);
 
     std::string fault;
     CHECK_MSG(flush_effects(compiled.program, state, mesh, fault), fault);
@@ -359,8 +359,8 @@ void test_compile_and_run() {
     const uint64_t after_feed = allocation_count.load(std::memory_order_relaxed);
     CHECK(after_feed == before_feed);
     CHECK(!fed.faulted);
-    CHECK(state.values[bound->cell].tag == ValueTag::Num);
-    CHECK(state.values[bound->cell].data.num == 12.3);
+    CHECK(state.store.values[bound->cell].tag == ValueTag::Num);
+    CHECK(state.store.values[bound->cell].data.num == 12.3);
 }
 
 void test_expression_rejection() {
@@ -531,9 +531,9 @@ void test_replay() {
         CHECK(flush_effects(compiled.program, second, second_mesh, fault));
     }
     CHECK(first_mesh.transcript() == second_mesh.transcript());
-    CHECK(first.values.size() == second.values.size());
-    for (uint32_t i = 0; i < first.values.size(); ++i)
-        CHECK(value_same_scalar(first.values[i], second.values[i]));
+    CHECK(first.store.values.size() == second.store.values.size());
+    for (uint32_t i = 0; i < first.store.values.size(); ++i)
+        CHECK(value_same_scalar(first.store.values[i], second.store.values[i]));
 }
 
 void test_migration() {
@@ -549,13 +549,13 @@ void test_migration() {
     Program same = compiled.program;
     same.cells[setpoint].initial = Value::number(3);
     RuntimeState migrated = migrate_state(compiled.program, old_state, same);
-    CHECK(migrated.values[setpoint].data.num == 77);
-    CHECK(migrated.text(same, migrated.values[note]) == "ready");
+    CHECK(migrated.store.values[setpoint].data.num == 77);
+    CHECK(migrated.text(same, migrated.store.values[note]) == "ready");
 
     Program renamed = same;
     renamed.cells[setpoint].name = "other";
     RuntimeState reset = migrate_state(compiled.program, old_state, renamed);
-    CHECK(reset.values[setpoint].data.num == 3);
+    CHECK(reset.store.values[setpoint].data.num == 3);
 
     /* A SLOT is the other case. A variable's init is not its value, so editing the init
      * leaves a running variable alone (above). An unfed slot has no such separation: the
@@ -572,10 +572,10 @@ void test_migration() {
     Program reslotted = compiled.program;
     reslotted.cells[slot].initial = Value::number(9);
     RuntimeState authored = migrate_state(compiled.program, old_state, reslotted);
-    CHECK(authored.values[slot].data.num == 9);
+    CHECK(authored.store.values[slot].data.num == 9);
 
     RuntimeState untouched = migrate_state(compiled.program, old_state, compiled.program);
-    CHECK(untouched.values[slot].data.num == 41);
+    CHECK(untouched.store.values[slot].data.num == 41);
 }
 
 /* A struct-TYPED declared variable (spec 2.7): born zeroed, filled field by field, its
@@ -596,31 +596,31 @@ void test_typed_variables() {
     CHECK(msg >= 0);
     const CellDef& cell = compiled.program.cells[msg];
     CHECK(cell.shape == Shape::Struct);
-    CHECK(cell.struct_slot < state.structs.size());
+    CHECK(cell.struct_slot < state.store.structs.size());
 
     /* born at its DEFAULTS: enabled true (authored); a field with no default is
        UNKNOWN — un-set-ness IS Nil-ness, and a move out keeps the owner's bytes
        for it */
-    CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
-    CHECK(state.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
+    CHECK(state.store.structs[cell.struct_slot].fields[1].data.boolean == true);
+    CHECK(state.store.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
 
     run_event(compiled.program, state, instance, "input", Value::number(3));
     state.out.clear();
     run_event(compiled.program, state, instance, "commit", Value::number(4));
-    CHECK(state.structs[cell.struct_slot].fields[0].data.num == 10);
+    CHECK(state.store.structs[cell.struct_slot].fields[0].data.num == 10);
 
     /* RESET: back to the declared start — the default where one is authored, and
        UNKNOWN where none is, never an invented zero */
     state.out.clear();
     run_event(compiled.program, state, instance, "commit", Value::number(-1));
-    CHECK(state.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
-    CHECK(state.structs[cell.struct_slot].fields[1].data.boolean == true);
+    CHECK(state.store.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
+    CHECK(state.store.structs[cell.struct_slot].fields[1].data.boolean == true);
 
     /* the value survives a recompile while the type still matches: here the post-reset
        state, so the migrated copy holds the DEFAULTS and the Unknown stays Unknown */
     RuntimeState migrated = migrate_state(compiled.program, state, compiled.program);
-    CHECK(migrated.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
-    CHECK(migrated.structs[cell.struct_slot].fields[1].data.boolean == true);
+    CHECK(migrated.store.structs[cell.struct_slot].fields[0].tag == ValueTag::Nil);
+    CHECK(migrated.store.structs[cell.struct_slot].fields[1].data.boolean == true);
 
     /* a TypeRef that resolves nothing is a finding on the variable, never a silent Nil */
     Document broken = runtime_document();
@@ -769,15 +769,15 @@ void test_enum_names() {
     seed_entity(state, compiled.program, "gear", 0, Value::enumeration(1, mode_type));
     RunResult fed = run_slot(compiled.program, *feed, state);
     CHECK(!fed.faulted);
-    CHECK(state.text(compiled.program, state.values[feed->cell]) == "run");
+    CHECK(state.text(compiled.program, state.store.values[feed->cell]) == "run");
 
     /* the joining binding: "Run " + <enum> lands as "Run run" */
     const SlotProgram* joined = slot_program_of(compiled.program, fmt_id, "text");
     if (!CHECK(joined != nullptr)) return;
     RunResult ran = run_slot(compiled.program, *joined, state);
     CHECK(!ran.faulted);
-    CHECK_MSG(state.text(compiled.program, state.values[joined->cell]) == "Run run",
-              std::string(state.text(compiled.program, state.values[joined->cell])));
+    CHECK_MSG(state.text(compiled.program, state.store.values[joined->cell]) == "Run run",
+              std::string(state.text(compiled.program, state.store.values[joined->cell])));
 
     /* enum equality three ways: `.fast` (2), the name "stop" (0), the integer 1 */
     const SlotProgram* compared = slot_program_of(compiled.program, fmt_id, "enabled");
@@ -787,8 +787,8 @@ void test_enum_names() {
                     Value::enumeration(variant, mode_type));
         RunResult one = run_slot(compiled.program, *compared, state);
         CHECK(!one.faulted);
-        CHECK(state.values[compared->cell].tag == ValueTag::Bool);
-        CHECK(state.values[compared->cell].data.boolean == true);
+        CHECK(state.store.values[compared->cell].tag == ValueTag::Bool);
+        CHECK(state.store.values[compared->cell].data.boolean == true);
     }
 
     /* the vocabulary is checked at compile: an unknown variant is a finding, and a
@@ -872,13 +872,13 @@ void test_enum_names() {
             compiled.program.cells[i].name == "gearMode")
             gear_mode = static_cast<int>(i);
     CHECK(gear_mode >= 0);
-    CHECK(state.values[gear_mode].tag == ValueTag::Enum);
-    CHECK(state.values[gear_mode].data.integer == 2);
+    CHECK(state.store.values[gear_mode].tag == ValueTag::Enum);
+    CHECK(state.store.values[gear_mode].data.integer == 2);
     state.out.clear();
     RunResult release = run_event(compiled.program, state, instance, "release", Value::nil());
     CHECK(!release.faulted);
-    CHECK(state.values[gear_mode].tag == ValueTag::Enum);
-    CHECK(state.values[gear_mode].data.integer == 1);
+    CHECK(state.store.values[gear_mode].tag == ValueTag::Enum);
+    CHECK(state.store.values[gear_mode].data.integer == 1);
 
     /* the enum variable into the text slot: the compiler inserted the .name render */
     int text_cell = -1;
@@ -891,7 +891,7 @@ void test_enum_names() {
     state.out.clear();
     RunResult held = run_event(compiled.program, state, instance, "held", Value::nil());
     CHECK(!held.faulted);
-    CHECK(state.text(compiled.program, state.values[text_cell]) == "run");
+    CHECK(state.text(compiled.program, state.store.values[text_cell]) == "run");
 
     /* THE IMPLICIT CONVERSION, end to end: a dynamic name in the vocabulary lands
        the variant, a foreign one lands UNKNOWN (no fault — it propagates), and the
@@ -909,11 +909,11 @@ void test_enum_names() {
     state.out.clear();
     RunResult press = run_event(compiled.program, state, instance, "press", Value::nil());
     CHECK(!press.faulted);
-    CHECK(state.values[gear_mode].tag == ValueTag::Enum);
-    CHECK(state.values[gear_mode].data.integer == 1);        /* "run", converted */
-    CHECK(state.values[gear_bad].tag == ValueTag::Nil);      /* "bogus": unknown */
-    CHECK(state.values[gear_const].tag == ValueTag::Enum);
-    CHECK(state.values[gear_const].data.integer == 1);       /* constant, resolved */
+    CHECK(state.store.values[gear_mode].tag == ValueTag::Enum);
+    CHECK(state.store.values[gear_mode].data.integer == 1);        /* "run", converted */
+    CHECK(state.store.values[gear_bad].tag == ValueTag::Nil);      /* "bogus": unknown */
+    CHECK(state.store.values[gear_const].tag == ValueTag::Enum);
+    CHECK(state.store.values[gear_const].data.integer == 1);       /* constant, resolved */
 
     /* `+` JOINS text in a display expression, rendering the other side as str() does;
        a wire value refuses it like any other formatting */
@@ -1000,14 +1000,14 @@ void test_slot_conditionals() {
                     Value::enumeration(variant, mode_type));
         RunResult one = run_slot(compiled.program, feed, state);
         CHECK(!one.faulted);
-        CHECK_MSG(state.text(compiled.program, state.values[feed.cell]) == said[variant],
-                  std::string(state.text(compiled.program, state.values[feed.cell])));
+        CHECK_MSG(state.text(compiled.program, state.store.values[feed.cell]) == said[variant],
+                  std::string(state.text(compiled.program, state.store.values[feed.cell])));
     }
     /* UNKNOWN in, UNKNOWN out: no fault, no stale match */
     RuntimeState fresh(compiled.program);
     RunResult nil_run = run_slot(compiled.program, feed, fresh);
     CHECK(!nil_run.faulted);
-    CHECK(fresh.values[feed.cell].tag == ValueTag::Nil);
+    CHECK(fresh.store.values[feed.cell].tag == ValueTag::Nil);
 
     /* the explicit else that shows the rest as themselves: the D2 spelling is the        .name() call, written out */
     Document through = document_with(
@@ -1019,7 +1019,7 @@ void test_slot_conditionals() {
     RunResult rest = run_slot(passing.program, passing.program.slot_programs[0], passed);
     CHECK(!rest.faulted);
     CHECK(passed.text(passing.program,
-                      passed.values[passing.program.slot_programs[0].cell]) == "fast");
+                      passed.store.values[passing.program.slot_programs[0].cell]) == "fast");
 
     /* a conditional COLOR: the same chain, a color slot, the else spelled out */
     Document forgiven = document_with(
@@ -1032,7 +1032,7 @@ void test_slot_conditionals() {
     RunResult other = run_slot(covered.program, covered.program.slot_programs[0],
                                fallback);
     CHECK(!other.faulted);
-    CHECK(fallback.values[covered.program.slot_programs[0].cell].data.rgba ==
+    CHECK(fallback.store.values[covered.program.slot_programs[0].cell].data.rgba ==
           0x444444ffu);
 }
 
@@ -1076,24 +1076,24 @@ void test_standing_slots() {
     const RuntimeState& state = scheduler.state();
     std::string fault;
     scheduler.tick(fault);
-    CHECK(state.values[decimals].data.num == 2);
+    CHECK(state.store.values[decimals].data.num == 2);
     /* neither topic has arrived: the sum is honestly UNKNOWN */
-    CHECK(state.values[value].tag == ValueTag::Nil);
+    CHECK(state.store.values[value].tag == ValueTag::Nil);
 
     /* one side alone is still UNKNOWN (Nil poisons the sum) */
     mesh.push_update(EntityKind::Topic, "left", {Value::number(5)});
     scheduler.tick(fault);
-    CHECK(state.values[value].tag == ValueTag::Nil);
+    CHECK(state.store.values[value].tag == ValueTag::Nil);
 
     /* the OTHER dep arriving re-evaluates the same program */
     mesh.push_update(EntityKind::Topic, "right", {Value::number(7)});
     scheduler.tick(fault);
-    CHECK(state.values[value].data.num == 12);
+    CHECK(state.store.values[value].data.num == 12);
 
     /* and the first dep moving re-evaluates it again */
     mesh.push_update(EntityKind::Topic, "left", {Value::number(10)});
     scheduler.tick(fault);
-    CHECK(state.values[value].data.num == 17);
+    CHECK(state.store.values[value].data.num == 17);
 
     /* an unparseable expression is a FINDING on the instance's slot row, and the cell
        stays UNKNOWN — commit is never blocked, the compiler teaches */
@@ -1109,7 +1109,7 @@ void test_standing_slots() {
     const int broken_cell = slot_cell_of(failed.program, only_instance(broken), "value");
     CHECK(broken_cell >= 0);
     RuntimeState empty(failed.program);
-    CHECK(broken_cell >= 0 && empty.values[broken_cell].tag == ValueTag::Nil);
+    CHECK(broken_cell >= 0 && empty.store.values[broken_cell].tag == ValueTag::Nil);
 }
 
 /* A WHOLE entity's fields in one expression: each read is its own field cell off
@@ -1143,12 +1143,12 @@ void test_whole_source() {
     for (uint32_t i = 0; i < compiled.program.entities.size(); ++i)
         if (compiled.program.entities[i].name == "motor") motor = static_cast<int>(i);
     CHECK(motor >= 0);
-    state.last[motor].known = true;
-    state.last[motor].fields[0] = Value::number(21);
-    state.last[motor].fields[1] = Value::boolean(true);
+    state.store.last[motor].known = true;
+    state.store.last[motor].fields[0] = Value::number(21);
+    state.store.last[motor].fields[1] = Value::boolean(true);
     RunResult ran = run_slot(compiled.program, feed, state);
     CHECK(!ran.faulted);
-    CHECK(state.values[feed.cell].data.num == 43);
+    CHECK(state.store.values[feed.cell].data.num == 43);
 
     /* a whole message cannot BE a value: the reference must pick a field */
     Document bare = document;
@@ -1193,7 +1193,7 @@ void test_default_behavior() {
     CHECK(compiled.ok);
     RuntimeState state(compiled.program);
     const uint64_t id = only_instance(bare);
-    CHECK(state.values[0].tag != ValueTag::Nil);   /* a bool slot starts from its value */
+    CHECK(state.store.values[0].tag != ValueTag::Nil);   /* a bool slot starts from its value */
     run_event(compiled.program, state, id, "tap", Value::boolean(true));
     const uint32_t slot = [&] {
         for (uint32_t i = 0; i < compiled.program.cells.size(); ++i)
@@ -1203,9 +1203,9 @@ void test_default_behavior() {
         return UINT32_MAX;
     }();
     CHECK(slot != UINT32_MAX);
-    CHECK(state.values[slot].data.boolean == true);
+    CHECK(state.store.values[slot].data.boolean == true);
     run_event(compiled.program, state, id, "tap", Value::boolean(true));
-    CHECK(state.values[slot].data.boolean == false);
+    CHECK(state.store.values[slot].data.boolean == false);
 
     /* a bound expression takes the slot over: the control becomes a view of the
        machine (motor.enabled is the reflection's one bool field) */
@@ -1236,7 +1236,7 @@ void test_default_behavior() {
     run_event(authored_compiled.program, authored_state, authored_id, "tap",
               Value::boolean(true));
     /* the author's flow assigns true, so a second tap does NOT toggle it back */
-    CHECK(authored_state.values[slot].data.boolean == true);
+    CHECK(authored_state.store.values[slot].data.boolean == true);
 
     /* a slot is the instance's own: another instance's slot is not addressable */
     Document reaching = instance_document(
@@ -1256,9 +1256,9 @@ void drain_raised(const Program& program, RuntimeState& state) {
         if (record.def >= program.raises.size()) continue;
         const RaiseDef& def = program.raises[record.def];
         Value value = record.value;
-        if (value.tag == ValueTag::Text && state.input_scratch < state.texts.size()) {
-            state.texts[state.input_scratch].set(record.text.view());
-            value = Value::text(state.input_scratch);
+        if (value.tag == ValueTag::Text && state.store.input_scratch < state.store.texts.size()) {
+            state.store.texts[state.store.input_scratch].set(record.text.view());
+            value = Value::text(state.store.input_scratch);
         }
         run_event(program, state, def.node_id, def.event, value);
     }
@@ -1354,7 +1354,7 @@ void test_events_are_calls() {
                 return i;
         return UINT32_MAX;
     }();
-    CHECK(state.values[slot].data.boolean == false);
+    CHECK(state.store.values[slot].data.boolean == false);
 
     /* THE BOUND CONTROL STILL SPEAKS: the expression claims `value`, so the behavior's
        local echo stands down PER STEP — and the raise beside it still runs, carrying the
@@ -1383,7 +1383,7 @@ void test_events_are_calls() {
     run_event(fed_compiled.program, fed_state, fed_id, "tap", Value::nil());
     drain_raised(fed_compiled.program, fed_state);
     /* the local echo stood down (the expression owns the slot)... */
-    CHECK(fed_state.values[fed_slot].data.boolean == true);
+    CHECK(fed_state.store.values[fed_slot].data.boolean == true);
     /* ...but changed(false) still went out with the proposal */
     CHECK(fed_state.out.effect_count == 1);
     CHECK(fed_state.out.effects[0].value.tag == ValueTag::Bool);
@@ -1398,7 +1398,7 @@ void test_events_are_calls() {
               Value::number(62.5));
     for (uint32_t i = 0; i < slider_compiled.program.cells.size(); ++i)
         if (slider_compiled.program.cells[i].name == "value")
-            CHECK(slider_state.values[i].data.num == 62.5);
+            CHECK(slider_state.store.values[i].data.num == 62.5);
 
     /* pressrelease(down): the edge event, bound by its declared name */
     Document jog = instance_document(
@@ -1481,7 +1481,7 @@ void test_events_are_calls() {
     CHECK(shadow_state.out.effects[0].value.tag == ValueTag::Bool);
     CHECK(shadow_state.out.effects[0].value.data.boolean == false);
     /* ...and the fed cell itself never moved */
-    CHECK(shadow_state.values[shadow_slot].data.boolean == true);
+    CHECK(shadow_state.store.values[shadow_slot].data.boolean == true);
 
     /* a gesture no element of the component raises is a finding, not a dead flow */
     Document deaf = instance_document(
@@ -1556,7 +1556,7 @@ void test_colors() {
     const uint64_t id = only_instance(document);
 
     auto rgba_of = [&](const SlotProgram* feed) {
-        const Value& value = state.values[feed->cell];
+        const Value& value = state.store.values[feed->cell];
         return value.tag == ValueTag::Color ? value.data.rgba : 0u;
     };
     /* five programs: four over the locals, plus the constant CHAIN (the parser folds
@@ -1585,13 +1585,13 @@ void test_colors() {
     }();
     if (!CHECK(on_cell >= 0 && n_cell >= 0)) return;
     auto set_num = [&](int cell, double value) {
-        state.values[cell] = Value::number(value);
+        state.store.values[cell] = Value::number(value);
     };
 
-    state.values[on_cell] = Value::boolean(true);
+    state.store.values[on_cell] = Value::boolean(true);
     run_slot(compiled.program, *picked, state);
     CHECK_EQ(rgba_of(picked), 0x7fc4a0ffu);
-    state.values[on_cell] = Value::boolean(false);
+    state.store.values[on_cell] = Value::boolean(false);
     run_slot(compiled.program, *picked, state);
     CHECK_EQ(rgba_of(picked), 0xe0857cffu);
 
@@ -1622,8 +1622,8 @@ void test_colors() {
     if (!CHECK(channels != nullptr)) return;
     CHECK(!channels->body.sig.every_tick && channels->body.sig.reads.empty());
     run_slot(compiled.program, *channels, state);
-    CHECK(state.values[channels->cell].tag == ValueTag::Num);
-    CHECK_EQ(state.values[channels->cell].data.num, 129.0);   /* 0x80 + a of 1.0 */
+    CHECK(state.store.values[channels->cell].tag == ValueTag::Num);
+    CHECK_EQ(state.store.values[channels->cell].data.num, 129.0);   /* 0x80 + a of 1.0 */
 
     /* `*` doubles the channels (alpha kept), `.invert()` / `invert()` flip them */
     Document folded = instance_document(
@@ -1640,8 +1640,8 @@ void test_colors() {
     if (!CHECK(scaled && inverted)) return;
     run_slot(folded_compiled.program, *scaled, folded_state);
     run_slot(folded_compiled.program, *inverted, folded_state);
-    CHECK_EQ(folded_state.values[scaled->cell].data.rgba, 0xbf7f3fffu);
-    CHECK_EQ(folded_state.values[inverted->cell].data.rgba, 0xefdfbfffu);
+    CHECK_EQ(folded_state.store.values[scaled->cell].data.rgba, 0xbf7f3fffu);
+    CHECK_EQ(folded_state.store.values[inverted->cell].data.rgba, 0xefdfbfffu);
 
     /* color arithmetic is display vocabulary, refused on the wire */
     {
@@ -1717,7 +1717,7 @@ void test_tonemaps() {
     const uint64_t b_id = json_u64_or(kids[1]["id"], 0);
     const uint64_t c_id = json_u64_or(kids[2]["id"], 0);
     auto rgba_of = [&](const SlotProgram* feed) {
-        const Value& value = state.values[feed->cell];
+        const Value& value = state.store.values[feed->cell];
         return value.tag == ValueTag::Color ? value.data.rgba : 0u;
     };
     auto ramp = [&](const char* slot, double n) {
@@ -1739,7 +1739,7 @@ void test_tonemaps() {
     CHECK_EQ(rgba_of(parsed), 0xff8040ffu);
     seed_entity_text(state, program, "tag", 0, "nope");
     run_slot(program, *parsed, state);
-    CHECK(state.values[parsed->cell].tag == ValueTag::Nil);
+    CHECK(state.store.values[parsed->cell].tag == ValueTag::Nil);
 
     const SlotProgram* grey = slot_program_of(program, c_id, "surface");
     if (!CHECK(grey != nullptr)) return;
@@ -1822,11 +1822,11 @@ void test_text_and_enums() {
         return slot_program_of(program, ids[instance], slot);
     };
     auto text_of = [&](const SlotProgram* feed) {
-        return std::string(state.text(compiled.program, state.values[feed->cell]));
+        return std::string(state.text(compiled.program, state.store.values[feed->cell]));
     };
     auto num_of = [&](const SlotProgram* feed) {
-        return state.values[feed->cell].tag == ValueTag::Num
-                   ? state.values[feed->cell].data.num
+        return state.store.values[feed->cell].tag == ValueTag::Num
+                   ? state.store.values[feed->cell].data.num
                    : -1e9;
     };
     auto run_one = [&](const SlotProgram* feed) {
@@ -2003,13 +2003,13 @@ void test_lists_and_maps() {
     auto cell_num = [&](uint32_t instance_at, const char* slot) {
         const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return -2e9;
-        const Value& value = state.values[cell];
+        const Value& value = state.store.values[cell];
         return value.tag == ValueTag::Num ? value.data.num : -1e9;
     };
     auto cell_text = [&](uint32_t instance_at, const char* slot) {
         const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return std::string("<no cell>");
-        return std::string(state.text(program, state.values[cell]));
+        return std::string(state.text(program, state.store.values[cell]));
     };
     CHECK_EQ(cell_num(0, "value"), 30.0);                  /* max */
     CHECK_EQ(cell_num(0, "reading.decimals"), 3.0);        /* length */
@@ -2185,13 +2185,13 @@ void test_reduce() {
     auto cell_num = [&](uint32_t instance_at, const char* slot) {
         const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return -2e9;
-        const Value& value = state.values[cell];
+        const Value& value = state.store.values[cell];
         return value.tag == ValueTag::Num ? value.data.num : -1e9;
     };
     auto cell_text = [&](uint32_t instance_at, const char* slot) {
         const int cell = slot_cell_of(program, wid(instance_at), slot);
         if (cell < 0) return std::string("<no cell>");
-        return std::string(state.text(program, state.values[cell]));
+        return std::string(state.text(program, state.store.values[cell]));
     };
     CHECK_EQ(cell_num(0, "value"), cell_num(0, "reading.decimals"));
     CHECK_EQ(cell_num(0, "value"), 60.0);
@@ -2208,7 +2208,7 @@ void test_reduce() {
        all still reads UNKNOWN — test_standing_slots holds that line) */
     mesh.push_update(EntityKind::Variable, "fold", {Value::nil(), Value::nil()});
     scheduler.tick(fault);
-    CHECK(state.values[slot_cell_of(program, wid(0), "value")].data.num == 60.0);
+    CHECK(state.store.values[slot_cell_of(program, wid(0), "value")].data.num == 60.0);
 
     /* ---- what the fold refuses (spec 6.4) ---- */
     Program scratch;
@@ -2324,7 +2324,7 @@ void test_list_cells() {
     const Program& program = scheduler.program();
     const RuntimeState& state = scheduler.state();
     auto joined = [&](int cell) {
-        const Value& value = state.values[cell];
+        const Value& value = state.store.values[cell];
         if (value.tag != ValueTag::List) return std::string("<not a list>");
         const AggView view = state.aggregate(value);
         std::string out;
@@ -2338,9 +2338,9 @@ void test_list_cells() {
     CHECK_EQ(joined(typed_at), "x,y");
     /* a FED slot starts UNKNOWN whatever it authored: the source owns the value, and an
        authored list shown before the first update would read as live data that is not */
-    CHECK(state.values[fed_at].tag == ValueTag::Nil);
+    CHECK(state.store.values[fed_at].tag == ValueTag::Nil);
     {
-        const AggView mixed = state.aggregate(state.values[mixed_at]);
+        const AggView mixed = state.aggregate(state.store.values[mixed_at]);
         CHECK(mixed.count == 3);
         if (mixed.count == 3) {
             CHECK_EQ(mixed.data[0].data.num, 1.0);
@@ -2373,7 +2373,7 @@ void test_list_cells() {
        new run's own storage, so nothing points at the run being retired */
     RuntimeState migrated = migrate_state(program, state, program);
     auto migrated_joined = [&](int cell) {
-        const Value& value = migrated.values[cell];
+        const Value& value = migrated.store.values[cell];
         if (value.tag != ValueTag::List) return std::string("<not a list>");
         const AggView view = migrated.aggregate(value);
         std::string out;
@@ -2392,7 +2392,7 @@ void test_list_cells() {
     restated.cells[authored_at].list_init = {
         Value::text(restated.add_text("one")), Value::text(restated.add_text("two"))};
     RuntimeState edited = migrate_state(program, state, restated);
-    const AggView after = edited.aggregate(edited.values[authored_at]);
+    const AggView after = edited.aggregate(edited.store.values[authored_at]);
     CHECK(after.count == 2);
     CHECK(after.count == 2 && edited.text(restated, after.data[0]) == "one");
 }
@@ -2413,7 +2413,7 @@ int named_cell(const Program& program, const std::string& name) {
 
 /* a list cell's elements, joined, so a check reads as the value the author would see */
 std::string list_dump(const Program& program, const RuntimeState& state, int cell) {
-    const Value& value = state.values[cell];
+    const Value& value = state.store.values[cell];
     if (value.tag != ValueTag::List) return "<not a list>";
     const AggView view = state.aggregate(value);
     std::string out;
@@ -2436,7 +2436,7 @@ std::string list_dump(const Program& program, const RuntimeState& state, int cel
 
 /* a map cell's pairs, in the order it holds them: the check IS the sorted-keys rule */
 std::string map_dump(const Program& program, const RuntimeState& state, int cell) {
-    const Value& value = state.values[cell];
+    const Value& value = state.store.values[cell];
     if (value.tag != ValueTag::Map) return "<not a map>";
     const AggView view = state.aggregate(value);
     std::string out;
@@ -2522,7 +2522,7 @@ void test_aggregate_variables() {
     const uint32_t table_slot = program.cells[table].list_slot;
     CHECK_EQ(list_dump(program, state, log), "");
     CHECK_EQ(map_dump(program, state, table), "a=1,b=2");
-    CHECK(state.lists[log_slot].gen == 0 && state.lists[log_slot].total == 0);
+    CHECK(state.store.lists[log_slot].gen == 0 && state.store.lists[log_slot].total == 0);
 
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
@@ -2536,9 +2536,9 @@ void test_aggregate_variables() {
     CHECK_EQ(list_dump(program, state, log), "3,4,5");
     CHECK_EQ(list_dump(program, state, words), "3,4,5");
     /* `total` counts appends EVER and never rewinds on a trim: it is the wire's cursor */
-    CHECK(state.lists[log_slot].total == 5);
-    CHECK(state.lists[log_slot].count == 3);
-    CHECK(state.lists[log_slot].gen == 0);
+    CHECK(state.store.lists[log_slot].total == 5);
+    CHECK(state.store.lists[log_slot].count == 3);
+    CHECK(state.store.lists[log_slot].gen == 0);
 
     /* a KEYED write inserts at its sorted position, whatever order the keys arrive in */
     raise("press");
@@ -2551,19 +2551,19 @@ void test_aggregate_variables() {
     raise("held");
     CHECK_EQ(map_dump(program, state, table), "a=1,aa=6,zz=tail");
     /* every mutation moves `total`, so the wire sees "changed" without diffing */
-    CHECK(state.lists[table_slot].total > 2);
-    CHECK(state.lists[table_slot].gen == 0);
+    CHECK(state.store.lists[table_slot].total > 2);
+    CHECK(state.store.lists[table_slot].gen == 0);
 
     /* A WHOLE STORE IS A DISCONTINUITY: the generation moves and the append cursor
        restarts, because no client could describe the change as appends. (A whole
        aggregate reaches a cell through a FEED, the display tier; the wire tier a flow
        speaks carries one scalar at a time, which is why append exists at all.) */
-    const uint32_t before_gen = state.lists[log_slot].gen;
+    const uint32_t before_gen = state.store.lists[log_slot].gen;
     const Value replacement[2] = {Value::number(7), Value::number(8)};
     CHECK(state.hold_list(program, state, log, log_slot, replacement, 2));
     CHECK_EQ(list_dump(program, state, log), "7,8");
-    CHECK(state.lists[log_slot].gen == before_gen + 1);
-    CHECK(state.lists[log_slot].total == 2);
+    CHECK(state.store.lists[log_slot].gen == before_gen + 1);
+    CHECK(state.store.lists[log_slot].total == 2);
 
     /* a recompile carries BOTH shapes by value, into the new run's own storage, and
        moves the generation: a recompile is a new baseline */
@@ -2571,8 +2571,8 @@ void test_aggregate_variables() {
     CHECK_EQ(list_dump(program, migrated, log), "7,8");
     CHECK_EQ(list_dump(program, migrated, words), "3,4,5");
     CHECK_EQ(map_dump(program, migrated, table), "a=1,aa=6,zz=tail");
-    CHECK(migrated.lists[log_slot].gen == state.lists[log_slot].gen + 1);
-    CHECK(migrated.lists[log_slot].total == state.lists[log_slot].total);
+    CHECK(migrated.store.lists[log_slot].gen == state.store.lists[log_slot].gen + 1);
+    CHECK(migrated.store.lists[log_slot].total == state.store.lists[log_slot].total);
 
     /* an edited authored start RESEEDS the slot on recompile, exactly as a scalar's
        does — but only for a slot: a variable's init is where a run STARTS, not what it
@@ -2615,7 +2615,7 @@ std::string row_text(const Program& program, const RuntimeState& state, const Va
 
 /* a NESTED cell, rows separated by | so the check reads as the whole picture */
 std::string nested_dump(const Program& program, const RuntimeState& state, int cell) {
-    const Value& value = state.values[cell];
+    const Value& value = state.store.values[cell];
     if (value.tag != ValueTag::List && value.tag != ValueTag::Map) return "<not nested>";
     const AggView view = state.aggregate(value);
     const bool pairs = value.tag == ValueTag::Map;
@@ -2708,7 +2708,7 @@ void test_nested_aggregates() {
     CHECK_EQ(nested_dump(program, state, grid), "[1,2]|[3]");
     CHECK_EQ(nested_dump(program, state, by_name), "a:[1,2]|b:[4]");
     CHECK_EQ(nested_dump(program, state, rows), "[k=v]");
-    CHECK(state.lists[grid_slot].gen == 0 && state.lists[grid_slot].nested());
+    CHECK(state.store.lists[grid_slot].gen == 0 && state.store.lists[grid_slot].nested());
 
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
@@ -2721,7 +2721,7 @@ void test_nested_aggregates() {
     CHECK_EQ(nested_dump(program, state, grid), "[1,2]|[3]|[7,8]");
     raise("tap");
     CHECK_EQ(nested_dump(program, state, grid), "[3]|[7,8]|[7,8]");
-    CHECK(state.lists[grid_slot].total == 4 && state.lists[grid_slot].count == 3);
+    CHECK(state.store.lists[grid_slot].total == 4 && state.store.lists[grid_slot].count == 3);
 
     /* an element write replaces one row and leaves the rest standing */
     raise("press");
@@ -2735,10 +2735,10 @@ void test_nested_aggregates() {
 
     /* INSIDE A ROW. A leaf append grows that row alone; a leaf write edits one position
        and moves the generation, because the aggs lane has no in-place-edit vocabulary. */
-    const uint32_t before = state.lists[grid_slot].gen;
+    const uint32_t before = state.store.lists[grid_slot].gen;
     CHECK(state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Append, Value::number(42), Value::number(1), Value::nil()));
     CHECK_EQ(nested_dump(program, state, grid), "[9]|[7,8,42]|[7,8]");
-    CHECK(state.lists[grid_slot].gen == before + 1);
+    CHECK(state.store.lists[grid_slot].gen == before + 1);
     CHECK(state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Assign, Value::number(5), Value::number(1), Value::number(0)));
     CHECK_EQ(nested_dump(program, state, grid), "[9]|[5,8,42]|[7,8]");
     /* a write past the row's end EDITS nothing: a row grows by its own append */
@@ -2750,31 +2750,31 @@ void test_nested_aggregates() {
        growing its extent: the arena settles instead of climbing forever */
     for (int i = 0; i < 300; ++i)
         CHECK(state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Append, Value::number(i), Value::number(2), Value::number(4)));
-    CHECK_EQ(row_text(program, state, state.aggregate(state.values[grid]).data[2]),
+    CHECK_EQ(row_text(program, state, state.aggregate(state.store.values[grid]).data[2]),
              "296,297,298,299");
-    CHECK(state.lists[grid_slot].leaves.size() <= buffer_capacity(Shape::Num));
+    CHECK(state.store.lists[grid_slot].leaves.size() <= buffer_capacity(Shape::Num));
 
     /* a MAP ROW upserts by key inside its own extent, Nil erasing as it does above */
-    state.texts[state.mesh_scratch].set("z");
-    state.texts[state.input_scratch].set("zz");
-    CHECK(state.write(program, rows, 0, StorePlace::Leaf, StoreMode::Assign, Value::text(state.input_scratch), Value::number(0), Value::text(state.mesh_scratch)));
+    state.store.texts[state.store.mesh_scratch].set("z");
+    state.store.texts[state.store.input_scratch].set("zz");
+    CHECK(state.write(program, rows, 0, StorePlace::Leaf, StoreMode::Assign, Value::text(state.store.input_scratch), Value::number(0), Value::text(state.store.mesh_scratch)));
     CHECK_EQ(nested_dump(program, state, rows), "[k=v,z=zz]");
-    state.texts[state.mesh_scratch].set("k");
-    CHECK(state.write(program, rows, 0, StorePlace::Leaf, StoreMode::Assign, Value::nil(), Value::number(0), Value::text(state.mesh_scratch)));
+    state.store.texts[state.store.mesh_scratch].set("k");
+    CHECK(state.write(program, rows, 0, StorePlace::Leaf, StoreMode::Assign, Value::nil(), Value::number(0), Value::text(state.store.mesh_scratch)));
     CHECK_EQ(nested_dump(program, state, rows), "[z=zz]");
 
     /* A SCALAR IS NOT A ROW: a nested cell's declared element is what it says it is, and
        the runtime refuses what the compiler could not see */
     CHECK(!state.write(program, grid, 0, StorePlace::Cell, StoreMode::Append, Value::number(1), Value::nil()));
     /* nor is a row a leaf: there is no third level to write into */
-    CHECK(!state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Assign, state.values[grid], Value::number(0), Value::number(0)));
+    CHECK(!state.write(program, grid, 0, StorePlace::Leaf, StoreMode::Assign, state.store.values[grid], Value::number(0), Value::number(0)));
 
     /* CLEARED releases the arena with the entries: an extent nothing names is hole, and a
        cell still counting the cleared rows as live would refuse the next append for room
        it is holding */
     RuntimeState blank(program);
     CHECK(blank.write(program, grid, 0, StorePlace::Cell, StoreMode::Assign, Value::nil()));
-    CHECK(blank.lists[grid_slot].leaf_live == 0 && blank.lists[grid_slot].row_cap.empty());
+    CHECK(blank.store.lists[grid_slot].leaf_live == 0 && blank.store.lists[grid_slot].row_cap.empty());
     CHECK(blank.write(program, grid, 0, StorePlace::Cell, StoreMode::Append, Value::list(0, 0, ValueTag::Nil), Value::nil()));
     CHECK_EQ(nested_dump(program, blank, grid), "[]");
 
@@ -2783,7 +2783,7 @@ void test_nested_aggregates() {
     CHECK_EQ(nested_dump(program, migrated, grid), "[9]|[5,8,42]|[296,297,298,299]");
     CHECK_EQ(nested_dump(program, migrated, by_name), "b:[4]|c:[5,6]");
     CHECK_EQ(nested_dump(program, migrated, rows), "[z=zz]");
-    CHECK(migrated.lists[grid_slot].gen == state.lists[grid_slot].gen + 1);
+    CHECK(migrated.store.lists[grid_slot].gen == state.store.lists[grid_slot].gen + 1);
 }
 
 /* A NESTED RING RUNS FOREVER. A sampler appends a row on a cadence and a keep window
@@ -2828,11 +2828,11 @@ void test_nested_ring() {
     }
     CHECK_MSG(faulted_at < 0,
               "a bounded nested ring faulted at append " + std::to_string(faulted_at));
-    CHECK(state.lists[slot].count == 470);
+    CHECK(state.store.lists[slot].count == 470);
     /* the live extent is the window, not the history: 470 rows of two leaves */
-    CHECK_EQ(state.lists[slot].leaf_live, 940u);
-    CHECK(state.lists[slot].leaf_used <= buffer_capacity(Shape::Num));
-    CHECK_EQ(row_text(program, state, state.aggregate(state.values[grid]).data[0]), "1,2");
+    CHECK_EQ(state.store.lists[slot].leaf_live, 940u);
+    CHECK(state.store.lists[slot].leaf_used <= buffer_capacity(Shape::Num));
+    CHECK_EQ(row_text(program, state, state.aggregate(state.store.values[grid]).data[0]), "1,2");
 
     /* A WIDE ROW COSTS THE LIST NOTHING. `keep` counts ROWS and a row's leaves live in an
      * arena with a budget of its own, so a window of W rows holds W rows however wide one
@@ -2875,13 +2875,13 @@ void test_nested_ring() {
                 stopped = i;
         }
         CHECK_MSG(stopped < 0, "a six-wide ring faulted at row " + std::to_string(stopped));
-        CHECK_EQ(wide_state.lists[wide_slot].count, 940u);
-        CHECK_EQ(wide_state.lists[wide_slot].leaf_live, 940u * 6u);
+        CHECK_EQ(wide_state.store.lists[wide_slot].count, 940u);
+        CHECK_EQ(wide_state.store.lists[wide_slot].leaf_live, 940u * 6u);
         /* the arena collects its holes as it goes rather than growing with the history:
            5000 appends of a six-wide row is 30000 leaves written and 5640 still live */
-        CHECK(wide_state.lists[wide_slot].leaf_used < 940u * 6u * 3u);
+        CHECK(wide_state.store.lists[wide_slot].leaf_used < 940u * 6u * 3u);
         CHECK_EQ(row_text(built.program, wide_state,
-                          wide_state.aggregate(wide_state.values[cell]).data[0]),
+                          wide_state.aggregate(wide_state.store.values[cell]).data[0]),
                  "1,2,3,4,5,6");
     }
 }
@@ -3016,8 +3016,8 @@ void test_indexed_writes() {
     CHECK_EQ(list_dump(program, state, buf), "10,99,30");
     CHECK_EQ(list_dump(program, state, words), "first,b");
     /* an in-place edit is a discontinuity: the generation moved, the cursor rebased */
-    CHECK(state.lists[buf_slot].gen == 1);
-    CHECK(state.lists[buf_slot].total == 3);
+    CHECK(state.store.lists[buf_slot].gen == 1);
+    CHECK(state.store.lists[buf_slot].total == 3);
 
     /* past the window: faulted, nothing changed */
     const uint32_t faults_before = state.out.fault_count;
@@ -3027,7 +3027,7 @@ void test_indexed_writes() {
 
     /* the same element again: silent — the generation stands still */
     press("release", Value::boolean(false));
-    CHECK(state.lists[buf_slot].gen == 1);
+    CHECK(state.store.lists[buf_slot].gen == 1);
 
     /* a whole store of text into a list of numbers: refused at the write, faulted */
     const uint32_t held_faults = state.out.fault_count;
@@ -3043,10 +3043,10 @@ void test_indexed_writes() {
     for (const std::string& line : mesh.transcript())
         if (line.find("plant.temps[1]=77") != std::string::npos) wrote = true;
     CHECK(wrote);
-    const uint32_t mirror = state.entity_aggs[0][0];
-    if (CHECK(mirror != UINT32_MAX && state.lists[mirror].count == 3)) {
-        CHECK(state.lists[mirror].elems[1].tag == ValueTag::Num);
-        CHECK_EQ(state.lists[mirror].elems[1].data.num, 77.0);
+    const uint32_t mirror = state.store.entity_aggs[0][0];
+    if (CHECK(mirror != UINT32_MAX && state.store.lists[mirror].count == 3)) {
+        CHECK(state.store.lists[mirror].elems[1].tag == ValueTag::Num);
+        CHECK_EQ(state.store.lists[mirror].elems[1].data.num, 77.0);
     }
 
     /* direct refusals the flows above cannot spell: a non-number index, a foreign
@@ -3054,7 +3054,7 @@ void test_indexed_writes() {
     RuntimeState& mut = const_cast<RuntimeState&>(state);
     CHECK(!mut.write(program, buf, 0, StorePlace::Elem, StoreMode::Assign, Value::number(1), Value::text(0)));
     CHECK(!mut.write(program, buf, 0, StorePlace::Elem, StoreMode::Assign, Value::number(1), Value::number(-1)));
-    CHECK(!mut.write(program, nums, 0, StorePlace::Elem, StoreMode::Assign, state.values[words], Value::number(0)));
+    CHECK(!mut.write(program, nums, 0, StorePlace::Elem, StoreMode::Assign, state.store.values[words], Value::number(0)));
     CHECK(!mut.write(program, nums, 0, StorePlace::Cell, StoreMode::Append, Value::boolean(true), Value::nil()));
     CHECK_EQ(list_dump(program, state, nums), "1,2");
 }
@@ -3175,8 +3175,8 @@ void test_struct_agg_fields() {
     press("press", Value::boolean(true));
     press("release", Value::boolean(false));
     CHECK_EQ(list_dump(program, state, readback), "1,9,3");
-    CHECK(state.values[second].tag == ValueTag::Num);
-    CHECK_EQ(state.values[second].data.num, 9.0);
+    CHECK(state.store.values[second].tag == ValueTag::Num);
+    CHECK_EQ(state.store.values[second].data.num, 9.0);
 
     /* append grows it within the keep window */
     press("held", Value::boolean(true));
@@ -3264,17 +3264,17 @@ void test_bare_topic_scalars() {
     if (!CHECK(lit >= 0 && flag_at >= 0 && instance)) return;
 
     RuntimeState state(program);
-    state.last[flag_at].known = true;
-    state.last[flag_at].fields[0] = Value::boolean(true);
+    state.store.last[flag_at].known = true;
+    state.store.last[flag_at].fields[0] = Value::boolean(true);
 
     run_event(program, state, instance, "tap", Value::nil());
-    CHECK(state.values[lit].tag == ValueTag::Bool);
-    CHECK(state.values[lit].data.boolean == true);
+    CHECK(state.store.values[lit].tag == ValueTag::Bool);
+    CHECK(state.store.values[lit].data.boolean == true);
 
     /* a fresh temporary takes the topic's scalar shape, and reads like any bool */
     run_event(program, state, instance, "press", Value::nil());
-    CHECK(state.values[lit].tag == ValueTag::Bool);
-    CHECK(state.values[lit].data.boolean == false);
+    CHECK(state.store.values[lit].tag == ValueTag::Bool);
+    CHECK(state.store.values[lit].data.boolean == false);
 
     /* and the variable goes back out as the anonymous value */
     state.out.clear();
@@ -3364,21 +3364,21 @@ void test_assign_expression_reads_mesh() {
     CHECK(subscribed(b_at));
 
     RuntimeState state(program);
-    state.last[a_at].known = true;
-    state.last[a_at].fields[0] = Value::number(3);
-    state.last[b_at].known = true;
-    state.last[b_at].fields[0] = Value::number(4);
+    state.store.last[a_at].known = true;
+    state.store.last[a_at].fields[0] = Value::number(3);
+    state.store.last[b_at].known = true;
+    state.store.last[b_at].fields[0] = Value::number(4);
 
     run_event(program, state, instance, "tap", Value::nil());
-    CHECK(state.values[total].tag == ValueTag::Num);
-    CHECK_EQ(state.values[total].data.num, 7.0);
+    CHECK(state.store.values[total].tag == ValueTag::Num);
+    CHECK_EQ(state.store.values[total].data.num, 7.0);
 
     /* the gate reads @a: 3 stands down, 7 passes */
     run_event(program, state, instance, "release", Value::nil());
-    CHECK_EQ(state.values[hits].data.num, 0.0);
-    state.last[a_at].fields[0] = Value::number(7);
+    CHECK_EQ(state.store.values[hits].data.num, 0.0);
+    state.store.last[a_at].fields[0] = Value::number(7);
     run_event(program, state, instance, "release", Value::nil());
-    CHECK_EQ(state.values[hits].data.num, 1.0);
+    CHECK_EQ(state.store.values[hits].data.num, 1.0);
 }
 
 void test_aggregate_expressions() {
@@ -3453,25 +3453,25 @@ void test_aggregate_expressions() {
        over the same source rebuilds the same picture, and the wire must not be told
        anything moved */
     const uint32_t dst_slot = program.cells[dst].list_slot;
-    const uint32_t gen_after_first = state.lists[dst_slot].gen;
-    const uint64_t total_after_first = state.lists[dst_slot].total;
+    const uint32_t gen_after_first = state.store.lists[dst_slot].gen;
+    const uint64_t total_after_first = state.store.lists[dst_slot].total;
     raise("select");
-    CHECK(state.lists[dst_slot].gen == gen_after_first);
-    CHECK(state.lists[dst_slot].total == total_after_first);
+    CHECK(state.store.lists[dst_slot].gen == gen_after_first);
+    CHECK(state.store.lists[dst_slot].total == total_after_first);
     /* while a source that MOVED is a real change, and the generation says so */
     const Value grown[4] = {Value::number(1), Value::number(2), Value::number(3),
                             Value::number(9)};
     CHECK(state.hold_list(program, state, src, program.cells[src].list_slot, grown, 4));
     raise("select");
     CHECK_EQ(list_dump(program, state, dst), "2,3,9");
-    CHECK(state.lists[dst_slot].gen == gen_after_first + 1);
+    CHECK(state.store.lists[dst_slot].gen == gen_after_first + 1);
 
     /* Nil onto an already-UNKNOWN cell is not a change either */
     CHECK(state.write(program, static_cast<uint32_t>(dst), 0, StorePlace::Cell, StoreMode::Assign, Value::nil()));
-    const uint32_t gen_cleared = state.lists[dst_slot].gen;
-    CHECK(state.values[dst].tag == ValueTag::Nil);
+    const uint32_t gen_cleared = state.store.lists[dst_slot].gen;
+    CHECK(state.store.values[dst].tag == ValueTag::Nil);
     CHECK(state.write(program, static_cast<uint32_t>(dst), 0, StorePlace::Cell, StoreMode::Assign, Value::nil()));
-    CHECK(state.lists[dst_slot].gen == gen_cleared);
+    CHECK(state.store.lists[dst_slot].gen == gen_cleared);
 
     /* THE REFUSALS: a scalar variable, the pipeline register and a mesh field all still
        take one scalar — the door opens for declared aggregate destinations alone */
@@ -3560,17 +3560,17 @@ void test_aggregate_ceilings() {
 
     /* a bounded ring never faults: it just drops its oldest */
     for (int i = 0; i < 40; ++i) CHECK(!raise("press").faulted);
-    CHECK(state.lists[program.cells[bounded].list_slot].count == 8);
+    CHECK(state.store.lists[program.cells[bounded].list_slot].count == 8);
 
     /* an unbounded one fills its BUFFER and then REFUSES, loudly. The bound is bytes, so
        what it holds is however many elements those bytes buy — an untyped list is charged
        as text, because that is what it may turn out to hold. */
     const uint32_t fits = buffer_capacity(Shape::Unknown);
     for (uint32_t i = 0; i < fits; ++i) raise("tap");
-    CHECK(state.lists[program.cells[unbounded].list_slot].count == fits);
+    CHECK(state.store.lists[program.cells[unbounded].list_slot].count == fits);
     const RunResult over = raise("tap");
     CHECK(over.faulted);
-    CHECK(state.lists[program.cells[unbounded].list_slot].count == fits);
+    CHECK(state.store.lists[program.cells[unbounded].list_slot].count == fits);
     /* the finding names the variable and the way out of it */
     std::string named;
     for (uint32_t i = 0; i < state.out.faults.size(); ++i)
@@ -3581,13 +3581,13 @@ void test_aggregate_ceilings() {
 
     /* the IN-PLACE readers walk the elements where they lie, so they work at any length */
     CHECK(!raise("release").faulted);
-    CHECK_EQ(state.values[total].data.num, static_cast<double>(fits));
+    CHECK_EQ(state.store.values[total].data.num, static_cast<double>(fits));
 
     /* iteration BUILDS, in the scratch pool, whose bound is the varr ceiling — so a
        longer source faults instead of folding the portion it could reach */
     const RunResult clipped = raise("held");
     CHECK(clipped.faulted);
-    CHECK(state.values[folded].data.num == 0.0);
+    CHECK(state.store.values[folded].data.num == 0.0);
 }
 
 /* A MAP FOLDS, and only folds: the lambda visits (acc, key, value), which is the one
@@ -3649,14 +3649,14 @@ void test_map_reduce() {
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     run_event(program, state, instance, "tap", Value::nil());
     run_event(program, state, instance, "press", Value::nil());
-    CHECK_EQ(state.values[named_cell(program, "total")].data.num, 60.0);
+    CHECK_EQ(state.store.values[named_cell(program, "total")].data.num, 60.0);
     /* SORTED KEYS, always: the fold visits them in one order and only one, which is what
        makes a replay byte-identical however the keys were written */
-    CHECK_EQ(state.values[named_cell(program, "ordered")].data.num, 1230.0);
+    CHECK_EQ(state.store.values[named_cell(program, "ordered")].data.num, 1230.0);
     /* the key and the value it holds arrive together, in that order */
-    CHECK_EQ(state.values[named_cell(program, "keyed")].data.num, 20.0);
-    CHECK_EQ(state.values[named_cell(program, "pairs")].data.num, 3.0);
-    CHECK_EQ(state.values[named_cell(program, "looked_up")].data.num, 30.0);
+    CHECK_EQ(state.store.values[named_cell(program, "keyed")].data.num, 20.0);
+    CHECK_EQ(state.store.values[named_cell(program, "pairs")].data.num, 3.0);
+    CHECK_EQ(state.store.values[named_cell(program, "looked_up")].data.num, 30.0);
 
     Program scratch;
     Env scope = x_scope(Shape::Map);
@@ -4012,7 +4012,7 @@ void test_variant_options() {
     RuntimeState state(compiled.program);
     RunResult seeded = run_slot(compiled.program, *fill, state);
     CHECK(!seeded.faulted);
-    const AggView view = state.aggregate(state.values[cell]);
+    const AggView view = state.aggregate(state.store.values[cell]);
     CHECK(view.count == 3);
     if (view.count == 3) {
         CHECK_EQ(std::string(state.text(compiled.program, view.data[0])), "stop");
@@ -4047,7 +4047,7 @@ void test_variant_options() {
         if (!CHECK(tcell >= 0 && tfill != nullptr)) return;
         RuntimeState tstate(tc.program);
         CHECK(!run_slot(tc.program, *tfill, tstate).faulted);
-        const AggView tview = tstate.aggregate(tstate.values[tcell]);
+        const AggView tview = tstate.aggregate(tstate.store.values[tcell]);
         CHECK(tview.count == 3);
         if (tview.count == 3)
             CHECK_EQ(std::string(tstate.text(tc.program, tview.data[2])), "fast");
@@ -4088,7 +4088,7 @@ void test_variant_options() {
         if (!CHECK(bad_cell >= 0)) continue;
         CHECK(!failed.program.cells[bad_cell].has_list);
         RuntimeState empty(failed.program);
-        CHECK(empty.values[bad_cell].tag == ValueTag::Nil);
+        CHECK(empty.store.values[bad_cell].tag == ValueTag::Nil);
     }
 }
 
@@ -4132,13 +4132,13 @@ void test_park_holds_text() {
     /* move the source variable while the run is parked */
     const int note = cell_named(compiled.program, "note");
     CHECK(note >= 0);
-    state.texts[state.mesh_scratch].set("second");
-    CHECK(state.write(compiled.program, static_cast<uint32_t>(note), 0, StorePlace::Cell, StoreMode::Assign, Value::text(state.mesh_scratch)));
+    state.store.texts[state.store.mesh_scratch].set("second");
+    CHECK(state.write(compiled.program, static_cast<uint32_t>(note), 0, StorePlace::Cell, StoreMode::Assign, Value::text(state.store.mesh_scratch)));
 
     resume_pending(compiled.program, state, 0);
     const int out = cell_named(compiled.program, "out");
     CHECK(out >= 0);
-    CHECK_EQ(std::string(state.text(compiled.program, state.values[out])), "first");
+    CHECK_EQ(std::string(state.text(compiled.program, state.store.values[out])), "first");
 }
 
 /* THE STEP BUDGET IS ENFORCED (stage 6d, rule 14): a body that jumps backward
@@ -4341,7 +4341,7 @@ void test_clock() {
     auto value_of = [&](int instance, const char* slot) -> const Value& {
         static const Value nil = Value::nil();
         const int cell = slot_cell_of(program, ids[instance], slot);
-        return cell >= 0 ? state.values[cell] : nil;
+        return cell >= 0 ? state.store.values[cell] : nil;
     };
     /* one tick in: one millisecond of program time */
     CHECK(value_of(0, "value").tag == ValueTag::Num);
@@ -4450,7 +4450,7 @@ void test_icon() {
     auto slot_text = [&](uint64_t instance) -> std::string {
         const int cell = slot_cell_of(program, instance, "symbol");
         if (cell < 0) return "<no cell>";
-        return std::string(state.text(program, state.values[cell]));
+        return std::string(state.text(program, state.store.values[cell]));
     };
     CHECK_EQ(slot_text(lit), "siren");
     CHECK_EQ(slot_text(fed), "bell");

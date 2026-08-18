@@ -8,14 +8,14 @@ namespace hmi {
  * tick-start snapshot. Delivered text is re-homed into the entity's retained slot,
  * exactly as an arrival is (Scheduler::on_update); aggregates stay out. */
 static void mirror_write(RuntimeState& state, const EffectRecord& record) noexcept {
-    if (record.verb == Verb::Unforce || record.entity >= state.last.size()) return;
-    LastValueState& last = state.last[record.entity];
+    if (record.verb == Verb::Unforce || record.entity >= state.store.last.size()) return;
+    LastValueState& last = state.store.last[record.entity];
     auto rehome = [&](Value value, std::string_view text, uint32_t field) -> Value {
-        if (value.tag != ValueTag::Text || record.entity >= state.entity_texts.size())
+        if (value.tag != ValueTag::Text || record.entity >= state.store.entity_texts.size())
             return value;
-        const auto& slots = state.entity_texts[record.entity];
-        if (field >= slots.size() || slots[field] >= state.texts.size()) return value;
-        state.texts[slots[field]].set(text);
+        const auto& slots = state.store.entity_texts[record.entity];
+        if (field >= slots.size() || slots[field] >= state.store.texts.size()) return value;
+        state.store.texts[slots[field]].set(text);
         return Value::text(slots[field]);
     };
     if (record.bare) {
@@ -25,16 +25,16 @@ static void mirror_write(RuntimeState& state, const EffectRecord& record) noexce
            is empty or shorter than the index just skips — the owner's next delivery
            is the truth either way, and the encode side bounds the real write. */
         if (record.elem_index != UINT32_MAX) {
-            if (record.field >= state.entity_aggs[record.entity].size()) return;
-            const uint32_t mirror = state.entity_aggs[record.entity][record.field];
-            if (mirror == UINT32_MAX || mirror >= state.lists.size()) return;
-            ListState& held = state.lists[mirror];
+            if (record.field >= state.store.entity_aggs[record.entity].size()) return;
+            const uint32_t mirror = state.store.entity_aggs[record.entity][record.field];
+            if (mirror == UINT32_MAX || mirror >= state.store.lists.size()) return;
+            ListState& held = state.store.lists[mirror];
             if (record.elem_index >= held.count) return;
             Value element = record.value;
             if (element.tag == ValueTag::Text) {
-                const uint32_t slot = state.list_text(held, record.elem_index);
+                const uint32_t slot = state.store.list_text(held, record.elem_index);
                 if (slot == UINT32_MAX) return;
-                state.texts[slot].set(record.bare_text.view());
+                state.store.texts[slot].set(record.bare_text.view());
                 element = Value::text(slot);
             }
             held.elems[record.elem_index] = element;
@@ -76,10 +76,10 @@ static void mirror_agg(const Program& program, RuntimeState& state,
                        const MeshElems& span) noexcept {
     const EntityDef& entity = program.entities[record.entity];
     if (entity.kind != EntityKind::Variable && entity.kind != EntityKind::Topic) return;
-    if (record.entity >= state.entity_aggs.size() ||
-        field >= state.entity_aggs[record.entity].size())
+    if (record.entity >= state.store.entity_aggs.size() ||
+        field >= state.store.entity_aggs[record.entity].size())
         return;
-    const uint32_t mirror = state.entity_aggs[record.entity][field];
+    const uint32_t mirror = state.store.entity_aggs[record.entity][field];
     if (mirror == UINT32_MAX) return;
     if (field >= entity.fields.size()) return;
     const FieldDef& def = entity.fields[field];
@@ -88,14 +88,14 @@ static void mirror_agg(const Program& program, RuntimeState& state,
                           : def.elem == Shape::Bool ? ValueTag::Bool
                           : def.elem == Shape::Text ? ValueTag::Text
                                                     : ValueTag::Nil;
-    const Value held = state.hold_entity_agg(mirror, span.data, span.texts, span.count,
+    const Value held = state.store.hold_entity_agg(mirror, span.data, span.texts, span.count,
                                              pairs, elem,
                                              def.bound ? def.bound : kVarrCeiling);
     if (held.tag == ValueTag::Nil) return;
-    if (record.entity < state.last.size() &&
-        field < state.last[record.entity].fields.size()) {
-        state.last[record.entity].fields[field] = held;
-        state.last[record.entity].known = true;
+    if (record.entity < state.store.last.size() &&
+        field < state.store.last[record.entity].fields.size()) {
+        state.store.last[record.entity].fields[field] = held;
+        state.store.last[record.entity].known = true;
     }
 }
 

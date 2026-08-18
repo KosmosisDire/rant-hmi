@@ -1090,12 +1090,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
             case OpCode::Load:
                 switch (static_cast<LoadPlace>(ins.small)) {
                     case LoadPlace::Cell:
-                        if (ins.a >= state.values.size() || !push(state.values[ins.a]))
+                        if (ins.a >= state.store.values.size() || !push(state.store.values[ins.a]))
                             fail(ins.c);
                         break;
                     case LoadPlace::Field: {
-                        const Value holder = ins.a < state.values.size()
-                                                 ? state.values[ins.a]
+                        const Value holder = ins.a < state.store.values.size()
+                                                 ? state.store.values[ins.a]
                                                  : Value::nil();
                         const StructState* item =
                             holder.tag == ValueTag::Struct ? state.struct_at(holder.ref)
@@ -1106,12 +1106,12 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         break;
                     }
                     case LoadPlace::Entity: {
-                        if (ins.a >= state.last.size() ||
-                            ins.b >= state.last[ins.a].fields.size()) {
+                        if (ins.a >= state.store.last.size() ||
+                            ins.b >= state.store.last[ins.a].fields.size()) {
                             fail(ins.c);
                             break;
                         }
-                        const LastValueState& last = state.last[ins.a];
+                        const LastValueState& last = state.store.last[ins.a];
                         if (!push(last.known ? last.fields[ins.b] : Value::nil()))
                             fail(ins.c);
                         break;
@@ -1267,7 +1267,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
              * this touches no rows. A typed temporary's declaring row and a variable's
              * reset are both this one instruction. */
             case OpCode::New: {
-                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
+                const Value holder = ins.a < state.store.values.size() ? state.store.values[ins.a]
                                                                  : Value::nil();
                 StructState* slot_item =
                     holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
@@ -1290,16 +1290,16 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
              * each AGGREGATE field's copy beside this instruction (an entity-place
              * Load of the mirror, stored whole into the field's derived cell). */
             case OpCode::ReadEnt: {
-                const Value holder = ins.a < state.values.size() ? state.values[ins.a]
+                const Value holder = ins.a < state.store.values.size() ? state.store.values[ins.a]
                                                                  : Value::nil();
                 StructState* slot_item =
                     holder.tag == ValueTag::Struct ? state.struct_at(holder.ref) : nullptr;
-                if (!slot_item || ins.b >= state.last.size()) {
+                if (!slot_item || ins.b >= state.store.last.size()) {
                     fail(ins.c);
                     break;
                 }
                 StructState& item = *slot_item;
-                const LastValueState& last = state.last[ins.b];
+                const LastValueState& last = state.store.last[ins.b];
                 const std::vector<FieldDef>& defs = struct_fields(program, item.type_id);
                 for (uint32_t i = 0; i < item.fields.size(); ++i) {
                     const Shape shape = i < defs.size() ? defs[i].shape : Shape::Unknown;

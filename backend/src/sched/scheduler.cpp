@@ -55,9 +55,9 @@ void Scheduler::drain_raised(const RepeatSeat& copy) {
         Value value = record.value;
         /* a text argument was copied into the record; home it into the input slot the
            way an InputEvent's text is, so the flows read it like any event payload */
-        if (value.tag == ValueTag::Text && state_.input_scratch < state_.texts.size()) {
-            state_.texts[state_.input_scratch].set(record.text.view());
-            value = Value::text(state_.input_scratch);
+        if (value.tag == ValueTag::Text && state_.store.input_scratch < state_.store.texts.size()) {
+            state_.store.texts[state_.store.input_scratch].set(record.text.view());
+            value = Value::text(state_.store.input_scratch);
         }
         /* a raised run inherits the drain's copy untouched, which is right — an
            event raised from a copy's own run is that copy speaking */
@@ -187,7 +187,7 @@ void Scheduler::on_update(const MeshUpdate& update) {
      * RESPONSE fields — `fields` is already the response table for one — because a slot
      * expression reads a polled response exactly as it reads a topic. */
     {
-        auto& last = state_.last[entity];
+        auto& last = state_.store.last[entity];
         bool any = false;
         for (uint32_t i = 0; i < count && i < last.fields.size(); ++i) {
             Value value = update.fields[i];
@@ -196,15 +196,15 @@ void Scheduler::on_update(const MeshUpdate& update) {
              * cache's Value — so `@entity.<list field>` reads the last delivery the
              * way a scalar field reads the last value */
             if (value.tag == ValueTag::List || value.tag == ValueTag::Map) {
-                if (i >= state_.entity_aggs[entity].size()) continue;
-                const uint32_t mirror = state_.entity_aggs[entity][i];
+                if (i >= state_.store.entity_aggs[entity].size()) continue;
+                const uint32_t mirror = state_.store.entity_aggs[entity][i];
                 if (mirror == UINT32_MAX || !update.elems) continue;
                 const MeshElems& source = update.elems[i];
                 const bool pairs = value.tag == ValueTag::Map;
                 uint32_t span = static_cast<uint32_t>(value.data.integer) *
                                 (pairs ? 2u : 1u);
                 span = std::min(span, source.count);
-                const Value held = state_.hold_entity_agg(
+                const Value held = state_.store.hold_entity_agg(
                     mirror, source.data, source.texts, span, pairs,
                     list_elem_tag(value), fields[i].bound);
                 if (held.tag == ValueTag::Nil) continue;
@@ -214,10 +214,10 @@ void Scheduler::on_update(const MeshUpdate& update) {
             }
             if (value.tag == ValueTag::Enum) value.type_id = fields[i].type_id;
             if (value.tag == ValueTag::Text) {
-                if (i >= state_.entity_texts[entity].size()) continue;
-                const uint32_t slot = state_.entity_texts[entity][i];
-                if (slot >= state_.texts.size()) continue;
-                state_.texts[slot].set(update.texts[i]);
+                if (i >= state_.store.entity_texts[entity].size()) continue;
+                const uint32_t slot = state_.store.entity_texts[entity][i];
+                if (slot >= state_.store.texts.size()) continue;
+                state_.store.texts[slot].set(update.texts[i]);
                 value = Value::text(slot);
             }
             last.fields[i] = value;
@@ -295,9 +295,9 @@ bool Scheduler::tick(std::string& fault) {
         else if (event.event == "release") on_release(event);
         else {
             Value value = event.value;
-            if (!event.text.empty() && state_.input_scratch < state_.texts.size()) {
-                state_.texts[state_.input_scratch].set(event.text);
-                value = Value::text(state_.input_scratch);
+            if (!event.text.empty() && state_.store.input_scratch < state_.store.texts.size()) {
+                state_.store.texts[state_.store.input_scratch].set(event.text);
+                value = Value::text(state_.store.input_scratch);
             }
             dispatch(event.node, event.element, event.event, value, event.repeat);
         }

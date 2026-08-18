@@ -65,13 +65,13 @@ int global_cell_of(const Program& program, const char* name) {
 
 double num_at(const Scheduler& sched, int cell) {
     if (cell < 0) return -1e300;
-    const Value& value = sched.state().values[cell];
+    const Value& value = sched.state().store.values[cell];
     return value.tag == ValueTag::Num ? value.data.num : -1e300;
 }
 
 std::string text_at(const Scheduler& sched, int cell) {
     if (cell < 0) return "<no cell>";
-    const Value& value = sched.state().values[cell];
+    const Value& value = sched.state().store.values[cell];
     return std::string(sched.state().text(sched.program(), value));
 }
 

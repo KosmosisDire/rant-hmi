@@ -52,7 +52,7 @@ uint32_t buffer_capacity(Shape shape) noexcept;
  * only ever holds three options must not carry a whole budget's worth of Values, and a
  * buffer that has earned its size keeps it rather than being cut off. `texts` names one
  * slot in
- * RuntimeState::texts per element position that has ever held text, so element text
+ * Store::texts per element position that has ever held text, so element text
  * resolves through exactly the machinery every other text value does.
  *
  * `gen` and `total` are the WIRE's truth and have to stay exact: gen bumps on every
@@ -246,6 +246,60 @@ struct Frame {
     }
 };
 
+/* THE STORE (stage 7): what the system KNOWS — every value AT REST. The declared
+ * cells' scalars, their text, their retained aggregates and their struct fields, and
+ * the mesh's last-value mirrors beside them: a database, addressed by the compiler's
+ * layout, with no idea when or why anything runs. Values IN FLIGHT live in the run's
+ * Frame instead, and the two never share an index space (kFrameRef marks the frame's).
+ * The storage-only verbs live here; anything that must ROUTE between the store and
+ * the active frame (a write landing in a flow temporary, text resolution, aggregate
+ * views) stays one level up, where both halves are in reach. */
+struct Store {
+    std::vector<Value> values;
+    std::vector<FixedText> texts;
+    /* mesh-inbound text storage, appended after the cell slots: one scratch slot for
+     * values consumed immediately (a function response feed), and one RETAINED slot per
+     * text-shaped entity field so the last-value cache can hold deliverable text (a
+     * `seed: last` build must be able to re-send it) */
+    uint32_t mesh_scratch = 0;
+    /* one slot for an input event's text payload (a Dropdown's selected option),
+       homed here at dispatch so `x` can be text without the queue owning storage */
+    uint32_t input_scratch = 0;
+    std::vector<std::vector<uint32_t>> entity_texts;   /* [entity][field] -> text slot */
+    /* one entry per LIST- or MAP-shaped cell, indexed by CellDef::list_slot — and,
+     * appended AFTER those, the MESH AGGREGATE MIRRORS (entity_aggs below) */
+    std::vector<ListState> lists;
+    /* MESH AGGREGATE MIRRORS: one retained slot per aggregate-shaped readable entity
+     * field, indexed [entity][read-side field] -> `lists`, UINT32_MAX where the field
+     * is not an aggregate. A delivery copies the elements in (hold_entity_agg) and the
+     * last-value cache holds the retained Value, so an entity read hands a slot expression or
+     * a flow the entity's last list/map exactly as the cache hands it a scalar. Empty
+     * after a recompile until the mesh re-delivers — the scalar cache's own rule. */
+    std::vector<std::vector<uint32_t>> entity_aggs;
+    /* declared struct variables' slots only: a flow temporary's fields live in
+     * frame.locals (struct_at routes a handle to whichever owns it) */
+    std::vector<StructState> structs;
+    std::vector<LastValueState> last;
+
+    /* One delivered aggregate field into its mirror slot: `data` is the delivery's
+     * element run (a map's pairs interleaved, arrival order), `elem_texts[k]` the text
+     * behind data[k] where that element is text. Bounds to the field's own bound and
+     * the retained ceiling, sorts a map's pairs by key, homes text per position, and
+     * returns the retained Value the last-value cache should hold (Nil on refusal). */
+    Value hold_entity_agg(uint32_t list_slot, const Value* data,
+                          const std::string_view* elem_texts, uint32_t delivered,
+                          bool pairs, ValueTag elem, uint32_t bound) noexcept;
+    /* the text slot backing element `at` of a retained aggregate, allocated on first use */
+    uint32_t list_text(ListState& held, uint32_t at) noexcept;
+    /* the same, for position `at` of a nested slot's LEAF arena */
+    uint32_t leaf_text(ListState& held, uint32_t at) noexcept;
+    /* move one entry within a retained slot, its text following it into the destination
+     * position's own slot: what a trim and a keyed insert are both built out of */
+    void move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept;
+    /* the same move, within the leaf arena */
+    void move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept;
+};
+
 /* THE OUTBOX (stage 7): what the system SAYS. Every message leaving a run passes
  * through here and nowhere else — the mesh port flushes the effects, the scheduler
  * dispatches the raises, the App broadcasts the notices — which is what makes "effects
@@ -311,31 +365,8 @@ class RuntimeState {
      * wall_pinned and writing wall_ms by hand. */
     double wall_ms = 0;
     bool wall_pinned = false;
-    std::vector<Value> values;
-    std::vector<FixedText> texts;
-    /* mesh-inbound text storage, appended after the cell slots: one scratch slot for
-     * values consumed immediately (a function response feed), and one RETAINED slot per
-     * text-shaped entity field so the last-value cache can hold deliverable text (a
-     * `seed: last` build must be able to re-send it) */
-    uint32_t mesh_scratch = 0;
-    /* one slot for an input event's text payload (a Dropdown's selected option),
-       homed here at dispatch so `x` can be text without the queue owning storage */
-    uint32_t input_scratch = 0;
-    std::vector<std::vector<uint32_t>> entity_texts;   /* [entity][field] -> text slot */
-    /* one entry per LIST- or MAP-shaped cell, indexed by CellDef::list_slot — and,
-     * appended AFTER those, the MESH AGGREGATE MIRRORS (entity_aggs below) */
-    std::vector<ListState> lists;
-    /* MESH AGGREGATE MIRRORS: one retained slot per aggregate-shaped readable entity
-     * field, indexed [entity][read-side field] -> `lists`, UINT32_MAX where the field
-     * is not an aggregate. A delivery copies the elements in (hold_entity_agg) and the
-     * last-value cache holds the retained Value, so an entity read hands a slot expression or
-     * a flow the entity's last list/map exactly as the cache hands it a scalar. Empty
-     * after a recompile until the mesh re-delivers — the scalar cache's own rule. */
-    std::vector<std::vector<uint32_t>> entity_aggs;
-    /* declared struct variables' slots only: a flow temporary's fields live in
-     * frame.locals (struct_at routes a handle to whichever owns it) */
-    std::vector<StructState> structs;
-    std::vector<LastValueState> last;
+    /* every value at rest: the cells' storage and the mesh mirrors */
+    Store store;
     std::vector<PendingState> pending;
     std::vector<TimerState> timers;
     std::vector<uint8_t> fired;
@@ -348,13 +379,13 @@ class RuntimeState {
     /* the storage behind a struct handle: a declared variable's slot is the state's,
      * a flow temporary's is the frame's — it parks and resumes with its run */
     StructState* struct_at(uint32_t slot) noexcept {
-        if (slot < structs.size()) return &structs[slot];
-        const uint32_t local = slot - static_cast<uint32_t>(structs.size());
+        if (slot < store.structs.size()) return &store.structs[slot];
+        const uint32_t local = slot - static_cast<uint32_t>(store.structs.size());
         return local < frame.locals.size() ? &frame.locals[local] : nullptr;
     }
     const StructState* struct_at(uint32_t slot) const noexcept {
-        if (slot < structs.size()) return &structs[slot];
-        const uint32_t local = slot - static_cast<uint32_t>(structs.size());
+        if (slot < store.structs.size()) return &store.structs[slot];
+        const uint32_t local = slot - static_cast<uint32_t>(store.structs.size());
         return local < frame.locals.size() ? &frame.locals[local] : nullptr;
     }
     /* the FixedText behind a struct field's own text slot, wherever it lives
@@ -364,7 +395,7 @@ class RuntimeState {
             const uint32_t at = ref & ~kFrameRef;
             return at < frame.texts.size() ? &frame.texts[at] : nullptr;
         }
-        return ref < texts.size() ? &texts[ref] : nullptr;
+        return ref < store.texts.size() ? &store.texts[ref] : nullptr;
     }
     /* THE ONE STORE (stage 6c): every write a program makes lands through here — the
      * place says where, the mode how (ir_ops.h). `step` is the place's dynamic step:
@@ -397,24 +428,6 @@ class RuntimeState {
      * cell as `row_init` rather than in one flat run, because a run of scalars is exactly
      * what a nested literal is not */
     void seed_nested(const Program& program, uint32_t cell, const CellDef& def) noexcept;
-    /* One delivered aggregate field into its mirror slot: `data` is the delivery's
-     * element run (a map's pairs interleaved, arrival order), `elem_texts[k]` the text
-     * behind data[k] where that element is text. Bounds to the field's own bound and
-     * the retained ceiling, sorts a map's pairs by key, homes text per position, and
-     * returns the retained Value the last-value cache should hold (Nil on refusal). */
-    Value hold_entity_agg(uint32_t list_slot, const Value* data,
-                          const std::string_view* elem_texts, uint32_t delivered,
-                          bool pairs, ValueTag elem, uint32_t bound) noexcept;
-    /* the text slot backing element `at` of a retained aggregate, allocated on first use */
-    uint32_t list_text(ListState& held, uint32_t at) noexcept;
-    /* the same, for position `at` of a nested slot's LEAF arena */
-    uint32_t leaf_text(ListState& held, uint32_t at) noexcept;
-    /* move one entry within a retained slot, its text following it into the destination
-     * position's own slot: what a trim and a keyed insert are both built out of */
-    void move_entry(ListState& held, uint32_t dst, uint32_t src) noexcept;
-    /* the same move, within the leaf arena */
-    void move_leaf(ListState& held, uint32_t dst, uint32_t src) noexcept;
-
   private:
     /* THE LANDINGS behind `write`, one per place-and-mode. The whole store replaces
      * (an unchanged aggregate is no write; Nil clears); the field store re-homes text
