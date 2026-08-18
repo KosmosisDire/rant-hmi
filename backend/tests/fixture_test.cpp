@@ -13,6 +13,7 @@
  * folds (`.sum()`, `.join()`), which is also the only way the wire tier may see one. */
 #include "check.h"
 #include "lang/expression.h"
+#include "lang/template_expr.h"
 #include "vm/program.h"
 #include "vm/state.h"
 #include "vm/vm.h"
@@ -391,8 +392,10 @@ void run_case(const FixtureCase& item) {
                   item.want_type + " " + item.want);
 }
 
-/* one fixture file: '#' comments, '==' opens a case, the directives fill it */
-int run_file(const std::filesystem::path& path) {
+/* one fixture file: '#' comments, '==' opens a case, the directives fill it.
+ * `collect` gathers the cases instead of running them (the conformance dump). */
+int run_file(const std::filesystem::path& path,
+             std::vector<FixtureCase>* collect = nullptr) {
     std::ifstream input(path);
     if (!input) {
         CHECK_MSG(false, "cannot open " + path.string());
@@ -408,8 +411,12 @@ int run_file(const std::filesystem::path& path) {
         if (!open) return;
         ++cases;
         if (CHECK_MSG(!current.expr.empty(), current.file + ":" +
-                          std::to_string(current.line) + "  case has no expr"))
-            run_case(current);
+                          std::to_string(current.line) + "  case has no expr")) {
+            if (collect)
+                collect->push_back(current);
+            else
+                run_case(current);
+        }
     };
     while (std::getline(input, line)) {
         ++number;
@@ -466,13 +473,133 @@ int run_file(const std::filesystem::path& path) {
     return cases;
 }
 
+/* ---- THE CONFORMANCE DUMP (--dump): the same cases, compiled by the VIEW emitter ----
+ *
+ * The second interpreter (frontend/src/program.ts) must agree with the VM about every
+ * value the SHARED vocabulary computes, forever. This mode compiles each value-want
+ * case with compile_template_expr — every env variable exposed as a property, so
+ * `level` loads the cell "slot:level" — and writes {cells, program, want} rows the
+ * node runner (frontend/test/conformance_test.mjs) executes through the REAL built
+ * interpreter over a plain-map host. A case the view emitter refuses is honestly
+ * outside the shared vocabulary (text methods, variants, the pipeline register) and
+ * is skipped, as is one whose env or want no JSON can carry (nan/inf); the refusal
+ * and fault cases pin the SCALAR checker and stay with the runner above. Values are
+ * rendered in the VIEW's own spellings — a color is its "#rrggbb" text, an enum its
+ * variant name — because those are the shapes the live wire serves its cells in. */
+
+bool view_json(const std::string& type, const std::string& literal, Json& out) {
+    std::string head, arg;
+    split_type(type, head, arg);
+    const std::string text = trim(literal);
+    if (head == "num") {
+        char* end = nullptr;
+        const double number = std::strtod(text.c_str(), &end);
+        if (!end || *end || !std::isfinite(number)) return false;
+        out = number;
+        return true;
+    }
+    if (head == "bool") {
+        if (text != "true" && text != "false") return false;
+        out = text == "true";
+        return true;
+    }
+    if (head == "text") {
+        if (text.size() < 2 || text.front() != '"' || text.back() != '"') return false;
+        out = text.substr(1, text.size() - 2);
+        return true;
+    }
+    if (head == "color") {
+        bool ok = false;
+        const uint32_t rgba = parse_color(text, ok);
+        if (!ok) return false;
+        out = format_color(rgba);
+        return true;
+    }
+    if (head == "enum") {
+        out = text;   /* the wire spelling: the variant's own name */
+        return true;
+    }
+    if (head != "list" && head != "map") return false;
+    std::vector<std::string> parts;
+    if (!split_elements(text, head == "list" ? '[' : '{', head == "list" ? ']' : '}',
+                        parts))
+        return false;
+    if (head == "list") {
+        Json list = Json::array();
+        for (const std::string& part : parts) {
+            Json elem;
+            if (!view_json(arg, part, elem)) return false;
+            list.push_back(std::move(elem));
+        }
+        out = std::move(list);
+        return true;
+    }
+    Json map = Json::object();
+    for (const std::string& part : parts) {
+        const size_t colon = part.find(':', part.find('"', 1) + 1);
+        if (colon == std::string::npos) return false;
+        Json key, value;
+        if (!view_json("text", part.substr(0, colon), key) ||
+            !view_json(arg, part.substr(colon + 1), value))
+            return false;
+        map[key.get<std::string>()] = std::move(value);
+    }
+    out = std::move(map);
+    return true;
+}
+
+int dump_cases(const std::vector<FixtureCase>& cases, const char* path) {
+    Json rows = Json::array();
+    for (const FixtureCase& item : cases) {
+        if (item.has_error || item.has_fault) continue;
+        Json want;
+        if (item.want_type == "nil") want = nullptr;
+        else if (!view_json(item.want_type, item.want, want)) continue;
+        std::vector<std::pair<std::string, uint64_t>> names;
+        Json cells = Json::object();
+        bool carried = true;
+        for (const FixtureEnv& var : item.env) {
+            Json value;
+            if (!view_json(var.type, var.literal, value)) {
+                carried = false;
+                break;
+            }
+            cells["slot:" + var.name] = std::move(value);
+            names.push_back({var.name, 0});
+        }
+        if (!carried) continue;
+        TemplateScope scope;
+        TemplateExprResult compiled =
+            compile_template_expr(item.expr, scope.extend("", names));
+        if (!compiled.ok) continue;
+        rows.push_back(Json{{"file", item.file},
+                            {"line", item.line},
+                            {"name", item.name},
+                            {"cells", std::move(cells)},
+                            {"program", std::move(compiled.program)},
+                            {"want_type", item.want_type},
+                            {"want", std::move(want)}});
+    }
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        std::printf("fixture_test: cannot write %s\n", path);
+        return -1;
+    }
+    out << rows.dump(1) << "\n";
+    std::printf("fixture_test: dumped %d view-legal cases to %s\n",
+                static_cast<int>(rows.size()), path);
+    return static_cast<int>(rows.size());
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::printf("usage: hmi_fixture_test <fixtures-dir>\n");
+        std::printf("usage: hmi_fixture_test <fixtures-dir> [--dump <path>]\n");
         return 1;
     }
+    const char* dump_path =
+        argc >= 4 && std::string(argv[2]) == "--dump" ? argv[3] : nullptr;
     int cases = 0;
     std::vector<std::filesystem::path> files;
     for (const auto& entry : std::filesystem::directory_iterator(argv[1]))
@@ -480,6 +607,12 @@ int main(int argc, char** argv) {
     std::sort(files.begin(), files.end());
     CHECK_MSG(files.size() >= 5, "fixture files went missing: found " +
                                      std::to_string(files.size()));
+    if (dump_path) {
+        std::vector<FixtureCase> collected;
+        for (const auto& path : files) cases += run_file(path, &collected);
+        if (dump_cases(collected, dump_path) < 0) return 1;
+        return check::summary("fixture_test");
+    }
     for (const auto& path : files) cases += run_file(path);
     std::printf("%d fixture cases\n", cases);
     return check::summary("fixture_test");

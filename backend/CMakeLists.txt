@@ -158,6 +158,16 @@ if(NODE_EXE AND EXISTS "${HMI_ROOT}/frontend/dist/main.js")
   set_tests_properties(view_test PROPERTIES
                        WORKING_DIRECTORY "${HMI_ROOT}/frontend"
                        DEPENDS sync_test)
+  # THE CONFORMANCE SUITE, in the SECOND executor: the same fixture files
+  # fixture_test runs through the C++ VM, compiled by the view emitter
+  # (hmi_fixture_test --dump) and executed by the built frontend interpreter
+  # (dist/program.js). One suite pins both interpreters, forever.
+  add_test(NAME lang_conformance
+           COMMAND "${NODE_EXE}" test/conformance_test.mjs
+                   $<TARGET_FILE:hmi_fixture_test>
+                   "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/lang")
+  set_tests_properties(lang_conformance PROPERTIES
+                       WORKING_DIRECTORY "${HMI_ROOT}/frontend")
 else()
   message(STATUS "frontend view_test skipped (build it with: cd frontend && npm install && node build.mjs)")
 endif()
