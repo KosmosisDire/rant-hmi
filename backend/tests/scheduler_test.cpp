@@ -373,6 +373,68 @@ void test_scheduler_speaks() {
     CHECK(mesh.transcript()[1] == "write V:switch.on=false");
 }
 
+/* A RAISE OUT OF A RESUMED RUN drains the same tick (stage 6d): the wake loop
+ * drains raises after each resume, so a parked behavior that speaks on waking is
+ * heard even when nothing else runs that tick. Before the drain, the raise sat in
+ * the queue and the next tick's clear_outputs silently dropped it. */
+void test_resumed_raise_drains() {
+    Json component = {
+        {"name", "Delayed"},
+        {"design_w", 10},
+        {"design_h", 10},
+        {"interact", Json{{"primitive", "press"}}},
+        {"events",
+         Json::array({Json{{"name", "changed"},
+                           {"params", Json::array({Json{{"name", "value"},
+                                                        {"shape", "bool"}}})}}})},
+        {"behavior",
+         Json::array({Json{
+             {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+             {"when_mode", "any"},
+             {"do", Json::array({
+                        steps::guard("delay", 2),
+                        Json{{"kind", "raise"},
+                             {"event", "changed"},
+                             {"args", Json{{"value", "true"}}}},
+                    })}}})},
+    };
+    Json instance = {
+        {"kind", "frame"},
+        {"type", "Delayed"},
+        {"flows",
+         Json::array({Json{
+             {"when", Json::array({Json{{"kind", "event"}, {"name", "changed"}}})},
+             {"when_mode", "any"},
+             {"do", Json::array({steps::set_var("count", "count + 1")})}}})},
+    };
+    Json root = {
+        {"version", 1},
+        {"next_id", 1},
+        {"components", Json::array({component})},
+        {"globals", Json::array({Json{{"name", "count"}, {"type", "num"}, {"init", 0}}})},
+        {"pages",
+         Json::array({Json{{"name", "Main"}, {"children", Json::array({instance})}}})},
+    };
+    Document document;
+    std::string error;
+    CHECK_MSG(document.adopt(std::move(root), error), error);
+    FakeMesh mesh;
+    CompileResult compiled = compile_document(document, mesh);
+    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
+                               ? "compile failed"
+                               : compiled.program.diagnostics[0].message);
+    const uint64_t instance_id =
+        json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
+    Scheduler scheduler(std::move(compiled.program), mesh);
+    const uint32_t cell = count_cell(scheduler.program());
+
+    scheduler.post(InputEvent{1, instance_id, "tap", Value::nil(), 1});
+    tick(scheduler, 1);   /* the behavior parks */
+    CHECK(scheduler.state().values[cell].data.num == 0);
+    tick(scheduler, 2);   /* the wake: the raise drains this same tick */
+    CHECK(scheduler.state().values[cell].data.num == 1);
+}
+
 /* HOLD-TO-TOGGLE: held() is a MOMENT — it carries nothing, and the flow reads the
  * state it flips. A press shorter than hold_ms commits nothing; the second hold reads
  * the state the first one left and flips it back. (The variable is `lit`, not `state`:
@@ -967,6 +1029,7 @@ int main() {
     test_filters();
     test_first_of_rearm();
     test_scheduler_speaks();
+    test_resumed_raise_drains();
     test_held_nullary();
     test_timer_reads();
     test_flow_entity_read();
