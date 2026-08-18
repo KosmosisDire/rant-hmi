@@ -172,9 +172,14 @@ struct RuntimeFault {
     uint32_t count = 0;
 };
 
+/* A TIMER IS A HOST OBJECT (stage 7): what the host stores is the SCHEDULE — running
+ * and the tick it fires at — and `remaining` is DERIVED (deadline - now) wherever it
+ * is read. Nothing decrements per tick: starting writes the deadline once, expiry is
+ * one comparison, and a viewer can render a countdown at any frame rate from the same
+ * two facts without the host saying a new number every millisecond. */
 struct TimerState {
     bool running = false;
-    uint32_t remaining = 0;
+    uint64_t deadline = 0;
 };
 
 /* WHICH COPY OF A `repeat` A RUN BELONGS TO — the HOST'S record of the occurrence

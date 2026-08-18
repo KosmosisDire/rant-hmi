@@ -396,14 +396,19 @@ Json App::live(bool full) const {
     for (uint32_t i = 0; i < program.timers.size(); ++i) {
         const TimerDef& def = program.timers[i];
         const TimerState& timer = state.timers[i];
+        /* remaining derives off the schedule here exactly as TmrRead derives it —
+           the served numbers are unchanged; serving the deadline itself (and letting
+           the view count down between frames) is the port's wire change, not this
+           one's */
+        const double left = timer.running && timer.deadline > state.tick
+                                ? static_cast<double>(timer.deadline - state.tick)
+                                : 0.0;
         values["v" + std::to_string(def.node_id)] =
             Json{{"running", timer.running},
-                 {"remaining", static_cast<double>(timer.remaining) / 1000.0},
+                 {"remaining", left / 1000.0},
                  {"duration", static_cast<double>(def.duration_ticks) / 1000.0},
-                 {"progress", def.duration_ticks
-                                  ? 1.0 - static_cast<double>(timer.remaining) /
-                                              def.duration_ticks
-                                  : 0.0}};
+                 {"progress", def.duration_ticks ? 1.0 - left / def.duration_ticks
+                                                 : 0.0}};
     }
     return Json{{"epoch", epoch_},
                 {"values", std::move(values)},

@@ -248,15 +248,15 @@ bool Scheduler::tick(std::string& fault) {
     /* tick step 1: the mesh's arrivals, decoded, before anything time-driven runs */
     mesh_.drain(*this);
 
+    /* timer expiry is ONE COMPARISON against the schedule the start wrote — nothing
+       decrements. A zero-duration timer's deadline is its start tick, so it fires on
+       the next tick rather than idling forever. */
     ended_.clear();
     for (uint32_t i = 0; i < state_.timers.size(); ++i) {
         TimerState& timer = state_.timers[i];
-        if (!timer.running || timer.remaining == 0) continue;
-        --timer.remaining;
-        if (timer.remaining == 0) {
-            timer.running = false;
-            ended_.push_back(i);
-        }
+        if (!timer.running || state_.tick < timer.deadline) continue;
+        timer.running = false;
+        ended_.push_back(i);
     }
 
     for (uint32_t i = 0; i < state_.exec.pending.size(); ++i) {

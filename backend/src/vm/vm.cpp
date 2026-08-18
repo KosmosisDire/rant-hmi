@@ -1440,8 +1440,10 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                         }
                         TimerState& timer = state.timers[ins.a];
                         timer.running = verb_code == 0;
-                        timer.remaining =
-                            timer.running ? program.timers[ins.a].duration_ticks : 0;
+                        timer.deadline =
+                            timer.running
+                                ? state.tick + program.timers[ins.a].duration_ticks
+                                : 0;
                         for (uint32_t group : program.timers[ins.a].rearm_groups) {
                             if (flow && flow->first_only && group == flow->group)
                                 continue;
@@ -1475,20 +1477,21 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 }
                 const TimerState& timer = state.timers[ins.a];
                 /* ticks are milliseconds; the fields speak SECONDS, like a timer's
-                   declared duration does. `progress` is the FRACTION finished, 0..1,
-                   readable with no knowledge of the total time (an idle timer reads
-                   as finished: its remaining is zero). */
+                   declared duration does. `remaining` DERIVES off the deadline —
+                   the stored fact is the schedule, not a countdown. `progress` is
+                   the FRACTION finished, 0..1, readable with no knowledge of the
+                   total time (an idle timer reads as finished: nothing remains). */
                 const uint32_t duration = program.timers[ins.a].duration_ticks;
+                const double left =
+                    timer.running && timer.deadline > state.tick
+                        ? static_cast<double>(timer.deadline - state.tick)
+                        : 0.0;
                 const Value value =
                     ins.b == 0 ? Value::boolean(timer.running)
-                    : ins.b == 1
-                        ? Value::number(static_cast<double>(timer.remaining) / 1000.0)
+                    : ins.b == 1 ? Value::number(left / 1000.0)
                     : ins.b == 2
                         ? Value::number(static_cast<double>(duration) / 1000.0)
-                        : Value::number(
-                              duration ? 1.0 - static_cast<double>(timer.remaining) /
-                                                   duration
-                                       : 0.0);
+                        : Value::number(duration ? 1.0 - left / duration : 0.0);
                 if (!push(value)) fail(ins.c);
                 break;
             }
