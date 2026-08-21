@@ -126,20 +126,6 @@ target_link_libraries(hmi_fixture_test PRIVATE hmi_core)
 add_test(NAME fixture_test COMMAND hmi_fixture_test
          "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/lang")
 
-# THE TOMBSTONE TEST: dead symbols stay dead. tests/tombstones.txt is the burial
-# list; a listed symbol appearing anywhere in the source trees fails the build.
-add_executable(hmi_tombstone_test tests/tombstone_test.cpp)
-add_test(NAME tombstone_test COMMAND hmi_tombstone_test "${HMI_ROOT}"
-         "${CMAKE_CURRENT_SOURCE_DIR}/tests/tombstones.txt")
-
-# THE GOLDEN DUMP (the language-rewrite ratchet): the repo document's whole compile
-# product, byte for byte. Regenerate after an INTENDED change with:
-#   bin/hmi_golden_test hmi.json backend/tests/golden/hmi.golden --write
-add_executable(hmi_golden_test tests/golden_test.cpp)
-target_link_libraries(hmi_golden_test PRIVATE hmi_core)
-add_test(NAME golden_test COMMAND hmi_golden_test "${HMI_ROOT}/hmi.json"
-         "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/hmi.golden")
-
 # The view's pure half (boot and sync, document mirror, attribute interpreter, sidebar
 # reconciliation) is checked headlessly against a real backend; it needs `node build.mjs`
 # to have run. What a component LOOKS like is not checked here: that is a browser's

@@ -8,4 +8,3 @@ hmi.state.json
 frontend/test/*.tmp.json
 fern-backend/
 *.bak
-backend/tests/golden/*.actual

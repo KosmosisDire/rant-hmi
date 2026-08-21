@@ -3,8 +3,8 @@
  * refusal, or a runtime fault by site code. The fixture files (tests/fixtures/lang)
  * speak the LANGUAGE, never the encoding: no opcode, no instruction count, no stack
  * depth appears in one, so they survive IR changes unchanged and are reused verbatim
- * when the second interpreter is conformance-tested. The golden dump catches encoding
- * drift; these catch semantic drift.
+ * when the second interpreter is conformance-tested. Encoding pins live in the
+ * component and sync suites; these catch semantic drift.
  *
  * The runner is deliberately the smallest honest host: one hand-built Program whose
  * cells are the case's environment, the real compiler, the real VM. Results are read
