@@ -66,7 +66,7 @@ export const ICONS: Record<string, string> = {
   "node-path": '<path d="M4 18C7 6 17 18 20 6"/><rect x="2" y="16" width="4" height="4" rx="1"/><rect x="18" y="4" width="4" height="4" rx="1"/>',
 };
 
-export const KIND_COLOR: Record<string, string> = {
+const KIND_COLOR: Record<string, string> = {
   V: "#cf9a3a",
   L: "#cf9a3a",
   T: "#9a9a9f",
@@ -77,7 +77,7 @@ export const KIND_COLOR: Record<string, string> = {
   g: "#a78bfa",
 };
 
-export function kindColor(kind: string): string {
+function kindColor(kind: string): string {
   return KIND_COLOR[kind] ?? "#8a8a8a";
 }
 

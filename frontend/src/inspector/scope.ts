@@ -66,7 +66,7 @@ export interface BrowseRow {
  * `motor` and completes `.speed` off its fields — exactly the flat model it always
  * had); a pure folder only frames. Rows carrying a reflection ordinal sort by it,
  * after the ordinal-less rows (the mesh rides behind the hmi names, as ever). ---- */
-export function projectNames(rows: BrowseRow[]): NameRow[] {
+function projectNames(rows: BrowseRow[]): NameRow[] {
   const out: { name: NameRow; ord: number }[] = [];
   const walk = (rows: BrowseRow[]) => {
     for (const row of rows) {
@@ -152,14 +152,8 @@ function declaredLocals(editor: Editor, id: number): Var[] {
 /* is this element inside a component definition rather than on a page? The walk up ends
  * at a component record or at the page — the same question owningComponent answers, kept
  * separate because the callers that ask this do not want the component itself. */
-export function inComponent(editor: Editor, id: number): boolean {
+function inComponent(editor: Editor, id: number): boolean {
   return owningComponent(editor, id) !== null;
-}
-
-/* WHICH LOCALS BELONG TO THIS ELEMENT ALONE — what the inspector's Local Variables
- * section edits. Every element owns its own list; the scope above is what READS them. */
-export function ownLocals(editor: Editor, id: number): Var[] {
-  return declaredLocals(editor, id);
 }
 
 /* a scalar variable's shape IS its type; anything else is a timer, an aggregate or a
@@ -374,18 +368,6 @@ function slotRoots(editor: Editor, element: Node | null,
 }
 
 /* ---- the factories: one per surface ---- */
-
-/* an instance-surface display-tier field: the standing vocabulary, no pipeline register,
- * no mesh */
-export function pageScope(editor: Editor, instance: Node | null): Scope {
-  const roots = () => hmiRoot(editor, instance);
-  return {
-    tier: "display",
-    lang: () => editor.lang,
-    names: () => projectNames(roots()),
-    roots,
-  };
-}
 
 /* WHICH COPY THIS FLOW RUNS FOR, offered only where the flow can have one. `repeat` names
  * the copy an EVENT arrived on: a cadence or a timer fires for the element itself, so the

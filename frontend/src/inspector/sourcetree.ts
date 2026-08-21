@@ -160,31 +160,6 @@ function varFields(editor: Editor, type: string): MeshField[] {
   return editor.mesh.types.find((t) => t.name === type)?.fields ?? [];
 }
 
-/* what a src/path pair resolves to, for the type chips outside the tree */
-export function resolveShape(
-  editor: Editor,
-  instance: Node | null,
-  ref: { kind?: string; name?: string } | undefined,
-  path: string | undefined,
-): string {
-  if (!ref?.name) return "";
-  if (ref.kind === "L") {
-    const local = (instance?.locals ?? []).find((v) => v.name === ref.name);
-    const found = local ?? editor.store.globals().find((v) => v.name === ref.name);
-    if (!found) return "";
-    if (!path)
-      return found.type === "list" || found.type === "map"
-        ? aggLabel(found.type, found.elem, found.leaf) : varShape(found.type);
-    return varFields(editor, found.type).find((f) => f.path === path)?.shape ?? "";
-  }
-  const entity = editor.mesh.entities.find((e) => e.kind === ref.kind && e.name === ref.name);
-  if (!entity) return "";
-  const fields = fieldsOf(entity, /*write=*/ false);
-  if (!path && fields.length !== 1) return entity.type ?? "";
-  const field = path ? fields.find((f) => f.path === path) : fields[0];
-  return field?.shape ?? "";
-}
-
 function leaf_name(name: string): string {
   const at = name.lastIndexOf("/");
   return at < 0 ? name : name.slice(at + 1);

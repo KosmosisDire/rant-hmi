@@ -2321,7 +2321,7 @@ export function previewArrangement(
  * calls, since the inline styles it painted are exactly what a plain render would keep.
  * A RECONCILE, not a fresh build: what is wanted is the document's own numbers re-asserted
  * onto the very elements the gesture was holding. */
-export function repaintDocument(host: HTMLElement, editor: Editor): void {
+function repaintDocument(host: HTMLElement, editor: Editor): void {
   stateOf(host).docSig = "";
   renderStage(host, editor);
 }
@@ -2395,7 +2395,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
 /* the node the browser's own hit test named: the deepest one under the pointer, 0 where
  * the event landed on the page background. Only PAGE nodes carry an id, so a component's
  * internals answer with the instance that holds them — which is what you select. */
-export function idUnder(target: EventTarget | null): number {
+function idUnder(target: EventTarget | null): number {
   const at = (target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
   return at ? Number(at.getAttribute("data-id")) : 0;
 }

@@ -34,18 +34,13 @@ export interface LocalInfo {
 /* a scalar variable's shape IS its type now (SCALAR_TYPES in types.ts) */
 const scalarShape = (type: string) => (SCALAR_TYPES.has(type) ? type : undefined);
 
-export function entityOf(editor: Editor, ref: Json): MeshEntity | null {
-  if (!ref || !ref.kind || !ref.name) return null;
-  return editor.mesh.entities.find((e) => e.kind === ref.kind && e.name === ref.name) ?? null;
-}
-
 /* the fields a WRITE may address on an entity: its value/request table, never the
  * response side (that is a feed's business) */
-export function writeFields(entity: MeshEntity | null): MeshField[] {
+function writeFields(entity: MeshEntity | null): MeshField[] {
   return entity?.fields ?? [];
 }
 
-export function typeFields(editor: Editor, name: string): MeshField[] {
+function typeFields(editor: Editor, name: string): MeshField[] {
   if (!name) return [];
   return editor.mesh.types.find((t) => t.name === name)?.fields ?? [];
 }

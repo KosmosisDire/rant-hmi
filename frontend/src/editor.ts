@@ -349,7 +349,7 @@ export function section(
 }
 
 /* a live value, or the UNKNOWN mark: never a fabricated number */
-export function liveText(live: Live | null, cell: string): string {
+function liveText(live: Live | null, cell: string): string {
   const value = live?.values?.[cell];
   if (value === undefined || value === null) return "--";
   if (typeof value === "boolean") return value ? "true" : "false";

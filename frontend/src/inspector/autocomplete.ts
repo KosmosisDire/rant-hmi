@@ -10,11 +10,9 @@
  * strand it, and rows insert on mousedown so the input's blur cannot race the pick. */
 
 import { el } from "../dom.js";
-import { Editor } from "../editor.js";
 import { placeBox } from "../popover.js";
 import { shownValue } from "../reconcile.js";
-import { Flow, LangEntry, MeshField, Node } from "../types.js";
-import { localAt } from "./flowscope.js";
+import { LangEntry, MeshField } from "../types.js";
 import { Scope } from "./scope.js";
 
 interface Row {
@@ -464,70 +462,5 @@ export function attachAutocomplete(input: HTMLInputElement, ctx: Scope): void {
     rows = [];
   });
   input.addEventListener("keydown", menuKeydown(input), { capture: true });
-}
-
-/* ---- the path picker: the chosen entity's field paths, with shapes ---- */
-
-export interface PathOption {
-  path: string;
-  shape: string;
-  elem?: string;
-}
-
-/* Complete a dotted-path field against a fixed option list: typing filters (prefix
- * first, then contains), picking replaces the WHOLE value. This is "autocomplete on
- * msg": the options are exactly the fields the source message carries. */
-export function attachPathAutocomplete(
-  input: HTMLInputElement,
-  options: () => PathOption[],
-): void {
-  const refreshPaths = () => {
-    const all = options();
-    const typed = input.value.trim().toLowerCase();
-    const starts = all.filter((o) => o.path.toLowerCase().startsWith(typed));
-    const rest = all.filter(
-      (o) => !starts.includes(o) && o.path.toLowerCase().includes(typed),
-    );
-    rows = starts.concat(rest).map((o) => ({
-      insert: o.path,
-      label: o.path,
-      signature: "",
-      result: o.elem ? o.shape + " of " + o.elem : o.shape,
-      note: "",
-    }));
-    active = 0;
-    wholeValue = true;
-    render(input);
-  };
-  input.autocomplete = "off";
-  input.spellcheck = false;
-  input.addEventListener("input", () => {
-    if (!muted) refreshPaths();
-  });
-  input.addEventListener("focus", refreshPaths);
-  input.addEventListener("blur", () => {
-    close();
-    rows = [];
-  });
-  input.addEventListener("keydown", menuKeydown(input), { capture: true });
-}
-
-
-/* What a move's `to.path` may name when the destination is a LOCAL: the fields of the
- * struct that local holds at this row. Aggregates stay out, because the write
- * side cannot set them. */
-export function localPaths(
-  editor: Editor,
-  instance: Node | null,
-  flow: () => Flow,
-  stepId: number,
-  local: () => string,
-) {
-  return (): PathOption[] => {
-    const held = localAt(editor, instance, flow(), stepId, local());
-    return (held?.fields ?? [])
-      .filter((f) => f.shape !== "list" && f.shape !== "map")
-      .map((f) => ({ path: f.path, shape: f.shape }));
-  };
 }
 
