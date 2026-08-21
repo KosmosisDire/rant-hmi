@@ -56,7 +56,6 @@ constexpr uint32_t kStepCeiling = 1u << 27;
 
 struct Instruction {
     OpCode op = OpCode::Halt;
-    uint8_t flags = 0;
     uint16_t small = 0;
     uint32_t a = 0;
     uint32_t b = 0;
