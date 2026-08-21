@@ -9704,7 +9704,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           0
         ],
         "k": [
-          0.0
+          572.0
         ]
       },
       "top": {
@@ -9715,7 +9715,7 @@ node 574 error [unresolved_entity] to: mesh entity V:cage/plc/gSafetyCmd is not 
           0
         ],
         "k": [
-          187.0
+          11.0
         ]
       },
       "w": {
