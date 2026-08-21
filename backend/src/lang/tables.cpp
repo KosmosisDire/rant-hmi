@@ -119,7 +119,6 @@ ViewMethod view_method(const std::string& name) {
     for (const MethodSpec& spec : methods()) {
         if (name != spec.name) continue;
         out.known = true;
-        out.bespoke = spec.view[0] == '@';
         out.direct = spec.view[0] == '=';
         out.id = spec.method;
         out.args = spec.args;

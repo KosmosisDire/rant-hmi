@@ -136,11 +136,11 @@ ViewBuiltin view_builtin(const std::string& name);
 /* The method-table twin of view_builtin(), keyed on the NAME alone: for a receiver
  * like `x[i]` the view carries no shape to check against. The namesake rows
  * (length on text/list/map) all carry "=" and the view interpreter answers them
- * receiver-blind, so the first match's id is as good as any. */
+ * receiver-blind, so the first match's id is as good as any. No `bespoke` here:
+ * the one "@" method row (clamp) is folded by name before the table is asked. */
 struct ViewMethod {
     bool known = false;
     bool direct = false;
-    bool bespoke = false;
     MethodId id{};             /* meaningful only when `direct` */
     uint32_t args = 0;
 };
