@@ -21,6 +21,12 @@ class FakeMesh final : public MeshPort {
     void push_elems(uint32_t field, std::vector<Value> elements,
                     std::vector<std::string> texts = {});
 
+    /* Tests reshape the reflection here: the next refresh() reports the change, which
+     * is the App's cue to recompile — the fake's half of a provider arriving, leaving
+     * or retyping. */
+    void retype(std::vector<EntityDef> entities);
+    bool refresh() override;
+
     void clear();
     const std::vector<std::string>& transcript() const;
 
@@ -41,6 +47,7 @@ class FakeMesh final : public MeshPort {
     std::vector<EntityDef> entities_;
     std::vector<std::string> transcript_;
     std::vector<Update> updates_;
+    bool changed_ = false;
 };
 
 } // namespace hmi

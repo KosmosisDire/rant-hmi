@@ -144,6 +144,17 @@ void FakeMesh::push_elems(uint32_t field, std::vector<Value> elements,
     update.elems[field] = FieldElems{std::move(elements), std::move(texts)};
 }
 
+void FakeMesh::retype(std::vector<EntityDef> entities) {
+    entities_ = std::move(entities);
+    changed_ = true;
+}
+
+bool FakeMesh::refresh() {
+    const bool changed = changed_;
+    changed_ = false;
+    return changed;
+}
+
 void FakeMesh::clear() { transcript_.clear(); }
 
 const std::vector<std::string>& FakeMesh::transcript() const { return transcript_; }

@@ -151,11 +151,22 @@ size_t App::poll() {
     if (std::chrono::steady_clock::now() >= next_mesh_refresh_) {
         next_mesh_refresh_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
         if (mesh_->refresh()) {
+            /* THE COMPILE PRODUCTS FOLLOW THE MESH TOO: page attrs bind reflection
+             * (an `@entity.field` read, a variants() fold), so a provider arriving,
+             * leaving or retyping changes `node_attrs` exactly as an edit can — and
+             * the snapshot is the products' only carrier; the mesh frame serves the
+             * entity tree alone. Same detection as on_apply_ops: compare the derived
+             * JSON, re-serve every session when it moved. Without this, a view keeps
+             * rendering programs compiled against the OLD mesh until a reload. */
+            const Json registry_before = registry_;
+            const Json attrs_before = node_attrs_;
             compile_runtime();
             if (server_.sessions()) {
                 Json frame = mesh_json();
                 frame["type"] = "mesh";
                 server_.broadcast(frame);
+                if (registry_ != registry_before || node_attrs_ != attrs_before)
+                    server_.broadcast(snapshot());
             }
         }
     }

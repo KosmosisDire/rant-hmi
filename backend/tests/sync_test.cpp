@@ -703,7 +703,14 @@ int main() {
                             {"node", {{"kind", "frame"},
                                       {"attrs", {{"w", "@tank.level"},
                                                  {"h", "@tank.readings.length()"}}}}}}})}});
-            CHECK(frame_of(pump(mesh_app, d, 1), "ops_applied") != nullptr);
+            frames = pump(mesh_app, d, 1);
+            const Json* placed = frame_of(frames, "ops_applied");
+            CHECK(placed != nullptr);
+            /* the issued id off the echo: the retype block below asserts on this
+               node's served programs */
+            const uint64_t attr_node =
+                placed ? json_u64_or((*placed)["ops"][0]["node"]["id"], 0) : 0;
+            CHECK(attr_node != 0);
 
             /* the read is what makes the key exist at all: before any delivery the
                mirror is unknown, and an unknown cell omits its key rather than
@@ -768,6 +775,35 @@ int main() {
                 }
             }
             CHECK_EQ(elements, size_t(3));
+
+            /* ---- A MESH CHANGE RE-SERVES THE COMPILE PRODUCTS ----
+             *
+             * `node_attrs` and the registry ride ONLY the snapshot, and a recompile
+             * the MESH triggers changes them exactly as an edit does: `w` above
+             * compiled against @tank's reflection. The provider leaving must re-serve
+             * the programs with that attr refused; its return must re-serve the
+             * working ones. A view that only got the mesh frame would keep rendering
+             * the old programs until a page reload. */
+            {
+                const std::string key = std::to_string(attr_node);
+                d.take();
+                fake->retype({});
+                frames = pump(mesh_app, d, 2);
+                const Json* tree = frame_of(frames, "mesh");
+                CHECK(tree != nullptr);
+                if (tree) CHECK((*tree)["entities"].empty());
+                const Json* reserved = frame_of(frames, "snapshot");
+                CHECK(reserved != nullptr);
+                if (reserved && CHECK((*reserved)["node_attrs"].contains(key)))
+                    CHECK(!(*reserved)["node_attrs"][key]["attrs"].contains("w"));
+
+                fake->retype({tank});
+                frames = pump(mesh_app, d, 2);
+                const Json* restored = frame_of(frames, "snapshot");
+                CHECK(restored != nullptr);
+                if (restored && CHECK((*restored)["node_attrs"].contains(key)))
+                    CHECK((*restored)["node_attrs"][key]["attrs"].contains("w"));
+            }
             d.close();
         }
         mesh_app.stop();
