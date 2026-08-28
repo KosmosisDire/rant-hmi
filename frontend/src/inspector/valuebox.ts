@@ -545,11 +545,11 @@ export function valueBox(spec: BoxSpec): HTMLElement {
 
   /* THE TAIL OVERLAY: every trailing cell rides one absolutely-positioned container
      on the box's right edge, so revealing buttons never reflows the text. Tail
-     BUTTONS rest hidden until hover/focus; a passive mark (the diag dot) stays
-     untagged and therefore never hides — an error must not need a hover. Marks sit
-     RIGHT of every button, and a chip standing .on rides the same stationary side
-     by flex order (value-box.css), so the hover reveal never shifts anything the
-     user can already see. */
+     BUTTONS rest hidden until hover/focus — a chip whose state is on included, so
+     no button ever changes place or lingers (value-box.css tells the two failed
+     alternatives). A passive mark (the diag dot) stays untagged and therefore
+     never hides — an error must not need a hover; marks sit RIGHT of every
+     button. */
   const trail = (spec.trail ?? []).filter(Boolean) as HTMLElement[];
   const buttons = trail.filter((cell) => cell.tagName === "BUTTON");
   const marks = trail.filter((cell) => cell.tagName !== "BUTTON");

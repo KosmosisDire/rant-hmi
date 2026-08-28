@@ -116,15 +116,16 @@
 
 /* ---- the tail overlay: the box's trailing icons on the input's right edge ----
    One absolutely-positioned container holds them all, so revealing buttons on
-   hover never reflows the text. Buttons rest hidden; hover or focus reveals them,
-   and a chip in its .on state is standing authored state (an active cases editor,
-   a set poll rate) and stays. The diag dot is never tagged vb-tail, so a finding
-   never needs a hover to be seen; it renders LAST — rightmost, stationary.
+   hover never reflows the text. EVERY button rests hidden and hover or focus
+   reveals them all — a chip whose state is on (an open cases editor, a set poll
+   rate) wears the accent (.icon-btn.on) but hides and shows like its neighbours.
 
-   THE STATIONARY SIDE: everything visible AT REST (standing .on chips, the marks)
-   is pushed right of everything the hover reveals (flex order below), so the reveal
-   only ever adds to the LEFT of what already shows — a chip the user is aiming at
-   must never move out from under the click as the other buttons appear. */
+   NO BUTTON EVER MOVES: the revealed set is the same whatever a chip's state, so
+   a chip sits in one place through arm, open and shut. Visibility special cases
+   were tried twice — stay-visible-at-rest, then reorder-right while on — and each
+   put a moved button under a click aimed at another one. The diag dot is never
+   tagged vb-tail, so a finding never needs a hover to be seen; it renders LAST —
+   rightmost. */
 
 .vb-tail-box {
   position: absolute;
@@ -151,19 +152,8 @@
   --icon-glyph: 14px;
 }
 
-.vb-tail-box > .vb-tail:not(.on) {
+.vb-tail-box > .vb-tail {
   display: none;
-}
-
-/* the stationary side: a standing chip rides right of the hover-revealed buttons,
-   the marks right of everything — and the tail's overflow clip eats the revealed
-   (leftmost) buttons first, never what stands */
-.vb-tail-box > .vb-tail.on {
-  order: 1;
-}
-
-.vb-tail-box > :not(.vb-tail) {
-  order: 2;
 }
 
 .value-box:hover .vb-tail-box > .vb-tail,
