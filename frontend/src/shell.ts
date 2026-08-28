@@ -891,14 +891,15 @@ export class App implements Editor {
   /* ---- context menu (right-click) ---- */
 
   /* The stage is real DOM again, so the pointer names a node: the browser's own hit test
-     hands the event to the leaf or frame div it landed on. What it never names is a
-     POSITION — insertion is by tree position only, appending into whichever frame was
-     clicked (the page itself when the click missed every frame). */
+     hands the event to the leaf or frame div it landed on. It names a POSITION too — the
+     insert verbs centre the fresh node under this very point, so what is added lands
+     where the author aimed rather than at a standing spot. */
   private onContextMenu(ev: MouseEvent): void {
     if (this.view.mode !== "edit") return;
     ev.preventDefault();
     const hit = (ev.target as HTMLElement | null)?.closest?.("[data-id]") as HTMLElement | null;
-    this.openContextAt(ev.clientX, ev.clientY, hit ? Number(hit.getAttribute("data-id")) : 0);
+    this.openContextAt(ev.clientX, ev.clientY, hit ? Number(hit.getAttribute("data-id")) : 0,
+                       true);
   }
 
   /* The verbs of one node, wherever the right-click came from: the stage hands us what the
@@ -908,7 +909,9 @@ export class App implements Editor {
     this.openContextAt(clientX, clientY, node);
   }
 
-  private openContextAt(clientX: number, clientY: number, at: number): void {
+  /* `stage` says the click point is real stage pixels: only then can an insert land
+     under it — a Layers-row click has no place on the artboard to name */
+  private openContextAt(clientX: number, clientY: number, at: number, stage = false): void {
     /* the editing root: the page, or the entered component. Null means an unforked
        built-in is on the artboard — read-only, so no verbs at all. */
     const page = this.root();
@@ -937,6 +940,8 @@ export class App implements Editor {
                  : node ? (this.store.parentOf(at)?.id ?? page.id)
                  : page.id;
     if (node) this.select([node.id]);
+    /* measured now, while the click's rects still stand — the menu outlives the pointer */
+    const spot = stage ? this.stagePoint(parent, clientX, clientY) : null;
     const types = this.registry?.components ?? [];
     openMenu(clientX, clientY, node?.name || node?.type || page.name, [
       {
@@ -950,19 +955,19 @@ export class App implements Editor {
           openMenu(clientX, clientY, "Add component", types.map((type) => ({
             label: type.name,
             icon: type.name,
-            run: () => this.addInstance(type.name, parent),
+            run: () => this.addInstance(type.name, parent, spot),
           })));
         },
       },
       { separator: true },
       /* ONE box: a frame is a box and a box is all a frame is */
-      { label: "Add box", icon: "frame", run: () => this.addBox(parent) },
+      { label: "Add box", icon: "frame", run: () => this.addBox(parent, spot) },
       { separator: true },
       /* THE INK: text, a glyph and an outline are ordinary nodes, so a page can hold a
          caption or a mimic line without a component around it */
-      { label: "Add text", icon: "node-text", run: () => this.addLeaf("text", parent) },
-      { label: "Add icon", icon: "node-icon", run: () => this.addLeaf("icon", parent) },
-      { label: "Add path", icon: "node-path", run: () => this.addLeaf("path", parent) },
+      { label: "Add text", icon: "node-text", run: () => this.addLeaf("text", parent, spot) },
+      { label: "Add icon", icon: "node-icon", run: () => this.addLeaf("icon", parent, spot) },
+      { label: "Add path", icon: "node-path", run: () => this.addLeaf("path", parent, spot) },
       ...(node
         ? [
             { separator: true } as const,
@@ -1003,6 +1008,25 @@ export class App implements Editor {
       w: at.width / k,
       h: at.height / k,
     };
+  }
+
+  /* a client point in `parent`'s own artboard px — the stage scale and the parent's
+     rendered origin taken back out, the same read canvasBox does for a box. Null when
+     nothing is rendered to measure against; the fresh-spot rule then stands. */
+  private stagePoint(parent: number, clientX: number, clientY: number):
+      { x: number; y: number } | null {
+    const host = this.nodes.stage;
+    const pageEl = host?.querySelector(".page") as HTMLElement | null;
+    if (!pageEl) return null;
+    const k = stageScale(host);
+    if (!(k > 0)) return null;
+    const pel = (parent === this.root()?.id
+      ? null
+      : host!.querySelector('.page [data-id="' + parent + '"]') as HTMLElement | null)
+      ?? pageEl;
+    const rect = pel.getBoundingClientRect();
+    return { x: (clientX - rect.left) / k - pel.clientLeft,
+             y: (clientY - rect.top) / k - pel.clientTop };
   }
 
   /* which unit system writes under `parent` take: canvas px on a page, fractions of the
@@ -1166,8 +1190,9 @@ export class App implements Editor {
     this.view.selection = [];
   }
 
-  /* where a fresh node lands: centred on the artboard when it joins the root, a couple of
-     cells in when it joins a box — deterministic, on the grid, and always in view */
+  /* where a fresh node lands when no pointer named a place (a Layers-row add): centred on
+     the artboard when it joins the root, a couple of cells in when it joins a box —
+     deterministic, on the grid, and always in view */
   private freshSpot(parent: number, w: number, h: number): { x: number; y: number } {
     const root = this.root();
     const art = this.artboard();
@@ -1179,8 +1204,11 @@ export class App implements Editor {
   /* one insert of one node with a starter box, wherever it goes: the spot and size are
      figured in artboard px and written in the space the parent reads — px on a page,
      fractions of the parent inside a component */
-  private insertNode(parent: number, node: Json, w: number, h: number): void {
-    const at = this.freshSpot(parent, w, h);
+  private insertNode(parent: number, node: Json, w: number, h: number,
+                     spot: { x: number; y: number } | null = null): void {
+    /* a right-click named a place: the node centres under it, snapped to the grid */
+    const at = spot ? { x: snapPx(spot.x - w / 2), y: snapPx(spot.y - h / 2) }
+                    : this.freshSpot(parent, w, h);
     const space = this.writeSpace(parent);
     node.attrs = {
       ...(node.attrs ?? {}),
@@ -1193,24 +1221,26 @@ export class App implements Editor {
   /* AN INSTANCE IS A FRAME THAT NAMES A COMPONENT — there is no instance kind to ask for — so
      this inserts the same node `addBox` does, carrying a `type`, at the component's own
      NATURAL SIZE: the design frame it was authored against. */
-  private addInstance(type: string, parent: number): void {
+  private addInstance(type: string, parent: number,
+                      spot: { x: number; y: number } | null = null): void {
     const spec = (this.registry?.components ?? []).find((t) => t.name === type);
     const w = Math.max(22, snapPx(spec?.design_w ?? 240));
     const h = Math.max(22, snapPx(spec?.design_h ?? 120));
-    this.insertNode(parent, { kind: "frame", type, name: type }, w, h);
+    this.insertNode(parent, { kind: "frame", type, name: type }, w, h, spot);
   }
 
-  private addBox(parent: number): void {
-    this.insertNode(parent, { kind: "frame", name: "Box" }, 352, 264);
+  private addBox(parent: number, spot: { x: number; y: number } | null = null): void {
+    this.insertNode(parent, { kind: "frame", name: "Box" }, 352, 264, spot);
   }
 
   /* the ink kinds, added the same way: one node, one insert, each with a starter box so
      it lands graspable rather than stretched over its whole parent */
-  private addLeaf(kind: NodeKind, parent: number): void {
+  private addLeaf(kind: NodeKind, parent: number,
+                  spot: { x: number; y: number } | null = null): void {
     const size = kind === "text" ? { w: 264, h: 44 }
                : kind === "icon" ? { w: 66, h: 66 }
                : { w: 264, h: 264 };
-    this.insertNode(parent, { kind, name: kind }, size.w, size.h);
+    this.insertNode(parent, { kind, name: kind }, size.w, size.h, spot);
   }
 
   /* duplicate every selected instance OR frame into its OWN parent, directly after it: a
