@@ -268,7 +268,9 @@ export interface Editor {
 }
 
 /* The inline finding mark: a small icon on the offending row, its popover on hover. The
- * popover is one shared element on the body, so a sidebar rebuild can never strand it. */
+ * popover is one shared element on the body, so a sidebar rebuild can never strand it —
+ * but a rebuild replacing the hovered icon fires no mouseleave on the detached element,
+ * so the popover watches its anchor while shown and leaves the moment the anchor did. */
 let pop: HTMLElement | null = null;
 
 function showPop(anchor: HTMLElement, diags: Diag[]): void {
@@ -289,6 +291,13 @@ function showPop(anchor: HTMLElement, diags: Diag[]): void {
   );
   document.body.appendChild(pop);
   placeBox(pop, anchor.getBoundingClientRect(), { exact: true, gap: 6 });
+  const mine = pop;
+  const watch = () => {
+    if (pop !== mine) return;
+    if (!anchor.isConnected) hidePop();
+    else requestAnimationFrame(watch);
+  };
+  requestAnimationFrame(watch);
 }
 
 function hidePop(): void {
