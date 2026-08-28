@@ -317,14 +317,14 @@ const TIMER_FIELDS = [
 /* what Iterate does with each element's body result (rides Instruction::small);
  * `call` is the method name both surface grammars spell it by */
 const ITERATE_ROWS = [
-  { name: "Map", call: "map", c: "the body result becomes the element        -> list" },
-  { name: "Filter", call: "filter", c: "keep the element where the body is true    -> list" },
-  { name: "Any", call: "any", c: "true if the body is true for any element   -> bool" },
-  { name: "All", call: "all", c: "true if the body is true for every element -> bool" },
-  { name: "SortBy", call: "sortBy", c: "order the elements by the body's value     -> list" },
+  { name: "Map", call: "Map", c: "the body result becomes the element        -> list" },
+  { name: "Filter", call: "Filter", c: "keep the element where the body is true    -> list" },
+  { name: "Any", call: "Any", c: "true if the body is true for any element   -> bool" },
+  { name: "All", call: "All", c: "true if the body is true for every element -> bool" },
+  { name: "SortBy", call: "SortBy", c: "order the elements by the body's value     -> list" },
   {
     name: "Reduce",
-    call: "reduce",
+    call: "Reduce",
     c: `fold: the body takes the accumulator and the element and returns the next
 accumulator, starting from the initial value the call's second argument pushed.
 The one mode that consumes TWO stack operands (list then init) and the one whose
@@ -342,48 +342,48 @@ result shape is the body's rather than the receiver's.`,
  * which answers Nil if a bug ever routes one to the VM instead of silently
  * computing a borrowed builtin. `c` comments the enum entry, `rc` the table row. */
 const BUILTINS = [
-  { name: "Clamp", fn: "clamp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
+  { name: "Clamp", fn: "Clamp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
   {
-    name: "MapRange", fn: "mapRange", min: 5, max: 5, params: ["Num", "Num", "Num", "Num", "Num"], result: "Num", view: "@",
+    name: "MapRange", fn: "MapRange", min: 5, max: 5, params: ["Num", "Num", "Num", "Num", "Num"], result: "Num", view: "@",
     rc: `mapRange/roundTo/lerp: pure arithmetic, so the view emitter folds each onto
 the existing Add/Sub/Mul/Div and the Pow/Round calls (template_expr.cpp)
 rather than gaining an id of its own -- "@" is the same bespoke marker
 \`clamp\` uses`,
   },
-  { name: "RoundTo", fn: "roundTo", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@" },
-  { name: "Lerp", fn: "lerp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
-  { name: "Abs", fn: "abs", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Round", fn: "round", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Floor", fn: "floor", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Ceil", fn: "ceil", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Sqrt", fn: "sqrt", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Pow", fn: "pow", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
-  { name: "Min", fn: "min", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
-  { name: "Max", fn: "max", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
-  { name: "Int", fn: "int", min: 1, max: 1, params: ["Unknown"], result: "Num", view: "=" },
-  { name: "Num", fn: "num", min: 1, max: 1, params: ["Unknown"], result: "Num" },
+  { name: "RoundTo", fn: "RoundTo", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@" },
+  { name: "Lerp", fn: "Lerp", min: 3, max: 3, params: ["Num", "Num", "Num"], result: "Num", view: "@" },
+  { name: "Abs", fn: "Abs", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Round", fn: "Round", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Floor", fn: "Floor", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Ceil", fn: "Ceil", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Sqrt", fn: "Sqrt", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Pow", fn: "Pow", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
+  { name: "Min", fn: "Min", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
+  { name: "Max", fn: "Max", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
+  { name: "Int", fn: "Int", min: 1, max: 1, params: ["Unknown"], result: "Num", view: "=" },
+  { name: "Num", fn: "Num", min: 1, max: 1, params: ["Unknown"], result: "Num" },
   {
-    fn: "clamp01", min: 1, max: 1, params: ["Num"], result: "Num", view: "@", viewOnly: true,
+    fn: "Clamp01", min: 1, max: 1, params: ["Num"], result: "Num", view: "@", viewOnly: true,
     rc: `view-only: the template tier's saturating 0..1 fold, which the scalar language
-spells clamp(x, 0, 1) -- the emitter folds it onto Max/Min the same way`,
+spells Clamp(x, 0, 1) -- the emitter folds it onto Max/Min the same way`,
   },
-  { name: "Rgb", fn: "rgb", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "=" },
-  { name: "Hsv", fn: "hsv", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "=" },
-  { name: "Str", fn: "str", min: 1, max: 1, params: ["Unknown"], result: "Text", view: "=" },
-  { name: "Name", fn: "name", min: 1, max: 1, params: ["Unknown"], result: "Text" },
-  { name: "FmtTime", fn: "fmtTime", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
-  { name: "FmtDuration", fn: "fmtDuration", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
-  { name: "Color", fn: "color", min: 1, max: 1, params: ["Text"], result: "Color", display: true },
-  { name: "Jet", fn: "jet", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
-  { name: "Hot", fn: "hot", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
-  { name: "CoolWarm", fn: "coolWarm", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
-  { name: "Viridis", fn: "viridis", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
-  { name: "Grayscale", fn: "grayscale", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
-  { name: "Values", fn: "values", min: 1, max: 1, params: ["Unknown"], result: "List" },
-  { name: "Keys", fn: "keys", min: 1, max: 1, params: ["Unknown"], result: "List" },
-  { name: "Invert", fn: "invert", min: 1, max: 1, params: ["Color"], result: "Color", display: true },
+  { name: "Rgb", fn: "Rgb", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "=" },
+  { name: "Hsv", fn: "Hsv", min: 3, max: 4, params: ["Num", "Num", "Num", "Num"], result: "Color", display: true, view: "=" },
+  { name: "Str", fn: "Str", min: 1, max: 1, params: ["Unknown"], result: "Text", view: "=" },
+  { name: "Name", fn: "Name", min: 1, max: 1, params: ["Unknown"], result: "Text" },
+  { name: "FmtTime", fn: "FmtTime", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
+  { name: "FmtDuration", fn: "FmtDuration", min: 1, max: 1, params: ["Num"], result: "Text", display: true },
+  { name: "Color", fn: "Color", min: 1, max: 1, params: ["Text"], result: "Color", display: true },
+  { name: "Jet", fn: "Jet", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Hot", fn: "Hot", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "CoolWarm", fn: "CoolWarm", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Viridis", fn: "Viridis", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Grayscale", fn: "Grayscale", min: 1, max: 1, params: ["Num"], result: "Color", display: true },
+  { name: "Values", fn: "Values", min: 1, max: 1, params: ["Unknown"], result: "List" },
+  { name: "Keys", fn: "Keys", min: 1, max: 1, params: ["Unknown"], result: "List" },
+  { name: "Invert", fn: "Invert", min: 1, max: 1, params: ["Color"], result: "Color", display: true },
   {
-    name: "Sin", fn: "sin", min: 1, max: 1, params: ["Num"], result: "Num", view: "=",
+    name: "Sin", fn: "Sin", min: 1, max: 1, params: ["Num"], result: "Num", view: "=",
     c: `ordinary trigonometry, degrees in and out (the project-wide angle convention):
 both tiers gain these together, which is the piece that unblocks authoring a
 needle's capsule or an arc's annular sector as arithmetic instead of a hard-coded
@@ -392,13 +392,13 @@ draw kind`,
 project-wide angle convention (degrees, 0 = up, clockwise) rather than
 inventing a radians dialect nothing else in the document uses`,
   },
-  { name: "Cos", fn: "cos", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Tan", fn: "tan", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Asin", fn: "asin", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Acos", fn: "acos", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
-  { name: "Atan2", fn: "atan2", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
+  { name: "Cos", fn: "Cos", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Tan", fn: "Tan", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Asin", fn: "Asin", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Acos", fn: "Acos", min: 1, max: 1, params: ["Num"], result: "Num", view: "=" },
+  { name: "Atan2", fn: "Atan2", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "=" },
   {
-    fn: "sign", min: 1, max: 1, params: ["Num"], result: "Num", view: "@", viewOnly: true,
+    fn: "Sign", min: 1, max: 1, params: ["Num"], result: "Num", view: "@", viewOnly: true,
     rc: `view-only free-function spellings the surface grammar offers beside the
 methods: sign folds onto the NumSign method, mod onto the Mod opcode, hypot
 onto Mul/Add and the Sqrt call -- each a bespoke lowering over ids that
@@ -406,17 +406,17 @@ already exist, so none needs a scalar Builtin. Builtin::None marks each
 view-only bespoke row: no scalar id exists, and view_only rows never reach
 the dispatcher that would want one.`,
   },
-  { fn: "mod", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
-  { fn: "hypot", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
+  { fn: "Mod", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
+  { fn: "Hypot", min: 2, max: 2, params: ["Num", "Num"], result: "Num", view: "@", viewOnly: true },
   {
-    name: "Known", fn: "known", min: 1, max: 1, params: ["Unknown"], result: "Bool", view: "=",
+    name: "Known", fn: "Known", min: 1, max: 1, params: ["Unknown"], result: "Bool", view: "=",
     rc: `THE UNKNOWN TEST (spec 2.4): true when the value is not UNKNOWN. The one
 place the language ASKS about Nil instead of propagating it — == cannot test
 for it (an unknown comparison is unknown), so this is the honest spelling,
 beside \`??\` for the default-value case. Wire-legal: a gate may guard on it.`,
   },
   {
-    name: "Measure", fn: "measure", min: 2, max: 2, params: ["Text", "Num"], result: "Num", display: true, view: "=", viewOnly: true,
+    name: "Measure", fn: "Measure", min: 2, max: 2, params: ["Text", "Num"], result: "Num", display: true, view: "=", viewOnly: true,
     c: `view-only, id'd at the table's end so naming it renumbered nothing: the
 estimated rendered width the view answers (no VM case dispatches it)`,
     rc: `view-only WITH an id: the estimated rendered width of TEXT at SIZE, in
@@ -427,7 +427,7 @@ interpreter dispatches the id, and view_only keeps it out of the scalar
 compiler, so a bug that routes it to the VM answers Nil.`,
   },
   {
-    name: "Anchor", fn: "anchor", min: 2, max: 2, params: ["Num", "Num"], result: "Struct", display: true, view: "=", viewOnly: true,
+    name: "Anchor", fn: "Anchor", min: 2, max: 2, params: ["Num", "Num"], result: "Struct", display: true, view: "=", viewOnly: true,
     rc: `view-only WITH an id, like measure: one point of a computed path, in
 fractions of the node's box — what a \`points\` attr's map produces per
 sample. No wire meaning and no VM case (a machine has no boxes).`,
@@ -442,76 +442,76 @@ sample. No wire meaning and no VM case (a machine has no boxes).`,
  * enum-only: an id the emitter uses directly (TextConcat, the color arithmetic)
  * with no surface method behind it. */
 const METHODS = [
-  { name: "NumRound", recv: "Num", m: "round", args: 1, params: ["Num"], result: "Num" },
-  { name: "NumFloor", recv: "Num", m: "floor", args: 0, params: [], result: "Num" },
-  { name: "NumCeil", recv: "Num", m: "ceil", args: 0, params: [], result: "Num" },
-  { name: "NumAbs", recv: "Num", m: "abs", args: 0, params: [], result: "Num" },
-  { name: "NumClamp", recv: "Num", m: "clamp", args: 2, params: ["Num", "Num"], result: "Num", view: "@" },
-  { name: "NumMapRange", recv: "Num", m: "mapRange", args: 4, params: ["Num", "Num", "Num", "Num"], result: "Num" },
-  { name: "NumSign", recv: "Num", m: "sign", args: 0, params: [], result: "Num" },
-  { name: "BoolInt", recv: "Bool", m: "int", args: 0, params: [], result: "Num" },
-  { name: "BoolNot", recv: "Bool", m: "not", args: 0, params: [], result: "Bool" },
-  { name: "BoolPick", recv: "Bool", m: "pick", args: 2, params: ["Unknown", "Unknown"], result: "Unknown", view: "=" },
-  { name: "ColorR", recv: "Color", m: "r", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ColorG", recv: "Color", m: "g", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ColorB", recv: "Color", m: "b", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ColorA", recv: "Color", m: "a", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ColorAlpha", recv: "Color", m: "alpha", args: 1, params: ["Num"], result: "Color", display: true, view: "=" },
-  { name: "ColorMix", recv: "Color", m: "mix", args: 2, params: ["Color", "Num"], result: "Color", display: true, view: "=" },
-  { name: "NumToFixed", recv: "Num", m: "toFixed", args: 1, params: ["Num"], result: "Text", display: true, view: "=" },
+  { name: "NumRound", recv: "Num", m: "Round", args: 1, params: ["Num"], result: "Num" },
+  { name: "NumFloor", recv: "Num", m: "Floor", args: 0, params: [], result: "Num" },
+  { name: "NumCeil", recv: "Num", m: "Ceil", args: 0, params: [], result: "Num" },
+  { name: "NumAbs", recv: "Num", m: "Abs", args: 0, params: [], result: "Num" },
+  { name: "NumClamp", recv: "Num", m: "Clamp", args: 2, params: ["Num", "Num"], result: "Num", view: "@" },
+  { name: "NumMapRange", recv: "Num", m: "MapRange", args: 4, params: ["Num", "Num", "Num", "Num"], result: "Num" },
+  { name: "NumSign", recv: "Num", m: "Sign", args: 0, params: [], result: "Num" },
+  { name: "BoolInt", recv: "Bool", m: "Int", args: 0, params: [], result: "Num" },
+  { name: "BoolNot", recv: "Bool", m: "Not", args: 0, params: [], result: "Bool" },
+  { name: "BoolPick", recv: "Bool", m: "Pick", args: 2, params: ["Unknown", "Unknown"], result: "Unknown", view: "=" },
+  { name: "ColorR", recv: "Color", m: "R", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorG", recv: "Color", m: "G", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorB", recv: "Color", m: "B", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorA", recv: "Color", m: "A", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ColorAlpha", recv: "Color", m: "Alpha", args: 1, params: ["Num"], result: "Color", display: true, view: "=" },
+  { name: "ColorMix", recv: "Color", m: "Mix", args: 2, params: ["Color", "Num"], result: "Color", display: true, view: "=" },
+  { name: "NumToFixed", recv: "Num", m: "ToFixed", args: 1, params: ["Num"], result: "Text", display: true, view: "=" },
   {
-    name: "TextLength", recv: "Text", m: "length", args: 0, params: [], result: "Num", view: "=",
+    name: "TextLength", recv: "Text", m: "Length", args: 0, params: [], result: "Num", view: "=",
     rc: `text: the predicates and length are wire-legal (a gate may test an alarm
 code); everything text-PRODUCING is formatting and stays display-side`,
   },
-  { name: "TextUpper", recv: "Text", m: "upper", args: 0, params: [], result: "Text", display: true },
-  { name: "TextLower", recv: "Text", m: "lower", args: 0, params: [], result: "Text", display: true },
-  { name: "TextTitle", recv: "Text", m: "title", args: 0, params: [], result: "Text", display: true },
-  { name: "TextTrim", recv: "Text", m: "trim", args: 0, params: [], result: "Text", display: true },
-  { name: "TextSlice", recv: "Text", m: "slice", args: 2, params: ["Num", "Num"], result: "Text", display: true },
-  { name: "TextStartsWith", recv: "Text", m: "startsWith", args: 1, params: ["Text"], result: "Bool" },
-  { name: "TextEndsWith", recv: "Text", m: "endsWith", args: 1, params: ["Text"], result: "Bool" },
-  { name: "TextContains", recv: "Text", m: "contains", args: 1, params: ["Text"], result: "Bool" },
-  { name: "TextReplace", recv: "Text", m: "replace", args: 2, params: ["Text", "Text"], result: "Text", display: true },
-  { name: "TextPadStart", recv: "Text", m: "padStart", args: 2, params: ["Num", "Text"], result: "Text", display: true },
-  { name: "EnumInt", recv: "Enum", m: "int", args: 0, params: [], result: "Num" },
-  { name: "EnumName", recv: "Enum", m: "name", args: 0, params: [], result: "Text" },
+  { name: "TextUpper", recv: "Text", m: "Upper", args: 0, params: [], result: "Text", display: true },
+  { name: "TextLower", recv: "Text", m: "Lower", args: 0, params: [], result: "Text", display: true },
+  { name: "TextTitle", recv: "Text", m: "Title", args: 0, params: [], result: "Text", display: true },
+  { name: "TextTrim", recv: "Text", m: "Trim", args: 0, params: [], result: "Text", display: true },
+  { name: "TextSlice", recv: "Text", m: "Slice", args: 2, params: ["Num", "Num"], result: "Text", display: true },
+  { name: "TextStartsWith", recv: "Text", m: "StartsWith", args: 1, params: ["Text"], result: "Bool" },
+  { name: "TextEndsWith", recv: "Text", m: "EndsWith", args: 1, params: ["Text"], result: "Bool" },
+  { name: "TextContains", recv: "Text", m: "Contains", args: 1, params: ["Text"], result: "Bool" },
+  { name: "TextReplace", recv: "Text", m: "Replace", args: 2, params: ["Text", "Text"], result: "Text", display: true },
+  { name: "TextPadStart", recv: "Text", m: "PadStart", args: 2, params: ["Num", "Text"], result: "Text", display: true },
+  { name: "EnumInt", recv: "Enum", m: "Int", args: 0, params: [], result: "Num" },
+  { name: "EnumName", recv: "Enum", m: "Name", args: 0, params: [], result: "Text" },
   {
-    name: "EnumVariants", recv: "Enum", m: "variants", args: 0, params: [], result: "List",
+    name: "EnumVariants", recv: "Enum", m: "Variants", args: 0, params: [], result: "List",
     rc: `the VOCABULARY as a value: list(text) of the receiver's variant names. The
 receiver's TYPE answers at COMPILE, so this folds to a constant list (no VM
 case, the receiver's value is never read) and can never drift from the schema.
-The options spelling — myMode.variants(), filterable like any list.`,
+The options spelling — myMode.Variants(), filterable like any list.`,
   },
-  { name: "TextSplit", recv: "Text", m: "split", args: 1, params: ["Text"], result: "List", display: true },
+  { name: "TextSplit", recv: "Text", m: "Split", args: 1, params: ["Text"], result: "List", display: true },
   {
-    name: "ListLength", recv: "List", m: "length", args: 0, params: [], result: "Num", view: "=",
+    name: "ListLength", recv: "List", m: "Length", args: 0, params: [], result: "Num", view: "=",
     rc: `aggregates ride mid-expression on either tier (max over a list is a wire
 value); the wire-result rule alone keeps a LIST from going to a machine.
 length is receiver-blind in the view: the untyped emitter picks the first
 namesake row's id and the view interpreter answers text, list and map alike
 under any of the three, so all three rows carry "=".`,
   },
-  { name: "ListFirst", recv: "List", m: "first", args: 0, params: [], result: "Unknown" },
-  { name: "ListLast", recv: "List", m: "last", args: 0, params: [], result: "Unknown" },
-  { name: "ListSum", recv: "List", m: "sum", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ListAvg", recv: "List", m: "avg", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ListMax", recv: "List", m: "max", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ListMin", recv: "List", m: "min", args: 0, params: [], result: "Num", view: "=" },
-  { name: "ListJoin", recv: "List", m: "join", args: 1, params: ["Text"], result: "Text", display: true },
-  { name: "ListSort", recv: "List", m: "sort", args: 0, params: [], result: "List" },
-  { name: "ListReverse", recv: "List", m: "reverse", args: 0, params: [], result: "List" },
-  { name: "ListSlice", recv: "List", m: "slice", args: 2, params: ["Num", "Num"], result: "List" },
-  { name: "ListContains", recv: "List", m: "contains", args: 1, params: ["Unknown"], result: "Bool" },
-  { name: "ListIndexOf", recv: "List", m: "indexOf", args: 1, params: ["Unknown"], result: "Num", view: "=" },
-  { name: "MapLength", recv: "Map", m: "length", args: 0, params: [], result: "Num", view: "=" },
-  { name: "MapKeys", recv: "Map", m: "keys", args: 0, params: [], result: "List" },
-  { name: "MapValues", recv: "Map", m: "values", args: 0, params: [], result: "List" },
-  { name: "MapHas", recv: "Map", m: "has", args: 1, params: ["Text"], result: "Bool" },
-  { name: "MapGet", recv: "Map", m: "get", args: 1, params: ["Text"], result: "Unknown" },
+  { name: "ListFirst", recv: "List", m: "First", args: 0, params: [], result: "Unknown" },
+  { name: "ListLast", recv: "List", m: "Last", args: 0, params: [], result: "Unknown" },
+  { name: "ListSum", recv: "List", m: "Sum", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ListAvg", recv: "List", m: "Avg", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ListMax", recv: "List", m: "Max", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ListMin", recv: "List", m: "Min", args: 0, params: [], result: "Num", view: "=" },
+  { name: "ListJoin", recv: "List", m: "Join", args: 1, params: ["Text"], result: "Text", display: true },
+  { name: "ListSort", recv: "List", m: "Sort", args: 0, params: [], result: "List" },
+  { name: "ListReverse", recv: "List", m: "Reverse", args: 0, params: [], result: "List" },
+  { name: "ListSlice", recv: "List", m: "Slice", args: 2, params: ["Num", "Num"], result: "List" },
+  { name: "ListContains", recv: "List", m: "Contains", args: 1, params: ["Unknown"], result: "Bool" },
+  { name: "ListIndexOf", recv: "List", m: "IndexOf", args: 1, params: ["Unknown"], result: "Num", view: "=" },
+  { name: "MapLength", recv: "Map", m: "Length", args: 0, params: [], result: "Num", view: "=" },
+  { name: "MapKeys", recv: "Map", m: "Keys", args: 0, params: [], result: "List" },
+  { name: "MapValues", recv: "Map", m: "Values", args: 0, params: [], result: "List" },
+  { name: "MapHas", recv: "Map", m: "Has", args: 1, params: ["Text"], result: "Bool" },
+  { name: "MapGet", recv: "Map", m: "Get", args: 1, params: ["Text"], result: "Unknown" },
   {
     name: "TextConcat",
-    c: `\`a + b\` with a text operand (display tier): both sides rendered as str() would
+    c: `\`a + b\` with a text operand (display tier): both sides rendered as Str() would
 render them, joined into the site's own slot`,
   },
   {
@@ -520,7 +520,7 @@ render them, joined into the site's own slot`,
 \`.invert()\` flips them`,
   },
   { name: "ColorDiv" },
-  { name: "ColorInvert", recv: "Color", m: "invert", args: 0, params: [], result: "Color", display: true },
+  { name: "ColorInvert", recv: "Color", m: "Invert", args: 0, params: [], result: "Color", display: true },
 ];
 
 /* ------------------------------------------------------------- the emitters */

@@ -641,7 +641,7 @@ std::vector<AttrDecl> shown_attrs(const std::vector<AttrDecl>& attrs,
                                });
     if (at != out.end() && at->key == "show") {
         if (at->is_text) authored = at->text;
-        at->text = at->is_text ? "(" + shown + ").pick((" + at->text + "), false)" : shown;
+        at->text = at->is_text ? "(" + shown + ").Pick((" + at->text + "), false)" : shown;
         at->is_text = true;
     } else {
         out.insert(at, AttrDecl{"show", shown, true});

@@ -1,6 +1,6 @@
-# CONFORMANCE FIXTURES: nil, ??, known() — the one unknown rule (spec 2.4).
+# CONFORMANCE FIXTURES: nil, ??, Known() — the one unknown rule (spec 2.4).
 # UNKNOWN propagates: it never faults and never silently becomes a value. `??`
-# gives it a default, known() is the one test that asks about it, and a tested
+# gives it a default, Known() is the one test that asks about it, and a tested
 # unknown poisons the test's answer everywhere, including filter / any / all.
 
 == the nil literal
@@ -40,54 +40,54 @@ want bool true
 
 == known on a value
 env level: num = 5
-expr known(level)
+expr Known(level)
 want bool true
 
 == known on an unknown
-expr known(1 / 0)
+expr Known(1 / 0)
 want bool false
 
 == known is the unknown test
-expr known(nil)
+expr Known(nil)
 want bool false
 
 == known guards a condition
-expr known(1 / 0) && false
+expr Known(1 / 0) && false
 want bool false
 
 == equality cannot test for unknown
 env level: num = 5
 expr level == nil
-error cannot test for it; write known
+error cannot test for it; write Known
 
 == inequality cannot test for unknown either
 env level: num = 5
 expr nil != level
-error cannot test for it; write known
+error cannot test for it; write Known
 
 == an unknown filter condition poisons the answer
 env temps: list(num) = [1, 2, 3]
-expr temps.filter(v => v / 0 > 0).length()
+expr temps.Filter(v => v / 0 > 0).Length()
 want nil
 
 == an unknown any condition poisons the answer
 env temps: list(num) = [1, 2, 3]
-expr temps.any(v => v / 0 > 0)
+expr temps.Any(v => v / 0 > 0)
 want nil
 
 == an unknown all condition poisons the answer
 env temps: list(num) = [1, 2, 3]
-expr temps.all(v => v / 0 > 0)
+expr temps.All(v => v / 0 > 0)
 want nil
 
 == a decided filter still filters
 env temps: list(num) = [1, 2, 3]
-expr temps.filter(v => v > 1).length()
+expr temps.Filter(v => v > 1).Length()
 want num 2
 
 == a map body may carry gaps
 env temps: list(num) = [1, 2, 3]
-expr temps.map(v => v / 0).length()
+expr temps.Map(v => v / 0).Length()
 want num 3
 
 == an unknown condition in a conditional is unknown

@@ -114,7 +114,7 @@ Document runtime_document() {
         {"locals",
          Json::array({Json{{"name", "msg"}, {"type", "Motor"},
                            {"init", Json{{"enabled", true}}}}})},
-        {"slots", Json{{"value", "(@sensor.value).round(1)"}}},
+        {"slots", Json{{"value", "(@sensor.value).Round(1)"}}},
         {"flows", Json::array()},
     };
 
@@ -125,7 +125,7 @@ Document runtime_document() {
              {"when_mode", "any"},
              {"do",
               Json::array({
-                  steps::set_x("clamp(value * 2, 0, 100)"),
+                  steps::set_x("Clamp(value * 2, 0, 100)"),
                   steps::set_var("setpoint", "x"),
                   steps::write_field("T", "command", "", "x"),
               })}});
@@ -403,7 +403,7 @@ void test_expression_rejection() {
        — the old checker stopped at the first */
     error.clear();
     code.clear();
-    CHECK(!compile_expr("max(x.bogus(), x.missing())", ExprTier::Display, scope,
+    CHECK(!compile_expr("Max(x.bogus(), x.missing())", ExprTier::Display, scope,
                         program, code, result, error));
     CHECK_MSG(error.find("no method 'bogus'") != std::string::npos, error);
     CHECK_MSG(error.find("no method 'missing'") != std::string::npos, error);
@@ -419,11 +419,11 @@ void test_tiers() {
     std::string error;
     /* the color constructors are display vocabulary: fine in a transform, refused
      * where the result is for a machine */
-    CHECK(compile_expr("rgb(1, 0, 0)", ExprTier::Display, scope, program, code,
+    CHECK(compile_expr("Rgb(1, 0, 0)", ExprTier::Display, scope, program, code,
                              result, error));
     code.clear();
     error.clear();
-    CHECK(!compile_expr("rgb(1, 0, 0)", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expr("Rgb(1, 0, 0)", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
     CHECK(code.empty());
@@ -433,11 +433,11 @@ void test_tiers() {
      * execute, so the scalar language must not know the name on either tier. clamp01 is
      * the only such row today; spell it out, because a row that leaked would compile to
      * a Call the VM has no case for. */
-    CHECK(!compile_expr("clamp01(x)", ExprTier::Display, scope, program, code, result,
+    CHECK(!compile_expr("Clamp01(x)", ExprTier::Display, scope, program, code, result,
                         error));
     CHECK_MSG(error.find("unknown function") != std::string::npos, error);
     error.clear();
-    CHECK(!compile_expr("clamp01(x)", ExprTier::Wire, scope, program, code, result,
+    CHECK(!compile_expr("Clamp01(x)", ExprTier::Wire, scope, program, code, result,
                         error));
     error.clear();
     /* `c ? a : b` (spec 6.2): sugar over the pick the language already had, so it needs
@@ -462,18 +462,18 @@ void test_tiers() {
     error.clear();
     code.clear();
     /* an unknown method on a known shape suggests the neighbour */
-    CHECK(!compile_expr("x.Round(1)", ExprTier::Display, scope, program, code,
+    CHECK(!compile_expr("x.round(1)", ExprTier::Display, scope, program, code,
                               result, error));
-    CHECK_MSG(error.find("'round'") != std::string::npos, error);
+    CHECK_MSG(error.find("'Round'") != std::string::npos, error);
     error.clear();
     scope = x_scope(Shape::Color);
-    CHECK(!compile_expr("x.mix(#fff, 0.5)", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expr("x.Mix(#fff, 0.5)", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
     /* the accessors are the sanctioned wire bridge (an RGB LED takes channels) */
     error.clear();
     code.clear();
-    CHECK(compile_expr("x.r()", ExprTier::Wire, scope, program, code, result, error));
+    CHECK(compile_expr("x.R()", ExprTier::Wire, scope, program, code, result, error));
     CHECK(result.shape == Shape::Num);
 
     /* the word operators are the symbol operators, and `.not()` still names the method */
@@ -486,7 +486,7 @@ void test_tiers() {
     error.clear();
     code.clear();
     scope = x_scope(Shape::Bool);
-    CHECK_MSG(compile_expr("x.not()", ExprTier::Wire, scope, program, code, result,
+    CHECK_MSG(compile_expr("x.Not()", ExprTier::Wire, scope, program, code, result,
                                  error), error);
     CHECK(result.shape == Shape::Bool);
 
@@ -495,17 +495,17 @@ void test_tiers() {
     error.clear();
     code.clear();
     scope = x_scope(Shape::Text);
-    CHECK(!compile_expr("x.length", ExprTier::Wire, scope, program, code,
+    CHECK(!compile_expr("x.Length", ExprTier::Wire, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("call it") != std::string::npos, error);
     error.clear();
     code.clear();
-    CHECK(!compile_expr("x.trim", ExprTier::Display, scope, program, code,
+    CHECK(!compile_expr("x.Trim", ExprTier::Display, scope, program, code,
                               result, error));
     CHECK_MSG(error.find("call it") != std::string::npos, error);
     error.clear();
     code.clear();
-    CHECK_MSG(compile_expr("x.trim().length()", ExprTier::Display, scope, program,
+    CHECK_MSG(compile_expr("x.Trim().Length()", ExprTier::Display, scope, program,
                                  code, result, error), error);
     CHECK(result.shape == Shape::Num);
 }
@@ -739,7 +739,7 @@ void test_enum_names() {
         {"slots",
          Json{{"text", "\"Run \" + @gear.mode"},
               {"enabled",
-               "@gear.mode == .fast || .stop == @gear.mode || @gear.mode.int() == 1"}}},
+               "@gear.mode == .fast || .stop == @gear.mode || @gear.mode.Int() == 1"}}},
         {"flows", Json::array()},
     };
     root["pages"].push_back(
@@ -811,7 +811,7 @@ void test_enum_names() {
        vocabulary through the type's own spelling — and a type is ONLY that */
     bad.clear();
     eerror.clear();
-    CHECK_MSG(compile_expr("Gear.mode.variants().length()", ExprTier::Display, escope,
+    CHECK_MSG(compile_expr("Gear.mode.Variants().Length()", ExprTier::Display, escope,
                            compiled.program, bad, eresult, eerror), eerror);
     CHECK(eresult.shape == Shape::Num);
     bad.clear();
@@ -821,9 +821,9 @@ void test_enum_names() {
     CHECK_MSG(eerror.find("a type is not a value") != std::string::npos, eerror);
     bad.clear();
     eerror.clear();
-    CHECK(!compile_expr("Gear.mode.name()", ExprTier::Display, escope,
+    CHECK(!compile_expr("Gear.mode.Name()", ExprTier::Display, escope,
                         compiled.program, bad, eresult, eerror));
-    CHECK_MSG(eerror.find("write Gear.mode.variants()") != std::string::npos, eerror);
+    CHECK_MSG(eerror.find("write Gear.mode.Variants()") != std::string::npos, eerror);
 
     /* writing the variant lands the value */
     state.out.clear();
@@ -1011,7 +1011,7 @@ void test_slot_conditionals() {
 
     /* the explicit else that shows the rest as themselves: the D2 spelling is the        .name() call, written out */
     Document through = document_with(
-        "text", "@gear.mode == .stop ? \"Halted\" : @gear.mode.name()");
+        "text", "@gear.mode == .stop ? \"Halted\" : @gear.mode.Name()");
     CompileResult passing = compile_document(through, mesh);
     CHECK(passing.ok);
     Host passed(passing.program);
@@ -1122,7 +1122,7 @@ void test_whole_source() {
         {"kind", "frame"},
         {"type", "Readout"},
         {"name", "motor"},
-        {"slots", Json{{"value", "@motor.speed * 2 + @motor.enabled.int()"}}},
+        {"slots", Json{{"value", "@motor.speed * 2 + @motor.enabled.Int()"}}},
         {"flows", Json::array()},
     };
     root["pages"].push_back(Json{{"name", "Main"}, {"children", Json::array({readout})}});
@@ -1537,12 +1537,12 @@ void test_colors() {
 
     Document document = instance_document(
         "Readout",
-        Json{{"reading", Json{{"textColor", "on.pick(#7fc4a0, #e0857c)"},
+        Json{{"reading", Json{{"textColor", "on.Pick(#7fc4a0, #e0857c)"},
                               /* a CONSTANT chain folds into the cell's start */
-                              {"decimals", "#ff8040.g() + #ffffff.a()"}}},
-             {"units", Json{{"textColor", "#000000.mix(#ffffff, n / 100).alpha(0.5)"}}},
-             {"surface", "rgb(n / 255, 0, 1 - n / 255)"},
-             {"border", "hsv(n, 1, 1)"}},
+                              {"decimals", "#ff8040.G() + #ffffff.A()"}}},
+             {"units", Json{{"textColor", "#000000.Mix(#ffffff, n / 100).Alpha(0.5)"}}},
+             {"surface", "Rgb(n / 255, 0, 1 - n / 255)"},
+             {"border", "Hsv(n, 1, 1)"}},
         Json{{"locals", Json::array({
                   Json{{"name", "on"}, {"type", "bool"}, {"init", false}},
                   Json{{"name", "n"}, {"type", "num"}, {"init", 0}},
@@ -1627,8 +1627,8 @@ void test_colors() {
 
     /* `*` doubles the channels (alpha kept), `.invert()` / `invert()` flip them */
     Document folded = instance_document(
-        "Readout", Json{{"reading", Json{{"textColor", "(#204060 * 2).invert()"}}},
-                        {"units", Json{{"textColor", "invert(#204080 / 2)"}}}});
+        "Readout", Json{{"reading", Json{{"textColor", "(#204060 * 2).Invert()"}}},
+                        {"units", Json{{"textColor", "Invert(#204080 / 2)"}}}});
     CompileResult folded_compiled = compile_document(folded, mesh);
     CHECK(folded_compiled.ok);
     CHECK(folded_compiled.program.slot_programs.size() == 2);
@@ -1666,7 +1666,7 @@ void test_colors() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(compile_expr("hsv(x, 1, 1).mix(rgb(0, 0, 0), 0.5).alpha(x / 360)",
+    CHECK(compile_expr("Hsv(x, 1, 1).Mix(Rgb(0, 0, 0), 0.5).Alpha(x / 360)",
                              ExprTier::Display, scope, program, code, result, error));
     CHECK(result.shape == Shape::Color);
 }
@@ -1687,16 +1687,16 @@ void test_tonemaps() {
     Json instances = Json::array();
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
-        {"slots", Json{{"reading", Json{{"textColor", "jet(@sensor.value)"}}},
-                       {"units", Json{{"textColor", "hot(@sensor.value)"}}},
-                       {"surface", "coolWarm(@sensor.value)"},
-                       {"border", "viridis(@sensor.value)"}}}});
+        {"slots", Json{{"reading", Json{{"textColor", "Jet(@sensor.value)"}}},
+                       {"units", Json{{"textColor", "Hot(@sensor.value)"}}},
+                       {"surface", "CoolWarm(@sensor.value)"},
+                       {"border", "Viridis(@sensor.value)"}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "b"},
-        {"slots", Json{{"line", Json{{"textColor", "color(@tag.text)"}}}}}});
+        {"slots", Json{{"line", Json{{"textColor", "Color(@tag.text)"}}}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Button"}, {"name", "c"},
-        {"slots", Json{{"surface", "grayscale(@sensor.value)"}}}});
+        {"slots", Json{{"surface", "Grayscale(@sensor.value)"}}}});
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
@@ -1753,7 +1753,7 @@ void test_tonemaps() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(!compile_expr("jet(x)", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(!compile_expr("Jet(x)", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK_MSG(error.find("display") != std::string::npos, error);
 }
 
@@ -1776,26 +1776,26 @@ void test_text_and_enums() {
     Json instances = Json::array();
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
-        {"slots", Json{{"units", Json{{"text", "@machine.mode.name()"}}},
+        {"slots", Json{{"units", Json{{"text", "@machine.mode.Name()"}}},
                        {"reading",
-                        Json{{"decimals", "@machine.mode.is(running).pick(4, 1)"}}},
-                       {"value", "@machine.mode.int()"}}}});
+                        Json{{"decimals", "@machine.mode.Is(running).Pick(4, 1)"}}},
+                       {"value", "@machine.mode.Int()"}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "b"},
-        {"slots", Json{{"units", Json{{"text", "@sensor.value.toFixed(2)"}}},
-                       {"value", "num(@machine.note.trim())"},
-                       {"reading", Json{{"decimals", "@machine.note.length()"}}}}}});
+        {"slots", Json{{"units", Json{{"text", "@sensor.value.ToFixed(2)"}}},
+                       {"value", "Num(@machine.note.Trim())"},
+                       {"reading", Json{{"decimals", "@machine.note.Length()"}}}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "c"},
         {"slots",
          Json{{"text",
-               "@machine.note.trim().title().replace(\"Ab\", \"Z\").padStart(4, \"_\")"}}}});
+               "@machine.note.Trim().Title().Replace(\"Ab\", \"Z\").PadStart(4, \"_\")"}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "d"},
-        {"slots", Json{{"text", "fmtDuration(@sensor.value)"}}}});
+        {"slots", Json{{"text", "FmtDuration(@sensor.value)"}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "e"},
-        {"slots", Json{{"text", "str(@sensor.value)"}}}});
+        {"slots", Json{{"text", "Str(@sensor.value)"}}}});
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
@@ -1891,12 +1891,12 @@ void test_text_and_enums() {
     std::vector<Instruction> code;
     ExpressionResult result;
     std::string error;
-    CHECK(!compile_expr("x.is(bogus)", ExprTier::Display, scope, scratch, code,
+    CHECK(!compile_expr("x.Is(bogus)", ExprTier::Display, scope, scratch, code,
                               result, error));
     CHECK_MSG(error.find("variant") != std::string::npos, error);
     error.clear();
     code.clear();
-    CHECK(compile_expr("x.is(running)", ExprTier::Wire, scope, scratch, code,
+    CHECK(compile_expr("x.Is(running)", ExprTier::Wire, scope, scratch, code,
                              result, error));
     CHECK(result.shape == Shape::Bool);
 }
@@ -1938,32 +1938,32 @@ void test_lists_and_maps() {
                     {"slots", std::move(slots)}};
     };
     Json instances = Json::array();
-    instances.push_back(readout3("a", "@plant.temps.max()", "@plant.temps.length()",
-                               "@plant.names.join(\", \")"));
-    instances.push_back(readout3("b", "@plant.temps.sort()[0]",
-                               "@plant.temps.slice(1, 3).sum()",
-                               "@plant.names.sort().join(\"|\")"));
-    instances.push_back(readout3("c", "num(@plant.config.get(\"speed\"))",
-                               "@plant.config.length()",
-                               "@plant.config.keys().sort().join(\",\")"));
-    instances.push_back(readout3("d", "@plant.names.indexOf(\"b\")", nullptr,
-                               "@plant.config.has(\"mode\").pick(\"y\", \"n\")"));
+    instances.push_back(readout3("a", "@plant.temps.Max()", "@plant.temps.Length()",
+                               "@plant.names.Join(\", \")"));
+    instances.push_back(readout3("b", "@plant.temps.Sort()[0]",
+                               "@plant.temps.Slice(1, 3).Sum()",
+                               "@plant.names.Sort().Join(\"|\")"));
+    instances.push_back(readout3("c", "Num(@plant.config.Get(\"speed\"))",
+                               "@plant.config.Length()",
+                               "@plant.config.Keys().Sort().Join(\",\")"));
+    instances.push_back(readout3("d", "@plant.names.IndexOf(\"b\")", nullptr,
+                               "@plant.config.Has(\"mode\").Pick(\"y\", \"n\")"));
     instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "e"},
         {"slots",
-         Json{{"text", "@plant.csv.split(\",\").slice(0, 2).join(\"+\")"}}}});
-    instances.push_back(readout3("f", "values(@plant.config).length()", nullptr, nullptr));
+         Json{{"text", "@plant.csv.Split(\",\").Slice(0, 2).Join(\"+\")"}}}});
+    instances.push_back(readout3("f", "Values(@plant.config).Length()", nullptr, nullptr));
     /* lambdas (spec 6.4): every mode, end to end through the scheduler. temps is
        [30, 10, 20]; names is ["b", "c", "a"]. */
-    instances.push_back(readout3("g", "@plant.temps.map(v => v * 2).sum()",
-                               "@plant.temps.filter(v => v > 15).length()",
-                               "@plant.names.map(v => v.upper()).join(\",\")"));
-    instances.push_back(readout3("h", "@plant.temps.any(v => v > 25).pick(1, 0)",
-                               "@plant.temps.all(v => v > 25).pick(1, 0)",
-                               "@plant.names.sortBy(v => v).join(\"\")"));
+    instances.push_back(readout3("g", "@plant.temps.Map(v => v * 2).Sum()",
+                               "@plant.temps.Filter(v => v > 15).Length()",
+                               "@plant.names.Map(v => v.Upper()).Join(\",\")"));
+    instances.push_back(readout3("h", "@plant.temps.Any(v => v > 25).Pick(1, 0)",
+                               "@plant.temps.All(v => v > 25).Pick(1, 0)",
+                               "@plant.names.SortBy(v => v).Join(\"\")"));
     /* the body's own value orders the elements (a negated key reverses); chaining a
        lambda result is an ordinary list */
-    instances.push_back(readout3("i", "@plant.temps.sortBy(v => -v).first()",
-                               "@plant.temps.filter(v => v > 15).map(v => v / 10).sum()",
+    instances.push_back(readout3("i", "@plant.temps.SortBy(v => -v).First()",
+                               "@plant.temps.Filter(v => v > 15).Map(v => v / 10).Sum()",
                                nullptr));
     Json root = {{"version", 1},
                  {"next_id", 1},
@@ -2058,26 +2058,26 @@ void test_lists_and_maps() {
             Env nested = x_scope(Shape::List, 0, Shape::List);
             code.clear();
             error.clear();
-            CHECK(!compile_expr("x.map(v => v.map(w => w))", ExprTier::Display, nested,
+            CHECK(!compile_expr("x.Map(v => v.Map(w => w))", ExprTier::Display, nested,
                                 scratch, code, result, error));
             CHECK_MSG(error.find("another lambda") != std::string::npos, error);
         }
         /* x is out of scope inside a body: the parameter is the element */
-        CHECK(refused("x.map(v => x.length())", "not in scope"));
-        CHECK(refused("x.map(x => x)", "cannot name a lambda parameter"));
+        CHECK(refused("x.Map(v => x.Length())", "not in scope"));
+        CHECK(refused("x.Map(x => x)", "cannot name a lambda parameter"));
         /* the body is ONE expression, and the arrow is not optional */
-        CHECK(refused("x.map(v => v, 2)", "ONE expression"));
-        CHECK(refused("x.map(v)", "expected '=>'"));
-        CHECK(refused("x.map(2 => 2)", "parameter name"));
+        CHECK(refused("x.Map(v => v, 2)", "ONE expression"));
+        CHECK(refused("x.Map(v)", "expected '=>'"));
+        CHECK(refused("x.Map(2 => 2)", "parameter name"));
         /* the modes that test a condition say so when handed a value */
-        CHECK(refused("x.filter(v => v + 1)", "condition"));
-        CHECK(refused("x.any(v => v + 1)", "condition"));
+        CHECK(refused("x.Filter(v => v + 1)", "condition"));
+        CHECK(refused("x.Any(v => v + 1)", "condition"));
         /* A lambda is legal ONLY as an iterating method's argument. Everywhere else the
            parameter name is just an unbound identifier, so it dies on the name rather
            than on the arrow -- the message differs by position, the refusal does not. */
         code.clear();
         error.clear();
-        CHECK(!compile_expr("x.contains(v => v)", ExprTier::Display, nums, scratch, code,
+        CHECK(!compile_expr("x.Contains(v => v)", ExprTier::Display, nums, scratch, code,
                             result, error));
         code.clear();
         error.clear();
@@ -2086,30 +2086,30 @@ void test_lists_and_maps() {
         /* and the wire tier's one-scalar rule still holds over a lambda result */
         code.clear();
         error.clear();
-        CHECK(!compile_expr("x.map(v => v * 2)", ExprTier::Wire, nums, scratch, code,
+        CHECK(!compile_expr("x.Map(v => v * 2)", ExprTier::Wire, nums, scratch, code,
                             result, error));
         CHECK_MSG(error.find("one scalar") != std::string::npos, error);
         /* but reducing one is fine, on either tier */
         code.clear();
         error.clear();
-        CHECK_MSG(compile_expr("x.filter(v => v > 1).sum()", ExprTier::Wire, nums, scratch,
+        CHECK_MSG(compile_expr("x.Filter(v => v > 1).Sum()", ExprTier::Wire, nums, scratch,
                                code, result, error), error);
         CHECK(result.shape == Shape::Num);
         code.clear();
         error.clear();
     }
-    CHECK(!compile_expr("x.sum()", ExprTier::Display, scope, scratch, code, result, error));
+    CHECK(!compile_expr("x.Sum()", ExprTier::Display, scope, scratch, code, result, error));
     CHECK_MSG(error.find("numbers") != std::string::npos, error);
     /* and a LIST can never be the wire's final value */
     error.clear();
     code.clear();
-    CHECK(!compile_expr("x.sort()", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(!compile_expr("x.Sort()", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK_MSG(error.find("one scalar") != std::string::npos, error);
     /* but reducing one on the wire tier is fine */
     error.clear();
     code.clear();
     scope = x_scope(Shape::List, 0, Shape::Num);
-    CHECK(compile_expr("x.max() + 1", ExprTier::Wire, scope, scratch, code, result, error));
+    CHECK(compile_expr("x.Max() + 1", ExprTier::Wire, scope, scratch, code, result, error));
     CHECK(result.shape == Shape::Num);
 }
 
@@ -2144,18 +2144,18 @@ void test_reduce() {
     Json instances = Json::array();
     /* a numeric fold IS the sum, spelled out; the text fold proves each iteration's
        result is re-homed before it becomes the accumulator */
-    instances.push_back(readout("a", "@fold.temps.reduce((acc, v) => acc + v, 0)",
-                              "@fold.temps.sum()",
-                              "@fold.temps.reduce((acc, v) => acc + str(v), \"\")"));
+    instances.push_back(readout("a", "@fold.temps.Reduce((acc, v) => acc + v, 0)",
+                              "@fold.temps.Sum()",
+                              "@fold.temps.Reduce((acc, v) => acc + Str(v), \"\")"));
     /* the index, on both sides: a fold that weights by position, a map that reads it */
-    instances.push_back(readout("b", "@fold.temps.reduce((acc, v, i) => acc + v * i, 0)",
-                              "@fold.temps.map((v, i) => v * 100 + i).sum()",
-                              "@fold.names.map((v, i) => str(i) + v).join(\",\")"));
+    instances.push_back(readout("b", "@fold.temps.Reduce((acc, v, i) => acc + v * i, 0)",
+                              "@fold.temps.Map((v, i) => v * 100 + i).Sum()",
+                              "@fold.names.Map((v, i) => Str(i) + v).Join(\",\")"));
     /* an empty list leaves the starting value alone, and a fold over text joins */
     instances.push_back(readout("c",
-                              "@fold.temps.slice(0, 0).reduce((acc, v) => acc + v, 7)",
-                              "@fold.temps.reduce((acc, v) => acc + 1, 0)",
-                              "@fold.names.reduce((acc, v) => acc + v, \"\")"));
+                              "@fold.temps.Slice(0, 0).Reduce((acc, v) => acc + v, 7)",
+                              "@fold.temps.Reduce((acc, v) => acc + 1, 0)",
+                              "@fold.names.Reduce((acc, v) => acc + v, \"\")"));
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array()},
@@ -2224,29 +2224,29 @@ void test_reduce() {
         return !ok && error.find(needle) != std::string::npos;
     };
     /* the arities are per mode, and every refusal spells the legal call out */
-    CHECK(refused("x.reduce(v => v, 0)", "2 or 3 lambda parameters"));
-    CHECK(refused("x.map((v, i, k) => v)", "1 or 2 lambda parameters"));
-    CHECK(refused("x.filter((v, i) => v > 1)", "1 lambda parameter"));
+    CHECK(refused("x.Reduce(v => v, 0)", "2 or 3 lambda parameters"));
+    CHECK(refused("x.Map((v, i, k) => v)", "1 or 2 lambda parameters"));
+    CHECK(refused("x.Filter((v, i) => v > 1)", "1 lambda parameter"));
     /* reduce takes exactly two arguments: the lambda, then where the fold starts */
-    CHECK(refused("x.reduce((acc, v) => acc + v)", "value the fold starts from"));
-    CHECK(refused("x.reduce((acc, v) => acc + v, 0, 1)", "exactly two arguments"));
+    CHECK(refused("x.Reduce((acc, v) => acc + v)", "value the fold starts from"));
+    CHECK(refused("x.Reduce((acc, v) => acc + v, 0, 1)", "exactly two arguments"));
     /* the parameters are distinct names, and none of them is x */
-    CHECK(refused("x.map((v, v) => v)", "named twice"));
-    CHECK(refused("x.reduce((acc, x) => acc, 0)", "cannot name a lambda parameter"));
+    CHECK(refused("x.Map((v, v) => v)", "named twice"));
+    CHECK(refused("x.Reduce((acc, x) => acc, 0)", "cannot name a lambda parameter"));
     /* the fold stays one shape, and it stays scalar */
-    CHECK(refused("x.reduce((acc, v) => acc + v, \"\")", "one shape"));
-    CHECK(refused("x.reduce((acc, v) => [v], 0)", "folds to ONE value"));
+    CHECK(refused("x.Reduce((acc, v) => acc + v, \"\")", "one shape"));
+    CHECK(refused("x.Reduce((acc, v) => [v], 0)", "folds to ONE value"));
     /* and a fold to a number is an ordinary wire value, unlike the list it came from */
     code.clear();
     error.clear();
-    CHECK_MSG(compile_expr("x.reduce((acc, v) => acc + v, 0)", ExprTier::Wire, nums,
+    CHECK_MSG(compile_expr("x.Reduce((acc, v) => acc + v, 0)", ExprTier::Wire, nums,
                            scratch, code, result, error), error);
     CHECK(result.shape == Shape::Num);
 
     /* the reference the editor autocompletes from carries the new row */
     bool declared = false;
     for (const LangRow& row : language_reference())
-        if (std::string(row.name) == "reduce") {
+        if (std::string(row.name) == "Reduce") {
             declared = true;
             CHECK(row.min_args == 2 && row.max_args == 2);
             CHECK(std::string(row.args[0]) == "lambda");
@@ -2469,7 +2469,7 @@ void test_aggregate_variables() {
         {"flows",
          Json::array({
              flow_on("tap", {steps::append_var("log", "n", "3"),
-                             steps::append_var("words", "str(n)", "3"),
+                             steps::append_var("words", "Str(n)", "3"),
                              steps::set_var("n", "n + 1")}),
              flow_on("press", {steps::set_key("table", "'aa'", "n"),
                                steps::set_key("table", "'zz'", "'tail'")}),
@@ -2954,7 +2954,7 @@ void test_indexed_writes() {
              flow_on("release", {steps::set_index("buf", "1", "99")}),
              /* a whole store into a TYPED list from an expression the compiler cannot
                 element-check: the runtime refuses the foreign picture at the store */
-             flow_on("held", {steps::set_var("nums", "words.map(v => v)")}),
+             flow_on("held", {steps::set_var("nums", "words.Map(v => v)")}),
              /* one element of the entity's array, over the owner's own bytes */
              flow_on("pressrelease", {steps::write_elem("V", "plant", "temps", "1", "77")}),
          })},
@@ -3232,7 +3232,7 @@ void test_bare_topic_scalars() {
          Json::array({
              flow_on("tap", {steps::read_into("lit", "T", "flag")}),
              flow_on("press", {steps::read_into("t", "T", "flag"),
-                               steps::set_var("lit", "t.not()")}),
+                               steps::set_var("lit", "t.Not()")}),
              flow_on("release", {steps::write_field("T", "flag", "", "lit")}),
          })},
     };
@@ -3398,8 +3398,8 @@ void test_aggregate_expressions() {
         {"kind", "frame"}, {"type", "Dropdown"}, {"name", "D"}, {"slots", Json::object()},
         {"flows",
          Json::array({
-             flow_on("open", {steps::set_slot("options", "src.map((v) => str(v))")}),
-             flow_on("select", {steps::set_var("dst", "src.filter((v) => v > 1)"),
+             flow_on("open", {steps::set_slot("options", "src.Map((v) => Str(v))")}),
+             flow_on("select", {steps::set_var("dst", "src.Filter((v) => v > 1)"),
                                 steps::set_var("copy", "src")}),
          })},
     };
@@ -3521,10 +3521,10 @@ void test_aggregate_ceilings() {
         {"flows", Json::array({
                       flow_on("tap", {steps::append_var("unbounded", "1")}),
                       flow_on("press", {steps::append_var("bounded", "1", "8")}),
-                      flow_on("release", {steps::set_var("total", "unbounded.sum()")}),
+                      flow_on("release", {steps::set_var("total", "unbounded.Sum()")}),
                       flow_on("held",
                               {steps::set_var("folded",
-                                              "unbounded.reduce((acc, v) => acc + v, 0)")}),
+                                              "unbounded.Reduce((acc, v) => acc + v, 0)")}),
                   })},
     };
     Json root = {{"version", 1},
@@ -3602,19 +3602,19 @@ void test_map_reduce() {
          Json::array({
              flow_on("tap",
                      {steps::set_var("total",
-                                     "table.reduce((acc, key, value) => acc + value, 0)"),
+                                     "table.Reduce((acc, key, value) => acc + value, 0)"),
                       /* order-SENSITIVE on purpose: any other visiting order gives
                          another number, so this is the sorted-keys rule as a value */
                       steps::set_var("ordered",
-                                     "table.reduce((acc, key, value) => "
+                                     "table.Reduce((acc, key, value) => "
                                      "acc * 10 + value, 0)")}),
              flow_on("press",
                      {steps::set_var("keyed",
-                                     "table.reduce((acc, key, value) => "
+                                     "table.Reduce((acc, key, value) => "
                                      "acc + (key == 'b' ? value : 0), 0)"),
                       /* the IN-PLACE readers over a RETAINED map: length counts pairs
                          and indexing looks a key up where the entries lie */
-                      steps::set_var("pairs", "table.length()"),
+                      steps::set_var("pairs", "table.Length()"),
                       steps::set_var("looked_up", "table['c']")}),
          })},
     };
@@ -3670,10 +3670,10 @@ void test_map_reduce() {
             compile_expr(text, ExprTier::Display, scope, scratch, code, result, error);
         return !ok && error.find(needle) != std::string::npos;
     };
-    CHECK(refused("x.map(v => v)", "reduce((acc, key, value)"));
-    CHECK(refused("x.filter(v => v)", "reduce((acc, key, value)"));
-    CHECK(refused("x.sortBy(v => v)", "reduce((acc, key, value)"));
-    CHECK(refused("x.reduce((acc, v) => acc, 0)", "3 lambda parameters"));
+    CHECK(refused("x.Map(v => v)", "reduce((acc, key, value)"));
+    CHECK(refused("x.Filter(v => v)", "reduce((acc, key, value)"));
+    CHECK(refused("x.SortBy(v => v)", "reduce((acc, key, value)"));
+    CHECK(refused("x.Reduce((acc, v) => acc, 0)", "3 lambda parameters"));
 }
 
 /* REPLAY DETERMINISM: the same writes in a different ORDER leave byte-identical state,
@@ -3989,7 +3989,7 @@ void test_variant_options() {
                  {"pages", Json::array({Json{
                       {"name", "P"},
                       {"children",
-                       Json::array({selector("good", "jobMode.variants()")})}}})}};
+                       Json::array({selector("good", "jobMode.Variants()")})}}})}};
     Document document;
     std::string err;
     CHECK(document.adopt(std::move(root), err));
@@ -4029,7 +4029,7 @@ void test_variant_options() {
                            {"children", Json::array({Json{
                                 {"kind", "frame"}, {"type", "Selector"},
                                 {"name", "typed"},
-                                {"slots", Json{{"options", "Gear.mode.variants()"},
+                                {"slots", Json{{"options", "Gear.mode.Variants()"},
                                                {"value", "'run'"}}}}})}}})}};
         Document tdoc;
         CHECK(tdoc.adopt(std::move(troot), err));

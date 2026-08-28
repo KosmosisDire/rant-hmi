@@ -1,6 +1,6 @@
 # CONFORMANCE FIXTURES: enums (spec 6.2). A variant literal resolves against the
 # enum its CONTEXT expects — the other side of an equality, the destination being
-# written, a ternary arm's expectation; `.is()` resolves against the receiver's.
+# written, a ternary arm's expectation; `.Is()` resolves against the receiver's.
 
 == a variant literal on the right of equality
 env mode: enum(idle, run, fault) = run
@@ -24,82 +24,82 @@ want bool true
 
 == is tests a variant
 env mode: enum(idle, run, fault) = run
-expr mode.is(run)
+expr mode.Is(run)
 want bool true
 
 == is misses
 env mode: enum(idle, run, fault) = run
-expr mode.is(fault)
+expr mode.Is(fault)
 want bool false
 
 == int is the backing value
 env mode: enum(idle, run, fault) = run
-expr mode.int()
+expr mode.Int()
 want num 1
 
 == name is the variant name
 env mode: enum(idle, run, fault) = run
-expr mode.name()
+expr mode.Name()
 want text "run"
 
 == variants lists the vocabulary
 env mode: enum(idle, run, fault) = run
-expr mode.variants().length()
+expr mode.Variants().Length()
 want num 3
 
 == variants filters like any list
 env mode: enum(idle, run, fault) = run
-expr mode.variants().filter(v => v != "idle").length()
+expr mode.Variants().Filter(v => v != "idle").Length()
 want num 2
 
 == variants joins in declaration order
 env mode: enum(idle, run, fault) = fault
-expr mode.variants().join(",")
+expr mode.Variants().Join(",")
 want text "idle,run,fault"
 
 == variants demands its parentheses
 env mode: enum(idle, run, fault) = run
-expr mode.variants
+expr mode.Variants
 error is a method
 
 == the old free-function spelling teaches the method
 env mode: enum(idle, run, fault) = run
-expr variants(mode)
+expr Variants(mode)
 error reads off an enum value
 
 == str renders the variant name
 env mode: enum(idle, run, fault) = fault
-expr str(mode)
+expr Str(mode)
 want text "fault"
 
 == num converts the backing value
 env mode: enum(idle, run, fault) = fault
-expr num(mode)
+expr Num(mode)
 want num 2
 
 == name as a builtin
 env mode: enum(idle, run, fault) = idle
-expr name(mode)
+expr Name(mode)
 want text "idle"
 
-== an enum refuses its backing number; int() spells the intent
+== an enum refuses its backing number; Int() spells the intent
 env mode: enum(idle, run, fault) = run
 expr mode == 1
 error compares to its own variants
 
-== the backing number reads through int()
+== the backing number reads through Int()
 env mode: enum(idle, run, fault) = run
-expr mode.int() == 1
+expr mode.Int() == 1
 want bool true
 
-== an enum refuses variant text; name() spells the intent
+== an enum refuses variant text; Name() spells the intent
 env mode: enum(idle, run, fault) = run
 expr mode == "run"
 error compares to its own variants
 
-== the variant name reads through name()
+== the variant name reads through Name()
 env mode: enum(idle, run, fault) = run
-expr mode.name() == "idle"
+expr mode.Name() == "idle"
 want bool false
 
 == different enums never compare
@@ -127,7 +127,7 @@ error no variant 'bogus'
 
 == is refuses a typo
 env mode: enum(idle, run, fault) = run
-expr mode.is(bogus)
+expr mode.Is(bogus)
 error no variant 'bogus'
 
 == a variant needs an enum beside it

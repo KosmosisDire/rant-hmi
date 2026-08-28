@@ -237,9 +237,9 @@ const std::vector<AttrDef>& path_attrs() {
         def_variants("cap", "butt", "how the line's ends are drawn (stroke-linecap)",
                      {"butt", "round", "square"}),
         no_def("points", "list",
-            "COMPUTED ANCHORS: a list of anchor(x, y) records in fractions of the box, "
+            "COMPUTED ANCHORS: a list of Anchor(x, y) records in fractions of the box, "
             "drawn in place of the authored anchors — a plot is a map over a list slot "
-            "(history.map((v, i) => anchor(..., ...))). A Nil element is a GAP: the "
+            "(history.Map((v, i) => Anchor(..., ...))). A Nil element is a GAP: the "
             "line breaks there rather than bridging it", "d"),
     };
     return table;

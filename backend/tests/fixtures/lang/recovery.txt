@@ -38,15 +38,15 @@ expr nope1[nope2]
 error unknown name 'nope2'
 
 == a method argument above a broken value reports
-expr nope1.round(nope2)
+expr nope1.Round(nope2)
 error unknown name 'nope2'
 
 == a lambda body above a broken value reports
-expr nope1.filter(v => v + nope2)
+expr nope1.Filter(v => v + nope2)
 error unknown name 'nope2'
 
 == a fold's start reports beside its broken body
-expr [1, 2].reduce((acc, v) => acc + nope1, nope2)
+expr [1, 2].Reduce((acc, v) => acc + nope1, nope2)
 error unknown name 'nope2'
 
 # ---- PARSE RECOVERY: a hole (ast.h Error) stands where text failed to parse,
@@ -71,7 +71,7 @@ expr nope1 + + nope2
 error unknown name 'nope2'
 
 == a broken argument list keeps the arguments that parsed
-expr str(nope1
+expr Str(nope1
 error unknown name 'nope1'
 
 == pathological nesting terminates

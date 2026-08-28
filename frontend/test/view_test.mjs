@@ -500,7 +500,7 @@ check(valueInput.value === "5.5", "an unfed slot's field follows the document, g
       cell's value is the backend's. The bound/driven cell states died with the old
       slot cells (phase 4a): a slot holding a non-literal expression shows exactly like
       an attr holding one — the icon dims for gestures. The seeded Readout "Flow"
-      binds `value` to flow.round(1). */
+      binds `value` to flow.Round(1). */
 const fedInstance = store.instancesOn(store.pages()[0]).find(
   (w) => typeof (w.slots ?? {}).value === "string" && w.type === "Readout");
 const fedPanel = new Panel(new Element("aside"));
@@ -515,13 +515,13 @@ check(fedRow !== null && fedRow.querySelector(".value-box") !== null,
 check(fedRow.querySelector(".vb-icon").classList.contains("vb-dim"),
       "a slot holding a non-literal expression dims the icon, exactly like an attr");
 const fedInput = fedRow.querySelector("input");
-check(fedInput.value === "flow.round(1)",
+check(fedInput.value === "flow.Round(1)",
       "a bound slot's box shows the authored expression, got " + fedInput.value);
 fedEditor.live = { epoch: 4, values: { [fedInstance.id + ".value"]: 4.25 } };
 drawFed();
 check(fedRow.querySelector("input") === fedInput,
       "a live frame does not rebuild a bound slot's box");
-check(fedInput.value === "flow.round(1)",
+check(fedInput.value === "flow.Round(1)",
       "a live frame never overwrites the authored expression, got " + fedInput.value);
 
 /* 4. uncommitted text is held under the document address, so a rebuild caused by an edit
@@ -1115,7 +1115,7 @@ check(trackPanel.host.querySelector(".head-tag")?.textContent === "built-in",
       "the head marks it as the built-in definition");
 const trackAttrs = trackPanel.host.querySelectorAll(".attr-row");
 check(trackAttrs.some((row) =>
-        row.querySelectorAll("input").some((i) => i.value === "value.pick(fillColor, trackColor)")),
+        row.querySelectorAll("input").some((i) => i.value === "value.Pick(fillColor, trackColor)")),
       "the attrs table shows each attr's expression text");
 check(trackPanel.host.querySelectorAll("input").every((i) => i.getAttribute("readonly")),
       "every field in it is read-only: nothing in the document owns a built-in");
@@ -3441,9 +3441,9 @@ check(stageNode("frame", 901) === heldAgain &&
 
 /* ---- THE OPTIONS SLOT: a list spelling, discoverable through the reference browse ----
    A Dropdown's options used to BE a TypeRef chip, then a variants(Type.field) magic
-   string. The vocabulary reads off an enum VALUE now (myMode.variants()), so the row
+   string. The vocabulary reads off an enum VALUE now (myMode.Variants()), so the row
    is an ordinary expression field, and the options browse (the reference selector)
-   offers every enum-typed value in reach as its .variants() read — picked, never
+   offers every enum-typed value in reach as its .Variants() read — picked, never
    memorised, and never naming a different enum than the value beside it. */
 {
   const { enumListRefs, optionsSlotScope } = await import(mod("inspector/scope.js"));
@@ -3460,16 +3460,16 @@ check(stageNode("frame", 901) === heldAgain &&
     },
   };
   const refs = enumListRefs(optionsEditor, null);
-  check(refs.some((r) => r.insert === "valveMode.variants()"),
-        "an enum-typed variable offers its vocabulary as a .variants() read");
-  check(refs.some((r) => r.insert === "@plant/valve.mode.variants()"),
+  check(refs.some((r) => r.insert === "valveMode.Variants()"),
+        "an enum-typed variable offers its vocabulary as a .Variants() read");
+  check(refs.some((r) => r.insert === "@plant/valve.mode.Variants()"),
         "and a mesh enum field offers the same, addressed");
-  check(refs.some((r) => r.insert === "Valve.mode.variants()"),
+  check(refs.some((r) => r.insert === "Valve.mode.Variants()"),
         "and the schema type itself covers the no-value case");
   const roots = optionsSlotScope(optionsEditor, null).roots();
   const folder = roots.find((r) => r.key === "enums");
   check(Boolean(folder) &&
-            folder.children.some((row) => row.insert === "valveMode.variants()"),
+            folder.children.some((row) => row.insert === "valveMode.Variants()"),
         "the options browse lists them under enum lists, insert-ready");
 }
 
@@ -3890,18 +3890,18 @@ check(stageNode("frame", 901) === heldAgain &&
   }
 
   /* the options-shaped box: every enum-typed VALUE in reach rides its browse (the
-     reference selector), spelled as its .variants() read — here the valve struct
+     reference selector), spelled as its .Variants() read — here the valve struct
      variable's enum field */
   document.activeElement = null;
   const optionsInput4a = row4a("options").querySelector("input");
   fire(row4a("options").querySelector(".vb-browse"), "click");
   check(streeRow4a("enum lists") !== null,
         "an options box's browse carries the enum lists section");
-  const valveRow = streeRow4a("valve.mode.variants()");
+  const valveRow = streeRow4a("valve.mode.Variants()");
   check(valveRow !== null, "listing each enum-typed value in reach");
   fire(valveRow, "click", { detail: 0 });
-  check(optionsInput4a.value === "valve.mode.variants()",
-        "picking one inserts its .variants() read, got " + optionsInput4a.value);
+  check(optionsInput4a.value === "valve.mode.Variants()",
+        "picking one inserts its .Variants() read, got " + optionsInput4a.value);
   document.activeElement = null;
 }
 

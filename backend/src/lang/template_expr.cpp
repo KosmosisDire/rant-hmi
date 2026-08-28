@@ -685,14 +685,14 @@ class ViewLower {
             return fail("a transition is not written in the expression: set it with "
                         "the transition button beside the field",
                         expr.name_after);
-        if (name == "clamp") {
+        if (name == "Clamp") {
             /* x.clamp(lo, hi): Max then Min, the same fold the builtin uses. Kept as
                its own case rather than going through view_method()'s bespoke flag:
                the receiver is already on the stack, so the fold only ever needs each
                argument once and a plain interleaved Max/Min costs less than
                capturing and splicing would. */
             if (!expr.called || expr.args.size() != 2)
-                return fail("clamp takes 2 arguments", expr.name_after);
+                return fail("Clamp takes 2 arguments", expr.name_after);
             argument(expr.args[0]);
             if (!error_.empty()) return false;
             emit_call(Builtin::Max, 2);
@@ -714,10 +714,10 @@ class ViewLower {
            clamp, is handled by name above -- so `direct` is the whole gate. */
         if (!view.known || !view.direct)
             return fail("'" + name + "' has no encoding in the view; template "
-                        "expressions are limited to pick / toFixed / clamp, the "
-                        "color accessors (r / g / b / a / alpha / mix), the numeric "
-                        "builtins and the list vocabulary (length / indexOf / sum / "
-                        "avg / max / min, indexing, map / filter / reduce)",
+                        "expressions are limited to Pick / ToFixed / Clamp, the "
+                        "color accessors (R / G / B / A / Alpha / Mix), the numeric "
+                        "builtins and the list vocabulary (Length / IndexOf / Sum / "
+                        "Avg / Max / Min, indexing, Map / Filter / Reduce)",
                         expr.name_after);
         /* plain after a dot is a FIELD; a method is always CALLED -- the same line
            the scalar checker holds, worded the same way */
@@ -753,9 +753,9 @@ class ViewLower {
                         expr.name_after);
         const bool reduces = mode->mode == IterateMode::Reduce;
         const size_t least = reduces ? 2 : 1;
-        const size_t most = reduces ? 3 : (name == "map" ? 2 : 1);
+        const size_t most = reduces ? 3 : (name == "Map" ? 2 : 1);
         const std::string usage =
-            reduces ? "reduce((acc, v) => ..., start)" : name + "(v => ...)";
+            reduces ? "Reduce((acc, v) => ..., start)" : name + "(v => ...)";
         if (!expr.called || expr.args.empty())
             return fail(name + " takes a lambda: " + usage, expr.name_after);
         const Expr& lambda = at(expr.args[0]);
@@ -836,7 +836,7 @@ class ViewLower {
            left for hist() to address that the property's own name does not already
            reach. */
         if (name == "hist") {
-            fail("hist() is gone: read the list slot itself (history.map(...)) or a "
+            fail("hist() is gone: read the list slot itself (history.Map(...)) or a "
                  "list variable",
                  expr.name_after);
             return;
@@ -844,14 +844,14 @@ class ViewLower {
         /* the resolver cells died when options became a LIST: what they computed is
            ordinary list arithmetic now, so the refusal teaches the spelling */
         if (name == "optcount" || name == "optnames" || name == "optfrac") {
-            fail("'" + name + "' is gone: options are a list — write options.length(), "
-                 "the list itself, or options.indexOf(value) / (options.length() - 1)",
+            fail("'" + name + "' is gone: options are a list — write options.Length(), "
+                 "the list itself, or options.IndexOf(value) / (options.Length() - 1)",
                  expr.name_after);
             return;
         }
-        if (name == "variants") {
-            fail("variants() reads off an enum value in a slot's expression "
-                 "(myMode.variants()); a template reads the resulting list from "
+        if (name == "Variants") {
+            fail("Variants() reads off an enum value in a slot's expression "
+                 "(myMode.Variants()); a template reads the resulting list from "
                  "the options property",
                  expr.name_after);
             return;
@@ -887,8 +887,8 @@ class ViewLower {
         if (view.known && view.bespoke) {
             /* the single-use folds first: each argument lowers once, straight into
                `code_`, so none of these needs capture/splice */
-            if (name == "clamp01" || name == "sign" || name == "mod") {
-                const size_t single = name == "mod" ? 2 : 1;
+            if (name == "Clamp01" || name == "Sign" || name == "Mod") {
+                const size_t single = name == "Mod" ? 2 : 1;
                 if (expr.args.size() != single) {
                     fail(name + " takes " + std::to_string(single) + " argument" +
                              (single == 1 ? "" : "s"),
@@ -899,13 +899,13 @@ class ViewLower {
                     argument(arg);
                     if (!error_.empty()) return;
                 }
-                if (name == "clamp01") {
+                if (name == "Clamp01") {
                     /* clamp01(x) == clamp(x, 0, 1), the same Max/Min fold */
                     emit_const(0.0);
                     emit_call(Builtin::Max, 2);
                     emit_const(1.0);
                     emit_call(Builtin::Min, 2);
-                } else if (name == "sign") {
+                } else if (name == "Sign") {
                     /* the free spelling of the num.sign method */
                     emit_method(MethodId::NumSign, 0);
                 } else {
@@ -917,8 +917,8 @@ class ViewLower {
             /* everything else here is a fixed-arity arithmetic fold: each argument
                is captured once and spliced as many times as the formula needs it, so
                none of these costs a stack DUP the view has never had (capture). */
-            const size_t count = name == "mapRange" ? 5
-                                 : name == "clamp" || name == "lerp" ? 3
+            const size_t count = name == "MapRange" ? 5
+                                 : name == "Clamp" || name == "Lerp" ? 3
                                                                      : 2;
             if (expr.args.size() != count) {
                 fail(name + " takes " + std::to_string(count) + " arguments",
@@ -930,14 +930,14 @@ class ViewLower {
                 a.push_back(capture(arg));
                 if (!error_.empty()) return;
             }
-            if (name == "clamp") {
+            if (name == "Clamp") {
                 /* clamp(x, lo, hi) == min(max(x, lo), hi) */
                 splice(a[0]);
                 splice(a[1]);
                 emit_call(Builtin::Max, 2);
                 splice(a[2]);
                 emit_call(Builtin::Min, 2);
-            } else if (name == "mapRange") {
+            } else if (name == "MapRange") {
                 /* outLo + (x - inLo) * (outHi - outLo) / (inHi - inLo). Div already
                    yields Nil on a zero divisor, so an inHi == inLo call poisons the
                    same way the scalar builtin's explicit guard does, for free. */
@@ -948,7 +948,7 @@ class ViewLower {
                 splice(a[2]); splice(a[1]); emit(OpCode::Sub);   /* inHi - inLo */
                 emit(OpCode::Div);
                 emit(OpCode::Add);
-            } else if (name == "roundTo") {
+            } else if (name == "RoundTo") {
                 /* round(x * scale) / scale, scale = 10^dp. The Pow call's result
                    goes through the numeric coercion, which already refuses a
                    non-finite value, and Div already refuses a zero divisor -- the
@@ -965,13 +965,13 @@ class ViewLower {
                 emit_call(Builtin::Round, 1);
                 scale();
                 emit(OpCode::Div);
-            } else if (name == "lerp") {
+            } else if (name == "Lerp") {
                 /* a + (b - a) * t */
                 splice(a[0]);
                 splice(a[1]); splice(a[0]); emit(OpCode::Sub);
                 splice(a[2]); emit(OpCode::Mul);
                 emit(OpCode::Add);
-            } else if (name == "hypot") {
+            } else if (name == "Hypot") {
                 /* sqrt(a*a + b*b) */
                 splice(a[0]); splice(a[0]); emit(OpCode::Mul);
                 splice(a[1]); splice(a[1]); emit(OpCode::Mul);

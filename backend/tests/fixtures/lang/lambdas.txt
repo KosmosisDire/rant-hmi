@@ -3,172 +3,172 @@
 
 == map transforms each element
 env temps: list(num) = [1, 2, 3]
-expr temps.map(v => v * 10).sum()
+expr temps.Map(v => v * 10).Sum()
 want num 60
 
 == map may take the index
 env temps: list(num) = [5, 5, 5]
-expr temps.map((v, i) => v * i).sum()
+expr temps.Map((v, i) => v * i).Sum()
 want num 15
 
 == map to text re-homes each result
 env temps: list(num) = [1, 2]
-expr temps.map(v => str(v) + "s").join(",")
+expr temps.Map(v => Str(v) + "s").Join(",")
 want text "1s,2s"
 
 == filter keeps what passes
 env temps: list(num) = [5, 15, 25]
-expr temps.filter(v => v > 10).sum()
+expr temps.Filter(v => v > 10).Sum()
 want num 40
 
 == filter keeps the element shape for the chain
 env temps: list(num) = [5, 15, 25]
-expr temps.filter(v => v > 10).first()
+expr temps.Filter(v => v > 10).First()
 want num 15
 
 == any finds a witness
 env temps: list(num) = [5, 15]
-expr temps.any(v => v > 10)
+expr temps.Any(v => v > 10)
 want bool true
 
 == any finds none
 env temps: list(num) = [5, 6]
-expr temps.any(v => v > 10)
+expr temps.Any(v => v > 10)
 want bool false
 
 == all holds
 env temps: list(num) = [11, 12]
-expr temps.all(v => v > 10)
+expr temps.All(v => v > 10)
 want bool true
 
 == all breaks
 env temps: list(num) = [11, 2]
-expr temps.all(v => v > 10)
+expr temps.All(v => v > 10)
 want bool false
 
 == sortBy orders by the key
 env temps: list(num) = [10, 30, 20]
-expr temps.sortBy(v => -v).join(",")
+expr temps.SortBy(v => -v).Join(",")
 want text "30,20,10"
 
 == sortBy over text keys
 env names: list(text) = ["bb", "a", "ccc"]
-expr names.sortBy(v => v.length()).join(",")
+expr names.SortBy(v => v.Length()).Join(",")
 want text "a,bb,ccc"
 
 == reduce folds with its starting value
 env temps: list(num) = [1, 2, 3]
-expr temps.reduce((acc, v) => acc + v, 10)
+expr temps.Reduce((acc, v) => acc + v, 10)
 want num 16
 
 == reduce may take the index
 env temps: list(num) = [10, 20, 30]
-expr temps.reduce((acc, v, i) => acc + v * i, 0)
+expr temps.Reduce((acc, v, i) => acc + v * i, 0)
 want num 80
 
 == a text fold re-homes its accumulator
 env temps: list(num) = [1, 2, 3]
-expr temps.reduce((acc, v) => acc + str(v), "")
+expr temps.Reduce((acc, v) => acc + Str(v), "")
 want text "123"
 
 == an empty list folds to its start
-expr [].reduce((acc, v) => acc + v, 7)
+expr [].Reduce((acc, v) => acc + v, 7)
 want num 7
 
 == the chain composes
 env temps: list(num) = [1, 2, 3, 4]
-expr temps.filter(v => v % 2 == 0).map(v => v * v).sum()
+expr temps.Filter(v => v % 2 == 0).Map(v => v * v).Sum()
 want num 20
 
 == iteration is wire-legal when the result folds
 tier wire
 env temps: list(num) = [1, 2, 3]
-expr temps.filter(v => v > 1).sum()
+expr temps.Filter(v => v > 1).Sum()
 want num 5
 
 == a mapped list is one scalar short of the wire
 tier wire
 env temps: list(num) = [1, 2]
-expr temps.map(v => v * 2)
+expr temps.Map(v => v * 2)
 error one scalar
 
 == a lambda may not nest
 env rows: list(num) = [1]
-expr rows.map(v => [v].map(w => w))
+expr rows.Map(v => [v].Map(w => w))
 error another lambda
 
 == x is out of scope inside a body
 env temps: list(num) = [1]
-expr temps.map(v => x)
+expr temps.Map(v => x)
 error not in scope
 
 == x cannot name a parameter
 env temps: list(num) = [1]
-expr temps.map(x => x)
+expr temps.Map(x => x)
 error cannot name a lambda parameter
 
 == a parameter may not shadow a variable
 env limit: num = 5
 env temps: list(num) = [1]
-expr temps.map(limit => limit)
+expr temps.Map(limit => limit)
 error shadows a variable
 
 == parameters need distinct names
 env temps: list(num) = [1]
-expr temps.reduce((v, v) => v, 0)
+expr temps.Reduce((v, v) => v, 0)
 error named twice
 
 == the body is one expression
 env temps: list(num) = [1]
-expr temps.map(v => v, 2)
+expr temps.Map(v => v, 2)
 error ONE expression
 
 == the arrow is not optional
 env temps: list(num) = [1]
-expr temps.map(v)
+expr temps.Map(v)
 error expected '=>'
 
 == the head is a name
 env temps: list(num) = [1]
-expr temps.map(2 => 2)
+expr temps.Map(2 => 2)
 error parameter name
 
 == filter wants a condition
 env temps: list(num) = [1]
-expr temps.filter(v => v + 1)
+expr temps.Filter(v => v + 1)
 error condition
 
 == all wants a condition
 env temps: list(num) = [1]
-expr temps.all(v => v + 1)
+expr temps.All(v => v + 1)
 error condition
 
 == sortBy wants an orderable key
 env temps: list(num) = [1]
-expr temps.sortBy(v => v > 0)
+expr temps.SortBy(v => v > 0)
 error number or text
 
 == reduce needs its starting value
 env temps: list(num) = [1]
-expr temps.reduce((acc, v) => acc + v)
+expr temps.Reduce((acc, v) => acc + v)
 error starts from
 
 == reduce folds to one value
 env temps: list(num) = [1]
-expr temps.reduce((acc, v) => [v], 0)
+expr temps.Reduce((acc, v) => [v], 0)
 error folds to ONE value
 
 == the fold stays one shape
 env temps: list(num) = [1]
-expr temps.reduce((acc, v) => acc + v, "zero")
+expr temps.Reduce((acc, v) => acc + v, "zero")
 error stay one shape
 
 == map takes at most the element and the index
 env temps: list(num) = [1]
-expr temps.map((a, b, c) => a)
+expr temps.Map((a, b, c) => a)
 error lambda parameters
 
 == a number has no map
 env setpoint: num = 5
-expr setpoint.map(v => v)
-error has no method 'map'
+expr setpoint.Map(v => v)
+error has no method 'Map'

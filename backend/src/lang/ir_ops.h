@@ -306,12 +306,12 @@ struct IterateModeDef {
 };
 
 constexpr IterateModeDef kIterateModes[] = {
-    {"map", IterateMode::Map},
-    {"filter", IterateMode::Filter},
-    {"any", IterateMode::Any},
-    {"all", IterateMode::All},
-    {"sortBy", IterateMode::SortBy},
-    {"reduce", IterateMode::Reduce},
+    {"Map", IterateMode::Map},
+    {"Filter", IterateMode::Filter},
+    {"Any", IterateMode::Any},
+    {"All", IterateMode::All},
+    {"SortBy", IterateMode::SortBy},
+    {"Reduce", IterateMode::Reduce},
 };
 
 enum class Builtin : uint16_t {
@@ -419,7 +419,7 @@ enum class MethodId : uint16_t {
     MapValues,
     MapHas,
     MapGet,
-    /* `a + b` with a text operand (display tier): both sides rendered as str() would
+    /* `a + b` with a text operand (display tier): both sides rendered as Str() would
      * render them, joined into the site's own slot
      */
     TextConcat,

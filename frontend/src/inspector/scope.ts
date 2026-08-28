@@ -513,7 +513,7 @@ export function slotScope(editor: Editor, instance: Node | null): Scope {
   };
 }
 
-/* every ENUM-TYPED value in reach, spelled with its `.variants()` read: variables
+/* every ENUM-TYPED value in reach, spelled with its `.Variants()` read: variables
  * whose declared type names an enum, and the mesh's enum fields. What the options
  * slot's browse offers, so the vocabulary list is PICKED, never memorised — and it
  * is named through the VALUE beside it, so it can never name a different enum than
@@ -524,20 +524,20 @@ export function enumListRefs(editor: Editor, instance: Node | null):
   for (const v of variablesInScope(editor, instance)) {
     const resolved = resolveTypeRef(editor.mesh, v.type ?? "");
     if (resolved?.kind === "enum")
-      out.push({ label: v.name, insert: v.name + ".variants()" });
+      out.push({ label: v.name, insert: v.name + ".Variants()" });
     else if (resolved?.kind === "struct")
       /* a struct variable's ENUM FIELDS are enum values too, one dot deeper */
       for (const field of resolved.type.fields)
         if (field.variants?.length)
           out.push({ label: v.name + "." + field.path,
-                     insert: v.name + "." + field.path + ".variants()" });
+                     insert: v.name + "." + field.path + ".Variants()" });
   }
   for (const entity of editor.mesh.entities) {
     const fields = entityReadFields(entity);
     for (const field of fields)
       if (field.variants?.length) {
         const ref = "@" + entity.name + (field.path ? "." + field.path : "");
-        out.push({ label: ref, insert: ref + ".variants()" });
+        out.push({ label: ref, insert: ref + ".Variants()" });
       }
   }
   /* the schema's enum TYPES by their own spelling — the no-value case: a function
@@ -548,14 +548,14 @@ export function enumListRefs(editor: Editor, instance: Node | null):
     for (const field of type.fields)
       if (field.variants?.length) {
         const ref = type.name + "." + field.path;
-        out.push({ label: ref, insert: ref + ".variants()" });
+        out.push({ label: ref, insert: ref + ".Variants()" });
       }
   }
   return out;
 }
 
 /* an OPTIONS slot's scope: the same universe plus the enum lists above. Browse-only
- * (flat-skipped): `.variants()` is a read spelling, not a name of its own. */
+ * (flat-skipped): `.Variants()` is a read spelling, not a name of its own. */
 export function optionsSlotScope(editor: Editor, instance: Node | null): Scope {
   const roots = () => {
     const enums: BrowseRow[] = enumListRefs(editor, instance).map((row) => ({

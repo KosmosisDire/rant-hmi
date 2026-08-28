@@ -536,7 +536,7 @@ Json timer_read_root(const std::string& surface_xf) {
 void test_timer_reads() {
     Document document;
     std::string error;
-    CHECK_MSG(document.adopt(timer_read_root("blink.running.pick(#00ff00, #102030)"), error),
+    CHECK_MSG(document.adopt(timer_read_root("blink.running.Pick(#00ff00, #102030)"), error),
               error);
     FakeMesh mesh;
     CompileResult compiled = compile_document(document, mesh);
@@ -592,7 +592,7 @@ void test_timer_reads() {
        nothing in a slot expression at all */
     auto refuses = [&](uint32_t instance_index, const char* slot, const std::string& xf,
                        const char* needle) {
-        Json root = timer_read_root("blink.running.pick(#00ff00, #102030)");
+        Json root = timer_read_root("blink.running.Pick(#00ff00, #102030)");
         root["pages"][0]["children"][instance_index]["slots"][slot] = xf;
         Document bad;
         std::string adopt_error;
@@ -604,7 +604,7 @@ void test_timer_reads() {
             if (diagnostic.message.find(needle) != std::string::npos) found = true;
         CHECK_MSG(found, "no diagnostic mentions '" + std::string(needle) + "'");
     };
-    refuses(0, "surface", "blink.pick(#00ff00, #102030)", "unknown field");
+    refuses(0, "surface", "blink.Pick(#00ff00, #102030)", "unknown field");
     refuses(0, "surface", "blink == true", "is a timer");
     refuses(1, "value", "x * 2", "there is no x here");
     refuses(1, "value", "blink.expired * 2", "unknown field");

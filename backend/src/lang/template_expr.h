@@ -12,7 +12,7 @@
  * emitted from the ONE table in tools/gen_ir.mjs. The frontend's interpreter
  * (frontend/src/program.ts) is the second implementation of the same IR, executing
  * over the symbolic cells the table names. This is how a component's template attrs
- * are authored as text ("value.pick(fillColor, trackColor)") and served compiled,
+ * are authored as text ("value.Pick(fillColor, trackColor)") and served compiled,
  * with the view still never parsing anything.
  *
  * The vocabulary is the view-legal slice of the shared tables: scalar and list

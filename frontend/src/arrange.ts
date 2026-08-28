@@ -30,7 +30,7 @@ export interface DropPlan {
 
 /* A FIELD A GESTURE MAY MOVE. Every field is expression text, and direct manipulation is
  * the act of writing a CONSTANT into one — so a drag may only move a field that holds a
- * constant NOW. `12` is a number a boundary can push around; `value.pick(2, 1)` is authored
+ * constant NOW. `12` is a number a boundary can push around; `value.Pick(2, 1)` is authored
  * logic, and a drag that overwrote it would be destroying work to save a keystroke. An
  * absent field reads as its default, which is a constant too.
  *

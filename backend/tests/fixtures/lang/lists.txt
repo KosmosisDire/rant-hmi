@@ -3,50 +3,50 @@
 # results are observed through folds.
 
 == a literal list sums
-expr [1, 2, 3].sum()
+expr [1, 2, 3].Sum()
 want num 6
 
 == an env list sums
 env temps: list(num) = [10, 20, 30]
-expr temps.sum()
+expr temps.Sum()
 want num 60
 
 == average
 env temps: list(num) = [10, 20, 30]
-expr temps.avg()
+expr temps.Avg()
 want num 20
 
 == max
 env temps: list(num) = [10, 40, 30]
-expr temps.max()
+expr temps.Max()
 want num 40
 
 == min
 env temps: list(num) = [10, 40, 30]
-expr temps.min()
+expr temps.Min()
 want num 10
 
 == length
 env temps: list(num) = [10, 20, 30]
-expr temps.length()
+expr temps.Length()
 want num 3
 
 == first
 env temps: list(num) = [10, 20, 30]
-expr temps.first()
+expr temps.First()
 want num 10
 
 == last
 env temps: list(num) = [10, 20, 30]
-expr temps.last()
+expr temps.Last()
 want num 30
 
 == an empty literal sums to zero
-expr [].sum()
+expr [].Sum()
 want num 0
 
 == first of an empty list is unknown
-expr [].first()
+expr [].First()
 want nil
 
 == indexing
@@ -66,79 +66,79 @@ want num 30
 
 == contains
 env temps: list(num) = [10, 20, 30]
-expr temps.contains(20)
+expr temps.Contains(20)
 want bool true
 
 == contains misses
 env temps: list(num) = [10, 20, 30]
-expr temps.contains(99)
+expr temps.Contains(99)
 want bool false
 
 == indexOf
 env temps: list(num) = [10, 20, 30]
-expr temps.indexOf(20)
+expr temps.IndexOf(20)
 want num 1
 
 == indexOf misses with -1
 env temps: list(num) = [10, 20, 30]
-expr temps.indexOf(99)
+expr temps.IndexOf(99)
 want num -1
 
 == sort ascending
 env temps: list(num) = [30, 10, 20]
-expr temps.sort().join(",")
+expr temps.Sort().Join(",")
 want text "10,20,30"
 
 == sort text lexicographically
 env names: list(text) = ["b", "c", "a"]
-expr names.sort().join(",")
+expr names.Sort().Join(",")
 want text "a,b,c"
 
 == reverse
 env temps: list(num) = [10, 20, 30]
-expr temps.reverse().join(",")
+expr temps.Reverse().Join(",")
 want text "30,20,10"
 
 == slice
 env temps: list(num) = [10, 20, 30, 40]
-expr temps.slice(1, 3).join(",")
+expr temps.Slice(1, 3).Join(",")
 want text "20,30"
 
 == join over text
 env names: list(text) = ["jog", "head"]
-expr names.join(" ")
+expr names.Join(" ")
 want text "jog head"
 
 == a gathered literal list
 env a: num = 1
 env b: num = 2
-expr [a, b, a + b].join("-")
+expr [a, b, a + b].Join("-")
 want text "1-2-3"
 
 == sum over text refuses at compile
 env names: list(text) = ["a", "b"]
-expr names.sum()
+expr names.Sum()
 error needs a list of numbers
 
 == a mixed literal loses its element shape and refuses nothing at compile
-expr [1, "a"].sum()
+expr [1, "a"].Sum()
 want nil
 
 == the chain keeps the element shape
 env temps: list(num) = [30, 10]
-expr temps.sort().first() + 1
+expr temps.Sort().First() + 1
 want num 11
 
 == a list is one scalar short of the wire
 tier wire
 env temps: list(num) = [10, 20]
-expr temps.sort()
+expr temps.Sort()
 error one scalar
 
 == but a fold of one is wire-legal
 tier wire
 env temps: list(num) = [10, 20]
-expr temps.max() + 1
+expr temps.Max() + 1
 want num 21
 
 == indexing wants a number

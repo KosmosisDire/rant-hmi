@@ -2,196 +2,196 @@
 # methods. Trigonometry is degrees in, degrees out.
 
 == clamp inside
-expr clamp(5, 0, 10)
+expr Clamp(5, 0, 10)
 want num 5
 
 == clamp below
-expr clamp(-1, 0, 10)
+expr Clamp(-1, 0, 10)
 want num 0
 
 == clamp above
-expr clamp(15, 0, 10)
+expr Clamp(15, 0, 10)
 want num 10
 
 == clamp as a method
-expr (15).clamp(0, 10)
+expr (15).Clamp(0, 10)
 want num 10
 
 == mapRange
-expr mapRange(5, 0, 10, 0, 100)
+expr MapRange(5, 0, 10, 0, 100)
 want num 50
 
 == mapRange extrapolates
-expr mapRange(15, 0, 10, 0, 100)
+expr MapRange(15, 0, 10, 0, 100)
 want num 150
 
 == mapRange as a method takes the four bounds
-expr (5).mapRange(0, 10, 0, 100)
+expr (5).MapRange(0, 10, 0, 100)
 want num 50
 
 == a collapsed mapRange is unknown
-expr mapRange(5, 3, 3, 0, 100)
+expr MapRange(5, 3, 3, 0, 100)
 want nil
 
 == roundTo
-expr roundTo(3.14159, 2)
+expr RoundTo(3.14159, 2)
 want num 3.14
 
 == lerp
-expr lerp(0, 10, 0.5)
+expr Lerp(0, 10, 0.5)
 want num 5
 
 == abs
-expr abs(-3)
+expr Abs(-3)
 want num 3
 
 == round half away from zero
-expr round(2.5)
+expr Round(2.5)
 want num 3
 
 == floor
-expr floor(2.9)
+expr Floor(2.9)
 want num 2
 
 == ceil
-expr ceil(2.1)
+expr Ceil(2.1)
 want num 3
 
 == floor as a method
-expr (2.9).floor()
+expr (2.9).Floor()
 want num 2
 
 == ceil as a method
-expr (2.1).ceil()
+expr (2.1).Ceil()
 want num 3
 
 == abs as a method
-expr (-3).abs()
+expr (-3).Abs()
 want num 3
 
 == round as a method takes a decimal count
-expr (3.14159).round(2)
+expr (3.14159).Round(2)
 want num 3.14
 
 == sign of a negative
-expr (-7).sign()
+expr (-7).Sign()
 want num -1
 
 == sqrt
-expr sqrt(9)
+expr Sqrt(9)
 want num 3
 
 == sqrt of a negative is unknown
-expr sqrt(-1)
+expr Sqrt(-1)
 want nil
 
 == pow
-expr pow(2, 10)
+expr Pow(2, 10)
 want num 1024
 
 == min
-expr min(3, 7)
+expr Min(3, 7)
 want num 3
 
 == max
-expr max(3, 7)
+expr Max(3, 7)
 want num 7
 
 == sin in degrees
-expr sin(90)
+expr Sin(90)
 want num 1
 
 == cos in degrees
-expr cos(0)
+expr Cos(0)
 want num 1
 
 == tan in degrees
-expr tan(45)
+expr Tan(45)
 want num 1
 
 == asin answers degrees
-expr asin(1)
+expr Asin(1)
 want num 90
 
 == asin outside its domain is unknown
-expr asin(2)
+expr Asin(2)
 want nil
 
 == acos answers degrees
-expr acos(1)
+expr Acos(1)
 want num 0
 
 == atan2 answers degrees
-expr atan2(1, 0)
+expr Atan2(1, 0)
 want num 90
 
 == fmtDuration seconds
-expr fmtDuration(42)
+expr FmtDuration(42)
 want text "42s"
 
 == fmtDuration minutes
-expr fmtDuration(90)
+expr FmtDuration(90)
 want text "1m 30s"
 
 == fmtDuration hours
-expr fmtDuration(3700)
+expr FmtDuration(3700)
 want text "1h 1m"
 
 == fmtDuration negative
-expr fmtDuration(-5)
+expr FmtDuration(-5)
 want text "-5s"
 
 == not is a method on bool
 env on: bool = false
-expr on.not()
+expr on.Not()
 want bool true
 
 == pick chooses by the receiver
 env on: bool = true
-expr on.pick(10, 20)
+expr on.Pick(10, 20)
 want num 10
 
 == pick the other way
 env on: bool = false
-expr on.pick(10, 20)
+expr on.Pick(10, 20)
 want num 20
 
 == pick carries any shape
 env on: bool = true
-expr on.pick("a", "b")
+expr on.Pick("a", "b")
 want text "a"
 
 == bool int
 env on: bool = true
-expr on.int()
+expr on.Int()
 want num 1
 
 == toFixed refuses on the wire but int does not
 tier wire
 env on: bool = true
-expr int(on)
+expr Int(on)
 want num 1
 
 == fmtDuration is display vocabulary
 tier wire
-expr fmtDuration(90)
+expr FmtDuration(90)
 error display vocabulary
 
 == jet is display vocabulary
 tier wire
-expr jet(0.5)
+expr Jet(0.5)
 error display vocabulary
 
 == clamp01 is not a scalar builtin
-expr clamp01(0.5)
+expr Clamp01(0.5)
 error unknown function
 
 == measure is not a scalar builtin
-expr measure("x", 16)
+expr Measure("x", 16)
 error unknown function
 
 == anchor is not a scalar builtin
-expr anchor(0.5, 0.5)
+expr Anchor(0.5, 0.5)
 error unknown function
 
 == an unknown function refuses by name
@@ -199,9 +199,9 @@ expr frobnicate(1)
 error unknown function 'frobnicate'
 
 == the arity refusal names the whole legal range
-expr rgb(1, 0, 0, 1, 1)
-error rgb takes 3 or 4 arguments
+expr Rgb(1, 0, 0, 1, 1)
+error Rgb takes 3 or 4 arguments
 
 == clamp arity
-expr clamp(1, 2)
-error clamp takes 3 arguments
+expr Clamp(1, 2)
+error Clamp takes 3 arguments

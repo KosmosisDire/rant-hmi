@@ -334,7 +334,7 @@ void test_rename() {
     CHECK(global_named(d, "flow") == nullptr);
     /* the slot expression, the move destination and the step expression all followed
        (the slots object is a SlotMap role: every string leaf is an expression) */
-    CHECK(labelled(d, "Flow")["slots"]["value"] == "flowRate.round(1)");
+    CHECK(labelled(d, "Flow")["slots"]["value"] == "flowRate.Round(1)");
     CHECK(labelled(d, "History")["slots"]["value"] == "flowRate");
     CHECK(labelled(d, "Reset")["flows"][0]["do"][1]["to"]["local"] == "flowRate");
     CHECK((*d.node(step))["from"]["expr"] == "flowRate * 2 + flowRate");
@@ -560,7 +560,7 @@ void test_expr_uses() {
     CHECK(!expr_uses("\"flow\"", "flow"));        /* a string is not an identifier */
     CHECK(expr_uses("flowing + flow", "flow"));
     CHECK(!expr_uses("flowing", "flow"));
-    CHECK(expr_uses("clamp(flow, 0, 1)", "flow"));
+    CHECK(expr_uses("Clamp(flow, 0, 1)", "flow"));
     /* the scan is THE LEXER's: what it owns whole is not an identifier, so a mesh
        path, a number's exponent and a color literal keep their spelling however a
        variable is named */
@@ -817,11 +817,11 @@ void test_tokens() {
        comparison could never have handled */
     const uint64_t body_id = id_of(named_frame(d, "Lamps"));
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", body_id}, {"key", "attrs"},
-                             {"value", Json{{"surface", "true.pick($pane, $ink)"}}}}}, err),
+                             {"value", Json{{"surface", "true.Pick($pane, $ink)"}}}}}, err),
               err);
     CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", id_of(*token_named(d, "pane"))},
                              {"name", "shell"}}}, err), err);
-    CHECK((*d.node(body_id))["attrs"]["surface"] == "true.pick($shell, $ink)");
+    CHECK((*d.node(body_id))["attrs"]["surface"] == "true.Pick($shell, $ink)");
 
     /* collisions and invalid names are refused; a hyphen is a legal token name */
     CHECK(!apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "alarm"}}}, err));

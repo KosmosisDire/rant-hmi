@@ -7,79 +7,79 @@ want text "hello"
 
 == length is a method
 env note: text = "ready"
-expr note.length()
+expr note.Length()
 want num 5
 
 == length is wire-legal
 tier wire
 env note: text = "ready"
-expr note.length()
+expr note.Length()
 want num 5
 
 == upper
-expr "Mixed Case".upper()
+expr "Mixed Case".Upper()
 want text "MIXED CASE"
 
 == lower
-expr "Mixed Case".lower()
+expr "Mixed Case".Lower()
 want text "mixed case"
 
 == title
-expr "the jog head".title()
+expr "the jog head".Title()
 want text "The Jog Head"
 
 == trim
-expr "  padded  ".trim()
+expr "  padded  ".Trim()
 want text "padded"
 
 == slice
-expr "abcdef".slice(1, 4)
+expr "abcdef".Slice(1, 4)
 want text "bcd"
 
 == slice with negative indexes counts from the end
-expr "abcdef".slice(-3, -1)
+expr "abcdef".Slice(-3, -1)
 want text "de"
 
 == slice collapsed range is empty
-expr "abcdef".slice(4, 2)
+expr "abcdef".Slice(4, 2)
 want text ""
 
 == startsWith
-expr "gauge_1".startsWith("gauge")
+expr "gauge_1".StartsWith("gauge")
 want bool true
 
 == endsWith
-expr "gauge_1".endsWith("_1")
+expr "gauge_1".EndsWith("_1")
 want bool true
 
 == contains
-expr "the jog head".contains("jog")
+expr "the jog head".Contains("jog")
 want bool true
 
 == contains misses
-expr "the jog head".contains("axis")
+expr "the jog head".Contains("axis")
 want bool false
 
 == predicates are wire-legal
 tier wire
 env note: text = "E42 overtravel"
-expr note.startsWith("E42")
+expr note.StartsWith("E42")
 want bool true
 
 == replace
-expr "a-b-c".replace("-", "+")
+expr "a-b-c".Replace("-", "+")
 want text "a+b+c"
 
 == padStart
-expr "7".padStart(3, "0")
+expr "7".PadStart(3, "0")
 want text "007"
 
 == split and join
-expr "a,b,c".split(",").join("|")
+expr "a,b,c".Split(",").Join("|")
 want text "a|b|c"
 
 == split counts pieces
-expr "a,b,c".split(",").length()
+expr "a,b,c".Split(",").Length()
 want num 3
 
 == concatenation joins text
@@ -95,39 +95,39 @@ expr "is " + true
 want text "is true"
 
 == toFixed
-expr (3.14159).toFixed(2)
+expr (3.14159).ToFixed(2)
 want text "3.14"
 
 == str of a number
-expr str(12.5)
+expr Str(12.5)
 want text "12.5"
 
 == str of text passes through
-expr str("x")
+expr Str("x")
 want text "x"
 
 == num parses text
-expr num("12.5")
+expr Num("12.5")
 want num 12.5
 
 == num of unparseable text is unknown
-expr num("reading")
+expr Num("reading")
 want nil
 
 == int truncates toward zero
-expr int(3.9)
+expr Int(3.9)
 want num 3
 
 == int truncates negative toward zero
-expr int(-3.9)
+expr Int(-3.9)
 want num -3
 
 == int of a bool
-expr int(true)
+expr Int(true)
 want num 1
 
 == int parses text
-expr int("42.7")
+expr Int("42.7")
 want num 42
 
 == concatenation is display vocabulary
@@ -139,10 +139,10 @@ error display vocabulary
 == upper is display vocabulary
 tier wire
 env note: text = "x"
-expr note.upper()
+expr note.Upper()
 error display vocabulary
 
 == toFixed is display vocabulary
 tier wire
-expr (1.5).toFixed(1)
+expr (1.5).ToFixed(1)
 error display vocabulary

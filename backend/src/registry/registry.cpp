@@ -97,10 +97,10 @@ Json interact(const char* primitive, Json params, bool bubbles = true) {
  * inscribed circle — so a thickness reads as the fraction of the radius it has always
  * been. */
 Str dial_x(const Str& angle, const Str& radius) {
-    return "0.5 + 0.5 * (" + radius + ") * sin(" + angle + ")";
+    return "0.5 + 0.5 * (" + radius + ") * Sin(" + angle + ")";
 }
 Str dial_y(const Str& angle, const Str& radius) {
-    return "0.5 - 0.5 * (" + radius + ") * cos(" + angle + ")";
+    return "0.5 - 0.5 * (" + radius + ") * Cos(" + angle + ")";
 }
 
 Json anchor(const Str& x, const Str& y) { return Json{{"x", x}, {"y", y}}; }
@@ -118,7 +118,7 @@ Json arc_to(const Str& x, const Str& y, const Str& radius, const Str& large,
  * collapses to zero area and paints nothing, which is exactly the old rule that a fill
  * shrinks continuously to nothing. */
 Json sector(const Str& a0, const Str& a1, const Str& r_out, const Str& r_in) {
-    const Str large = "abs((" + a1 + ") - (" + a0 + ")) > 180";
+    const Str large = "Abs((" + a1 + ") - (" + a0 + ")) > 180";
     return Json::array({
         anchor(dial_x(a0, r_out), dial_y(a0, r_out)),
         arc_to(dial_x(a1, r_out), dial_y(a1, r_out), "0.5 * (" + r_out + ")", large, "1"),
@@ -336,7 +336,7 @@ Json component(const char* name, int design_w, int design_h, Json locals, Json e
 }
 
 /* the 0..1 fraction of a value in its min..max range: what a bar or a dial sweeps */
-const char* kFraction = "clamp01((value - min) / (max - min))";
+const char* kFraction = "Clamp01((value - min) / (max - min))";
 
 /* ---- the built-in components ---- */
 
@@ -408,7 +408,7 @@ Json toggle_component() {
                                     {"originY", "0.5"},
                                     /* the track shows BOTH states, so it owns both
                                        colours: `fillColor` is what it wears when on */
-                                    {"surface", "value.pick(fillColor, trackColor)"},
+                                    {"surface", "value.Pick(fillColor, trackColor)"},
                                     {"radius", "999"}},
                                Json::array({
                                    /* the knob is placed, not laid out: its centre slides
@@ -420,7 +420,7 @@ Json toggle_component() {
                                                    {"aspect", "1"},
                                                    {"h", "0.84"},
                                                    {"top", "0.5"},
-                                                   {"left", "value.pick(0.75, 0.25)"},
+                                                   {"left", "value.Pick(0.75, 0.25)"},
                                                    {"originX", "0.5"},
                                                    {"originY", "0.5"}}),
                                         Json::array({slot("handleColor", "color", "$handle",
@@ -460,7 +460,7 @@ Json linear_scale() {
                                Json{{"repeat", "divisions"},
                                     {"show", "labels"},
                                     {"text", "(min + (max - min) * repeat.fraction)"
-                                             ".toFixed(decimals)"},
+                                             ".ToFixed(decimals)"},
                                     {"color", "$ink-muted"},
                                     {"size", "9"},
                                     {"align", "'center'"},
@@ -510,7 +510,7 @@ Json slider_component() {
                                     {"left", "0"},
                                     {"top", "0"},
                                     {"w", "1"},
-                                    {"h", "scale.shown.pick(0.7, 1)"}},
+                                    {"h", "scale.shown.Pick(0.7, 1)"}},
                                Json::array({
                                    /* the fill IS the handle: one bar whose leading edge is
                                       the value */
@@ -522,14 +522,14 @@ Json slider_component() {
                                               {"w", fraction},
                                               {"h", "1"}}),
                                    text("headIn",
-                                        with(head, Json{{"show", "(text != '').pick(" +
+                                        with(head, Json{{"show", "(text != '').Pick(" +
                                                                      fraction + " > 0.3, false)"},
                                                         {"text", "text"},
                                                         {"align", "'end'"},
                                                         {"left", fraction + " - 0.02"},
                                                         {"originX", "1"}})),
                                    text("headOut",
-                                        with(head, Json{{"show", "(text != '').pick(" +
+                                        with(head, Json{{"show", "(text != '').Pick(" +
                                                                      fraction + " <= 0.3, false)"},
                                                         {"text", "text"},
                                                         {"align", "'start'"},
@@ -574,7 +574,7 @@ Json readout_component() {
                        property it displays would collide with it. The value keeps the left
                        two thirds and reads to its right edge; the units answer from just
                        past it — the classic value-unit pair, with no row to negotiate. */
-                    owns(text("reading", Json{{"text", "value.toFixed(decimals)"},
+                    owns(text("reading", Json{{"text", "value.ToFixed(decimals)"},
                                               {"color", "textColor"},
                                               {"size", "textSize"},
                                               {"bold", "true"},
@@ -630,8 +630,8 @@ Json trend_component() {
                 box_attrs(),
                 Json::array({
                     owns(path("plot", Json{{"points",
-                                            "history.map((v, i) => anchor("
-                                            "i / max(history.length() - 1, 1), "
+                                            "history.Map((v, i) => Anchor("
+                                            "i / Max(history.Length() - 1, 1), "
                                             "1 - (v - min) / (max - min)))"},
                                            {"stroke", "fillColor"},
                                            {"strokeW", "2"}},
@@ -763,7 +763,7 @@ Json radial_scale(const Str& outer, const char* len, bool shown, bool labels_out
                                Json{{"repeat", "divisions"},
                                     {"show", "labels"},
                                     {"text", "(min + (max - min) * repeat.fraction)"
-                                             ".toFixed(decimals)"},
+                                             ".ToFixed(decimals)"},
                                     {"color", "$ink-muted"},
                                     {"size", "9"},
                                     {"align", "'center'"},
@@ -801,7 +801,7 @@ Json knob_component() {
     /* the face keeps clear of the arc and, when the scale shows, of its marks too: one
        expression over the arc's own thickness, read by address because the thickness
        belongs to the arc that draws it */
-    const Str face = "(1 - dial.arc.thickness * 2 - 0.12) * dial.scale.shown.pick(0.74, 1)";
+    const Str face = "(1 - dial.arc.thickness * 2 - 0.12) * dial.scale.shown.Pick(0.74, 1)";
     return component("Knob", 176, 198,
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
@@ -820,9 +820,9 @@ Json knob_component() {
                        carries the drag, so the whole face turns rather than just the arc.
                        It cedes the bottom strip to the label only when there is one. */
                     frame("dial", Json{{"aspect", "1"},
-                                       {"h", "(label.text != '').pick(0.78, 0.94)"},
+                                       {"h", "(label.text != '').Pick(0.78, 0.94)"},
                                        {"left", "0.5"},
-                                       {"top", "(label.text != '').pick(0.44, 0.5)"},
+                                       {"top", "(label.text != '').Pick(0.44, 0.5)"},
                                        {"originX", "0.5"},
                                        {"originY", "0.5"}},
                           Json::array({
@@ -897,9 +897,9 @@ Json radial_slider_component() {
                     /* no handle: the fill's leading edge IS the value, exactly as on the
                        linear bar */
                     frame("dial", Json{{"aspect", "1"},
-                                       {"h", "(label.text != '').pick(0.78, 0.94)"},
+                                       {"h", "(label.text != '').Pick(0.78, 0.94)"},
                                        {"left", "0.5"},
-                                       {"top", "(label.text != '').pick(0.44, 0.5)"},
+                                       {"top", "(label.text != '').Pick(0.44, 0.5)"},
                                        {"originX", "0.5"},
                                        {"originY", "0.5"}},
                           Json::array({
@@ -945,9 +945,9 @@ Json gauge_component() {
                     /* read-only, so no interact on the dial: the tap-to-read press rides
                        the whole box, exactly like a Readout */
                     frame("dial", Json{{"aspect", "1"},
-                                       {"h", "(label.text != '').pick(0.78, 0.94)"},
+                                       {"h", "(label.text != '').Pick(0.78, 0.94)"},
                                        {"left", "0.5"},
-                                       {"top", "(label.text != '').pick(0.44, 0.5)"},
+                                       {"top", "(label.text != '').Pick(0.44, 0.5)"},
                                        {"originX", "0.5"},
                                        {"originY", "0.5"}},
                           Json::array({
@@ -985,7 +985,7 @@ Json selector_component() {
      * -1 of a value not in the list clamped to the first detent rather than swinging
      * below the sweep */
     const Str frac =
-        "max(options.indexOf(value), 0) / max(options.length() - 1, 1)";
+        "Max(options.IndexOf(value), 0) / Max(options.Length() - 1, 1)";
     const Str angle = "startAngle + " + frac + " * sweepAngle";
     return component("Selector", 176, 176,
                 compose_slots(tile_base(), {
@@ -1022,7 +1022,7 @@ Json selector_component() {
                                  by its own copy's fraction, its NAME beside it by index —
                                  the list indexing the old resolver cells could never do */
                               frame("detent",
-                                    Json{{"repeat", "options.length()"},
+                                    Json{{"repeat", "options.Length()"},
                                          {"surface", "$scale"},
                                          {"w", "0.02"},
                                          {"h", "0.08"},
@@ -1035,7 +1035,7 @@ Json selector_component() {
                                          {"rotate", "startAngle + repeat.fraction * "
                                                     "sweepAngle"}}),
                               text("names",
-                                   Json{{"repeat", "options.length()"},
+                                   Json{{"repeat", "options.Length()"},
                                         {"text", "options[repeat.index]"},
                                         {"color", "$ink-muted"},
                                         {"size", "10"},

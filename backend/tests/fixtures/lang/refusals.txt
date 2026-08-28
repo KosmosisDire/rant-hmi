@@ -12,8 +12,8 @@ error did you mean 'upper'
 
 == a near miss suggests the neighbour
 env setpoint: num = 1
-expr setpoint.Round(1)
-error did you mean 'round'
+expr setpoint.round(1)
+error did you mean 'Round'
 
 == an unknown method on a known shape
 env setpoint: num = 1
@@ -22,12 +22,12 @@ error has no method 'launch'
 
 == a no-argument method still demands parentheses
 env note: text = "x"
-expr note.length
+expr note.Length
 error is a method
 
 == a method demands parentheses
 env note: text = "x"
-expr note.trim
+expr note.Trim
 error is a method
 
 == a transition is not an expression
@@ -42,13 +42,13 @@ error the value stays true
 
 == method arity is checked
 env note: text = "x"
-expr note.slice(1)
-error slice takes 2 arguments
+expr note.Slice(1)
+error Slice takes 2 arguments
 
 == method argument shapes are checked
 env note: text = "x"
-expr note.slice("a", 2)
-error slice wants num
+expr note.Slice("a", 2)
+error Slice wants num
 
 == assignment is not an expression
 env setpoint: num = 1
@@ -89,7 +89,7 @@ error 'widget' is spelled 'this' now
 
 == a lambda is legal only under an iterating method
 env temps: list(num) = [1]
-expr temps.contains(v => v)
+expr temps.Contains(v => v)
 error unknown name 'v'
 
 == a bare lambda dies on its name

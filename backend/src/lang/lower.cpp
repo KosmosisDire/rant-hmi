@@ -224,7 +224,7 @@ class Lower {
         /* a Member the checker resolved past Load: is / iterate / a table method */
         walk(expr.a);
         if (mark.op == Note::Op::IsVariant) {
-            site("is", expr.at);
+            site("Is", expr.at);
             emit(OpCode::Const, module_.add_constant(Value::enumeration(
                                     mark.variant, mark.variant_type)));
             pushed();

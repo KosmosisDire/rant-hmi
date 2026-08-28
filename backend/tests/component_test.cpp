@@ -144,17 +144,17 @@ void test_template_expr() {
              "LOAD(slot:value) JMP_NIL(3) JMP(4) CONST(0.0)");
 
     /* the method/builtin encodings the view executes */
-    CHECK_EQ(lower("value.pick(fillColor, trackColor)", scope),
+    CHECK_EQ(lower("value.Pick(fillColor, trackColor)", scope),
              "LOAD(slot:value) LOAD(slot:fillColor) LOAD(slot:trackColor) "
              "METHOD(BOOL_PICK,2)");
-    CHECK_EQ(lower("value.toFixed(decimals)", scope),
+    CHECK_EQ(lower("value.ToFixed(decimals)", scope),
              "LOAD(slot:value) LOAD(slot:decimals) METHOD(NUM_TO_FIXED,1)");
-    CHECK_EQ(lower("clamp01((value - min) / (max - min))", scope),
+    CHECK_EQ(lower("Clamp01((value - min) / (max - min))", scope),
              "LOAD(slot:value) LOAD(slot:min) SUB LOAD(slot:max) LOAD(slot:min) SUB "
              "DIV CONST(0.0) CALL(MAX,2) CONST(1.0) CALL(MIN,2)");
-    CHECK_EQ(lower("clamp(value, 0, 100)", scope),
+    CHECK_EQ(lower("Clamp(value, 0, 100)", scope),
              "LOAD(slot:value) CONST(0.0) CALL(MAX,2) CONST(100.0) CALL(MIN,2)");
-    CHECK_EQ(lower("min(value, 10)", scope),
+    CHECK_EQ(lower("Min(value, 10)", scope),
              "LOAD(slot:value) CONST(10.0) CALL(MIN,2)");
 
     /* `c ? a : b` is sugar over the pick `.pick()` already lowered to, so the two
@@ -162,7 +162,7 @@ void test_template_expr() {
     CHECK_EQ(lower("value > 0 ? fillColor : trackColor", scope),
              "LOAD(slot:value) CONST(0.0) GT LOAD(slot:fillColor) "
              "LOAD(slot:trackColor) METHOD(BOOL_PICK,2)");
-    CHECK_EQ(lower("(value > 0).pick(fillColor, trackColor)", scope),
+    CHECK_EQ(lower("(value > 0).Pick(fillColor, trackColor)", scope),
              lower("value > 0 ? fillColor : trackColor", scope));
     /* right-associative: the second conditional is the FALSE arm of the first */
     CHECK_EQ(lower("value > 2 ? 'hi' : value > 1 ? 'mid' : 'lo'", scope),
@@ -179,23 +179,23 @@ void test_template_expr() {
        Iterate instruction, and a parameter reference is a LoadX of the loop's
        per-element bindings (rendered ARG) — element then index, in declaration
        order, the same registers the scalar VM seeds */
-    CHECK_EQ(lower("options.map(v => v)", scope),
+    CHECK_EQ(lower("options.Map(v => v)", scope),
              "LOAD(slot:options) ITERATE[MAP]{ARG(0)}");
-    CHECK_EQ(lower("options.map((v, i) => i)", scope),
+    CHECK_EQ(lower("options.Map((v, i) => i)", scope),
              "LOAD(slot:options) ITERATE[MAP]{ARG(1)}");
     /* a bare arrow outside an iterating method is still nothing */
     CHECK(refuses("value => value", scope, "unexpected"));
-    CHECK_EQ(lower("pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) CALL(POW,2)");
-    CHECK_EQ(lower("floor(value)", scope), "LOAD(slot:value) CALL(FLOOR,1)");
+    CHECK_EQ(lower("Pow(value, 2)", scope), "LOAD(slot:value) CONST(2.0) CALL(POW,2)");
+    CHECK_EQ(lower("Floor(value)", scope), "LOAD(slot:value) CALL(FLOOR,1)");
 
     /* the cell-addressing builtins are gone whole: the sampling ring became an ordinary
        list PROPERTY and the option resolvers ordinary list arithmetic, so every one of
        these refusals teaches the spelling that replaced it */
     CHECK(refuses("hist(value)", scope, "read the list slot itself"));
-    CHECK(refuses("optcount(options)", scope, "options.length"));
+    CHECK(refuses("optcount(options)", scope, "options.Length"));
     CHECK(refuses("optnames(options)", scope, "the list itself"));
-    CHECK(refuses("optfrac(value, options)", scope, "options.indexOf(value)"));
-    CHECK(refuses("variants(options)", scope, "reads off an enum value"));
+    CHECK(refuses("optfrac(value, options)", scope, "options.IndexOf(value)"));
+    CHECK(refuses("Variants(options)", scope, "reads off an enum value"));
 
     /* unknown names and fields are errors, not silent Nil */
     CHECK(refuses("nope", scope, "unknown name 'nope'"));
@@ -210,11 +210,11 @@ void test_template_expr() {
     /* vocabulary with no view encoding is still refused BY NAME, tier explained -- the
        tonemaps and color(text) stay refused (out of scope: spec 6.2), and so does a
        METHOD-form mapRange (only the free function gained a view lowering, below) */
-    CHECK(refuses("viridis(value)", scope, "no encoding in the view"));
-    CHECK(refuses("jet(value)", scope, "no encoding in the view"));
-    CHECK(refuses("color('#fff')", scope, "no encoding in the view"));
-    CHECK(refuses("text.upper()", scope, "no encoding in the view"));
-    CHECK(refuses("value.mapRange(0, 1, 0, 100)", scope, "no encoding in the view"));
+    CHECK(refuses("Viridis(value)", scope, "no encoding in the view"));
+    CHECK(refuses("Jet(value)", scope, "no encoding in the view"));
+    CHECK(refuses("Color('#fff')", scope, "no encoding in the view"));
+    CHECK(refuses("text.Upper()", scope, "no encoding in the view"));
+    CHECK(refuses("value.MapRange(0, 1, 0, 100)", scope, "no encoding in the view"));
     CHECK_EQ(lower("[1, 2]", scope), "CONST(1.0) CONST(2.0) MAKE_LIST(2)");
     CHECK_EQ(lower("options[0]", scope), "LOAD(slot:options) CONST(0.0) INDEX");
     CHECK(refuses("hopefully(value)", scope, "unknown function"));
@@ -242,31 +242,31 @@ void test_list_vocabulary() {
        exactly the scalar tier's spellings. The length family is receiver-blind:
        the untyped emitter picks the first namesake row's id (TEXT_LENGTH) and the
        interpreter answers text, list and map alike under it. */
-    CHECK_EQ(lower("options.length()", scope),
+    CHECK_EQ(lower("options.Length()", scope),
              "LOAD(slot:options) METHOD(TEXT_LENGTH,0)");
-    CHECK_EQ(lower("options.indexOf(value)", scope),
+    CHECK_EQ(lower("options.IndexOf(value)", scope),
              "LOAD(slot:options) LOAD(slot:value) METHOD(LIST_INDEX_OF,1)");
     /* a past is an ordinary LIST property now, so the aggregates are called on it */
-    CHECK_EQ(lower("history.max()", scope), "LOAD(slot:history) METHOD(LIST_MAX,0)");
-    CHECK_EQ(lower("history.min()", scope), "LOAD(slot:history) METHOD(LIST_MIN,0)");
-    CHECK_EQ(lower("history.sum()", scope), "LOAD(slot:history) METHOD(LIST_SUM,0)");
-    CHECK_EQ(lower("history.avg()", scope), "LOAD(slot:history) METHOD(LIST_AVG,0)");
-    CHECK(refuses("options.length", scope, "call it with parentheses"));
+    CHECK_EQ(lower("history.Max()", scope), "LOAD(slot:history) METHOD(LIST_MAX,0)");
+    CHECK_EQ(lower("history.Min()", scope), "LOAD(slot:history) METHOD(LIST_MIN,0)");
+    CHECK_EQ(lower("history.Sum()", scope), "LOAD(slot:history) METHOD(LIST_SUM,0)");
+    CHECK_EQ(lower("history.Avg()", scope), "LOAD(slot:history) METHOD(LIST_AVG,0)");
+    CHECK(refuses("options.Length", scope, "call it with parentheses"));
 
     /* the Selector's needle fraction, whole: what optfrac used to be, as arithmetic */
-    CHECK_EQ(lower("max(options.indexOf(value), 0) / max(options.length() - 1, 1)", scope),
+    CHECK_EQ(lower("Max(options.IndexOf(value), 0) / Max(options.Length() - 1, 1)", scope),
              "LOAD(slot:options) LOAD(slot:value) METHOD(LIST_INDEX_OF,1) CONST(0.0) "
              "CALL(MAX,2) LOAD(slot:options) METHOD(TEXT_LENGTH,0) CONST(1.0) SUB "
              "CONST(1.0) CALL(MAX,2) DIV");
 
     /* anchor() builds one point of a computed path */
-    CHECK_EQ(lower("anchor(0.5, value)", scope),
+    CHECK_EQ(lower("Anchor(0.5, value)", scope),
              "CONST(0.5) LOAD(slot:value) CALL(ANCHOR,2)");
 
     /* the Trend's whole plot: a map from its own history LIST to anchors, the seed of
        the no-privileged-renderer-paths acceptance test */
-    CHECK_EQ(lower("history.map((v, i) => anchor("
-                   "i / max(history.length() - 1, 1), "
+    CHECK_EQ(lower("history.Map((v, i) => Anchor("
+                   "i / Max(history.Length() - 1, 1), "
                    "1 - (v - min) / (max - min)))", scope),
              "LOAD(slot:history) ITERATE[MAP]{"
              "ARG(1) LOAD(slot:history) METHOD(TEXT_LENGTH,0) CONST(1.0) SUB "
@@ -275,30 +275,30 @@ void test_list_vocabulary() {
              "LOAD(slot:max) LOAD(slot:min) SUB DIV SUB CALL(ANCHOR,2)}");
 
     /* reduce carries its seed after the lambda, landing above the list on the stack */
-    CHECK_EQ(lower("options.reduce((acc, v) => acc + v, '')", scope),
+    CHECK_EQ(lower("options.Reduce((acc, v) => acc + v, '')", scope),
              "LOAD(slot:options) CONST(\"\") ITERATE[REDUCE]{ARG(0) ARG(1) ADD}");
-    CHECK_EQ(lower("options.reduce((acc, v, i) => acc + i, 0)", scope),
+    CHECK_EQ(lower("options.Reduce((acc, v, i) => acc + i, 0)", scope),
              "LOAD(slot:options) CONST(0.0) ITERATE[REDUCE]{ARG(0) ARG(2) ADD}");
-    CHECK_EQ(lower("options.filter(v => v != '').length()", scope),
+    CHECK_EQ(lower("options.Filter(v => v != '').Length()", scope),
              "LOAD(slot:options) ITERATE[FILTER]{ARG(0) CONST(\"\") NE} "
              "METHOD(TEXT_LENGTH,0)");
-    CHECK_EQ(lower("options.any(v => v == value)", scope),
+    CHECK_EQ(lower("options.Any(v => v == value)", scope),
              "LOAD(slot:options) ITERATE[ANY]{ARG(0) LOAD(slot:value) EQ}");
-    CHECK_EQ(lower("options.sortBy(v => v)", scope),
+    CHECK_EQ(lower("options.SortBy(v => v)", scope),
              "LOAD(slot:options) ITERATE[SORT_BY]{ARG(0)}");
 
     /* the refusals hold the scalar tier's lines, and teach */
-    CHECK(refuses("options.map(v => options.map(w => w))", scope,
+    CHECK(refuses("options.Map(v => options.Map(w => w))", scope,
                   "one level of iteration"));
-    CHECK(refuses("options.map((a, b, c) => a)", scope, "lambda parameter"));
-    CHECK(refuses("options.reduce(acc => acc, 0)", scope, "lambda parameter"));
-    CHECK(refuses("options.map((v, v) => v)", scope, "duplicate lambda parameter"));
-    CHECK(refuses("options.map(value => value)", scope, "shadows the property"));
-    CHECK(refuses("options.map(x => x)", scope, "cannot name a lambda parameter"));
-    CHECK(refuses("options.map(state => state)", scope, "cannot name a lambda parameter"));
-    CHECK(refuses("options.reduce((acc, v) => acc + v)", scope,
+    CHECK(refuses("options.Map((a, b, c) => a)", scope, "lambda parameter"));
+    CHECK(refuses("options.Reduce(acc => acc, 0)", scope, "lambda parameter"));
+    CHECK(refuses("options.Map((v, v) => v)", scope, "duplicate lambda parameter"));
+    CHECK(refuses("options.Map(value => value)", scope, "shadows the property"));
+    CHECK(refuses("options.Map(x => x)", scope, "cannot name a lambda parameter"));
+    CHECK(refuses("options.Map(state => state)", scope, "cannot name a lambda parameter"));
+    CHECK(refuses("options.Reduce((acc, v) => acc + v)", scope,
                   "reduce takes (lambda, start)"));
-    CHECK(refuses("options.map(v => v", scope, "expected ')'"));
+    CHECK(refuses("options.Map(v => v", scope, "expected ')'"));
 }
 
 /* The vocabulary this task adds (trig, the exposed numeric builtins, string building,
@@ -316,32 +316,32 @@ void test_new_vocabulary() {
                   "decimals", "options"});
 
     /* trigonometry: direct calls of the shared ids, degrees in and out */
-    CHECK_EQ(lower("sin(value)", scope), "LOAD(slot:value) CALL(SIN,1)");
-    CHECK_EQ(lower("cos(value)", scope), "LOAD(slot:value) CALL(COS,1)");
-    CHECK_EQ(lower("tan(value)", scope), "LOAD(slot:value) CALL(TAN,1)");
-    CHECK_EQ(lower("asin(value)", scope), "LOAD(slot:value) CALL(ASIN,1)");
-    CHECK_EQ(lower("acos(value)", scope), "LOAD(slot:value) CALL(ACOS,1)");
-    CHECK_EQ(lower("atan2(value, min)", scope),
+    CHECK_EQ(lower("Sin(value)", scope), "LOAD(slot:value) CALL(SIN,1)");
+    CHECK_EQ(lower("Cos(value)", scope), "LOAD(slot:value) CALL(COS,1)");
+    CHECK_EQ(lower("Tan(value)", scope), "LOAD(slot:value) CALL(TAN,1)");
+    CHECK_EQ(lower("Asin(value)", scope), "LOAD(slot:value) CALL(ASIN,1)");
+    CHECK_EQ(lower("Acos(value)", scope), "LOAD(slot:value) CALL(ACOS,1)");
+    CHECK_EQ(lower("Atan2(value, min)", scope),
              "LOAD(slot:value) LOAD(slot:min) CALL(ATAN2,2)");
 
     /* the view-only free spellings fold onto ids that already exist: sign onto the
        num.sign method, mod onto the Mod opcode `%` lowers to */
-    CHECK_EQ(lower("sign(value)", scope), "LOAD(slot:value) METHOD(NUM_SIGN,0)");
-    CHECK_EQ(lower("mod(value, 2)", scope), "LOAD(slot:value) CONST(2.0) MOD");
+    CHECK_EQ(lower("Sign(value)", scope), "LOAD(slot:value) METHOD(NUM_SIGN,0)");
+    CHECK_EQ(lower("Mod(value, 2)", scope), "LOAD(slot:value) CONST(2.0) MOD");
 
     /* mapRange/roundTo/lerp/hypot: bespoke folds onto arithmetic that already
        existed, each argument captured once and spliced as many times as the formula
        needs it (mapRange needs inLo and outLo twice, lerp needs its start twice,
        hypot needs each leg twice) */
-    CHECK_EQ(lower("mapRange(value, 10, 20, 100, 200)", scope),
+    CHECK_EQ(lower("MapRange(value, 10, 20, 100, 200)", scope),
              "CONST(100.0) LOAD(slot:value) CONST(10.0) SUB CONST(200.0) CONST(100.0) "
              "SUB MUL CONST(20.0) CONST(10.0) SUB DIV ADD");
-    CHECK_EQ(lower("roundTo(value, 2)", scope),
+    CHECK_EQ(lower("RoundTo(value, 2)", scope),
              "CONST(10.0) CONST(2.0) CALL(POW,2) LOAD(slot:value) MUL CALL(ROUND,1) "
              "CONST(10.0) CONST(2.0) CALL(POW,2) DIV");
-    CHECK_EQ(lower("lerp(min, max, value)", scope),
+    CHECK_EQ(lower("Lerp(min, max, value)", scope),
              "LOAD(slot:min) LOAD(slot:max) LOAD(slot:min) SUB LOAD(slot:value) MUL ADD");
-    CHECK_EQ(lower("hypot(value, min)", scope),
+    CHECK_EQ(lower("Hypot(value, min)", scope),
              "LOAD(slot:value) LOAD(slot:value) MUL LOAD(slot:min) LOAD(slot:min) MUL "
              "ADD CALL(SQRT,1)");
 
@@ -349,38 +349,38 @@ void test_new_vocabulary() {
        decides that at RUN time, since this tier tracks no shapes to decide it at
        compile), str() and measure() are direct calls */
     CHECK_EQ(lower("'x = ' + value", scope), "CONST(\"x = \") LOAD(slot:value) ADD");
-    CHECK_EQ(lower("str(value)", scope), "LOAD(slot:value) CALL(STR,1)");
-    CHECK_EQ(lower("measure(text, 14)", scope),
+    CHECK_EQ(lower("Str(value)", scope), "LOAD(slot:value) CALL(STR,1)");
+    CHECK_EQ(lower("Measure(text, 14)", scope),
              "LOAD(slot:text) CONST(14.0) CALL(MEASURE,2)");
 
     /* color arithmetic: the constructors take 3 or 4 arguments with argc riding the
        call (the builtin itself defaults a missing alpha to fully opaque), the
        accessors read BARE like the scalar tier's, alpha/mix are called */
-    CHECK_EQ(lower("rgb(1, 0, 0)", scope),
+    CHECK_EQ(lower("Rgb(1, 0, 0)", scope),
              "CONST(1.0) CONST(0.0) CONST(0.0) CALL(RGB,3)");
-    CHECK_EQ(lower("rgb(1, 0, 0, 0.5)", scope),
+    CHECK_EQ(lower("Rgb(1, 0, 0, 0.5)", scope),
              "CONST(1.0) CONST(0.0) CONST(0.0) CONST(0.5) CALL(RGB,4)");
-    CHECK_EQ(lower("hsv(120, 1, 1)", scope),
+    CHECK_EQ(lower("Hsv(120, 1, 1)", scope),
              "CONST(120.0) CONST(1.0) CONST(1.0) CALL(HSV,3)");
-    CHECK_EQ(lower("#ff0000.r()", scope), "CONST(\"#ff0000\") METHOD(COLOR_R,0)");
-    CHECK_EQ(lower("#ff0000.g()", scope), "CONST(\"#ff0000\") METHOD(COLOR_G,0)");
-    CHECK_EQ(lower("#ff0000.b()", scope), "CONST(\"#ff0000\") METHOD(COLOR_B,0)");
-    CHECK_EQ(lower("#ff0000.a()", scope), "CONST(\"#ff0000\") METHOD(COLOR_A,0)");
-    CHECK_EQ(lower("#ff0000.alpha(0.5)", scope),
+    CHECK_EQ(lower("#ff0000.R()", scope), "CONST(\"#ff0000\") METHOD(COLOR_R,0)");
+    CHECK_EQ(lower("#ff0000.G()", scope), "CONST(\"#ff0000\") METHOD(COLOR_G,0)");
+    CHECK_EQ(lower("#ff0000.B()", scope), "CONST(\"#ff0000\") METHOD(COLOR_B,0)");
+    CHECK_EQ(lower("#ff0000.A()", scope), "CONST(\"#ff0000\") METHOD(COLOR_A,0)");
+    CHECK_EQ(lower("#ff0000.Alpha(0.5)", scope),
              "CONST(\"#ff0000\") CONST(0.5) METHOD(COLOR_ALPHA,1)");
-    CHECK_EQ(lower("#ff0000.mix(#0000ff, 0.5)", scope),
+    CHECK_EQ(lower("#ff0000.Mix(#0000ff, 0.5)", scope),
              "CONST(\"#ff0000\") CONST(\"#0000ff\") CONST(0.5) METHOD(COLOR_MIX,2)");
-    CHECK(refuses("#ff0000.r", scope, "is a method"));
+    CHECK(refuses("#ff0000.R", scope, "is a method"));
     /* invert() is scalar/wire-tier color vocabulary; it stays out of the view (spec
        6.2 -- nothing in this task's fixed list asks for it) */
-    CHECK(refuses("#ff0000.invert()", scope, "no encoding in the view"));
+    CHECK(refuses("#ff0000.Invert()", scope, "no encoding in the view"));
 
     /* THE PROOF: trig plus concatenation computes SVG path data -- a needle from the
        tile center to the point 40 units out at 30 degrees (0 = up, clockwise; sin/cos
        themselves stay ordinary). Only the LOWERING is pinned: nothing executes it and
        checks the string it produces ("M 50 50 L 70.00 15.36") any more. */
-    CHECK_EQ(lower("'M 50 50 L ' + (50 + 40 * sin(value)).toFixed(2) + ' ' + "
-                   "(50 - 40 * cos(value)).toFixed(2)", scope),
+    CHECK_EQ(lower("'M 50 50 L ' + (50 + 40 * Sin(value)).ToFixed(2) + ' ' + "
+                   "(50 - 40 * Cos(value)).ToFixed(2)", scope),
              "CONST(\"M 50 50 L \") CONST(50.0) CONST(40.0) LOAD(slot:value) "
              "CALL(SIN,1) MUL ADD CONST(2.0) METHOD(NUM_TO_FIXED,1) ADD CONST(\" \") "
              "ADD CONST(50.0) CONST(40.0) LOAD(slot:value) CALL(COS,1) MUL SUB "
@@ -1510,7 +1510,7 @@ void test_timer_fields() {
     CHECK_EQ(lower("1 - cook.progress", scope),
              "CONST(1.0) LOAD(tmr:77:progress) SUB");
     /* ordinary postfix still applies above the field read */
-    CHECK_EQ(lower("cook.remaining.toFixed(1)", scope),
+    CHECK_EQ(lower("cook.remaining.ToFixed(1)", scope),
              "LOAD(tmr:77:remaining) CONST(1.0) METHOD(NUM_TO_FIXED,1)");
     CHECK(refuses("cook", scope, "read a field"));
     CHECK(refuses("cook.blah", scope, "unknown field 'cook.blah'"));

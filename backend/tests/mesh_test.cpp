@@ -458,10 +458,10 @@ int main() {
         {"name", "Hist"},
         /* aggregate mesh fields read off the ENTITY MIRRORS: the delivery lands in a
            retained slot and the expression reduces it like any list or map */
-        {"slots", Json{{"value", "@history.temps.max()"},
+        {"slots", Json{{"value", "@history.temps.Max()"},
                        {"reading",
-                        Json{{"decimals", "num(@history.extras.get(\"speed\"))"}}},
-                       {"units", Json{{"text", "@history.tags.join(\"/\")"}}}}},
+                        Json{{"decimals", "Num(@history.extras.Get(\"speed\"))"}}},
+                       {"units", Json{{"text", "@history.tags.Join(\"/\")"}}}}},
     };
 
     /* a BARE-TYPED topic: the anonymous value IS the entity, read bare */
@@ -615,7 +615,7 @@ int main() {
         const int hist_tags = cell_of(sched.program(), hist_id, "units.text");
         CHECK(hist_max >= 0 && hist_speed >= 0 && hist_tags >= 0);
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, hist_max) == 9.25; }),
-                  "temps.max() never arrived");
+                  "temps.Max() never arrived");
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, hist_speed) == 5.0; }),
                   "extras.speed never arrived");
         CHECK_MSG(run_until(sched, [&] { return text_at(sched, hist_tags) == "hot/cold"; }),

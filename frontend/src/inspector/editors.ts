@@ -40,7 +40,7 @@ export function valueEditor(
     return grid;
   }
   /* ... an OPTIONS slot's value edits in the instance panel's slot row, whose browse
-     (optionsSlotScope) offers every enum-typed value in reach as its .variants()
+     (optionsSlotScope) offers every enum-typed value in reach as its .Variants()
      read — so this editor needs no case for it */
   switch (shape) {
     case "bool": {

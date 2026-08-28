@@ -9,54 +9,54 @@
 
 #ifdef HMI_BUILTIN_ROW
 /* fn, enum id, min args, max args, (params), result, display_only, view, view_only */
-HMI_BUILTIN_ROW("clamp", Clamp, 3, 3, (Shape::Num, Shape::Num, Shape::Num), Num, false, "@", false)
+HMI_BUILTIN_ROW("Clamp", Clamp, 3, 3, (Shape::Num, Shape::Num, Shape::Num), Num, false, "@", false)
 /* mapRange/roundTo/lerp: pure arithmetic, so the view emitter folds each onto
  * the existing Add/Sub/Mul/Div and the Pow/Round calls (template_expr.cpp)
  * rather than gaining an id of its own -- "@" is the same bespoke marker
  * `clamp` uses
  */
-HMI_BUILTIN_ROW("mapRange", MapRange, 5, 5, (Shape::Num, Shape::Num, Shape::Num, Shape::Num, Shape::Num), Num, false, "@", false)
-HMI_BUILTIN_ROW("roundTo", RoundTo, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", false)
-HMI_BUILTIN_ROW("lerp", Lerp, 3, 3, (Shape::Num, Shape::Num, Shape::Num), Num, false, "@", false)
-HMI_BUILTIN_ROW("abs", Abs, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("round", Round, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("floor", Floor, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("ceil", Ceil, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("sqrt", Sqrt, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("pow", Pow, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("min", Min, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("max", Max, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("int", Int, 1, 1, (Shape::Unknown), Num, false, "=", false)
-HMI_BUILTIN_ROW("num", Num, 1, 1, (Shape::Unknown), Num, false, "", false)
+HMI_BUILTIN_ROW("MapRange", MapRange, 5, 5, (Shape::Num, Shape::Num, Shape::Num, Shape::Num, Shape::Num), Num, false, "@", false)
+HMI_BUILTIN_ROW("RoundTo", RoundTo, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", false)
+HMI_BUILTIN_ROW("Lerp", Lerp, 3, 3, (Shape::Num, Shape::Num, Shape::Num), Num, false, "@", false)
+HMI_BUILTIN_ROW("Abs", Abs, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Round", Round, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Floor", Floor, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Ceil", Ceil, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Sqrt", Sqrt, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Pow", Pow, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Min", Min, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Max", Max, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Int", Int, 1, 1, (Shape::Unknown), Num, false, "=", false)
+HMI_BUILTIN_ROW("Num", Num, 1, 1, (Shape::Unknown), Num, false, "", false)
 /* view-only: the template tier's saturating 0..1 fold, which the scalar language
- * spells clamp(x, 0, 1) -- the emitter folds it onto Max/Min the same way
+ * spells Clamp(x, 0, 1) -- the emitter folds it onto Max/Min the same way
  */
-HMI_BUILTIN_ROW("clamp01", None, 1, 1, (Shape::Num), Num, false, "@", true)
-HMI_BUILTIN_ROW("rgb", Rgb, 3, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Color, true, "=", false)
-HMI_BUILTIN_ROW("hsv", Hsv, 3, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Color, true, "=", false)
-HMI_BUILTIN_ROW("str", Str, 1, 1, (Shape::Unknown), Text, false, "=", false)
-HMI_BUILTIN_ROW("name", Name, 1, 1, (Shape::Unknown), Text, false, "", false)
-HMI_BUILTIN_ROW("fmtTime", FmtTime, 1, 1, (Shape::Num), Text, true, "", false)
-HMI_BUILTIN_ROW("fmtDuration", FmtDuration, 1, 1, (Shape::Num), Text, true, "", false)
-HMI_BUILTIN_ROW("color", Color, 1, 1, (Shape::Text), Color, true, "", false)
-HMI_BUILTIN_ROW("jet", Jet, 1, 1, (Shape::Num), Color, true, "", false)
-HMI_BUILTIN_ROW("hot", Hot, 1, 1, (Shape::Num), Color, true, "", false)
-HMI_BUILTIN_ROW("coolWarm", CoolWarm, 1, 1, (Shape::Num), Color, true, "", false)
-HMI_BUILTIN_ROW("viridis", Viridis, 1, 1, (Shape::Num), Color, true, "", false)
-HMI_BUILTIN_ROW("grayscale", Grayscale, 1, 1, (Shape::Num), Color, true, "", false)
-HMI_BUILTIN_ROW("values", Values, 1, 1, (Shape::Unknown), List, false, "", false)
-HMI_BUILTIN_ROW("keys", Keys, 1, 1, (Shape::Unknown), List, false, "", false)
-HMI_BUILTIN_ROW("invert", Invert, 1, 1, (Shape::Color), Color, true, "", false)
+HMI_BUILTIN_ROW("Clamp01", None, 1, 1, (Shape::Num), Num, false, "@", true)
+HMI_BUILTIN_ROW("Rgb", Rgb, 3, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Color, true, "=", false)
+HMI_BUILTIN_ROW("Hsv", Hsv, 3, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Color, true, "=", false)
+HMI_BUILTIN_ROW("Str", Str, 1, 1, (Shape::Unknown), Text, false, "=", false)
+HMI_BUILTIN_ROW("Name", Name, 1, 1, (Shape::Unknown), Text, false, "", false)
+HMI_BUILTIN_ROW("FmtTime", FmtTime, 1, 1, (Shape::Num), Text, true, "", false)
+HMI_BUILTIN_ROW("FmtDuration", FmtDuration, 1, 1, (Shape::Num), Text, true, "", false)
+HMI_BUILTIN_ROW("Color", Color, 1, 1, (Shape::Text), Color, true, "", false)
+HMI_BUILTIN_ROW("Jet", Jet, 1, 1, (Shape::Num), Color, true, "", false)
+HMI_BUILTIN_ROW("Hot", Hot, 1, 1, (Shape::Num), Color, true, "", false)
+HMI_BUILTIN_ROW("CoolWarm", CoolWarm, 1, 1, (Shape::Num), Color, true, "", false)
+HMI_BUILTIN_ROW("Viridis", Viridis, 1, 1, (Shape::Num), Color, true, "", false)
+HMI_BUILTIN_ROW("Grayscale", Grayscale, 1, 1, (Shape::Num), Color, true, "", false)
+HMI_BUILTIN_ROW("Values", Values, 1, 1, (Shape::Unknown), List, false, "", false)
+HMI_BUILTIN_ROW("Keys", Keys, 1, 1, (Shape::Unknown), List, false, "", false)
+HMI_BUILTIN_ROW("Invert", Invert, 1, 1, (Shape::Color), Color, true, "", false)
 /* ordinary trigonometry: degrees in and out on BOTH tiers, matching the
  * project-wide angle convention (degrees, 0 = up, clockwise) rather than
  * inventing a radians dialect nothing else in the document uses
  */
-HMI_BUILTIN_ROW("sin", Sin, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("cos", Cos, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("tan", Tan, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("asin", Asin, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("acos", Acos, 1, 1, (Shape::Num), Num, false, "=", false)
-HMI_BUILTIN_ROW("atan2", Atan2, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Sin", Sin, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Cos", Cos, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Tan", Tan, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Asin", Asin, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Acos", Acos, 1, 1, (Shape::Num), Num, false, "=", false)
+HMI_BUILTIN_ROW("Atan2", Atan2, 2, 2, (Shape::Num, Shape::Num), Num, false, "=", false)
 /* view-only free-function spellings the surface grammar offers beside the
  * methods: sign folds onto the NumSign method, mod onto the Mod opcode, hypot
  * onto Mul/Add and the Sqrt call -- each a bespoke lowering over ids that
@@ -64,15 +64,15 @@ HMI_BUILTIN_ROW("atan2", Atan2, 2, 2, (Shape::Num, Shape::Num), Num, false, "=",
  * view-only bespoke row: no scalar id exists, and view_only rows never reach
  * the dispatcher that would want one.
  */
-HMI_BUILTIN_ROW("sign", None, 1, 1, (Shape::Num), Num, false, "@", true)
-HMI_BUILTIN_ROW("mod", None, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", true)
-HMI_BUILTIN_ROW("hypot", None, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", true)
+HMI_BUILTIN_ROW("Sign", None, 1, 1, (Shape::Num), Num, false, "@", true)
+HMI_BUILTIN_ROW("Mod", None, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", true)
+HMI_BUILTIN_ROW("Hypot", None, 2, 2, (Shape::Num, Shape::Num), Num, false, "@", true)
 /* THE UNKNOWN TEST (spec 2.4): true when the value is not UNKNOWN. The one
  * place the language ASKS about Nil instead of propagating it — == cannot test
  * for it (an unknown comparison is unknown), so this is the honest spelling,
  * beside `??` for the default-value case. Wire-legal: a gate may guard on it.
  */
-HMI_BUILTIN_ROW("known", Known, 1, 1, (Shape::Unknown), Bool, false, "=", false)
+HMI_BUILTIN_ROW("Known", Known, 1, 1, (Shape::Unknown), Bool, false, "=", false)
 /* view-only WITH an id: the estimated rendered width of TEXT at SIZE, in
  * artboard units -- the same estimator the text renderer uses, so an author's
  * own layout maths agrees with what actually renders. No wire meaning and no
@@ -80,79 +80,79 @@ HMI_BUILTIN_ROW("known", Known, 1, 1, (Shape::Unknown), Bool, false, "=", false)
  * interpreter dispatches the id, and view_only keeps it out of the scalar
  * compiler, so a bug that routes it to the VM answers Nil.
  */
-HMI_BUILTIN_ROW("measure", Measure, 2, 2, (Shape::Text, Shape::Num), Num, true, "=", true)
+HMI_BUILTIN_ROW("Measure", Measure, 2, 2, (Shape::Text, Shape::Num), Num, true, "=", true)
 /* view-only WITH an id, like measure: one point of a computed path, in
  * fractions of the node's box — what a `points` attr's map produces per
  * sample. No wire meaning and no VM case (a machine has no boxes).
  */
-HMI_BUILTIN_ROW("anchor", Anchor, 2, 2, (Shape::Num, Shape::Num), Struct, true, "=", true)
+HMI_BUILTIN_ROW("Anchor", Anchor, 2, 2, (Shape::Num, Shape::Num), Struct, true, "=", true)
 #endif
 
 #ifdef HMI_METHOD_ROW
 /* receiver, name, enum id, args, (params), result, display_only, view */
-HMI_METHOD_ROW(Num, "round", NumRound, 1, (Shape::Num), Num, false, "")
-HMI_METHOD_ROW(Num, "floor", NumFloor, 0, (), Num, false, "")
-HMI_METHOD_ROW(Num, "ceil", NumCeil, 0, (), Num, false, "")
-HMI_METHOD_ROW(Num, "abs", NumAbs, 0, (), Num, false, "")
-HMI_METHOD_ROW(Num, "clamp", NumClamp, 2, (Shape::Num, Shape::Num), Num, false, "@")
-HMI_METHOD_ROW(Num, "mapRange", NumMapRange, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Num, false, "")
-HMI_METHOD_ROW(Num, "sign", NumSign, 0, (), Num, false, "")
-HMI_METHOD_ROW(Bool, "int", BoolInt, 0, (), Num, false, "")
-HMI_METHOD_ROW(Bool, "not", BoolNot, 0, (), Bool, false, "")
-HMI_METHOD_ROW(Bool, "pick", BoolPick, 2, (Shape::Unknown, Shape::Unknown), Unknown, false, "=")
-HMI_METHOD_ROW(Color, "r", ColorR, 0, (), Num, false, "=")
-HMI_METHOD_ROW(Color, "g", ColorG, 0, (), Num, false, "=")
-HMI_METHOD_ROW(Color, "b", ColorB, 0, (), Num, false, "=")
-HMI_METHOD_ROW(Color, "a", ColorA, 0, (), Num, false, "=")
-HMI_METHOD_ROW(Color, "alpha", ColorAlpha, 1, (Shape::Num), Color, true, "=")
-HMI_METHOD_ROW(Color, "mix", ColorMix, 2, (Shape::Color, Shape::Num), Color, true, "=")
-HMI_METHOD_ROW(Num, "toFixed", NumToFixed, 1, (Shape::Num), Text, true, "=")
+HMI_METHOD_ROW(Num, "Round", NumRound, 1, (Shape::Num), Num, false, "")
+HMI_METHOD_ROW(Num, "Floor", NumFloor, 0, (), Num, false, "")
+HMI_METHOD_ROW(Num, "Ceil", NumCeil, 0, (), Num, false, "")
+HMI_METHOD_ROW(Num, "Abs", NumAbs, 0, (), Num, false, "")
+HMI_METHOD_ROW(Num, "Clamp", NumClamp, 2, (Shape::Num, Shape::Num), Num, false, "@")
+HMI_METHOD_ROW(Num, "MapRange", NumMapRange, 4, (Shape::Num, Shape::Num, Shape::Num, Shape::Num), Num, false, "")
+HMI_METHOD_ROW(Num, "Sign", NumSign, 0, (), Num, false, "")
+HMI_METHOD_ROW(Bool, "Int", BoolInt, 0, (), Num, false, "")
+HMI_METHOD_ROW(Bool, "Not", BoolNot, 0, (), Bool, false, "")
+HMI_METHOD_ROW(Bool, "Pick", BoolPick, 2, (Shape::Unknown, Shape::Unknown), Unknown, false, "=")
+HMI_METHOD_ROW(Color, "R", ColorR, 0, (), Num, false, "=")
+HMI_METHOD_ROW(Color, "G", ColorG, 0, (), Num, false, "=")
+HMI_METHOD_ROW(Color, "B", ColorB, 0, (), Num, false, "=")
+HMI_METHOD_ROW(Color, "A", ColorA, 0, (), Num, false, "=")
+HMI_METHOD_ROW(Color, "Alpha", ColorAlpha, 1, (Shape::Num), Color, true, "=")
+HMI_METHOD_ROW(Color, "Mix", ColorMix, 2, (Shape::Color, Shape::Num), Color, true, "=")
+HMI_METHOD_ROW(Num, "ToFixed", NumToFixed, 1, (Shape::Num), Text, true, "=")
 /* text: the predicates and length are wire-legal (a gate may test an alarm
  * code); everything text-PRODUCING is formatting and stays display-side
  */
-HMI_METHOD_ROW(Text, "length", TextLength, 0, (), Num, false, "=")
-HMI_METHOD_ROW(Text, "upper", TextUpper, 0, (), Text, true, "")
-HMI_METHOD_ROW(Text, "lower", TextLower, 0, (), Text, true, "")
-HMI_METHOD_ROW(Text, "title", TextTitle, 0, (), Text, true, "")
-HMI_METHOD_ROW(Text, "trim", TextTrim, 0, (), Text, true, "")
-HMI_METHOD_ROW(Text, "slice", TextSlice, 2, (Shape::Num, Shape::Num), Text, true, "")
-HMI_METHOD_ROW(Text, "startsWith", TextStartsWith, 1, (Shape::Text), Bool, false, "")
-HMI_METHOD_ROW(Text, "endsWith", TextEndsWith, 1, (Shape::Text), Bool, false, "")
-HMI_METHOD_ROW(Text, "contains", TextContains, 1, (Shape::Text), Bool, false, "")
-HMI_METHOD_ROW(Text, "replace", TextReplace, 2, (Shape::Text, Shape::Text), Text, true, "")
-HMI_METHOD_ROW(Text, "padStart", TextPadStart, 2, (Shape::Num, Shape::Text), Text, true, "")
-HMI_METHOD_ROW(Enum, "int", EnumInt, 0, (), Num, false, "")
-HMI_METHOD_ROW(Enum, "name", EnumName, 0, (), Text, false, "")
+HMI_METHOD_ROW(Text, "Length", TextLength, 0, (), Num, false, "=")
+HMI_METHOD_ROW(Text, "Upper", TextUpper, 0, (), Text, true, "")
+HMI_METHOD_ROW(Text, "Lower", TextLower, 0, (), Text, true, "")
+HMI_METHOD_ROW(Text, "Title", TextTitle, 0, (), Text, true, "")
+HMI_METHOD_ROW(Text, "Trim", TextTrim, 0, (), Text, true, "")
+HMI_METHOD_ROW(Text, "Slice", TextSlice, 2, (Shape::Num, Shape::Num), Text, true, "")
+HMI_METHOD_ROW(Text, "StartsWith", TextStartsWith, 1, (Shape::Text), Bool, false, "")
+HMI_METHOD_ROW(Text, "EndsWith", TextEndsWith, 1, (Shape::Text), Bool, false, "")
+HMI_METHOD_ROW(Text, "Contains", TextContains, 1, (Shape::Text), Bool, false, "")
+HMI_METHOD_ROW(Text, "Replace", TextReplace, 2, (Shape::Text, Shape::Text), Text, true, "")
+HMI_METHOD_ROW(Text, "PadStart", TextPadStart, 2, (Shape::Num, Shape::Text), Text, true, "")
+HMI_METHOD_ROW(Enum, "Int", EnumInt, 0, (), Num, false, "")
+HMI_METHOD_ROW(Enum, "Name", EnumName, 0, (), Text, false, "")
 /* the VOCABULARY as a value: list(text) of the receiver's variant names. The
  * receiver's TYPE answers at COMPILE, so this folds to a constant list (no VM
  * case, the receiver's value is never read) and can never drift from the schema.
- * The options spelling — myMode.variants(), filterable like any list.
+ * The options spelling — myMode.Variants(), filterable like any list.
  */
-HMI_METHOD_ROW(Enum, "variants", EnumVariants, 0, (), List, false, "")
-HMI_METHOD_ROW(Text, "split", TextSplit, 1, (Shape::Text), List, true, "")
+HMI_METHOD_ROW(Enum, "Variants", EnumVariants, 0, (), List, false, "")
+HMI_METHOD_ROW(Text, "Split", TextSplit, 1, (Shape::Text), List, true, "")
 /* aggregates ride mid-expression on either tier (max over a list is a wire
  * value); the wire-result rule alone keeps a LIST from going to a machine.
  * length is receiver-blind in the view: the untyped emitter picks the first
  * namesake row's id and the view interpreter answers text, list and map alike
  * under any of the three, so all three rows carry "=".
  */
-HMI_METHOD_ROW(List, "length", ListLength, 0, (), Num, false, "=")
-HMI_METHOD_ROW(List, "first", ListFirst, 0, (), Unknown, false, "")
-HMI_METHOD_ROW(List, "last", ListLast, 0, (), Unknown, false, "")
-HMI_METHOD_ROW(List, "sum", ListSum, 0, (), Num, false, "=")
-HMI_METHOD_ROW(List, "avg", ListAvg, 0, (), Num, false, "=")
-HMI_METHOD_ROW(List, "max", ListMax, 0, (), Num, false, "=")
-HMI_METHOD_ROW(List, "min", ListMin, 0, (), Num, false, "=")
-HMI_METHOD_ROW(List, "join", ListJoin, 1, (Shape::Text), Text, true, "")
-HMI_METHOD_ROW(List, "sort", ListSort, 0, (), List, false, "")
-HMI_METHOD_ROW(List, "reverse", ListReverse, 0, (), List, false, "")
-HMI_METHOD_ROW(List, "slice", ListSlice, 2, (Shape::Num, Shape::Num), List, false, "")
-HMI_METHOD_ROW(List, "contains", ListContains, 1, (Shape::Unknown), Bool, false, "")
-HMI_METHOD_ROW(List, "indexOf", ListIndexOf, 1, (Shape::Unknown), Num, false, "=")
-HMI_METHOD_ROW(Map, "length", MapLength, 0, (), Num, false, "=")
-HMI_METHOD_ROW(Map, "keys", MapKeys, 0, (), List, false, "")
-HMI_METHOD_ROW(Map, "values", MapValues, 0, (), List, false, "")
-HMI_METHOD_ROW(Map, "has", MapHas, 1, (Shape::Text), Bool, false, "")
-HMI_METHOD_ROW(Map, "get", MapGet, 1, (Shape::Text), Unknown, false, "")
-HMI_METHOD_ROW(Color, "invert", ColorInvert, 0, (), Color, true, "")
+HMI_METHOD_ROW(List, "Length", ListLength, 0, (), Num, false, "=")
+HMI_METHOD_ROW(List, "First", ListFirst, 0, (), Unknown, false, "")
+HMI_METHOD_ROW(List, "Last", ListLast, 0, (), Unknown, false, "")
+HMI_METHOD_ROW(List, "Sum", ListSum, 0, (), Num, false, "=")
+HMI_METHOD_ROW(List, "Avg", ListAvg, 0, (), Num, false, "=")
+HMI_METHOD_ROW(List, "Max", ListMax, 0, (), Num, false, "=")
+HMI_METHOD_ROW(List, "Min", ListMin, 0, (), Num, false, "=")
+HMI_METHOD_ROW(List, "Join", ListJoin, 1, (Shape::Text), Text, true, "")
+HMI_METHOD_ROW(List, "Sort", ListSort, 0, (), List, false, "")
+HMI_METHOD_ROW(List, "Reverse", ListReverse, 0, (), List, false, "")
+HMI_METHOD_ROW(List, "Slice", ListSlice, 2, (Shape::Num, Shape::Num), List, false, "")
+HMI_METHOD_ROW(List, "Contains", ListContains, 1, (Shape::Unknown), Bool, false, "")
+HMI_METHOD_ROW(List, "IndexOf", ListIndexOf, 1, (Shape::Unknown), Num, false, "=")
+HMI_METHOD_ROW(Map, "Length", MapLength, 0, (), Num, false, "=")
+HMI_METHOD_ROW(Map, "Keys", MapKeys, 0, (), List, false, "")
+HMI_METHOD_ROW(Map, "Values", MapValues, 0, (), List, false, "")
+HMI_METHOD_ROW(Map, "Has", MapHas, 1, (Shape::Text), Bool, false, "")
+HMI_METHOD_ROW(Map, "Get", MapGet, 1, (Shape::Text), Unknown, false, "")
+HMI_METHOD_ROW(Color, "Invert", ColorInvert, 0, (), Color, true, "")
 #endif

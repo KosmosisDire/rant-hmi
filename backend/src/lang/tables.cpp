@@ -175,7 +175,7 @@ const std::vector<LangRow>& language_reference() {
         LangRow is_row;
         is_row.kind = "method";
         is_row.receiver = "enum";
-        is_row.name = "is";
+        is_row.name = "Is";
         is_row.min_args = is_row.max_args = 1;
         is_row.args[0] = "variant";
         is_row.result = "bool";
@@ -185,12 +185,12 @@ const std::vector<LangRow>& language_reference() {
            directly. Autocomplete still has to know they exist, and that the argument is
            a lambda rather than a value, so they are declared here. */
         struct IterRow { const char* name; const char* result; uint32_t args; };
-        for (const IterRow& iter : {IterRow{"map", "list", 1}, IterRow{"filter", "list", 1},
-                                    IterRow{"any", "bool", 1}, IterRow{"all", "bool", 1},
-                                    IterRow{"sortBy", "list", 1},
+        for (const IterRow& iter : {IterRow{"Map", "list", 1}, IterRow{"Filter", "list", 1},
+                                    IterRow{"Any", "bool", 1}, IterRow{"All", "bool", 1},
+                                    IterRow{"SortBy", "list", 1},
                                     /* the one two-argument form: the lambda, then the
                                        value the fold starts from */
-                                    IterRow{"reduce", "any", 2}}) {
+                                    IterRow{"Reduce", "any", 2}}) {
             LangRow row;
             row.kind = "method";
             row.receiver = "list";

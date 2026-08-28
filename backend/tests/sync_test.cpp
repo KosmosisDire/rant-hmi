@@ -702,7 +702,7 @@ int main() {
                             {"op", "insert"}, {"parent", mesh_page}, {"list", "children"},
                             {"node", {{"kind", "frame"},
                                       {"attrs", {{"w", "@tank.level"},
-                                                 {"h", "@tank.readings.length()"}}}}}}})}});
+                                                 {"h", "@tank.readings.Length()"}}}}}}})}});
             frames = pump(mesh_app, d, 1);
             const Json* placed = frame_of(frames, "ops_applied");
             CHECK(placed != nullptr);

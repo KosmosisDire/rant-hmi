@@ -296,7 +296,7 @@ Document Document::make_default() {
     Json readout = instance("Readout", "Flow",
                             /* a nested node's value nests under its name: the units are
                                the `units` node's */
-                            Json{{"value", "flow.round(1)"},
+                            Json{{"value", "flow.Round(1)"},
                                  {"units", Json{{"text", "'l/min'"}}}},
                             at(22, 198, 836, 176));
     Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "'Reset'"}}}},

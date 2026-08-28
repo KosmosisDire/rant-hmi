@@ -10,11 +10,11 @@ namespace {
 bool iterate_mode(const std::string& name, IterateMode& out) {
     for (const IterateModeDef& mode : kIterateModes)
         if (name == mode.call) {
-            if (name == "map") out = IterateMode::Map;
-            else if (name == "filter") out = IterateMode::Filter;
-            else if (name == "any") out = IterateMode::Any;
-            else if (name == "all") out = IterateMode::All;
-            else if (name == "sortBy") out = IterateMode::SortBy;
+            if (name == "Map") out = IterateMode::Map;
+            else if (name == "Filter") out = IterateMode::Filter;
+            else if (name == "Any") out = IterateMode::Any;
+            else if (name == "All") out = IterateMode::All;
+            else if (name == "SortBy") out = IterateMode::SortBy;
             else out = IterateMode::Reduce;
             return true;
         }
@@ -344,14 +344,14 @@ class Sema {
             if (at(expr.a).kind == ExprKind::NilLit ||
                 at(expr.b).kind == ExprKind::NilLit) {
                 fail("a comparison with an unknown side is unknown, so == cannot "
-                     "test for it; write known(x), or x ?? fallback for a default",
+                     "test for it; write Known(x), or x ?? fallback for a default",
                      at(expr.b).after);
                 return Type();
             }
             /* an enum compares to ITS OWN vocabulary and nothing else: a variant
                literal or a value of the same enum. The old number/text leniencies
-               died with the runtime coercion — the intent is spelled now: x.int(),
-               x.name(). */
+               died with the runtime coercion — the intent is spelled now: x.Int(),
+               x.Name(). */
             if (left.kind == Shape::Enum && right.kind == Shape::Enum &&
                 left.enum_id() && right.enum_id() &&
                 left.enum_id() != right.enum_id()) {
@@ -364,7 +364,7 @@ class Sema {
                 (left.kind == Shape::Num || left.kind == Shape::Text ||
                  right.kind == Shape::Num || right.kind == Shape::Text)) {
                 fail("an enum compares to its own variants; write == .variant, or "
-                     "read .name() / .int() to compare the name or the backing "
+                     "read .Name() / .Int() to compare the name or the backing "
                      "number",
                      at(expr.b).after);
                 return Type();
@@ -640,22 +640,22 @@ class Sema {
             if (type_ref != env_.enum_types.end()) {
                 const EnumVariants* variants = env_.variants(type_ref->second);
                 if (ops.size() < 2 || at(ops[1]).kind != ExprKind::Member ||
-                    at(ops[1]).text != "variants" || !variants) {
+                    at(ops[1]).text != "Variants" || !variants) {
                     fail("'" + spelling + "' names a type, and a type is not a "
-                         "value; write " + spelling + ".variants() to read its "
+                         "value; write " + spelling + ".Variants() to read its "
                          "vocabulary",
                          at(ops[0]).after);
                     return Type();
                 }
                 const Expr& call = at(ops[1]);
                 if (!call.called) {
-                    fail("'variants' is a method; call it with parentheses "
-                         "(variants())",
+                    fail("'Variants' is a method; call it with parentheses "
+                         "(Variants())",
                          call.name_after);
                     return Type();
                 }
                 if (!call.args.empty()) {
-                    fail("variants takes 0 arguments", call.after);
+                    fail("Variants takes 0 arguments", call.after);
                     return Type();
                 }
                 Note& mark = note(ops[1]);
@@ -781,7 +781,7 @@ class Sema {
 
         /* `.is(variant)` resolves the variant against the RECEIVER's vocabulary at
          * compile time and lowers to an ordinary equality; no method id exists */
-        if (receiver.kind == Shape::Enum && name == "is")
+        if (receiver.kind == Shape::Enum && name == "Is")
             return apply_is(index, receiver);
 
         /* The iterating methods (spec 6.4) take a LAMBDA rather than a value, so
@@ -870,7 +870,7 @@ class Sema {
                    schema. No type, no vocabulary — nothing to list. */
                 const EnumVariants* variants = env_.variants(receiver.enum_id());
                 if (!variants) {
-                    fail("this value's enum type is not known here, so variants() "
+                    fail("this value's enum type is not known here, so Variants() "
                          "has no vocabulary to list",
                          expr.name_after);
                     return Type();
@@ -1154,8 +1154,8 @@ class Sema {
         /* the old options spelling, taught toward the method: the vocabulary reads
            off an enum VALUE now, so the list can never name a different enum than
            the value beside it */
-        if (name == "variants") {
-            fail("variants() reads off an enum value now: write myMode.variants() "
+        if (name == "Variants") {
+            fail("Variants() reads off an enum value now: write myMode.Variants() "
                  "and it lists that value's own vocabulary",
                  expr.name_after);
             return Type();

@@ -964,7 +964,7 @@ class Compiler {
         const AggSite site{node_id, "slot '" + slot + "' is a list", slot,
                            "Write the options as a list ([\"Off\", \"Low\", \"High\"]) "
                            "or bind them through an expression — a variable's name, or "
-                           "myMode.variants() for an enum's own vocabulary"};
+                           "myMode.Variants() for an enum's own vocabulary"};
         if (value.is_null()) return false;
         if (value.is_string()) {
             const std::string text = trimmed(value.get<std::string>());
@@ -3000,7 +3000,7 @@ class Compiler {
                     const uint32_t site = fault_site(
                         step_id, "gate_unknown",
                         "this gate's condition is UNKNOWN, so the flow "
-                        "did not run; guard with known(...) or give the "
+                        "did not run; guard with Known(...) or give the "
                         "value a default with ??");
                     const uint32_t at = static_cast<uint32_t>(flow.body.code.size());
                     Instruction unknown{OpCode::JmpNil};
