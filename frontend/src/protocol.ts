@@ -45,6 +45,13 @@ export class Connection {
     return this.version;
   }
 
+  /* nothing of this client's outstanding: every commit it sent has echoed, or a
+     snapshot swallowed it. What the reconciler's committed-text holds settle against
+     (reconcile.ts): while unsettled the document is legitimately behind the author. */
+  settled(): boolean {
+    return !this.inflight && this.pending.length === 0;
+  }
+
   sessionId(): number {
     return this.session;
   }
@@ -136,8 +143,10 @@ export class Connection {
         return;
       case "snapshot":
         /* a snapshot settles everything outstanding (it follows every reject and
-           resync), so anything queued goes out against its fresh version */
+           resync), so anything queued goes out against its fresh version — BEFORE the
+           handler, so settled() tells the app the truth while it renders */
         this.version = frame.version;
+        this.flush();
         this.handlers.snapshot(frame.doc, frame.registry, frame.live,
           frame.diag?.compile ?? [], frame.mesh ?? { entities: [] },
           frame.lang ?? { builtins: [], methods: [], objects: [] },
@@ -145,7 +154,6 @@ export class Connection {
           frame.builtins ?? [],
           frame.node_attrs ?? {});
         this.handlers.log(frame.log ?? [], false);
-        this.flush();
         return;
       case "ops_applied":
         if (frame.version !== this.version + 1) {
@@ -154,9 +162,10 @@ export class Connection {
           return;
         }
         this.version = frame.version;
-        this.handlers.ops(frame.version, frame.ops, frame.origin_session);
-        /* our own echo: the in-flight batch landed, the queue may go out */
+        /* our own echo: the in-flight batch landed and the queue may go out — sent
+           BEFORE the handler, so settled() tells the app the truth while it renders */
         if (frame.origin_session === this.session) this.flush();
+        this.handlers.ops(frame.version, frame.ops, frame.origin_session);
         return;
       case "live":
         this.handlers.live(frame);

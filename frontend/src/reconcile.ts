@@ -42,6 +42,19 @@ const shown = new WeakMap<HTMLElement, string>();
 /* uncommitted text, keyed by document address so it outlives the element it was typed in */
 const pending = new Map<string, string>();
 
+/* COMMITTED text the document has not echoed yet. There is no optimistic apply
+   (protocol.ts), so for one round trip the document is legitimately behind the author —
+   and a sync pass in that window (a live frame, a diag) must not push the stale value
+   back in: the bool icon flicked on, off, on again. A hold clears the moment the echo
+   carries its text back; settleCommitted sweeps the ones that never will. */
+const committed = new Map<string, string>();
+
+/* every commit has echoed (the connection is settled), so any hold left standing is the
+   backend normalizing or refusing the text — the document is the truth again */
+export function settleCommitted(): void {
+  committed.clear();
+}
+
 /* the panel currently being built: bindings register against it, so a builder can declare
    what a control shows without every function having to thread a panel through */
 let building: Panel | null = null;
@@ -145,11 +158,18 @@ export function bindField(
     if (input.value === shown.get(input)) pending.delete(key);
     else pending.set(key, input.value);
   });
-  input.addEventListener("change", () => pending.delete(key));
+  input.addEventListener("change", () => {
+    pending.delete(key);
+    committed.set(key, input.value);
+  });
   input.addEventListener("keydown", (ev) => {
     if ((ev as KeyboardEvent).key === "Escape") pending.delete(key);
   });
+  const sent = committed.get(key);
   const held = pending.get(key);
+  /* a rebuild mid round-trip: the fresh input was built from the stale document, and
+     the committed text is what the author is owed (typed-but-uncommitted text wins) */
+  if (held === undefined && sent !== undefined) input.value = sent;
   if (held !== undefined) {
     input.value = held;
     /* A HELD EDIT WHOSE FIELD LOST FOCUS IN A REBUILD would otherwise sit here forever
@@ -170,6 +190,11 @@ export function bindField(
     const text = read();
     shown.set(input, text);
     if (pending.has(key)) return;
+    const sent = committed.get(key);
+    if (sent !== undefined) {
+      if (sent === text) committed.delete(key);   /* the echo landed */
+      else return;   /* mid round-trip: the committed text stands, not the stale doc */
+    }
     if (input.value !== text) input.value = text;
   });
 }

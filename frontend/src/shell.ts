@@ -22,7 +22,7 @@ import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from ".
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
-import { Panel } from "./reconcile.js";
+import { Panel, settleCommitted } from "./reconcile.js";
 import { previewArrangement, renderStage, stageScale } from "./stage.js";
 import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry, RepeatCopy, primitiveDef } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
@@ -509,6 +509,9 @@ export class App implements Editor {
     if (!this.view.selection.length) this.view.element = "";
     this.settleComponentSel();
     this.settleContexts();
+    /* nothing of ours outstanding any more: committed text the snapshot did not carry
+       was refused or normalized, and the document is the truth again */
+    if (this.conn.settled()) settleCommitted();
     this.renderAll();
   }
 
@@ -545,6 +548,9 @@ export class App implements Editor {
         }
     this.settleComponentSel();
     this.settleContexts();
+    /* every commit echoed: a hold this echo did not clear by value is the backend
+       normalizing the text, and the document is the truth again */
+    if (this.conn.settled()) settleCommitted();
     this.renderAll();
   }
 
