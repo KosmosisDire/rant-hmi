@@ -22,6 +22,8 @@ import { tokenAccess } from "./scope.js";
 
 export function valueEditor(
   spec: SlotSpec | null,
+  /* the served PascalCase type spelling ("Num", "Bool", ...); anything else lands on
+     the raw default branch */
   shape: string,
   key: string,
   read: () => Json,

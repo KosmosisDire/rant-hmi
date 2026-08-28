@@ -513,9 +513,9 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
    *    TYPE and nowhere else. Same numeric idiom the frame inspector's gap/pad fields
    *    use (panel.ts): a hand-built SlotSpec through the ordinary value editor. */
   const designField = (key: "design_w" | "design_h") => {
-    const spec: SlotSpec = { name: key, shape: "num", default: key === "design_w" ? 240 : 120,
+    const spec: SlotSpec = { name: key, shape: "Num", default: key === "design_w" ? 240 : 120,
                              group: "config" };
-    return valueEditor(spec, "num", comp.id + ":" + key, () => at()[key],
+    return valueEditor(spec, "Num", comp.id + ":" + key, () => at()[key],
                        (v) => editor.apply([{ op: "set_prop", node: comp.id, key, value: v }]),
                        false, editor);
   };
@@ -549,7 +549,7 @@ function eventsSection(editor: Editor, comp: ComponentDef): HTMLElement[] {
     const taken = new Set(eventsAt().map((e) => e.name));
     let name = "changed";
     for (let n = 2; taken.has(name) || eventKind(name); ++n) name = "event" + n;
-    commit([...eventsAt(), { name, params: [{ name: "value", shape: "num" }] }]);
+    commit([...eventsAt(), { name, params: [{ name: "value", shape: "Num" }] }]);
   };
 
   return section("comp-events", "Events", String(events.length), () => [

@@ -59,10 +59,10 @@ function declared(editor: Editor, instance: Node | null): LocalInfo[] {
       if (v.type === "list" || v.type === "map")
         return { name: v.name, shape: v.type, elem: v.elem || undefined,
                  leaf: v.leaf || undefined, note };
-      if (v.type.includes(".")) return { name: v.name, shape: "enum", type: v.type, note };
+      if (v.type.includes(".")) return { name: v.name, shape: "Enum", type: v.type, note };
       return {
         name: v.name,
-        shape: "struct",
+        shape: "Struct",
         type: v.type,
         fields: typeFields(editor, v.type),
         note,
@@ -105,7 +105,7 @@ function sourceShape(
     if (whole) {
       const fields = writeFields(whole);
       if (whole.type || fields.length > 1)
-        return { shape: "struct", type: whole.type, fields };
+        return { shape: "Struct", type: whole.type, fields };
       return fields.length === 1
         ? { shape: fields[0].shape, elem: fields[0].elem }
         : null;
@@ -171,8 +171,8 @@ export function scopeAt(
        per run, whichever field the row goes on to fill */
     if (typeof to.type === "string" && to.type && !scope.has(to.local)) {
       scope.set(to.local, to.type.includes(".")
-        ? { name: to.local, shape: "enum", type: to.type, note: "temporary" }
-        : { name: to.local, shape: "struct", type: to.type,
+        ? { name: to.local, shape: "Enum", type: to.type, note: "temporary" }
+        : { name: to.local, shape: "Struct", type: to.type,
             fields: typeFields(editor, to.type), note: "temporary" });
     }
     /* a field write says nothing about the whole value, so it declares nothing */

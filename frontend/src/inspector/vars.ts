@@ -185,7 +185,7 @@ export function varCard(
       el("div", { class: "var-line" }, [
         valueEditor(
           null,
-          "text",
+          "Text",
           variable.id + ":init",
           () => {
             const init = at().init;
@@ -298,7 +298,7 @@ export function varCard(
       el("div", { class: "var-line" }, [
         valueEditor(
           null,
-          "bool",
+          "Bool",
           variable.id + ":public",
           () => Boolean(at().public),
           (value) => setProp("public", Boolean(value)),
@@ -328,7 +328,7 @@ export function varCard(
       const bound = (key: "min" | "max" | "step") =>
         valueEditor(
           null,
-          "num",
+          "Num",
           variable.id + ":" + key,
           () => (at() as Json)[key] ?? null,
           (value) => setProp(key, value === "" || value === null ? null : value),
@@ -355,7 +355,7 @@ export function varCard(
         el("div", { class: "var-line" }, [
           valueEditor(
             null,
-            "text",
+            "Text",
             variable.id + ":variants",
             () => (at().variants ?? []).join(", "),
             (value) => {
@@ -385,7 +385,7 @@ export function varCard(
         el("div", { class: "var-line" }, [
           valueEditor(
             null,
-            "bool",
+            "Bool",
             variable.id + ":persist",
             () => at().persist,
             (value) => setProp("persist", value),
