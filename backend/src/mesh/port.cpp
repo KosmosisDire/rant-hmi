@@ -6,9 +6,15 @@ namespace hmi {
  * reads see it without waiting for the owner's echo. This runs at flush, not at emit
  * (the PLC-scan rule): every flow in the tick that produced the effect read the
  * tick-start snapshot. Delivered text is re-homed into the entity's retained slot,
- * exactly as an arrival is (Scheduler::on_update); aggregates stay out. */
+ * exactly as an arrival is (Scheduler::on_update); aggregates stay out.
+ * ONLY verbs whose fields ARE the read table fold: a write, a force, a publish. A
+ * call's REQUEST is not the entity's value — a function or task reads its RESPONSE
+ * table, and folding request values over it would land them at foreign indices. */
 static void mirror_write(Host& state, const EffectRecord& record) noexcept {
-    if (record.verb == Verb::Unforce || record.entity >= state.store.last.size()) return;
+    if (record.verb != Verb::Write && record.verb != Verb::Force &&
+        record.verb != Verb::Publish)
+        return;
+    if (record.entity >= state.store.last.size()) return;
     LastValueState& last = state.store.last[record.entity];
     auto rehome = [&](Value value, std::string_view text, uint32_t field) -> Value {
         if (value.tag != ValueTag::Text || record.entity >= state.store.entity_texts.size())
