@@ -3,31 +3,31 @@
 
 == clamp inside
 expr Clamp(5, 0, 10)
-want num 5
+want Num 5
 
 == clamp below
 expr Clamp(-1, 0, 10)
-want num 0
+want Num 0
 
 == clamp above
 expr Clamp(15, 0, 10)
-want num 10
+want Num 10
 
 == clamp as a method
 expr (15).Clamp(0, 10)
-want num 10
+want Num 10
 
 == mapRange
 expr MapRange(5, 0, 10, 0, 100)
-want num 50
+want Num 50
 
 == mapRange extrapolates
 expr MapRange(15, 0, 10, 0, 100)
-want num 150
+want Num 150
 
 == mapRange as a method takes the four bounds
 expr (5).MapRange(0, 10, 0, 100)
-want num 50
+want Num 50
 
 == a collapsed mapRange is unknown
 expr MapRange(5, 3, 3, 0, 100)
@@ -35,51 +35,51 @@ want nil
 
 == roundTo
 expr RoundTo(3.14159, 2)
-want num 3.14
+want Num 3.14
 
 == lerp
 expr Lerp(0, 10, 0.5)
-want num 5
+want Num 5
 
 == abs
 expr Abs(-3)
-want num 3
+want Num 3
 
 == round half away from zero
 expr Round(2.5)
-want num 3
+want Num 3
 
 == floor
 expr Floor(2.9)
-want num 2
+want Num 2
 
 == ceil
 expr Ceil(2.1)
-want num 3
+want Num 3
 
 == floor as a method
 expr (2.9).Floor()
-want num 2
+want Num 2
 
 == ceil as a method
 expr (2.1).Ceil()
-want num 3
+want Num 3
 
 == abs as a method
 expr (-3).Abs()
-want num 3
+want Num 3
 
 == round as a method takes a decimal count
 expr (3.14159).Round(2)
-want num 3.14
+want Num 3.14
 
 == sign of a negative
 expr (-7).Sign()
-want num -1
+want Num -1
 
 == sqrt
 expr Sqrt(9)
-want num 3
+want Num 3
 
 == sqrt of a negative is unknown
 expr Sqrt(-1)
@@ -87,31 +87,31 @@ want nil
 
 == pow
 expr Pow(2, 10)
-want num 1024
+want Num 1024
 
 == min
 expr Min(3, 7)
-want num 3
+want Num 3
 
 == max
 expr Max(3, 7)
-want num 7
+want Num 7
 
 == sin in degrees
 expr Sin(90)
-want num 1
+want Num 1
 
 == cos in degrees
 expr Cos(0)
-want num 1
+want Num 1
 
 == tan in degrees
 expr Tan(45)
-want num 1
+want Num 1
 
 == asin answers degrees
 expr Asin(1)
-want num 90
+want Num 90
 
 == asin outside its domain is unknown
 expr Asin(2)
@@ -119,58 +119,58 @@ want nil
 
 == acos answers degrees
 expr Acos(1)
-want num 0
+want Num 0
 
 == atan2 answers degrees
 expr Atan2(1, 0)
-want num 90
+want Num 90
 
 == fmtDuration seconds
 expr FmtDuration(42)
-want text "42s"
+want Text "42s"
 
 == fmtDuration minutes
 expr FmtDuration(90)
-want text "1m 30s"
+want Text "1m 30s"
 
 == fmtDuration hours
 expr FmtDuration(3700)
-want text "1h 1m"
+want Text "1h 1m"
 
 == fmtDuration negative
 expr FmtDuration(-5)
-want text "-5s"
+want Text "-5s"
 
 == not is a method on bool
-env on: bool = false
+env on: Bool = false
 expr on.Not()
-want bool true
+want Bool true
 
 == pick chooses by the receiver
-env on: bool = true
+env on: Bool = true
 expr on.Pick(10, 20)
-want num 10
+want Num 10
 
 == pick the other way
-env on: bool = false
+env on: Bool = false
 expr on.Pick(10, 20)
-want num 20
+want Num 20
 
 == pick carries any shape
-env on: bool = true
+env on: Bool = true
 expr on.Pick("a", "b")
-want text "a"
+want Text "a"
 
 == bool int
-env on: bool = true
+env on: Bool = true
 expr on.Int()
-want num 1
+want Num 1
 
 == toFixed refuses on the wire but int does not
 tier wire
-env on: bool = true
+env on: Bool = true
 expr Int(on)
-want num 1
+want Num 1
 
 == fmtDuration is display vocabulary
 tier wire

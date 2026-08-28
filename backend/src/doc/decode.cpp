@@ -123,7 +123,7 @@ VarDecl decode_var(const Json& record) {
     VarDecl out;
     out.id = id_of(record);
     out.name = text_or(record, "name", "");
-    out.type = text_or(record, "type", "num");
+    out.type = text_or(record, "type", "Num");
     out.elem = text_or(record, "elem", "");
     out.leaf = text_or(record, "leaf", "");
     auto init = record.find("init");

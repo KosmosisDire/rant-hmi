@@ -168,8 +168,8 @@ const std::vector<NodeSpec>& table() {
              * resolves the name. */
             /* `icon` is a scalar too: the value is the glyph's NAME (ordinary text at
              * runtime); the declared type is what earns it the icon-grid editor */
-            text_retyping("type", "num",
-                          {"num", "bool", "text", "color", "icon", "timer", "list", "map"},
+            text_retyping("type", "Num",
+                          {"Num", "Bool", "Text", "Color", "Icon", "Timer", "List", "Map"},
                           "init",
                           {Json(0.0), Json(false), Json(""), Json("#ffffff"), Json(""),
                            Json(1.0), Json::array(), Json::object()}),

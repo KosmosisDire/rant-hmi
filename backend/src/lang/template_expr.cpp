@@ -39,9 +39,9 @@ const char* kProfiles[] = {"linear", "ease", "ease-in", "ease-out", "ease-in-out
  * resolve to the renderer-answered "tmr:" cells in resolve_head) — rides the wire
  * already and costs this tier nothing but the load. */
 std::string no_display_reading(const std::string& name, const std::string& type) {
-    if (type.empty() || type == "num" || type == "bool" || type == "text" ||
-        type == "color" || type == "icon" || type == "list" || type == "map" ||
-        type == "timer" || type.find('.') != std::string::npos)
+    if (type.empty() || type == "Num" || type == "Bool" || type == "Text" ||
+        type == "Color" || type == "Icon" || type == "List" || type == "Map" ||
+        type == "Timer" || type.find('.') != std::string::npos)
         return "";
     return "'" + name + "' is a whole " + type + " message, and an attr reads one value: "
            "put the field the picture needs in a variable of its own";
@@ -485,7 +485,7 @@ class ViewLower {
         if (const TemplateVar* variable = scope_.variable(name)) {
             /* a timer only exists by field (the dotted reads resolve in timer_field,
                ahead of this) — the same line the scalar checker holds */
-            if (variable->type == "timer") {
+            if (variable->type == "Timer") {
                 fail("'" + name + "' is a timer; read a field (" +
                          object_field_list(name.c_str(), kTimerFields) + ")",
                      anchor);
@@ -537,7 +537,7 @@ class ViewLower {
            published per tick. Behind the property scope, like every variable. */
         if (dotted && !scope_.has_prop(name))
             if (const TemplateVar* variable = scope_.variable(name))
-                if (variable->type == "timer")
+                if (variable->type == "Timer")
                     return timer_field(primary, *variable, ops, next);
         const Bare answer = bare(name, head.at, head.after);
         if (answer != Bare::Unbound) return answer == Bare::Emitted;

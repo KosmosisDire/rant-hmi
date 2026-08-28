@@ -220,14 +220,14 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
     i = 1;
     while (i < chain.length && chain[i] !== quote) i += chain[i] === "\\" ? 2 : 1;
     i++;
-    current = { shape: "text" };
+    current = { shape: "Text" };
   } else if (chain[0] === "#") {
     i = 1;
     while (i < chain.length && /[0-9a-fA-F]/.test(chain[i])) i++;
-    current = { shape: "color" };
+    current = { shape: "Color" };
   } else if (/[0-9]/.test(chain[0])) {
     while (i < chain.length && /[0-9.eE+-]/.test(chain[i])) i++;
-    current = { shape: "num" };
+    current = { shape: "Num" };
   } else {
     const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(chain);
     if (!m) return null;
@@ -238,7 +238,7 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
       const entry = lang?.builtins.find((b) => b.name === name);
       skipBalanced("(", ")");
       current = entry ? { shape: entry.result } : null;
-      if (entry?.name === "keys") current = { shape: "list", elem: "text" };
+      if (entry?.name === "Keys") current = { shape: "List", elem: "Text" };
     } else if (name === "x") {
       current = ctx.x?.() ?? null;
     } else if (name === "this" && chain[i] === ".") {
@@ -284,7 +284,7 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
           .map((field) => ({ ...field, path: field.path.slice(run[0].length + 1) }));
         if (!tail.length) return null;
         i += run[0].length;
-        current = { shape: "struct", fields: tail };
+        current = { shape: "Struct", fields: tail };
         continue;
       }
       i += best.path.length;
@@ -306,11 +306,11 @@ function resolveChain(chain: string, ctx: Scope): Resolved | null {
     if (!entry) return null;
     if (entry.result === "elem") {
       current = current.elem ? { shape: current.elem, elem: current.leaf } : null;
-    } else if (entry.result === "list") {
+    } else if (entry.result === "List") {
       /* sort/reverse/slice/values keep the element shape (and its rows); split, keys
          and variants build a fresh list of text */
       const kept = method !== "split" && method !== "keys" && method !== "variants";
-      current = { shape: "list",
+      current = { shape: "List",
                   elem: kept ? current.elem : "text",
                   leaf: kept ? current.leaf : undefined };
     } else if (entry.result === "any") {

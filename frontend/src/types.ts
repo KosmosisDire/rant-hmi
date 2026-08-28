@@ -150,7 +150,7 @@ export interface AttrDef {
   /* mirrors registry/attrs.cpp: `list` is the computed-anchors shape (a path's
      `points`), `any` the shapeless escape (clip's bool-or-number). `icon` is text
      whose value is a Lucide glyph NAME — the shape that earns the icon-grid picker */
-  shape: "num" | "bool" | "text" | "color" | "icon" | "list" | "any";
+  shape: "Num" | "Bool" | "Text" | "Color" | "Icon" | "List" | "Any";
   /* absent = no computed default: the attr is structural (show, repeat, clip, the box
      fields, rotate, a colour that is simply not painted) and `note` explains what absence
      means */
@@ -242,8 +242,8 @@ export interface Var {
 /* what a scalar variable type is CALLED in the UI. A type outside this table is a TypeRef
    from the mesh, which names itself — so a miss here is also the struct test. */
 export const SCALAR_LABEL: Record<string, string> = {
-  num: "number", bool: "bool", text: "text", color: "color", icon: "icon",
-  timer: "timer", list: "list", map: "map",
+  Num: "Number", Bool: "Bool", Text: "Text", Color: "Color", Icon: "Icon",
+  Timer: "Timer", List: "List", Map: "Map",
 };
 
 /* THE TYPES WHOSE WORD IS THEIR SHAPE — one value, loadable in one cell, editable by one
@@ -251,14 +251,14 @@ export const SCALAR_LABEL: Record<string, string> = {
    a variable's type and a slot's shape stopped being two vocabularies. `timer`, `list`
    and `map` are named in SCALAR_LABEL but are not here: that table is about what a type
    is CALLED, this one about what it IS. */
-export const SCALAR_TYPES = new Set(["num", "bool", "text", "color", "icon"]);
+export const SCALAR_TYPES = new Set(["Num", "Bool", "Text", "Color", "Icon"]);
 
 /* what a list's or map's declared element type reads as in a picker row:
    "list of number"; "list of list of number" where the elements are ROWS; bare "list"
    when the elements are undeclared */
 export function aggLabel(type: string, elem?: string, leaf?: string): string {
   if (!elem) return type;
-  const of = elem === "list" || elem === "map" ? aggLabel(elem, leaf)
+  const of = elem === "List" || elem === "Map" ? aggLabel(elem, leaf)
                                                : SCALAR_LABEL[elem] ?? elem;
   return type + " of " + of;
 }
@@ -533,14 +533,14 @@ export const EVENT_KINDS: EventKind[] = [
   { name: "tap", params: [], from: ["press"], past: "tapped" },
   { name: "press", params: [], from: ["press"], past: "pressed down" },
   { name: "release", params: [], from: ["press"], past: "released" },
-  { name: "pressrelease", params: [{ name: "down", shape: "bool" }], from: ["press"],
+  { name: "pressrelease", params: [{ name: "down", shape: "Bool" }], from: ["press"],
     past: "pressed down or released", derived: true },
   { name: "held", params: [], from: ["press"], past: "held", derived: true },
-  { name: "input", params: [{ name: "value", shape: "num" }],
+  { name: "input", params: [{ name: "value", shape: "Num" }],
     from: ["drag1d", "dragRadial"], past: "dragged" },
-  { name: "commit", params: [{ name: "value", shape: "num" }],
+  { name: "commit", params: [{ name: "value", shape: "Num" }],
     from: ["drag1d", "dragRadial"], past: "drag committed" },
-  { name: "select", params: [{ name: "option", shape: "text" }],
+  { name: "select", params: [{ name: "option", shape: "Text" }],
     from: ["pick", "dragRadial"], past: "picked" },
   { name: "open", params: [], from: ["pick"], past: "opened" },
 ];

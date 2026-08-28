@@ -99,8 +99,8 @@ Document runtime_document() {
         {"next_id", 1},
         {"globals",
          Json::array({
-             Json{{"name", "setpoint"}, {"type", "num"}, {"init", 10.0}, {"persist", true}},
-             Json{{"name", "note"}, {"type", "text"}, {"init", "ready"}},
+             Json{{"name", "setpoint"}, {"type", "Num"}, {"init", 10.0}, {"persist", true}},
+             Json{{"name", "note"}, {"type", "Text"}, {"init", "ready"}},
          })},
         {"pages", Json::array()},
     };
@@ -700,8 +700,8 @@ void test_enum_names() {
              Json{{"name", "gearMode"}, {"type", "Gear.mode"}, {"init", "fast"}},
              Json{{"name", "gearBad"}, {"type", "Gear.mode"}, {"init", "fast"}},
              Json{{"name", "gearConst"}, {"type", "Gear.mode"}, {"init", "stop"}},
-             Json{{"name", "pickedName"}, {"type", "text"}, {"init", "run"}},
-             Json{{"name", "badName"}, {"type", "text"}, {"init", "bogus"}}})},
+             Json{{"name", "pickedName"}, {"type", "Text"}, {"init", "run"}},
+             Json{{"name", "badName"}, {"type", "Text"}, {"init", "bogus"}}})},
         {"flows",
          Json::array({
              /* writes spell the VARIANT: the destination's own vocabulary resolves
@@ -1423,7 +1423,7 @@ void test_events_are_calls() {
        cell itself stays the feed's. */
     Json onoff = {
         {"id", 700}, {"name", "OnOff"},
-        {"locals", Json::array({Json{{"id", 701}, {"name", "value"}, {"type", "bool"},
+        {"locals", Json::array({Json{{"id", 701}, {"name", "value"}, {"type", "Bool"},
                                      {"init", false}, {"group", "value"},
                                      {"public", true}}})},
         {"events", Json::array({Json{{"name", "changed"},
@@ -1544,8 +1544,8 @@ void test_colors() {
              {"surface", "Rgb(n / 255, 0, 1 - n / 255)"},
              {"border", "Hsv(n, 1, 1)"}},
         Json{{"locals", Json::array({
-                  Json{{"name", "on"}, {"type", "bool"}, {"init", false}},
-                  Json{{"name", "n"}, {"type", "num"}, {"init", 0}},
+                  Json{{"name", "on"}, {"type", "Bool"}, {"init", false}},
+                  Json{{"name", "n"}, {"type", "Num"}, {"init", 0}},
               })}});
     CompileResult compiled = compile_document(document, mesh);
     for (const Diag& diag : compiled.program.diagnostics)
@@ -2249,7 +2249,7 @@ void test_reduce() {
         if (std::string(row.name) == "Reduce") {
             declared = true;
             CHECK(row.min_args == 2 && row.max_args == 2);
-            CHECK(std::string(row.args[0]) == "lambda");
+            CHECK(std::string(row.args[0]) == "Lambda");
         }
     CHECK(declared);
 }
@@ -2483,12 +2483,12 @@ void test_aggregate_variables() {
                  {"next_id", 1},
                  {"globals",
                   Json::array({
-                      Json{{"name", "n"}, {"type", "num"}, {"init", 1}},
-                      Json{{"name", "note"}, {"type", "text"}, {"init", "b"}},
-                      Json{{"name", "log"}, {"type", "list"}},
-                      Json{{"name", "words"}, {"type", "list"}},
+                      Json{{"name", "n"}, {"type", "Num"}, {"init", 1}},
+                      Json{{"name", "note"}, {"type", "Text"}, {"init", "b"}},
+                      Json{{"name", "log"}, {"type", "List"}},
+                      Json{{"name", "words"}, {"type", "List"}},
                       Json{{"name", "table"},
-                           {"type", "map"},
+                           {"type", "Map"},
                            {"init", Json{{"b", 2}, {"a", 1}}}},
                   })},
                  {"pages",
@@ -2662,19 +2662,19 @@ void test_nested_aggregates() {
         {"globals",
          Json::array({
              Json{{"name", "grid"},
-                  {"type", "list"},
-                  {"elem", "list"},
-                  {"leaf", "num"},
+                  {"type", "List"},
+                  {"elem", "List"},
+                  {"leaf", "Num"},
                   {"init", Json::array({Json::array({1, 2}), Json::array({3})})}},
              Json{{"name", "byName"},
-                  {"type", "map"},
-                  {"elem", "list"},
-                  {"leaf", "num"},
+                  {"type", "Map"},
+                  {"elem", "List"},
+                  {"leaf", "Num"},
                   {"init", Json{{"b", Json::array({4})}, {"a", Json::array({1, 2})}}}},
              Json{{"name", "rows"},
-                  {"type", "list"},
-                  {"elem", "map"},
-                  {"leaf", "text"},
+                  {"type", "List"},
+                  {"elem", "Map"},
+                  {"leaf", "Text"},
                   {"init", Json::array({Json{{"k", "v"}}})}},
          })},
         {"pages",
@@ -2802,10 +2802,10 @@ void test_nested_ring() {
         {"next_id", 1},
         {"globals",
          Json::array({
-             Json{{"name", "grid"}, {"type", "list"}, {"elem", "list"}, {"leaf", "num"}},
+             Json{{"name", "grid"}, {"type", "List"}, {"elem", "List"}, {"leaf", "Num"}},
              Json{{"name", "sample"},
-                  {"type", "list"},
-                  {"elem", "num"},
+                  {"type", "List"},
+                  {"elem", "Num"},
                   {"init", Json::array({1, 2})}},
          })},
         {"pages",
@@ -2850,11 +2850,11 @@ void test_nested_ring() {
             {"next_id", 1},
             {"globals",
              Json::array({
-                 Json{{"name", "grid"}, {"type", "list"}, {"elem", "list"},
-                      {"leaf", "num"}},
+                 Json{{"name", "grid"}, {"type", "List"}, {"elem", "List"},
+                      {"leaf", "Num"}},
                  Json{{"name", "sample"},
-                      {"type", "list"},
-                      {"elem", "num"},
+                      {"type", "List"},
+                      {"elem", "Num"},
                       {"init", Json::array({1, 2, 3, 4, 5, 6})}},
              })},
             {"pages",
@@ -2895,14 +2895,14 @@ void test_nested_refusals() {
         {"globals",
          Json::array({
              /* one level, ever: a leaf cannot itself be a row */
-             Json{{"name", "deep"}, {"type", "list"}, {"elem", "list"}, {"leaf", "list"}},
+             Json{{"name", "deep"}, {"type", "List"}, {"elem", "List"}, {"leaf", "List"}},
              /* a leaf type says what ROWS hold, so it needs rows to have been declared */
-             Json{{"name", "flat"}, {"type", "list"}, {"elem", "num"}, {"leaf", "num"}},
+             Json{{"name", "flat"}, {"type", "List"}, {"elem", "Num"}, {"leaf", "Num"}},
              /* a scalar where a row was declared is the finding, not a promotion */
              Json{{"name", "mixed"},
-                  {"type", "list"},
-                  {"elem", "list"},
-                  {"leaf", "num"},
+                  {"type", "List"},
+                  {"elem", "List"},
+                  {"leaf", "Num"},
                   {"init", Json::array({Json::array({1}), 2})}},
          })},
         {"pages", Json::array({Json{{"name", "P"}, {"children", Json::array()}}})}};
@@ -2963,11 +2963,11 @@ void test_indexed_writes() {
                  {"next_id", 1},
                  {"globals",
                   Json::array({
-                      Json{{"name", "buf"}, {"type", "list"},
+                      Json{{"name", "buf"}, {"type", "List"},
                            {"init", Json::array({10, 20, 30})}},
-                      Json{{"name", "words"}, {"type", "list"}, {"elem", "text"},
+                      Json{{"name", "words"}, {"type", "List"}, {"elem", "Text"},
                            {"init", Json::array({"a", "b"})}},
-                      Json{{"name", "nums"}, {"type", "list"}, {"elem", "num"},
+                      Json{{"name", "nums"}, {"type", "List"}, {"elem", "Num"},
                            {"init", Json::array({1, 2})}},
                   })},
                  {"pages",
@@ -3121,10 +3121,10 @@ void test_struct_agg_fields() {
                  {"globals",
                   Json::array({
                       Json{{"name", "jogCmd"}, {"type", "Jog"}},
-                      Json{{"name", "src"}, {"type", "list"}, {"elem", "num"},
+                      Json{{"name", "src"}, {"type", "List"}, {"elem", "Num"},
                            {"init", Json::array({1, 2, 3})}},
-                      Json{{"name", "readback"}, {"type", "list"}},
-                      Json{{"name", "second"}, {"type", "num"}},
+                      Json{{"name", "readback"}, {"type", "List"}},
+                      Json{{"name", "second"}, {"type", "Num"}},
                   })},
                  {"pages",
                   Json::array({Json{{"name", "P"},
@@ -3238,7 +3238,7 @@ void test_bare_topic_scalars() {
     };
     Json root = {{"version", 1},
                  {"next_id", 1},
-                 {"globals", Json::array({Json{{"name", "lit"}, {"type", "bool"},
+                 {"globals", Json::array({Json{{"name", "lit"}, {"type", "Bool"},
                                                {"init", false}}})},
                  {"pages", Json::array({Json{{"name", "P"},
                                              {"children", Json::array({button})}}})}};
@@ -3291,7 +3291,7 @@ void test_bare_topic_scalars() {
     };
     Json bad_root = {{"version", 1},
                      {"next_id", 1},
-                     {"globals", Json::array({Json{{"name", "n"}, {"type", "num"},
+                     {"globals", Json::array({Json{{"name", "n"}, {"type", "Num"},
                                                    {"init", 0}}})},
                      {"pages", Json::array({Json{{"name", "P"},
                                                  {"children", Json::array({bad_button})}}})}};
@@ -3327,8 +3327,8 @@ void test_assign_expression_reads_mesh() {
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals",
-                  Json::array({Json{{"name", "total"}, {"type", "num"}, {"init", 0}},
-                               Json{{"name", "hits"}, {"type", "num"}, {"init", 0}}})},
+                  Json::array({Json{{"name", "total"}, {"type", "Num"}, {"init", 0}},
+                               Json{{"name", "hits"}, {"type", "Num"}, {"init", 0}}})},
                  {"pages", Json::array({Json{{"name", "P"},
                                              {"children", Json::array({button})}}})}};
     Document document;
@@ -3407,10 +3407,10 @@ void test_aggregate_expressions() {
                  {"next_id", 1},
                  {"globals",
                   Json::array({
-                      Json{{"name", "src"}, {"type", "list"},
+                      Json{{"name", "src"}, {"type", "List"},
                            {"init", Json::array({1, 2, 3})}},
-                      Json{{"name", "dst"}, {"type", "list"}},
-                      Json{{"name", "copy"}, {"type", "list"}},
+                      Json{{"name", "dst"}, {"type", "List"}},
+                      Json{{"name", "copy"}, {"type", "List"}},
                   })},
                  {"pages",
                   Json::array({Json{{"name", "P"},
@@ -3485,9 +3485,9 @@ void test_aggregate_expressions() {
                          {"next_id", 1},
                          {"globals",
                           Json::array({
-                              Json{{"name", "src"}, {"type", "list"},
+                              Json{{"name", "src"}, {"type", "List"},
                                    {"init", Json::array({1, 2, 3})}},
-                              Json{{"name", "n"}, {"type", "num"}, {"init", 0}},
+                              Json{{"name", "n"}, {"type", "Num"}, {"init", 0}},
                           })},
                          {"pages",
                           Json::array({Json{{"name", "P"},
@@ -3531,10 +3531,10 @@ void test_aggregate_ceilings() {
                  {"next_id", 1},
                  {"globals",
                   Json::array({
-                      Json{{"name", "unbounded"}, {"type", "list"}},
-                      Json{{"name", "bounded"}, {"type", "list"}},
-                      Json{{"name", "total"}, {"type", "num"}, {"init", 0}},
-                      Json{{"name", "folded"}, {"type", "num"}, {"init", 0}},
+                      Json{{"name", "unbounded"}, {"type", "List"}},
+                      Json{{"name", "bounded"}, {"type", "List"}},
+                      Json{{"name", "total"}, {"type", "Num"}, {"init", 0}},
+                      Json{{"name", "folded"}, {"type", "Num"}, {"init", 0}},
                   })},
                  {"pages",
                   Json::array({Json{{"name", "P"},
@@ -3623,13 +3623,13 @@ void test_map_reduce() {
                  {"globals",
                   Json::array({
                       Json{{"name", "table"},
-                           {"type", "map"},
+                           {"type", "Map"},
                            {"init", Json{{"b", 20}, {"a", 10}, {"c", 30}}}},
-                      Json{{"name", "total"}, {"type", "num"}, {"init", 0}},
-                      Json{{"name", "ordered"}, {"type", "num"}, {"init", 0}},
-                      Json{{"name", "keyed"}, {"type", "num"}, {"init", 0}},
-                      Json{{"name", "pairs"}, {"type", "num"}, {"init", 0}},
-                      Json{{"name", "looked_up"}, {"type", "num"}, {"init", 0}},
+                      Json{{"name", "total"}, {"type", "Num"}, {"init", 0}},
+                      Json{{"name", "ordered"}, {"type", "Num"}, {"init", 0}},
+                      Json{{"name", "keyed"}, {"type", "Num"}, {"init", 0}},
+                      Json{{"name", "pairs"}, {"type", "Num"}, {"init", 0}},
+                      Json{{"name", "looked_up"}, {"type", "Num"}, {"init", 0}},
                   })},
                  {"pages",
                   Json::array({Json{{"name", "P"},
@@ -3697,7 +3697,7 @@ void test_map_replay() {
         Json root = {{"version", 1},
                      {"next_id", 1},
                      {"globals",
-                      Json::array({Json{{"name", "table"}, {"type", "map"}}})},
+                      Json::array({Json{{"name", "table"}, {"type", "Map"}}})},
                      {"pages",
                       Json::array({Json{{"name", "P"},
                                         {"children", Json::array({button})}}})}};
@@ -3748,14 +3748,14 @@ void test_aggregate_refusals() {
                      {"next_id", 1},
                      {"globals",
                       Json::array({
-                          Json{{"name", "log"}, {"type", "list"}},
-                          Json{{"name", "table"}, {"type", "map"}},
-                          Json{{"name", "n"}, {"type", "num"}, {"init", 0}},
-                          Json{{"name", "typed"}, {"type", "list"}, {"elem", "num"}},
+                          Json{{"name", "log"}, {"type", "List"}},
+                          Json{{"name", "table"}, {"type", "Map"}},
+                          Json{{"name", "n"}, {"type", "Num"}, {"init", 0}},
+                          Json{{"name", "typed"}, {"type", "List"}, {"elem", "Num"}},
                           Json{{"name", "rows"},
-                               {"type", "list"},
-                               {"elem", "list"},
-                               {"leaf", "num"}},
+                               {"type", "List"},
+                               {"elem", "List"},
+                               {"leaf", "Num"}},
                           Json{{"name", "m"}, {"type", "Plant"}},
                       })},
                      {"pages",
@@ -3779,14 +3779,14 @@ void test_aggregate_refusals() {
                   "append writes into a list variable"));
     CHECK(refuses(flow_on("tap", {steps::set_key("n", "'k'", "1")}),
                   "an element write addresses a list by index or a map by key"));
-    CHECK(refuses(flow_on("tap", {steps::set_key("log", "'k'", "1")}), "num"));
+    CHECK(refuses(flow_on("tap", {steps::set_key("log", "'k'", "1")}), "Num"));
     /* a struct value's list field takes element writes NOW — so what teaches is the
        ordinary element-type refusal, exactly as on a declared list variable */
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", {{"local", "m"}, {"path", "names"}}},
                                        {"key", "0"}}}),
-                  "holds text elements; this expression yields a num"));
+                  "holds Text elements; this expression yields a Num"));
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "1"}}},
                                        {"to", {{"local", "m"}, {"path", "speed"}}},
@@ -3815,17 +3815,17 @@ void test_aggregate_refusals() {
                                        {"keep", "3"}}}),
                   "'log' does not say what its elements are"));
     CHECK(refuses(flow_on("tap", {steps::append_var("log", "[1, 2]", "3")}),
-                  "Declare its elements list (the variable's OF row)"));
+                  "Declare its elements List (the variable's OF row)"));
     /* a DECLARED element type is the check: a list is not a number, and the refusal says
        so in the list's own terms rather than reciting the rule */
     CHECK(refuses(flow_on("tap", {steps::append_var("typed", "[1, 2]", "3")}),
-                  "'typed' holds num elements; this expression yields a list"));
+                  "'typed' holds Num elements; this expression yields a List"));
     /* and the same check the other way round: a cell whose elements are ROWS refuses a
        scalar, teaching how a row is spelled */
     CHECK(refuses(flow_on("tap", {steps::append_var("rows", "1", "3")}),
-                  "'rows' holds list of num elements; this expression yields a num"));
+                  "'rows' holds List of Num elements; this expression yields a Num"));
     CHECK(refuses(flow_on("tap", {steps::append_var("rows", "table", "3")}),
-                  "'rows' holds list of num elements; this expression yields a map"));
+                  "'rows' holds List of Num elements; this expression yields a Map"));
     /* a mesh entity takes no append; its array fields take one ELEMENT at an index,
        which must be present, a number, and never forced — and a scalar field takes
        no index at all */
@@ -3837,7 +3837,7 @@ void test_aggregate_refusals() {
     /* a mesh array field takes the WHOLE list now — so a scalar source against one
        is the ordinary shape refusal, and the element form still wants its index */
     CHECK(refuses(flow_on("tap", {steps::write_field("V", "plant", "names", "'a'")}),
-                  "wants list"));
+                  "wants List"));
     CHECK(refuses(flow_on("tap", {Json{{"kind", "assign"},
                                        {"from", {{"expr", "'a'"}}},
                                        {"to", steps::entity_ref("V", "plant", "names")},
@@ -3847,8 +3847,8 @@ void test_aggregate_refusals() {
     CHECK(refuses(flow_on("tap", {steps::write_elem("V", "plant", "speed", "0", "1")}),
                   "a scalar field; an index addresses an array"));
     /* the DECLARED element type teaches at compile where the shape is visible */
-    CHECK(refuses(flow_on("tap", {steps::append_var("typed", "'word'", "3")}), "num"));
-    CHECK(refuses(flow_on("tap", {steps::set_index("typed", "0", "'word'")}), "num"));
+    CHECK(refuses(flow_on("tap", {steps::append_var("typed", "'word'", "3")}), "Num"));
+    CHECK(refuses(flow_on("tap", {steps::set_index("typed", "0", "'word'")}), "Num"));
     /* an every trigger with no readable cadence drops the trigger and says so */
     CHECK(refuses(Json{{"when", Json::array({steps::every(Json("rate * 2"))})},
                        {"do", Json::array({steps::append_var("log", "1", "3")})}},
@@ -3873,24 +3873,24 @@ void test_aggregate_refusals() {
                         diag.message.c_str());
         return false;
     };
-    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "banana"}},
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "List"}, {"elem", "banana"}},
                       "not an element type"));
-    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "num"},
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "List"}, {"elem", "Num"},
                            {"init", Json::array({1, "a"})}},
-                      "elements are declared num"));
+                      "elements are declared Num"));
     /* a COLOR element's members are strings, so the refusal cannot be the shape one —
        it has to end on the spellings that would have worked */
-    CHECK(var_refuses(Json{{"name", "l"}, {"type", "list"}, {"elem", "color"},
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "List"}, {"elem", "Color"},
                            {"init", Json::array({"#ff0000", "sort of red"})}},
                       "is not a color"));
-    CHECK(var_refuses(Json{{"name", "l"}, {"type", "map"}, {"elem", "color"},
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "Map"}, {"elem", "Color"},
                            {"init", Json{{"k", "#gg0000"}}}},
                       "is not a color"));
     /* a member that is not a string at all was never a colour SPELLING, so it lands on
        the ordinary declared-element refusal rather than on the colour teaching */
-    CHECK(var_refuses(Json{{"name", "l"}, {"type", "map"}, {"elem", "color"},
+    CHECK(var_refuses(Json{{"name", "l"}, {"type", "Map"}, {"elem", "Color"},
                            {"init", Json{{"k", 3}}}},
-                      "elements are declared color, and the start holds a num"));
+                      "elements are declared Color, and the start holds a Num"));
 }
 
 /* A COLOR IS AN ELEMENT TYPE. It was a variable type everywhere a scalar could go, but
@@ -3916,12 +3916,12 @@ void test_color_element_variables() {
                                      {"light", "#ffffff"}}})},
         {"globals",
          Json::array({
-             Json{{"name", "swatches"}, {"type", "list"}, {"elem", "color"},
+             Json{{"name", "swatches"}, {"type", "List"}, {"elem", "Color"},
                   {"init", Json::array({"#ff0000", "#00ff0080", "$accent"})}},
-             Json{{"name", "byName"}, {"type", "map"}, {"elem", "color"},
+             Json{{"name", "byName"}, {"type", "Map"}, {"elem", "Color"},
                   {"init", Json{{"warn", "#ffaa00"}}}},
-             Json{{"name", "ramps"}, {"type", "list"}, {"elem", "list"},
-                  {"leaf", "color"},
+             Json{{"name", "ramps"}, {"type", "List"}, {"elem", "List"},
+                  {"leaf", "Color"},
                   {"init", Json::array({Json::array({"#000000", "#ffffff"})})}},
          })},
         {"pages",
@@ -4107,8 +4107,8 @@ void test_park_holds_text() {
     Json root = {{"version", 1},
                  {"next_id", 1},
                  {"globals", Json::array({
-                     Json{{"name", "note"}, {"type", "text"}, {"init", "first"}},
-                     Json{{"name", "out"}, {"type", "text"}, {"init", ""}},
+                     Json{{"name", "note"}, {"type", "Text"}, {"init", "first"}},
+                     Json{{"name", "out"}, {"type", "Text"}, {"init", ""}},
                  })},
                  {"pages", Json::array({Json{{"name", "P"},
                                              {"children", Json::array({std::move(instance)})}}})}};
@@ -4388,7 +4388,7 @@ void test_icon() {
     FakeMesh mesh(std::vector<EntityDef>{});
     Json badge = {
         {"id", 800}, {"name", "Badge"},
-        {"locals", Json::array({Json{{"id", 801}, {"name", "symbol"}, {"type", "icon"},
+        {"locals", Json::array({Json{{"id", 801}, {"name", "symbol"}, {"type", "Icon"},
                                      {"init", "gauge"}, {"group", "appearance"},
                                      {"public", true}}})},
         {"events", Json::array()},
@@ -4399,7 +4399,7 @@ void test_icon() {
         {"version", 1}, {"next_id", 1000},
         {"components", Json::array({std::move(badge)})},
         {"globals",
-         Json::array({Json{{"name", "glyph"}, {"type", "icon"}, {"init", "bell"}}})},
+         Json::array({Json{{"name", "glyph"}, {"type", "Icon"}, {"init", "bell"}}})},
         {"pages", Json::array({Json{{"name", "P"}, {"children", Json::array({
             /* an authored icon literal, the quoted spelling the grid writes */
             Json{{"kind", "frame"}, {"type", "Badge"}, {"name", "lit"},
@@ -4419,8 +4419,8 @@ void test_icon() {
     std::string err;
     CHECK(doc.adopt(std::move(root), err));
     /* the schema kept both declarations rather than clamping them away */
-    CHECK_EQ(doc.root["globals"][0]["type"].get<std::string>(), "icon");
-    CHECK_EQ(doc.root["components"][0]["locals"][0]["type"].get<std::string>(), "icon");
+    CHECK_EQ(doc.root["globals"][0]["type"].get<std::string>(), "Icon");
+    CHECK_EQ(doc.root["components"][0]["locals"][0]["type"].get<std::string>(), "Icon");
 
     std::vector<Diag> derive_diags;
     derive_registry(doc, derive_diags);
@@ -4462,7 +4462,7 @@ void test_icon() {
         {"components", Json::array({Json{
             {"id", 800}, {"name", "Badge"},
             {"locals", Json::array({Json{{"id", 801}, {"name", "symbol"},
-                                         {"type", "icon"}, {"init", "gauge"},
+                                         {"type", "Icon"}, {"init", "gauge"},
                                          {"group", "appearance"}, {"public", true}}})},
             {"events", Json::array()}, {"children", Json::array()},
             {"behavior", Json::array()}}})},

@@ -564,7 +564,7 @@ void test_builtins_compile_clean() {
        them), and the toggle's logic lives in visible behavior, not a derivation */
     CHECK(toggle["events"][0]["name"] == "changed");
     CHECK(toggle["events"][0]["params"][0]["name"] == "value");
-    CHECK(toggle["events"][0]["params"][0]["shape"] == "bool");
+    CHECK(toggle["events"][0]["params"][0]["shape"] == "Bool");
     CHECK(toggle["behavior"][0]["do"][1]["to"]["slot"] == "value");
     CHECK(toggle["behavior"][0]["do"][2]["kind"] == "raise");
 
@@ -599,8 +599,8 @@ void test_builtins_compile_clean() {
         if (slot.value("name", "") == "value") value_shape = slot.value("shape", "");
         CHECK(!slot.contains("history"));
     }
-    CHECK_EQ(history_shape, "list");
-    CHECK_EQ(value_shape, "num");
+    CHECK_EQ(history_shape, "List");
+    CHECK_EQ(value_shape, "Num");
     if (CHECK(trend["behavior"].size() == 1)) {
         const Json& sampler = trend["behavior"][0];
         CHECK_EQ(sampler["when"][0].value("kind", ""), "every");
@@ -650,7 +650,7 @@ void test_builtins_compile_clean() {
             arc_color = true;
             /* the SHAPE says colour now, so the editor hint that merely repeated it is
                gone: a redundant word is not served */
-            CHECK(slot["shape"] == "color" && !slot.contains("editor"));
+            CHECK(slot["shape"] == "Color" && !slot.contains("editor"));
         }
     }
     CHECK(thickness && arc_color);
@@ -668,9 +668,9 @@ Document component_document() {
                                      {"params", Json::array({Json{{"name", "level"},
                                                                   {"shape", "num"}}})}}})},
         {"locals", Json::array({
-            Json{{"id", 101}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+            Json{{"id", 101}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
                  {"group", "value"}, {"public", true}},
-            Json{{"id", 102}, {"name", "fillColor"}, {"type", "color"},
+            Json{{"id", 102}, {"name", "fillColor"}, {"type", "Color"},
                  {"init", "$accent"}, {"group", "appearance"}, {"public", true}},
         })},
         /* THE COMPONENT IS THE ROOT FRAME: its own attrs describe the box an
@@ -687,7 +687,7 @@ Document component_document() {
         {"id", 200},
         {"name", "Toggle"},
         {"locals", Json::array({
-            Json{{"id", 201}, {"name", "value"}, {"type", "bool"}, {"init", false},
+            Json{{"id", 201}, {"name", "value"}, {"type", "Bool"}, {"init", false},
                  {"group", "value"}, {"public", true}},
         })},
         {"events", Json::array({Json{{"name", "changed"},
@@ -792,14 +792,14 @@ void test_part_properties() {
         {"name", "Dial"},
         /* the component's own: read anywhere, addressed bare */
         {"locals", Json::array({
-            Json{{"id", 401}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+            Json{{"id", 401}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
                  {"group", "value"}, {"public", true}},
         })},
         {"children", Json::array({
             Json{{"id", 420}, {"kind", "frame"}, {"name", "gauge"},
                  /* declared on the frame, so BOTH its children read it */
                  {"locals", Json::array({Json{{"id", 421}, {"name", "shade"},
-                                              {"type", "color"},
+                                              {"type", "Color"},
                                               {"init", "$track"},
                                               {"group", "appearance"},
                                               {"public", true}}})},
@@ -808,7 +808,7 @@ void test_part_properties() {
                      Json{{"id", 430}, {"kind", "frame"}, {"name", "arc"},
                           {"locals", Json::array({Json{{"id", 431},
                                                        {"name", "fillColor"},
-                                                       {"type", "color"},
+                                                       {"type", "Color"},
                                                        {"init", "$accent"},
                                                        {"group", "appearance"},
                                                        {"public", true}}})},
@@ -819,7 +819,7 @@ void test_part_properties() {
                      Json{{"id", 440}, {"kind", "frame"}, {"name", "dot"},
                           {"locals", Json::array({Json{{"id", 441},
                                                        {"name", "fillColor"},
-                                                       {"type", "color"},
+                                                       {"type", "Color"},
                                                        {"init", "$handle"},
                                                        {"group", "appearance"},
                                                        {"public", true}}})},
@@ -923,7 +923,7 @@ void test_part_property_rules() {
     };
     /* one `tint` variable row; every node in a document carries its own id */
     auto tint = [](int id) {
-        return Json::array({Json{{"id", id}, {"name", "tint"}, {"type", "color"},
+        return Json::array({Json{{"id", id}, {"name", "tint"}, {"type", "Color"},
                                  {"init", "#000000"}, {"group", "appearance"},
                                  {"public", true}}});
     };
@@ -1069,8 +1069,8 @@ void test_page_universe() {
     Json root = {
         {"version", 1}, {"next_id", 900},
         {"globals", Json::array({
-            Json{{"id", 500}, {"name", "setpoint"}, {"type", "num"}, {"init", 4}},
-            Json{{"id", 501}, {"name", "ticker"}, {"type", "timer"}},
+            Json{{"id", 500}, {"name", "setpoint"}, {"type", "Num"}, {"init", 4}},
+            Json{{"id", 501}, {"name", "ticker"}, {"type", "Timer"}},
             Json{{"id", 502}, {"name", "spec"}, {"type", "Motor"}}})},
         /* a component whose attrs try for the page and are refused */
         {"components", Json::array({Json{
@@ -1083,7 +1083,7 @@ void test_page_universe() {
             {"children", Json::array({
                 Json{{"id", 110}, {"kind", "frame"}, {"name", "outer"},
                      {"locals", Json::array({Json{{"id", 510}, {"name", "hits"},
-                                                  {"type", "num"}}})},
+                                                  {"type", "Num"}}})},
                      {"attrs", Json{{"w", "hits * 10"}, {"opacity", "@cage/motor.speed"}}},
                      {"children", Json::array({
                          Json{{"id", 111}, {"kind", "frame"}, {"name", "kid"},
@@ -1092,7 +1092,7 @@ void test_page_universe() {
                                              {"h", "@cage/sensor"}}}},
                          Json{{"id", 112}, {"kind", "frame"}, {"name", "shadow"},
                               {"locals", Json::array({Json{{"id", 511}, {"name", "hits"},
-                                                           {"type", "num"}}})},
+                                                           {"type", "Num"}}})},
                               {"attrs", Json{{"w", "hits"}}}}})}},
                 /* outside that subtree: the local is not in scope, and neither is a
                    field the motor does not have */
@@ -1203,9 +1203,9 @@ void test_per_copy_slots() {
     Json root = {
         {"version", 1}, {"next_id", 900},
         {"globals", Json::array({
-            Json{{"id", 500}, {"name", "readings"}, {"type", "list"}, {"elem", "num"},
+            Json{{"id", 500}, {"name", "readings"}, {"type", "List"}, {"elem", "Num"},
                  {"init", Json::array({10, 20, 30})}},
-            Json{{"id", 501}, {"name", "seen"}, {"type", "num"}, {"init", 0}}})},
+            Json{{"id", 501}, {"name", "seen"}, {"type", "Num"}, {"init", 0}}})},
         {"pages", Json::array({Json{
             {"id", 100}, {"name", "Main"},
             {"children", Json::array({
@@ -1315,15 +1315,15 @@ void test_transitions() {
     Json comp = {
         {"id", 800}, {"name", "Sweep"},
         {"locals", Json::array({
-            Json{{"id", 801}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+            Json{{"id", 801}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
                  {"group", "value"}, {"public", true}, {"smooth", 400.0},
                  {"profile", "ease-out"}},
-            Json{{"id", 804}, {"name", "rate"}, {"type", "num"}, {"init", 1.0},
+            Json{{"id", 804}, {"name", "rate"}, {"type", "Num"}, {"init", 1.0},
                  {"group", "config"}, {"public", true}, {"smooth", 250.0}},
             /* the sweep's time is an EXPRESSION over the component's own scope */
-            Json{{"id", 805}, {"name", "speed"}, {"type", "num"}, {"init", 0.0},
+            Json{{"id", 805}, {"name", "speed"}, {"type", "Num"}, {"init", 0.0},
                  {"group", "value"}, {"public", true}, {"smooth", "1000 / rate"}},
-            Json{{"id", 803}, {"name", "label"}, {"type", "text"}, {"init", "hi"},
+            Json{{"id", 803}, {"name", "label"}, {"type", "Text"}, {"init", "hi"},
                  {"group", "config"}, {"public", true}},
         })},
         {"transitions", Json{{"surface", Json{{"ms", 300.0}}}}},
@@ -1444,12 +1444,12 @@ void test_transitions() {
             {"components", Json::array({Json{
                 {"id", 820}, {"name", "BadSweep"},
                 {"locals", Json::array({
-                    Json{{"id", 821}, {"name", "a"}, {"type", "num"}, {"init", 0.0},
+                    Json{{"id", 821}, {"name", "a"}, {"type", "Num"}, {"init", 0.0},
                          {"group", "value"}, {"public", true}, {"smooth", -20.0}},
-                    Json{{"id", 822}, {"name", "b"}, {"type", "num"}, {"init", 0.0},
+                    Json{{"id", 822}, {"name", "b"}, {"type", "Num"}, {"init", 0.0},
                          {"group", "value"}, {"public", true}, {"smooth", 100.0},
                          {"profile", "bounce"}},
-                    Json{{"id", 823}, {"name", "c"}, {"type", "color"},
+                    Json{{"id", 823}, {"name", "c"}, {"type", "Color"},
                          {"init", "#fff"}, {"group", "appearance"}, {"public", true},
                          {"smooth", 100.0}},
                 })}}})},
@@ -1503,7 +1503,7 @@ void test_transitions() {
  * hold the scalar tier's own lines. */
 void test_timer_fields() {
     TemplateScope scope = scope_of({"value"});
-    scope.vars.push_back(TemplateVar{"cook", 77, "timer"});
+    scope.vars.push_back(TemplateVar{"cook", 77, "Timer"});
     CHECK_EQ(lower("cook.remaining", scope), "LOAD(tmr:77:remaining)");
     CHECK_EQ(lower("cook.running", scope), "LOAD(tmr:77:running)");
     CHECK_EQ(lower("cook.duration", scope), "LOAD(tmr:77:duration)");
@@ -1522,7 +1522,7 @@ void test_definition_check() {
         {"id", 300},
         {"name", "Lonely"},
         {"locals", Json::array({
-            Json{{"id", 301}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+            Json{{"id", 301}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
                  {"group", "value"}, {"public", true}},
         })},
         {"interact", Json{{"primitive", "press"}}},
@@ -1537,7 +1537,7 @@ void test_definition_check() {
         {"id", 400},
         {"name", "Placed"},
         {"locals", Json::array({
-            Json{{"id", 401}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
+            Json{{"id", 401}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
                  {"group", "value"}, {"public", true}},
         })},
         {"interact", Json{{"primitive", "press"}}},
@@ -1597,7 +1597,7 @@ void test_reference_index() {
         {"version", 3},
         {"next_id", 2000},
         {"globals", Json::array({
-            Json{{"id", 900}, {"name", "flow"}, {"type", "num"}, {"init", 2.0}},
+            Json{{"id", 900}, {"name", "flow"}, {"type", "Num"}, {"init", 2.0}},
         })},
         {"pages", Json::array({Json{
             {"name", "Main"},
@@ -1633,8 +1633,8 @@ void test_structural_reference_index() {
         {"version", 3},
         {"next_id", 2000},
         {"globals", Json::array({
-            Json{{"id", 900}, {"name", "flow"}, {"type", "num"}, {"init", 2.0}},
-            Json{{"id", 905}, {"name", "blink"}, {"type", "timer"}, {"init", 0.5}},
+            Json{{"id", 900}, {"name", "flow"}, {"type", "Num"}, {"init", 2.0}},
+            Json{{"id", 905}, {"name", "blink"}, {"type", "Timer"}, {"init", 0.5}},
         })},
         {"pages", Json::array({Json{
             {"name", "Main"},
@@ -1705,17 +1705,17 @@ void test_display_reference_index() {
         {"version", 3},
         {"next_id", 2000},
         {"globals", Json::array({
-            Json{{"id", 900}, {"name", "flow"}, {"type", "num"}, {"init", 2.0}},
+            Json{{"id", 900}, {"name", "flow"}, {"type", "Num"}, {"init", 2.0}},
         })},
         {"components", Json::array({Json{
             {"id", 970}, {"name", "Card"},
             {"locals", Json::array({Json{{"id", 971}, {"name", "value"},
-                                         {"type", "num"}, {"public", true}}})},
+                                         {"type", "Num"}, {"public", true}}})},
             {"attrs", Json{{"w", "value"}}},
             {"children", Json::array({
                 Json{{"id", 975}, {"kind", "frame"}, {"name", "bar"},
                      {"locals", Json::array({Json{{"id", 976}, {"name", "lvl"},
-                                                  {"type", "num"}}})},
+                                                  {"type", "Num"}}})},
                      {"attrs", Json{{"show", "value > 1"}}}},
             })}}})},
         {"pages", Json::array({Json{
@@ -1726,7 +1726,7 @@ void test_display_reference_index() {
                      {"children", Json::array({
                          Json{{"id", 960}, {"kind", "frame"}, {"name", "Inner"},
                               {"locals", Json::array({Json{{"id", 961}, {"name", "flow"},
-                                                           {"type", "num"}}})},
+                                                           {"type", "Num"}}})},
                               {"attrs", Json{{"w", "flow"}}}},
                      })}},
             })}}})},

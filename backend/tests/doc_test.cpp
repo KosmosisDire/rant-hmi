@@ -356,7 +356,7 @@ void test_rename() {
     Json local = Json::array({Json{{"op", "insert"},
                                    {"parent", instance},
                                    {"list", "locals"},
-                                   {"node", {{"name", "flowRate"}, {"type", "num"}}}}});
+                                   {"node", {{"name", "flowRate"}, {"type", "Num"}}}}});
     CHECK_MSG(apply_batch(d, local, lr, err), err);
     ApplyResult br;
     Json shadowed = Json::array({Json{{"op", "rename"}, {"node", var_id}, {"name", "capture"}}});
@@ -400,7 +400,7 @@ void test_rename_scope() {
         {"op", "insert"}, {"parent", zone}, {"list", "children"},
         {"node", {{"kind", "frame"}, {"name", "Shadow"},
                   {"attrs", {{"w", "flow"}}},
-                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "num"}}})}}}}});
+                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "Num"}}})}}}}});
     CHECK_MSG(apply_batch(d, shadow_op, sr, err), err);
     const uint64_t shadow = sr.ops[0]["node"]["id"].get<uint64_t>();
 
@@ -419,7 +419,7 @@ void test_rename_scope() {
     Json comp_op = Json::array({Json{
         {"op", "insert"}, {"parent", 0}, {"list", "components"},
         {"node", {{"name", "Sealed"}, {"attrs", {{"w", "flow"}}},
-                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "num"},
+                  {"locals", Json::array({Json{{"name", "flow"}, {"type", "Num"},
                                                {"public", true}}})}}}}});
     CHECK_MSG(apply_batch(d, comp_op, cr, err), err);
     const uint64_t sealed = cr.ops[0]["node"]["id"].get<uint64_t>();
@@ -449,7 +449,7 @@ void test_rename_scope() {
         {"op", "insert"}, {"parent", zone}, {"list", "children"},
         {"node", {{"kind", "frame"}, {"name", "Deep"},
                   {"attrs", {{"w", "rate"}}},
-                  {"locals", Json::array({Json{{"name", "speed"}, {"type", "num"}}})}}}}});
+                  {"locals", Json::array({Json{{"name", "speed"}, {"type", "Num"}}})}}}}});
     CHECK_MSG(apply_batch(d, deep_op, dr, err), err);
     const uint64_t deep = dr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(!apply(d, {Json{{"op", "rename"}, {"node", var_id}, {"name", "speed"}}}, err));
@@ -461,7 +461,7 @@ void test_rename_scope() {
     ApplyResult lr;
     Json local_op = Json::array({Json{
         {"op", "insert"}, {"parent", zone}, {"list", "locals"},
-        {"node", {{"name", "hits"}, {"type", "num"}}}}});
+        {"node", {{"name", "hits"}, {"type", "Num"}}}}});
     CHECK_MSG(apply_batch(d, local_op, lr, err), err);
     const uint64_t hits = lr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", zone}, {"key", "attrs"},
@@ -470,7 +470,7 @@ void test_rename_scope() {
     Json kid_op = Json::array({Json{
         {"op", "insert"}, {"parent", shadow}, {"list", "children"},
         {"node", {{"kind", "frame"}, {"name", "Kid"}, {"attrs", {{"w", "hits"}}},
-                  {"locals", Json::array({Json{{"name", "hits"}, {"type", "num"}}})}}}}});
+                  {"locals", Json::array({Json{{"name", "hits"}, {"type", "Num"}}})}}}}});
     CHECK_MSG(apply_batch(d, kid_op, kr, err), err);
     const uint64_t kid = kr.ops[0]["node"]["id"].get<uint64_t>();
     CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", hits}, {"name", "taps"}}}, err), err);
@@ -496,7 +496,7 @@ void test_rename_by_index() {
         {"node", {{"name", "Counter"},
                   {"attrs", {{"w", "count"}}},
                   {"interact", {{"primitive", "press"}}},
-                  {"locals", Json::array({Json{{"name", "count"}, {"type", "num"},
+                  {"locals", Json::array({Json{{"name", "count"}, {"type", "Num"},
                                                {"public", true}}})},
                   {"behavior", Json::array({Json{
                       {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -582,7 +582,7 @@ void test_retype() {
     std::string err;
     ApplyResult r;
     CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
-                                    {"value", "bool"}}}),
+                                    {"value", "Bool"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == true);   /* 42 is not zero */
     /* the coercion is echoed as its own op, so a client applies it mechanically */
@@ -593,14 +593,14 @@ void test_retype() {
 
     /* and back: a bool becomes a number again, so nothing is stuck in the wrong shape */
     CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
-                                    {"value", "num"}}}),
+                                    {"value", "Num"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == 1.0);
 
     /* a document read off disk with the wrong shape is normalized by the same rule */
     Json root = {{"version", 1},
                  {"next_id", 1},
-                 {"globals", Json::array({Json{{"name", "on"}, {"type", "bool"}, {"init", 0}}})},
+                 {"globals", Json::array({Json{{"name", "on"}, {"type", "Bool"}, {"init", 0}}})},
                  {"pages", Json::array()}};
     Document loaded;
     CHECK(loaded.adopt(std::move(root), err));
@@ -610,7 +610,7 @@ void test_retype() {
     Json with_null = {
         {"version", 1},
         {"next_id", 1},
-        {"globals", Json::array({Json{{"name", "on"}, {"type", "bool"}, {"init", nullptr}}})},
+        {"globals", Json::array({Json{{"name", "on"}, {"type", "Bool"}, {"init", nullptr}}})},
         {"pages", Json::array()}};
     Document kept;
     CHECK(kept.adopt(std::move(with_null), err));
@@ -620,15 +620,15 @@ void test_retype() {
        key. Retyping into one starts it EMPTY rather than carrying the scalar it left
        behind, which nothing could hold; retyping back restores the scalar's own start. */
     CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
-                                    {"value", "list"}}}),
+                                    {"value", "List"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == Json::array());
     CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
-                                    {"value", "map"}}}),
+                                    {"value", "Map"}}}),
                     r, err));
     CHECK(global_named(d, "setpoint")->at("init") == Json::object());
     CHECK(apply_batch(d, ops_of({Json{{"op", "set_prop"}, {"node", id}, {"key", "type"},
-                                    {"value", "num"}}}),
+                                    {"value", "Num"}}}),
                     r, err));
     /* nothing about a map is a number, so the number's own default stands */
     CHECK(global_named(d, "setpoint")->at("init") == 0.0);
@@ -639,13 +639,13 @@ void test_retype() {
                    {"next_id", 1},
                    {"globals",
                     Json::array({Json{{"name", "log"},
-                                      {"type", "list"},
+                                      {"type", "List"},
                                       {"init", Json::array({1, 2, 3})}},
                                  Json{{"name", "typed"},
-                                      {"type", "list"},
+                                      {"type", "List"},
                                       {"init", "[4, 5]"}},
                                  Json{{"name", "table"},
-                                      {"type", "map"},
+                                      {"type", "Map"},
                                       {"init", Json{{"a", 1}}}}})},
                    {"pages", Json::array()}};
     Document rings;
@@ -715,10 +715,10 @@ void test_var_types() {
             if (v == want) return true;
         return false;
     };
-    CHECK(names("num") && names("text") && names("color"));
-    CHECK(names("list") && names("map") && names("timer"));
+    CHECK(names("Num") && names("Text") && names("Color"));
+    CHECK(names("List") && names("Map") && names("Timer"));
     CHECK(!names("f64") && !names("str"));
-    CHECK(!names("series") && !names("enum"));
+    CHECK(!names("series") && !names("Enum"));
     /* the interface fields PropDef used to own now live on the variable itself */
     for (const char* key : {"public", "group", "editor", "variants", "min", "max",
                             "step", "smooth", "profile"})

@@ -2,86 +2,86 @@
 # only by fold.
 
 == length counts pairs
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Length()
-want num 2
+want Num 2
 
 == keys come sorted
-env limits: map(num) = {"lo": 2, "hi": 10}
+env limits: Map(Num) = {"lo": 2, "hi": 10}
 expr limits.Keys().Join(",")
-want text "hi,lo"
+want Text "hi,lo"
 
 == values ride beside their keys
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Values().Sum()
-want num 12
+want Num 12
 
 == has
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Has("hi")
-want bool true
+want Bool true
 
 == has misses
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Has("mid")
-want bool false
+want Bool false
 
 == get
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Get("hi")
-want num 10
+want Num 10
 
 == get of a missing key is unknown
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Get("mid")
 want nil
 
 == indexing a map by key
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits["lo"]
-want num 2
+want Num 2
 
 == indexing by a missing key is unknown
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits["mid"]
 want nil
 
 == map keys builtin
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr Keys(limits).Length()
-want num 2
+want Num 2
 
 == map values builtin
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr Values(limits).Max()
-want num 10
+want Num 10
 
 == a map folds
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Reduce((acc, key, value) => acc + value, 0)
-want num 12
+want Num 12
 
 == a map fold reads its keys
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Reduce((acc, key, value) => acc + key, "")
-want text "hilo"
+want Text "hilo"
 
 == a map does not map
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Map(v => v)
 error iterate a map with reduce
 
 == a map does not filter
-env limits: map(num) = {"hi": 10, "lo": 2}
+env limits: Map(Num) = {"hi": 10, "lo": 2}
 expr limits.Filter(v => v > 1)
 error iterate a map with reduce
 
 == a map fold names all three
-env limits: map(num) = {"hi": 10}
+env limits: Map(Num) = {"hi": 10}
 expr limits.Reduce((acc, v) => acc + v, 0)
 error 3 lambda parameters
 
-== indexing a map wants text
-env limits: map(num) = {"hi": 10}
+== indexing a map wants Text
+env limits: Map(Num) = {"hi": 10}
 expr limits[0]
-error map key wants text
+error map key wants Text

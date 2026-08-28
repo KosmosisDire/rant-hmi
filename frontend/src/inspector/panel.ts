@@ -1029,21 +1029,21 @@ function slotRowSig(editor: Editor, instance: Node): string {
 /* which literal picker a slot's box gets, from the served spec: variants feed the enum
  * picker, min/max/step become the scrub grain hints */
 function slotBoxType(spec: SlotSpec): BoxType {
-  if (spec.editor === "align") return { shape: "align" };
-  if (spec.shape === "enum") {
+  if (spec.editor === "align") return { shape: "Align" };
+  if (spec.shape === "Enum") {
     const variants = spec.variants ?? [];
-    return { shape: "enum", variants: () => variants };
+    return { shape: "Enum", variants: () => variants };
   }
-  if (spec.shape === "num") {
+  if (spec.shape === "Num") {
     const bounded = typeof spec.min === "number" && typeof spec.max === "number" &&
                     spec.max > spec.min;
     const step = spec.step ?? (bounded ? (spec.max! - spec.min!) / 100 : 0);
-    return step ? { shape: "num", step } : { shape: "num" };
+    return step ? { shape: "Num", step } : { shape: "Num" };
   }
-  if (spec.shape === "bool" || spec.shape === "text" || spec.shape === "color" ||
-      spec.shape === "icon" || spec.shape === "list" || spec.shape === "map")
+  if (spec.shape === "Bool" || spec.shape === "Text" || spec.shape === "Color" ||
+      spec.shape === "Icon" || spec.shape === "List" || spec.shape === "Map")
     return { shape: spec.shape };
-  return { shape: "text" };   /* anything unforeseen: the glyph alone */
+  return { shape: "Text" };   /* anything unforeseen: the glyph alone */
 }
 
 /* one slot's row (and its open cases editor, when one stands) */
@@ -1132,7 +1132,7 @@ function pollChip(editor: Editor, instance: Node, spec: SlotSpec): HTMLElement |
         emptyMeans: "default",
         placeholder: "2",
         title: "calls per second — a plain rate; empty falls back to 2 Hz",
-        type: { shape: "num" },
+        type: { shape: "Num" },
         scope: constScope(editor),
       });
       openMenu(rect.left, rect.bottom + 4, "poll " + slotLeaf(spec.name), [
@@ -1185,7 +1185,7 @@ function casesEditor(
       }),
       emptyMeans: "unset",
       title: side === "when" ? "the condition" : "the value while the condition holds",
-      type: side === "when" ? { shape: "bool" } : boxType,
+      type: side === "when" ? { shape: "Bool" } : boxType,
       scope,
     });
 

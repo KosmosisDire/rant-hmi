@@ -978,7 +978,7 @@ int main() {
             {"version", 1},
             {"next_id", 1},
             {"globals",
-             Json::array({Json{{"name", "hold"}, {"type", "num"}, {"init", 0}}})},
+             Json::array({Json{{"name", "hold"}, {"type", "Num"}, {"init", 0}}})},
             {"pages",
              Json::array({Json{{"name", "Cycle"},
                                {"children", Json::array({cy_gauge, cy_dial, cy_meter,

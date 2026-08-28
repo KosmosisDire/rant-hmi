@@ -6,52 +6,52 @@ expr flow_rate + 1
 error unknown name 'flow_rate'
 
 == an unknown method suggests the neighbour
-env note: text = "x"
+env note: Text = "x"
 expr note.toUpperCase()
 error did you mean 'upper'
 
 == a near miss suggests the neighbour
-env setpoint: num = 1
+env setpoint: Num = 1
 expr setpoint.round(1)
 error did you mean 'Round'
 
 == an unknown method on a known shape
-env setpoint: num = 1
+env setpoint: Num = 1
 expr setpoint.launch()
 error has no method 'launch'
 
 == a no-argument method still demands parentheses
-env note: text = "x"
+env note: Text = "x"
 expr note.Length
 error is a method
 
 == a method demands parentheses
-env note: text = "x"
+env note: Text = "x"
 expr note.Trim
 error is a method
 
 == a transition is not an expression
-env value: num = 1
+env value: Num = 1
 expr value.smooth(300)
 error not written in an expression
 
 == transition by its other name
-env value: num = 1
+env value: Num = 1
 expr value.transition(300)
 error the value stays true
 
 == method arity is checked
-env note: text = "x"
+env note: Text = "x"
 expr note.Slice(1)
 error Slice takes 2 arguments
 
 == method argument shapes are checked
-env note: text = "x"
+env note: Text = "x"
 expr note.Slice("a", 2)
-error Slice wants num
+error Slice wants Num
 
 == assignment is not an expression
-env setpoint: num = 1
+env setpoint: Num = 1
 expr setpoint = 1
 error unexpected '='
 
@@ -88,7 +88,7 @@ expr widget
 error 'widget' is spelled 'this' now
 
 == a lambda is legal only under an iterating method
-env temps: list(num) = [1]
+env temps: List(Num) = [1]
 expr temps.Contains(v => v)
 error unknown name 'v'
 
@@ -101,7 +101,7 @@ expr $accent + 1
 error expected an expression
 
 == keywords do not name methods that do not exist
-env on: bool = true
+env on: Bool = true
 expr on.and()
 error has no method 'and'
 

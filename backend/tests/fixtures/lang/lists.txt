@@ -4,119 +4,119 @@
 
 == a literal list sums
 expr [1, 2, 3].Sum()
-want num 6
+want Num 6
 
 == an env list sums
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.Sum()
-want num 60
+want Num 60
 
 == average
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.Avg()
-want num 20
+want Num 20
 
 == max
-env temps: list(num) = [10, 40, 30]
+env temps: List(Num) = [10, 40, 30]
 expr temps.Max()
-want num 40
+want Num 40
 
 == min
-env temps: list(num) = [10, 40, 30]
+env temps: List(Num) = [10, 40, 30]
 expr temps.Min()
-want num 10
+want Num 10
 
 == length
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.Length()
-want num 3
+want Num 3
 
 == first
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.First()
-want num 10
+want Num 10
 
 == last
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.Last()
-want num 30
+want Num 30
 
 == an empty literal sums to zero
 expr [].Sum()
-want num 0
+want Num 0
 
 == first of an empty list is unknown
 expr [].First()
 want nil
 
 == indexing
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps[1]
-want num 20
+want Num 20
 
 == indexing out of range is unknown
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps[9]
 want nil
 
 == a computed index
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps[1 + 1]
-want num 30
+want Num 30
 
 == contains
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.Contains(20)
-want bool true
+want Bool true
 
 == contains misses
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.Contains(99)
-want bool false
+want Bool false
 
 == indexOf
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.IndexOf(20)
-want num 1
+want Num 1
 
 == indexOf misses with -1
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.IndexOf(99)
-want num -1
+want Num -1
 
 == sort ascending
-env temps: list(num) = [30, 10, 20]
+env temps: List(Num) = [30, 10, 20]
 expr temps.Sort().Join(",")
-want text "10,20,30"
+want Text "10,20,30"
 
 == sort text lexicographically
-env names: list(text) = ["b", "c", "a"]
+env names: List(Text) = ["b", "c", "a"]
 expr names.Sort().Join(",")
-want text "a,b,c"
+want Text "a,b,c"
 
 == reverse
-env temps: list(num) = [10, 20, 30]
+env temps: List(Num) = [10, 20, 30]
 expr temps.Reverse().Join(",")
-want text "30,20,10"
+want Text "30,20,10"
 
 == slice
-env temps: list(num) = [10, 20, 30, 40]
+env temps: List(Num) = [10, 20, 30, 40]
 expr temps.Slice(1, 3).Join(",")
-want text "20,30"
+want Text "20,30"
 
 == join over text
-env names: list(text) = ["jog", "head"]
+env names: List(Text) = ["jog", "head"]
 expr names.Join(" ")
-want text "jog head"
+want Text "jog head"
 
 == a gathered literal list
-env a: num = 1
-env b: num = 2
+env a: Num = 1
+env b: Num = 2
 expr [a, b, a + b].Join("-")
-want text "1-2-3"
+want Text "1-2-3"
 
 == sum over text refuses at compile
-env names: list(text) = ["a", "b"]
+env names: List(Text) = ["a", "b"]
 expr names.Sum()
 error needs a list of numbers
 
@@ -125,26 +125,26 @@ expr [1, "a"].Sum()
 want nil
 
 == the chain keeps the element shape
-env temps: list(num) = [30, 10]
+env temps: List(Num) = [30, 10]
 expr temps.Sort().First() + 1
-want num 11
+want Num 11
 
 == a list is one scalar short of the wire
 tier wire
-env temps: list(num) = [10, 20]
+env temps: List(Num) = [10, 20]
 expr temps.Sort()
 error one scalar
 
 == but a fold of one is wire-legal
 tier wire
-env temps: list(num) = [10, 20]
+env temps: List(Num) = [10, 20]
 expr temps.Max() + 1
-want num 21
+want Num 21
 
 == indexing wants a number
-env temps: list(num) = [10]
+env temps: List(Num) = [10]
 expr temps["a"]
-error list index wants num
+error list index wants Num
 
 == only a list or a map indexes
 expr (5)[0]

@@ -47,7 +47,7 @@ let failed = 0;
 for (const item of cases) {
   const got = run(item.program, (cell) => item.cells[cell] ?? null);
   const ok = item.want_type === "nil" ? got === null
-           : item.want_type === "num" ? close(got, item.want)
+           : item.want_type === "Num" ? close(got, item.want)
            : got === item.want;
   if (!ok) {
     failed += 1;

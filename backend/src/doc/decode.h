@@ -96,7 +96,7 @@ struct InteractDecl {
 struct VarDecl {
     uint64_t id = 0;
     std::string name;
-    std::string type = "num";
+    std::string type = "Num";
     std::string elem;              /* a list/map's declared element type, "" = undeclared */
     std::string leaf;              /* a nested row's held type */
     Json init;                     /* null = a deliberate UNKNOWN start */

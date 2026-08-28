@@ -1,114 +1,114 @@
-# CONFORMANCE FIXTURES: text (spec 6.2/6.3). Producing text is display vocabulary;
+# CONFORMANCE FIXTURES: Text (spec 6.2/6.3). Producing text is display vocabulary;
 # the predicates and length stay wire-legal.
 
 == a text literal
 expr "hello"
-want text "hello"
+want Text "hello"
 
 == length is a method
-env note: text = "ready"
+env note: Text = "ready"
 expr note.Length()
-want num 5
+want Num 5
 
 == length is wire-legal
 tier wire
-env note: text = "ready"
+env note: Text = "ready"
 expr note.Length()
-want num 5
+want Num 5
 
 == upper
 expr "Mixed Case".Upper()
-want text "MIXED CASE"
+want Text "MIXED CASE"
 
 == lower
 expr "Mixed Case".Lower()
-want text "mixed case"
+want Text "mixed case"
 
 == title
 expr "the jog head".Title()
-want text "The Jog Head"
+want Text "The Jog Head"
 
 == trim
 expr "  padded  ".Trim()
-want text "padded"
+want Text "padded"
 
 == slice
 expr "abcdef".Slice(1, 4)
-want text "bcd"
+want Text "bcd"
 
 == slice with negative indexes counts from the end
 expr "abcdef".Slice(-3, -1)
-want text "de"
+want Text "de"
 
 == slice collapsed range is empty
 expr "abcdef".Slice(4, 2)
-want text ""
+want Text ""
 
 == startsWith
 expr "gauge_1".StartsWith("gauge")
-want bool true
+want Bool true
 
 == endsWith
 expr "gauge_1".EndsWith("_1")
-want bool true
+want Bool true
 
 == contains
 expr "the jog head".Contains("jog")
-want bool true
+want Bool true
 
 == contains misses
 expr "the jog head".Contains("axis")
-want bool false
+want Bool false
 
 == predicates are wire-legal
 tier wire
-env note: text = "E42 overtravel"
+env note: Text = "E42 overtravel"
 expr note.StartsWith("E42")
-want bool true
+want Bool true
 
 == replace
 expr "a-b-c".Replace("-", "+")
-want text "a+b+c"
+want Text "a+b+c"
 
 == padStart
 expr "7".PadStart(3, "0")
-want text "007"
+want Text "007"
 
 == split and join
 expr "a,b,c".Split(",").Join("|")
-want text "a|b|c"
+want Text "a|b|c"
 
 == split counts pieces
 expr "a,b,c".Split(",").Length()
-want num 3
+want Num 3
 
 == concatenation joins text
 expr "jog " + "head"
-want text "jog head"
+want Text "jog head"
 
 == concatenation renders a number the way str does
 expr "n=" + 5
-want text "n=5"
+want Text "n=5"
 
 == concatenation renders a bool
 expr "is " + true
-want text "is true"
+want Text "is true"
 
 == toFixed
 expr (3.14159).ToFixed(2)
-want text "3.14"
+want Text "3.14"
 
 == str of a number
 expr Str(12.5)
-want text "12.5"
+want Text "12.5"
 
 == str of text passes through
 expr Str("x")
-want text "x"
+want Text "x"
 
 == num parses text
 expr Num("12.5")
-want num 12.5
+want Num 12.5
 
 == num of unparseable text is unknown
 expr Num("reading")
@@ -116,29 +116,29 @@ want nil
 
 == int truncates toward zero
 expr Int(3.9)
-want num 3
+want Num 3
 
 == int truncates negative toward zero
 expr Int(-3.9)
-want num -3
+want Num -3
 
 == int of a bool
 expr Int(true)
-want num 1
+want Num 1
 
 == int parses text
 expr Int("42.7")
-want num 42
+want Num 42
 
 == concatenation is display vocabulary
 tier wire
-env note: text = "x"
+env note: Text = "x"
 expr note + "y"
 error display vocabulary
 
 == upper is display vocabulary
 tier wire
-env note: text = "x"
+env note: Text = "x"
 expr note.Upper()
 error display vocabulary
 

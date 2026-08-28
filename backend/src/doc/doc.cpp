@@ -262,10 +262,10 @@ Document Document::make_default() {
     j["version"] = 1;
     j["next_id"] = 1;
     j["globals"] = Json::array({
-        Json{{"name", "pumpOn"}, {"type", "bool"}, {"init", false}},
-        Json{{"name", "setpoint"}, {"type", "num"}, {"init", 42.0}, {"persist", true}},
-        Json{{"name", "flow"}, {"type", "num"}, {"init", 0.0}},
-        Json{{"name", "blink"}, {"type", "timer"}, {"init", 1.0}},
+        Json{{"name", "pumpOn"}, {"type", "Bool"}, {"init", false}},
+        Json{{"name", "setpoint"}, {"type", "Num"}, {"init", 42.0}, {"persist", true}},
+        Json{{"name", "flow"}, {"type", "Num"}, {"init", 0.0}},
+        Json{{"name", "blink"}, {"type", "Timer"}, {"init", 1.0}},
     });
 
     /* The semantic token set (spec 2.10). DARK is today's editor-reference palette and

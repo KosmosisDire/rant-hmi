@@ -52,9 +52,9 @@ export function slotText(value: Json): string {
  * typed and the compiler's finding teaches */
 export function spellSlotText(shape: string, text: string): Json {
   const at = text.trim();
-  if (shape === "num" && /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(at))
+  if (shape === "Num" && /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(at))
     return Number(at);
-  if (shape === "bool" && (at === "true" || at === "false")) return at === "true";
+  if (shape === "Bool" && (at === "true" || at === "false")) return at === "true";
   return text;
 }
 

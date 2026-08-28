@@ -43,7 +43,7 @@ export function valueEditor(
      (optionsSlotScope) offers every enum-typed value in reach as its .Variants()
      read — so this editor needs no case for it */
   switch (shape) {
-    case "bool": {
+    case "Bool": {
       const pair = boolPair(value === true, commit);
       bindGroup(key, pair, () => {
         const next = read();
@@ -52,7 +52,7 @@ export function valueEditor(
       });
       return pair;
     }
-    case "num": {
+    case "Num": {
       const lo = typeof spec?.min === "number" ? spec.min : null;
       const hi = typeof spec?.max === "number" ? spec.max : null;
       const bounded = lo !== null && hi !== null && hi > lo;
@@ -87,12 +87,12 @@ export function valueEditor(
       bindField(key + ".range", slider, reader);
       return el("span", { class: "range-pair" }, [slider, field]);
     }
-    case "color":
+    case "Color":
       /* the value may be "$token": the swatch shows the resolved color, the field the
          honest reference, and the $ button offers the document's tokens */
       return colorField(text(value), commit, key, () => text(read()),
                         editor ? tokenAccess(editor) : undefined);
-    case "enum": {
+    case "Enum": {
       const wrap = selectField(
         (spec?.variants ?? []).map((v) => ({ value: v })),
         text(value),
@@ -101,11 +101,11 @@ export function valueEditor(
       bindChoice(key, pickerOf(wrap), () => text(read()));
       return wrap;
     }
-    case "icon":
+    case "Icon":
       /* the raw value is the glyph's BARE name; the button paints it and opens the
          grid — the colorField anatomy carried to ink */
       return iconField(text(value), commit, key, () => text(read()));
-    case "text": {
+    case "Text": {
       /* a textarea, not an input: a caption may hold EXPLICIT newlines (Shift+Enter);
          Enter still commits, and the row stays one line tall either way */
       const field = commitTextInput(text(value), commit, { class: "field grow", ...placeholder });

@@ -25,7 +25,7 @@ expr nope1 ?? nope2
 error unknown name 'nope2'
 
 == both arms of a ternary report
-env flag: bool = true
+env flag: Bool = true
 expr flag ? nope1 : nope2
 error unknown name 'nope2'
 

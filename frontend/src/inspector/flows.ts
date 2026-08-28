@@ -345,7 +345,7 @@ function whenGrid(
           events.push({ value: "@element:" + armed.element + ":" + kind.name,
                         label: armed.element + " " + pastTense(kind.name) });
     }
-  const timers = variablesInScope(editor, instance).filter((v) => v.type === "timer");
+  const timers = variablesInScope(editor, instance).filter((v) => v.type === "Timer");
   const setFirst = (patch: Json) => {
     const next = entries().slice();
     next[0] = { ...head(), ...patch };
@@ -420,7 +420,7 @@ function whenGrid(
         },
         emptyMeans: "unset",
         placeholder: "expression",
-        type: { shape: "num" },
+        type: { shape: "Num" },
         /* the WHEN row stands before any step, so its scope stops at the first one */
         scope: flowScope(editor, instance, flow, (at().do ?? [])[0]?.id ?? 0),
       });
@@ -529,7 +529,7 @@ function alsoMenu(
           op: "insert",
           parent: instance.id,
           list: "locals",
-          node: { name: fresh, type: "timer", init: 1 },
+          node: { name: fresh, type: "Timer", init: 1 },
         },
         {
           op: "set_prop",
@@ -607,12 +607,12 @@ function destShape(editor: Editor, instance: Node, type: ComponentType | null, f
     return type?.slots.find((s) => s.name === to.slot)?.shape ?? "";
   if (typeof to?.local === "string" && !to.path) {
     const declared = variablesInScope(editor, instance).find((v) => v.name === to.local);
-    return declared?.type === "list" || declared?.type === "map" ? declared.type : "";
+    return declared?.type === "List" || declared?.type === "Map" ? declared.type : "";
   }
   if (typeof to?.local === "string" && to.path) {
     const held = localAt(editor, instance, flow, stepId, String(to.local));
     const field = (held?.fields ?? []).find((f) => f.path === to.path);
-    return field?.shape === "list" || field?.shape === "map" ? field.shape : "";
+    return field?.shape === "List" || field?.shape === "Map" ? field.shape : "";
   }
   return "";
 }
@@ -625,7 +625,7 @@ function entityAggField(editor: Editor, to: Json): { shape: string; elem?: strin
   if (!to.name || !to.path) return null;
   const entity = editor.mesh.entities.find((e) => e.kind === to.kind && e.name === to.name);
   const field = entity?.fields.find((f) => f.path === to.path);
-  if (!field || (field.shape !== "list" && field.shape !== "map")) return null;
+  if (!field || (field.shape !== "List" && field.shape !== "Map")) return null;
   return { shape: field.shape, elem: field.elem };
 }
 
@@ -754,7 +754,7 @@ function stepCell(
       }));
       cell.appendChild(el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     } else if (verbOf(step) !== "unforce") {
-      cell.appendChild(box("from.expr", "text", () => String(at().from?.expr ?? ""),
+      cell.appendChild(box("from.expr", "Text", () => String(at().from?.expr ?? ""),
                            (text) => set("from", { expr: text })));
       cell.appendChild(el("span", { class: "icon-mark chain-arrow", html: iconMarkup("arrow-right", 10, 1.5) }));
     }
@@ -821,22 +821,22 @@ function stepCell(
       cell.appendChild(picker);
       if (derived() === "append") {
         cell.appendChild(el("span", { class: "op", text: "keep last" }));
-        cell.appendChild(box("keep", "num", () => String(at().keep ?? ""),
+        cell.appendChild(box("keep", "Num", () => String(at().keep ?? ""),
                              (text) => set("keep", text)));
       } else if (derived() === "index") {
         cell.appendChild(el("span", { class: "op", text: "at" }));
-        cell.appendChild(box("key", "num", () => String(at().key ?? ""),
+        cell.appendChild(box("key", "Num", () => String(at().key ?? ""),
                              (text) => set("key", text)));
       }
     } else if (shape === "map") {
       cell.appendChild(el("span", { class: "op", text: "at key" }));
-      cell.appendChild(box("key", "text", () => String(at().key ?? ""),
+      cell.appendChild(box("key", "Text", () => String(at().key ?? ""),
                            (text) => set("key", text)));
     } else {
       /* a mesh LIST field takes the whole array or one element — no append (growth
          belongs to the owner); a mesh map field renders nothing, the compiler teaches */
       const meshAgg = entityAggField(editor, at().to);
-      if (meshAgg?.shape === "list") {
+      if (meshAgg?.shape === "List") {
         const meshDerived = () => (indexKey() !== "" ? "index" : "write");
         const picker = selectField(
           [{ value: "write" }, { value: "index", label: "at index" }],
@@ -848,7 +848,7 @@ function stepCell(
         cell.appendChild(picker);
         if (meshDerived() === "index") {
           cell.appendChild(el("span", { class: "op", text: "at" }));
-          cell.appendChild(box("key", "num", () => String(at().key ?? ""),
+          cell.appendChild(box("key", "Num", () => String(at().key ?? ""),
                                (text) => set("key", text)));
         }
       }
@@ -859,7 +859,7 @@ function stepCell(
   if (step.kind === "gate") {
     /* the verb already reads "if", so the condition follows it bare */
     /* a condition's literal form IS true/false, so the bool icon is honest here */
-    cell.appendChild(box("a", "bool", () => String(at().a ?? ""),
+    cell.appendChild(box("a", "Bool", () => String(at().a ?? ""),
                          (text) => set("a", text)));
     return cell;
   }
@@ -894,10 +894,10 @@ function stepCell(
      it is for a human); an empty ms scales the showing time with the message's
      length, capped at 10 s. */
   if (step.kind === "notify") {
-    cell.appendChild(box("text", "text", () => String(at().text ?? ""),
+    cell.appendChild(box("text", "Text", () => String(at().text ?? ""),
                          (text) => set("text", text)));
     cell.appendChild(el("span", { class: "op", text: "for" }));
-    cell.appendChild(box("ms", "num", () => String(at().ms ?? ""),
+    cell.appendChild(box("ms", "Num", () => String(at().ms ?? ""),
                          (text) => set("ms", text)));
     cell.appendChild(el("span", { class: "op", text: "ms" }));
     return cell;
@@ -920,7 +920,7 @@ function stepCell(
   }
 
   if (step.kind === "tmr_start" || step.kind === "tmr_cancel") {
-    const timers = variablesInScope(editor, instance).filter((v) => v.type === "timer");
+    const timers = variablesInScope(editor, instance).filter((v) => v.type === "Timer");
     const picker = selectField(
       timers.length ? timers.map((t) => ({ value: t.name })) : [{ value: "" }],
       String(step.timer ?? ""),

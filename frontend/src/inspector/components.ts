@@ -30,7 +30,7 @@ import { newVariable, varCard, varShape } from "./vars.js";
 /* the shapes an event's PARAMETER may carry. A list or a map is not one (an event
    passes a value, never a history) and `enum` needs a type to name its variants, which
    a signature has nowhere to put — the enum's own text name is what travels. */
-const EVENT_SHAPES = ["bool", "num", "text", "color"];
+const EVENT_SHAPES = ["Bool", "Num", "Text", "Color"];
 
 /* the closed attr vocabulary: `editor.attrTable` is snapshot-only data, so these read
  * straight off it rather than caching — a kind with nothing of its own, or an offline
@@ -863,7 +863,7 @@ function transitionChip(editor: Editor, node: Node, def: AttrDef): HTMLElement |
       emptyMeans: "unset",
       placeholder: "none",
       title: "milliseconds — a number or an expression; empty = none",
-      type: { shape: "num" },
+      type: { shape: "Num" },
       scope,
     });
     const profile = valueBox({
@@ -882,7 +882,7 @@ function transitionChip(editor: Editor, node: Node, def: AttrDef): HTMLElement |
       placeholder: "ease",
       title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
              + "yielding one",
-      type: { shape: "text" },
+      type: { shape: "Text" },
       scope,
     });
     openMenu(rect.left, rect.bottom + 4, "transition " + def.name, [
@@ -951,14 +951,14 @@ export function chassisRow(opts: {
 /* Which literal picker an attr's box gets, from the served table — `variants` is a
  * real column now (registry/attrs.cpp serves it), so the enum picker reads data. */
 function attrBoxType(def: AttrDef): BoxType {
-  if (def.shape === "text" && def.variants && def.variants.length) {
+  if (def.shape === "Text" && def.variants && def.variants.length) {
     const variants = def.variants;
-    return { shape: "enum", variants: () => variants };
+    return { shape: "Enum", variants: () => variants };
   }
-  if (def.shape === "num" || def.shape === "bool" || def.shape === "color" ||
-      def.shape === "icon" || def.shape === "text" || def.shape === "list")
+  if (def.shape === "Num" || def.shape === "Bool" || def.shape === "Color" ||
+      def.shape === "Icon" || def.shape === "Text" || def.shape === "List")
     return { shape: def.shape };
-  return { shape: "text" };   /* `any` and anything unforeseen: the glyph alone */
+  return { shape: "Text" };   /* `any` and anything unforeseen: the glyph alone */
 }
 
 function attrDefRow(
@@ -1016,7 +1016,7 @@ function unknownAttrRow(
     read: () => String(attrsOf()[key] ?? ""),
     commit: (text) => commitAttrs({ ...attrsOf(), [key]: text }),
     emptyMeans: "unset",
-    type: { shape: "text" },   /* undeclared: no shape info, so the glyph alone */
+    type: { shape: "Text" },   /* undeclared: no shape info, so the glyph alone */
     scope,
     trail: [diagIcon(editor.diagAt(node.id, key))],
   });
@@ -1183,7 +1183,7 @@ function interactParamRow(
     emptyMeans: "unset",
     /* a gesture's params are untyped expression slots (their seeds are literals of any
        shape), so the box shows the glyph alone */
-    type: { shape: "text" },
+    type: { shape: "Text" },
     scope: attrScope(editor, node),
     trail: [diagIcon(editor.diagAt(node.id, "interact." + param))],
   });

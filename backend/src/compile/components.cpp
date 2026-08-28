@@ -391,16 +391,16 @@ struct Walk {
  * into a cell that reads UNKNOWN forever — and a page element, which is its own placement,
  * still takes either. */
 bool component_type_ok(const std::string& type) {
-    return type == "num" || type == "bool" || type == "text" || type == "color" ||
-           type == "icon" || type == "list" || type == "map";
+    return type == "Num" || type == "Bool" || type == "Text" || type == "Color" ||
+           type == "Icon" || type == "List" || type == "Map";
 }
 
 /* what one ELEMENT of a declared list or map may be. Checked HERE, on the row that
  * declares it, so a mistake gets one finding rather than one per placement and the
  * document compiler can take the served string at its word. */
 bool elem_type_ok(const std::string& type) {
-    return type == "num" || type == "bool" || type == "text" || type == "color" ||
-           type == "icon";
+    return type == "Num" || type == "Bool" || type == "Text" || type == "Color" ||
+           type == "Icon";
 }
 
 /* A VARIABLE'S TYPE AS EVERY READER OF THE SERVED ROW SEES IT — the same word it was
@@ -411,8 +411,8 @@ bool elem_type_ok(const std::string& type) {
  * list text, which is all the old `enum` shape ever meant. The vocabulary is the author's
  * own words — a mesh enum is a TypeRef, and those do not come this way. */
 std::string served_shape(const VarDecl& var) {
-    if (var.type != "text") return var.type;
-    return var.variants.empty() ? "text" : "enum";
+    if (var.type != "Text") return var.type;
+    return var.variants.empty() ? "Text" : "Enum";
 }
 
 /* The variables one node declares: each becomes a served row addressed under this node's
@@ -488,19 +488,19 @@ std::vector<std::pair<std::string, uint64_t>> collect_vars(
                         "type");
             continue;
         }
-        const bool aggregate = var.type == "list" || var.type == "map";
-        const bool rows_of = var.elem == "list" || var.elem == "map";
+        const bool aggregate = var.type == "List" || var.type == "Map";
+        const bool rows_of = var.elem == "List" || var.elem == "Map";
         if (aggregate && !var.elem.empty() && !elem_type_ok(var.elem) && !rows_of)
             sink.report(var.id, "var_type",
-                        "'" + var.elem + "' is not an element type: elements are num, bool, "
-                        "text, color or icon, or list or map for rows",
+                        "'" + var.elem + "' is not an element type: elements are Num, Bool, "
+                        "Text, Color or Icon, or List or Map for rows",
                         "elem");
         else if (aggregate && !var.leaf.empty() && (!rows_of || !elem_type_ok(var.leaf)))
             sink.report(var.id, "var_type",
-                        rows_of ? "'" + var.leaf + "' is not a leaf type: a row holds num, "
-                                  "bool, text, color or icon"
+                        rows_of ? "'" + var.leaf + "' is not a leaf type: a row holds Num, "
+                                  "Bool, Text, Color or Icon"
                                 : "a leaf type says what the ROWS hold; declare this "
-                                  "variable's elements list or map first",
+                                  "variable's elements List or Map first",
                         "leaf");
         /* an inherited name still resolves — to THIS one, from here down — but a
            variable whose meaning changes with depth is a mistake worth saying out loud.
@@ -521,7 +521,7 @@ std::vector<std::pair<std::string, uint64_t>> collect_vars(
             (var.smooth.kind == NumOrText::Kind::Num && var.smooth.num != 0) ||
             (var.smooth.kind == NumOrText::Kind::Text && !var.smooth.text.empty());
         if (sweeps_at_all) {
-            if (var.type != "num")
+            if (var.type != "Num")
                 sink.report(var.id, "var_smooth",
                             "only a number sweeps; a colour cross-fades on the attribute "
                             "that draws it (its transition button)",
@@ -556,7 +556,7 @@ void collect_tree(const NodeDecl& node, const std::string& path, bool addressabl
     if (addressable && !path.empty() && !declares_shown(node.locals)) {
         names.push_back({"shown", 0});
         walk.slots.push_back(Json{{"name", path + ".shown"},
-                                  {"shape", "bool"},
+                                  {"shape", "Bool"},
                                   {"default", true},
                                   {"group", "config"},
                                   /* the switch is the instance's to throw, so the one

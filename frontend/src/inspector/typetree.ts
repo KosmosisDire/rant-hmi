@@ -40,16 +40,16 @@ export interface TypePick {
 }
 
 const SCALARS = [
-  { ref: "num", label: "number" },
-  { ref: "bool", label: "bool" },
-  { ref: "text", label: "text" },
+  { ref: "Num", label: "Number" },
+  { ref: "Bool", label: "Bool" },
+  { ref: "Text", label: "Text" },
   /* a colour is a scalar like any other; it was only ever a property SHAPE because
      properties used to be a separate kind of row */
-  { ref: "color", label: "color" },
+  { ref: "Color", label: "Color" },
   /* an icon variable holds a glyph NAME (text at runtime); the declared type is
      what earns its editors the icon grid */
-  { ref: "icon", label: "icon" },
-  { ref: "timer", label: "timer" },
+  { ref: "Icon", label: "Icon" },
+  { ref: "Timer", label: "Timer" },
   { ref: "list", label: "list" },
   { ref: "map", label: "map" },
 ];

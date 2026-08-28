@@ -130,7 +130,7 @@ ViewMethod view_method(const std::string& name) {
 const std::vector<LangRow>& language_reference() {
     static const std::vector<LangRow> table = [] {
         auto doc_shape = [](Shape shape) {
-            return shape == Shape::Unknown ? "any" : shape_name(shape);
+            return shape == Shape::Unknown ? "Any" : shape_name(shape);
         };
         std::vector<LangRow> rows;
         for (const auto& item : builtins()) {
@@ -164,7 +164,7 @@ const std::vector<LangRow>& language_reference() {
             row.result = spec.method == MethodId::ListFirst ||
                                  spec.method == MethodId::ListLast ||
                                  spec.method == MethodId::MapGet
-                             ? "elem"
+                             ? "Elem"
                              : doc_shape(spec.result);
             row.display_only = spec.display_only;
             row.view = spec.view[0] != 0;
@@ -174,30 +174,30 @@ const std::vector<LangRow>& language_reference() {
            encoding (view holds no shape to resolve a variant against) */
         LangRow is_row;
         is_row.kind = "method";
-        is_row.receiver = "enum";
+        is_row.receiver = "Enum";
         is_row.name = "Is";
         is_row.min_args = is_row.max_args = 1;
-        is_row.args[0] = "variant";
-        is_row.result = "bool";
+        is_row.args[0] = "Variant";
+        is_row.result = "Bool";
         rows.push_back(is_row);
         /* The iterating methods (spec 6.4) are not table rows either -- they take a
            LAMBDA where every other method takes values, so the checker handles them
            directly. Autocomplete still has to know they exist, and that the argument is
            a lambda rather than a value, so they are declared here. */
         struct IterRow { const char* name; const char* result; uint32_t args; };
-        for (const IterRow& iter : {IterRow{"Map", "list", 1}, IterRow{"Filter", "list", 1},
-                                    IterRow{"Any", "bool", 1}, IterRow{"All", "bool", 1},
-                                    IterRow{"SortBy", "list", 1},
+        for (const IterRow& iter : {IterRow{"Map", "List", 1}, IterRow{"Filter", "List", 1},
+                                    IterRow{"Any", "Bool", 1}, IterRow{"All", "Bool", 1},
+                                    IterRow{"SortBy", "List", 1},
                                     /* the one two-argument form: the lambda, then the
                                        value the fold starts from */
-                                    IterRow{"Reduce", "any", 2}}) {
+                                    IterRow{"Reduce", "Any", 2}}) {
             LangRow row;
             row.kind = "method";
-            row.receiver = "list";
+            row.receiver = "List";
             row.name = iter.name;
             row.min_args = row.max_args = iter.args;
-            row.args[0] = "lambda";
-            if (iter.args > 1) row.args[1] = "any";
+            row.args[0] = "Lambda";
+            if (iter.args > 1) row.args[1] = "Any";
             row.result = iter.result;
             rows.push_back(row);
         }

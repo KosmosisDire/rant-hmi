@@ -7,19 +7,19 @@ namespace hmi {
 
 const char* shape_name(Shape shape) {
     switch (shape) {
-        case Shape::Unknown: return "unknown";
-        case Shape::Nil: return "nil";
-        case Shape::Num: return "num";
-        case Shape::Bool: return "bool";
-        case Shape::Text: return "text";
-        case Shape::Enum: return "enum";
-        case Shape::List: return "list";
-        case Shape::Map: return "map";
-        case Shape::Struct: return "struct";
-        case Shape::Color: return "color";
-        case Shape::Timer: return "timer";
+        case Shape::Unknown: return "Unknown";
+        case Shape::Nil: return "Nil";
+        case Shape::Num: return "Num";
+        case Shape::Bool: return "Bool";
+        case Shape::Text: return "Text";
+        case Shape::Enum: return "Enum";
+        case Shape::List: return "List";
+        case Shape::Map: return "Map";
+        case Shape::Struct: return "Struct";
+        case Shape::Color: return "Color";
+        case Shape::Timer: return "Timer";
     }
-    return "unknown";
+    return "Unknown";
 }
 
 Value Value::nil() { return Value{}; }

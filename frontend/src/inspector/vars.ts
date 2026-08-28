@@ -126,12 +126,12 @@ export function varCard(
   });
 
   const initShape =
-    variable.type === "bool" ? "bool"
-    : variable.type === "text" ? "text"
-    : variable.type === "icon" ? "icon"
-    : variable.type === "color" ? "color"
-    : "num";
-  const isAgg = variable.type === "list" || variable.type === "map";
+    variable.type === "Bool" ? "Bool"
+    : variable.type === "Text" ? "Text"
+    : variable.type === "Icon" ? "Icon"
+    : variable.type === "Color" ? "Color"
+    : "Num";
+  const isAgg = variable.type === "List" || variable.type === "Map";
 
   /* OF: list/map only — the element type the compiler enforces on appends and on
      an indexed/keyed element write. Picking `list` or `map` here says the elements are
@@ -139,9 +139,9 @@ export function varCard(
      row holds. Nesting is ONE level, so that second picker offers scalars only. */
   const ofRow: HTMLElement[] = [];
   if (isAgg) {
-    const nested = variable.elem === "list" || variable.elem === "map";
+    const nested = variable.elem === "List" || variable.elem === "Map";
     const of = selectField(
-      [...ELEM_TYPES, { value: "list", label: "list" }, { value: "map", label: "map" }],
+      [...ELEM_TYPES, { value: "List", label: "List" }, { value: "Map", label: "Map" }],
       String(variable.elem ?? ""),
       /* one apply, both keys: a leaf says what a ROW holds, so it cannot outlive the
          row that carried it (and a second apply would ride a stale version) */
@@ -149,7 +149,7 @@ export function varCard(
         const ops: Op[] = [
           { op: "set_prop", node: variable.id, key: "elem", value: choice },
         ];
-        if (choice !== "list" && choice !== "map" && at().leaf)
+        if (choice !== "List" && choice !== "Map" && at().leaf)
           ops.push({ op: "set_prop", node: variable.id, key: "leaf", value: "" });
         editor.apply(ops);
       },
@@ -207,7 +207,7 @@ export function varCard(
   } else if (!isStruct) {
     initRows.push(
       el("span", { class: "row-label",
-                   text: variable.type === "timer" ? "SECS" : "INIT" }, [
+                   text: variable.type === "Timer" ? "SECS" : "INIT" }, [
         diagIcon(initDiags),
       ]),
       el("div", { class: "var-line" }, [
@@ -218,7 +218,7 @@ export function varCard(
           () => at().init,
           (value) => setProp("init", value),
         ),
-        variable.type === "timer" ? el("span", { class: "op", text: "s" }) : null,
+        variable.type === "Timer" ? el("span", { class: "op", text: "s" }) : null,
       ]),
     );
   } else if (resolved?.kind === "enum") {
@@ -256,8 +256,8 @@ export function varCard(
         bindChoice(variable.id + ":init." + field.path, pickerOf(picker), () =>
           typeof read() === "string" ? String(read()) : "");
         control = picker;
-      } else if (field.shape === "num" || field.shape === "bool" ||
-                 field.shape === "text") {
+      } else if (field.shape === "Num" || field.shape === "Bool" ||
+                 field.shape === "Text") {
         control = valueEditor(
           null,
           field.shape,
@@ -324,7 +324,7 @@ export function varCard(
 
     /* A BOUNDED NUMBER EDITS AS A SLIDER beside its field, and steps by its own grain
        rather than by 1 — the two facts a number input needs that its type cannot say. */
-    if (variable.type === "num") {
+    if (variable.type === "Num") {
       const bound = (key: "min" | "max" | "step") =>
         valueEditor(
           null,
@@ -349,7 +349,7 @@ export function varCard(
 
     /* A TEXT THAT CARRIES ITS OWN VOCABULARY is picked from it — which is the whole of
        what an "enum" property was. Written as the words themselves, comma separated. */
-    if (variable.type === "text") {
+    if (variable.type === "Text") {
       publicRows.push(
         el("span", { class: "row-label", text: "ONE OF" }),
         el("div", { class: "var-line" }, [
@@ -404,9 +404,9 @@ const GROUPS = ["value", "appearance", "config", "frame"];
  * of what a nested variable's ROWS may hold. `list` and `map` join this list on the OF
  * picker alone, because that is the one place where an element may itself be a row. */
 const ELEM_TYPES = [
-  { value: "", label: "anything" }, { value: "num", label: "number" },
-  { value: "bool", label: "bool" }, { value: "text", label: "text" },
-  { value: "color", label: "color" }, { value: "icon", label: "icon" },
+  { value: "", label: "anything" }, { value: "Num", label: "Number" },
+  { value: "Bool", label: "Bool" }, { value: "Text", label: "Text" },
+  { value: "Color", label: "Color" }, { value: "Icon", label: "Icon" },
 ];
 
 /* THE DECLARED SWEEP, number inputs only: rendered reads of this variable ease toward the
@@ -444,7 +444,7 @@ function sweepChip(
       emptyMeans: "unset",
       placeholder: "none",
       title: "milliseconds — a number or an expression over this component; empty = none",
-      type: { shape: "num" },
+      type: { shape: "Num" },
       scope,
     });
     const profile = valueBox({
@@ -455,7 +455,7 @@ function sweepChip(
       placeholder: "ease",
       title: "linear, ease, ease-in, ease-out or ease-in-out — or an expression "
              + "yielding one",
-      type: { shape: "text" },
+      type: { shape: "Text" },
       scope,
     });
     openMenu(rect.left, rect.bottom + 4, "sweep " + at().name, [
@@ -480,5 +480,5 @@ export function newVariable(editor: Editor, parent: number, list: string, taken:
   const names = new Set(taken.map((v) => v.name));
   let n = 1;
   while (names.has("var" + n)) n++;
-  editor.apply([{ op: "insert", parent, list, node: { name: "var" + n, type: "num", init: 0 } }]);
+  editor.apply([{ op: "insert", parent, list, node: { name: "var" + n, type: "Num", init: 0 } }]);
 }

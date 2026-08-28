@@ -1256,8 +1256,8 @@ class Compiler {
         if (shape == Shape::List || shape == Shape::Map) return shape;
         diag(var.id, "value_shape",
              "variable '" + var.name + "': '" + text +
-                 "' is not an element type; elements are num, bool, text, color or icon, "
-                 "or list or map for rows",
+                 "' is not an element type; elements are Num, Bool, Text, Color or Icon, "
+                 "or List or Map for rows",
              DiagGrade::Error, "elem");
         return Shape::Unknown;
     }
@@ -1301,8 +1301,8 @@ class Compiler {
      * conflating them left every enum reading Nil. `timer` is the one type a component
      * cannot have, refused where it is declared rather than here. */
     Shape var_shape(const std::string& type) const {
-        if (type == "icon" || type == "enum") return Shape::Text;
-        if (type == "timer") return Shape::Timer;
+        if (type == "Icon" || type == "Enum") return Shape::Text;
+        if (type == "Timer") return Shape::Timer;
         return shape_from_name(type);
     }
 
@@ -3320,14 +3320,14 @@ class Compiler {
 } // namespace
 
 Shape shape_from_name(const std::string& name) {
-    if (name == "num") return Shape::Num;
-    if (name == "bool") return Shape::Bool;
-    if (name == "text") return Shape::Text;
-    if (name == "enum") return Shape::Enum;
-    if (name == "list") return Shape::List;
-    if (name == "map") return Shape::Map;
-    if (name == "struct") return Shape::Struct;
-    if (name == "color") return Shape::Color;
+    if (name == "Num") return Shape::Num;
+    if (name == "Bool") return Shape::Bool;
+    if (name == "Text") return Shape::Text;
+    if (name == "Enum") return Shape::Enum;
+    if (name == "List") return Shape::List;
+    if (name == "Map") return Shape::Map;
+    if (name == "Struct") return Shape::Struct;
+    if (name == "Color") return Shape::Color;
     return Shape::Unknown;
 }
 

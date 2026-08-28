@@ -2,42 +2,42 @@
 
 == true literal
 expr true
-want bool true
+want Bool true
 
 == false literal
 expr false
-want bool false
+want Bool false
 
 == negation
 expr !true
-want bool false
+want Bool false
 
 == word not
 expr not false
-want bool true
+want Bool true
 
 == conjunction
 expr true && false
-want bool false
+want Bool false
 
 == disjunction
 expr false || true
-want bool true
+want Bool true
 
 # `x` is the pipeline register, reserved before any scope map answers, so the
 # variable here is named level
 == word operators
-env level: num = 5
+env level: Num = 5
 expr level > 0 and not (level > 10) or level == 42
-want bool true
+want Bool true
 
 == conjunction short-circuits
 expr false && (1 / 0 > 0)
-want bool false
+want Bool false
 
 == disjunction short-circuits
 expr true || (1 / 0 > 0)
-want bool true
+want Bool true
 
 # THE ONE UNKNOWN RULE (spec 2.4): an unknown CONDITION side yields an unknown
 # result — never a fault, never silently a value. The decided cases short-circuit
@@ -52,45 +52,45 @@ want nil
 
 == a decided disjunction never reaches the unknown side
 expr true || (1 / 0 > 0)
-want bool true
+want Bool true
 
 == a false conjunction is false whatever follows
 expr false && (1 / 0 > 0)
-want bool false
+want Bool false
 
 == less
 expr 1 < 2
-want bool true
+want Bool true
 
 == less or equal
 expr 2 <= 2
-want bool true
+want Bool true
 
 == greater
 expr 3 > 4
-want bool false
+want Bool false
 
 == greater or equal
 expr 4 >= 5
-want bool false
+want Bool false
 
 == equality
 expr 1 == 1
-want bool true
+want Bool true
 
 == inequality
 expr 1 != 2
-want bool true
+want Bool true
 
 == text equality
-env note: text = "ready"
+env note: Text = "ready"
 expr note == "ready"
-want bool true
+want Bool true
 
 == text inequality
-env note: text = "ready"
+env note: Text = "ready"
 expr note != "armed"
-want bool true
+want Bool true
 
 == ordered comparison through unknown is unknown
 expr (1 / 0) > 0
@@ -102,37 +102,37 @@ want nil
 
 == conditional takes the true arm
 expr true ? 1 : 2
-want num 1
+want Num 1
 
 == conditional takes the false arm
 expr false ? 1 : 2
-want num 2
+want Num 2
 
 == conditional chains right-associative
-env level: num = 1.5
+env level: Num = 1.5
 expr level > 2 ? 1 : level > 1 ? 2 : 3
-want num 2
+want Num 2
 
 == both arms evaluate but the picked one answers
 expr true ? 1 : (1 / 0)
-want num 1
+want Num 1
 
 == conditional condition must be a condition
 expr 1 ? 2 : 3
-error ?: wants bool
+error ?: wants Bool
 
 == negation wants a condition
 expr !5
-error ! wants bool
+error ! wants Bool
 
 == conjunction wants conditions
 expr 1 && true
-error && wants bool
+error && wants Bool
 
 == comparison refuses mixed shapes
 expr 1 == "a"
-error comparison mixes num and text
+error comparison mixes Num and Text
 
 == ordered comparison refuses text
 expr "a" < "b"
-error ordered comparison wants num
+error ordered comparison wants Num

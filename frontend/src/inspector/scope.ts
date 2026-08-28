@@ -201,7 +201,7 @@ function hmiRows(editor: Editor, instance: Node | null,
     key: "s:" + slot.name,
     label: slot.name,
     icon: "layers",
-    shape: slot.shape === "enum" ? "text" : slot.shape,
+    shape: slot.shape === "Enum" ? "Text" : slot.shape,
     insert: "this." + slot.name,
     flat: { note: "slot" },
   }));
@@ -237,22 +237,22 @@ function variableRows(editor: Editor, element: Node | null, prefix: string,
     /* beyond timer and the scalars, a variable's type is a TypeRef: a dotted ref is
        an enum, a root name a struct carrying its field table */
     const scalar = scalarShape(variable.type);
-    const isEnum = !scalar && variable.type !== "timer" && variable.type.includes(".");
+    const isEnum = !scalar && variable.type !== "Timer" && variable.type.includes(".");
     const fields =
-      variable.type === "timer" ? objectFields(editor, "timer")
+      variable.type === "Timer" ? objectFields(editor, "timer")
       : scalar || isEnum ? []
       : editor.mesh.types.find((t) => t.name === variable.type)?.fields ?? [];
     buckets[note].push({
       key: prefix + "/v:" + variable.name,
       label: variable.name,
       kind: note === "global" ? "g" : "l",
-      shape: variable.type === "timer" ? "timer" : scalar ?? (isEnum ? "enum" : "struct"),
+      shape: variable.type === "Timer" ? "Timer" : scalar ?? (isEnum ? "Enum" : "Struct"),
       insert: variable.name,
       flat: { note },
       children: fields.map((field) => ({
         key: prefix + "/v:" + variable.name + "." + field.path,
         label: field.path,
-        shape: field.variants?.length ? "enum" : field.shape,
+        shape: field.variants?.length ? "Enum" : field.shape,
         insert: variable.name + "." + field.path,
         field,
       })),
@@ -562,7 +562,7 @@ export function optionsSlotScope(editor: Editor, instance: Node | null): Scope {
       key: "ev:" + row.insert,
       label: row.insert,
       icon: "layers",
-      shape: "list",
+      shape: "List",
       insert: row.insert,
     }));
     const rest = slotRoots(editor, instance);
@@ -619,8 +619,8 @@ function owningComponent(editor: Editor, id: number): ComponentDef | null {
  * and a TIMER (whose fields resolve to renderer-answered "tmr:" cells that count down
  * per frame off the served deadline) — rides the wire already. */
 function displayReadable(variable: Var): boolean {
-  return SCALAR_TYPES.has(variable.type) || variable.type === "timer" ||
-         variable.type === "list" || variable.type === "map" ||
+  return SCALAR_TYPES.has(variable.type) || variable.type === "Timer" ||
+         variable.type === "List" || variable.type === "Map" ||
          variable.type.includes(".");
 }
 
@@ -628,7 +628,7 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
   const viewInput = (name: string, note: string, fields: MeshField[]): BrowseRow => ({
     key: "attr/" + name,
     label: name,
-    shape: "struct",
+    shape: "Struct",
     note,
     insert: name,
     children: fields.map((field) => ({
@@ -660,7 +660,7 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
     rows.push({
       key: "attr/p:" + slot.name,
       label: slot.name,
-      shape: slot.shape === "enum" ? "text" : slot.shape,
+      shape: slot.shape === "Enum" ? "Text" : slot.shape,
       note: "prop",
       insert: slot.name,
     });

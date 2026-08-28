@@ -345,7 +345,7 @@ ws.send(JSON.stringify({
     op: "insert", parent: 0, list: "components",
     node: {
       name: "Pill",
-      locals: [{ name: "text", type: "text", init: "go", group: "appearance", public: true }],
+      locals: [{ name: "text", type: "Text", init: "go", group: "appearance", public: true }],
       attrs: { surface: "'#222222'" },
       children: [
         { kind: "frame", name: "body",
@@ -533,7 +533,7 @@ echo([
     op: "insert",
     parent: readout.id,
     list: "locals",
-    node: { id: 9001, name: "tmp", type: "num", init: 0, persist: false },
+    node: { id: 9001, name: "tmp", type: "Num", init: 0, persist: false },
   },
 ]);
 const rebuiltLabel = sidebar.querySelector(".inspector-head").children[0];
@@ -551,7 +551,7 @@ echo([
     op: "insert",
     parent: readout.id,
     list: "locals",
-    node: { id: 9002, name: "tmp2", type: "num", init: 0, persist: false },
+    node: { id: 9002, name: "tmp2", type: "Num", init: 0, persist: false },
   },
 ]);
 check(slotInput("borderW") !== heightField, "the second insert rebuilt the inspector");
@@ -572,7 +572,7 @@ echo([
     op: "insert",
     parent: readout.id,
     list: "locals",
-    node: { id: 9003, name: "tmp3", type: "num", init: 0, persist: false },
+    node: { id: 9003, name: "tmp3", type: "Num", init: 0, persist: false },
   },
 ]);
 check(slotInput("radius") !== focusedWidth, "the mixed batch rebuilt the inspector");
@@ -793,14 +793,14 @@ check(
   toggleType.events.length === 1 &&
     toggleType.events[0].name === "changed" &&
     toggleType.events[0].params?.[0]?.name === "value" &&
-    toggleType.events[0].params?.[0]?.shape === "bool",
+    toggleType.events[0].params?.[0]?.shape === "Bool",
   "a discrete control declares exactly changed(value) — gesture events are never rows",
 );
 const sliderEvents = snapshot.registry.components.find((t) => t.name === "Slider").events;
 check(
   sliderEvents.map((e) => e.name).join(",") === "changing,changed" &&
     sliderEvents.every((e) => e.params?.[0]?.name === "value" &&
-                              e.params?.[0]?.shape === "num"),
+                              e.params?.[0]?.shape === "Num"),
   "a continuous control declares the PAIR, got " +
     sliderEvents.map((e) => e.name).join(","),
 );
@@ -1147,7 +1147,7 @@ store.apply(store.version() + 1, [
       name: "Lamp",
       events: [{ name: "tap", x: "bool" }],
       locals: [
-        { id: 9201, name: "tint", type: "color", init: "#ff0000", group: "appearance",
+        { id: 9201, name: "tint", type: "Color", init: "#ff0000", group: "appearance",
           public: true },
       ],
       /* the component IS the root frame: its own layout and attrs, holding its children */
@@ -1486,10 +1486,10 @@ const meshEditor = {
   mesh: {
     entities: [
       { kind: "V", name: "plant/temp", type: "", writable: true, forceable: false,
-        fields: [{ path: "value", shape: "num" }] },
+        fields: [{ path: "value", shape: "Num" }] },
     ],
     types: [
-      { name: "ValveCmd", fields: [{ path: "on", shape: "bool" }],
+      { name: "ValveCmd", fields: [{ path: "on", shape: "Bool" }],
         entities: [{ kind: "V", name: "plant/valve" }] },
     ],
   },
@@ -2288,7 +2288,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const cell = (c) => asm(loadCell(c));
   const pcType = {
     name: "Cellule", design_w: 120, design_h: 40, events: [],
-    slots: [{ name: "value", shape: "num", default: 0 }],
+    slots: [{ name: "value", shape: "Num", default: 0 }],
     template: { kind: "frame", name: "", attrs: {}, children: [
       { kind: "text", name: "face", attrs: { text: cell("slot:value") } },
     ] },
@@ -2357,7 +2357,7 @@ check(stageNode("frame", 901) === heldAgain &&
      template node's rows reach its element. */
   const sweepType = {
     name: "Sweeper", design_w: 220, design_h: 110, events: [],
-    slots: [{ name: "value", shape: "num", default: 0.2, group: "value",
+    slots: [{ name: "value", shape: "Num", default: 0.2, group: "value",
               smooth: 200, profile: "linear" }],
     template: { kind: "frame", name: "", attrs: {}, children: [
       /* the width transition's DURATION is an expression over the smoothed slot: what
@@ -2486,7 +2486,7 @@ check(stageNode("frame", 901) === heldAgain &&
   tEditor.registry = { version: 2, components: [{
     ...sweepType,
     slots: [...sweepType.slots,
-            { name: "raw", shape: "num", group: "value", smooth: 200, profile: "linear" }],
+            { name: "raw", shape: "Num", group: "value", smooth: 200, profile: "linear" }],
     template: { ...sweepType.template, children: [
       ...sweepType.template.children,
       { kind: "frame", name: "rawbar", attrs: { left: cell("slot:raw"), w: prog(0.1),
@@ -2949,7 +2949,7 @@ check(stageNode("frame", 901) === heldAgain &&
       node: { id: 9800, name: "Bulb", events: [], locals: [], attrs: {},
               children: [
                 { id: 9810, kind: "frame", name: "body", attrs: {},
-                  locals: [{ id: 9812, name: "glow_color", type: "color", public: true,
+                  locals: [{ id: 9812, name: "glow_color", type: "Color", public: true,
                              init: "#ff0000", group: "appearance" }],
                   interact: { primitive: "press", params: { holdMs: "600" },
                               emits: { tap: "tap" } },
@@ -3052,7 +3052,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const evEditor = { ...insEditor, apply: (batch) => evOps.push(...batch) };
   store.apply(store.version() + 1, [
     { op: "set_prop", node: 9800, key: "events",
-      value: [{ name: "changed", params: [{ name: "value", shape: "bool" }] },
+      value: [{ name: "changed", params: [{ name: "value", shape: "Bool" }] },
               { name: "confirmed", params: [] }] },
   ]);
   compPanel.render(inspectorShape(evEditor), (host) => renderInspector(host, evEditor));
@@ -3454,9 +3454,9 @@ check(stageNode("frame", 901) === heldAgain &&
              globals: () => [{ name: "valveMode", type: "Valve.mode" }] },
     mesh: {
       entities: [{ kind: "V", name: "plant/valve", type: "Valve", writable: true,
-                   fields: [{ path: "mode", shape: "enum", variants: valveVariants }] }],
+                   fields: [{ path: "mode", shape: "Enum", variants: valveVariants }] }],
       types: [{ name: "Valve",
-                fields: [{ path: "mode", shape: "enum", variants: valveVariants }] }],
+                fields: [{ path: "mode", shape: "Enum", variants: valveVariants }] }],
     },
   };
   const refs = enumListRefs(optionsEditor, null);
@@ -3606,13 +3606,13 @@ check(stageNode("frame", 901) === heldAgain &&
   const meshFor4a = {
     entities: [
       { kind: "F", name: "sim/calc", type: "", writable: false, forceable: false,
-        fields: [], returns: [{ path: "value", shape: "num" }] },
+        fields: [], returns: [{ path: "value", shape: "Num" }] },
       { kind: "V", name: "cage/plc/IO", type: "IOBlock", writable: true, forceable: false,
-        fields: [{ path: "temp", shape: "num" }, { path: "level", shape: "num" }] },
+        fields: [{ path: "temp", shape: "Num" }, { path: "level", shape: "Num" }] },
     ],
     types: [{
       name: "Valve", entities: [],
-      fields: [{ path: "mode", shape: "enum",
+      fields: [{ path: "mode", shape: "Enum",
                  variants: [{ name: "Off", value: 0 }, { name: "On", value: 1 }] }],
     }],
   };
@@ -3788,7 +3788,7 @@ check(stageNode("frame", 901) === heldAgain &&
     { op: "insert", parent: 9800, list: "locals",
       node: { id: 9860, name: "valve", type: "Valve", init: 0, persist: false } },
     { op: "insert", parent: 9800, list: "locals",
-      node: { id: 9861, name: "cook", type: "timer", init: 0, persist: false } },
+      node: { id: 9861, name: "cook", type: "Timer", init: 0, persist: false } },
   ]);
   draw4a();
   document.activeElement = null;
@@ -3876,7 +3876,7 @@ check(stageNode("frame", 901) === heldAgain &&
     check(byLabel("this.value")?.note === "slot",
           "names() projects the slot leaf back to its flat this.value row");
     const valveRow4a = byLabel("valve");
-    check(valveRow4a?.shape === "struct" && valveRow4a?.note === "local" &&
+    check(valveRow4a?.shape === "Struct" && valveRow4a?.note === "local" &&
           valveRow4a?.fields?.length === 1 && valveRow4a.fields[0].path === "mode",
           "a struct variable projects as ONE row carrying its dot table");
     check(byLabel("cook")?.fields?.length === 4,
@@ -4036,7 +4036,7 @@ check(stageNode("frame", 901) === heldAgain &&
     mesh: {
       entities: [
         { kind: "V", name: "plant/temp", writable: true,
-          fields: [{ path: "value", shape: "num" }, { path: "alarm", shape: "bool" }] },
+          fields: [{ path: "value", shape: "Num" }, { path: "alarm", shape: "Bool" }] },
       ],
       types: [],
     },
@@ -4118,7 +4118,7 @@ check(stageNode("frame", 901) === heldAgain &&
   /* the vars TYPE chip is the same builder, opening the TYPE tree */
   store.apply(store.version() + 1, [
     { op: "insert", parent: 9900, list: "locals",
-      node: { id: 9940, name: "t1", type: "num", init: 0, persist: false } },
+      node: { id: 9940, name: "t1", type: "Num", init: 0, persist: false } },
   ]);
   draw4b();
   const varHead = panel4b.host.querySelectorAll(".card-head")
@@ -4128,7 +4128,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const typeChip = panel4b.host.querySelectorAll(".card")
     .find((c) => c.querySelector(".now-value") !== null)
     ?.querySelector(".source-chip") ?? null;
-  check(typeChip !== null && typeChip.querySelector(".name")?.textContent === "number",
+  check(typeChip !== null && typeChip.querySelector(".name")?.textContent === "Number",
         "a variable's TYPE wears the same chip, reading its scalar label");
   fire(typeChip, "click");
   const ttree4b = document.body.children.find((n) => n.id === "ttree");
@@ -4144,8 +4144,8 @@ check(stageNode("frame", 901) === heldAgain &&
     { op: "insert", parent: 0, list: "components", node: {
       id: 9930, name: "Sweep4b", events: [],
       locals: [
-        { id: 9931, name: "rate", type: "num", init: 1, group: "value", public: true },
-        { id: 9932, name: "tint", type: "color", init: "#123456", group: "appearance",
+        { id: 9931, name: "rate", type: "Num", init: 1, group: "value", public: true },
+        { id: 9932, name: "tint", type: "Color", init: "#123456", group: "appearance",
           public: true },
       ],
       attrs: {}, children: [], behavior: [] } },
@@ -4233,7 +4233,7 @@ check(stageNode("frame", 901) === heldAgain &&
      clears the leaf in the SAME apply — a row type cannot outlive the row. ---- */
   store.apply(store.version() + 1, [
     { op: "insert", parent: 9930, list: "locals", node: {
-      id: 9933, name: "grid", type: "list", init: null, persist: false } },
+      id: 9933, name: "grid", type: "List", init: null, persist: false } },
   ]);
   drawSw();
   const ofPicker = (name, label) => {
@@ -4247,24 +4247,24 @@ check(stageNode("frame", 901) === heldAgain &&
   const ofSel = ofPicker("grid", "OF");
   check(ofSel !== null &&
           ofSel.children.map((o) => o.value).join(",") ===
-            ",num,bool,text,color,icon,list,map",
+            ",Num,Bool,Text,Color,Icon,List,Map",
         "OF offers the scalars and then list/map — elements that are ROWS");
   check(ofPicker("grid", "ROWS OF") === null,
         "a list of scalars has no leaf to declare");
-  ofSel.value = "list";
+  ofSel.value = "List";
   fire(ofSel, "change");
   drawSw();
   const rowsSel = ofPicker("grid", "ROWS OF");
   check(rowsSel !== null &&
           rowsSel.children.map((o) => o.value).join(",") ===
-            ",num,bool,text,color,icon",
+            ",Num,Bool,Text,Color,Icon",
         "elements that are rows bring ROWS OF, scalars only — nesting is one level");
-  rowsSel.value = "num";
+  rowsSel.value = "Num";
   fire(rowsSel, "change");
-  check(swOps.findLast((o) => o.key === "leaf")?.value === "num",
+  check(swOps.findLast((o) => o.key === "leaf")?.value === "Num",
         "and it writes the leaf type");
   const { aggLabel } = await import(mod("types.js"));
-  check(aggLabel("list", "list", "num") === "list of list of number",
+  check(aggLabel("List", "List", "Num") === "List of List of Number",
         "which reads as a list of list of number wherever a variable names its shape");
   const backToScalar = ofPicker("grid", "OF");
   backToScalar.value = "text";

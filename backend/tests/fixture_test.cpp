@@ -77,11 +77,11 @@ void split_type(const std::string& type, std::string& head, std::string& arg) {
 }
 
 Shape scalar_shape(const std::string& name) {
-    if (name == "num") return Shape::Num;
-    if (name == "bool") return Shape::Bool;
-    if (name == "text") return Shape::Text;
-    if (name == "color") return Shape::Color;
-    if (name == "enum") return Shape::Enum;
+    if (name == "Num") return Shape::Num;
+    if (name == "Bool") return Shape::Bool;
+    if (name == "Text") return Shape::Text;
+    if (name == "Color") return Shape::Color;
+    if (name == "Enum") return Shape::Enum;
     return Shape::Unknown;
 }
 
@@ -161,7 +161,7 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
         CellDef cell;
         cell.name = var.name;
         uint16_t enum_type = 0;
-        if (head == "enum") {
+        if (head == "Enum") {
             TypeDef type;
             type.kind = TypeKind::Enum;
             type.name = var.name;
@@ -178,8 +178,8 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
                 why = "env '" + var.name + "': bad enum literal " + var.literal;
                 return false;
             }
-        } else if (head == "list" || head == "map") {
-            cell.shape = head == "list" ? Shape::List : Shape::Map;
+        } else if (head == "List" || head == "Map") {
+            cell.shape = head == "List" ? Shape::List : Shape::Map;
             cell.elem = scalar_shape(arg);
             if (cell.elem == Shape::Unknown) {
                 why = "env '" + var.name + "': element type '" + arg + "'";
@@ -188,13 +188,13 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
             cell.list_slot = program.layout.list_slots++;
             cell.has_list = true;
             std::vector<std::string> parts;
-            if (!split_elements(var.literal, head == "list" ? '[' : '{',
-                                head == "list" ? ']' : '}', parts)) {
+            if (!split_elements(var.literal, head == "List" ? '[' : '{',
+                                head == "List" ? ']' : '}', parts)) {
                 why = "env '" + var.name + "': bad aggregate literal " + var.literal;
                 return false;
             }
             for (const std::string& part : parts) {
-                if (head == "list") {
+                if (head == "List") {
                     Value value;
                     if (!scalar_value(program, cell.elem, 0, part, value)) {
                         why = "env '" + var.name + "': bad element " + part;
@@ -219,7 +219,7 @@ bool build_env(Program& program, Env& scope, const FixtureCase& item,
                 cell.list_init.push_back(value);
             }
             /* a map's pairs arrive sorted by key, as every compiled map's do */
-            if (head == "map") {
+            if (head == "Map") {
                 std::vector<std::pair<Value, Value>> pairs;
                 for (size_t i = 0; i + 1 < cell.list_init.size(); i += 2)
                     pairs.emplace_back(cell.list_init[i], cell.list_init[i + 1]);
@@ -292,7 +292,7 @@ std::string render(const Program& program, const Host& state, const Value& value
 bool value_matches(const Program& program, const Host& state, const Value& value,
                    const std::string& type, const std::string& want) {
     if (type == "nil") return value.tag == ValueTag::Nil;
-    if (type == "num") {
+    if (type == "Num") {
         if (value.tag != ValueTag::Num) return false;
         if (want == "nan") return std::isnan(value.data.num);
         if (want == "inf") return value.data.num == INFINITY;
@@ -302,17 +302,17 @@ bool value_matches(const Program& program, const Host& state, const Value& value
         return std::fabs(got - expected) <=
                1e-9 * std::max(1.0, std::fabs(expected));
     }
-    if (type == "bool")
+    if (type == "Bool")
         return value.tag == ValueTag::Bool && (want == "true") == value.data.boolean;
-    if (type == "text")
+    if (type == "Text")
         return value.tag == ValueTag::Text &&
                want == "\"" + std::string(state.text(program, value)) + "\"";
-    if (type == "color") {
+    if (type == "Color") {
         bool ok = false;
         const uint32_t rgba = parse_color(want, ok);
         return ok && value.tag == ValueTag::Color && value.data.rgba == rgba;
     }
-    if (type == "enum") return render(program, state, value) == want;
+    if (type == "Enum") return render(program, state, value) == want;
     return false;
 }
 
@@ -491,40 +491,40 @@ bool view_json(const std::string& type, const std::string& literal, Json& out) {
     std::string head, arg;
     split_type(type, head, arg);
     const std::string text = trim(literal);
-    if (head == "num") {
+    if (head == "Num") {
         char* end = nullptr;
         const double number = std::strtod(text.c_str(), &end);
         if (!end || *end || !std::isfinite(number)) return false;
         out = number;
         return true;
     }
-    if (head == "bool") {
+    if (head == "Bool") {
         if (text != "true" && text != "false") return false;
         out = text == "true";
         return true;
     }
-    if (head == "text") {
+    if (head == "Text") {
         if (text.size() < 2 || text.front() != '"' || text.back() != '"') return false;
         out = text.substr(1, text.size() - 2);
         return true;
     }
-    if (head == "color") {
+    if (head == "Color") {
         bool ok = false;
         const uint32_t rgba = parse_color(text, ok);
         if (!ok) return false;
         out = format_color(rgba);
         return true;
     }
-    if (head == "enum") {
+    if (head == "Enum") {
         out = text;   /* the wire spelling: the variant's own name */
         return true;
     }
-    if (head != "list" && head != "map") return false;
+    if (head != "List" && head != "Map") return false;
     std::vector<std::string> parts;
-    if (!split_elements(text, head == "list" ? '[' : '{', head == "list" ? ']' : '}',
+    if (!split_elements(text, head == "List" ? '[' : '{', head == "List" ? ']' : '}',
                         parts))
         return false;
-    if (head == "list") {
+    if (head == "List") {
         Json list = Json::array();
         for (const std::string& part : parts) {
             Json elem;

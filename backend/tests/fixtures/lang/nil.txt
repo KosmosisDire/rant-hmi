@@ -8,87 +8,87 @@ expr nil
 want nil
 
 == coalesce keeps a known value
-env level: num = 5
+env level: Num = 5
 expr level ?? 0
-want num 5
+want Num 5
 
 == coalesce replaces an unknown
 expr (1 / 0) ?? 42
-want num 42
+want Num 42
 
 == the nil literal coalesces away
 expr nil ?? 7
-want num 7
+want Num 7
 
 == coalesce chains left
 expr nil ?? nil ?? 3
-want num 3
+want Num 3
 
 == coalesce binds looser than arithmetic
 expr (1 / 0) ?? 2 + 3
-want num 5
+want Num 5
 
 == a ternary arm carries a coalesce
-env on: bool = true
+env on: Bool = true
 expr on ? (1 / 0) ?? 9 : 0
-want num 9
+want Num 9
 
 == a coalesce default resolves against the equality's enum
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == (((1 / 0 > 0) ? .fault : .idle) ?? .run)
-want bool true
+want Bool true
 
 == known on a value
-env level: num = 5
+env level: Num = 5
 expr Known(level)
-want bool true
+want Bool true
 
 == known on an unknown
 expr Known(1 / 0)
-want bool false
+want Bool false
 
 == known is the unknown test
 expr Known(nil)
-want bool false
+want Bool false
 
 == known guards a condition
 expr Known(1 / 0) && false
-want bool false
+want Bool false
 
 == equality cannot test for unknown
-env level: num = 5
+env level: Num = 5
 expr level == nil
 error cannot test for it; write Known
 
 == inequality cannot test for unknown either
-env level: num = 5
+env level: Num = 5
 expr nil != level
 error cannot test for it; write Known
 
 == an unknown filter condition poisons the answer
-env temps: list(num) = [1, 2, 3]
+env temps: List(Num) = [1, 2, 3]
 expr temps.Filter(v => v / 0 > 0).Length()
 want nil
 
 == an unknown any condition poisons the answer
-env temps: list(num) = [1, 2, 3]
+env temps: List(Num) = [1, 2, 3]
 expr temps.Any(v => v / 0 > 0)
 want nil
 
 == an unknown all condition poisons the answer
-env temps: list(num) = [1, 2, 3]
+env temps: List(Num) = [1, 2, 3]
 expr temps.All(v => v / 0 > 0)
 want nil
 
 == a decided filter still filters
-env temps: list(num) = [1, 2, 3]
+env temps: List(Num) = [1, 2, 3]
 expr temps.Filter(v => v > 1).Length()
-want num 2
+want Num 2
 
 == a map body may carry gaps
-env temps: list(num) = [1, 2, 3]
+env temps: List(Num) = [1, 2, 3]
 expr temps.Map(v => v / 0).Length()
-want num 3
+want Num 3
 
 == an unknown condition in a conditional is unknown
 expr (1 / 0 > 0) ? 1 : 2

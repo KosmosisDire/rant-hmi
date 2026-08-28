@@ -3,130 +3,130 @@
 # written, a ternary arm's expectation; `.Is()` resolves against the receiver's.
 
 == a variant literal on the right of equality
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == .run
-want bool true
+want Bool true
 
 == a variant literal on the left of equality
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr .run == mode
-want bool true
+want Bool true
 
 == a variant literal misses
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == .idle
-want bool false
+want Bool false
 
 == inequality against a variant
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode != .idle
-want bool true
+want Bool true
 
 == is tests a variant
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Is(run)
-want bool true
+want Bool true
 
 == is misses
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Is(fault)
-want bool false
+want Bool false
 
 == int is the backing value
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Int()
-want num 1
+want Num 1
 
 == name is the variant name
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Name()
-want text "run"
+want Text "run"
 
 == variants lists the vocabulary
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Variants().Length()
-want num 3
+want Num 3
 
 == variants filters like any list
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Variants().Filter(v => v != "idle").Length()
-want num 2
+want Num 2
 
 == variants joins in declaration order
-env mode: enum(idle, run, fault) = fault
+env mode: Enum(idle, run, fault) = fault
 expr mode.Variants().Join(",")
-want text "idle,run,fault"
+want Text "idle,run,fault"
 
 == variants demands its parentheses
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Variants
 error is a method
 
 == the old free-function spelling teaches the method
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr Variants(mode)
 error reads off an enum value
 
 == str renders the variant name
-env mode: enum(idle, run, fault) = fault
+env mode: Enum(idle, run, fault) = fault
 expr Str(mode)
-want text "fault"
+want Text "fault"
 
 == num converts the backing value
-env mode: enum(idle, run, fault) = fault
+env mode: Enum(idle, run, fault) = fault
 expr Num(mode)
-want num 2
+want Num 2
 
 == name as a builtin
-env mode: enum(idle, run, fault) = idle
+env mode: Enum(idle, run, fault) = idle
 expr Name(mode)
-want text "idle"
+want Text "idle"
 
 == an enum refuses its backing number; Int() spells the intent
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == 1
 error compares to its own variants
 
 == the backing number reads through Int()
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Int() == 1
-want bool true
+want Bool true
 
 == an enum refuses variant text; Name() spells the intent
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == "run"
 error compares to its own variants
 
 == the variant name reads through Name()
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Name() == "idle"
-want bool false
+want Bool false
 
 == different enums never compare
-env mode: enum(idle, run, fault) = run
-env gear: enum(low, high) = low
+env mode: Enum(idle, run, fault) = run
+env gear: Enum(low, high) = low
 expr mode == gear
 error different enums
 
 == a ternary arm resolves against the equality's enum
-env mode: enum(idle, run, fault) = run
-env on: bool = true
+env mode: Enum(idle, run, fault) = run
+env on: Bool = true
 expr mode == (on ? .run : .idle)
-want bool true
+want Bool true
 
 == enums are wire-legal
 tier wire
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == .run
-want bool true
+want Bool true
 
 == a typo of a variant refuses
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == .bogus
 error no variant 'bogus'
 
 == is refuses a typo
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode.Is(bogus)
 error no variant 'bogus'
 
@@ -139,17 +139,17 @@ expr .run
 error needs an enum
 
 == an enum refuses a bool compare
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode == true
 error comparison mixes
 
 == ordered comparison refuses enums
-env mode: enum(idle, run, fault) = run
+env mode: Enum(idle, run, fault) = run
 expr mode < 2
-error ordered comparison wants num
+error ordered comparison wants Num
 
 == a conditional keeps an agreeing enum pair typed
-env mode: enum(idle, run, fault) = run
-env on: bool = true
+env mode: Enum(idle, run, fault) = run
+env on: Bool = true
 expr (on ? mode : mode) == .run
-want bool true
+want Bool true
