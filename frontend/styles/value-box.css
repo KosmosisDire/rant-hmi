@@ -132,6 +132,16 @@
      matches the box's inner corner */
   background: var(--input);
   border-radius: 0 4px 4px 0;
+  /* ABOVE the syntax underlay (z-index 1), or the text paints over the buttons
+     and the opaque background above is defeated */
+  z-index: 2;
+  /* never the whole box: the tail caps so a caret-landing strip of text survives a
+     thin box, clipping its leftmost buttons first — the marks render last and stay.
+     `clip`, never `hidden` (the wrapper note in highlight.css: a scroll container
+     that cannot scroll still stops the wheel chain). */
+  justify-content: flex-end;
+  max-width: calc(100% - 72px);
+  overflow: clip;
   /* in the tail the art runs a notch smaller than the 16px house glyph */
   --icon-glyph: 14px;
 }
