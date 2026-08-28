@@ -43,6 +43,12 @@ const SPANS: { label: string; ms: number }[] = [
   { label: "1h", ms: 3_600_000 },
 ];
 
+/* the auto life of a popped message: scales with reading length. The shell's warning
+ * banner keeps the same clock, so nothing that pops stays a different amount of time. */
+export function messageLife(text: string): number {
+  return Math.min(TOAST_CAP_MS, TOAST_BASE_MS + text.length * TOAST_PER_CHAR_MS);
+}
+
 function stamp(wall_us: number): string {
   const date = wall_us > 0 ? new Date(wall_us / 1000) : new Date();
   const two = (n: number) => String(n).padStart(2, "0");
@@ -318,10 +324,7 @@ export class LogView {
       window.setTimeout(() => box.remove(), TOAST_FADE_MS);
     };
     box.addEventListener("click", dismiss);
-    const life =
-      entry.ms && entry.ms > 0
-        ? entry.ms
-        : Math.min(TOAST_CAP_MS, TOAST_BASE_MS + entry.text.length * TOAST_PER_CHAR_MS);
+    const life = entry.ms && entry.ms > 0 ? entry.ms : messageLife(entry.text);
     window.setTimeout(dismiss, life);
     this.toasts.appendChild(box);
     while (this.toasts.childElementCount > TOASTS_MAX && this.toasts.firstChild)

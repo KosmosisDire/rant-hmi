@@ -16,7 +16,7 @@ import { DropPlan, fmtFraction, fmtPx, holds, literalNumber, snapPx } from "./ar
 import { DocStore } from "./doc.js";
 import { clear, el, iconButton } from "./dom.js";
 import { AggEntry, Editor, foldAggs, Mode, StageContext, ViewState } from "./editor.js";
-import { LogView } from "./logbar.js";
+import { LogView, messageLife } from "./logbar.js";
 import { armSwallow, closeMenu, openMenu } from "./menu.js";
 import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from "./inspector/panel.js";
 import { refreshSourceTree } from "./inspector/sourcetree.js";
@@ -104,6 +104,8 @@ export class App implements Editor {
   private sidebarsDirty = true;
   /* the gesture sequence (protocol `input.seq`): monotonic for the session's life */
   private inputSeq = 1;
+  /* the pending clear of a transient banner (flash) */
+  private flashTimer = 0;
   /* the log sidebar + its toasts (logbar.ts): built in every view, operate included —
      an operator is exactly who an error notification is for */
   private logView!: LogView;
@@ -618,13 +620,19 @@ export class App implements Editor {
     this.nodes.pill.className = "pill " + state;
     this.nodes.pill.title = state;
     if (state === "live" && detail.startsWith("edit refused")) this.flash(detail);
-    else if (state !== "live") this.flash(detail + " (retrying)");
+    else if (state !== "live") this.flash(detail + " (retrying)", true);
     else this.flash("");
   }
 
-  private flash(text: string): void {
+  /* The banner has no mouseleave and no click to send it away, so a message left without
+   * a clock would stand forever. A transient one keeps the toasts' reading clock; only a
+   * connection state is sticky — it stays until the state itself resolves. */
+  private flash(text: string, sticky = false): void {
+    window.clearTimeout(this.flashTimer);
     this.nodes.banner.textContent = text;
     this.nodes.banner.classList.toggle("on", text.length > 0);
+    if (text.length > 0 && !sticky)
+      this.flashTimer = window.setTimeout(() => this.flash(""), messageLife(text));
   }
 
   /* ---- rendering ---- */
