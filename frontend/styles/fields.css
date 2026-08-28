@@ -157,7 +157,7 @@ select.field {
   height: 24px;
   border: 1px solid var(--line-in);
   border-radius: 2px;
-  overflow: hidden;
+  overflow: clip;
   flex: none;
 }
 

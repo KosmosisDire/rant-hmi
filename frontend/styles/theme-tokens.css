@@ -3,7 +3,7 @@
 /* a tokenized value: the swatch paints the resolved color and wears a corner notch */
 button.swatch {
   position: relative;
-  overflow: hidden;
+  overflow: clip;
 }
 
 button.swatch.token::after {

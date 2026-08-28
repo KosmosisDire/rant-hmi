@@ -52,7 +52,7 @@
 .attr-row .attr-name {
   flex: 0 0 84px;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -81,7 +81,7 @@
    view rather than looking like a form that refuses to work. */
 .value-static {
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink-2);
@@ -113,7 +113,7 @@
 
 .event-line .event-expr {
   color: var(--dim);
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -129,7 +129,7 @@
 .prop-grid > label {
   font: 600 12px var(--sans);
   color: var(--muted);
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 

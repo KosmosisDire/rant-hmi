@@ -104,7 +104,7 @@
 .detail-name {
   font: 700 14px var(--mono);
   color: var(--ink);
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 
@@ -151,7 +151,7 @@
 
 .field-table .variants {
   color: var(--dim-2);
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -181,7 +181,7 @@
 
 .used-row .used-path {
   color: var(--dim);
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 

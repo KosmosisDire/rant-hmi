@@ -29,7 +29,7 @@
   color: var(--muted);
   font: inherit;
   cursor: pointer;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 12em;
@@ -262,6 +262,6 @@
 }
 
 .layer-label {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }

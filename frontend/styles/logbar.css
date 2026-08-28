@@ -92,7 +92,7 @@
 .log-shownof {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -217,7 +217,7 @@
   width: 76px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: clip;
   font-size: 10.5px;
   line-height: 1.5;
 }
@@ -225,7 +225,7 @@
   color: var(--dim);
 }
 .log-row .log-node {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);

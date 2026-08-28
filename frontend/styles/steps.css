@@ -40,7 +40,7 @@
   color: var(--muted);
   text-align: right;
   white-space: nowrap;
-  overflow: hidden;
+  overflow: clip;
 }
 
 /* THE LINE IS THE EDITOR: a move's source, arrow, target and mode sit inline. The
@@ -61,7 +61,7 @@
 .do-cell > .source-chip {
   flex: 0 1 auto;
   min-width: 44px;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .do-cell > .select-wrap {
@@ -90,11 +90,11 @@
   font: 400 12px/24px var(--mono);
   color: var(--ink-2);
   white-space: nowrap;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .do-say > span {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 

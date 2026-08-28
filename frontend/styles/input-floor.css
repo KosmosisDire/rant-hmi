@@ -6,7 +6,15 @@
    allowances input.ts uses for the event half of the same policy. This block sits early on
    purpose: a component rule further down the file has the same specificity and wins, so a
    control that needs its own drag (sliders, the colour picker, the gutters) keeps saying so
-   where it is defined. */
+   where it is defined.
+
+   One consequence of the blanket overscroll-behavior: an overflow:hidden element ANYWHERE
+   becomes a scroll container that cannot scroll, and such a container stops the wheel
+   chain DEAD — the list behind it goes unscrollable exactly where it is hovered. A
+   decorative clipper (an ellipsized label, a rounded corner) inside any scrolling surface
+   must say `overflow: clip`, which clips identically without becoming a scroll container
+   (the wrapper note in highlight.css). `hidden` is for real scroll boxes and the
+   top-level layout clips only. */
 * {
   touch-action: none;
   overscroll-behavior: none;

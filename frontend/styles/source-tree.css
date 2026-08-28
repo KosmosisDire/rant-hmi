@@ -138,7 +138,11 @@
 }
 
 .stree-label {
-  overflow: hidden;
+  /* clip, never hidden: under the input floor's blanket overscroll-behavior an
+     overflow:hidden label is a scroll container that cannot scroll, and it STOPS the
+     wheel chain — the list under it goes dead wherever a label is hovered (the
+     wrapper note in highlight.css) */
+  overflow: clip;
   text-overflow: ellipsis;
 }
 

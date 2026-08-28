@@ -52,7 +52,7 @@
   padding-left: 12px;
   color: #5a5a5a;
   max-width: 120px;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

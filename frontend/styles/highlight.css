@@ -76,7 +76,7 @@
   letter-spacing: 0.05em;
   color: var(--dim);
   text-transform: uppercase;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 
@@ -97,7 +97,7 @@
 }
 
 .source-chip > span {
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
 }
 
