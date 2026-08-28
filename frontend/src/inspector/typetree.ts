@@ -25,7 +25,7 @@ import { resolveTypeRef, variantNames } from "../slots.js";
 export { resolveTypeRef, variantNames };
 
 export interface TypeTreeOptions {
-  scalars?: boolean;   /* offer num / bool / text / color / icon / timer / list / map */
+  scalars?: boolean;   /* offer Num / Bool / Text / Color / Icon / Timer / List / Map */
   /* a component's variable is storage PER PLACEMENT, and a timer has no per-placement
      form — so the one surface that cannot offer it says so here */
   timers?: boolean;
@@ -34,7 +34,7 @@ export interface TypeTreeOptions {
 }
 
 export interface TypePick {
-  ref: string;                          /* what the document stores: "num", "ValveCmd",
+  ref: string;                          /* what the document stores: "Num", "ValveCmd",
                                            "ValveCmd.mode" */
   kind: "scalar" | "struct" | "enum";
 }
@@ -50,8 +50,8 @@ const SCALARS = [
      what earns its editors the icon grid */
   { ref: "Icon", label: "Icon" },
   { ref: "Timer", label: "Timer" },
-  { ref: "list", label: "list" },
-  { ref: "map", label: "map" },
+  { ref: "List", label: "List" },
+  { ref: "Map", label: "Map" },
 ];
 
 interface Row {
@@ -98,7 +98,7 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
       rows.push({ depth: 0, key: "hmi", label: "hmi", icon: "folder", expandable: true });
     if (openOr("hmi"))
       for (const scalar of SCALARS)
-        if (match(scalar.label) && (scalar.ref !== "timer" || opts.timers !== false))
+        if (match(scalar.label) && (scalar.ref !== "Timer" || opts.timers !== false))
           rows.push({
             depth: depth0,
             key: "sc:" + scalar.ref,
