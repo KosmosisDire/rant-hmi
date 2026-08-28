@@ -9,7 +9,9 @@
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--sidebar-left) 1fr var(--sidebar-right);
+  /* the same width variables Content's grid reads, and the same 5px gutter tracks:
+     resizing a column in either workspace resizes it in both */
+  grid-template-columns: var(--sidebar-left) 5px 1fr 5px var(--sidebar-right);
   background: var(--stage);
 }
 

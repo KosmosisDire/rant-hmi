@@ -49,6 +49,7 @@
 
   --sidebar-left: 274px;
   --sidebar-right: 384px;
+  --sidebar-data: 340px;
 
   --sans: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
   --mono: ui-monospace, Consolas, "Cascadia Mono", "SF Mono", monospace;

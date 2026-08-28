@@ -713,7 +713,8 @@ export class App implements Editor {
          an expansion rebuild in the tree keeps the detail pane's scroll (and vice versa) */
       const dataTree = el("aside", { class: "data-tree", "data-input": "scroll" });
       const dataDetail = el("section", { class: "data-detail", "data-input": "scroll" });
-      const data = el("main", { class: "workspace-data" }, [dataTree, dataDetail]);
+      const data = el("main", { class: "workspace-data" },
+                      [dataTree, this.gutter("data"), dataDetail]);
       this.dataTreePanel = new Panel(dataTree);
       this.dataDetailPanel = new Panel(dataDetail);
       /* Design: the component tree and the component/element inspector, either side of an
@@ -724,8 +725,9 @@ export class App implements Editor {
       const designTree = el("aside", { class: "sidebar design-tree", "data-input": "scroll" });
       const designInspector = el("aside", { class: "sidebar design-inspector", "data-input": "scroll" });
       const designStage = el("section", { class: "stage empty" });
-      const design =
-        el("main", { class: "workspace-design" }, [designTree, designStage, designInspector]);
+      const design = el("main", { class: "workspace-design" },
+                        [designTree, this.gutter("left"), designStage,
+                         this.gutter("right"), designInspector]);
       this.designTreePanel = new Panel(designTree);
       this.designInspectorPanel = new Panel(designInspector);
       this.workspaces = buildWorkspaces(content, design, data, style);
@@ -792,14 +794,20 @@ export class App implements Editor {
     window.addEventListener("keydown", (ev) => this.onKey(ev));
   }
 
-  private gutter(side: "left" | "right"): HTMLElement {
+  /* a workspace column divider: dragging writes the shared width VARIABLE, so every
+   * workspace whose grid reads it follows — Content and Design share the left/right
+   * pair, the Data tree has its own. The panel a gutter resizes is its own neighbour,
+   * measured at press: only the visible workspace's gutter can be pressed. */
+  private gutter(side: "left" | "right" | "data"): HTMLElement {
     const node = el("div", { class: "gutter", "data-side": side });
     node.addEventListener("pointerdown", (ev) => {
       const start = (ev as PointerEvent).clientX;
-      const sidebar = side === "left" ? this.nodes.left : this.nodes.inspector;
-      const from = sidebar.getBoundingClientRect().width;
+      const before = side !== "right";
+      const panel = (before ? node.previousElementSibling
+                            : node.nextElementSibling) as HTMLElement;
+      const from = panel.getBoundingClientRect().width;
       const move = (m: PointerEvent) => {
-        const delta = side === "left" ? m.clientX - start : start - m.clientX;
+        const delta = before ? m.clientX - start : start - m.clientX;
         const width = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, from + delta));
         document.documentElement.style.setProperty("--sidebar-" + side, width + "px");
       };
@@ -819,7 +827,7 @@ export class App implements Editor {
   }
 
   private restoreSidebarWidths(): void {
-    for (const side of ["left", "right"]) {
+    for (const side of ["left", "right", "data"]) {
       const saved = localStorage.getItem("sidebar-" + side);
       if (saved) document.documentElement.style.setProperty("--sidebar-" + side, saved);
     }
