@@ -210,13 +210,16 @@ function stateOf(host: HTMLElement): StageState {
 
 /* ---- the camera ---- */
 
-/* the artboard, scaled to sit whole in the pane with a breath of margin around it */
-function fitCamera(host: HTMLElement, state: StageState): void {
+/* the artboard, scaled to sit whole in the pane with a breath of margin around it — and
+ * with NONE in the deployed view: operate's pane is the machine's whole screen, so the
+ * page fills it edge to edge, letterboxed only where the aspects disagree */
+function fitCamera(host: HTMLElement, state: StageState, editor: Editor): void {
   const w = host.clientWidth;
   const h = host.clientHeight;
   if (!(w > 0) || !(h > 0)) return;
   const cam = state.cam;
-  cam.k = Math.min(w / state.art.w, h / state.art.h) * 0.96;
+  cam.k = Math.min(w / state.art.w, h / state.art.h) *
+          (editor.view.mode === "operate" ? 1 : 0.96);
   cam.x = (w - state.art.w * cam.k) / 2;
   cam.y = (h - state.art.h * cam.k) / 2;
 }
@@ -2375,7 +2378,7 @@ export function renderStage(host: HTMLElement, editor: Editor): void {
     if (fresh) buildFresh(host, editor, page);
     else reconcile(host, editor, page);
     state.docSig = docSig;
-    if (!state.cam.manual) fitCamera(host, state);
+    if (!state.cam.manual) fitCamera(host, state, editor);
     applyCamera(state);
     /* A PASS MUST NOT TAKE A GESTURE WITH IT. What a live frame moved is a value, not an
        arrangement, and the box in your hand is holding numbers that are deliberately not
@@ -2527,6 +2530,10 @@ function wire(host: HTMLElement, editor: Editor): void {
        operate (gestures.ts draws that same line on the four primitives). */
     if (editor.view.mode !== "edit" && wheelScrolls(host, ev)) return;
     ev.preventDefault();
+    /* the deployed view has no camera to take: the page IS the screen (fitCamera fills
+       it), and a stray wheel or pinch must not shove it off — the default stays
+       cancelled above, or ctrl+wheel would zoom the browser instead */
+    if (editor.view.mode === "operate") return;
     if (ev.ctrlKey) {
       const at = host.getBoundingClientRect();
       const px = ev.clientX - at.left;
@@ -2544,7 +2551,7 @@ function wire(host: HTMLElement, editor: Editor): void {
     positionRings(host, editor);
   }, { passive: false });
   host.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 1) return;
+    if (ev.button !== 1 || editor.view.mode === "operate") return;
     ev.preventDefault();
     const state2 = stateOf(host);
     const start = { x: ev.clientX, y: ev.clientY, cx: state2.cam.x, cy: state2.cam.y };
@@ -2569,7 +2576,7 @@ function wire(host: HTMLElement, editor: Editor): void {
     new ResizeObserver(() => {
       const state2 = stateOf(host);
       if (!state2.cam.manual) {
-        fitCamera(host, state2);
+        fitCamera(host, state2, editor);
         applyCamera(state2);
       }
       positionRings(host, editor);
