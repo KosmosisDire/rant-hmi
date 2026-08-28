@@ -142,11 +142,17 @@ export class Connection {
         this.handlers.status("live", "session " + frame.session_id);
         return;
       case "snapshot":
-        /* a snapshot settles everything outstanding (it follows every reject and
-           resync), so anything queued goes out against its fresh version — BEFORE the
-           handler, so settled() tells the app the truth while it renders */
+        /* a snapshot settles the QUEUE only when nothing is in flight. The backend
+           broadcasts an unsolicited PRODUCT snapshot after any edit that changes
+           compiled products (nearly every attr edit), and that one rides in between
+           our echo and our next batch — resetting inflight there broke
+           ONE-IN-FLIGHT: the next rapid commit went out concurrently, came back
+           "changed since version N" rejected, and the intent was dropped (the
+           color-drag warning + snap-back). After a real reject inflight is already
+           cleared, so the follow-up snapshot still sends the queue. Flush BEFORE the
+           handler, so settled() tells the app the truth while it renders. */
         this.version = frame.version;
-        this.flush();
+        if (!this.inflight) this.flush();
         this.handlers.snapshot(frame.doc, frame.registry, frame.live,
           frame.diag?.compile ?? [], frame.mesh ?? { entities: [] },
           frame.lang ?? { builtins: [], methods: [], objects: [] },
@@ -180,7 +186,9 @@ export class Connection {
         this.handlers.log(frame.entries ?? [], true);
         return;
       case "reject":
-        /* the backend always follows a reject with a snapshot */
+        /* the in-flight batch is DEAD — the backend always follows a reject with a
+           snapshot, whose flush sends the queue against the fresh version */
+        this.inflight = false;
         this.handlers.status("live", "edit refused: " + frame.reason);
         return;
       default:
