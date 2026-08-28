@@ -119,7 +119,12 @@
    hover never reflows the text. Buttons rest hidden; hover or focus reveals them,
    and a chip in its .on state is standing authored state (an active cases editor,
    a set poll rate) and stays. The diag dot is never tagged vb-tail, so a finding
-   never needs a hover to be seen; it renders LAST — rightmost, stationary. */
+   never needs a hover to be seen; it renders LAST — rightmost, stationary.
+
+   THE STATIONARY SIDE: everything visible AT REST (standing .on chips, the marks)
+   is pushed right of everything the hover reveals (flex order below), so the reveal
+   only ever adds to the LEFT of what already shows — a chip the user is aiming at
+   must never move out from under the click as the other buttons appear. */
 
 .vb-tail-box {
   position: absolute;
@@ -148,6 +153,17 @@
 
 .vb-tail-box > .vb-tail:not(.on) {
   display: none;
+}
+
+/* the stationary side: a standing chip rides right of the hover-revealed buttons,
+   the marks right of everything — and the tail's overflow clip eats the revealed
+   (leftmost) buttons first, never what stands */
+.vb-tail-box > .vb-tail.on {
+  order: 1;
+}
+
+.vb-tail-box > :not(.vb-tail) {
+  order: 2;
 }
 
 .value-box:hover .vb-tail-box > .vb-tail,
