@@ -305,7 +305,8 @@ function renderBuiltinElementView(host: HTMLElement, editor: Editor, at: Builtin
   const attrDefRow = (def: AttrDef): HTMLElement => {
     const raw = attrs[def.name];
     return el("div", { class: "attr-row" }, [
-      el("span", { class: "field attr-name static", text: def.name, title: def.note }),
+      el("span", { class: "field attr-name static", text: humanName(def.name),
+                   title: def.note ? def.name + " — " + def.note : def.name }),
       exprView(typeof raw === "string" ? raw : "", attrPlaceholder(def), def.note),
     ]);
   };
@@ -331,7 +332,8 @@ function renderBuiltinElementView(host: HTMLElement, editor: Editor, at: Builtin
         ]),
         ...params.map(([param, expr]) =>
           el("div", { class: "attr-row" }, [
-            el("span", { class: "field attr-name static", text: param }),
+            el("span", { class: "field attr-name static", text: humanName(param),
+                         title: param }),
             exprView(String(expr ?? "")),
           ]),
         ),
@@ -903,14 +905,27 @@ function transitionChip(editor: Editor, node: Node, def: AttrDef): HTMLElement |
   return chip;
 }
 
+/* the display face of a document key: `border_radius` and `ledColor` read as "Border
+ * radius" and "Led color". DISPLAY ONLY — the key itself stays the spelling every
+ * expression uses, so the tooltip carries it verbatim wherever the face differs. */
+export function humanName(name: string): string {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_\s]+/g, " ")
+    .trim()
+    .toLowerCase();
+  return words ? words[0].toUpperCase() + words.slice(1) : name;
+}
+
 /* ---- THE ROW CHASSIS, minimal form: label | value box | trailing cells ----
  *
  * One builder where three stood (the declared attr row, the stray row, the interact
- * param row) — and the slot rows ride it too (panel.ts): the label cell is a static
- * name with the note as its tooltip and the warning ink on a stray, the box carries
- * the value AND the value's metadata (BoxSpec.trail: chips, the diag dot), and
- * everything after the box is the caller's trail — ROW lifecycle only, like the
- * remove on a stray. The box never carries row concerns. */
+ * param row) — and the slot rows ride it too (panel.ts): the label cell is the name's
+ * display face with the key and note as its tooltip, and the warning ink on a stray
+ * (which stays VERBATIM — that row exists to quote exactly the key the document
+ * holds), the box carries the value AND the value's metadata (BoxSpec.trail: chips,
+ * the diag dot), and everything after the box is the caller's trail — ROW lifecycle
+ * only, like the remove on a stray. The box never carries row concerns. */
 export function chassisRow(opts: {
   name: string;
   note?: string;
@@ -921,11 +936,12 @@ export function chassisRow(opts: {
   return el("div", { class: "attr-row" }, [
     el("span", {
       class: "field attr-name static" + (opts.unknown ? " unknown" : ""),
-      text: opts.name,
-      /* the tooltip always holds at least the name: the cell ellipsizes a long one */
+      text: opts.unknown ? opts.name : humanName(opts.name),
+      /* the tooltip always holds at least the KEY, verbatim: the display face above
+         is not the spelling an expression or a hand edit needs */
       title: opts.unknown
         ? "no element of this kind reads '" + opts.name + "'"
-        : opts.note ?? opts.name,
+        : opts.note ? opts.name + " — " + opts.note : opts.name,
     }),
     opts.box,
     ...(opts.trail ?? []),

@@ -69,6 +69,13 @@ const asm = (...rows) => {
 };
 const { syncUrl } = await import(mod("endpoint.js"));
 const { Panel } = await import(mod("reconcile.js"));
+const { humanName } = await import(mod("inspector/components.js"));
+/* a label cell wears the key's display face ("Border radius"); a stray row stays
+   verbatim — so a row is named by either spelling */
+const namedRow = (row, name) => {
+  const label = row.querySelector(".attr-name")?.textContent;
+  return label === name || label === humanName(name);
+};
 const { inspectorShape, leftShape, renderInspector, renderLeftSidebar } =
   await import(mod("inspector/panel.js"));
 const { designInspectorShape, designShape, renderDesignInspector, renderDesignTree } =
@@ -434,7 +441,7 @@ const echo = (ops) => {
    text input inside), so these helpers address that anatomy — the rules are unchanged. */
 const slotRowIn = (host, name) =>
   host.querySelectorAll(".attr-row.slot-row")
-    .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
+    .find((row) => namedRow(row, name)) ?? null;
 const slotInput = (name) => slotRowIn(sidebar, name)?.querySelector("input") ?? null;
 const slotsNow = () => store.instance(readout.id).slots ?? {};
 const echoSlot = (name, value) =>
@@ -979,9 +986,10 @@ const elementPanel = new Panel(new Element("aside"));
 elementPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
 const elementLabels = elementPanel.host.querySelectorAll(".attr-row.slot-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(elementLabels.includes("handle_color"),
+check(elementLabels.includes(humanName("handle_color")),
       "the element view lists the property that element owns");
-check(!elementLabels.includes("fill_color") && !elementLabels.includes("track_color"),
+check(!elementLabels.includes(humanName("fill_color")) &&
+      !elementLabels.includes(humanName("track_color")),
       "and not its siblings' slots, got " + elementLabels.join(","));
 check(elementPanel.host.querySelector(".geom-grid") === null,
       "the element view carries no Panel/placement section");
@@ -996,21 +1004,25 @@ const instancePanel = new Panel(new Element("aside"));
 instancePanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
 const instanceLabels = instancePanel.host.querySelectorAll(".attr-row.slot-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(!instanceLabels.includes("handle_color") && !instanceLabels.includes("fill_color"),
+check(!instanceLabels.includes(humanName("handle_color")) &&
+      !instanceLabels.includes(humanName("fill_color")),
       "the instance view shows no property an element owns, got " + instanceLabels.join(","));
-check(instanceLabels.includes("surface"), "and keeps the instance's own frame slots");
+check(instanceLabels.includes(humanName("surface")),
+      "and keeps the instance's own frame slots");
 /* PLACE IS NOT A SLOT and not a prop: an instance is a node, so its box on the artboard
    is the same attr row a plain box gets, through the same commit */
 const instanceAttrNames = instancePanel.host.querySelectorAll(".attr-row")
   .filter((row) => !row.classList.contains("slot-row"))
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(instanceAttrNames.includes("left") && instanceAttrNames.includes("w"),
+check(instanceAttrNames.includes(humanName("left")) &&
+      instanceAttrNames.includes(humanName("w")),
       "the instance view places the instance, got " + instanceAttrNames.join(","));
 {
   /* EVERY element carries its own `shown` switch, so an element is turned off by selecting it
      — and the edit writes NESTED, under the element that owns it. The switch is the bool
      box now: committing `false` stores the raw bool at the element's address. */
-  check(elementLabels.includes("shown"), "an element can be switched off from its own view");
+  check(elementLabels.includes(humanName("shown")),
+        "an element can be switched off from its own view");
   const applied = [];
   const nested = { ...toggleEditor2, apply: (ops) => applied.push(...ops) };
   view.element = "pill.knob";
@@ -1199,13 +1211,13 @@ check(attrRows.length === textVocabCount,
       "the element view lists the kind's attrs and the placement half that applies, got " +
         attrRows.length + " expected " + textVocabCount);
 const attrNamed = (rows, name) =>
-  rows.find((row) => row.querySelector(".attr-name")?.textContent === name);
+  rows.find((row) => namedRow(row, name));
 check(MEASURED.every((name) => attrNamed(attrRows, name) !== undefined),
       "a child of a FREE frame places itself: the box fields are offered");
 check(ARRANGED.every((name) => attrNamed(attrRows, name) === undefined),
       "and the share its parent would have given it is not");
 const attrRowNamed = (rows, name) =>
-  rows.find((row) => row.querySelector(".attr-name")?.textContent === name);
+  rows.find((row) => namedRow(row, name));
 check(attrRowNamed(attrRows, "text").querySelectorAll("input")
         .some((i) => i.value === "'hi'"),
       "the set attr's expression text is editable in place");
@@ -2596,7 +2608,7 @@ check(stageNode("frame", 901) === heldAgain &&
 
   const attrRowFor = (name) =>
     framePanel.host.querySelectorAll(".attr-row")
-      .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
+      .find((row) => namedRow(row, name)) ?? null;
   /* the box's own dressing and its one placement vocabulary: everything sits at its own
      left/top in the one static space — the far edges and the clamps beside them — so the
      same box rows stand on every node */
@@ -3057,7 +3069,7 @@ check(stageNode("frame", 901) === heldAgain &&
             .some((b) => b.textContent === "+ Variable"),
         "a component's element declares and edits its variables from the content view");
   check(compPanel.host.textContent.includes("GESTURE") &&
-          compPanel.host.textContent.includes("hold_ms") &&
+          compPanel.host.textContent.includes(humanName("hold_ms")) &&
           compPanel.host.textContent.includes("pressrelease (down)"),
         "and the interact it carries shows its params and the family it BRINGS");
   /* the gesture is EDITABLE here, which is what lets an authored node be given one at
@@ -3486,7 +3498,7 @@ check(stageNode("frame", 901) === heldAgain &&
                  (host) => renderDesignInspector(host, vbEditor));
   const vbRow = (name) =>
     vbPanel.host.querySelectorAll(".attr-row")
-      .find((row) => row.querySelector(".attr-name")?.textContent === name) ?? null;
+      .find((row) => namedRow(row, name)) ?? null;
   const lastAttrs = () => vbOps.findLast((o) => o.key === "attrs");
 
   /* the anatomy: one box per declared row — icon, input, browse (the attr scope always
@@ -3614,7 +3626,7 @@ check(stageNode("frame", 901) === heldAgain &&
     panel4a.render(inspectorShape(editor4a), (host) => renderInspector(host, editor4a));
   const row4a = (name) =>
     panel4a.host.querySelectorAll(".attr-row.slot-row")
-      .find((r) => r.querySelector(".attr-name")?.textContent === name) ?? null;
+      .find((r) => namedRow(r, name)) ?? null;
   const echo4a = (name, value) =>
     store.apply(store.version() + 1, [{
       op: "set_prop", node: 9800, key: "slots",
