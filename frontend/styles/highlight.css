@@ -34,8 +34,9 @@
   top: 1px;
   left: 0;
   /* sized by its OWN text, never the box: `pre` makes the full expression the
-     element's width, so text past the right edge is painted and the scroll transform
-     slides it into view — the WRAPPER is the clip */
+     element's width, so text past the right edge is painted and the scroll slide (the
+     `translate` property, highlight.ts) brings it into view — the WRAPPER is the clip.
+     `transform` stays free for a host's own centering (the value box). */
   padding: 0 7px;   /* the field's 1px border + 6px padding: the text must sit EXACTLY
                        under the caret's text */
   /* centered by line-height, NEVER flex: flex layout drops whitespace-only text nodes

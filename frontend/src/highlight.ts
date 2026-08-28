@@ -77,7 +77,10 @@ function tick(): void {
     }
     if (site.scrolled !== site.input.scrollLeft) {
       site.scrolled = site.input.scrollLeft;
-      site.under.style.transform = "translateX(" + -site.scrolled + "px)";
+      /* the separate `translate` property, never `transform`: a host's CSS may center
+         the underlay WITH a transform (the value box does), and the first scroll must
+         not overwrite it — the two compose */
+      site.under.style.translate = -site.scrolled + "px";
     }
   }
   if (sites.length) requestAnimationFrame(tick);
