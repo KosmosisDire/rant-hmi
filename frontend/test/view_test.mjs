@@ -3770,15 +3770,27 @@ check(stageNode("frame", 901) === heldAgain &&
         "editing a branch writes back the exact chain shape, got " +
           JSON.stringify(lastSlots()?.value?.value));
 
-  /* a PLAIN expression gets the wrap editor: + Case makes it the chain's else */
+  /* a PLAIN expression gets the wrap editor: + Case scaffolds a branch over it, with
+     a BLANK condition — the condition is the author's to write, never invented */
   echo4a("value", "@cage/plc/IO.temp");
   draw4a();
   const wrapHost = panel4a.host.querySelector(".cases-editor");
   check(wrapHost !== null && wrapHost.querySelectorAll("input").length === 1,
         "a plain expression shows its else row alone");
   fire(wrapHost.querySelectorAll(".dashed-btn")[0], "click");
+  check(store.instance(9800).slots.value === "@cage/plc/IO.temp",
+        "+ Case commits nothing — the document keeps the plain value, got " +
+          JSON.stringify(store.instance(9800).slots.value));
+  draw4a();
+  const wrapInputs = panel4a.host.querySelector(".cases-editor").querySelectorAll("input");
+  check(wrapInputs.length === 3 && wrapInputs[0].value === "" &&
+        wrapInputs[1].value === "@cage/plc/IO.temp",
+        "it scaffolds a blank WHEN and carries the standing value into the THEN, got " +
+          wrapInputs.map((i) => i.value).join(" | "));
+  typeInto(wrapInputs[0], "true");
+  fire(wrapInputs[0], "change");
   check(lastSlots()?.value?.value === "true ? @cage/plc/IO.temp : @cage/plc/IO.temp",
-        "+ Case wraps it as the else branch, got " +
+        "typing the condition commits the wrapped chain, got " +
           JSON.stringify(lastSlots()?.value?.value));
   /* a literal spelling is a short expression: it arms the wrap editor too, so the
      affordance stands BEFORE any ternary exists — while dirty ?: text gets nothing */
@@ -3793,30 +3805,51 @@ check(stageNode("frame", 901) === heldAgain &&
   check(dirtyChip !== null && dirtyChip.classList.contains("off"),
         "an unpairable ?: hides the chip by bind — the box alone edits it");
 
-  /* THE NEVER-PRINT-DIRTY GATE: clearing a branch's WHEN deletes that branch rather
-     than committing the dirty " ? then : else" that would un-arm the whole editor
-     out from under the user */
+  /* THE HELD DRAFT: a side the user blanks stays blank in the editor and commits
+     NOTHING — the document keeps the standing chain, a temporary deletion is never
+     reinterpreted as a branch deletion, and the editor never collapses mid-edit */
   echo4a("value", "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'");
   draw4a();
   const gateInputs = panel4a.host.querySelector(".cases-editor").querySelectorAll("input");
   typeInto(gateInputs[0], "");
   fire(gateInputs[0], "change");
-  check(lastSlots()?.value?.value === "'cold'",
-        "clearing the WHEN deletes its branch, got " +
-          JSON.stringify(lastSlots()?.value?.value));
+  check(store.instance(9800).slots.value === "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'",
+        "clearing the WHEN commits nothing — the blank is held, got " +
+          JSON.stringify(store.instance(9800).slots.value));
   draw4a();
-  check(row4a("value").querySelector(".cases-chip") !== null &&
-        panel4a.host.querySelector(".cases-editor") !== null,
-        "and the editor stays standing on the else that remains");
-  /* a blank ELSE keeps what stood: a chain cannot lose its else */
-  echo4a("value", "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'");
+  check(panel4a.host.querySelector(".cases-editor")
+          ?.querySelectorAll("input")[0] === gateInputs[0] &&
+        gateInputs[0].value === "",
+        "and the editor stands — the very same input, its blank in place");
+  typeInto(gateInputs[0], "@cage/plc/IO.temp > 9");
+  fire(gateInputs[0], "change");
+  check(lastSlots()?.value?.value === "@cage/plc/IO.temp > 9 ? 'hot' : 'cold'",
+        "typing a condition back commits the whole chain again, got " +
+          JSON.stringify(lastSlots()?.value?.value));
+  /* a blank ELSE holds the same way */
   draw4a();
   const elseInput4a = panel4a.host.querySelector(".cases-editor").querySelectorAll("input")[2];
   typeInto(elseInput4a, "");
   fire(elseInput4a, "change");
-  check(lastSlots()?.value?.value === "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'",
-        "a blank ELSE keeps the standing else, got " +
+  check(store.instance(9800).slots.value === "@cage/plc/IO.temp > 9 ? 'hot' : 'cold'",
+        "a blank ELSE commits nothing and stands blank, got " +
+          JSON.stringify(store.instance(9800).slots.value));
+  typeInto(elseInput4a, "'mild'");
+  fire(elseInput4a, "change");
+  check(lastSlots()?.value?.value === "@cage/plc/IO.temp > 9 ? 'hot' : 'mild'",
+        "refilling it commits the chain with the new else, got " +
           JSON.stringify(lastSlots()?.value?.value));
+  /* deleting a branch is the x button and nothing else */
+  draw4a();
+  const xBtn4a = panel4a.host.querySelector(".cases-editor").querySelectorAll(".case-row")[0]
+    .children.find((n) => n.tagName === "BUTTON");
+  fire(xBtn4a, "click");
+  check(lastSlots()?.value?.value === "'mild'",
+        "the x deletes its branch purposefully, leaving the else, got " +
+          JSON.stringify(lastSlots()?.value?.value));
+  draw4a();
+  check(panel4a.host.querySelector(".cases-editor").querySelectorAll("input").length === 1,
+        "and the editor drops to the else row alone");
 
   /* the same instance's ATTR rows carry the disclosure too (one module serves slots
      and attrs): the chip stands on every row and ARMS BY BIND, so authoring a chain
