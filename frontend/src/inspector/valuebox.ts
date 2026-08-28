@@ -107,6 +107,21 @@ const browseExpanded = new Set<string>(["hmi", "hmi/local", "hmi/outer", "hmi/gl
                                         "attr/local", "attr/outer", "attr/global",
                                         "dart", "enums", "flow"]);
 
+/* THE DETOUR RULE: opening the browse popover mid-edit is part of the edit, not the
+ * end of it. The popover takes focus (its search must type), which blurs the box —
+ * and the blur would fire commit-on-change: half-typed text hitting the document, a
+ * recompile, and a fresh error mark shifting the very button just clicked. So while
+ * the popover stands open for a box that box's commit is swallowed, and closing it
+ * without a pick puts focus and the caret back and re-announces, so the pending text
+ * still commits exactly once, on the edit's own blur. */
+let browsing: {
+  input: HTMLInputElement;
+  refocus: boolean;
+  start: number | null;
+  end: number | null;
+  picked: boolean;
+} | null = null;
+
 function ensureBrowse(): Shell {
   return (browseShell ??= makeShell({
     id: "vbrowse",
@@ -114,6 +129,20 @@ function ensureBrowse(): Shell {
     dismiss: "backdrop",
     contextDismiss: "anywhere",
     wheel: "passive",
+    onDismiss: () => {
+      const b = browsing;
+      browsing = null;
+      if (!b || b.picked || !b.refocus) return;
+      /* AFTER the dismissing press's own default: a pointerdown on the backdrop moves
+         focus to the body as its default action, which would undo a synchronous
+         refocus — and fire the just-armed commit early */
+      setTimeout(() => {
+        if (!b.input.isConnected) return;
+        b.input.focus();
+        b.input.setSelectionRange?.(b.start, b.end);
+        announceInput(b.input);
+      }, 0);
+    },
   }));
 }
 
@@ -137,6 +166,7 @@ function openBrowse(anchor: HTMLElement, input: HTMLInputElement, scope: Scope):
     announceInput(input);
   };
 
+  browsing = { input, refocus: focused, start, end, picked: false };
   const sh = ensureBrowse();
   sh.box.innerHTML = "";
 
@@ -145,6 +175,7 @@ function openBrowse(anchor: HTMLElement, input: HTMLInputElement, scope: Scope):
     shape ? el("span", { class: "stree-shape", text: shape }) : null,
   ];
   const pick = (text: string) => () => {
+    if (browsing?.input === input) browsing.picked = true;
     sh.close();
     insert(text);
   };
@@ -315,6 +346,15 @@ function attachIconScrub(
 
 export function valueBox(spec: BoxSpec): HTMLElement {
   const shape = spec.type.shape;
+  /* every commit path passes the detour guard: while the browse popover stands open
+     for this box, the blur it caused must not write the half-edited text */
+  const authored = spec.commit;
+  spec = {
+    ...spec,
+    commit: (text: string) => {
+      if (browsing?.input !== input) authored(text);
+    },
+  };
   const input = commitInput(spec.read(), spec.commit, {
     class: "field grow",
     spellcheck: "false",
