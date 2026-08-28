@@ -22,7 +22,7 @@ import { inspectorShape, leftShape, renderInspector, renderLeftSidebar } from ".
 import { refreshSourceTree } from "./inspector/sourcetree.js";
 import { pageSelectShape, renderPageSelect } from "./pageselect.js";
 import { Connection, Status } from "./protocol.js";
-import { Panel, settleCommitted } from "./reconcile.js";
+import { Panel, settleCommitted, syncWhen } from "./reconcile.js";
 import { previewArrangement, renderStage, stageScale } from "./stage.js";
 import { AttrTable, BuiltinDef, CANVAS_H, CANVAS_W, Diag, Doc, Json, Lang, Live, Mesh, Node, NodeAttrs, NodeKind, Op, Page, Registry, RepeatCopy, primitiveDef } from "./types.js";
 import { buildWorkspaces, Workspace, WorkspaceId } from "./workspaces.js";
@@ -135,6 +135,10 @@ export class App implements Editor {
       log: (entries, fresh) => this.logView.log(entries, fresh),
       status: (state, detail) => this.onStatus(state, detail),
     });
+    /* the sync gate reads the connection directly: while a commit is outstanding the
+       sidebars stop pushing the (legitimately behind) document into controls, and the
+       settle frame's own render lands truth everywhere at once */
+    syncWhen(() => this.conn.settled());
   }
 
   start(): void {

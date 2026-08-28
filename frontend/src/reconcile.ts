@@ -55,6 +55,18 @@ export function settleCommitted(): void {
   committed.clear();
 }
 
+/* THE SYNC GATE: while the connection has a commit outstanding, the document is
+   legitimately behind the author for one round trip, and pushing its values into
+   controls would repaint pre-edit state — the flicker class, on EVERY bind surface
+   (selects, groups, chips, icons), not just text inputs. So value pushes hold as one
+   rule: the settle frame's own render lands truth everywhere at once. The app
+   installs the predicate; the default keeps tests and connection-less panels live. */
+let syncOpen: () => boolean = () => true;
+
+export function syncWhen(pred: () => boolean): void {
+  syncOpen = pred;
+}
+
 /* the panel currently being built: bindings register against it, so a builder can declare
    what a control shows without every function having to thread a panel through */
 let building: Panel | null = null;
@@ -94,8 +106,10 @@ export class Panel {
     this.host.scrollTop = scroll;
   }
 
-  /* push the current document and live values into the controls that are already there */
+  /* push the current document and live values into the controls that are already there;
+     held back whole while a commit is outstanding (the sync gate above) */
   sync(): void {
+    if (!syncOpen()) return;
     for (const binding of this.bindings) binding.push();
   }
 

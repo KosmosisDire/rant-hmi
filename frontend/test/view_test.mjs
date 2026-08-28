@@ -68,7 +68,7 @@ const asm = (...rows) => {
   return p;
 };
 const { syncUrl } = await import(mod("endpoint.js"));
-const { Panel } = await import(mod("reconcile.js"));
+const { Panel, syncWhen } = await import(mod("reconcile.js"));
 const { humanName } = await import(mod("inspector/components.js"));
 /* a label cell wears the key's display face ("Border radius"); a stray row stays
    verbatim — so a row is named by either spelling */
@@ -467,6 +467,18 @@ widthField.focus();
 echoSlot("radius", 654);
 check(widthField.value === "654", "a remote change reaches a FOCUSED field, got " + widthField.value);
 check(document.activeElement === widthField, "and the field keeps focus");
+
+/* 2b. THE SYNC GATE: while a commit is outstanding the app closes the gate
+      (syncWhen(conn.settled) in the shell), and a sync pass pushes NOTHING — the
+      document is legitimately behind the author for one round trip, and repainting
+      it would flick every control to pre-edit state. The settle render lands it. */
+syncWhen(() => false);
+echoSlot("radius", 777);
+check(widthField.value === "654",
+      "a gated sync leaves every control alone, got " + widthField.value);
+syncWhen(() => true);
+draw();
+check(widthField.value === "777", "and the settle render lands the withheld value");
 
 /* 3. An UNFED slot's field edits the document, so it shows the document. The runtime keeps
       its own compiled copy of that slot, and a field that read it back would fight whatever
