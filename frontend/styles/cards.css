@@ -38,6 +38,12 @@
   align-items: start;
 }
 
+/* WHEN and DO top-align against their grids, whose first row centers a 24px control;
+   the row-num line-height, so the word sits on that row's line rather than above it */
+.card-body.when-do > .row-label {
+  line-height: 24px;
+}
+
 /* a variable body is one grid of its own: it takes the divider, not the numbered
    two-column template a feed or flow body carries */
 .card-body.var-body {
