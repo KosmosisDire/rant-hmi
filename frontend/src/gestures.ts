@@ -1,7 +1,7 @@
 /* THE GESTURE PRIMITIVES: what a pointer does to a rendered instance outside edit mode.
  *
  * A view is a view and an input device. These handlers REPORT gestures — press, drag1d,
- * drag_radial, pick — and never decide behavior: every flow runs on the backend, once,
+ * dragRadial, pick — and never decide behavior: every flow runs on the backend, once,
  * identically for every view. Four primitives, written once, parameterized by the
  * served `interact` row riding the node that carries the gesture — the pill, the track,
  * the dial — so the pressable area is the painted control and the browser's own hit
@@ -218,7 +218,7 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
     if (editing(seat) || ev.button !== 0 || live) return;
     /* the DEEPEST armed node wins, the stage's own one-target rule */
     ev.stopPropagation();
-    const holdMs = num(param(seat, "hold_ms"), 600);
+    const holdMs = num(param(seat, "holdMs"), 600);
     const down = { x: ev.clientX, y: ev.clientY, at: performance.now() };
     let moved = false;
     live = true;
@@ -236,7 +236,7 @@ function armPress(node: HTMLElement, seat: GestureSeat): void {
         seat.setState("pressed", false);
         post(seat, "release");
         /* the tap arrives AFTER the release, from the view: a short, still press that
-           ended on its own. Past hold_ms it was a hold — the backend already fired
+           ended on its own. Past holdMs it was a hold — the backend already fired
            held — and reporting a tap too would commit twice. */
         if (!cancelled && !moved && performance.now() - down.at < holdMs)
           post(seat, "tap");
@@ -414,12 +414,12 @@ export function armInteract(node: HTMLElement, seat: GestureSeat): void {
      of buttons stays scrollable by dragging one of them, and the press that drag cancels
      never taps. Outside a scroll box the input floor already refuses every native gesture,
      so this changes nothing there. */
-  if (seat.interact.primitive === "drag1d" || seat.interact.primitive === "drag_radial")
+  if (seat.interact.primitive === "drag1d" || seat.interact.primitive === "dragRadial")
     node.style.touchAction = "none";
   switch (seat.interact.primitive) {
     case "press": return armPress(node, seat);
     case "drag1d": return armDrag1d(node, seat);
-    case "drag_radial": return armDragRadial(node, seat);
+    case "dragRadial": return armDragRadial(node, seat);
     case "pick": return armPick(node, seat);
   }
 }

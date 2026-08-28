@@ -113,7 +113,7 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
 
 /* An instance's authored value for one slot ADDRESS (spec 2.3). An instance's `slots`
  * object mirrors the component's elements: a component-level slot is a key, an element's
- * slot a key inside an object named for it, so "bar.fill_color" walks two levels. Null
+ * slot a key inside an object named for it, so "bar.fillColor" walks two levels. Null
  * when nothing is authored there (the type's default stands) — including when the path
  * runs into a non-object, which is a stale value, not a value. Shared, because the two
  * compilers have to walk one address the same way. */

@@ -659,7 +659,7 @@ export function inspectorShape(editor: Editor): string {
        poll button) follows the authored text, so it is structure */
     slotsig: slotRowSig(editor, instance),
     align: template.includes("slot:align"),
-    textScale: template.includes("slot:text_scale"),
+    textScale: template.includes("slot:textScale"),
     /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
        genuinely structural; it is a boolean, and it moves only when an aspect is authored */
     aspect: String(authoredSlot(instance, type, "aspect") ?? "") !== "",
@@ -812,11 +812,11 @@ const SLOT_ORDER = [
   /* the node's own switch leads: whether it is drawn at all comes before how */
   "shown",
   /* the content colors */
-  "fill_color", "track_color", "handle_color", "body_color",
+  "fillColor", "trackColor", "handleColor", "bodyColor",
   /* text */
-  "text", "text_color", "text_size", "align",
+  "text", "textColor", "textSize", "align",
   /* the control's own shape */
-  "control_radius", "thickness", "start_angle", "sweep_angle",
+  "controlRadius", "thickness", "startAngle", "sweepAngle",
   /* range + gesture */
   "min", "max", "step", "drag",
   /* the scale */
@@ -829,8 +829,8 @@ const SLOT_ORDER = [
   "visible", "enabled",
 ];
 
-/* ranked by the property's own name, not its address: `bar.fill_color` sorts as
-   fill_color, so one element's rows read in the same order as any other's */
+/* ranked by the property's own name, not its address: `bar.fillColor` sorts as
+   fillColor, so one element's rows read in the same order as any other's */
 function slotRank(address: string): number {
   const at = SLOT_ORDER.indexOf(slotLeaf(address));
   return at < 0 ? SLOT_ORDER.length : at;

@@ -12,7 +12,7 @@
  * emitted from the ONE table in tools/gen_ir.mjs. The frontend's interpreter
  * (frontend/src/program.ts) is the second implementation of the same IR, executing
  * over the symbolic cells the table names. This is how a component's template attrs
- * are authored as text ("value.pick(fill_color, track_color)") and served compiled,
+ * are authored as text ("value.pick(fillColor, trackColor)") and served compiled,
  * with the view still never parsing anything.
  *
  * The vocabulary is the view-legal slice of the shared tables: scalar and list
@@ -95,8 +95,8 @@ struct TemplateMesh {
  *
  * A BARE name is a property this element declares, or inherits from an enclosing one,
  * and it resolves to that property's ADDRESS — the declaring element's path plus the
- * name (spec 2.3). So `fill_color` inside the `bar` element loads the cell
- * `slot:bar.fill_color`, and the same word under a different element means a different
+ * name (spec 2.3). So `fillColor` inside the `bar` element loads the cell
+ * `slot:bar.fillColor`, and the same word under a different element means a different
  * cell. A component's own properties declare at the top, where the path is empty and the
  * address is the name.
  *

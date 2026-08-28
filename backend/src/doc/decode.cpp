@@ -209,7 +209,7 @@ TriggerDecl decode_trigger(const Json& record) {
     out.var = text_or(record, "var", "");
     out.element = text_or(record, "element", "");
     out.ms = num_or_text(record, "ms");
-    out.hold_ms = number_or(record, "hold_ms", 600.0);
+    out.holdMs = number_or(record, "holdMs", 600.0);
     out.every_ms = number_or(record, "every_ms", 0.0);
     return out;
 }

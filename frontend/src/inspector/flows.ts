@@ -429,10 +429,10 @@ function whenGrid(
   }
 
   if (first.name === "held") {
-    const hold = numberInput(first.hold_ms ?? 600, (ms) => setFirst({ hold_ms: ms }), {
+    const hold = numberInput(first.holdMs ?? 600, (ms) => setFirst({ holdMs: ms }), {
       class: "field num",
     });
-    bindField(flow.id + ":when.hold_ms", hold, () => String(head().hold_ms ?? 600));
+    bindField(flow.id + ":when.holdMs", hold, () => String(head().holdMs ?? 600));
     row("for", hold, el("span", { class: "op", text: "ms" }));
 
     /* a two-state choice is a dropdown with the states NAMED, never an icon pair whose

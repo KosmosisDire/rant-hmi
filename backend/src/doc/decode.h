@@ -161,7 +161,7 @@ struct TriggerDecl {
     std::string var;               /* the timer variable */
     std::string element;           /* the element channel (behavior only) */
     NumOrText ms;                  /* an `every` trigger's cadence */
-    double hold_ms = 600.0;
+    double holdMs = 600.0;
     double every_ms = 0.0;
 };
 

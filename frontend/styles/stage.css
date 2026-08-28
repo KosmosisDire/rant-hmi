@@ -30,8 +30,8 @@
 /* EVERY BOX IS A SIZE CONTAINER (2026-08-07). A box's size never depends on its content
    — every child is absolutely positioned, out of flow — so size containment changes no
    picture, and it gives children the cqw/cqh units: the cross-axis measure place() needs
-   to TRANSFER a clamp through an aspect ratio (a `max_w` on a height-authored aspect box
-   folds into the height as min(h, max_w/aspect), the way a replaced element keeps its
+   to TRANSFER a clamp through an aspect ratio (a `maxW` on a height-authored aspect box
+   folds into the height as min(h, maxW/aspect), the way a replaced element keeps its
    ratio under min/max). The ink kinds are leaves with real content and stay out of it. */
 .page,
 .frame,
@@ -57,8 +57,8 @@
    frame a real scroll container and stage.ts writes the overflow inline like every other
    answer — but a scrollbar is drawn by PSEUDO-ELEMENTS, and no element's style attribute can
    reach one. So the values still come from the attrs, as custom properties on the box that
-   its own pseudo-elements inherit (`--sb-w` from scrollbar_w, `--sb-thumb` from
-   scrollbar_color, `--sb-track` from scrollbar_track), and these rules are only the
+   its own pseudo-elements inherit (`--sb-w` from scrollbarW, `--sb-thumb` from
+   scrollbarColor, `--sb-track` from scrollbarTrack), and these rules are only the
    mechanism they feed. Scoped to `[data-scroll]` so a box that does not scroll is not
    pulled into custom-scrollbar drawing by a rule it can never use.
 

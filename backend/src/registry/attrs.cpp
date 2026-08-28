@@ -63,7 +63,7 @@ const std::vector<AttrDef>& common_attrs_table() {
            joins in and the width follows them) — the far edge, once set, owns the size. */
         no_def("left", "num",
                "the ORIGIN POINT's position in canvas px from the parent's origin (with "
-               "origin_x 0 that is the left edge). With `right` also set the two edges pin "
+               "originX 0 that is the left edge). With `right` also set the two edges pin "
                "and the width follows them (`w` goes inert). Absent with `right` set the "
                "box anchors to the right edge instead; absent with `right` and `w` both "
                "absent the axis stretches to the parent; absent with `w` set pins to 0",
@@ -82,32 +82,32 @@ const std::vector<AttrDef>& common_attrs_table() {
                "pinned) or, where `left` is set, the content's own width. Inert where "
                "`left` and `right` pin both edges", "width"),
         no_def("h", "num", "height in canvas px; as `w`", "height"),
-        no_def("min_w", "num",
+        no_def("minW", "num",
                "the least width the box may render at; absent = none. Clamps whatever the "
                "axis derives — an authored `w`, pinned edges, an aspect ratio — and on an "
                "aspect-derived axis the clamp TRANSFERS through the ratio (see `aspect`), "
                "which is what keeps an aspect-constrained box in shape", "min-width"),
-        no_def("max_w", "num", "the most width the box may render at; absent = none; as "
-               "`min_w`", "max-width"),
-        no_def("min_h", "num", "the least height the box may render at; as `min_w`",
+        no_def("maxW", "num", "the most width the box may render at; absent = none; as "
+               "`minW`", "max-width"),
+        no_def("minH", "num", "the least height the box may render at; as `minW`",
                "min-height"),
-        no_def("max_h", "num", "the most height the box may render at; as `min_w`",
+        no_def("maxH", "num", "the most height the box may render at; as `minW`",
                "max-height"),
         def("aspect", "num", 0.0,
             "0 = free; > 0 derives the UNAUTHORED one of w/h from the authored one at "
             "that ratio (aspect-ratio). With both authored it is inert. THE RATIO HOLDS "
             "THROUGH THE CLAMPS: a min/max on the derived axis transfers back through "
             "the ratio and shrinks or grows the authored axis with it, the way a "
-            "replaced element keeps its shape — so h + aspect + max_w is a box that "
+            "replaced element keeps its shape — so h + aspect + maxW is a box that "
             "rides its height until the width bound bites, then scales down whole"),
-        def("origin_x", "num", 0.0,
+        def("originX", "num", 0.0,
             "the node's OWN reference point on x, a fraction of its own width: the point "
             "`left` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle",
             "transform-origin"),
-        def("origin_y", "num", 0.0, "the node's own reference point on y; as `origin_x`",
+        def("originY", "num", 0.0, "the node's own reference point on y; as `originX`",
             "transform-origin"),
         no_def("rotate", "num",
-               "absent = no rotation; degrees clockwise about (origin_x, origin_y). "
+               "absent = no rotation; degrees clockwise about (originX, originY). "
                "Applied to the whole subtree, so an offset child orbits", "transform"),
 
         /* THE SHADOW, one authored intent on every kind. What draws it differs — a box
@@ -116,19 +116,19 @@ const std::vector<AttrDef>& common_attrs_table() {
         no_def("shadow", "color",
                "absent = no shadow; a colour casts one. THE COLOUR IS THE SWITCH, exactly "
                "as it is for `surface` — a fully transparent one casts nothing. Offset by "
-               "shadow_x/shadow_y, softened by shadow_blur, turned inward by shadow_inset. "
+               "shadowX/shadowY, softened by shadowBlur, turned inward by shadowInset. "
                "A shadow is never layout and never takes a gesture", "box-shadow"),
-        def("shadow_x", "num", 0.0,
+        def("shadowX", "num", 0.0,
             "how far right the shadow falls, in canvas px. IT DOES NOT TURN WITH THE NODE: "
             "the offset is read in the artboard's own axes and the view cancels the "
             "rotation of this node and every parent above it, so a needle sweeping its dial "
             "keeps one still shadow instead of swinging one around", "box-shadow"),
-        def("shadow_y", "num", 0.0, "how far down the shadow falls, in canvas px; as "
-                                    "`shadow_x`, and just as unturning", "box-shadow"),
-        def("shadow_blur", "num", 0.0,
+        def("shadowY", "num", 0.0, "how far down the shadow falls, in canvas px; as "
+                                    "`shadowX`, and just as unturning", "box-shadow"),
+        def("shadowBlur", "num", 0.0,
             "how soft the shadow's edge is, in canvas px. 0 is a hard copy of the shape",
             "box-shadow"),
-        def("shadow_inset", "bool", false,
+        def("shadowInset", "bool", false,
             "false casts the shadow OUTSIDE the shape; true turns it inward, so the shape "
             "reads as recessed. A frame does this with box-shadow's own inset; INK (text, "
             "icon, path) does it with an SVG inner-shadow filter over its outline, which is "
@@ -145,7 +145,7 @@ const std::vector<AttrDef>& frame_attrs() {
                "absent = no surface at all, which is not the same as a transparent one "
                "(background)", "background-color"),
         no_def("border", "color", "absent = no border (border-color)", "border-color"),
-        def("border_w", "num", 1.0, "border width in canvas px", "border-width"),
+        def("borderW", "num", 1.0, "border width in canvas px", "border-width"),
         def("radius", "num", 0.0, "corner radius in canvas px (border-radius)",
             "border-radius"),
 
@@ -168,22 +168,22 @@ const std::vector<AttrDef>& frame_attrs() {
                {"y", "x", "both"}),
         def("scrollbar", "bool", true,
             "true draws the bar the browser gives each scrolling axis, dressed by "
-            "scrollbar_w / scrollbar_color / scrollbar_track; false hides it and the box "
+            "scrollbarW / scrollbarColor / scrollbarTrack; false hides it and the box "
             "still scrolls, by wheel and by touch. Hiding it hands its strip back to the "
             "content, which is the one thing about a bar that IS layout"),
-        def("scrollbar_w", "num", 8.0,
+        def("scrollbarW", "num", 8.0,
             "the bar's thickness in canvas px, on whichever edges scroll"),
-        no_def("scrollbar_color", "color",
+        no_def("scrollbarColor", "color",
                "absent = a neutral grey that reads on a pale surface and a dark one; a "
                "colour paints the THUMB — the part that moves, and the part a pointer "
                "grabs. It wears the bar's own pill shape either way"),
-        no_def("scrollbar_track", "color",
+        no_def("scrollbarTrack", "color",
                "absent = the groove behind the thumb is not painted at all, so the box's "
                "own surface shows through it; a colour paints it"),
         /* box-shadow's fourth length, and a box's alone: the filter that shadows ink has
            no such knob, and a row that quietly did nothing on three of the four kinds
            would be worse than a row that lives where it works. */
-        def("shadow_spread", "num", 0.0,
+        def("shadowSpread", "num", 0.0,
             "grows (or, negative, shrinks) the shadow before it is blurred, in canvas px — "
             "how a lit panel wears a halo. A BOX'S ONLY: ink casts its shadow from its own "
             "outline, which has no edge to push out", "box-shadow"),
@@ -217,9 +217,9 @@ const std::vector<AttrDef>& icon_attrs() {
         def("name", "icon", "",
             "a Lucide icon name; unresolved (including empty) draws nothing"),
         def("color", "color", "$ink", "the icon's stroke colour", "color"),
-        /* stroke_w rewrites the glyph's own markup (iconSig, stage.ts), so there is no
+        /* strokeW rewrites the glyph's own markup (iconSig, stage.ts), so there is no
            standing property for a transition to ride — deliberately not transitionable */
-        def("stroke_w", "num", 1.5, "stroke width in the icon's own 24-unit box"),
+        def("strokeW", "num", 1.5, "stroke width in the icon's own 24-unit box"),
     };
     return table;
 }
@@ -231,7 +231,7 @@ const std::vector<AttrDef>& path_attrs() {
                "rule and the reason `closed` is about the outline, not the paint", "fill"),
         no_def("stroke", "color", "absent = no stroke; neither fill nor stroke draws nothing",
                "stroke"),
-        def("stroke_w", "num", 1.0,
+        def("strokeW", "num", 1.0,
             "stroke width in CSS pixels — the anchors scale with the box, the stroke does "
             "not (vector-effect: non-scaling-stroke)", "stroke-width"),
         def_variants("cap", "butt", "how the line's ends are drawn (stroke-linecap)",

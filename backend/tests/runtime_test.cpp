@@ -1023,7 +1023,7 @@ void test_slot_conditionals() {
 
     /* a conditional COLOR: the same chain, a color slot, the else spelled out */
     Document forgiven = document_with(
-        "line.text_color",
+        "line.textColor",
         "@gear.mode == .stop ? #888888 : @gear.mode == .run ? #7fc4a0 : #444444");
     CompileResult covered = compile_document(forgiven, mesh);
     CHECK(covered.ok);
@@ -1429,7 +1429,7 @@ void test_events_are_calls() {
         {"events", Json::array({Json{{"name", "changed"},
                                      {"params", Json::array({Json{{"name", "value"},
                                                                   {"shape", "bool"}}})}}})},
-        {"interact", Json{{"primitive", "press"}, {"params", Json{{"hold_ms", "600"}}}}},
+        {"interact", Json{{"primitive", "press"}, {"params", Json{{"holdMs", "600"}}}}},
         {"children", Json::array()},
         {"behavior", Json::array({Json{
             {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -1537,10 +1537,10 @@ void test_colors() {
 
     Document document = instance_document(
         "Readout",
-        Json{{"reading", Json{{"text_color", "on.pick(#7fc4a0, #e0857c)"},
+        Json{{"reading", Json{{"textColor", "on.pick(#7fc4a0, #e0857c)"},
                               /* a CONSTANT chain folds into the cell's start */
                               {"decimals", "#ff8040.g() + #ffffff.a()"}}},
-             {"units", Json{{"text_color", "#000000.mix(#ffffff, n / 100).alpha(0.5)"}}},
+             {"units", Json{{"textColor", "#000000.mix(#ffffff, n / 100).alpha(0.5)"}}},
              {"surface", "rgb(n / 255, 0, 1 - n / 255)"},
              {"border", "hsv(n, 1, 1)"}},
         Json{{"locals", Json::array({
@@ -1562,8 +1562,8 @@ void test_colors() {
     /* five programs: four over the locals, plus the constant CHAIN (the parser folds
        single literals only, so a chain still evaluates once at the seed) */
     if (!CHECK(compiled.program.slot_programs.size() == 5)) return;
-    const SlotProgram* picked = slot_program_of(compiled.program, id, "reading.text_color");
-    const SlotProgram* mixed = slot_program_of(compiled.program, id, "units.text_color");
+    const SlotProgram* picked = slot_program_of(compiled.program, id, "reading.textColor");
+    const SlotProgram* mixed = slot_program_of(compiled.program, id, "units.textColor");
     const SlotProgram* built = slot_program_of(compiled.program, id, "surface");
     const SlotProgram* swept = slot_program_of(compiled.program, id, "border");
     if (!CHECK(picked && mixed && built && swept)) return;
@@ -1627,16 +1627,16 @@ void test_colors() {
 
     /* `*` doubles the channels (alpha kept), `.invert()` / `invert()` flip them */
     Document folded = instance_document(
-        "Readout", Json{{"reading", Json{{"text_color", "(#204060 * 2).invert()"}}},
-                        {"units", Json{{"text_color", "invert(#204080 / 2)"}}}});
+        "Readout", Json{{"reading", Json{{"textColor", "(#204060 * 2).invert()"}}},
+                        {"units", Json{{"textColor", "invert(#204080 / 2)"}}}});
     CompileResult folded_compiled = compile_document(folded, mesh);
     CHECK(folded_compiled.ok);
     CHECK(folded_compiled.program.slot_programs.size() == 2);
     Host folded_state(folded_compiled.program);
     const SlotProgram* scaled = slot_program_of(
-        folded_compiled.program, only_instance(folded), "reading.text_color");
+        folded_compiled.program, only_instance(folded), "reading.textColor");
     const SlotProgram* inverted = slot_program_of(
-        folded_compiled.program, only_instance(folded), "units.text_color");
+        folded_compiled.program, only_instance(folded), "units.textColor");
     if (!CHECK(scaled && inverted)) return;
     run_slot(folded_compiled.program, *scaled, folded_state);
     run_slot(folded_compiled.program, *inverted, folded_state);
@@ -1656,7 +1656,7 @@ void test_colors() {
 
     /* a color where the slot wants one is fine; a number there is a shape diagnostic */
     Document wrong = instance_document(
-        "Readout", Json{{"reading", Json{{"text_color", "@sensor.value"}}}});
+        "Readout", Json{{"reading", Json{{"textColor", "@sensor.value"}}}});
     CHECK(has_diag(compile_document(wrong, mesh), "shape"));
 
     /* the chain type-checks end to end and yields a color */
@@ -1687,13 +1687,13 @@ void test_tonemaps() {
     Json instances = Json::array();
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
-        {"slots", Json{{"reading", Json{{"text_color", "jet(@sensor.value)"}}},
-                       {"units", Json{{"text_color", "hot(@sensor.value)"}}},
+        {"slots", Json{{"reading", Json{{"textColor", "jet(@sensor.value)"}}},
+                       {"units", Json{{"textColor", "hot(@sensor.value)"}}},
                        {"surface", "coolWarm(@sensor.value)"},
                        {"border", "viridis(@sensor.value)"}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Label"}, {"name", "b"},
-        {"slots", Json{{"line", Json{{"text_color", "color(@tag.text)"}}}}}});
+        {"slots", Json{{"line", Json{{"textColor", "color(@tag.text)"}}}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Button"}, {"name", "c"},
         {"slots", Json{{"surface", "grayscale(@sensor.value)"}}}});
@@ -1726,13 +1726,13 @@ void test_tonemaps() {
         if (feed) run_slot(program, *feed, state);
         return feed ? rgba_of(feed) : 0u;
     };
-    CHECK_EQ(ramp("reading.text_color", 0.5), 0x80ff80ffu);
-    CHECK_EQ(ramp("units.text_color", 0.4), 0xff3300ffu);
+    CHECK_EQ(ramp("reading.textColor", 0.5), 0x80ff80ffu);
+    CHECK_EQ(ramp("units.textColor", 0.4), 0xff3300ffu);
     CHECK_EQ(ramp("surface", 0.5), 0xddddddffu);
     CHECK_EQ(ramp("surface", 0), 0x3b4cc0ffu);
     CHECK_EQ(ramp("border", 0.25), 0x3b528bffu);
 
-    const SlotProgram* parsed = slot_program_of(program, b_id, "line.text_color");
+    const SlotProgram* parsed = slot_program_of(program, b_id, "line.textColor");
     if (!CHECK(parsed != nullptr)) return;
     seed_entity_text(state, program, "tag", 0, "#ff8040");
     run_slot(program, *parsed, state);
@@ -4274,7 +4274,7 @@ void test_theme_tokens() {
     CHECK(flagged);
 
     /* a registry DEFAULT may be a token reference too: the untouched Toggle's fill */
-    const Value* fill = slot_initial(sw, "pill.fill_color");
+    const Value* fill = slot_initial(sw, "pill.fillColor");
     CHECK(fill && fill->tag == ValueTag::Color && fill->data.rgba == 0x4e8ef7ffu);
 }
 

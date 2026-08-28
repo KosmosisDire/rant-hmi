@@ -768,10 +768,10 @@ void test_tokens() {
        token's value does not */
     const uint64_t wid = id_of(labelled(d, "Title"));
     Json slots = labelled(d, "Title")["slots"];
-    slots["text_color"] = "$accent";
+    slots["textColor"] = "$accent";
     slots["surface"] = "#4e8ef7";
     /* an ELEMENT's colour sits one level in (spec 2.3): the fan-out walks the nesting */
-    slots["bar"] = Json{{"fill_color", "$accent"}};
+    slots["bar"] = Json{{"fillColor", "$accent"}};
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", wid}, {"key", "slots"},
                              {"value", slots}}},
                     err),
@@ -781,8 +781,8 @@ void test_tokens() {
     CHECK_MSG(apply_batch(d, rename, rr, err), err);
     CHECK(token_named(d, "brand") != nullptr);
     CHECK(token_named(d, "accent") == nullptr);
-    CHECK(labelled(d, "Title")["slots"]["text_color"] == "$brand");
-    CHECK(labelled(d, "Title")["slots"]["bar"]["fill_color"] == "$brand");
+    CHECK(labelled(d, "Title")["slots"]["textColor"] == "$brand");
+    CHECK(labelled(d, "Title")["slots"]["bar"]["fillColor"] == "$brand");
     CHECK(labelled(d, "Title")["slots"]["surface"] == "#4e8ef7");
     /* the fan-out is echoed as ONE set_prop of the whole slots object per touched instance */
     int set_props = 0;
@@ -790,8 +790,8 @@ void test_tokens() {
         if (op["op"] == "set_prop") {
             ++set_props;
             CHECK(op["key"] == "slots");
-            CHECK(op["value"]["text_color"] == "$brand");
-            CHECK(op["value"]["bar"]["fill_color"] == "$brand");
+            CHECK(op["value"]["textColor"] == "$brand");
+            CHECK(op["value"]["bar"]["fillColor"] == "$brand");
         }
     CHECK(set_props == 1);
 
@@ -829,7 +829,7 @@ void test_tokens() {
     CHECK(!apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "$brand"}}}, err));
     CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "brand-2"}}}, err),
               err);
-    CHECK(labelled(d, "Title")["slots"]["text_color"] == "$brand-2");
+    CHECK(labelled(d, "Title")["slots"]["textColor"] == "$brand-2");
     /* the name changes only through the rename op, like a variable's */
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", accent_id}, {"key", "name"},
                           {"value", "x"}}},
@@ -839,7 +839,7 @@ void test_tokens() {
        transparent and the compiler flags them (spec 2.10) */
     CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", accent_id}}}, err), err);
     CHECK(token_named(d, "brand-2") == nullptr);
-    CHECK(labelled(d, "Title")["slots"]["text_color"] == "$brand-2");
+    CHECK(labelled(d, "Title")["slots"]["textColor"] == "$brand-2");
 }
 
 /* FRAMES: one kind of child in one ordered list, because z-order and flow order must be

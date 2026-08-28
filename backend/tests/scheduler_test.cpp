@@ -48,7 +48,7 @@ Document timed_document() {
              Json{{"when",
                    Json::array({Json{{"kind", "event"},
                                      {"name", "held"},
-                                     {"hold_ms", 2},
+                                     {"holdMs", 2},
                                      {"every_ms", 2}}})},
                   {"when_mode", "any"},
                   {"do",
@@ -436,7 +436,7 @@ void test_resumed_raise_drains() {
 }
 
 /* HOLD-TO-TOGGLE: held() is a MOMENT — it carries nothing, and the flow reads the
- * state it flips. A press shorter than hold_ms commits nothing; the second hold reads
+ * state it flips. A press shorter than holdMs commits nothing; the second hold reads
  * the state the first one left and flips it back. (The variable is `lit`, not `state`:
  * a slot expression spelling `state` names the VIEW's own input and goes per copy —
  * the placement rule, derived from the text on both tiers.) */
@@ -447,7 +447,7 @@ void test_held_nullary() {
                     Json::array({Json{
                         {"when", Json::array({Json{{"kind", "event"},
                                                    {"name", "held"},
-                                                   {"hold_ms", 5}}})},
+                                                   {"holdMs", 5}}})},
                         {"when_mode", "first"},
                         {"do", Json::array({steps::set_var("lit", "!lit")})}}})}};
     Json root = {{"version", 1},
@@ -512,7 +512,7 @@ Json timer_read_root(const std::string& surface_xf) {
                        {"reading", Json{{"decimals", "blink.duration * 1000"},
                                         /* the fraction finished, 0..1, with no
                                            knowledge of the total time */
-                                        {"text_size", "blink.progress"}}}}},
+                                        {"textSize", "blink.progress"}}}}},
         {"flows", Json::array()},
     };
     /* the pressed-recently treatment (the old cased feed, now a ?: chain): the
@@ -521,7 +521,7 @@ Json timer_read_root(const std::string& surface_xf) {
         {"kind", "frame"},
         {"type", "Toggle"},
         {"slots", Json{{"pill",
-                        Json{{"track_color", "blink.running ? #885a1f : #2e2e2e"}}}}},
+                        Json{{"trackColor", "blink.running ? #885a1f : #2e2e2e"}}}}},
         {"flows", Json::array()},
     };
     return Json{{"version", 1},
@@ -556,9 +556,9 @@ void test_timer_reads() {
     const uint32_t duration =
         static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "reading.decimals"));
     const uint32_t progress =
-        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "reading.text_size"));
-    const uint32_t track_color =
-        static_cast<uint32_t>(cell_of(scheduler.program(), toggle_id, "pill.track_color"));
+        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "reading.textSize"));
+    const uint32_t trackColor =
+        static_cast<uint32_t>(cell_of(scheduler.program(), toggle_id, "pill.trackColor"));
 
     tick(scheduler, 1);
     CHECK(scheduler.state().store.values[surface].data.rgba == 0x102030ffu);
@@ -566,13 +566,13 @@ void test_timer_reads() {
     CHECK(scheduler.state().store.values[duration].data.num == 4);
     /* an idle timer's remaining is zero, so it reads as finished */
     CHECK(scheduler.state().store.values[progress].data.num == 1);
-    CHECK(scheduler.state().store.values[track_color].data.rgba == 0x2e2e2effu);
+    CHECK(scheduler.state().store.values[trackColor].data.rgba == 0x2e2e2effu);
 
     scheduler.post(InputEvent{1, instance, "press", Value::boolean(true), 1});
     tick(scheduler, 1);
     CHECK(scheduler.state().timers[0].running);
     CHECK(scheduler.state().store.values[surface].data.rgba == 0x00ff00ffu);
-    CHECK(scheduler.state().store.values[track_color].data.rgba == 0x885a1fffu);
+    CHECK(scheduler.state().store.values[trackColor].data.rgba == 0x885a1fffu);
     const double started = scheduler.state().store.values[remaining].data.num;
     CHECK(started >= 3 && started <= 4);
     /* progress tracks remaining with no knowledge of the total */
@@ -586,7 +586,7 @@ void test_timer_reads() {
     CHECK(scheduler.state().store.values[surface].data.rgba == 0x102030ffu);
     CHECK(scheduler.state().store.values[remaining].data.num == 0);
     CHECK(scheduler.state().store.values[progress].data.num == 1);
-    CHECK(scheduler.state().store.values[track_color].data.rgba == 0x2e2e2effu);
+    CHECK(scheduler.state().store.values[trackColor].data.rgba == 0x2e2e2effu);
 
     /* a BARE timer has no scalar to be, an unknown field is named, and x means
        nothing in a slot expression at all */
@@ -883,7 +883,7 @@ Document repeat_document() {
                    })}},
              Json{{"when", Json::array({Json{{"kind", "event"},
                                              {"name", "held"},
-                                             {"hold_ms", 2}}})},
+                                             {"holdMs", 2}}})},
                   {"when_mode", "any"},
                   {"do", Json::array({steps::set_var("heldAt", "repeat.index")})}},
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "release"}}})},

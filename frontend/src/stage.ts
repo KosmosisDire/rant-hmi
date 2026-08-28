@@ -833,26 +833,26 @@ function slotSweep(type: ComponentType | null,
 const TRANSITION_COMMON: Record<string, string> = {
   left: "left", top: "top", right: "right", bottom: "bottom",
   w: "width", h: "height",
-  min_w: "min-width", max_w: "max-width", min_h: "min-height", max_h: "max-height",
-  rotate: "transform", origin_x: "transform-origin", origin_y: "transform-origin",
-  shadow: "box-shadow", shadow_x: "box-shadow", shadow_y: "box-shadow",
-  shadow_blur: "box-shadow",
+  minW: "min-width", maxW: "max-width", minH: "min-height", maxH: "max-height",
+  rotate: "transform", originX: "transform-origin", originY: "transform-origin",
+  shadow: "box-shadow", shadowX: "box-shadow", shadowY: "box-shadow",
+  shadowBlur: "box-shadow",
 };
 const TRANSITION_KIND: Record<string, Record<string, string>> = {
   frame: { surface: "background-color", border: "border-color",
-           border_w: "border-width", radius: "border-radius",
-           shadow_spread: "box-shadow" },
+           borderW: "border-width", radius: "border-radius",
+           shadowSpread: "box-shadow" },
   text: { color: "color", size: "font-size" },
   icon: { color: "color" },
-  path: { fill: "fill", stroke: "stroke", stroke_w: "stroke-width", points: "d" },
+  path: { fill: "fill", stroke: "stroke", strokeW: "stroke-width", points: "d" },
 };
 /* the entries that ride the inner <path> element rather than the node's own box */
-const TRANSITION_ON_PATH = new Set(["fill", "stroke", "stroke_w", "points"]);
+const TRANSITION_ON_PATH = new Set(["fill", "stroke", "strokeW", "points"]);
 
 /* the node's transition metadata as two CSS `transition` values: the element's own and
  * its <path>'s. The ms and profile are PROGRAMS evaluated over true values (specMs /
  * specProfile above — a duration that comes out wrong renders NO entry, the honest
- * snap). Deduped per CSS property (first declared wins — shadow_x and shadow_y both
+ * snap). Deduped per CSS property (first declared wins — shadowX and shadowY both
  * land on box-shadow); ink turns a box-shadow entry into a filter one, except the
  * INSET ink shadow, whose url(#) filter has nothing the browser can blend. */
 function transitionCss(state: StageState, node: ViewNode, inkInset: boolean,
@@ -1150,7 +1150,7 @@ function gestureStateWriter(state: StageState, editor: Editor, bind: Bind) {
  * edges and `w` goes inert; with `right` alone the box anchors right at `w`. The browser
  * itself derives the edge-pinned size, which is why this is all plain CSS writes. Both
  * edges pin when nothing on the axis is set, which is why an overlay needs nothing said
- * about it. `min_w`/`max_w`/`min_h`/`max_h` clamp whatever the axis derives — an authored
+ * about it. `minW`/`maxW`/`minH`/`maxH` clamp whatever the axis derives — an authored
  * size, pinned edges, or an aspect ratio. */
 function place(el: HTMLElement, node: ViewNode, cells: ViewHost): void {
   el.style.position = "absolute";
@@ -1165,19 +1165,19 @@ function place(el: HTMLElement, node: ViewNode, cells: ViewHost): void {
   const bottom = num(attrOf(node, "bottom", cells));
   const w = num(attrOf(node, "w", cells));
   const h = num(attrOf(node, "h", cells));
-  const ox = num(attrOf(node, "origin_x", cells)) ?? 0;
-  const oy = num(attrOf(node, "origin_y", cells)) ?? 0;
+  const ox = num(attrOf(node, "originX", cells)) ?? 0;
+  const oy = num(attrOf(node, "originY", cells)) ?? 0;
   /* A STRETCHED AXIS HAS NO PLACEMENT POINT: both edges are pinned, so there is no `left`
      for the origin to be the reference OF, and the offset below must not apply to it. Only
-     the rotation half of `origin_x`/`origin_y` survives on such an axis. A pinned FAR edge
+     the rotation half of `originX`/`originY` survives on such an axis. A pinned FAR edge
      takes the placement point away the same way: `left` and `right` are then both plain
      edges, and the width is theirs to decide. */
   const spanX = w === null && left === null && right === null;
   const spanY = h === null && top === null && bottom === null;
-  const minW = num(attrOf(node, "min_w", cells));
-  const maxW = num(attrOf(node, "max_w", cells));
-  const minH = num(attrOf(node, "min_h", cells));
-  const maxH = num(attrOf(node, "max_h", cells));
+  const minW = num(attrOf(node, "minW", cells));
+  const maxW = num(attrOf(node, "maxW", cells));
+  const minH = num(attrOf(node, "minH", cells));
+  const maxH = num(attrOf(node, "maxH", cells));
 
   /* CLAMPS TRANSFER THROUGH THE RATIO. CSS derives an aspect axis one way only: a clamp
      on the DERIVED axis clips it in place and lets the ratio break (only a replaced
@@ -1320,10 +1320,10 @@ function scrollbar(el: HTMLElement, node: ViewNode, cells: ViewHost,
        it has more to show, and losing it to an unknown would be losing that sentence */
     if (bar === undefined || bar === null || truthy(bar)) el.removeAttribute("data-scrollbar");
     else el.setAttribute("data-scrollbar", "off");
-    setVar("--sb-w", (num(attrOf(node, "scrollbar_w", cells)) ?? 8) + "px");
-    const thumb = attrOf(node, "scrollbar_color", cells);
+    setVar("--sb-w", (num(attrOf(node, "scrollbarW", cells)) ?? 8) + "px");
+    const thumb = attrOf(node, "scrollbarColor", cells);
     setVar("--sb-thumb", paints(thumb) ? cssColor(thumb) : null);
-    const track = attrOf(node, "scrollbar_track", cells);
+    const track = attrOf(node, "scrollbarTrack", cells);
     setVar("--sb-track", paints(track) ? cssColor(track) : null);
   }
   if (!scroll?.x && el.scrollLeft) el.scrollLeft = 0;
@@ -1385,8 +1385,8 @@ function shadowOf(state: StageState, editor: Editor, bind: Bind, node: ViewNode,
   const color = attrOf(node, "shadow", cells);
   /* THE COLOUR IS THE SWITCH, the same rule `surface` and `border` follow */
   if (!paints(color)) return null;
-  const dx = num(attrOf(node, "shadow_x", cells)) ?? 0;
-  const dy = num(attrOf(node, "shadow_y", cells)) ?? 0;
+  const dx = num(attrOf(node, "shadowX", cells)) ?? 0;
+  const dy = num(attrOf(node, "shadowY", cells)) ?? 0;
   /* R(-turn) applied to the authored offset: what the element draws in its own turned
      axes so that what LANDS on the artboard is the vector the author wrote */
   const rad = (turnOf(state, editor, bind) * Math.PI) / 180;
@@ -1396,9 +1396,9 @@ function shadowOf(state: StageState, editor: Editor, bind: Bind, node: ViewNode,
     color: cssColor(color),
     dx: dx * cos + dy * sin,
     dy: -dx * sin + dy * cos,
-    blur: Math.max(0, num(attrOf(node, "shadow_blur", cells)) ?? 0),
-    spread: num(attrOf(node, "shadow_spread", cells)) ?? 0,
-    inset: truthy(attrOf(node, "shadow_inset", cells)),
+    blur: Math.max(0, num(attrOf(node, "shadowBlur", cells)) ?? 0),
+    spread: num(attrOf(node, "shadowSpread", cells)) ?? 0,
+    inset: truthy(attrOf(node, "shadowInset", cells)),
   };
 }
 
@@ -1502,7 +1502,7 @@ function dress(el: HTMLElement, node: ViewNode, cells: ViewHost,
   el.style.background = paints(surface) ? cssColor(surface) : "";
   const border = attrOf(node, "border", cells);
   el.style.border = paints(border)
-    ? (num(attrOf(node, "border_w", cells)) ?? 1) + "px solid " + cssColor(border)
+    ? (num(attrOf(node, "borderW", cells)) ?? 1) + "px solid " + cssColor(border)
     : "";
   const radius = num(attrOf(node, "radius", cells));
   const clip = clipOf(node, cells);
@@ -1564,7 +1564,7 @@ function applyText(el: HTMLElement, node: ViewNode, cells: ViewHost): void {
 function applyIcon(bind: Bind, node: ViewNode, cells: ViewHost): void {
   const el = bind.el;
   const name = attrText(attrOf(node, "name", cells)) ?? "";
-  const stroke = num(attrOf(node, "stroke_w", cells)) ?? 1.5;
+  const stroke = num(attrOf(node, "strokeW", cells)) ?? 1.5;
   /* the glyph fills the box the layout gave it (stage.css sizes the svg to 100%), so the
      markup's own size argument is irrelevant here and the box is the only lever. The
      markup is rewritten only when it would differ: an icon's svg is a subtree like any
@@ -1654,7 +1654,7 @@ function applyPath(path: SVGPathElement, node: ViewNode, cells: ViewHost): void 
   const stroke = attrOf(node, "stroke", cells);
   if (paints(stroke)) {
     path.setAttribute("stroke", cssColor(stroke));
-    path.setAttribute("stroke-width", String(num(attrOf(node, "stroke_w", cells)) ?? 1));
+    path.setAttribute("stroke-width", String(num(attrOf(node, "strokeW", cells)) ?? 1));
     path.setAttribute("vector-effect", "non-scaling-stroke");
     const cap = attrText(attrOf(node, "cap", cells));
     if (cap) path.setAttribute("stroke-linecap", cap);

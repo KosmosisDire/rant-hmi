@@ -25,7 +25,7 @@ namespace hmi {
  * (3: the snapshot carries `builtins`, the built-ins' editable document form; 4: the
  * snapshot also carries `attr_table`, the closed attr vocabulary, spec 2.3; 5: the doc
  * lost `canvas` and every node lost `geom`; 6: a frame gained layout "stack", justify,
- * surface/border/border_w/radius, and both frames and instances gained grow/min; 7: move
+ * surface/border/borderW/radius, and both frames and instances gained grow/min; 7: move
  * reparents (its echo always carries parent+list+index) and `wrap` folds siblings into a
  * fresh frame; 8: ONE TREE — Frame, Widget and Part are one `node` kind with four
  * variants (frame | text | icon | path), every field is expression text in `attrs`, an

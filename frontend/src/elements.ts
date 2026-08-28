@@ -3,7 +3,7 @@
  *
  * An element's address is its names joined with "." from the template root, and the ROOT
  * CARRIES NO SEGMENT: the root element IS the component, so the component's own
- * properties address bare (`value`) and an element's under its path (`bar.fill_color`).
+ * properties address bare (`value`) and an element's under its path (`bar.fillColor`).
  * That address IS the served slot's name, so which element owns a property is read
  * straight off the component's slot table — split at the last dot — and never guessed
  * from which programs happen to load which cell.

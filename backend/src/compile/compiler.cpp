@@ -178,8 +178,8 @@ bool gesture_from(const std::string& event, const std::string& primitive) {
         event == "pressrelease")
         return primitive == "press";
     if (event == "input" || event == "commit")
-        return primitive == "drag1d" || primitive == "drag_radial";
-    if (event == "select") return primitive == "drag_radial" || primitive == "pick";
+        return primitive == "drag1d" || primitive == "dragRadial";
+    if (event == "select") return primitive == "dragRadial" || primitive == "pick";
     if (event == "open") return primitive == "pick";
     return false;
 }
@@ -3179,7 +3179,7 @@ class Compiler {
                                              /*in_behavior=*/false, param, has_param))
                             continue;
                         flow.hold_ticks =
-                            static_cast<uint32_t>(std::max(0.0, trigger.hold_ms));
+                            static_cast<uint32_t>(std::max(0.0, trigger.holdMs));
                         flow.every_ticks =
                             static_cast<uint32_t>(std::max(0.0, trigger.every_ms));
                     }
@@ -3275,7 +3275,7 @@ class Compiler {
                                              /*in_behavior=*/true, param, has_param))
                             continue;
                         flow.hold_ticks =
-                            static_cast<uint32_t>(std::max(0.0, trigger.hold_ms));
+                            static_cast<uint32_t>(std::max(0.0, trigger.holdMs));
                     }
                     stepped = true;
                     if (!compile_steps(element, node, flow, has_param ? &param : nullptr,

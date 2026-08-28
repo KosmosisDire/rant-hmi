@@ -105,7 +105,7 @@ bool refuses(const char* text, const TemplateScope& scope, const char* needle) {
 
 void test_template_expr() {
     const TemplateScope scope =
-        scope_of({"value", "min", "max", "fill_color", "track_color", "text",
+        scope_of({"value", "min", "max", "fillColor", "trackColor", "text",
                   "decimals", "options"});
 
     /* the scope: properties, this view's state, theme tokens */
@@ -144,8 +144,8 @@ void test_template_expr() {
              "LOAD(slot:value) JMP_NIL(3) JMP(4) CONST(0.0)");
 
     /* the method/builtin encodings the view executes */
-    CHECK_EQ(lower("value.pick(fill_color, track_color)", scope),
-             "LOAD(slot:value) LOAD(slot:fill_color) LOAD(slot:track_color) "
+    CHECK_EQ(lower("value.pick(fillColor, trackColor)", scope),
+             "LOAD(slot:value) LOAD(slot:fillColor) LOAD(slot:trackColor) "
              "METHOD(BOOL_PICK,2)");
     CHECK_EQ(lower("value.toFixed(decimals)", scope),
              "LOAD(slot:value) LOAD(slot:decimals) METHOD(NUM_TO_FIXED,1)");
@@ -159,11 +159,11 @@ void test_template_expr() {
 
     /* `c ? a : b` is sugar over the pick `.pick()` already lowered to, so the two
        spellings must produce byte-identical programs */
-    CHECK_EQ(lower("value > 0 ? fill_color : track_color", scope),
-             "LOAD(slot:value) CONST(0.0) GT LOAD(slot:fill_color) "
-             "LOAD(slot:track_color) METHOD(BOOL_PICK,2)");
-    CHECK_EQ(lower("(value > 0).pick(fill_color, track_color)", scope),
-             lower("value > 0 ? fill_color : track_color", scope));
+    CHECK_EQ(lower("value > 0 ? fillColor : trackColor", scope),
+             "LOAD(slot:value) CONST(0.0) GT LOAD(slot:fillColor) "
+             "LOAD(slot:trackColor) METHOD(BOOL_PICK,2)");
+    CHECK_EQ(lower("(value > 0).pick(fillColor, trackColor)", scope),
+             lower("value > 0 ? fillColor : trackColor", scope));
     /* right-associative: the second conditional is the FALSE arm of the first */
     CHECK_EQ(lower("value > 2 ? 'hi' : value > 1 ? 'mid' : 'lo'", scope),
              "LOAD(slot:value) CONST(2.0) GT CONST(\"hi\") "
@@ -312,7 +312,7 @@ void test_list_vocabulary() {
  * arithmetic difference between the two implementations passes every suite. */
 void test_new_vocabulary() {
     const TemplateScope scope =
-        scope_of({"value", "min", "max", "fill_color", "track_color", "text",
+        scope_of({"value", "min", "max", "fillColor", "trackColor", "text",
                   "decimals", "options"});
 
     /* trigonometry: direct calls of the shared ids, degrees in and out */
@@ -557,8 +557,8 @@ void test_builtins_compile_clean() {
     /* the pill owns both colours, so they lower to the ADDRESSES under it while `value` —
        the component's own — stays bare */
     CHECK_EQ(ops_of(pill["attrs"]["surface"]),
-             "LOAD(slot:value) LOAD(slot:pill.fill_color) "
-             "LOAD(slot:pill.track_color) METHOD(BOOL_PICK,2)");
+             "LOAD(slot:value) LOAD(slot:pill.fillColor) "
+             "LOAD(slot:pill.trackColor) METHOD(BOOL_PICK,2)");
     CHECK(pill["interact"]["primitive"] == "press");
     /* the control pair is DECLARED; gesture events never are (the primitive brings
        them), and the toggle's logic lives in visible behavior, not a derivation */
@@ -646,7 +646,7 @@ void test_builtins_compile_clean() {
             CHECK(slot["min"] == 0.02);
             CHECK(slot["max"] == 0.6);
         }
-        if (slot.value("name", "") == "dial.arc.fill_color") {
+        if (slot.value("name", "") == "dial.arc.fillColor") {
             arc_color = true;
             /* the SHAPE says colour now, so the editor hint that merely repeated it is
                gone: a redundant word is not served */
@@ -670,14 +670,14 @@ Document component_document() {
         {"locals", Json::array({
             Json{{"id", 101}, {"name", "value"}, {"type", "num"}, {"init", 0.0},
                  {"group", "value"}, {"public", true}},
-            Json{{"id", 102}, {"name", "fill_color"}, {"type", "color"},
+            Json{{"id", 102}, {"name", "fillColor"}, {"type", "color"},
                  {"init", "$accent"}, {"group", "appearance"}, {"public", true}},
         })},
         /* THE COMPONENT IS THE ROOT FRAME: its own attrs describe the box an
            instance renders as, and its children are what stands inside it */
         {"children", Json::array({
             Json{{"id", 111}, {"kind", "frame"}, {"name", "face"},
-                 {"attrs", Json{{"surface", "fill_color"},
+                 {"attrs", Json{{"surface", "fillColor"},
                                 {"show", "value > 10"},
                                 {"radius", "nope + 1"}}}},
         })},
@@ -694,7 +694,7 @@ Document component_document() {
                                      {"params", Json::array({Json{{"name", "value"},
                                                                   {"shape", "bool"}}})}}})},
         /* the root carries the press: tap is valid in behavior because an element raises it */
-        {"interact", Json{{"primitive", "press"}, {"params", Json{{"hold_ms", "600"}}}}},
+        {"interact", Json{{"primitive", "press"}, {"params", Json{{"holdMs", "600"}}}}},
         {"children", Json::array({
             Json{{"id", 211}, {"kind", "frame"}, {"name", "lamp"},
                  {"attrs", Json{{"surface", "#ff0000"}}}},
@@ -751,7 +751,7 @@ void test_doc_components() {
         CHECK(diags[0].message.find("nope") != std::string::npos);
     }
     const Json& face = registry["components"][12]["template"]["children"][0];
-    CHECK_EQ(ops_of(face["attrs"]["surface"]), "LOAD(slot:fill_color)");
+    CHECK_EQ(ops_of(face["attrs"]["surface"]), "LOAD(slot:fillColor)");
     /* the node's own `shown` switch is folded into whatever the type computes: it draws
        when both hold */
     CHECK_EQ(ops_of(face["attrs"]["show"]),
@@ -807,23 +807,23 @@ void test_part_properties() {
                  {"children", Json::array({
                      Json{{"id", 430}, {"kind", "frame"}, {"name", "arc"},
                           {"locals", Json::array({Json{{"id", 431},
-                                                       {"name", "fill_color"},
+                                                       {"name", "fillColor"},
                                                        {"type", "color"},
                                                        {"init", "$accent"},
                                                        {"group", "appearance"},
                                                        {"public", true}}})},
-                          {"attrs", Json{{"surface", "fill_color"},
+                          {"attrs", Json{{"surface", "fillColor"},
                                          {"border", "shade"},
                                          {"w", "value"}}}},
                      /* the SAME name on a sibling is a different variable */
                      Json{{"id", 440}, {"kind", "frame"}, {"name", "dot"},
                           {"locals", Json::array({Json{{"id", 441},
-                                                       {"name", "fill_color"},
+                                                       {"name", "fillColor"},
                                                        {"type", "color"},
                                                        {"init", "$handle"},
                                                        {"group", "appearance"},
                                                        {"public", true}}})},
-                          {"attrs", Json{{"surface", "fill_color"}}}},
+                          {"attrs", Json{{"surface", "fillColor"}}}},
                  })}},
         })},
     };
@@ -837,7 +837,7 @@ void test_part_properties() {
                 /* the instance's values nest exactly like the elements do */
                 {"slots", Json{{"value", 3.0},
                                {"gauge", Json{{"shade", "#101010"},
-                                              {"arc", Json{{"fill_color", "#00ff00"}}}}}}}}})}}})},
+                                              {"arc", Json{{"fillColor", "#00ff00"}}}}}}}}})}}})},
     };
     Document document;
     std::string error;
@@ -852,9 +852,9 @@ void test_part_properties() {
     for (const Json& slot : dial["slots"]) names.insert(slot.value("name", ""));
     CHECK(names.count("value") == 1);
     CHECK(names.count("gauge.shade") == 1);
-    CHECK(names.count("gauge.arc.fill_color") == 1);
-    CHECK(names.count("gauge.dot.fill_color") == 1);
-    CHECK(names.count("fill_color") == 0);   /* never at the component level */
+    CHECK(names.count("gauge.arc.fillColor") == 1);
+    CHECK(names.count("gauge.dot.fillColor") == 1);
+    CHECK(names.count("fillColor") == 0);   /* never at the component level */
     /* every named node can be switched off, without anyone declaring it */
     CHECK(names.count("gauge.shown") == 1);
     CHECK(names.count("gauge.arc.shown") == 1);
@@ -866,11 +866,11 @@ void test_part_properties() {
        the frame that declared it */
     const Json& gauge = dial["template"]["children"][0];
     CHECK_EQ(ops_of(gauge["children"][0]["attrs"]["surface"]),
-             "LOAD(slot:gauge.arc.fill_color)");
+             "LOAD(slot:gauge.arc.fillColor)");
     CHECK_EQ(ops_of(gauge["children"][0]["attrs"]["border"]), "LOAD(slot:gauge.shade)");
     CHECK_EQ(ops_of(gauge["children"][0]["attrs"]["w"]), "LOAD(slot:value)");
     CHECK_EQ(ops_of(gauge["children"][1]["attrs"]["surface"]),
-             "LOAD(slot:gauge.dot.fill_color)");
+             "LOAD(slot:gauge.dot.fillColor)");
 
     /* an instance's nested value reaches the compiled cell; an unauthored one keeps
        the type's default */
@@ -886,12 +886,12 @@ void test_part_properties() {
                 return &cell;
         return nullptr;
     };
-    const CellDef* arc = cell_named("gauge.arc.fill_color");
+    const CellDef* arc = cell_named("gauge.arc.fillColor");
     CHECK(arc && arc->initial.tag == ValueTag::Color &&
           arc->initial.data.rgba == 0x00ff00ffu);
     const CellDef* shade = cell_named("gauge.shade");
     CHECK(shade && shade->initial.data.rgba == 0x101010ffu);
-    const CellDef* dot = cell_named("gauge.dot.fill_color");
+    const CellDef* dot = cell_named("gauge.dot.fillColor");
     CHECK(dot && dot->initial.tag == ValueTag::Color);   /* the $handle default */
     CHECK(cell_named("value") != nullptr);
 }
@@ -1301,7 +1301,7 @@ void test_per_copy_slots() {
  * to the served rows; the property declaration serves as slot metadata. Nothing here
  * touches the VM: the true value is never eased anywhere the backend runs. */
 void test_transitions() {
-    const TemplateScope scope = scope_of({"value", "fill_color", "options"});
+    const TemplateScope scope = scope_of({"value", "fillColor", "options"});
 
     /* the language: a transition is not an expression, and the refusal says where it
      * lives now -- in both spellings someone might try */
@@ -1343,7 +1343,7 @@ void test_transitions() {
                                          a transition rides an inset the same as a
                                          position */
                                       {"right", Json{{"ms", 80.0}}},
-                                      {"min_w", Json{{"ms", 120.0}}}}}},
+                                      {"minW", Json{{"ms", 120.0}}}}}},
             Json{{"id", 812}, {"kind", "text"}, {"name", "cap"},
                  {"attrs", Json{{"text", "label"}}},
                  {"transitions", Json{{"text", Json{{"ms", 300.0}}},
@@ -1389,7 +1389,7 @@ void test_transitions() {
     CHECK(!bar["transitions"]["top"].contains("profile"));
     /* the edge insets and clamps are animatable rows of their own */
     CHECK_EQ(ops_of(bar["transitions"]["right"]["ms"]), "CONST(80.0)");
-    CHECK_EQ(ops_of(bar["transitions"]["min_w"]["ms"]), "CONST(120.0)");
+    CHECK_EQ(ops_of(bar["transitions"]["minW"]["ms"]), "CONST(120.0)");
     const Json& cap = sweep["template"]["children"][1];
     CHECK(!cap["transitions"].contains("text"));   /* content has nothing to blend */
     CHECK_EQ(ops_of(cap["transitions"]["color"]["ms"]), "CONST(200.0)");

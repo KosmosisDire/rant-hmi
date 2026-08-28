@@ -50,7 +50,7 @@ struct HostObject {
      * (the clock, a timer, a whole-message entity) */
     std::optional<Place> value;
     /* the field tree under the name: the binder spells paths dotted
-     * ("running", "pos.x", "bar.fill_color") and bind_field files them recursively */
+     * ("running", "pos.x", "bar.fillColor") and bind_field files them recursively */
     FieldNode fields;
     /* what reading the bare name of a fields-only object teaches, in the binder's
      * words ("'time' reads by field (time.now / ...)"). Empty = the checker's

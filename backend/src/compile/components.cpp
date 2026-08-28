@@ -65,7 +65,7 @@ constexpr const char* kIsolatedHelp =
     "instance's own value bring the page's variable or the mesh field in";
 
 /* A name is read as a BARE IDENTIFIER in expressions and joined with dots into slot
- * addresses (`bar.fill_color`), so a name carrying an address takes letters, digits and
+ * addresses (`bar.fillColor`), so a name carrying an address takes letters, digits and
  * underscores. A name that carries NO address is a label and takes anything. */
 bool identifier(const std::string& name) {
     if (name.empty()) return false;

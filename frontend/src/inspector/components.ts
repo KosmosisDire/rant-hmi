@@ -803,8 +803,8 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
  * box and `w`/`h` step back — and the min/max rows clamp whatever the axis derives. One
  * box group, the same rows on every node. */
 const MEASURED = ["left", "top", "right", "bottom", "w", "h",
-                  "min_w", "max_w", "min_h", "max_h",
-                  "aspect", "origin_x", "origin_y", "rotate"];
+                  "minW", "maxW", "minH", "maxH",
+                  "aspect", "originX", "originY", "rotate"];
 const PLACEMENT = new Set(MEASURED);
 
 function placementAttrs(editor: Editor): AttrDef[] {

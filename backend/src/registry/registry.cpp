@@ -62,7 +62,7 @@ Json path(const char* name, Json attrs, Json anchors, bool closed = true) {
                 {"anchors", std::move(anchors)}, {"closed", closed}};
 }
 
-/* A node OWNS variables: they are addressed under its path (`bar.fill_color`), stored
+/* A node OWNS variables: they are addressed under its path (`bar.fillColor`), stored
  * nested in an instance's slots, edited while that node is selected, and read by its own
  * expressions and its children's. The line between a component-level variable and a
  * node's is where it is READ:
@@ -243,18 +243,18 @@ Json appends_slot(const char* slot, const char* expression, const char* keep) {
  * it, and the root frame's `surface` attr simply reads that slot.
  *
  * A slot NAME IS A SEMANTIC CONTRACT shared by every type that declares it, read together
- * with the node that owns it (`bar.fill_color`, `label.text`):
+ * with the node that owns it (`bar.fillColor`, `label.text`):
  *
- *   fill_color    the value-carrying node (a toggle's on state, a slider's fill, a lit
+ *   fillColor    the value-carrying node (a toggle's on state, a slider's fill, a lit
  *                 lamp, a knob's swept arc, a trend's line)
- *   track_color   the inert node behind it (an off pill, a slider's track, an arc's track)
- *   handle_color  the grabbable or pointing marker (a toggle's knob, a knob's dot, a
+ *   trackColor   the inert node behind it (an off pill, a slider's track, an arc's track)
+ *   handleColor  the grabbable or pointing marker (a toggle's knob, a knob's dot, a
  *                 gauge or selector needle; the RadialSlider has none: its fill edge is
  *                 the value, like the linear bar's)
  *   text /        the node's own text, its colour and its size in pixels
- *   text_color /
- *   text_size
- *   control_radius  corner rounding of the control's own shape; the root's `radius`
+ *   textColor /
+ *   textSize
+ *   controlRadius  corner rounding of the control's own shape; the root's `radius`
  *                 rounds the box around it */
 Json state_slots() {
     return Json::array({
@@ -267,7 +267,7 @@ Json box_slots() {
     return Json::array({
         slot("surface", "color", "#00000000", "frame", "color"),
         slot("border", "color", "#00000000", "frame", "color"),
-        slot("border_w", "num", 1, "frame"),
+        slot("borderW", "num", 1, "frame"),
         slot("radius", "num", 4, "frame"),
     });
 }
@@ -288,7 +288,7 @@ Json box_attrs() {
                 {"enabled", "enabled"},
                 {"surface", "surface"},
                 {"border", "border"},
-                {"border_w", "border_w"},
+                {"borderW", "borderW"},
                 {"radius", "radius"}};
 }
 
@@ -341,7 +341,7 @@ const char* kFraction = "clamp01((value - min) / (max - min))";
 /* ---- the built-in components ---- */
 
 Json press_interact() {
-    return interact("press", Json{{"hold_ms", "600"}});
+    return interact("press", Json{{"holdMs", "600"}});
 }
 
 /* <local> = <expression>: the staging step a suppressible slot write and its raise
@@ -370,17 +370,17 @@ Json button_component() {
                      * that draws text, so it owns the text, its colour and its size.
                      * It fills the face — the text block centres its own line. */
                     owns(text("label", Json{{"text", "text"},
-                                            {"color", "text_color"},
-                                            {"size", "text_size"},
+                                            {"color", "textColor"},
+                                            {"size", "textSize"},
                                             {"align", "align"},
                                             {"bold", "true"}}),
                          Json::array({slot("text", "text", "", "appearance"),
                                       /* a literal, not $ink: the label sits on the accent
                                        * face, which is the same colour in both modes, so
                                        * the ink must not flip with them */
-                                      slot("text_color", "color", "#0d0d0d", "appearance",
+                                      slot("textColor", "color", "#0d0d0d", "appearance",
                                            "color"),
-                                      slot("text_size", "num", 14, "appearance")})),
+                                      slot("textSize", "num", 14, "appearance")})),
                 }),
                 Json::array(), press_interact());
 }
@@ -404,32 +404,32 @@ Json toggle_component() {
                                     {"h", "0.8"},
                                     {"top", "0.5"},
                                     {"left", "0.5"},
-                                    {"origin_x", "0.5"},
-                                    {"origin_y", "0.5"},
+                                    {"originX", "0.5"},
+                                    {"originY", "0.5"},
                                     /* the track shows BOTH states, so it owns both
-                                       colours: `fill_color` is what it wears when on */
-                                    {"surface", "value.pick(fill_color, track_color)"},
+                                       colours: `fillColor` is what it wears when on */
+                                    {"surface", "value.pick(fillColor, trackColor)"},
                                     {"radius", "999"}},
                                Json::array({
                                    /* the knob is placed, not laid out: its centre slides
                                       between two ends of the pill, which is the whole of
                                       what a toggle animates */
                                    owns(frame("knob",
-                                              Json{{"surface", "handle_color"},
+                                              Json{{"surface", "handleColor"},
                                                    {"radius", "999"},
                                                    {"aspect", "1"},
                                                    {"h", "0.84"},
                                                    {"top", "0.5"},
                                                    {"left", "value.pick(0.75, 0.25)"},
-                                                   {"origin_x", "0.5"},
-                                                   {"origin_y", "0.5"}}),
-                                        Json::array({slot("handle_color", "color", "$handle",
+                                                   {"originX", "0.5"},
+                                                   {"originY", "0.5"}}),
+                                        Json::array({slot("handleColor", "color", "$handle",
                                                           "appearance", "color")})),
                                }),
                                press_interact()),
                          Json::array({
-                             slot("fill_color", "color", "$accent", "appearance", "color"),
-                             slot("track_color", "color", "$track", "appearance", "color"),
+                             slot("fillColor", "color", "$accent", "appearance", "color"),
+                             slot("trackColor", "color", "$track", "appearance", "color"),
                          })),
                 }),
                 /* the toggle's own logic, stated where it can be read: propose the
@@ -455,7 +455,7 @@ Json linear_scale() {
                                      {"h", "0.34"},
                                      {"left", "repeat.fraction"},
                                      {"top", "0"},
-                                     {"origin_x", "0.5"}}),
+                                     {"originX", "0.5"}}),
                           text("value",
                                Json{{"repeat", "divisions"},
                                     {"show", "labels"},
@@ -467,7 +467,7 @@ Json linear_scale() {
                                     {"left", "repeat.fraction"},
                                     {"top", "0.42"},
                                     {"w", "0.2"},
-                                    {"origin_x", "0.5"}}),
+                                    {"originX", "0.5"}}),
                       })),
                 Json::array({slot("shown", "bool", false, "config"),
                              slot("divisions", "num", 5, "config"),
@@ -481,11 +481,11 @@ Json slider_component() {
        when there is not. "Room" used to be measured against the tile's own width; nothing
        measures yet, so the fill's own fraction stands in for it — the same restructure,
        decided by data rather than by pixels. */
-    Json head = Json{{"color", "text_color"},
-                     {"size", "text_size"},
+    Json head = Json{{"color", "textColor"},
+                     {"size", "textSize"},
                      {"bold", "true"},
                      {"top", "0.5"},
-                     {"origin_y", "0.5"},
+                     {"originY", "0.5"},
                      {"w", "0.4"}};
     return component("Slider", 396, 66,
                 compose_slots(tile_base(), {
@@ -504,8 +504,8 @@ Json slider_component() {
                        colour, and holds the fill that marks the value. It keeps the whole
                        box until the scale shows, then leaves it the bottom strip. */
                     owns(frame("control",
-                               Json{{"surface", "track_color"},
-                                    {"radius", "control_radius"},
+                               Json{{"surface", "trackColor"},
+                                    {"radius", "controlRadius"},
                                     {"clip", "true"},
                                     {"left", "0"},
                                     {"top", "0"},
@@ -515,26 +515,26 @@ Json slider_component() {
                                    /* the fill IS the handle: one bar whose leading edge is
                                       the value */
                                    frame("fill",
-                                         Json{{"surface", "fill_color"},
-                                              {"radius", "control_radius"},
+                                         Json{{"surface", "fillColor"},
+                                              {"radius", "controlRadius"},
                                               {"left", "0"},
                                               {"top", "0"},
                                               {"w", fraction},
                                               {"h", "1"}}),
-                                   text("head_in",
+                                   text("headIn",
                                         with(head, Json{{"show", "(text != '').pick(" +
                                                                      fraction + " > 0.3, false)"},
                                                         {"text", "text"},
                                                         {"align", "'end'"},
                                                         {"left", fraction + " - 0.02"},
-                                                        {"origin_x", "1"}})),
-                                   text("head_out",
+                                                        {"originX", "1"}})),
+                                   text("headOut",
                                         with(head, Json{{"show", "(text != '').pick(" +
                                                                      fraction + " <= 0.3, false)"},
                                                         {"text", "text"},
                                                         {"align", "'start'"},
                                                         {"left", fraction + " + 0.02"},
-                                                        {"origin_x", "0"}})),
+                                                        {"originX", "0"}})),
                                }),
                                interact("drag1d",
                                         Json{{"axis", "'x'"}, {"min", "min"},
@@ -542,12 +542,12 @@ Json slider_component() {
                          /* empty (the default) draws nothing, and a binding fills it: a
                             computed feed over this.value is the old readout */
                          Json::array({
-                             slot("fill_color", "color", "$accent", "appearance", "color"),
-                             slot("track_color", "color", "$track", "appearance", "color"),
-                             slot("control_radius", "num", 4, "appearance"),
+                             slot("fillColor", "color", "$accent", "appearance", "color"),
+                             slot("trackColor", "color", "$track", "appearance", "color"),
+                             slot("controlRadius", "num", 4, "appearance"),
                              slot("text", "text", "", "appearance"),
-                             slot("text_color", "color", "$ink", "appearance", "color"),
-                             slot("text_size", "num", 12, "appearance"),
+                             slot("textColor", "color", "$ink", "appearance", "color"),
+                             slot("textSize", "num", 12, "appearance"),
                          })),
                     linear_scale(),
                 }),
@@ -575,28 +575,28 @@ Json readout_component() {
                        two thirds and reads to its right edge; the units answer from just
                        past it — the classic value-unit pair, with no row to negotiate. */
                     owns(text("reading", Json{{"text", "value.toFixed(decimals)"},
-                                              {"color", "text_color"},
-                                              {"size", "text_size"},
+                                              {"color", "textColor"},
+                                              {"size", "textSize"},
                                               {"bold", "true"},
                                               {"align", "'end'"},
                                               {"left", "0"}, {"top", "0"},
                                               {"w", "0.64"}, {"h", "1"}}),
-                         Json::array({slot("text_color", "color", "$ink", "appearance", "color"),
-                                      slot("text_size", "num", 22, "appearance"),
+                         Json::array({slot("textColor", "color", "$ink", "appearance", "color"),
+                                      slot("textSize", "num", 22, "appearance"),
                                       slot("decimals", "num", 1, "config")})),
                     /* the units are their own node, so they are its own text and its own
                        colour: no `units_color` name needed to tell them apart */
                     owns(text("units", Json{{"text", "text"},
-                                            {"color", "text_color"},
-                                            {"size", "text_size"},
+                                            {"color", "textColor"},
+                                            {"size", "textSize"},
                                             {"align", "'start'"},
                                             {"left", "0.68"}, {"top", "0"},
                                             {"w", "0.32"}, {"h", "1"},
                                             {"show", "text != ''"}}),
                          Json::array({slot("text", "text", "", "appearance"),
-                                      slot("text_color", "color", "$ink-muted", "appearance",
+                                      slot("textColor", "color", "$ink-muted", "appearance",
                                            "color"),
-                                      slot("text_size", "num", 12, "appearance")})),
+                                      slot("textSize", "num", 12, "appearance")})),
                 }),
                 Json::array(), press_interact());
 }
@@ -633,10 +633,10 @@ Json trend_component() {
                                             "history.map((v, i) => anchor("
                                             "i / max(history.length() - 1, 1), "
                                             "1 - (v - min) / (max - min)))"},
-                                           {"stroke", "fill_color"},
-                                           {"stroke_w", "2"}},
+                                           {"stroke", "fillColor"},
+                                           {"strokeW", "2"}},
                               Json::array(), false),
-                         Json::array({slot("fill_color", "color", "$accent", "appearance",
+                         Json::array({slot("fillColor", "color", "$accent", "appearance",
                                            "color"),
                                       slot("min", "num", 0, "config"),
                                       slot("max", "num", 100, "config")})),
@@ -667,19 +667,19 @@ Json dropdown_component() {
                 Json::array({
                     /* the label keeps the field, less a margin and the chevron's corner */
                     owns(text("label", Json{{"text", "value"},
-                                            {"color", "text_color"},
-                                            {"size", "text_size"},
+                                            {"color", "textColor"},
+                                            {"size", "textSize"},
                                             {"align", "'start'"},
                                             {"left", "0.05"}, {"top", "0"},
                                             {"w", "0.78"}, {"h", "1"}}),
-                         Json::array({slot("text_color", "color", "$ink", "appearance", "color"),
-                                      slot("text_size", "num", 13, "appearance")})),
+                         Json::array({slot("textColor", "color", "$ink", "appearance", "color"),
+                                      slot("textSize", "num", 13, "appearance")})),
                     icon("chevron", Json{{"name", "'chevron-down'"},
                                          {"color", "$ink-muted"},
                                          {"aspect", "1"},
                                          {"h", "0.4"},
                                          {"left", "0.95"}, {"top", "0.5"},
-                                         {"origin_x", "1"}, {"origin_y", "0.5"}}),
+                                         {"originX", "1"}, {"originY", "0.5"}}),
                 }),
                 Json::array({on_event("select", {sets_slot("value", "option"),
                                                  raises("changed", "value", "option")})}),
@@ -688,7 +688,7 @@ Json dropdown_component() {
 
 /* ---- the radial controls ----
  *
- * One vocabulary: `start_angle` / `sweep_angle` (degrees, 0 = up, clockwise) place the
+ * One vocabulary: `startAngle` / `sweepAngle` (degrees, 0 = up, clockwise) place the
  * sweep, `thickness` is the arc as a fraction of the radius, and the colour slots keep
  * their meanings (fill = the swept value, track = the arc behind it, handle = the
  * grabbable marker).
@@ -703,8 +703,8 @@ Json dropdown_component() {
 
 Json radial_arc_props(double thickness) {
     return Json::array({
-        slot("fill_color", "color", "$accent", "appearance", "color"),
-        slot("track_color", "color", "$track", "appearance", "color"),
+        slot("fillColor", "color", "$accent", "appearance", "color"),
+        slot("trackColor", "color", "$track", "appearance", "color"),
         range(fine(slot("thickness", "num", thickness, "appearance"), 0.05), 0.02, 0.6),
     });
 }
@@ -712,29 +712,29 @@ Json radial_arc_props(double thickness) {
 Json radial_label_props() {
     return Json::array({
         slot("text", "text", "", "appearance"),
-        slot("text_color", "color", "$ink", "appearance", "color"),
-        slot("text_size", "num", 13, "appearance"),
+        slot("textColor", "color", "$ink", "appearance", "color"),
+        slot("textSize", "num", 13, "appearance"),
     });
 }
 
 Json radial_interact(Json extra_params) {
-    Json params = Json{{"start", "start_angle"}, {"sweep", "sweep_angle"}};
+    Json params = Json{{"start", "startAngle"}, {"sweep", "sweepAngle"}};
     for (auto& item : extra_params.items()) params[item.key()] = item.value();
-    return interact("drag_radial", std::move(params));
+    return interact("dragRadial", std::move(params));
 }
 
 /* the two arcs every radial control wears: the track over the whole sweep, and the fill
  * over the portion of it the value has reached */
 Json radial_arcs(const Str& outer, double thickness) {
-    const Str a0 = "start_angle";
-    const Str a1 = "start_angle + sweep_angle";
-    const Str value_a1 = "start_angle + (" + Str(kFraction) + ") * sweep_angle";
+    const Str a0 = "startAngle";
+    const Str a1 = "startAngle + sweepAngle";
+    const Str value_a1 = "startAngle + (" + Str(kFraction) + ") * sweepAngle";
     const Str r_in = "(" + outer + ") - thickness";
     return owns(frame("arc", Json::object(),
                       Json::array({
-                          path("track", Json{{"fill", "track_color"}},
+                          path("track", Json{{"fill", "trackColor"}},
                                sector(a0, a1, outer, r_in)),
-                          path("fill", Json{{"fill", "fill_color"}},
+                          path("fill", Json{{"fill", "fillColor"}},
                                sector(a0, value_a1, outer, r_in)),
                       })),
                 radial_arc_props(thickness));
@@ -743,7 +743,7 @@ Json radial_arcs(const Str& outer, double thickness) {
 /* A RADIAL SCALE: the same two repeated nodes the linear one uses, placed by trig instead
  * of along an axis. Each copy's angle is its own fraction of the sweep. */
 Json radial_scale(const Str& outer, const char* len, bool shown, bool labels_outside) {
-    const Str angle = "start_angle + repeat.fraction * sweep_angle";
+    const Str angle = "startAngle + repeat.fraction * sweepAngle";
     const Str mark_r = "(" + outer + ") - " + len + " * 0.5";
     const Str label_r = labels_outside ? "(" + outer + ") + " + len + " * 1.6"
                                        : "(" + outer + ") - " + len + " * 2.2";
@@ -756,8 +756,8 @@ Json radial_scale(const Str& outer, const char* len, bool shown, bool labels_out
                                      {"h", Str(len) + " * 0.5"},
                                      {"left", dial_x(angle, mark_r)},
                                      {"top", dial_y(angle, mark_r)},
-                                     {"origin_x", "0.5"},
-                                     {"origin_y", "0.5"},
+                                     {"originX", "0.5"},
+                                     {"originY", "0.5"},
                                      {"rotate", angle}}),
                           text("value",
                                Json{{"repeat", "divisions"},
@@ -770,8 +770,8 @@ Json radial_scale(const Str& outer, const char* len, bool shown, bool labels_out
                                     {"w", "0.24"},
                                     {"left", dial_x(angle, label_r)},
                                     {"top", dial_y(angle, label_r)},
-                                    {"origin_x", "0.5"},
-                                    {"origin_y", "0.5"}}),
+                                    {"originX", "0.5"},
+                                    {"originY", "0.5"}}),
                       })),
                 Json::array({slot("shown", "bool", shown, "config"),
                              slot("divisions", "num", 5, "config"),
@@ -784,20 +784,20 @@ Json radial_scale(const Str& outer, const char* len, bool shown, bool labels_out
 Json radial_needle(const char* outer, const char* width, const Str& angle) {
     const Str half = Str(width) + " * 0.25";
     return owns(path("needle",
-                     Json{{"fill", "handle_color"},
+                     Json{{"fill", "handleColor"},
                           {"rotate", angle},
-                          {"origin_x", "0.5"},
-                          {"origin_y", "0.5"}},
+                          {"originX", "0.5"},
+                          {"originY", "0.5"}},
                      Json::array({
                          anchor("0.5 - " + half, "0.5"),
                          anchor("0.5", dial_y("0", outer)),
                          anchor("0.5 + " + half, "0.5"),
                      })),
-                Json::array({slot("handle_color", "color", "$handle", "appearance", "color")}));
+                Json::array({slot("handleColor", "color", "$handle", "appearance", "color")}));
 }
 
 Json knob_component() {
-    const Str angle = "start_angle + (" + Str(kFraction) + ") * sweep_angle";
+    const Str angle = "startAngle + (" + Str(kFraction) + ") * sweepAngle";
     /* the face keeps clear of the arc and, when the scale shows, of its marks too: one
        expression over the arc's own thickness, read by address because the thickness
        belongs to the arc that draws it */
@@ -808,8 +808,8 @@ Json knob_component() {
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
-                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
-                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
+                    range(fine(slot("startAngle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweepAngle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
                 Json::array({event("changing", "value", "num"),
@@ -823,38 +823,38 @@ Json knob_component() {
                                        {"h", "(label.text != '').pick(0.78, 0.94)"},
                                        {"left", "0.5"},
                                        {"top", "(label.text != '').pick(0.44, 0.5)"},
-                                       {"origin_x", "0.5"},
-                                       {"origin_y", "0.5"}},
+                                       {"originX", "0.5"},
+                                       {"originY", "0.5"}},
                           Json::array({
                               radial_arcs("1", 0.14),
                               radial_scale("1 - dial.arc.thickness - 0.03", "0.1", false, false),
                               /* the FACE turns to the value, and the dot rides it as a
                                  real child — it orbits because its parent rotates */
                               owns(frame("face",
-                                         Json{{"surface", "body_color"},
+                                         Json{{"surface", "bodyColor"},
                                               {"radius", "999"},
                                               {"aspect", "1"},
                                               {"w", face},
                                               {"left", "0.5"},
                                               {"top", "0.5"},
-                                              {"origin_x", "0.5"},
-                                              {"origin_y", "0.5"},
+                                              {"originX", "0.5"},
+                                              {"originY", "0.5"},
                                               {"rotate", angle}},
                                          Json::array({
                                              owns(frame("dot",
-                                                        Json{{"surface", "handle_color"},
+                                                        Json{{"surface", "handleColor"},
                                                              {"radius", "999"},
                                                              {"aspect", "1"},
                                                              {"w", "0.18"},
                                                              {"left", "0.5"},
                                                              {"top", "0.16"},
-                                                             {"origin_x", "0.5"},
-                                                             {"origin_y", "0.5"}}),
-                                                  Json::array({slot("handle_color", "color",
+                                                             {"originX", "0.5"},
+                                                             {"originY", "0.5"}}),
+                                                  Json::array({slot("handleColor", "color",
                                                                     "$handle", "appearance",
                                                                     "color")})),
                                          })),
-                                   Json::array({slot("body_color", "color", "$surface-2",
+                                   Json::array({slot("bodyColor", "color", "$surface-2",
                                                      "appearance", "color")})),
                           }),
                           radial_interact(Json{{"min", "min"},
@@ -863,13 +863,13 @@ Json knob_component() {
                                                {"mode", "drag"},
                                                {"fraction", kFraction}})),
                     owns(text("label", Json{{"text", "text"},
-                                            {"color", "text_color"},
-                                            {"size", "text_size"},
+                                            {"color", "textColor"},
+                                            {"size", "textSize"},
                                             {"align", "'center'"},
                                             {"bold", "true"},
                                             {"left", "0.5"}, {"top", "1"},
                                             {"w", "0.9"}, {"h", "0.16"},
-                                            {"origin_x", "0.5"}, {"origin_y", "1"},
+                                            {"originX", "0.5"}, {"originY", "1"},
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
@@ -886,8 +886,8 @@ Json radial_slider_component() {
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
                     slot("step", "num", 0, "config"),
-                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
-                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
+                    range(fine(slot("startAngle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweepAngle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
                 Json::array({event("changing", "value", "num"),
@@ -900,8 +900,8 @@ Json radial_slider_component() {
                                        {"h", "(label.text != '').pick(0.78, 0.94)"},
                                        {"left", "0.5"},
                                        {"top", "(label.text != '').pick(0.44, 0.5)"},
-                                       {"origin_x", "0.5"},
-                                       {"origin_y", "0.5"}},
+                                       {"originX", "0.5"},
+                                       {"originY", "0.5"}},
                           Json::array({
                               radial_arcs("1", 0.18),
                               radial_scale("1 - dial.arc.thickness - 0.04", "0.09", false, false),
@@ -912,13 +912,13 @@ Json radial_slider_component() {
                                                {"mode", "drag"},
                                                {"fraction", kFraction}})),
                     owns(text("label", Json{{"text", "text"},
-                                            {"color", "text_color"},
-                                            {"size", "text_size"},
+                                            {"color", "textColor"},
+                                            {"size", "textSize"},
                                             {"align", "'center'"},
                                             {"bold", "true"},
                                             {"left", "0.5"}, {"top", "1"},
                                             {"w", "0.9"}, {"h", "0.16"},
-                                            {"origin_x", "0.5"}, {"origin_y", "1"},
+                                            {"originX", "0.5"}, {"originY", "1"},
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
@@ -929,14 +929,14 @@ Json radial_slider_component() {
 }
 
 Json gauge_component() {
-    const Str angle = "start_angle + (" + Str(kFraction) + ") * sweep_angle";
+    const Str angle = "startAngle + (" + Str(kFraction) + ") * sweepAngle";
     return component("Gauge", 198, 198,
                 compose_slots(tile_base(), {
                     slot("value", "num", 0, "value"),
                     slot("min", "num", 0, "config"),
                     slot("max", "num", 100, "config"),
-                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
-                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
+                    range(fine(slot("startAngle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweepAngle", "num", 270, "config"), 5), 10, 360),
                 }),
                 /* a display declares nothing: the press family rides the whole box */
                 Json::array(),
@@ -948,8 +948,8 @@ Json gauge_component() {
                                        {"h", "(label.text != '').pick(0.78, 0.94)"},
                                        {"left", "0.5"},
                                        {"top", "(label.text != '').pick(0.44, 0.5)"},
-                                       {"origin_x", "0.5"},
-                                       {"origin_y", "0.5"}},
+                                       {"originX", "0.5"},
+                                       {"originY", "0.5"}},
                           Json::array({
                               radial_arcs("1", 0.1),
                               /* a gauge is a scale you read, so its scale starts ON */
@@ -963,17 +963,17 @@ Json gauge_component() {
                                          {"w", "0.14"},
                                          {"left", "0.5"},
                                          {"top", "0.5"},
-                                         {"origin_x", "0.5"},
-                                         {"origin_y", "0.5"}}),
+                                         {"originX", "0.5"},
+                                         {"originY", "0.5"}}),
                           })),
                     owns(text("label", Json{{"text", "text"},
-                                            {"color", "text_color"},
-                                            {"size", "text_size"},
+                                            {"color", "textColor"},
+                                            {"size", "textSize"},
                                             {"align", "'center'"},
                                             {"bold", "true"},
                                             {"left", "0.5"}, {"top", "1"},
                                             {"w", "0.9"}, {"h", "0.16"},
-                                            {"origin_x", "0.5"}, {"origin_y", "1"},
+                                            {"originX", "0.5"}, {"originY", "1"},
                                             {"show", "text != ''"}}),
                          radial_label_props()),
                 }),
@@ -986,14 +986,14 @@ Json selector_component() {
      * below the sweep */
     const Str frac =
         "max(options.indexOf(value), 0) / max(options.length() - 1, 1)";
-    const Str angle = "start_angle + " + frac + " * sweep_angle";
+    const Str angle = "startAngle + " + frac + " * sweepAngle";
     return component("Selector", 176, 176,
                 compose_slots(tile_base(), {
                     /* options is a list, exactly as on Dropdown */
                     slot("options", "list", Json::array(), "value", "enum-type"),
                     slot("value", "text", "", "value"),
-                    range(fine(slot("start_angle", "num", -135, "config"), 5), -180, 180),
-                    range(fine(slot("sweep_angle", "num", 270, "config"), 5), 10, 360),
+                    range(fine(slot("startAngle", "num", -135, "config"), 5), -180, 180),
+                    range(fine(slot("sweepAngle", "num", 270, "config"), 5), 10, 360),
                     slot_enum("drag", {"radial", "linear"}, "linear", "config"),
                 }),
                 Json::array({event("changed", "value", "text")}),
@@ -1003,20 +1003,20 @@ Json selector_component() {
                                        {"h", "0.94"},
                                        {"left", "0.5"},
                                        {"top", "0.5"},
-                                       {"origin_x", "0.5"},
-                                       {"origin_y", "0.5"}},
+                                       {"originX", "0.5"},
+                                       {"originY", "0.5"}},
                           Json::array({
                               /* the round body the detents ring */
                               owns(frame("face",
-                                         Json{{"surface", "body_color"},
+                                         Json{{"surface", "bodyColor"},
                                               {"radius", "999"},
                                               {"aspect", "1"},
                                               {"w", "0.66"},
                                               {"left", "0.5"},
                                               {"top", "0.5"},
-                                              {"origin_x", "0.5"},
-                                              {"origin_y", "0.5"}}),
-                                   Json::array({slot("body_color", "color", "$surface-2",
+                                              {"originX", "0.5"},
+                                              {"originY", "0.5"}}),
+                                   Json::array({slot("bodyColor", "color", "$surface-2",
                                                      "appearance", "color")})),
                               /* THE DETENTS ARE THE OPTIONS: one mark per option, placed
                                  by its own copy's fraction, its NAME beside it by index —
@@ -1026,14 +1026,14 @@ Json selector_component() {
                                          {"surface", "$scale"},
                                          {"w", "0.02"},
                                          {"h", "0.08"},
-                                         {"left", dial_x("start_angle + repeat.fraction * "
-                                                      "sweep_angle", "0.92")},
-                                         {"top", dial_y("start_angle + repeat.fraction * "
-                                                      "sweep_angle", "0.92")},
-                                         {"origin_x", "0.5"},
-                                         {"origin_y", "0.5"},
-                                         {"rotate", "start_angle + repeat.fraction * "
-                                                    "sweep_angle"}}),
+                                         {"left", dial_x("startAngle + repeat.fraction * "
+                                                      "sweepAngle", "0.92")},
+                                         {"top", dial_y("startAngle + repeat.fraction * "
+                                                      "sweepAngle", "0.92")},
+                                         {"originX", "0.5"},
+                                         {"originY", "0.5"},
+                                         {"rotate", "startAngle + repeat.fraction * "
+                                                    "sweepAngle"}}),
                               text("names",
                                    Json{{"repeat", "options.length()"},
                                         {"text", "options[repeat.index]"},
@@ -1041,12 +1041,12 @@ Json selector_component() {
                                         {"size", "10"},
                                         {"w", "0.44"},
                                         {"h", "0.11"},
-                                        {"left", dial_x("start_angle + repeat.fraction * "
-                                                     "sweep_angle", "1.14")},
-                                        {"top", dial_y("start_angle + repeat.fraction * "
-                                                     "sweep_angle", "1.14")},
-                                        {"origin_x", "0.5"},
-                                        {"origin_y", "0.5"}}),
+                                        {"left", dial_x("startAngle + repeat.fraction * "
+                                                     "sweepAngle", "1.14")},
+                                        {"top", dial_y("startAngle + repeat.fraction * "
+                                                     "sweepAngle", "1.14")},
+                                        {"originX", "0.5"},
+                                        {"originY", "0.5"}}),
                               radial_needle("0.78", "0.09", angle),
                           }),
                           /* `select: true` turns the drag into a detent PICKER: it
@@ -1076,11 +1076,11 @@ Json label_component() {
                 Json::array({
                     /* the line fills the box and places its own text by the align slot */
                     owns(text("line", Json{{"text", "text"},
-                                           {"color", "text_color"},
-                                           {"size", "text_size"},
+                                           {"color", "textColor"},
+                                           {"size", "textSize"},
                                            {"align", "align"}}),
-                         Json::array({slot("text_color", "color", "$ink", "appearance", "color"),
-                                      slot("text_size", "num", 14, "appearance")})),
+                         Json::array({slot("textColor", "color", "$ink", "appearance", "color"),
+                                      slot("textSize", "num", 14, "appearance")})),
                 }),
                 Json::array(), press_interact());
 }

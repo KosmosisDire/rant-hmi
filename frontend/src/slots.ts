@@ -170,7 +170,7 @@ export function slotCell(instance: Node, slot: string): string {
 /* ---- nested slot values ----
  *
  * A slot's NAME is its address: bare for the component's own properties, prefixed by
- * the owning element's path for the ones an element declares (`bar.fill_color`). An
+ * the owning element's path for the ones an element declares (`bar.fillColor`). An
  * instance stores them the same way it reads them — nested, one object per element —
  * so the shape of an instance's `slots` mirrors the shape of its component. */
 

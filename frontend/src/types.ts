@@ -318,7 +318,7 @@ export interface Node {
   type?: string;                   /* "" = a plain frame; a component name = an instance */
   /* per-instance slot values, NESTED like the component's own nodes: a top-level property
      is a key here, a nested node's property a key inside an object named for that node, so
-     {"bar": {"fill_color": "#fff"}} is the slot addressed "bar.fill_color".
+     {"bar": {"fillColor": "#fff"}} is the slot addressed "bar.fillColor".
      A VALUE IS number | bool | EXPRESSION TEXT (spec D1): a string is a wire-tier
      expression the BACKEND compiles and evaluates standing — a quoted string is the
      text literal, `@entity.field` a live mesh read, a bare name a variable. What the
@@ -416,7 +416,7 @@ export type Program = {
    `public` decides whether an instance may see one. */
 export interface SlotSpec {
   /* the slot's ADDRESS: a component-level variable is a bare name, an element's is its
-     owning element's path plus the name (`bar.fill_color`). It is what a feed's `slot`, a move's
+     owning element's path plus the name (`bar.fillColor`). It is what a feed's `slot`, a move's
      destination, a live cell key and an instance's nesting all use. */
   name: string;
   shape: string;
@@ -451,7 +451,7 @@ export interface EventSpec {
 export type Attrs = Record<string, Program>;
 
 export interface Interact {
-  primitive: "press" | "drag1d" | "drag_radial" | "pick";
+  primitive: "press" | "drag1d" | "dragRadial" | "pick";
   params: Attrs;
   /* false keeps this element's gestures off the instance-level channel (static
      propagation topology — the system's whole answer to stopPropagation) */
@@ -471,7 +471,7 @@ export interface Interact {
  * one starts them at. `held` and `pressrelease` are synthesized by the backend from a
  * press it was already told about; they belong to the press family all the same. */
 export interface PrimitiveDef {
-  name: "press" | "drag1d" | "drag_radial" | "pick";
+  name: "press" | "drag1d" | "dragRadial" | "pick";
   /* how it is described where it is picked */
   note: string;
   /* the gesture events the primitive brings, in the order they lead */
@@ -488,13 +488,13 @@ export interface PrimitiveDef {
 export const PRIMITIVES: PrimitiveDef[] = [
   { name: "press", note: "pressed, released, tapped or held",
     events: ["tap", "press", "release", "pressrelease", "held"],
-    params: { hold_ms: "600" } },
+    params: { holdMs: "600" } },
   { name: "drag1d", note: "dragged along one axis, like a slider's track",
     events: ["input", "commit"],
     params: { axis: "'x'", min: "0", max: "100", step: "0" } },
   /* `select: true` turns the drag into a detent PICKER: it posts select(option) by
      detent instead of input/commit — what turns a dial into a Selector */
-  { name: "drag_radial", note: "turned, like a knob or a dial",
+  { name: "dragRadial", note: "turned, like a knob or a dial",
     events: ["input", "commit", "select"],
     params: { start: "-135", sweep: "270", mode: "'linear'", fraction: "0",
               min: "0", max: "100", step: "0" } },
@@ -537,11 +537,11 @@ export const EVENT_KINDS: EventKind[] = [
     past: "pressed down or released", derived: true },
   { name: "held", params: [], from: ["press"], past: "held", derived: true },
   { name: "input", params: [{ name: "value", shape: "num" }],
-    from: ["drag1d", "drag_radial"], past: "dragged" },
+    from: ["drag1d", "dragRadial"], past: "dragged" },
   { name: "commit", params: [{ name: "value", shape: "num" }],
-    from: ["drag1d", "drag_radial"], past: "drag committed" },
+    from: ["drag1d", "dragRadial"], past: "drag committed" },
   { name: "select", params: [{ name: "option", shape: "text" }],
-    from: ["pick", "drag_radial"], past: "picked" },
+    from: ["pick", "dragRadial"], past: "picked" },
   { name: "open", params: [], from: ["pick"], past: "opened" },
 ];
 

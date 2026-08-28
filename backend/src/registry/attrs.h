@@ -14,7 +14,7 @@
  *   ARRANGEMENT — a child of a row, col or grid is placed by `grow`, `min` and `aspect`;
  *                 x/y/w/h mean nothing there and the inspector does not offer them.
  *   MEASUREMENT — a child of a FREE frame places itself: x/y/w/h are fractions of the
- *                 containing box, `origin_x`/`origin_y` name the node's own reference
+ *                 containing box, `originX`/`originY` name the node's own reference
  *                 point, and `rotate` turns it about that same point.
  * Fractions rather than pixels because a component is not a picture at one size: a handle at
  * `value.mapRange(min, max, 0, 1)` is right at every box the page ever gives it, and that

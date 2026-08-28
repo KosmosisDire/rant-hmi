@@ -432,7 +432,7 @@ const echo = (ops) => {
   store.apply(store.version() + 1, ops);
   draw();
 };
-/* These checks drive two ordinary NUMBER SLOTS (radius and border_w, base frame slots
+/* These checks drive two ordinary NUMBER SLOTS (radius and borderW, base frame slots
    every type carries). Nothing about what is being proved depends on which two: these are
    reconciliation rules — same node, new value, no rebuild; focus found by document
    address rather than tree position — and they need any two standing numeric controls.
@@ -544,7 +544,7 @@ fire(rebuiltLabel, "change");
 
 /* 5. an insert that puts controls ABOVE the focused one must not redirect focus into a
       different control, which is exactly what a numeric DOM path would do */
-const heightField = slotInput("border_w");
+const heightField = slotInput("borderW");
 heightField.focus();
 echo([
   {
@@ -554,8 +554,8 @@ echo([
     node: { id: 9002, name: "tmp2", type: "num", init: 0, persist: false },
   },
 ]);
-check(slotInput("border_w") !== heightField, "the second insert rebuilt the inspector");
-check(document.activeElement === slotInput("border_w"),
+check(slotInput("borderW") !== heightField, "the second insert rebuilt the inspector");
+check(document.activeElement === slotInput("borderW"),
       "focus follows the key past inserted controls");
 check(
   document.activeElement.closest(".value-box") !== null,
@@ -998,10 +998,10 @@ const elementPanel = new Panel(new Element("aside"));
 elementPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
 const elementLabels = elementPanel.host.querySelectorAll(".attr-row.slot-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(elementLabels.includes(humanName("handle_color")),
+check(elementLabels.includes(humanName("handleColor")),
       "the element view lists the property that element owns");
-check(!elementLabels.includes(humanName("fill_color")) &&
-      !elementLabels.includes(humanName("track_color")),
+check(!elementLabels.includes(humanName("fillColor")) &&
+      !elementLabels.includes(humanName("trackColor")),
       "and not its siblings' slots, got " + elementLabels.join(","));
 check(elementPanel.host.querySelector(".geom-grid") === null,
       "the element view carries no Panel/placement section");
@@ -1016,8 +1016,8 @@ const instancePanel = new Panel(new Element("aside"));
 instancePanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
 const instanceLabels = instancePanel.host.querySelectorAll(".attr-row.slot-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(!instanceLabels.includes(humanName("handle_color")) &&
-      !instanceLabels.includes(humanName("fill_color")),
+check(!instanceLabels.includes(humanName("handleColor")) &&
+      !instanceLabels.includes(humanName("fillColor")),
       "the instance view shows no property an element owns, got " + instanceLabels.join(","));
 check(instanceLabels.includes(humanName("surface")),
       "and keeps the instance's own frame slots");
@@ -1115,7 +1115,7 @@ check(trackPanel.host.querySelector(".head-tag")?.textContent === "built-in",
       "the head marks it as the built-in definition");
 const trackAttrs = trackPanel.host.querySelectorAll(".attr-row");
 check(trackAttrs.some((row) =>
-        row.querySelectorAll("input").some((i) => i.value === "value.pick(fill_color, track_color)")),
+        row.querySelectorAll("input").some((i) => i.value === "value.pick(fillColor, trackColor)")),
       "the attrs table shows each attr's expression text");
 check(trackPanel.host.querySelectorAll("input").every((i) => i.getAttribute("readonly")),
       "every field in it is read-only: nothing in the document owns a built-in");
@@ -1215,7 +1215,7 @@ labelPanel.render(designInspectorShape(labelEditor), (host) => renderDesignInspe
    the time — which is the sort of dead row this table exists to prevent */
 const attrRows = labelPanel.host.querySelectorAll(".attr-row");
 const MEASURED = ["left", "top", "right", "bottom", "w", "h",
-                  "min_w", "max_w", "min_h", "max_h", "origin_x", "origin_y", "rotate"];
+                  "minW", "maxW", "minH", "maxH", "originX", "originY", "rotate"];
 const ARRANGED = ["grow", "min"];
 const textVocabCount = editor.attrTable.perKind.text.length +
   editor.attrTable.common.filter((a) => !ARRANGED.includes(a.name)).length;
@@ -1682,7 +1682,7 @@ check(label.style.left === "" && label.style.right === "44px" &&
       "the far edge alone anchors the box right at its own w, got left '" +
         label.style.left + "' right '" + label.style.right + "'");
 stageAttrs["904"].attrs = { left: prog(242), top: prog(22), w: prog(176), h: prog(110),
-                            min_w: prog(88), max_w: prog(352), max_h: prog(132) };
+                            minW: prog(88), maxW: prog(352), maxH: prog(132) };
 stageEditor.live = { epoch: 23, values: {} };
 drawStage();
 check(label.style.minWidth === "88px" && label.style.maxWidth === "352px" &&
@@ -1693,7 +1693,7 @@ check(label.style.minWidth === "88px" && label.style.maxWidth === "352px" &&
    fold into the AUTHORED axis's emitted size — converted through the ratio — so the
    ratio holds through them (CSS alone clips the derived axis and breaks the shape) */
 stageAttrs["904"].attrs = { left: prog(242), top: prog(22), h: prog(110),
-                            aspect: prog(2), max_w: prog(330), min_w: prog(44) };
+                            aspect: prog(2), maxW: prog(330), minW: prog(44) };
 stageEditor.live = { epoch: 25, values: {} };
 drawStage();
 check(label.style.height === "max(min(110px, 165px), 22px)" &&
@@ -1701,7 +1701,7 @@ check(label.style.height === "max(min(110px, 165px), 22px)" &&
       "a derived axis's clamps fold into the authored height through the ratio, got '" +
         label.style.height + "'");
 stageAttrs["904"].attrs = { left: prog(242), top: prog(22), w: prog(440),
-                            aspect: prog(4), max_h: prog(66) };
+                            aspect: prog(4), maxH: prog(66) };
 stageEditor.live = { epoch: 26, values: {} };
 drawStage();
 check(label.style.width === "min(440px, 264px)" && label.style.height === "",
@@ -1823,9 +1823,9 @@ check(row.style["--sb-w"] === "8px",
       "the bar's thickness carries the served default, got '" + row.style["--sb-w"] + "'");
 check(row.style["--sb-thumb"] === undefined && row.style["--sb-track"] === undefined,
       "with no colours authored the stylesheet's own neutral bar stands");
-stageAttrs["901"].attrs.scrollbar_w = prog(14);
-stageAttrs["901"].attrs.scrollbar_color = prog("$accent");
-stageAttrs["901"].attrs.scrollbar_track = prog("#00000022");
+stageAttrs["901"].attrs.scrollbarW = prog(14);
+stageAttrs["901"].attrs.scrollbarColor = prog("$accent");
+stageAttrs["901"].attrs.scrollbarTrack = prog("#00000022");
 stageEditor.live = { epoch: 72, values: {} };
 drawStage();
 check(row.style["--sb-w"] === "14px" && row.style["--sb-thumb"] === "var(--t-accent)" &&
@@ -1850,9 +1850,9 @@ check(row.style.overflow === "auto hidden", "`x` scrolls across and clips down")
 row.scrollTop = 40;
 delete stageAttrs["901"].attrs.scroll;
 delete stageAttrs["901"].attrs.scrollbar;
-delete stageAttrs["901"].attrs.scrollbar_w;
-delete stageAttrs["901"].attrs.scrollbar_color;
-delete stageAttrs["901"].attrs.scrollbar_track;
+delete stageAttrs["901"].attrs.scrollbarW;
+delete stageAttrs["901"].attrs.scrollbarColor;
+delete stageAttrs["901"].attrs.scrollbarTrack;
 stageEditor.live = { epoch: 76, values: {} };
 drawStage();
 check(row.style.overflow === "visible" && row.getAttribute("data-scroll") === null &&
@@ -1863,7 +1863,7 @@ check(row.scrollTop === 0, "and the offset it was left holding, which nothing co
 /* AN ORIGIN ON A STRETCHED AXIS IS A PIVOT AND NOTHING ELSE. Both edges are pinned, so
    there is no placement point to shift back from — and shifting anyway put every built-in
    needle half a dial up and to the left, which only the blanket clip above ever hid. */
-stageAttrs["905"].attrs = { origin_x: prog(0.5), origin_y: prog(0.5), rotate: prog(30) };
+stageAttrs["905"].attrs = { originX: prog(0.5), originY: prog(0.5), rotate: prog(30) };
 stageEditor.live = { epoch: 8, values: {} };
 drawStage();
 const spanned = stageNode("leaf", 905);
@@ -1873,7 +1873,7 @@ check(spanned.style.transformOrigin === "50% 50%",
       "and still turns about its own origin, got " + spanned.style.transformOrigin);
 /* the same origin on a PLACED axis still shifts: that is what `x` places */
 stageAttrs["905"].attrs = { left: prog(40), top: prog(40), w: prog(60), h: prog(60),
-                            origin_x: prog(0.5), origin_y: prog(0.5), rotate: prog(30) };
+                            originX: prog(0.5), originY: prog(0.5), rotate: prog(30) };
 stageEditor.live = { epoch: 9, values: {} };
 drawStage();
 check(stageNode("leaf", 905).style.transform === "translate(-50%, -50%) rotate(30deg)",
@@ -1893,19 +1893,19 @@ const shadowOn = (id, attrs, epoch) => {
   drawStage();
 };
 
-shadowOn(901, { shadow: prog("#000000cc"), shadow_x: prog(2), shadow_y: prog(4),
-                shadow_blur: prog(8) }, 11);
+shadowOn(901, { shadow: prog("#000000cc"), shadowX: prog(2), shadowY: prog(4),
+                shadowBlur: prog(8) }, 11);
 check(row.style.boxShadow === "2px 4px 8px 0px #000000cc",
       "a box casts box-shadow, got " + row.style.boxShadow);
-shadowOn(901, { shadow_inset: prog(true), shadow_spread: prog(3) }, 12);
+shadowOn(901, { shadowInset: prog(true), shadowSpread: prog(3) }, 12);
 check(row.style.boxShadow === "inset 2px 4px 8px 3px #000000cc",
       "with its own inset and spread, got " + row.style.boxShadow);
 
 /* THE OFFSET DOES NOT TURN WITH THE NODE. A quarter turn clockwise makes the element's
    own +x axis point down the screen, so a shadow authored 4px DOWN has to be written 4px
    along local +x for it to land down. */
-shadowOn(901, { shadow_inset: prog(false), shadow_spread: prog(0),
-                shadow_x: prog(0), shadow_y: prog(4), rotate: prog(90) }, 13);
+shadowOn(901, { shadowInset: prog(false), shadowSpread: prog(0),
+                shadowX: prog(0), shadowY: prog(4), rotate: prog(90) }, 13);
 check(row.style.boxShadow === "4px 0px 8px 0px #000000cc",
       "a rotated box un-turns its shadow so the offset stays put, got " + row.style.boxShadow);
 shadowOn(901, { rotate: prog(180) }, 14);
@@ -1916,7 +1916,7 @@ check(row.style.boxShadow === "-0px -4px 8px 0px #000000cc" ||
 /* AND IT COUNTS THE PARENTS TOO: rotation applies to the whole subtree, so a child of a
    turned box is turned as well and its own shadow has to cancel that too. */
 shadowOn(901, { rotate: prog(90) }, 15);
-shadowOn(903, { shadow: prog("#ff0000"), shadow_x: prog(0), shadow_y: prog(6) }, 16);
+shadowOn(903, { shadow: prog("#ff0000"), shadowX: prog(0), shadowY: prog(6) }, 16);
 check(stageNode("leaf", 903).style.boxShadow === "6px 0px 0px 0px #ff0000",
       "a child of a rotated box un-turns by its PARENT's rotation, got " +
         stageNode("leaf", 903).style.boxShadow);
@@ -1940,8 +1940,8 @@ stageEditor.live = { epoch: 20, values: {} };
 drawStage();
 const ink = () => stageNode("ink-text", 906);
 check(ink() !== null && ink().style.filter === "", "ink with no shadow carries no filter");
-shadowOn(906, { shadow: prog("#00ff00"), shadow_x: prog(1), shadow_y: prog(2),
-                shadow_blur: prog(4) }, 21);
+shadowOn(906, { shadow: prog("#00ff00"), shadowX: prog(1), shadowY: prog(2),
+                shadowBlur: prog(4) }, 21);
 check(ink().style.filter === "drop-shadow(1px 2px 4px #00ff00)",
       "ink casts drop-shadow, which follows the glyph and not its box, got " +
         ink().style.filter);
@@ -1949,7 +1949,7 @@ check(ink().style.boxShadow === undefined || ink().style.boxShadow === "",
       "and never a box-shadow: a text has no box worth shadowing");
 
 /* INSET ON INK has no CSS shorthand at all, so it is a real SVG inner-shadow filter */
-shadowOn(906, { shadow_inset: prog(true) }, 22);
+shadowOn(906, { shadowInset: prog(true) }, 22);
 const filterUrl = ink().style.filter;
 check(/^url\(#hmi-shadow-\d+\)$/.test(filterUrl),
       "an inset shadow on ink references a filter of its own, got " + filterUrl);
@@ -2624,10 +2624,10 @@ check(stageNode("frame", 901) === heldAgain &&
   /* the box's own dressing and its one placement vocabulary: everything sits at its own
      left/top in the one static space — the far edges and the clamps beside them — so the
      same box rows stand on every node */
-  for (const name of ["surface", "border", "border_w", "radius",
+  for (const name of ["surface", "border", "borderW", "radius",
                       "left", "top", "right", "bottom", "w", "h",
-                      "min_w", "max_w", "min_h", "max_h",
-                      "aspect", "origin_x", "origin_y", "rotate"])
+                      "minW", "maxW", "minH", "maxH",
+                      "aspect", "originX", "originY", "rotate"])
     check(attrRowFor(name) !== null, "the node inspector edits " + name);
   for (const name of ["gap", "pad", "align", "justify", "grow", "min", "layout"])
     check(attrRowFor(name) === null,
@@ -2787,7 +2787,7 @@ check(stageNode("frame", 901) === heldAgain &&
                              { left: 396, top: 66, w: 220, h: 110 });
   check(!measured.left.literal && Math.abs(measured.left.value - 396) < 1e-9,
         "an expression field reads off the screen and may not be written");
-  check(freeBoxOf(freeNode({ origin_x: "value" }), flat) === null,
+  check(freeBoxOf(freeNode({ originX: "value" }), flat) === null,
         "an expression origin refuses the whole gesture: nothing safe to write through");
 
   /* which handles are offered */
@@ -2851,7 +2851,7 @@ check(stageNode("frame", 901) === heldAgain &&
 
   /* an origin off the corner rides the writes: left places the origin, not the edge */
   const hub = freeBoxOf(freeNode({ left: "220", top: "220", w: "110", h: "110",
-                                   origin_x: "0.5", origin_y: "0.5" }), flat);
+                                   originX: "0.5", originY: "0.5" }), flat);
   const hubMove = freePlan("move", hub, origin).commit(15, 0, true);
   check(hubMove.left === 176 + 55,
         "a centred origin: the snapped LEFT EDGE plus half the width, got " +
@@ -2951,7 +2951,7 @@ check(stageNode("frame", 901) === heldAgain &&
                 { id: 9810, kind: "frame", name: "body", attrs: {},
                   locals: [{ id: 9812, name: "glow_color", type: "color", public: true,
                              init: "#ff0000", group: "appearance" }],
-                  interact: { primitive: "press", params: { hold_ms: "600" },
+                  interact: { primitive: "press", params: { holdMs: "600" },
                               emits: { tap: "tap" } },
                   children: [{ id: 9811, kind: "text", name: "label",
                                attrs: { text: "'on'" } }] },
@@ -3081,7 +3081,7 @@ check(stageNode("frame", 901) === heldAgain &&
             .some((b) => b.textContent === "+ Variable"),
         "a component's element declares and edits its variables from the content view");
   check(compPanel.host.textContent.includes("GESTURE") &&
-          compPanel.host.textContent.includes(humanName("hold_ms")) &&
+          compPanel.host.textContent.includes(humanName("holdMs")) &&
           compPanel.host.textContent.includes("pressrelease (down)"),
         "and the interact it carries shows its params and the family it BRINGS");
   /* the gesture is EDITABLE here, which is what lets an authored node be given one at
@@ -3090,7 +3090,7 @@ check(stageNode("frame", 901) === heldAgain &&
     .find((w) => w.children[0].value === "press");
   check(gesturePicker !== undefined &&
           gesturePicker.children[0].children.map((o) => o.value)
-            .join(",") === ",press,drag1d,drag_radial,pick",
+            .join(",") === ",press,drag1d,dragRadial,pick",
         "the primitive is picked, not read: none plus the four");
 
   /* the built-in context: the shipped definition, read-only, Override one click away */
@@ -3174,14 +3174,14 @@ check(stageNode("frame", 901) === heldAgain &&
      converts into the parent's cross-axis units — cqw, every box being a size container
      (stage.css) — so a narrowing instance shrinks the height and the shape holds */
   ctxAttrs["951"].attrs = { left: prog2(0), top: prog2(0.1), h: prog2(0.8),
-                            aspect: prog2(2), max_w: prog2(1) };
+                            aspect: prog2(2), maxW: prog2(1) };
   ctxStage.live = { epoch: 2, values: {} };
   renderStage(ctxHost, ctxStage);
   const fit = ctxHost.querySelectorAll(".frame")
     .find((n) => n.getAttribute("data-id") === "951") ?? null;
   check(fit !== null && fit.style.height === "min(80%, 50cqw)" &&
           fit.style.width === "" && fit.style.aspectRatio === "2",
-        "a max_w on a height-authored aspect box folds in as its parent-width bound, "
+        "a maxW on a height-authored aspect box folds in as its parent-width bound, "
         + "got '" + fit?.style.height + "'");
 }
 
@@ -3670,17 +3670,17 @@ check(stageNode("frame", 901) === heldAgain &&
         "and browse rides inside it");
 
   /* a num slot's box commits expression TEXT as typed — the string is the encoding */
-  const startInput = row4a("start_angle").querySelector("input");
+  const startInput = row4a("startAngle").querySelector("input");
   typeInto(startInput, "@x + @y");
   fire(startInput, "change");
-  check(lastSlots()?.value?.start_angle === "@x + @y",
+  check(lastSlots()?.value?.startAngle === "@x + @y",
         "typing an expression into a num slot commits the string, got " +
-          JSON.stringify(lastSlots()?.value?.start_angle));
+          JSON.stringify(lastSlots()?.value?.startAngle));
   typeInto(startInput, "-120");
   fire(startInput, "change");
-  check(lastSlots()?.value?.start_angle === -120,
+  check(lastSlots()?.value?.startAngle === -120,
         "while a plain number rides RAW, got " +
-          JSON.stringify(lastSlots()?.value?.start_angle));
+          JSON.stringify(lastSlots()?.value?.startAngle));
 
   /* the enum slot's picker writes the QUOTED variant spelling — one rule, every tier */
   draw4a();

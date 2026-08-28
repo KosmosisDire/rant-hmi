@@ -131,8 +131,8 @@ const std::vector<NodeSpec>& table() {
               text("type", ""),
               /* per-instance slot values, NESTED like the component's own nodes: a
                  top-level property is a key here, a nested node's property a key inside an
-                 object named for that node ({"bar": {"fill_color": "#fff"}} is the slot
-                 addressed "bar.fill_color").
+                 object named for that node ({"bar": {"fillColor": "#fff"}} is the slot
+                 addressed "bar.fillColor").
                  A VALUE IS number | bool | EXPRESSION TEXT: a string is a wire-tier
                  expression the backend compiles and evaluates STANDING (a quoted
                  string is the degenerate text literal, `@entity.field` a live mesh

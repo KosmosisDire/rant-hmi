@@ -163,7 +163,7 @@ export function settle(page: Page, dragId: number, raw: DropPlan): DropPlan | nu
 /* ---- moving and resizing on the artboard: canvas px, snapped to the one grid ----
  *
  * Everything on a page is in MEASUREMENT space: x/y/w/h are canvas px relative to the
- * parent's origin, and `origin_x`/`origin_y` name the point x/y places (fractions of the
+ * parent's origin, and `originX`/`originY` name the point x/y places (fractions of the
  * node's own box). The gestures are the old designer's — grab the body to move, grab an
  * edge pill or a corner bracket to resize — and their whole output is a handful of
  * constants written back into those fields, exactly what the inspector would have
@@ -236,7 +236,7 @@ export interface MeasuredBox {
 
 /* The document's box fields against the measured picture. SIZE resolves before POSITION
  * — `left` places the origin point, so reading it off the screen goes through w — the
- * same order the renderer solves in. Null when `origin_x`/`origin_y` hold expressions:
+ * same order the renderer solves in. Null when `originX`/`originY` hold expressions:
  * the origin converts between the box's edges and the doc's left/top, and an expression
  * there leaves nothing a gesture can safely write through.
  *
@@ -257,8 +257,8 @@ export function freeBoxOf(node: Node | null | undefined, measured: MeasuredBox,
     return { value: lit !== null ? (present ? lit * k : fallback) : fallback,
              literal: lit !== null, present };
   };
-  const ox = literalNumber(attrs.origin_x, 0);
-  const oy = literalNumber(attrs.origin_y, 0);
+  const ox = literalNumber(attrs.originX, 0);
+  const oy = literalNumber(attrs.originY, 0);
   if (ox === null || oy === null) return null;
   const w = field("w", measured.w, scale.x);
   const h = field("h", measured.h, scale.y);
