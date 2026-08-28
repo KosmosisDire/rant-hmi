@@ -45,10 +45,16 @@
   align-items: center;
 }
 
-/* a struct variable's per-field defaults, indented under INIT */
+/* a struct variable's per-field defaults, indented under INIT. The path is the one
+   label here that is not a fixed word, so it alone caps the auto column: a deep path
+   ellipsizes (tooltip carries it whole) rather than crushing the value beside it. */
 .var-grid .row-label.init-field {
   padding-left: 12px;
   color: #5a5a5a;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* a row's controls: laid out at their own size, not stretched to the value column */

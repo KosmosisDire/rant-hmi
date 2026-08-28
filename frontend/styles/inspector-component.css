@@ -47,9 +47,14 @@
   min-width: 0;
 }
 
+/* the name keeps its column: a long one ellipsizes rather than spilling into the value
+   box (the full name stays readable in the cell's tooltip) */
 .attr-row .attr-name {
   flex: 0 0 84px;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* a key the document carries that this kind's vocabulary does not declare: named in the

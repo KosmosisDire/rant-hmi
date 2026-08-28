@@ -922,9 +922,10 @@ export function chassisRow(opts: {
     el("span", {
       class: "field attr-name static" + (opts.unknown ? " unknown" : ""),
       text: opts.name,
+      /* the tooltip always holds at least the name: the cell ellipsizes a long one */
       title: opts.unknown
         ? "no element of this kind reads '" + opts.name + "'"
-        : opts.note,
+        : opts.note ?? opts.name,
     }),
     opts.box,
     ...(opts.trail ?? []),

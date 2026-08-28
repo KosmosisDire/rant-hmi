@@ -270,7 +270,7 @@ export function varCard(
         return null;
       }
       initRows.push(
-        el("span", { class: "row-label init-field", text: field.path }),
+        el("span", { class: "row-label init-field", text: field.path, title: field.path }),
         el("div", { class: "var-line" }, [control]),
       );
       return null;
