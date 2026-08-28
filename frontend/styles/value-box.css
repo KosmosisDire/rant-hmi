@@ -155,6 +155,15 @@
   display: inline-flex;
 }
 
+/* an UNARMED cases chip (empty or dirty text): the chip always exists and hides by
+   bind — never by rebuild, so arming cannot blow away a focused field — and the
+   hover reveal above must not resurrect it */
+.vb-tail-box > .vb-tail.cases-chip.off,
+.value-box:hover .vb-tail-box > .vb-tail.cases-chip.off,
+.value-box:focus-within .vb-tail-box > .vb-tail.cases-chip.off {
+  display: none;
+}
+
 /* in the tail the dot is a full square like its neighbours — findings.css
    compacts it to the 24px row rhythm everywhere else */
 .vb-tail-box .diag-dot {

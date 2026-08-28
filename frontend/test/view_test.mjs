@@ -1264,6 +1264,46 @@ check(labelPanel.host.querySelectorAll(".dashed-btn")
         "and the committed attrs object has the key removed, not set to \"\"");
 }
 
+/* THE CASES DISCLOSURE ON AN ATTR ROW: an attr's value is expression text like a
+   slot's, so it carries the same chip and when/then editor (casesrow.ts serves both —
+   the generalization the attrs/slots split had dropped). */
+{
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9211, key: "attrs",
+      value: { text: "1 > 2 ? 'hot' : 'cold'" } },
+  ]);
+  const caseOps = [];
+  const caseEditor = { ...labelEditor,
+    apply: (ops) => { caseOps.push(...ops); store.apply(store.version() + 1, ops); } };
+  const casePanel = new Panel(new Element("aside"));
+  const drawCase = () => casePanel.render(designInspectorShape(caseEditor),
+    (host) => renderDesignInspector(host, caseEditor));
+  drawCase();
+  const chainAttrRow = attrRowNamed(casePanel.host.querySelectorAll(".attr-row"), "text");
+  const attrChip = chainAttrRow.querySelector(".cases-chip");
+  check(attrChip !== null && !attrChip.classList.contains("off"),
+        "an attr's ?: chain arms the cases chip in its box tail");
+  fire(attrChip, "click");
+  drawCase();
+  const attrCases = casePanel.host.querySelector(".cases-editor");
+  check(attrCases !== null, "opening it builds the when/then editor below the attr row");
+  const attrInputs = attrCases.querySelectorAll("input");
+  check(attrInputs.length === 3 && attrInputs[2].value === "'cold'",
+        "one when/then pair and the else, parsed from the attr's text, got " +
+          attrInputs.map((i) => i.value).join(" | "));
+  typeInto(attrInputs[1], "'warm'");
+  fire(attrInputs[1], "change");
+  const editedAttrs = caseOps.findLast((o) => o.key === "attrs");
+  check(editedAttrs?.value?.text === "1 > 2 ? 'warm' : 'cold'",
+        "editing a branch writes the chain back into attrs, got " +
+          JSON.stringify(editedAttrs?.value?.text));
+  /* fold shut and restore the fixture's standing value for the blocks below */
+  fire(attrChip, "click");
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9211, key: "attrs", value: { text: "'hi'" } },
+  ]);
+}
+
 /* A key the document carries that this kind's vocabulary does NOT declare (a hand-edited
    document, or an attr the table dropped). The compiler flags it, so it must have a row
    of its own: generated rows come from the vocabulary, and this name is not in it, which
@@ -3740,15 +3780,66 @@ check(stageNode("frame", 901) === heldAgain &&
   check(lastSlots()?.value?.value === "true ? @cage/plc/IO.temp : @cage/plc/IO.temp",
         "+ Case wraps it as the else branch, got " +
           JSON.stringify(lastSlots()?.value?.value));
-  /* ...while a literal spelling and a dirty ?: text get no disclosure at all */
+  /* a literal spelling is a short expression: it arms the wrap editor too, so the
+     affordance stands BEFORE any ternary exists — while dirty ?: text gets nothing */
   echo4a("value", "'plain caption'");
   draw4a();
-  check(row4a("value").querySelector(".cases-chip") === null,
-        "a literal spelling gets no disclosure");
+  const literalChip = row4a("value").querySelector(".cases-chip");
+  check(literalChip !== null && !literalChip.classList.contains("off"),
+        "a literal spelling carries the cases affordance");
   echo4a("value", "a ? b");
   draw4a();
-  check(row4a("value").querySelector(".cases-chip") === null,
-        "an unpairable ?: never arms the editor — the box alone edits it");
+  const dirtyChip = row4a("value").querySelector(".cases-chip");
+  check(dirtyChip !== null && dirtyChip.classList.contains("off"),
+        "an unpairable ?: hides the chip by bind — the box alone edits it");
+
+  /* THE NEVER-PRINT-DIRTY GATE: clearing a branch's WHEN deletes that branch rather
+     than committing the dirty " ? then : else" that would un-arm the whole editor
+     out from under the user */
+  echo4a("value", "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'");
+  draw4a();
+  const gateInputs = panel4a.host.querySelector(".cases-editor").querySelectorAll("input");
+  typeInto(gateInputs[0], "");
+  fire(gateInputs[0], "change");
+  check(lastSlots()?.value?.value === "'cold'",
+        "clearing the WHEN deletes its branch, got " +
+          JSON.stringify(lastSlots()?.value?.value));
+  draw4a();
+  check(row4a("value").querySelector(".cases-chip") !== null &&
+        panel4a.host.querySelector(".cases-editor") !== null,
+        "and the editor stays standing on the else that remains");
+  /* a blank ELSE keeps what stood: a chain cannot lose its else */
+  echo4a("value", "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'");
+  draw4a();
+  const elseInput4a = panel4a.host.querySelector(".cases-editor").querySelectorAll("input")[2];
+  typeInto(elseInput4a, "");
+  fire(elseInput4a, "change");
+  check(lastSlots()?.value?.value === "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'",
+        "a blank ELSE keeps the standing else, got " +
+          JSON.stringify(lastSlots()?.value?.value));
+
+  /* the same instance's ATTR rows carry the disclosure too (one module serves slots
+     and attrs): the chip stands on every row and ARMS BY BIND, so authoring a chain
+     into a resting attr grows the affordance without a rebuild */
+  const surfaceRow4a = panel4a.host.querySelectorAll(".attr-row")
+    .find((r) => !r.classList.contains("slot-row") && namedRow(r, "surface")) ?? null;
+  const surfaceChip4a = surfaceRow4a?.querySelector(".cases-chip") ?? null;
+  check(surfaceChip4a !== null && surfaceChip4a.classList.contains("off"),
+        "an unset attr's cases chip rests hidden");
+  const preAttrShape4a = inspectorShape(editor4a);
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9800, key: "attrs",
+      value: { surface: "1 > 2 ? '#f00' : '#0f0'" } },
+  ]);
+  check(inspectorShape(editor4a) === preAttrShape4a,
+        "authoring a chain into it moves no shape — an arriving value never rebuilds");
+  draw4a();
+  check(!surfaceChip4a.classList.contains("off"),
+        "yet the standing chip arms by bind");
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9800, key: "attrs", value: {} },
+  ]);
+  draw4a();
 
   /* THE POLL SETTINGS, on exactly the rows whose expression reads a mesh function */
   check(row4a("value").querySelector(".poll-chip") === null,

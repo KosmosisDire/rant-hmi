@@ -23,6 +23,7 @@ import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
 import { AttrDef, ComponentDef, EventSpec, Json, Node, PRIMITIVES,
          SlotSpec, TransitionMap, Var, eventKind, primitiveDef,
          signatureText } from "../types.js";
+import { casesRows, casesSig } from "./casesrow.js";
 import { valueEditor } from "./editors.js";
 import { attrScope, Scope } from "./scope.js";
 import { BoxType, valueBox } from "./valuebox.js";
@@ -414,12 +415,12 @@ export function componentInspectorShape(editor: Editor): string | null {
       element: element.id,
       kind: element.kind,
       own: ownedShape(element),
-      /* the closed vocabulary fixes the declared row SET by kind, already covered by the
-         `kind` key above, so a value or diag change needs no shape bump (bindField and the
-         diag icon's own hover state handle those live). One thing still adds a row: an
-         undeclared key the document carries, which gets one of its own so it can be
-         removed. */
-      attrs: strayAttrs(editor, element),
+      /* the closed vocabulary fixes the declared row SET by kind, so a plain value or
+         diag change needs no shape bump (bindField and the diag icon's own hover state
+         handle those live). What still adds rows: an undeclared key the document
+         carries (its removable row), and a value whose cases disclosure arms or opens —
+         both of which attrsShape carries. */
+      attrs: attrsShape(editor, element),
       index: siblings.findIndex((node: Json) => node?.id === element.id),
       count: siblings.length,
       diag: diagShape(editor, element.id).concat(
@@ -783,12 +784,12 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
                  String(ownDefs.length + place.length + commonDefs.length + strays.length),
                  () => [
     ...(ownDefs.length
-      ? [attrGroupHeading("THIS " + node.kind.toUpperCase()), ...ownDefs.map(row)]
+      ? [attrGroupHeading("THIS " + node.kind.toUpperCase()), ...ownDefs.flatMap(row)]
       : []),
     attrGroupHeading("THE BOX"),
-    ...place.map(row),
+    ...place.flatMap(row),
     attrGroupHeading("COMMON"),
-    ...commonDefs.map(row),
+    ...commonDefs.flatMap(row),
     ...(strays.length
       ? [attrGroupHeading("NOT READ BY THIS KIND"),
          ...strays.map((key) => unknownAttrRow(editor, node, key, scope, attrsOf, commitAttrs))]
@@ -815,9 +816,16 @@ function placementAttrs(editor: Editor): AttrDef[] {
 }
 
 /* which attrs a node's inspector will show, as a shape string: the declared set is fixed
- * by kind, so only it and the strays move it */
+ * by kind, so it moves on the kind, the strays — and any OPEN cases disclosure, whose
+ * rows exist below its attr row (casesrow.ts; a shut one contributes nothing, so a
+ * value echo into a resting row never moves the shape) */
 export function attrsShape(editor: Editor, node: Node): string {
-  return node.kind + ":" + strayAttrs(editor, node).join(",");
+  const attrs = (node.attrs ?? {}) as Record<string, string>;
+  const sigs = Object.keys(attrs).sort().flatMap((name) => {
+    const cases = casesSig(node.id + ":attrs." + name, String(attrs[name] ?? ""));
+    return cases ? [name + ":" + cases] : [];
+  });
+  return node.kind + ":" + strayAttrs(editor, node).join(",") + ";" + sigs.join("|");
 }
 
 /* THE TRANSITION BUTTON, on exactly the attrs that land on a CSS property the browser
@@ -968,33 +976,40 @@ function attrDefRow(
   scope: Scope,
   attrsOf: () => Record<string, string>,
   commitAttrs: (next: Record<string, string>) => void,
-): HTMLElement {
+): HTMLElement[] {
   /* one icon serves both findings a row can carry: the expression's, and — where the
      expression is fine — its transition metadata's */
   const exprDiag = editor.diagAt(node.id, def.name);
   const transDiag = editor.diagAt(node.id, "transitions." + def.name);
+  const read = () => String(attrsOf()[def.name] ?? "");
+  const commit = (text: string) => {
+    const next = { ...attrsOf() };
+    if (text === "") delete next[def.name];
+    else next[def.name] = text;
+    commitAttrs(next);
+  };
+  /* an attr's value is expression text like a slot's, so it carries the same cases
+     disclosure (casesrow.ts) — the chip in the tail, the editor below the row */
+  const cases = casesRows(editor, node.id + ":attrs." + def.name, scope,
+                          attrBoxType(def), read, commit);
   const box = valueBox({
     key: node.id + ":attrs." + def.name,
-    read: () => String(attrsOf()[def.name] ?? ""),
-    commit: (text) => {
-      const next = { ...attrsOf() };
-      if (text === "") delete next[def.name];
-      else next[def.name] = text;
-      commitAttrs(next);
-    },
+    read,
+    commit,
     emptyMeans: "default",
     placeholder: attrPlaceholder(def),
     title: def.note,
     type: attrBoxType(def),
     scope,
-    trail: [transitionChip(editor, node, def),
+    trail: [cases?.chip ?? null, transitionChip(editor, node, def),
             diagIcon(exprDiag.length ? exprDiag : transDiag)],
   });
-  return chassisRow({
+  const row = chassisRow({
     name: def.name,
     note: def.note,
     box,
   });
+  return cases?.editor ? [row, cases.editor] : [row];
 }
 
 /* A key the document carries that this kind's vocabulary does NOT declare — a hand-edited

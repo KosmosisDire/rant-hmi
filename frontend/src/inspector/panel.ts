@@ -16,18 +16,17 @@
 import { DropPlan, dropAtPageEnd, dropPlan, dropZone, holds } from "../arrange.js";
 import { clear, commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, section } from "../editor.js";
-import { makeFolds } from "../fold.js";
 import { ICONS, iconMarkup } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { ownedSlots, elementIndex, slotLeaf } from "../elements.js";
 import { bindField, bindFlag, bindText } from "../reconcile.js";
-import { authoredSlot, boundSlots, eachAuthoredSlot, ownSlot, slotCell, slotExpression,
+import { authoredSlot, boundSlots, eachAuthoredSlot, ownSlot, slotCell,
          slotText, spellSlotText, typeOf, withSlot, withoutSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
 import { ComponentDef, Flow, isInstance, Json, Node, SlotSpec, TemplateNode,
          Var, ComponentType } from "../types.js";
 
-import { ChainCase, chainClean, printChain, scanChain } from "./cases.js";
+import { casesRows, casesSig } from "./casesrow.js";
 import { attrsSection, attrsShape, chassisRow, componentVarsSection, componentViewShape,
          interactSection, ownedShape, renderBuiltinComponent,
          renderComponentView } from "./components.js";
@@ -656,8 +655,10 @@ export function inspectorShape(editor: Editor): string {
     ]),
     fed: Array.from(fed).sort(),
     /* which affordances a slot row carries (the cases disclosure, its open rows, the
-       poll button) follows the authored text, so it is structure */
+       poll button) follows the authored text, so it is structure — and an instance's
+       ATTR rows carry the cases disclosure too */
     slotsig: slotRowSig(editor, instance),
+    attrsig: attrsShape(editor, instance),
     align: template.includes("slot:align"),
     textScale: template.includes("slot:textScale"),
     /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
@@ -979,14 +980,6 @@ function renderNodeInspector(host: HTMLElement, editor: Editor, node: Node): voi
  * unknown, and there is no bound or driven cell state any more. Empty means unset —
  * the key is removed and the type default stands as the placeholder. */
 
-/* the cases disclosures' fold state: which conditional rows are open. Structure — the
- * open editor's rows exist per branch — so it rides the shape through slotRowSig. */
-const caseFolds = makeFolds();
-
-function caseKey(instanceId: number, slot: string): string {
-  return instanceId + ":" + slot;
-}
-
 /* Does this expression read a mesh FUNCTION — is a poll cadence worth offering? A
  * lexical scan over the '@' spellings against the mesh's F entities; the compiler's
  * dep scan stays the authority on what actually polls. */
@@ -1000,28 +993,19 @@ function referencesFunction(editor: Editor, text: string): boolean {
   return false;
 }
 
-/* Which disclosure a slot's authored value earns. "chain" arms the structured editor —
- * ONLY on a clean top-level ?: chain (parse→print reproduces the text; cases.ts).
- * "wrap" offers the else-only editor on a plain real expression, whose one act is
- * adding a case around it. Literal spellings, empty values and anything the scanner
- * calls dirty get no disclosure: the box alone is the editor there. */
-function casesArm(value: Json): "chain" | "wrap" | "" {
-  if (typeof value !== "string" || !value.trim()) return "";
-  if (chainClean(value)) return "chain";
-  return scanChain(value).kind === "plain" && slotExpression(value) ? "wrap" : "";
-}
-
-/* the slot affordances as SHAPE data: the disclosure kind, its branch count, its open
- * bit, and whether the poll button stands — all of it decides which rows exist */
+/* the slot affordances as SHAPE data: the OPEN cases disclosure (casesrow.ts) and
+ * whether the poll button stands — exactly what decides which rows exist. A resting
+ * row contributes nothing, so a value echo into one never moves the shape (the chip
+ * arms by bind). The sig reads the box's TEXT encoding, so a raw number or bool slot
+ * carries the affordance the same as a string one. */
 function slotRowSig(editor: Editor, instance: Node): string {
   const rows: string[] = [];
   eachAuthoredSlot(instance, (address, value) => {
-    if (typeof value !== "string" || !value.trim()) return;
-    const arm = casesArm(value);
-    const chain = arm === "chain" ? chainClean(value) : null;
-    rows.push(address + ":" + arm + ":" + (chain ? chain.cases.length : 0) + ":" +
-              (referencesFunction(editor, value) ? "p" : "") + ":" +
-              (caseFolds.open(caseKey(instance.id, address)) ? "o" : ""));
+    const text = slotText(value);
+    if (!text.trim()) return;
+    const cases = casesSig(slotCell(instance, address), text);
+    const poll = referencesFunction(editor, text) ? "p" : "";
+    if (cases || poll) rows.push(address + ":" + cases + ":" + poll);
   });
   return rows.join("|");
 }
@@ -1065,19 +1049,8 @@ function slotRows(
   };
   const boxType = slotBoxType(spec);
 
-  const arm = casesArm(ownSlot(at(), spec.name));
-  const folded = caseKey(instance.id, spec.name);
-  const open = arm !== "" && caseFolds.open(folded);
-  let casesChip: HTMLElement | null = null;
-  if (arm !== "") {
-    casesChip = iconButton("git-branch",
-      "cases: edit this value as when/then branches", () => {
-        caseFolds.toggle(folded);
-        editor.refresh();
-      });
-    casesChip.classList.add("cases-chip");
-    if (open) casesChip.classList.add("on");
-  }
+  const cases = casesRows(editor, slotCell(instance, spec.name), scope, boxType,
+                          text, commitText);
 
   /* the chips and the diag mark ride INSIDE the box (BoxSpec.trail): they are
      metadata about the value, and the box is where the value lives */
@@ -1090,7 +1063,7 @@ function slotRows(
     title: spec.name + ": " + spec.shape,
     type: boxType,
     scope,
-    trail: [casesChip, pollChip(editor, instance, spec),
+    trail: [cases?.chip ?? null, pollChip(editor, instance, spec),
             diagIcon(editor.diagAt(instance.id, spec.name))],
   });
 
@@ -1103,7 +1076,7 @@ function slotRows(
      props-vs-attrs question); the class keeps them tellable apart */
   row.classList.add("slot-row");
   const rows = [row];
-  if (open) rows.push(casesEditor(instance, spec, scope, boxType, text, commitText));
+  if (cases?.editor) rows.push(cases.editor);
   return rows;
 }
 
@@ -1147,84 +1120,6 @@ function pollChip(editor: Editor, instance: Node, spec: SlotSpec): HTMLElement |
   return chip;
 }
 
-/* THE CASES DISCLOSURE (design D3): the structured editor below a conditional row —
- * one WHEN/THEN row pair per branch and an ELSE row, each side a value box over the
- * slot's own scope (the condition a bool, the result the slot's own type). Every edit
- * re-parses the authored text and writes back the exact chain shape; a plain
- * expression shows its ELSE row alone, and + Case wraps it as the chain's else. */
-function casesEditor(
-  instance: Node,
-  spec: SlotSpec,
-  scope: Scope,
-  boxType: BoxType,
-  text: () => string,
-  commitText: (raw: string) => void,
-): HTMLElement {
-  const chainNow = () => chainClean(text());
-  const rewrite = (mutate: (chain: { cases: ChainCase[]; last: string }) => void) => {
-    const held = chainNow();
-    const chain: { cases: ChainCase[]; last: string } = held
-      ? { cases: held.cases.map((c) => ({ ...c })), last: held.last }
-      : { cases: [], last: text() };
-    mutate(chain);
-    commitText(chain.cases.length ? printChain(chain) : chain.last.trim());
-  };
-  const key = slotCell(instance, spec.name);
-  const count = chainNow()?.cases.length ?? 0;
-
-  const caseBox = (i: number, side: "when" | "then") =>
-    valueBox({
-      key: key + ".case" + i + "." + side,
-      read: () => {
-        const chain = chainNow();
-        const piece = side === "when" ? chain?.cases[i]?.when : chain?.cases[i]?.then;
-        return piece?.trim() ?? "";
-      },
-      commit: (raw) => rewrite((chain) => {
-        if (chain.cases[i]) chain.cases[i][side] = raw;
-      }),
-      emptyMeans: "unset",
-      title: side === "when" ? "the condition" : "the value while the condition holds",
-      type: side === "when" ? { shape: "Bool" } : boxType,
-      scope,
-    });
-
-  const rows: (HTMLElement | null)[] = [];
-  for (let i = 0; i < count; i++) {
-    rows.push(el("div", { class: "case-row" }, [
-      el("span", { class: "row-label", text: "WHEN" }),
-      caseBox(i, "when"),
-      iconButton("x", "remove this case", () =>
-        rewrite((chain) => { chain.cases.splice(i, 1); })),
-    ]));
-    rows.push(el("div", { class: "case-row then" }, [
-      el("span", { class: "row-label", text: "THEN" }),
-      caseBox(i, "then"),
-    ]));
-  }
-  rows.push(el("div", { class: "case-row else" }, [
-    el("span", { class: "row-label", text: "ELSE" }),
-    valueBox({
-      key: key + ".else",
-      read: () => {
-        const chain = chainNow();
-        return (chain ? chain.last : text()).trim();
-      },
-      commit: (raw) => rewrite((chain) => { chain.last = raw; }),
-      emptyMeans: "unset",
-      title: "the value when no case holds",
-      type: boxType,
-      scope,
-    }),
-  ]));
-  rows.push(el("button", {
-    class: "dashed-btn",
-    text: "+ Case",
-    title: "add a when/then branch; a plain expression becomes the chain's else",
-    onclick: () => rewrite((chain) => {
-      chain.cases.push({ when: "true", then: chain.last });
-    }),
-  }));
-  return el("div", { class: "cases-editor" }, rows);
-}
+/* THE CASES DISCLOSURE moved to casesrow.ts wholesale: the attr rows
+ * (components.ts) carry it now too, and one module serves both. */
 
