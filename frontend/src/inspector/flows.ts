@@ -798,7 +798,7 @@ function stepCell(
        a mesh map field renders nothing — the compiler is the teacher there. */
     const shape = destShape(editor, instance, type, here(), step.id, at().to);
     const indexKey = (): string => String(at().key ?? "");
-    if (shape === "list") {
+    if (shape === "List") {
       const derived = () => (indexKey() !== "" ? "index" : String(at().mode ?? "write"));
       const picker = selectField(
         [{ value: "write" }, { value: "append" }, { value: "index", label: "at index" }],
@@ -828,7 +828,7 @@ function stepCell(
         cell.appendChild(box("key", "Num", () => String(at().key ?? ""),
                              (text) => set("key", text)));
       }
-    } else if (shape === "map") {
+    } else if (shape === "Map") {
       cell.appendChild(el("span", { class: "op", text: "at key" }));
       cell.appendChild(box("key", "Text", () => String(at().key ?? ""),
                            (text) => set("key", text)));
@@ -1072,7 +1072,7 @@ function stepMenu(
     ? eventKind(String(trigger.name ?? ""))?.params ??
       (type?.events ?? []).find((e) => e.name === trigger.name)?.params ?? []
     : [];
-  const continuous = triggerParams.some((p) => p.shape === "num");
+  const continuous = triggerParams.some((p) => p.shape === "Num");
   void instance;
 
   const items = [

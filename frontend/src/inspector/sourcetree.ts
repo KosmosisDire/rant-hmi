@@ -156,7 +156,7 @@ function varShape(type: string): string {
 /* a variable's struct fields, when its type names a struct ROOT; a dotted
  * TypeRef is an enum and holds no fields */
 function varFields(editor: Editor, type: string): MeshField[] {
-  if (!type || SCALAR_TYPES.has(type) || type === "timer" || type.includes(".")) return [];
+  if (!type || SCALAR_TYPES.has(type) || type === "Timer" || type.includes(".")) return [];
   return editor.mesh.types.find((t) => t.name === type)?.fields ?? [];
 }
 
@@ -253,7 +253,7 @@ function build_rows(editor: Editor, instance: Node | null, opts: SourceTreeOptio
           });
         for (const local of opts.scope.locals) {
           const row = { name: local.name,
-                        shape: local.shape === "list" || local.shape === "map"
+                        shape: local.shape === "List" || local.shape === "Map"
                           ? aggLabel(local.shape, local.elem, local.leaf) : local.shape,
                         type: local.type, fields: local.fields ?? [] };
           /* the trigger's parameter and the flow's temporaries both belong to THIS
@@ -265,7 +265,7 @@ function build_rows(editor: Editor, instance: Node | null, opts: SourceTreeOptio
       } else if (wanted("L")) {
         const named = (variable: Var): NamedVar => ({
           name: variable.name,
-          shape: variable.type === "list" || variable.type === "map"
+          shape: variable.type === "List" || variable.type === "Map"
             ? aggLabel(variable.type, variable.elem, variable.leaf)
             : varShape(variable.type),
           type: varFields(editor, variable.type).length ? variable.type : undefined,
@@ -469,7 +469,7 @@ export function openSourceTree(
         openTypeTree(typed, editor, { structs: true, enums: true }, (pick) => {
           const resolved = resolveTypeRef(editor.mesh, pick.ref);
           const first = pick.kind === "struct"
-            ? resolved?.type.fields.find((f) => f.shape !== "list" && f.shape !== "map")
+            ? resolved?.type.fields.find((f) => f.shape !== "List" && f.shape !== "Map")
             : undefined;
           closeSourceTree();
           onPick({ family: "local", kind: "L", name: text, path: first?.path ?? "",

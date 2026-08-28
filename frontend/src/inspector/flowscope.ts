@@ -19,7 +19,7 @@ import { variablesInScope } from "./scope.js";
 
 export interface LocalInfo {
   name: string;
-  /* "num" | "bool" | "text" | "struct" | ... ; "" when it could not be inferred */
+  /* "Num" | "Bool" | "Text" | "Struct" | ... ; "" when it could not be inferred */
   shape: string;
   /* aggregates: the element shape, and — where the elements are ROWS — what a row holds */
   elem?: string;
@@ -51,12 +51,12 @@ function typeFields(editor: Editor, name: string): MeshField[] {
 function declared(editor: Editor, instance: Node | null): LocalInfo[] {
   const own = new Set((instance?.locals ?? []).map((v) => v.id));
   return variablesInScope(editor, instance)
-    .filter((v) => v.type !== "timer")
+    .filter((v) => v.type !== "Timer")
     .map((v) => {
       const note = own.has(v.id) ? ("local" as const) : ("global" as const);
       const scalar = scalarShape(v.type);
       if (scalar) return { name: v.name, shape: scalar, note };
-      if (v.type === "list" || v.type === "map")
+      if (v.type === "List" || v.type === "Map")
         return { name: v.name, shape: v.type, elem: v.elem || undefined,
                  leaf: v.leaf || undefined, note };
       if (v.type.includes(".")) return { name: v.name, shape: "Enum", type: v.type, note };
