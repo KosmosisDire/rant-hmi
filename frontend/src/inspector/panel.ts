@@ -15,7 +15,7 @@
 
 import { DropPlan, dropAtPageEnd, dropPlan, dropZone, holds } from "../arrange.js";
 import { clear, commitInput, el, iconButton } from "../dom.js";
-import { diagIcon, Editor, section } from "../editor.js";
+import { diagIcon, Editor, section, StageContext } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
 import { openMenu } from "../menu.js";
 import { ownedSlots, elementIndex, slotLeaf } from "../elements.js";
@@ -191,16 +191,47 @@ export function renderLeftSidebar(host: HTMLElement, editor: Editor): void {
     /* an unforked built-in: the served template's rows, read-only until Override */
     const type = typeOf(editor.registry, ctx.builtin);
     rows = (type?.template?.children ?? [])
-      .flatMap((c) => readonlyRows(c, 0, "ro" + ctx.builtin));
+      .flatMap((c) => readonlyRows(c, 1, "ro" + ctx.builtin));
     empty = "this component is its box alone";
   } else if (root) {
-    rows = (root.children ?? []).flatMap((n) => nodeRows(editor, n, 0));
+    rows = (root.children ?? []).flatMap((n) => nodeRows(editor, n, ctx ? 1 : 0));
     if (ctx) empty = "this component is empty — right-click the artboard to add";
   }
+  const bare = !rows.length;
+  /* inside a component the tree is headed by the component ITSELF, indenting its
+     children one step under it */
+  if (ctx) rows.unshift(contextRootRow(editor, ctx));
   const tree = el("div", { class: "layers" }, rows);
   armTree(tree, editor);
   host.appendChild(tree);
-  if (!rows.length) host.appendChild(el("p", { class: "empty", text: empty }));
+  if (bare) host.appendChild(el("p", { class: "empty", text: empty }));
+}
+
+/* THE ROOT'S OWN ROW: the entry that selects the component being edited. Clicking it
+ * EMPTIES the selection, which the inspector already reads as the component itself (its
+ * events, properties, behavior) — Escape says the same thing, and now the tree can too.
+ * The key is no node's ("root"), so the drag, the row menu and the enter-on-double-click
+ * all pass it by; dropping a carried row on it falls through to the end-of-page drop. */
+function contextRootRow(editor: Editor, ctx: StageContext): HTMLElement {
+  const nameNow = () => ctx.component
+    ? String((editor.store.node(ctx.component) as Json)?.name ?? "?")
+    : ctx.builtin;
+  const label = el("span", { class: "layer-label" });
+  bindText((ctx.component || "b:" + ctx.builtin) + ":name.ctxroot", label, nameNow);
+  const name = nameNow();
+  return treeRow(
+    "root",
+    0,
+    "root" + (editor.view.selection.length ? "" : " current"),
+    null,
+    [
+      el("span", { class: "icon-mark layer-glyph",
+                   html: iconMarkup(ICONS[name] ? name : "layers", 16, 1.5) }),
+      label,
+    ],
+    () => editor.select([]),
+    "the component itself — its events, properties and behavior",
+  );
 }
 
 /* A row and the node it stands for are one thing seen twice, so pointing at either

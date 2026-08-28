@@ -3040,6 +3040,17 @@ check(stageNode("frame", 901) === heldAgain &&
   check(ctxPanel.host.querySelectorAll(".layer-row.tpl").length === 0,
         "nothing here is fenced: these rows are the component's to edit");
 
+  /* the component ITSELF heads the tree: the entry that selects it — clicking empties
+     the selection, which the inspector already reads as the component */
+  const rootRow = ctxPanel.host.querySelectorAll(".layer-row")[0];
+  check(rootRow.getAttribute("data-key") === "root" && rootRow.className.includes("root"),
+        "the component itself heads the context tree");
+  let picked = null;
+  ctxEditor.select = (ids) => { picked = ids; };
+  fire(rootRow, "click");
+  check(picked !== null && picked.length === 0,
+        "clicking the component's own row empties the selection (= the component)");
+
   /* the built-in variant: fenced rows and the Override verb */
   const roEditor = {
     ...ctxEditor,
@@ -3053,8 +3064,9 @@ check(stageNode("frame", 901) === heldAgain &&
   check(!!roPanel.host.querySelector(".crumb-note")?.textContent?.includes("read-only"),
         "and says read-only beside it");
   const roRows = roPanel.host.querySelectorAll(".layer-row");
-  check(roRows.length > 0 && roRows.every((r) => r.className.includes("tpl")),
-        "every row of a built-in's context is fenced until the fork");
+  check(roRows.length > 1 && roRows[0].getAttribute("data-key") === "root" &&
+          roRows.slice(1).every((r) => r.className.includes("tpl")),
+        "every row under the built-in's own is fenced until the fork");
 
   /* ---- the RIGHT sidebar inside a context ----
      Nothing selected stands the inspector on the COMPONENT itself — the Design

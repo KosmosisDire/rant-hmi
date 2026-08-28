@@ -216,6 +216,18 @@
   color: var(--muted);
 }
 
+/* the tree's first row inside a component: the component itself. The same structural
+   voice a frame row has; current while nothing under it is selected, because an empty
+   selection IS the component (the inspector already says so). */
+.layer-row.root {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.layer-row.root.current {
+  color: var(--ink);
+}
+
 /* a frame groups instances and other frames (spec 2.8): the same quiet, slightly bolder
    treatment a page row gets, so a group reads as structure rather than content */
 .layer-row.frame {
