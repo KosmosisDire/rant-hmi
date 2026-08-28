@@ -167,7 +167,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 19, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 20, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.components.length === 12, "twelve components");

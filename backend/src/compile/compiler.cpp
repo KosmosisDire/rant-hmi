@@ -23,7 +23,7 @@ bool entity_kind(const std::string& text, EntityKind& out) {
     if (text == "V") out = EntityKind::Variable;
     else if (text == "T") out = EntityKind::Topic;
     else if (text == "F") out = EntityKind::Function;
-    else if (text == "S") out = EntityKind::Signal;
+    else if (text == "K") out = EntityKind::Task;
     else return false;
     return true;
 }
@@ -39,7 +39,8 @@ Verb verb_for(EntityKind kind, const std::string& mode) {
             return Verb::Write;
         case EntityKind::Topic: return Verb::Publish;
         case EntityKind::Function: return Verb::Call;
-        case EntityKind::Signal: return Verb::Emit;
+        case EntityKind::Task:
+            return mode == "cancel" ? Verb::Cancel : Verb::Call;
     }
     return Verb::Write;
 }
@@ -2536,6 +2537,12 @@ class Compiler {
             diag(step_id, "move_mode", "only a variable can be unforced", DiagGrade::Error, "to");
             return false;
         }
+        if (verb == Verb::Cancel && !target.cancellable) {
+            diag(step_id, "move_mode",
+                 "task '" + target.name + "' declares no cancel; it runs to completion",
+                 DiagGrade::Error, "to");
+            return false;
+        }
 
         Instruction out;
         out.op = OpCode::Send;
@@ -2544,18 +2551,21 @@ class Compiler {
         out.small = send_small(SendTarget::Entity, static_cast<uint8_t>(verb));
         out.c = fault_site(step_id, "assign_out", "UNKNOWN was not sent");
 
-        if (verb == Verb::Unforce) {
+        /* unforce and cancel address the ENTITY's standing state, not a value: the
+           send is the whole of the step, so no field and no source */
+        if (verb == Verb::Unforce || verb == Verb::Cancel) {
+            out.b = UINT32_MAX;
             flow.body.code.push_back(out);
             ++program_.layout.effect_capacity;
             return true;
         }
 
-        /* a PARAMETERLESS target (a function whose request has no fields, a
-           payload-less signal): the send itself is the whole message, so no field and
-           no source are required — the schema's default (empty) request goes out.
+        /* a PARAMETERLESS target (a function or task whose request has no fields):
+           the send itself is the whole message, so no field and no source are
+           required — the schema's default (empty) request goes out.
            b = UINT32_MAX tells the VM to emit without popping a value. */
         if (target.fields.empty() && to.path.empty() &&
-            (target.kind == EntityKind::Function || target.kind == EntityKind::Signal)) {
+            (target.kind == EntityKind::Function || target.kind == EntityKind::Task)) {
             out.b = UINT32_MAX;
             flow.body.code.push_back(out);
             ++program_.layout.effect_capacity;
@@ -2636,7 +2646,7 @@ class Compiler {
                    the list. */
                 if (key.empty()) {
                     if (verb != Verb::Write && verb != Verb::Publish &&
-                        verb != Verb::Call && verb != Verb::Emit) {
+                        verb != Verb::Call) {
                         diag(step_id, "move_mode", "an array is written, never forced",
                              DiagGrade::Error, "to");
                         return false;
@@ -2653,12 +2663,10 @@ class Compiler {
                 if (target.kind != EntityKind::Variable &&
                     target.kind != EntityKind::Topic) {
                     diag(step_id, "move_dest",
-                         target.kind == EntityKind::Function
-                             ? "a function's arguments are sent whole with the call; "
-                               "an element write addresses a topic's or a variable's "
-                               "array"
-                             : "a signal fires a whole event; an element write "
-                               "addresses a topic's or a variable's array",
+                         std::string(target.kind == EntityKind::Function
+                                         ? "a function's" : "a task's") +
+                             " arguments are sent whole with the call; an element "
+                             "write addresses a topic's or a variable's array",
                          DiagGrade::Error, "to");
                     return false;
                 }

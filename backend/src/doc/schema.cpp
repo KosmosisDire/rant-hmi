@@ -256,7 +256,8 @@ const std::vector<NodeSpec>& table() {
                  from  {"expr": "x"} | {"init": true}   (reset: the dest's own start)
                  to    {"local","path","type"?} | {"kind","name","path"} | {"slot"}
                `to` stays structural: a destination is a PLACE, picked, never typed.
-               `mode` applies to a V destination only (write/force/unforce) or names the
+               `mode` surfaces a destination's choices — a V's write/force/unforce, a
+               task's start/cancel — or names the
                APPEND into a list; every other verb is derived. `keep` bounds an append
                to the last N elements, which is the whole of what a history ring is, and
                `key` addresses ONE entry of an aggregate destination: a map's entry by
@@ -264,7 +265,9 @@ const std::vector<NodeSpec>& table() {
                Both are expressions. */
             {"assign", {object("from", Json{{"expr", "x"}}, Role::MoveRef),
                       object("to", Json::object(), Role::MoveRef),
-                      enumer("mode", {"write", "force", "unforce", "append"}, "write"),
+                      enumer("mode", {"write", "force", "unforce", "append", "start",
+                                      "cancel"},
+                             "write"),
                       text("keep", "", Role::Expr),
                       text("key", "", Role::Expr)}},
             {"gate", {text("a", "", Role::Expr)}},

@@ -38,7 +38,7 @@ export type Json = any;
  * spelled `this.<slot>` in both tiers.
  * 14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
  * the step kind `notify` broadcasts a notification to every session.) */
-export const PROTO = 19;
+export const PROTO = 20;
 
 /* WHICH COPY of a `repeat` a gesture came from, as it rides the wire and as the renderer
  * holds it. One shape in one place: the stage's binds, the gesture seat and the `input`
@@ -78,15 +78,18 @@ export interface MeshField {
 }
 
 export interface MeshEntity {
-  kind: "V" | "T" | "F" | "S";
+  kind: "V" | "T" | "F" | "K";
   name: string;
   /* the schema's ROOT type name, "" where the schema names none. DART names only the
      root, so this is the whole of what an entity says about its type. */
   type: string;
   writable: boolean;
   forceable: boolean;
+  cancellable?: boolean; /* tasks: the provider honors cancel */
   fields: MeshField[];
-  returns?: MeshField[]; /* functions: the response fields a feed reads */
+  /* the READ table beside `fields` (what a call fills): a function's response; a
+     task's running / message / progress.* / result.* */
+  returns?: MeshField[];
 }
 
 /* One entry of the served type table: one per SCHEMA, not per entity, so a type shared

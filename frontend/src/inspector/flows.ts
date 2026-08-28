@@ -54,7 +54,8 @@ export function sideOf(side: Json): Side {
 }
 
 /* ONE word for the transfer: `assign`. force/unforce surface a variable destination's
- * mode, append grows a list rather than replacing it, reset speaks the {init} source.
+ * mode, start/cancel a task's, append grows a list rather than replacing it, reset
+ * speaks the {init} source.
  * The chip's kind mark says WHAT the target is; the verb never restates it. */
 export function verbOf(step: Json): string {
   switch (step?.kind) {
@@ -65,6 +66,9 @@ export function verbOf(step: Json): string {
         return "force";
       if (sideOf(to) === "entity" && to.kind === "V" && step.mode === "unforce")
         return "unforce";
+      /* a task is started or cancelled, never "assigned" */
+      if (sideOf(to) === "entity" && to.kind === "K")
+        return step.mode === "cancel" ? "cancel" : "start";
       /* an append is its own verb: it grows a list rather than replacing it */
       if (step.mode === "append") return "append";
       return "assign";
@@ -724,14 +728,16 @@ function stepCell(
         set("to", { kind: pick.kind, name: pick.name, path: pick.path });
     };
 
-    /* a PARAMETERLESS target (a function with no request fields, a payload-less
-       signal) takes no value at all: the send is the whole message, so the value
-       side disappears from the row */
+    /* a PARAMETERLESS target (a function or task with no request fields) takes no
+       value at all: the send is the whole message, so the value side disappears from
+       the row. A task CANCEL addresses the entity's standing call, so its value side
+       disappears the same way an unforce's does. */
     const dest = at().to ?? {};
     const bareSend =
-      (dest.kind === "F" || dest.kind === "S") && !dest.path &&
-      (editor.mesh?.entities.find((e) => e.kind === dest.kind && e.name === dest.name)
-        ?.fields.length ?? 1) === 0;
+      ((dest.kind === "F" || dest.kind === "K") && !dest.path &&
+        (editor.mesh?.entities.find((e) => e.kind === dest.kind && e.name === dest.name)
+          ?.fields.length ?? 1) === 0) ||
+      (dest.kind === "K" && at().mode === "cancel");
 
     /* the rvalue: ONE expression box, always (reading the mesh is naming it — the
        browse and autocomplete offer the @ spellings). A reset's source IS the target's
@@ -756,7 +762,8 @@ function stepCell(
     cell.appendChild(sideChip(editor, instance, step.id + ":to", () => at().to ?? {},
                               flow, step.id, toOpts, setTo, "pick target"));
 
-    /* mode exists only where there is something to choose: a topic cannot be forced */
+    /* mode exists only where there is something to choose: a topic cannot be forced,
+       and a task offers cancel only where its provider honors one */
     if (to === "entity" && step.to?.kind === "V") {
       const picker = selectField(
         [{ value: "write" }, { value: "force" }, { value: "unforce" }],
@@ -765,6 +772,19 @@ function stepCell(
         "mode",
       );
       bindChoice(step.id + ":mode", pickerOf(picker), () => String(at().mode ?? "write"));
+      cell.appendChild(picker);
+    }
+    if (to === "entity" && step.to?.kind === "K" &&
+        editor.mesh?.entities.find((e) => e.kind === "K" && e.name === step.to.name)
+          ?.cancellable) {
+      const taskMode = () => (String(at().mode ?? "") === "cancel" ? "cancel" : "start");
+      const picker = selectField(
+        [{ value: "start" }, { value: "cancel" }],
+        taskMode(),
+        (choice) => set("mode", choice),
+        "mode",
+      );
+      bindChoice(step.id + ":mode", pickerOf(picker), taskMode);
       cell.appendChild(picker);
     }
 

@@ -1,8 +1,9 @@
 /* End-to-end over a real mesh: a peer dart::Node hosting a variable, a topic, a
- * function and a signal on loopback multicast, against the DartMesh adapter driving
+ * function and a task on loopback multicast, against the DartMesh adapter driving
  * the compiled runtime. Covers reflection (kinds, fields, shapes), feeds from every
- * entity kind (including text and a paced function poll), and effects back out
- * (RMW variable write preserving an untouched text field, publish, emit). Runs on an
+ * entity kind (including text, a paced function poll, and a task's running/message/
+ * progress/result read table), and effects back out (RMW variable write preserving
+ * an untouched text field, publish, task start and cancel). Runs on an
  * isolated domain so a busy desk never interferes. */
 #include "check.h"
 #include "steps.h"
@@ -20,6 +21,8 @@
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <thread>
 
 using namespace hmi;
@@ -75,6 +78,12 @@ std::string text_at(const Scheduler& sched, int cell) {
     return std::string(sched.state().text(sched.program(), value));
 }
 
+int bool_at(const Scheduler& sched, int cell) {
+    if (cell < 0) return -1;
+    const Value& value = sched.state().store.values[cell];
+    return value.tag == ValueTag::Bool ? (value.data.boolean ? 1 : 0) : -1;
+}
+
 } // namespace
 
 int main() {
@@ -85,12 +94,14 @@ int main() {
     auto belt_schema = dart::Schema::compile("Belt { speed: f64, running: bool }");
     auto req_schema = dart::Schema::compile("StatusQ { probe: u8 }");
     auto rsp_schema = dart::Schema::compile("StatusR { temp: f64 }");
-    auto alarm_schema = dart::Schema::compile("Alarm { code: u8 }");
+    auto purge_q = dart::Schema::compile("PurgeQ { target: u8 }");
+    auto purge_p = dart::Schema::compile("PurgeP { pct: f64 }");
+    auto purge_r = dart::Schema::compile("PurgeR { done: u8 }");
     auto cmd_schema = dart::Schema::compile("Cmd { n: f64 }");
     CHECK(tank_schema && hist_schema && belt_schema && req_schema && rsp_schema &&
-          alarm_schema && cmd_schema);
+          purge_q && purge_p && purge_r && cmd_schema);
     if (!tank_schema || !hist_schema || !belt_schema || !req_schema || !rsp_schema ||
-        !alarm_schema || !cmd_schema)
+        !purge_q || !purge_p || !purge_r || !cmd_schema)
         return check::summary("mesh_test");
 
     dart::NodeOptions peer_options;
@@ -191,13 +202,22 @@ int main() {
         });
     CHECK(status.valid());
 
-    std::atomic<int> alarms_seen{0};
-    std::atomic<int> alarm_code{0};
-    dart::Signal<> alarm(peer, "alarm", &*alarm_schema, [&](const dart::MessageView& msg) {
-        alarm_code = static_cast<int>(msg.get_uint("code"));
-        ++alarms_seen;
-    });
-    CHECK(alarm.valid());
+    /* the TASK: the handler defers and the TEST drives the pending call from this
+     * thread (progress, completion, honoring cancel) — the token verbs are
+     * thread-safe by contract */
+    std::atomic<int> purge_calls{0};
+    std::atomic<int> purge_target{0};
+    std::mutex purge_mu;
+    std::optional<dart::PendingTask<>> purge_pending;
+    dart::TaskDefinition<> purge(
+        peer, "purge", &*purge_q, &*purge_p, &*purge_r,
+        [&](dart::TaskRequest<>& request) {
+            purge_target = static_cast<int>(request.get_uint("target"));
+            ++purge_calls;
+            std::lock_guard<std::mutex> hold(purge_mu);
+            purge_pending.emplace(request.defer());
+        });
+    CHECK(purge.valid());
 
     std::atomic<int> cmds_seen{0};
     std::atomic<double> cmd_value{0.0};
@@ -258,7 +278,7 @@ int main() {
     CHECK_MSG(mesh.start(err), err);
 
     /* reflection settles once discovery + detail fetches land */
-    const char* wanted[] = {"tank_level", "history", "belt", "status",   "alarm",
+    const char* wanted[] = {"tank_level", "history", "belt", "status",   "purge",
                             "cmd",        "suction", "flag", "pressure", "gauge",
                             "setpoint"};
     constexpr size_t kWanted = sizeof(wanted) / sizeof(wanted[0]);
@@ -276,7 +296,7 @@ int main() {
             std::printf("settle %d: peer sees %u peers; %zu/%zu entities [", i,
                         peer.peer_count(), found, kWanted);
             for (const EntityDef& entity : mesh.reflection())
-                std::printf(" %c:%s", "VTFS"[static_cast<int>(entity.kind)],
+                std::printf(" %c:%s", "VTFK"[static_cast<int>(entity.kind)],
                             entity.name.c_str());
             std::printf(" ]\n");
         }
@@ -287,11 +307,13 @@ int main() {
     const EntityDef* status_def = nullptr;
     const EntityDef* hist_def = nullptr;
     const EntityDef* flag_def = nullptr;
+    const EntityDef* purge_def = nullptr;
     for (const EntityDef& entity : mesh.reflection()) {
         if (entity.name == "tank_level") tank_def = &entity;
         if (entity.name == "status") status_def = &entity;
         if (entity.name == "history") hist_def = &entity;
         if (entity.name == "flag") flag_def = &entity;
+        if (entity.name == "purge") purge_def = &entity;
     }
     CHECK(hist_def && hist_def->fields.size() == 3);
     if (hist_def && hist_def->fields.size() == 3) {
@@ -314,6 +336,25 @@ int main() {
         CHECK(status_def->fields.size() == 1 && status_def->fields[0].path == "probe");
         CHECK(status_def->rsp_fields.size() == 1 && status_def->rsp_fields[0].path == "temp" &&
               status_def->rsp_fields[0].shape == Shape::Num);
+    }
+    /* a task reflects its request as `fields` and its whole READ table as
+     * `rsp_fields`: running, message, then the progress and response schemas under
+     * their own roots */
+    CHECK(purge_def && purge_def->kind == EntityKind::Task);
+    if (purge_def) {
+        CHECK(purge_def->cancellable);
+        CHECK(purge_def->fields.size() == 1 && purge_def->fields[0].path == "target");
+        CHECK(purge_def->rsp_fields.size() == 4);
+        if (purge_def->rsp_fields.size() == 4) {
+            CHECK(purge_def->rsp_fields[0].path == "running" &&
+                  purge_def->rsp_fields[0].shape == Shape::Bool);
+            CHECK(purge_def->rsp_fields[1].path == "message" &&
+                  purge_def->rsp_fields[1].shape == Shape::Text);
+            CHECK(purge_def->rsp_fields[2].path == "progress.pct" &&
+                  purge_def->rsp_fields[2].shape == Shape::Num);
+            CHECK(purge_def->rsp_fields[3].path == "result.done" &&
+                  purge_def->rsp_fields[3].shape == Shape::Num);
+        }
     }
     /* a bare-typed topic reflects as ONE anonymous field (path "") and no root name */
     CHECK(flag_def && flag_def->kind == EntityKind::Topic);
@@ -339,13 +380,12 @@ int main() {
                      steps::set_field("msg", "level", "x"),
                      steps::write_value("msg", "V", "tank_level"),
                  })}},
-            /* press: a bare publish and a bare emit, plus a publish to a BARE-TYPED
-             * topic (the anonymous value addressed by the empty path) */
+            /* press: a bare publish, plus a publish to a BARE-TYPED topic (the
+             * anonymous value addressed by the empty path) */
             Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
                  {"when_mode", "any"},
                  {"do", Json::array({
                      steps::write_field("T", "cmd", "", "5.5"),
-                     steps::write_field("S", "alarm", "", "7"),
                      steps::write_field("T", "flag", "", "true"),
                  })}},
         })},
@@ -371,11 +411,46 @@ int main() {
         {"slots", Json{{"value", "@status.temp"}}},
         {"poll", Json{{"value", 20}}},
     };
-    Json alarm_instance = {
+    /* the TASK instances: progress feeds a Readout, running a Toggle (bool), the
+     * outcome message a Label, the result a Readout; a tap STARTS the task with its
+     * request field and a press CANCELS the outstanding call */
+    Json purge_instance = {
         {"kind", "frame"},
         {"type", "Readout"},
-        {"name", "Alarm"},
-        {"slots", Json{{"value", "@alarm.code"}}},
+        {"name", "Purge"},
+        {"slots", Json{{"value", "@purge.progress.pct"}}},
+        {"flows", Json::array({
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
+                 {"when_mode", "any"},
+                 {"do", Json::array({
+                     steps::write_field("K", "purge", "target", "3"),
+                 })}},
+            Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+                 {"when_mode", "any"},
+                 {"do", Json::array({
+                     Json{{"kind", "assign"}, {"mode", "cancel"},
+                          {"from", Json{{"expr", "x"}}},
+                          {"to", entity_ref("K", "purge")}},
+                 })}},
+        })},
+    };
+    Json purge_run_instance = {
+        {"kind", "frame"},
+        {"type", "Toggle"},
+        {"name", "PurgeRun"},
+        {"slots", Json{{"value", "@purge.running"}}},
+    };
+    Json purge_msg_instance = {
+        {"kind", "frame"},
+        {"type", "Label"},
+        {"name", "PurgeMsg"},
+        {"slots", Json{{"text", "@purge.message"}}},
+    };
+    Json purge_done_instance = {
+        {"kind", "frame"},
+        {"type", "Readout"},
+        {"name", "PurgeDone"},
+        {"slots", Json{{"value", "@purge.result.done"}}},
     };
     Json hist_instance = {
         {"kind", "frame"},
@@ -458,11 +533,14 @@ int main() {
         {"pages", Json::array({Json{{"name", "Main"},
                                     {"children", Json::array({level_instance, label_instance,
                                                               speed_instance, temp_instance,
-                                                              alarm_instance, hist_instance,
+                                                              purge_instance, hist_instance,
                                                               suction_instance,
                                                               pressure_instance,
                                                               gauge_instance,
-                                                              setpoint_instance})}}})},
+                                                              setpoint_instance,
+                                                              purge_run_instance,
+                                                              purge_msg_instance,
+                                                              purge_done_instance})}}})},
     };
     Document document;
     CHECK_MSG(document.adopt(std::move(root), err), err);
@@ -480,9 +558,12 @@ int main() {
     const uint64_t label_id = page["children"][1].value("id", 0);
     const uint64_t speed_id = page["children"][2].value("id", 0);
     const uint64_t temp_id = page["children"][3].value("id", 0);
-    const uint64_t alarm_id = page["children"][4].value("id", 0);
+    const uint64_t purge_id = page["children"][4].value("id", 0);
     const uint64_t hist_id = page["children"][5].value("id", 0);
     const uint64_t pressure_id = page["children"][7].value("id", 0);
+    const uint64_t purge_run_id = page["children"][10].value("id", 0);
+    const uint64_t purge_msg_id = page["children"][11].value("id", 0);
+    const uint64_t purge_done_id = page["children"][12].value("id", 0);
 
     Scheduler sched(std::move(compiled.program), mesh);
     mesh.apply(sched.program(), {});
@@ -513,9 +594,13 @@ int main() {
     const int label_cell = cell_of(sched.program(), label_id, "text");
     const int speed_cell = cell_of(sched.program(), speed_id, "value");
     const int temp_cell = cell_of(sched.program(), temp_id, "value");
-    const int alarm_cell = cell_of(sched.program(), alarm_id, "value");
+    const int purge_pct_cell = cell_of(sched.program(), purge_id, "value");
+    const int purge_run_cell = cell_of(sched.program(), purge_run_id, "value");
+    const int purge_msg_cell = cell_of(sched.program(), purge_msg_id, "text");
+    const int purge_done_cell = cell_of(sched.program(), purge_done_id, "value");
     CHECK(level_cell >= 0 && label_cell >= 0 && speed_cell >= 0 && temp_cell >= 0 &&
-          alarm_cell >= 0);
+          purge_pct_cell >= 0 && purge_run_cell >= 0 && purge_msg_cell >= 0 &&
+          purge_done_cell >= 0);
 
     /* variable state arrives without any new write (on_change replays at registration) */
     CHECK_MSG(run_until(sched, [&] { return num_at(sched, level_cell) == 42.5; }),
@@ -570,21 +655,8 @@ int main() {
               "status.temp never arrived");
     CHECK_MSG(calls.load() > 0, "the peer's function was never called");
 
-    /* a signal binding */
-    {
-        dart::MessageBuilder fire(*alarm_schema);
-        fire.set_uint("code", 9);
-        CHECK(fire.ok());
-        bool seen = false;
-        for (int i = 0; i < 80 && !seen; ++i) {
-            alarm.emit(fire.bytes());
-            seen = run_until(sched, [&] { return num_at(sched, alarm_cell) == 9.0; }, 100);
-        }
-        CHECK_MSG(seen, "alarm code never arrived");
-    }
-
     /* effects: the tap flow RMW-writes the tank (label untouched), the press flow
-     * publishes to the peer's subscriber and emits the alarm */
+     * publishes to the peer's subscriber */
     uint64_t seq = 1;
     {
         bool written = false;
@@ -625,9 +697,83 @@ int main() {
         }
         CHECK_MSG(seen, "the publish never reached the peer");
         CHECK_EQ(cmd_value.load(), 5.5);
-        CHECK_MSG(run_until(sched, [&] { return alarms_seen.load() > 0; }, 2000),
-                  "the emit never reached the peer");
-        CHECK_EQ(alarm_code.load(), 7);
+    }
+
+    /* ---- THE TASK, end to end: a tap STARTS it (the request field rides the call),
+     * `running` flips true off the RUNNING ack, a progress update lands in
+     * `progress.pct`, and the terminal outcome fills `result.done` + `message` and
+     * drops `running` — the whole read table, driven from the peer's pending call ---- */
+    {
+        bool started = false;
+        for (int i = 0; i < 40 && !started; ++i) {
+            sched.post(InputEvent{1, purge_id, "tap", Value::boolean(true), seq++});
+            started = run_until(sched, [&] { return purge_calls.load() > 0; }, 200);
+        }
+        CHECK_MSG(started, "the task start never reached the peer");
+        CHECK_EQ(purge_target.load(), 3);
+        CHECK_MSG(run_until(sched, [&] { return bool_at(sched, purge_run_cell) == 1; }),
+                  "running never flipped true");
+
+        dart::MessageBuilder step(*purge_p);
+        step.set_f64("pct", 40.0);
+        CHECK(step.ok());
+        {
+            std::lock_guard<std::mutex> hold(purge_mu);
+            CHECK(purge_pending && purge_pending->valid());
+            CHECK(purge_pending->progress(step.bytes()) == dart::SendStatus::Ok);
+        }
+        CHECK_MSG(run_until(sched, [&] { return num_at(sched, purge_pct_cell) == 40.0; }),
+                  "the progress update never arrived");
+
+        dart::MessageBuilder done(*purge_r);
+        done.set_uint("done", 1);
+        CHECK(done.ok());
+        {
+            std::lock_guard<std::mutex> hold(purge_mu);
+            CHECK(purge_pending->complete(done.bytes(), "swept") == dart::SendStatus::Ok);
+        }
+        CHECK_MSG(run_until(sched, [&] { return num_at(sched, purge_done_cell) == 1.0; }),
+                  "the task result never arrived");
+        CHECK_MSG(run_until(sched, [&] { return bool_at(sched, purge_run_cell) == 0; }),
+                  "running never dropped after completion");
+        CHECK_MSG(run_until(sched, [&] { return text_at(sched, purge_msg_cell) == "swept"; }),
+                  "the outcome message never arrived");
+    }
+
+    /* ---- CANCEL: a second start, then the press flow's cancel; the peer honors it
+     * and the caller's read table says cancelled honestly ---- */
+    {
+        const int had_calls = purge_calls.load();
+        bool started = false;
+        for (int i = 0; i < 40 && !started; ++i) {
+            sched.post(InputEvent{1, purge_id, "tap", Value::boolean(true), seq++});
+            started = run_until(sched, [&] { return purge_calls.load() > had_calls; }, 200);
+        }
+        CHECK_MSG(started, "the second task start never reached the peer");
+        CHECK_MSG(run_until(sched, [&] { return bool_at(sched, purge_run_cell) == 1; }),
+                  "running never flipped true on the second call");
+
+        bool cancel_seen = false;
+        for (int i = 0; i < 40 && !cancel_seen; ++i) {
+            sched.post(InputEvent{1, purge_id, "press", Value::boolean(true), seq++});
+            cancel_seen = run_until(
+                sched,
+                [&] {
+                    std::lock_guard<std::mutex> hold(purge_mu);
+                    return purge_pending && purge_pending->cancelled();
+                },
+                200);
+        }
+        CHECK_MSG(cancel_seen, "the cancel never reached the peer");
+        {
+            std::lock_guard<std::mutex> hold(purge_mu);
+            CHECK(purge_pending->complete_cancelled("stopped") == dart::SendStatus::Ok);
+        }
+        CHECK_MSG(run_until(sched, [&] { return bool_at(sched, purge_run_cell) == 0; }),
+                  "running never dropped after the cancel");
+        CHECK_MSG(run_until(sched,
+                            [&] { return text_at(sched, purge_msg_cell) == "stopped"; }),
+                  "the cancelled outcome's message never arrived");
     }
 
     /* the publish to the BARE-TYPED topic: the codec rebuilt from reflection must

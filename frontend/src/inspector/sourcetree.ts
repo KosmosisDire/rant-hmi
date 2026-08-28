@@ -19,7 +19,7 @@ import { scrollToCurrent, streeTree } from "../streerows.js";
 import { aggLabel, Json, MeshEntity, MeshField, SCALAR_TYPES, SlotSpec, Var,
          Node } from "../types.js";
 import { FlowScope } from "./flowscope.js";
-import { EntityFolder, foldEntities } from "./scope.js";
+import { EntityFolder, entityReadFields, foldEntities } from "./scope.js";
 import { openTypeTree, resolveTypeRef } from "./typetree.js";
 
 export interface SourcePick {
@@ -140,11 +140,11 @@ export function closeSourceTree(): void {
 
 /* ---- the model ---- */
 
-/* A FUNCTION has two field tables and the tree shows the one the row will touch: a
- * read/feed decodes its RESPONSE, a write target fills its REQUEST (the arguments). */
+/* A FUNCTION or TASK has two field tables and the tree shows the one the row will
+ * touch: a read/feed decodes its READ table (entityReadFields), a write target fills
+ * its REQUEST (the arguments). */
 function fieldsOf(entity: MeshEntity, write: boolean): MeshField[] {
-  if (entity.kind !== "F") return entity.fields;
-  return write ? entity.fields : entity.returns ?? [];
+  return write ? entity.fields : entityReadFields(entity);
 }
 
 /* a variable's shape IS its declared type: one vocabulary since a property became a

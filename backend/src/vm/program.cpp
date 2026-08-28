@@ -9,7 +9,7 @@ const char* entity_kind_name(EntityKind kind) {
         case EntityKind::Variable: return "V";
         case EntityKind::Topic: return "T";
         case EntityKind::Function: return "F";
-        case EntityKind::Signal: return "S";
+        case EntityKind::Task: return "K";
     }
     return "?";
 }
@@ -20,7 +20,7 @@ const char* verb_name(Verb verb) {
         case Verb::Force: return "force";
         case Verb::Publish: return "publish";
         case Verb::Call: return "call";
-        case Verb::Emit: return "emit";
+        case Verb::Cancel: return "cancel";
         case Verb::Unforce: return "unforce";
     }
     return "?";

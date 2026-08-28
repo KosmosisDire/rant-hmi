@@ -277,10 +277,11 @@ function hmiRoot(editor: Editor, instance: Node | null,
 
 /* ---- the dart universe: the mesh, foldered by the / segments of entity names ---- */
 
-/* the fields a slot expression reads OFF an entity: a function's response, anything
- * else's own table (the backend's feed_fields, mirrored) */
-function entityReadFields(entity: MeshEntity): MeshField[] {
-  return entity.kind === "F" ? entity.returns ?? [] : entity.fields;
+/* THE fields a read sees OFF an entity (the backend's feed_fields, mirrored): the
+ * served `returns` table where one exists (a function's response, a task's
+ * running / message / progress.* / result.*), else the entity's own value fields */
+export function entityReadFields(entity: MeshEntity): MeshField[] {
+  return entity.returns ?? entity.fields;
 }
 
 /* nested folders from the / segments of entity names, explorer style — THE ONE fold
@@ -532,7 +533,7 @@ export function enumListRefs(editor: Editor, instance: Node | null):
                      insert: v.name + "." + field.path + ".variants()" });
   }
   for (const entity of editor.mesh.entities) {
-    const fields = entity.kind === "F" ? entity.returns ?? [] : entity.fields;
+    const fields = entityReadFields(entity);
     for (const field of fields)
       if (field.variants?.length) {
         const ref = "@" + entity.name + (field.path ? "." + field.path : "");

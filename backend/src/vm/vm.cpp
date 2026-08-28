@@ -1334,8 +1334,9 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                 const uint8_t verb_code = static_cast<uint8_t>(ins.small >> 8);
                 switch (target) {
                     /* the mesh: whether the source is a struct decides between a whole
-                       message and one field; unforce and a parameterless call/emit
-                       carry no source at all (spec 2.6). The last-value mirror takes a
+                       message and one field; unforce, cancel and a parameterless call
+                       carry no source at all (spec 2.6) — the compiler says so with
+                       b = UINT32_MAX. The last-value mirror takes a
                        write when the effect FLUSHES (end of tick, flush_effects),
                        never here: every flow that runs in this tick reads the
                        tick-start snapshot (the PLC-scan rule), so a second flow on the
@@ -1343,7 +1344,7 @@ static RunResult run_code(const Program& program, const std::vector<Instruction>
                        tick still reads its own write without an owner echo. */
                     case SendTarget::Entity: {
                         const Verb verb = static_cast<Verb>(verb_code);
-                        if (verb == Verb::Unforce || ins.b == UINT32_MAX) {
+                        if (ins.b == UINT32_MAX) {
                             if (state.out.effect_count >= state.out.effects.size()) {
                                 fail(ins.c);
                                 break;

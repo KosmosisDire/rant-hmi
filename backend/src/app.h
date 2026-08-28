@@ -80,7 +80,7 @@ namespace hmi {
  * scope offering reads what it once mirrored, and a timer's live record serves its
  * DEADLINE ({running, deadline (wall ms), duration (s)}): the view derives the
  * countdown per frame, and an attr reads `myTimer.remaining` through a "tmr:" cell */
-constexpr int kProto = 19;
+constexpr int kProto = 20;
 
 struct AppOptions {
     ServerOptions server;

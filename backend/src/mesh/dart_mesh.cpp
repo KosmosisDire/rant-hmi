@@ -11,8 +11,9 @@
  * sees the owner's own type and never a foreign one.
  *
  * Threading: every MeshPort entry runs on the logic thread. The node's service thread
- * only touches per-record slots and rings behind their own mutex (variable on_change,
- * signal handler, async call completions); topics queue inside DART and are taken here.
+ * only touches per-record slots behind their own mutex (variable on_change, task
+ * progress and outcomes, async call completions); topics queue inside DART and are
+ * taken here.
  * Records are never destroyed while the node lives, so handler captures stay valid. */
 #include "dart_mesh.h"
 
@@ -36,7 +37,6 @@ namespace dc = dart::detail;
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kSignalRingCap = 256;   /* queued signal fires before oldest drops */
 constexpr int kTakeBudget = 256;         /* topic messages decoded per entity per tick */
 constexpr uint32_t kEffectWaitUs = 20000;   /* bounded backpressure for effect sends */
 constexpr int kOwnerWaitMs = 50;      /* one write's bounded wait on a still-forming owner match */
@@ -47,7 +47,7 @@ EntityKind kind_of(dart::EntityKind kind) {
     switch (kind) {
         case dart::EntityKind::Variable: return EntityKind::Variable;
         case dart::EntityKind::Function: return EntityKind::Function;
-        case dart::EntityKind::Signal: return EntityKind::Signal;
+        case dart::EntityKind::Task: return EntityKind::Task;
         case dart::EntityKind::Topic: default: return EntityKind::Topic;
     }
 }
@@ -57,7 +57,7 @@ char kind_letter(EntityKind kind) {
         case EntityKind::Variable: return 'V';
         case EntityKind::Topic: return 'T';
         case EntityKind::Function: return 'F';
-        case EntityKind::Signal: return 'S';
+        case EntityKind::Task: return 'K';
     }
     return '?';
 }
@@ -159,15 +159,19 @@ struct EncField {
  * containers contribute their name to the path. Aggregate kinds present as List/Map
  * shapes for the READ side (feeds decode their elements into the scratch pool); the
  * write side never builds them (a wire value is one scalar), so encode skips them and
- * the RMW base preserves the owner's aggregate bytes untouched. */
+ * the RMW base preserves the owner's aggregate bytes untouched. `prefix` roots every
+ * path under one presented segment (a task's `progress.` / `result.` groups). */
 void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
-                  std::vector<EncField>* enc) {
+                  std::vector<EncField>* enc, const char* prefix = "") {
     std::vector<std::string> stack;
     for (const dart::SchemaField& field : info.fields) {
         stack.resize(field.depth);
-        std::string path;
+        std::string path = prefix;
         for (const std::string& segment : stack) path += segment + ".";
         path += field.name;
+        /* a BARE schema's one anonymous field under a prefix presents as the prefix
+           itself (a bare-f64 progress reads `@task.progress`) */
+        if (!path.empty() && path.back() == '.') path.pop_back();
         if (field.kind == dart::FieldType::Struct) {
             stack.push_back(field.name);
             continue;
@@ -202,6 +206,27 @@ void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
         out.push_back(std::move(def));
         if (enc) enc->push_back(EncField{path, field.kind, field.elem, field.str_cap});
     }
+}
+
+/* The READ table a TASK serves: the HMI's own call state first, then the progress
+ * schema's fields under `progress.`, then the response schema's under `result.` —
+ * ONE table like any entity's, delivered piecewise (the adapter Nil-pads around
+ * whichever part arrived, and on_update skips Nil). The two leading facts are the
+ * adapter's own: whether ITS call is outstanding, and the last outcome's human story
+ * (DartResponse.message — the one field a generic consumer displays on failure). */
+constexpr uint32_t kTaskLeadFields = 2;   /* running, message */
+
+void build_task_read_fields(const dart::Entity& entity, std::vector<FieldDef>& out) {
+    FieldDef running;
+    running.path = "running";
+    running.shape = Shape::Bool;
+    out.push_back(std::move(running));
+    FieldDef message;
+    message.path = "message";
+    message.shape = Shape::Text;
+    out.push_back(std::move(message));
+    build_fields(entity.progress_schema, out, nullptr, "progress.");
+    build_fields(entity.rsp_schema, out, nullptr, "result.");
 }
 
 /* scalar element sizes on the wire (little-endian; LE host assumed per PLAN.md) */
@@ -323,13 +348,19 @@ struct Rec {
 
     /* the owner's reflected schema(s) + our faithful recompilations */
     dart::SchemaInfo schema;                    /* value / payload / request */
-    dart::SchemaInfo rsp_schema;                /* FUNCTION: response */
+    dart::SchemaInfo rsp_schema;                /* FUNCTION / TASK: response */
+    dart::SchemaInfo prg_schema;                /* TASK: progress */
     std::optional<dart::Schema> compiled;
     std::optional<dart::Schema> rsp_compiled;
+    std::optional<dart::Schema> prg_compiled;
 
-    /* the field vocabulary as the compiler sees it, plus per-field encode info */
+    /* the field vocabulary as the compiler sees it, plus per-field encode info.
+     * `rsp_raw` / `prg_raw` are the DECODE tables (the schemas' own unprefixed
+     * paths); a task's presented read table prefixes them, so deliveries land at a
+     * lead offset instead. */
     std::vector<FieldDef> fields;
-    std::vector<FieldDef> rsp_fields;
+    std::vector<FieldDef> rsp_raw;
+    std::vector<FieldDef> prg_raw;
     std::vector<EncField> enc;
 
     /* handles, created on first need, cached until the entity re-types (refresh
@@ -337,7 +368,7 @@ struct Rec {
     std::optional<dart::Topic> topic;           /* Topic entity: sub + (role-flipped) pub */
     bool topic_pub = false;
     std::optional<dart::RemoteVariable<>> var;
-    std::optional<dart::Signal<>> sig;
+    std::optional<dart::RemoteTask<>> task;
     std::optional<dart::RemoteFunction<>> fn;
 
     /* the owner-match story for writes through the variable accessor: var_created
@@ -347,14 +378,24 @@ struct Rec {
     Clock::time_point var_created{};
     std::atomic<bool> owner_seen{false};
 
-    /* latest-wins slot: variable updates and function responses (service thread in,
-     * logic thread out); signals keep order in a bounded ring instead */
+    /* latest-wins slot: variable updates and function/task responses (service thread
+     * in, logic thread out) */
     std::mutex slot_mu;
     std::vector<uint8_t> slot;
     const dc::DartSchema* slot_schema = nullptr;
     bool slot_dirty = false;
-    std::deque<std::pair<std::vector<uint8_t>, const dc::DartSchema*>> ring;
-    size_t ring_dropped = 0;
+
+    /* TASK call state, behind the same mutex: ONE outstanding call per task from this
+     * HMI (the backend is the one caller for every session), its latest progress
+     * payload latest-wins, and the running/message pair the read table leads with */
+    uint32_t call_id = 0;
+    bool call_live = false;
+    bool task_running = false;
+    std::string task_message;
+    bool task_flags_dirty = false;
+    std::vector<uint8_t> prg_slot;
+    const dc::DartSchema* prg_slot_schema = nullptr;
+    bool prg_dirty = false;
 
     /* RMW base: the owner's exact last payload bytes (logic thread only) */
     std::vector<uint8_t> last_payload;
@@ -423,8 +464,15 @@ struct DartMesh::Impl {
     bool ensure_consumption(Rec& rec, std::string& err);
     void retire_rec_patterns(Rec& rec);
     bool encode(Rec& rec, const EffectView& effect, std::string& fault);
+    /* decode one payload against `fields` and hand it to the sink, the decoded values
+     * landing at positions [lead, lead + fields.size()) of the update — the leading
+     * positions ride Nil, which on_update skips. A task's presented read table is
+     * [running, message, progress.*, result.*], so its progress payload delivers at
+     * lead 2 and its response past the progress block. */
     void deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDef>& fields,
-                 dc::DartBytes data, const dc::DartSchema* schema);
+                 dc::DartBytes data, const dc::DartSchema* schema, uint32_t lead = 0);
+    void deliver_task_flags(MeshSink& sink, Rec& rec, bool running,
+                            const std::string& message);
     bool page_viewed(const Rec& rec) const;
     void log(const char* what, const std::string& detail) const {
         if (opts.verbose) std::printf("hmi mesh: %s %s\n", what, detail.c_str());
@@ -560,6 +608,9 @@ bool DartMesh::refresh() {
                 kept.schema_hash = entity.schema_hash;
                 kept.rsp_schema = std::move(entity.rsp_schema);
                 kept.rsp_schema_hash = entity.rsp_schema_hash;
+                kept.progress_schema = std::move(entity.progress_schema);
+                kept.progress_schema_hash = entity.progress_schema_hash;
+                kept.cancellable = entity.cancellable;
                 kept.reliable = entity.reliable;
                 kept.provides = kept.provides || entity.provides;
             }
@@ -585,7 +636,7 @@ bool DartMesh::refresh() {
             if (!overlap) {
                 auto rec_it = impl_->recs.find(item.first);
                 if (rec_it != impl_->recs.end() &&
-                    (rec_it->second->var || rec_it->second->sig || rec_it->second->fn)) {
+                    (rec_it->second->var || rec_it->second->task || rec_it->second->fn)) {
                     impl_->log("provider restarted, re-subscribing", item.first);
                     impl_->retire_rec_patterns(*rec_it->second);
                     provider_changed = true;
@@ -612,12 +663,18 @@ bool DartMesh::refresh() {
         build_fields(entity.schema, def.fields, nullptr);
         if (def.kind == EntityKind::Function)
             build_fields(entity.rsp_schema, def.rsp_fields, nullptr);
+        if (def.kind == EntityKind::Task) {
+            def.cancellable = entity.cancellable;
+            build_task_read_fields(entity, def.rsp_fields);
+        }
         signature += item.first;
         signature += def.writable ? "+w" : "";
         signature += def.forceable ? "+f" : "";
+        signature += def.cancellable ? "+c" : "";
         signature += entity.reliable ? "+r" : "";
         signature += ":" + std::to_string(entity.schema_hash);
         signature += "/" + std::to_string(entity.rsp_schema_hash);
+        signature += "/" + std::to_string(entity.progress_schema_hash);
         signature += ";";
         next.push_back(std::move(def));
     }
@@ -637,7 +694,9 @@ bool DartMesh::refresh() {
         Rec& rec = *it->second;
         const bool retyped =
             (rec.schema.hash != 0 && rec.schema.hash != item.second.schema_hash) ||
-            (rec.rsp_schema.hash != 0 && rec.rsp_schema.hash != item.second.rsp_schema_hash);
+            (rec.rsp_schema.hash != 0 && rec.rsp_schema.hash != item.second.rsp_schema_hash) ||
+            (rec.prg_schema.hash != 0 &&
+             rec.prg_schema.hash != item.second.progress_schema_hash);
         if (!retyped) continue;
         impl_->log("entity re-typed, re-subscribing with the new schema", item.first);
         if (rec.topic) rec.topic->retire();
@@ -646,8 +705,12 @@ bool DartMesh::refresh() {
         impl_->retire_rec_patterns(rec);
         rec.schema = {};
         rec.rsp_schema = {};
+        rec.prg_schema = {};
         rec.compiled.reset();
         rec.rsp_compiled.reset();
+        rec.prg_compiled.reset();
+        rec.rsp_raw.clear();
+        rec.prg_raw.clear();
         rec.enc.clear();
         rec.default_request.clear();
         rec.last_payload.clear();
@@ -658,7 +721,9 @@ bool DartMesh::refresh() {
             rec.slot.clear();
             rec.slot_schema = nullptr;
             rec.slot_dirty = false;
-            rec.ring.clear();
+            rec.prg_slot.clear();
+            rec.prg_slot_schema = nullptr;
+            rec.prg_dirty = false;
         }
     }
     impl_->signature = std::move(signature);
@@ -677,7 +742,6 @@ Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
         Rec& rec = *it->second;
         /* the compiler's field tables are the current truth; keep ours aligned */
         rec.fields = def.fields;
-        rec.rsp_fields = def.rsp_fields;
         if (!rec.compiled && folded_it != folded.end() && !folded_it->second.schema.empty())
             fill_rec_schema(rec, folded_it->second);
         return &rec;
@@ -686,7 +750,6 @@ Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
     rec->kind = def.kind;
     rec->name = def.name;
     rec->fields = def.fields;
-    rec->rsp_fields = def.rsp_fields;
     if (folded_it != folded.end()) fill_rec_schema(*rec, folded_it->second);
     Rec* out = rec.get();
     recs.emplace(key, std::move(rec));
@@ -700,6 +763,7 @@ Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
 void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& folded_entity) const {
     rec.schema = folded_entity.schema;
     rec.rsp_schema = folded_entity.rsp_schema;
+    rec.prg_schema = folded_entity.progress_schema;
     const std::string key = rec_key(rec.kind, rec.name);
     if (!rec.schema.empty()) {
         std::string err;
@@ -711,6 +775,16 @@ void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& folded_entity
         rec.rsp_compiled = dart::Schema::compile(schema_dsl(rec.rsp_schema), &err);
         if (!rec.rsp_compiled)
             log("response schema rebuild failed", key + ": " + err);
+        rec.rsp_raw.clear();
+        build_fields(rec.rsp_schema, rec.rsp_raw, nullptr);
+    }
+    if (!rec.prg_schema.empty()) {
+        std::string err;
+        rec.prg_compiled = dart::Schema::compile(schema_dsl(rec.prg_schema), &err);
+        if (!rec.prg_compiled)
+            log("progress schema rebuild failed", key + ": " + err);
+        rec.prg_raw.clear();
+        build_fields(rec.prg_schema, rec.prg_raw, nullptr);
     }
     if (rec.compiled) {
         rec.enc.clear();
@@ -728,12 +802,14 @@ void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& folded_entity
     }
 }
 
-/* Park + drop the PATTERN handles (variable / signal / function). Their standing
+/* Park + drop the PATTERN handles (variable / task / function). Their standing
  * lanes go DEAF across a provider incarnation change — a fresh accessor provably
  * receives where the standing one does not — and a live old-typed channel would
  * shadow a same-name successor on every peer, refusing each match with
  * schema-mismatch. retire() (the vendored HMI patch 2) parks the underlying
- * channels Inactive so the successor owns the name outright. The plain TOPIC
+ * channels Inactive so the successor owns the name outright. A task retire answers
+ * its outstanding call Cancelled through the ordinary response callback, so the
+ * read table's `running` goes false honestly. The plain TOPIC
  * handle STAYS: topic subscriptions rematch a returning provider by themselves,
  * and the C++ topic cache would hand a parked channel straight back on a
  * same-schema re-create. */
@@ -741,8 +817,8 @@ void DartMesh::Impl::retire_rec_patterns(Rec& rec) {
     if (rec.var) rec.var->retire();
     rec.var.reset();
     rec.owner_seen.store(false, std::memory_order_relaxed);
-    if (rec.sig) rec.sig->retire();
-    rec.sig.reset();
+    if (rec.task) rec.task->retire();
+    rec.task.reset();
     if (rec.fn) rec.fn->retire();
     rec.fn.reset();
 }
@@ -784,24 +860,13 @@ bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
                 });
                 break;
             }
-            case EntityKind::Signal: {
-                if (rec.sig) break;
-                Rec* self = &rec;
-                dart::SignalOptions options;
+            case EntityKind::Task: {
+                if (rec.task) break;
+                dart::TaskOptions options;
                 options.backpressure_wait_us = kEffectWaitUs;
-                rec.sig.emplace(*node, rec.name, schema,
-                                [self](const dart::MessageView& msg) {
-                                    const dart::Bytes data = msg.data();
-                                    std::lock_guard<std::mutex> hold(self->slot_mu);
-                                    if (self->ring.size() >= kSignalRingCap) {
-                                        self->ring.pop_front();
-                                        ++self->ring_dropped;
-                                    }
-                                    self->ring.emplace_back(
-                                        std::vector<uint8_t>(data.begin(), data.end()),
-                                        msg.raw_schema());
-                                },
-                                options);
+                rec.task.emplace(*node, rec.name, schema,
+                                 rec.prg_compiled ? &*rec.prg_compiled : nullptr,
+                                 rec.rsp_compiled ? &*rec.rsp_compiled : nullptr, options);
                 break;
             }
             case EntityKind::Function: {
@@ -911,11 +976,13 @@ bool DartMesh::Impl::page_viewed(const Rec& rec) const {
 }
 
 void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDef>& fields,
-                             dc::DartBytes data, const dc::DartSchema* schema) {
+                             dc::DartBytes data, const dc::DartSchema* schema,
+                             uint32_t lead) {
     if (!schema || fields.empty()) return;
-    rec.values.resize(fields.size());
-    rec.texts.resize(fields.size());
-    rec.views.assign(fields.size(), std::string_view{});
+    const uint32_t total = lead + static_cast<uint32_t>(fields.size());
+    rec.values.assign(total, Value::nil());
+    rec.texts.resize(total);
+    rec.views.assign(total, std::string_view{});
     rec.elem_pool.clear();
     rec.elem_strings.clear();
     rec.elem_meta.clear();
@@ -1003,12 +1070,13 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
     };
 
     for (size_t i = 0; i < fields.size(); ++i) {
+        const size_t at = lead + i;
         if (fields[i].shape == Shape::List || fields[i].shape == Shape::Map) {
-            rec.values[i] = decode_agg(fields[i], static_cast<uint32_t>(i));
+            rec.values[at] = decode_agg(fields[i], static_cast<uint32_t>(at));
             continue;
         }
-        rec.values[i] = decode_field(data, schema, fields[i].path.c_str(), rec.texts[i]);
-        if (rec.values[i].tag == ValueTag::Text) rec.views[i] = rec.texts[i];
+        rec.values[at] = decode_field(data, schema, fields[i].path.c_str(), rec.texts[at]);
+        if (rec.values[at].tag == ValueTag::Text) rec.views[at] = rec.texts[at];
     }
 
     /* element vectors are stable now: build the views and per-field spans */
@@ -1018,7 +1086,7 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
             rec.elem_pool[k].ref < rec.elem_strings.size())
             rec.elem_views[k] = rec.elem_strings[rec.elem_pool[k].ref];
     bool any_elems = false;
-    rec.elem_spans.assign(fields.size(), MeshElems{});
+    rec.elem_spans.assign(total, MeshElems{});
     for (const Rec::ElemMeta& meta : rec.elem_meta) {
         rec.elem_spans[meta.field] =
             MeshElems{rec.elem_pool.data() + meta.offset,
@@ -1032,7 +1100,22 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
     update.fields = rec.values.data();
     update.texts = rec.views.data();
     update.elems = any_elems ? rec.elem_spans.data() : nullptr;
-    update.field_count = static_cast<uint32_t>(fields.size());
+    update.field_count = total;
+    sink.on_update(update);
+}
+
+/* the task read table's two leading facts, delivered as a two-field update: position
+ * 0 = running, 1 = message (on_update touches only the positions an update carries) */
+void DartMesh::Impl::deliver_task_flags(MeshSink& sink, Rec& rec, bool running,
+                                        const std::string& message) {
+    const Value fields[kTaskLeadFields] = {Value::boolean(running), Value::text(0)};
+    const std::string_view texts[kTaskLeadFields] = {std::string_view{}, message};
+    MeshUpdate update;
+    update.kind = rec.kind;
+    update.name = rec.name;
+    update.fields = fields;
+    update.texts = texts;
+    update.field_count = kTaskLeadFields;
     sink.on_update(update);
 }
 
@@ -1060,6 +1143,12 @@ void DartMesh::drain(MeshSink& sink) {
 
         bool slot_dirty = false;
         const dc::DartSchema* schema = nullptr;
+        bool flags_dirty = false;
+        bool running = false;
+        std::string message;
+        bool prg_dirty = false;
+        std::vector<uint8_t> prg_payload;
+        const dc::DartSchema* prg_schema = nullptr;
         {
             std::lock_guard<std::mutex> hold(rec.slot_mu);
             slot_dirty = rec.slot_dirty;
@@ -1068,30 +1157,39 @@ void DartMesh::drain(MeshSink& sink) {
                 schema = rec.slot_schema;
                 rec.slot_dirty = false;
             }
+            flags_dirty = rec.task_flags_dirty;
+            if (flags_dirty) {
+                running = rec.task_running;
+                message = rec.task_message;
+                rec.task_flags_dirty = false;
+            }
+            prg_dirty = rec.prg_dirty;
+            if (prg_dirty) {
+                prg_payload = rec.prg_slot;
+                prg_schema = rec.prg_slot_schema;
+                rec.prg_dirty = false;
+            }
         }
+        /* the task read table's [running, message, progress.*, result.*] delivers
+         * piecewise: whichever parts moved land at their own positions this tick */
+        if (flags_dirty) impl.deliver_task_flags(sink, rec, running, message);
+        if (prg_dirty)
+            impl.deliver(sink, rec, rec.prg_raw,
+                         dc::dart_bytes(prg_payload.data(), prg_payload.size()),
+                         prg_schema, kTaskLeadFields);
         if (slot_dirty) {
             if (rec.kind == EntityKind::Variable && schema) {
                 rec.last_payload = rec.out;
                 rec.last_payload_hash = dc::dart_schema_hash(schema);
                 rec.last_schema = schema;
             }
-            impl.deliver(sink, rec,
-                         rec.kind == EntityKind::Function ? rec.rsp_fields : rec.fields,
-                         dc::dart_bytes(rec.out.data(), rec.out.size()), schema);
-        }
-
-        while (true) {
-            std::vector<uint8_t> payload;
-            const dc::DartSchema* fire_schema = nullptr;
-            {
-                std::lock_guard<std::mutex> hold(rec.slot_mu);
-                if (rec.ring.empty()) break;
-                payload = std::move(rec.ring.front().first);
-                fire_schema = rec.ring.front().second;
-                rec.ring.pop_front();
-            }
-            impl.deliver(sink, rec, rec.fields,
-                         dc::dart_bytes(payload.data(), payload.size()), fire_schema);
+            const bool response =
+                rec.kind == EntityKind::Function || rec.kind == EntityKind::Task;
+            impl.deliver(sink, rec, response ? rec.rsp_raw : rec.fields,
+                         dc::dart_bytes(rec.out.data(), rec.out.size()), schema,
+                         rec.kind == EntityKind::Task
+                             ? kTaskLeadFields + static_cast<uint32_t>(rec.prg_raw.size())
+                             : 0);
         }
 
         if (rec.fn && rec.poll_ms && impl.page_viewed(rec) && now >= rec.next_poll &&
@@ -1417,6 +1515,33 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
         return true;
     }
 
+    /* cancel means "ensure my call is not running": with nothing outstanding — never
+     * started, or the terminal outcome just landed — it is already satisfied, so only
+     * a genuine refusal is a fault (cancellation itself stays cooperative: the
+     * terminal status is the answer). */
+    if (effect.verb == Verb::Cancel) {
+        if (!rec->task) {
+            fault = "cancel target '" + rec->name + "' has no task";
+            return false;
+        }
+        uint32_t call_id = 0;
+        {
+            std::lock_guard<std::mutex> hold(rec->slot_mu);
+            if (!rec->call_live) return true;
+            call_id = rec->call_id;
+        }
+        const dart::SendStatus status = rec->task->cancel(call_id);
+        if (status == dart::SendStatus::BadRole) {
+            fault = "task '" + rec->name + "' declares no cancel";
+            return false;
+        }
+        if (status != dart::SendStatus::Ok && status != dart::SendStatus::State) {
+            fault = "cancel of '" + rec->name + "' " + send_status_story(status);
+            return false;
+        }
+        return true;
+    }
+
     if (!impl.encode(*rec, effect, fault)) return false;
     const dart::Bytes payload(rec->out.data(), rec->out.size());
 
@@ -1442,6 +1567,71 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             break;
         }
         case Verb::Call: {
+            if (rec->kind == EntityKind::Task) {
+                if (!rec->task) {
+                    fault = "call target '" + rec->name + "' has no task";
+                    return false;
+                }
+                /* claim the one outstanding call BEFORE sending: the terminal
+                 * callback may fire the moment the request commits, and it must find
+                 * call_live already true so its clear is never overwritten. A failed
+                 * send registered no callbacks, so the rollback below cannot race. */
+                {
+                    std::lock_guard<std::mutex> hold(rec->slot_mu);
+                    if (rec->call_live) {
+                        fault = "task '" + rec->name +
+                                "' is still running; cancel it or wait for it to finish";
+                        return false;
+                    }
+                    rec->call_live = true;
+                    rec->task_running = true;
+                    rec->task_message.clear();
+                    rec->task_flags_dirty = true;
+                }
+                Rec* self = rec;
+                const dart::TaskCall call = rec->task->call_async(
+                    payload,
+                    [self](const dart::ProgressView<>& progress) {
+                        /* the RUNNING ack arrives empty; either way the call provably
+                         * runs. Progress is latest-wins: an HMI paints the newest. */
+                        std::lock_guard<std::mutex> hold(self->slot_mu);
+                        if (!self->task_running) {
+                            self->task_running = true;
+                            self->task_flags_dirty = true;
+                        }
+                        if (progress.has_value() && progress.raw_schema()) {
+                            const dart::Bytes data = progress.data();
+                            self->prg_slot.assign(data.begin(), data.end());
+                            self->prg_slot_schema = progress.raw_schema();
+                            self->prg_dirty = true;
+                        }
+                    },
+                    [self](const dart::ResponseView<>& response) {
+                        std::lock_guard<std::mutex> hold(self->slot_mu);
+                        self->call_live = false;
+                        self->task_running = false;
+                        self->task_message.assign(response.message());
+                        self->task_flags_dirty = true;
+                        if (response.ok() && response.raw_schema()) {
+                            const dart::Bytes data = response.data();
+                            self->slot.assign(data.begin(), data.end());
+                            self->slot_schema = response.raw_schema();
+                            self->slot_dirty = true;
+                        }
+                    });
+                status = call.status;
+                {
+                    std::lock_guard<std::mutex> hold(rec->slot_mu);
+                    if (status == dart::SendStatus::Ok) {
+                        rec->call_id = call.id;
+                    } else {
+                        rec->call_live = false;
+                        rec->task_running = false;
+                        rec->task_flags_dirty = true;
+                    }
+                }
+                break;
+            }
             if (!rec->fn) {
                 fault = "call target '" + rec->name + "' has no function";
                 return false;
@@ -1459,9 +1649,6 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
                 });
             break;
         }
-        case Verb::Emit:
-            status = rec->sig ? rec->sig->emit(payload) : dart::SendStatus::NoTopic;
-            break;
         default:
             fault = "verb does not apply to the mesh";
             return false;

@@ -594,14 +594,17 @@ Json App::mesh_json() const {
 
     Json entities = Json::array();
     for (const EntityDef& entity : mesh_->reflection()) {
-        Json row{{"kind", std::string(1, "VTFS"[static_cast<int>(entity.kind)])},
+        Json row{{"kind", std::string(1, "VTFK"[static_cast<int>(entity.kind)])},
                  {"name", entity.name},
                  {"type", entity.type_name},
                  {"writable", entity.writable},
                  {"forceable", entity.forceable},
                  {"fields", fields_json(entity.fields)}};
-        if (entity.kind == EntityKind::Function)
+        /* a function's response table; a task's whole read table (running, message,
+           progress.*, result.*) — what a feed reads, beside `fields` a call fills */
+        if (entity.kind == EntityKind::Function || entity.kind == EntityKind::Task)
             row["returns"] = fields_json(entity.rsp_fields);
+        if (entity.kind == EntityKind::Task) row["cancellable"] = entity.cancellable;
         entities.push_back(std::move(row));
     }
 
@@ -620,7 +623,7 @@ Json App::mesh_json() const {
             for (const EntityDef& entity : program.entities)
                 if (entity.type_id == id)
                     carriers.push_back(
-                        Json{{"kind", std::string(1, "VTFS"[static_cast<int>(entity.kind)])},
+                        Json{{"kind", std::string(1, "VTFK"[static_cast<int>(entity.kind)])},
                              {"name", entity.name}});
             types.push_back(Json{{"name", def.name},
                                  {"fields", fields_json(def.fields)},

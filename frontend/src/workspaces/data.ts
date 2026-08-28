@@ -180,8 +180,9 @@ function buildRows(editor: Editor): Row[] {
         select: key,
       });
     if (hit && descend && openOr(key)) {
-      /* a function's two tables are labeled: what a call fills, what it returns */
-      if (entity.kind === "F") {
+      /* a function's or task's two tables are labeled: what a call fills, what it
+         serves back (a task's read table: running / message / progress.* / result.*) */
+      if (entity.kind === "F" || entity.kind === "K") {
         if (fields.length) rows.push({ depth: depth + 1, key: key + "/call", label: "call",
                                        group: true, expandable: false });
         for (const field of fields) fieldRow(field, depth + 1);
@@ -482,11 +483,12 @@ function entityDetail(host: HTMLElement, editor: Editor, kind: string, name: str
       entity?.type ? el("span", { class: "detail-type", text: entity.type }) : null,
       entity?.writable ? el("span", { class: "detail-chip", text: "writable" }) : null,
       entity?.forceable ? el("span", { class: "detail-chip", text: "forceable" }) : null,
+      entity?.cancellable ? el("span", { class: "detail-chip", text: "cancellable" }) : null,
     ]),
   );
   if (!entity) {
     host.appendChild(el("p", { class: "data-empty", text: "not on the mesh right now" }));
-  } else if (entity.kind === "F") {
+  } else if (entity.kind === "F" || entity.kind === "K") {
     if (entity.fields.length) {
       host.appendChild(el("div", { class: "detail-sect", text: "CALL" }));
       host.appendChild(fieldTable(entity.fields));

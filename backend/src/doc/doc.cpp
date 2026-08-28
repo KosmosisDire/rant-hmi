@@ -319,7 +319,7 @@ Document Document::make_default() {
                                  at(22, 22, 396, 66)));
     /* the slider streams into `flow` WHILE CHANGING — the uniform control sentence —
        so dragging it in Test literally draws the Trend below and moves the Readout:
-       the demo's one live signal path */
+       the demo's one live data path */
     Json slider = instance("Slider", "Setpoint",
                            Json{{"value", 62}, {"min", 0}, {"max", 100}},
                            at(22, 110, 836, 66));

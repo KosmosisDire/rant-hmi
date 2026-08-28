@@ -11,8 +11,8 @@
 
 namespace hmi {
 
-enum class EntityKind : uint8_t { Variable, Topic, Function, Signal };
-enum class Verb : uint8_t { Write, Force, Publish, Call, Emit, Unforce };
+enum class EntityKind : uint8_t { Variable, Topic, Function, Task };
+enum class Verb : uint8_t { Write, Force, Publish, Call, Cancel, Unforce };
 
 const char* entity_kind_name(EntityKind kind);
 const char* verb_name(Verb verb);
@@ -36,6 +36,9 @@ struct EntityDef {
     bool readable = true;
     bool writable = false;
     bool forceable = false;
+    /* TASK only: the provider honors cancel (the reflected attrs; default on) — what
+     * gates a flow step's `cancel` mode at compile */
+    bool cancellable = false;
     /* the schema's ROOT TYPE NAME and identity, straight off reflection: what the type
      * table is keyed by, and the only name DART gives a type (spec 2.2). Empty / 0 where
      * the owner published none. */
@@ -45,15 +48,23 @@ struct EntityDef {
      * stamped by the compiler: what `read <entity> -> local` gives the local, and what a
      * `new <Type>` of the same type may be written back to. 0 until stamped. */
     uint16_t type_id = 0;
-    /* the value fields (a FUNCTION's are its REQUEST fields: what a call builds) */
+    /* the value fields (a FUNCTION's or a TASK's are its REQUEST fields: what a call
+     * builds) */
     std::vector<FieldDef> fields;
-    /* FUNCTION only: the response fields (what a function feed reads and decodes) */
+    /* FUNCTION: the response fields (what a function feed reads and decodes).
+     * TASK: the whole READ table — `running` (bool), `message` (text, the last
+     * outcome's story), the progress schema's fields under `progress.`, and the
+     * response schema's under `result.` — built by reflection, one table like any
+     * other entity's. */
     std::vector<FieldDef> rsp_fields;
 };
 
-/* the field table a FEED reads from: the response side of a function, else the value */
+/* the field table a FEED reads from: the response side of a function or a task, else
+ * the value */
 inline const std::vector<FieldDef>& feed_fields(const EntityDef& entity) {
-    return entity.kind == EntityKind::Function ? entity.rsp_fields : entity.fields;
+    return entity.kind == EntityKind::Function || entity.kind == EntityKind::Task
+               ? entity.rsp_fields
+               : entity.fields;
 }
 
 struct Program;
