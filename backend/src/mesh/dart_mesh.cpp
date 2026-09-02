@@ -16,6 +16,7 @@
  * taken here.
  * Records are never destroyed while the node lives, so handler captures stay valid. */
 #include "dart_mesh.h"
+#include "schema_dsl.h"
 
 #include "dart.hpp"
 
@@ -67,84 +68,6 @@ std::string rec_key(EntityKind kind, std::string_view name) {
     key += ':';
     key.append(name.data(), name.size());
     return key;
-}
-
-const char* scalar_name(dart::FieldType kind) {
-    static const char* names[] = {"u8", "u16", "u32", "u64", "i8", "i16",
-                                  "i32", "i64", "f32", "f64", "bool"};
-    const int at = static_cast<int>(kind);
-    return at >= 0 && at <= 10 ? names[at] : "u8";
-}
-
-/* one non-struct field's type in DSL words (a struct opens inline in schema_dsl) */
-std::string type_dsl(const dart::SchemaField& field) {
-    switch (field.kind) {
-        case dart::FieldType::String:
-            return "string<" + std::to_string(field.str_cap) + ">";
-        case dart::FieldType::VString:
-            return "string";
-        case dart::FieldType::Array:
-        case dart::FieldType::VArray: {
-            std::string out = field.elem == dart::FieldType::String
-                                  ? "string<" + std::to_string(field.str_cap) + ">"
-                                  : scalar_name(field.elem);
-            out += "[";
-            if (field.kind == dart::FieldType::Array) out += std::to_string(field.count);
-            out += "]";
-            return out;
-        }
-        case dart::FieldType::Map:
-            return "map";
-        case dart::FieldType::Enum: {
-            std::string out = "enum<";
-            out += scalar_name(field.elem);
-            out += "> { ";
-            bool first = true;
-            for (const dart::SchemaField::Option& option : field.variants) {
-                if (!first) out += ", ";
-                first = false;
-                out += option.name + "=" + std::to_string(option.value);
-            }
-            out += " }";
-            return out;
-        }
-        default:
-            return scalar_name(field.kind);
-    }
-}
-
-/* Spell the reflected field table back as compile-ready DSL (the flat table is
- * depth-first: a struct's members directly follow it one level deeper). Commas between
- * fields are optional in the DSL, so fields self-delimit with whitespace. A BARE-TYPE
- * root (a topic typed `bool` rather than a struct: one anonymous field, no root name)
- * spells as the type alone, which is the DSL's bare form. */
-std::string schema_dsl(const dart::SchemaInfo& info) {
-    if (info.name.empty() && info.fields.size() == 1 && info.fields[0].name.empty())
-        return type_dsl(info.fields[0]);
-    std::string out = info.name.empty() ? std::string("T") : info.name;
-    out += " { ";
-    uint16_t open = 0;
-    for (const dart::SchemaField& field : info.fields) {
-        while (open > field.depth) {
-            out += "} ";
-            --open;
-        }
-        out += field.name;
-        out += ": ";
-        if (field.kind == dart::FieldType::Struct) {
-            out += "{ ";
-            ++open;
-            continue;
-        }
-        out += type_dsl(field);
-        out += " ";
-    }
-    while (open) {
-        out += "} ";
-        --open;
-    }
-    out += "}";
-    return out;
 }
 
 /* how one presented field encodes on the wire (aligned 1:1 with the FieldDef table) */
