@@ -5,10 +5,9 @@
  *
  * Codec note: encode/decode go through the embedded C serialize API (dart::detail::
  * dart_get_* / dart_set_* on raw buffers) rather than a re-implementation; the public
- * Schema::raw() is the sanctioned bridge to it. Write-side handles are TYPED with a
- * schema rebuilt to DSL from the reflected field table: an identical structure compiles
- * to the identical canonical wire, hence the identical hash, so the mesh's schema gate
- * sees the owner's own type and never a foreign one.
+ * Schema::raw() is the sanctioned bridge to it. Write-side handles are TYPED with the
+ * provider's own schema, copied off the node's reflection (dart::Entity carries owned
+ * Schema values), so the mesh's schema gate sees the owner's type and never a foreign one.
  *
  * Threading: every MeshPort entry runs on the logic thread. The node's service thread
  * only touches per-record slots behind their own mutex (variable on_change, task
@@ -16,7 +15,6 @@
  * taken here.
  * Records are never destroyed while the node lives, so handler captures stay valid. */
 #include "dart_mesh.h"
-#include "schema_dsl.h"
 
 #include "dart.hpp"
 
@@ -84,19 +82,20 @@ struct EncField {
  * write side never builds them (a wire value is one scalar), so encode skips them and
  * the RMW base preserves the owner's aggregate bytes untouched. `prefix` roots every
  * path under one presented segment (a task's `progress.` / `result.` groups). */
-void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
+void build_fields(const dart::Schema& schema, std::vector<FieldDef>& out,
                   std::vector<EncField>* enc, const char* prefix = "") {
     std::vector<std::string> stack;
-    for (const dart::SchemaField& field : info.fields) {
+    dart::Schema::Field field;
+    for (uint16_t i = 0; schema.field_at(i, field); ++i) {
         stack.resize(field.depth);
         std::string path = prefix;
         for (const std::string& segment : stack) path += segment + ".";
-        path += field.name;
+        path.append(field.name.data(), field.name.size());
         /* a BARE schema's one anonymous field under a prefix presents as the prefix
            itself (a bare-f64 progress reads `@task.progress`) */
         if (!path.empty() && path.back() == '.') path.pop_back();
         if (field.kind == dart::FieldType::Struct) {
-            stack.push_back(field.name);
+            stack.emplace_back(field.name);
             continue;
         }
         FieldDef def;
@@ -105,11 +104,13 @@ void build_fields(const dart::SchemaInfo& info, std::vector<FieldDef>& out,
             case dart::FieldType::Bool: def.shape = Shape::Bool; break;
             case dart::FieldType::String:
             case dart::FieldType::VString: def.shape = Shape::Text; break;
-            case dart::FieldType::Enum:
+            case dart::FieldType::Enum: {
                 def.shape = Shape::Enum;
-                for (const dart::SchemaField::Option& option : field.variants)
-                    def.variants.push_back({option.name, option.value});
+                dart::Schema::EnumVariant option;
+                for (uint16_t k = 0; schema.enum_variant(i, k, option); ++k)
+                    def.variants.push_back({std::string(option.name), option.value});
                 break;
+            }
             case dart::FieldType::Array:
             case dart::FieldType::VArray:
                 def.shape = Shape::List;
@@ -269,13 +270,14 @@ struct Rec {
     EntityKind kind = EntityKind::Topic;
     std::string name;
 
-    /* the owner's reflected schema(s) + our faithful recompilations */
-    dart::SchemaInfo schema;                    /* value / payload / request */
-    dart::SchemaInfo rsp_schema;                /* FUNCTION / TASK: response */
-    dart::SchemaInfo prg_schema;                /* TASK: progress */
-    std::optional<dart::Schema> compiled;
-    std::optional<dart::Schema> rsp_compiled;
-    std::optional<dart::Schema> prg_compiled;
+    /* the provider's schemas, owned copies off the reflection (nullopt = untyped) */
+    std::optional<dart::Schema> compiled;       /* value / payload / request */
+    std::optional<dart::Schema> rsp_compiled;   /* FUNCTION / TASK: response */
+    std::optional<dart::Schema> prg_compiled;   /* TASK: progress */
+    /* the entity's mesh generation the handles were created at (0 = none yet): it moves
+     * with the provider's identity, any schema, or an attr, and refresh() retires the
+     * handles when it does */
+    uint64_t generation = 0;
 
     /* the field vocabulary as the compiler sees it, plus per-field encode info.
      * `rsp_raw` / `prg_raw` are the DECODE tables (the schemas' own unprefixed
@@ -366,13 +368,8 @@ struct DartMesh::Impl {
     std::atomic<bool> dirty{true};
     std::vector<EntityDef> entities;
     std::string signature;
-    /* per-entity reflected schemas from the last refresh, keyed like recs */
+    /* the mesh's entities from the last refresh, keyed like recs */
     std::map<std::string, dart::Entity> folded;
-    /* per-entity PROVIDING peer ids from the last refresh that saw the entity: the
-     * incarnation identity a provider restart is detected by (a restarted node gets a
-     * fresh peer id). Keys persist while an entity is absent, so a down-then-up
-     * transition still compares the old incarnation against the new one. */
-    std::map<std::string, std::vector<uint32_t>> providers;
 
     std::vector<uint64_t> viewed_pages;
 
@@ -497,76 +494,16 @@ bool DartMesh::refresh() {
     if (!impl_->node || !impl_->node->valid()) return false;
     impl_->dirty.store(false, std::memory_order_relaxed);
 
-    /* fold every LIVE peer's advertised entities by (kind, name). The provider side
-     * owns the schema and reliability; consumers only widen writable/forceable.
-     * A DROPPED peer — silent past its timeout, its slot lingering only for a
-     * same-UUID resume — must NOT feed the fold: after a node restart the dead
-     * incarnation's stale detail cache still advertises the OLD schemas, and folding
-     * them beside (or ahead of) the live incarnation's makes the HMI keep or retake
-     * the old type against a re-typed provider — every match then refuses with
-     * schema-mismatch, values never flow, and the signature flaps as the two
-     * incarnations trade wins, recompiling in a storm. Down means down. */
+    /* the mesh as the node folds it: one entity per (kind, name) across every LIVE peer
+     * (a dropped peer never counts: down means down), the provider's schemas, and a
+     * GENERATION that moves with the provider's identity, any schema, or an attr. An entity
+     * nobody provides and only this node consumes is our own leftover handle, not the mesh. */
     std::map<std::string, dart::Entity> fold;
-    std::map<std::string, std::vector<uint32_t>> providers_now;
-    for (const dart::Peer& peer : impl_->node->peers()) {
-        if (!peer.active) continue;
-        for (dart::Entity& entity : impl_->node->peer_entities(peer.id)) {
-            if (entity.name.empty() || entity.name.compare(0, 2, "0x") == 0)
-                continue;   /* details not fetched yet; the next refresh sees them */
-            const std::string key = rec_key(kind_of(entity.kind), entity.name);
-            if (entity.provides) providers_now[key].push_back(peer.id);
-            auto it = fold.find(key);
-            if (it == fold.end()) {
-                fold.emplace(key, std::move(entity));
-                continue;
-            }
-            dart::Entity& kept = it->second;
-            kept.writable = kept.writable || entity.writable;
-            kept.forceable = kept.forceable || entity.forceable;
-            const bool better_schema =
-                !entity.schema.empty() &&
-                (kept.schema.empty() || (entity.provides && !kept.provides));
-            if (better_schema) {
-                kept.schema = std::move(entity.schema);
-                kept.schema_hash = entity.schema_hash;
-                kept.rsp_schema = std::move(entity.rsp_schema);
-                kept.rsp_schema_hash = entity.rsp_schema_hash;
-                kept.progress_schema = std::move(entity.progress_schema);
-                kept.progress_schema_hash = entity.progress_schema_hash;
-                kept.cancellable = entity.cancellable;
-                kept.reliable = entity.reliable;
-                kept.provides = kept.provides || entity.provides;
-            }
-        }
-    }
-
-    /* A PROVIDER INCARNATION CHANGED (its node restarted: a fresh peer id took over
-     * the name, with no overlap with the ids that provided it before). The standing
-     * pattern lanes go deaf across that boundary even when the schema is unchanged,
-     * so retire them and let the recompile's apply() re-create fresh ones. A second
-     * provider joining, or one of several leaving, keeps an id in common and does
-     * not retire. Keys persist while an entity is absent, so a restart with a down
-     * window compares across the gap. */
-    bool provider_changed = false;
-    for (auto& item : providers_now) {
-        auto last = impl_->providers.find(item.first);
-        if (last != impl_->providers.end() && !last->second.empty()) {
-            bool overlap = false;
-            for (uint32_t id : item.second)
-                if (std::find(last->second.begin(), last->second.end(), id) !=
-                    last->second.end())
-                    overlap = true;
-            if (!overlap) {
-                auto rec_it = impl_->recs.find(item.first);
-                if (rec_it != impl_->recs.end() &&
-                    (rec_it->second->var || rec_it->second->task || rec_it->second->fn)) {
-                    impl_->log("provider restarted, re-subscribing", item.first);
-                    impl_->retire_rec_patterns(*rec_it->second);
-                    provider_changed = true;
-                }
-            }
-        }
-        impl_->providers[item.first] = std::move(item.second);
+    for (dart::Entity& entity : impl_->node->mesh()) {
+        if (entity.name.empty() || entity.name.compare(0, 2, "0x") == 0)
+            continue;   /* details not fetched yet; the next refresh sees them */
+        if (!entity.providers && entity.from == impl_->opts.node_name) continue;
+        fold.emplace(rec_key(kind_of(entity.kind), entity.name), std::move(entity));
     }
 
     std::vector<EntityDef> next;
@@ -581,8 +518,8 @@ bool DartMesh::refresh() {
         def.forceable = def.kind == EntityKind::Variable && entity.forceable;
         /* the schema's root type name is the only name a type has (spec 2.2); the hash
          * is its identity, so two entities of one type fold to one type-table entry */
-        def.type_name = entity.schema.name;
-        def.schema_hash = entity.schema_hash;
+        def.type_name = std::string(entity.schema.name());
+        def.schema_hash = entity.schema.hash();
         build_fields(entity.schema, def.fields, nullptr);
         if (def.kind == EntityKind::Function)
             build_fields(entity.rsp_schema, def.rsp_fields, nullptr);
@@ -595,40 +532,29 @@ bool DartMesh::refresh() {
         signature += def.forceable ? "+f" : "";
         signature += def.cancellable ? "+c" : "";
         signature += entity.reliable ? "+r" : "";
-        signature += ":" + std::to_string(entity.schema_hash);
-        signature += "/" + std::to_string(entity.rsp_schema_hash);
-        signature += "/" + std::to_string(entity.progress_schema_hash);
+        signature += ":" + std::to_string(entity.generation);
         signature += ";";
         next.push_back(std::move(def));
     }
-    /* a provider restart with an unchanged signature still reports change: the
-     * retired handles need the recompile's apply() to re-create them */
-    if (signature == impl_->signature) return provider_changed;
+    if (signature == impl_->signature) return false;
 
-    /* an entity that came back with a NEW type: retire the rec's typed handles and
-     * codec now, so the recompile this refresh triggers re-subscribes with the new
-     * schema (ensure_rec refills from `folded`, ensure_consumption recreates the
-     * handles; Topic::retire releases the name — the ctor refuses a live same-name
-     * create under a different schema). The Rec object itself stays: service-thread
-     * handler captures remain valid, and the old handlers went with their channels. */
+    /* an entity whose GENERATION moved (a provider restarted, re-typed, or appeared):
+     * retire the rec's handles and codec now, so the recompile this refresh triggers
+     * re-subscribes with the current type (ensure_rec refills from `folded`,
+     * ensure_consumption recreates the handles; Topic::retire releases the name). The
+     * Rec object itself stays: service-thread handler captures remain valid, and the
+     * old handlers went with their channels. */
     for (const auto& item : fold) {
         auto it = impl_->recs.find(item.first);
         if (it == impl_->recs.end()) continue;
         Rec& rec = *it->second;
-        const bool retyped =
-            (rec.schema.hash != 0 && rec.schema.hash != item.second.schema_hash) ||
-            (rec.rsp_schema.hash != 0 && rec.rsp_schema.hash != item.second.rsp_schema_hash) ||
-            (rec.prg_schema.hash != 0 &&
-             rec.prg_schema.hash != item.second.progress_schema_hash);
-        if (!retyped) continue;
-        impl_->log("entity re-typed, re-subscribing with the new schema", item.first);
+        if (rec.generation == 0 || rec.generation == item.second.generation) continue;
+        impl_->log("entity changed, re-subscribing with the current type", item.first);
         if (rec.topic) rec.topic->retire();
         rec.topic.reset();
         rec.topic_pub = false;
         impl_->retire_rec_patterns(rec);
-        rec.schema = {};
-        rec.rsp_schema = {};
-        rec.prg_schema = {};
+        rec.generation = 0;
         rec.compiled.reset();
         rec.rsp_compiled.reset();
         rec.prg_compiled.reset();
@@ -665,7 +591,7 @@ Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
         Rec& rec = *it->second;
         /* the compiler's field tables are the current truth; keep ours aligned */
         rec.fields = def.fields;
-        if (!rec.compiled && folded_it != folded.end() && !folded_it->second.schema.empty())
+        if (rec.generation == 0 && folded_it != folded.end())
             fill_rec_schema(rec, folded_it->second);
         return &rec;
     }
@@ -679,43 +605,29 @@ Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
     return out;
 }
 
-/* (Re)build a record's compiled schemas + encode table from the latest reflection.
- * Runs at creation and again whenever a record still lacks a schema one has arrived
- * for: an entity that reflected untyped and typed later, or one whose type CHANGED
- * (refresh retired its old codec and handles, so the next apply() lands here). */
-void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& folded_entity) const {
-    rec.schema = folded_entity.schema;
-    rec.rsp_schema = folded_entity.rsp_schema;
-    rec.prg_schema = folded_entity.progress_schema;
-    const std::string key = rec_key(rec.kind, rec.name);
-    if (!rec.schema.empty()) {
-        std::string err;
-        rec.compiled = dart::Schema::compile(schema_dsl(rec.schema), &err);
-        if (!rec.compiled) log("schema rebuild failed", key + ": " + err);
-    }
-    if (!rec.rsp_schema.empty()) {
-        std::string err;
-        rec.rsp_compiled = dart::Schema::compile(schema_dsl(rec.rsp_schema), &err);
-        if (!rec.rsp_compiled)
-            log("response schema rebuild failed", key + ": " + err);
+/* Take a record's schemas + encode table from the latest reflection. Runs at creation
+ * and again after refresh() retired a changed entity's handles (the next apply() lands
+ * here with the current type). */
+void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& entity) const {
+    rec.generation = entity.generation;
+    rec.compiled.reset();
+    rec.rsp_compiled.reset();
+    rec.prg_compiled.reset();
+    if (!entity.schema.empty()) rec.compiled = entity.schema;
+    if (!entity.rsp_schema.empty()) {
+        rec.rsp_compiled = entity.rsp_schema;
         rec.rsp_raw.clear();
-        build_fields(rec.rsp_schema, rec.rsp_raw, nullptr);
+        build_fields(entity.rsp_schema, rec.rsp_raw, nullptr);
     }
-    if (!rec.prg_schema.empty()) {
-        std::string err;
-        rec.prg_compiled = dart::Schema::compile(schema_dsl(rec.prg_schema), &err);
-        if (!rec.prg_compiled)
-            log("progress schema rebuild failed", key + ": " + err);
+    if (!entity.progress_schema.empty()) {
+        rec.prg_compiled = entity.progress_schema;
         rec.prg_raw.clear();
-        build_fields(rec.prg_schema, rec.prg_raw, nullptr);
+        build_fields(entity.progress_schema, rec.prg_raw, nullptr);
     }
     if (rec.compiled) {
         rec.enc.clear();
         std::vector<FieldDef> unused;
-        build_fields(rec.schema, unused, &rec.enc);
-        /* a faithful rebuild reproduces the owner's canonical wire, hence its hash */
-        if (rec.compiled->hash() != rec.schema.hash)
-            log("rebuilt schema hash differs from the reflected one", key);
+        build_fields(*rec.compiled, unused, &rec.enc);
         /* the default request a function poll sends */
         if (rec.kind == EntityKind::Function) {
             rec.default_request.resize(dc::dart_schema_msg_min(rec.compiled->raw()));
