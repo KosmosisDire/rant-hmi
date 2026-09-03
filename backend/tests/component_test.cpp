@@ -1042,6 +1042,110 @@ void test_attr_vocabulary() {
     }
 }
 
+/* ---- WHO AUTHORS WHICH ATTRS (registry/attrs.h AttrOwner) ----
+ *
+ * An instance is one node with two owners: the PAGE places it (show, enabled, repeat,
+ * the box, aspect, origin, rotate — authored on the instance node) and the COMPONENT
+ * dresses it (everything else — authored on the root). Each side's attrs are refused
+ * on the other, named by the attr, and DROPPED from what is served, so the view never
+ * sees a field it must not honour. An element inside a component authors both. */
+void test_attr_owner() {
+    /* the served column: the seventeen placement rows are common and stamped; the rest
+       of the common set and every per-kind row is the component's */
+    {
+        const Json& table = attr_table_json();
+        std::set<std::string> placed;
+        for (const Json& row : table["common"])
+            if (row.value("owner", "") == "placement") placed.insert(row.value("name", ""));
+        CHECK_EQ(placed.size(), size_t(17));
+        CHECK(placed.count("show") && placed.count("enabled") && placed.count("repeat") &&
+              placed.count("left") && placed.count("bottom") && placed.count("h") &&
+              placed.count("maxH") && placed.count("aspect") && placed.count("originY") &&
+              placed.count("rotate"));
+        CHECK(!placed.count("clip") && !placed.count("shadow") && !placed.count("shadowX"));
+        for (const auto& [kind, rows] : table["perKind"].items())
+            for (const Json& row : rows)
+                CHECK_MSG(row.value("owner", "") == "component",
+                          kind + "." + row.value("name", "") + " is not the component's");
+        CHECK(attr_owner("show") == AttrOwner::Placement);
+        CHECK(attr_owner("surface") == AttrOwner::Component);
+        CHECK(attr_owner("nope") == AttrOwner::Component);
+    }
+
+    /* a component ROOT authoring the placement's half: one finding per attr on the
+       component, named by the attr (a transition follows its attr), and the template
+       root carries only the component's own dressing. An element inside still authors
+       both halves — it hides itself. */
+    {
+        Json root = {
+            {"version", 1}, {"next_id", 900},
+            {"components", Json::array({Json{
+                {"id", 650}, {"name", "Owner1"},
+                {"attrs", Json{{"show", "true"}, {"w", "10"}, {"surface", "#ffffff"}}},
+                {"transitions", Json{{"left", Json{{"ms", 100.0}}},
+                                     {"surface", Json{{"ms", 200.0}}}}},
+                {"children", Json::array({Json{
+                    {"id", 661}, {"kind", "frame"}, {"name", "scale"},
+                    {"attrs", Json{{"show", "false"}, {"surface", "#000000"}}}}})}}})},
+            {"pages", Json::array()},
+        };
+        Document document;
+        std::string error;
+        CHECK_MSG(document.adopt(std::move(root), error), error);
+        std::vector<Diag> diags;
+        Json registry = derive_registry(document, diags);
+        std::set<std::string> wheres;
+        for (const Diag& d : diags) {
+            CHECK_EQ(d.code, std::string("attr_owner"));
+            CHECK_EQ(d.node_id, uint64_t(650));
+            wheres.insert(d.where);
+        }
+        CHECK_EQ(diags.size(), size_t(3));
+        CHECK(wheres.count("show") && wheres.count("w") && wheres.count("transitions.left"));
+        const Json& tmpl = registry["components"][12]["template"];
+        CHECK(tmpl["attrs"].contains("surface"));
+        CHECK(!tmpl["attrs"].contains("show") && !tmpl["attrs"].contains("w"));
+        CHECK(tmpl["transitions"].contains("surface") && !tmpl["transitions"].contains("left"));
+        const Json& scale = tmpl["children"][0];
+        CHECK(scale["attrs"].contains("show") && scale["attrs"].contains("surface"));
+    }
+
+    /* an INSTANCE authoring the component's half: a finding on the instance, named by
+       the attr, and the page's row carries the placement alone */
+    {
+        Json root = {
+            {"version", 1}, {"next_id", 900},
+            {"components", Json::array()},
+            {"pages", Json::array({Json{
+                {"name", "Main"},
+                {"children", Json::array({Json{
+                    {"id", 700}, {"kind", "frame"}, {"type", "Button"}, {"name", "B"},
+                    {"attrs", Json{{"left", "22"}, {"surface", "#ff0000"},
+                                   {"show", "false"}}},
+                    {"transitions", Json{{"surface", Json{{"ms", 100.0}}},
+                                         {"left", Json{{"ms", 100.0}}}}},
+                    {"slots", Json::object()}}})}}})},
+        };
+        Document document;
+        std::string error;
+        CHECK_MSG(document.adopt(std::move(root), error), error);
+        std::vector<Diag> diags;
+        Json attrs = compile_page_attrs(document, diags, nullptr, nullptr, nullptr, nullptr);
+        std::set<std::string> wheres;
+        for (const Diag& d : diags) {
+            CHECK_EQ(d.code, std::string("attr_owner"));
+            CHECK_EQ(d.node_id, uint64_t(700));
+            wheres.insert(d.where);
+        }
+        CHECK_EQ(diags.size(), size_t(2));
+        CHECK(wheres.count("surface") && wheres.count("transitions.surface"));
+        const Json& row = attrs["700"];
+        CHECK(row["attrs"].contains("left") && row["attrs"].contains("show"));
+        CHECK(!row["attrs"].contains("surface"));
+        CHECK(row["transitions"].contains("left") && !row["transitions"].contains("surface"));
+    }
+}
+
 /* THE DISPLAY TIER GETS THE WHOLE UNIVERSE. What an attr may name is a fact about WHERE
  * the element sits, not about which kind of element it is: on a page it names the
  * variables in its lexical scope and the mesh, exactly as a flow on that element does;
@@ -1711,7 +1815,9 @@ void test_display_reference_index() {
             {"id", 970}, {"name", "Card"},
             {"locals", Json::array({Json{{"id", 971}, {"name", "value"},
                                          {"type", "Num"}, {"public", true}}})},
-            {"attrs", Json{{"w", "value"}}},
+            /* the root's own DRESSING reads the property: a placement attr (`w`) is
+               not the root's to author and would be refused, not indexed */
+            {"attrs", Json{{"radius", "value"}}},
             {"children", Json::array({
                 Json{{"id", 975}, {"kind", "frame"}, {"name", "bar"},
                      {"locals", Json::array({Json{{"id", 976}, {"name", "lvl"},
@@ -1779,6 +1885,7 @@ int main() {
     test_part_property_rules();
     test_empty_component();
     test_attr_vocabulary();
+    test_attr_owner();
     test_page_universe();
     test_per_copy_slots();
     test_transitions();

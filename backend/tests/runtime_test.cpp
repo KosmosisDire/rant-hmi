@@ -729,21 +729,28 @@ void test_enum_names() {
                                            {"to", {{"slot", "text"}}}}})}},
          })},
     };
-    /* a second label formats with text JOINING: enum x rendered as its name. Its
-       `enabled` compares the enum three ways: variant literals on either side, and
-       the backing integer read through .int(). */
+    /* a second label formats with text JOINING: enum x rendered as its name */
     Json fmt = {
         {"kind", "frame"},
         {"type", "Label"},
         {"name", "fmt"},
+        {"slots", Json{{"text", "\"Run \" + @gear.mode"}}},
+        {"flows", Json::array()},
+    };
+    /* a Toggle's Bool `value` compares the enum three ways: variant literals on either
+       side, and the backing integer read through .int(). A Bool SLOT, because an
+       instance's `enabled` is its own State attr on the display tier now, not a slot. */
+    Json cmp = {
+        {"kind", "frame"},
+        {"type", "Toggle"},
+        {"name", "cmp"},
         {"slots",
-         Json{{"text", "\"Run \" + @gear.mode"},
-              {"enabled",
+         Json{{"value",
                "@gear.mode == .fast || .stop == @gear.mode || @gear.mode.Int() == 1"}}},
         {"flows", Json::array()},
     };
     root["pages"].push_back(
-        Json{{"name", "Main"}, {"children", Json::array({label, fmt})}});
+        Json{{"name", "Main"}, {"children", Json::array({label, fmt, cmp})}});
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
@@ -754,6 +761,7 @@ void test_enum_names() {
                                : compiled.program.diagnostics[0].message);
     const uint64_t instance = json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     const uint64_t fmt_id = json_u64_or(document.root["pages"][0]["children"][1]["id"], 0);
+    const uint64_t cmp_id = json_u64_or(document.root["pages"][0]["children"][2]["id"], 0);
     Host state(compiled.program);
 
     /* the binding carries no authored render; the compiler appended the .name read */
@@ -780,7 +788,7 @@ void test_enum_names() {
               std::string(state.text(compiled.program, state.store.values[joined->cell])));
 
     /* enum equality three ways: `.fast` (2), the name "stop" (0), the integer 1 */
-    const SlotProgram* compared = slot_program_of(compiled.program, fmt_id, "enabled");
+    const SlotProgram* compared = slot_program_of(compiled.program, cmp_id, "value");
     if (!CHECK(compared != nullptr)) return;
     for (int64_t variant = 0; variant <= 2; ++variant) {
         seed_entity(state, compiled.program, "gear", 0,

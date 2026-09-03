@@ -33,16 +33,28 @@ AttrDef no_def_variants(const char* name, const char* note,
     return AttrDef{name, "Text", nullptr, note, css, std::move(variants)};
 }
 
-/* ---- the common set: honoured on any node, whatever it draws ---- */
+/* the PAGE's half of an instance (attrs.h AttrOwner): stamped on the rows below that a
+   placement authors, so the split is data every reader shares */
+AttrDef placement(AttrDef a) {
+    a.owner = AttrOwner::Placement;
+    return a;
+}
+
+/* ---- the common set: honoured on any node, whatever it draws ----
+ *
+ * SEVENTEEN of these are the PLACEMENT's (attrs.h AttrOwner): show, enabled, repeat,
+ * the box and its clamps, aspect, the origin point and rotate. The rest of the common
+ * set — clip and the shadow — dresses the node and is the component's on an instance,
+ * exactly as every per-kind attr below is. */
 const std::vector<AttrDef>& common_attrs_table() {
     static const std::vector<AttrDef> table = {
-        no_def("show", "Bool",
+        placement(no_def("show", "Bool",
                "absent = the node renders; false or Nil hides it and everything under it "
-               "(the node is not emitted at all, so it takes no room either)"),
-        no_def("repeat", "Num",
+               "(the node is not emitted at all, so it takes no room either)")),
+        placement(no_def("repeat", "Num",
                "absent = renders once; present, it renders that many copies (clamped to "
                "512), each seeing its own repeat.index/count/fraction cells and placing "
-               "itself, which is how a scale's ticks are authored"),
+               "itself, which is how a scale's ticks are authored")),
         no_def("clip", "Any",
                "absent = content may overflow the node's box and still draws; true clips "
                "to that box, a number clips to it rounded by that radius. Clipping is "
@@ -50,65 +62,65 @@ const std::vector<AttrDef>& common_attrs_table() {
                "is visible outside the box. A FRAME clips its children (a rounded pane "
                "whose child reaches the corner wants this); a TEXT clips itself, so "
                "`false` runs a one-line label past its box instead of ellipsising it"),
-        no_def("enabled", "Bool",
+        placement(no_def("enabled", "Bool",
                "absent = live; false or Nil dims the node and stops it taking gestures — "
                "UNKNOWN disables rather than enables, which is the fail-safe direction. It "
                "still SELECTS in the editor: a control you cannot operate is not a control "
-               "you cannot edit"),
+               "you cannot edit")),
 
         /* THE BOX, in canvas px: one static space, relative to the parent's origin. On a
            page that space is the 1408 x 792 artboard; inside a component it is the
            component's own design frame, which an instance's box scales per axis. An axis
            is authored EITHER from its near edge (`left` + `w`) or by BOTH edges (`right`
            joins in and the width follows them) — the far edge, once set, owns the size. */
-        no_def("left", "Num",
+        placement(no_def("left", "Num",
                "the ORIGIN POINT's position in canvas px from the parent's origin (with "
                "originX 0 that is the left edge). With `right` also set the two edges pin "
                "and the width follows them (`w` goes inert). Absent with `right` set the "
                "box anchors to the right edge instead; absent with `right` and `w` both "
                "absent the axis stretches to the parent; absent with `w` set pins to 0",
-               "left"),
-        no_def("top", "Num", "the origin point's vertical position in canvas px; as `left`",
-               "top"),
-        no_def("right", "Num",
+               "left")),
+        placement(no_def("top", "Num", "the origin point's vertical position in canvas px; as `left`",
+               "top")),
+        placement(no_def("right", "Num",
                "the RIGHT EDGE's inset from the parent's right edge, in canvas px. Setting "
                "it sizes the axis by its edges: with `left` too the width FOLLOWS them; "
                "alone, the box anchors right at `w`. No origin point rides an axis whose "
-               "far edge is pinned — `left` and `right` are then both plain edges", "right"),
-        no_def("bottom", "Num", "the BOTTOM EDGE's inset from the parent's bottom edge, in "
-               "canvas px; as `right`", "bottom"),
-        no_def("w", "Num",
+               "far edge is pinned — `left` and `right` are then both plain edges", "right")),
+        placement(no_def("bottom", "Num", "the BOTTOM EDGE's inset from the parent's bottom edge, in "
+               "canvas px; as `right`", "bottom")),
+        placement(no_def("w", "Num",
                "width in canvas px; absent = the axis stretches to the parent (both edges "
                "pinned) or, where `left` is set, the content's own width. Inert where "
-               "`left` and `right` pin both edges", "width"),
-        no_def("h", "Num", "height in canvas px; as `w`", "height"),
-        no_def("minW", "Num",
+               "`left` and `right` pin both edges", "width")),
+        placement(no_def("h", "Num", "height in canvas px; as `w`", "height")),
+        placement(no_def("minW", "Num",
                "the least width the box may render at; absent = none. Clamps whatever the "
                "axis derives — an authored `w`, pinned edges, an aspect ratio — and on an "
                "aspect-derived axis the clamp TRANSFERS through the ratio (see `aspect`), "
-               "which is what keeps an aspect-constrained box in shape", "min-width"),
-        no_def("maxW", "Num", "the most width the box may render at; absent = none; as "
-               "`minW`", "max-width"),
-        no_def("minH", "Num", "the least height the box may render at; as `minW`",
-               "min-height"),
-        no_def("maxH", "Num", "the most height the box may render at; as `minW`",
-               "max-height"),
-        def("aspect", "Num", 0.0,
+               "which is what keeps an aspect-constrained box in shape", "min-width")),
+        placement(no_def("maxW", "Num", "the most width the box may render at; absent = none; as "
+               "`minW`", "max-width")),
+        placement(no_def("minH", "Num", "the least height the box may render at; as `minW`",
+               "min-height")),
+        placement(no_def("maxH", "Num", "the most height the box may render at; as `minW`",
+               "max-height")),
+        placement(def("aspect", "Num", 0.0,
             "0 = free; > 0 derives the UNAUTHORED one of w/h from the authored one at "
             "that ratio (aspect-ratio). With both authored it is inert. THE RATIO HOLDS "
             "THROUGH THE CLAMPS: a min/max on the derived axis transfers back through "
             "the ratio and shrinks or grows the authored axis with it, the way a "
             "replaced element keeps its shape — so h + aspect + maxW is a box that "
-            "rides its height until the width bound bites, then scales down whole"),
-        def("originX", "Num", 0.0,
+            "rides its height until the width bound bites, then scales down whole")),
+        placement(def("originX", "Num", 0.0,
             "the node's OWN reference point on x, a fraction of its own width: the point "
             "`left` places and `rotate` turns about. 0 = its left edge, 0.5 = its middle",
-            "transform-origin"),
-        def("originY", "Num", 0.0, "the node's own reference point on y; as `originX`",
-            "transform-origin"),
-        no_def("rotate", "Num",
+            "transform-origin")),
+        placement(def("originY", "Num", 0.0, "the node's own reference point on y; as `originX`",
+            "transform-origin")),
+        placement(no_def("rotate", "Num",
                "absent = no rotation; degrees clockwise about (originX, originY). "
-               "Applied to the whole subtree, so an offset child orbits", "transform"),
+               "Applied to the whole subtree, so an offset child orbits", "transform")),
 
         /* THE SHADOW, one authored intent on every kind. What draws it differs — a box
            casts a box-shadow, ink casts a filter over its own outline — and the view picks
@@ -261,7 +273,8 @@ const std::map<std::string, const std::vector<AttrDef>*>& per_kind_table() {
 }
 
 Json attr_def_json(const AttrDef& a) {
-    Json row{{"name", a.name}, {"shape", a.shape}, {"note", a.note}};
+    Json row{{"name", a.name}, {"shape", a.shape}, {"note", a.note},
+             {"owner", a.owner == AttrOwner::Placement ? "placement" : "component"}};
     if (!a.default_value.is_null()) row["default"] = a.default_value;
     /* served so the inspector offers the transition button on exactly the rows a
        transition can ride — the same column the compiler validates against */
@@ -305,6 +318,12 @@ const char* attr_css(const std::string& kind, const std::string& attr_name) {
     for (const AttrDef& a : common_attrs())
         if (attr_name == a.name) return a.css;
     return "";
+}
+
+AttrOwner attr_owner(const std::string& attr_name) {
+    for (const AttrDef& a : common_attrs())
+        if (attr_name == a.name) return a.owner;
+    return AttrOwner::Component;
 }
 
 const Json& attr_table_json() {

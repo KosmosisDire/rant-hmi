@@ -494,7 +494,9 @@ void test_rename_by_index() {
     Json comp_op = Json::array({Json{
         {"op", "insert"}, {"parent", 0}, {"list", "components"},
         {"node", {{"name", "Counter"},
-                  {"attrs", {{"w", "count"}}},
+                  /* the root's dressing reads it: a placement attr on a root is
+                     refused, not indexed, so no rename could reach it */
+                  {"attrs", {{"radius", "count"}}},
                   {"interact", {{"primitive", "press"}}},
                   {"locals", Json::array({Json{{"name", "count"}, {"type", "Num"},
                                                {"public", true}}})},
@@ -509,7 +511,7 @@ void test_rename_by_index() {
     CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", count_id}, {"name", "tally"}}},
                     err), err);
     CHECK((*d.node(counter))["locals"][0]["name"] == "tally");
-    CHECK((*d.node(counter))["attrs"]["w"] == "tally");
+    CHECK((*d.node(counter))["attrs"]["radius"] == "tally");
     CHECK((*d.node(counter))["behavior"][0]["do"][0]["from"]["expr"] == "this.count + 1");
 
     /* a page attr that does not parse: the compile could not vouch for the name

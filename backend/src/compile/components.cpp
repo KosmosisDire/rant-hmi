@@ -101,6 +101,52 @@ void check_attr_names(const std::vector<AttrDecl>& attrs, const std::string& kin
     }
 }
 
+/* ---- WHO AUTHORS WHICH ATTRS (registry/attrs.h AttrOwner) ----
+ *
+ * An INSTANCE node authors its placement alone: the component's half is the type's,
+ * reached by exposing the field inside the component and never by an attr on the
+ * placement. A component ROOT authors the component's half alone: it has no place of
+ * its own, and whether a placement is shown, enabled or repeated is the page's call,
+ * never the widget's. Every other node — an element inside a component, a box on a
+ * page — authors both, the way a scale hides itself and a needle rotates. */
+enum class Authors { Both, PlacementOnly, ComponentOnly };
+
+Authors authors_of(const NodeDecl& node, bool root) {
+    if (root) return Authors::ComponentOnly;
+    return node.type.empty() ? Authors::Both : Authors::PlacementOnly;
+}
+
+bool may_author(Authors authors, const std::string& key) {
+    if (authors == Authors::Both) return true;
+    const bool placement = attr_owner(key) == AttrOwner::Placement;
+    return authors == Authors::PlacementOnly ? placement : !placement;
+}
+
+std::string owner_refusal(Authors authors, const std::string& key) {
+    return authors == Authors::PlacementOnly
+        ? "'" + key + "' is the component's: an instance places its component and sets "
+          "its inputs. To set it per placement, expose the field inside the component"
+        : "'" + key + "' is the placement's: a component's root has no place of its own, "
+          "and whether a placement is shown, enabled or repeated is the page's call — "
+          "author it on the instance";
+}
+
+/* the attrs this node may author; every other one is a finding named by the attr and is
+   DROPPED, so the served template and the page's rows carry only what the view honours */
+std::vector<AttrDecl> owned_attrs(const std::vector<AttrDecl>& attrs, Authors authors,
+                                  uint64_t node, Sink& sink) {
+    if (authors == Authors::Both) return attrs;
+    std::vector<AttrDecl> out;
+    for (const AttrDecl& attr : attrs) {
+        if (may_author(authors, attr.key)) {
+            out.push_back(attr);
+            continue;
+        }
+        sink.report(node, "attr_owner", owner_refusal(authors, attr.key), attr.key);
+    }
+    return out;
+}
+
 /* THE MESH AS THE DISPLAY TIER SEES IT, built once per compile: every readable field
  * under its '@' spelling, mapped to the cell the live frame publishes it in. The field
  * table comes through `feed_fields` — the wire tier's own rule, a function's RESPONSE
@@ -264,7 +310,8 @@ bool compile_transition_profile(const std::string& raw, const TemplateScope& sco
  * nothing to blend). A refused time drops the row; a refused profile drops only the
  * profile — the sweep still runs at the view's default ease. */
 Json compile_transitions(const NodeDecl& node, const std::string& kind,
-                         const TemplateScope& scope, uint64_t node_id, Sink& sink) {
+                         const TemplateScope& scope, uint64_t node_id, Sink& sink,
+                         Authors authors = Authors::Both) {
     Json out = Json::object();
     for (const TransitionDecl& authored : node.transitions) {
         const std::string where = "transitions." + authored.key;
@@ -272,6 +319,12 @@ Json compile_transitions(const NodeDecl& node, const std::string& kind,
             sink.report(node_id, "transition",
                         "'" + authored.key + "' is not an attr a '" + kind + "' node reads",
                         where);
+            continue;
+        }
+        /* a transition follows its attr's owner: nothing to blend on a field this node
+           cannot author */
+        if (!may_author(authors, authored.key)) {
+            sink.report(node_id, "attr_owner", owner_refusal(authors, authored.key), where);
             continue;
         }
         const char* css = attr_css(kind, authored.key);
@@ -653,11 +706,12 @@ std::vector<AttrDecl> shown_attrs(const std::vector<AttrDecl>& attrs,
  * node and a page node have in common, which is nearly all of it */
 Json compile_common(const NodeDecl& node, const std::string& kind,
                     const std::vector<AttrDecl>& attrs, const TemplateScope& scope,
-                    uint64_t node_id, Sink& sink, const char* unrecorded = nullptr) {
+                    uint64_t node_id, Sink& sink, Authors authors,
+                    const char* unrecorded = nullptr) {
     Json out{{"kind", kind},
              {"name", node.name},
              {"attrs", compile_attrs(attrs, scope, node_id, "", sink, unrecorded)}};
-    Json transitions = compile_transitions(node, kind, scope, node_id, sink);
+    Json transitions = compile_transitions(node, kind, scope, node_id, sink, authors);
     if (!transitions.empty()) out["transitions"] = std::move(transitions);
     if (kind == "path") {
         out["anchors"] = compile_anchors(node.anchors, scope, node_id, sink);
@@ -698,21 +752,24 @@ Json compile_interact(const NodeDecl& node, const TemplateScope& scope, uint64_t
  * component's own, addressed bare), then the names of the nodes below it joined with dots.
  * The scope for that path says what a bare identifier means inside it. */
 Json compile_node(const NodeDecl& node, const std::string& path, const Walk& walk,
-                  Sink& sink) {
+                  Sink& sink, bool root = false) {
     auto found = walk.scopes.find(path);
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
     check_attr_names(node.attrs, node.kind, node.id, sink);
+    /* the ROOT authors the component's half alone (a placement attr on it is refused
+       and dropped); a nested instance its placement alone; an element both */
+    const Authors authors = authors_of(node, root);
+    const std::vector<AttrDecl> owned = owned_attrs(node.attrs, authors, node.id, sink);
     bool folded = false;
     std::string authored;
-    const std::vector<AttrDecl> attrs =
-        shown_attrs(node.attrs, path, walk, folded, authored);
+    const std::vector<AttrDecl> attrs = shown_attrs(owned, path, walk, folded, authored);
     /* the folded `show` compiles with the switch wrapped in; the index rows must
        speak the DOCUMENT's text, so the authored expression records separately */
     if (!authored.empty())
         sink.record(node.id, authored, compile_template_expr(authored, scope));
 
-    Json out = compile_common(node, node.kind, attrs, scope, node.id, sink,
+    Json out = compile_common(node, node.kind, attrs, scope, node.id, sink, authors,
                               folded ? "show" : nullptr);
     if (node.kind != "frame") {
         /* a leaf holds neither children nor a gesture; the schema already refuses to store
@@ -741,19 +798,21 @@ Json compile_node(const NodeDecl& node, const std::string& path, const Walk& wal
  * holds and pulls each node's programs by id, exactly as it does for a page. Same nodes,
  * same scopes, same programs; a second key, not a second compiler. */
 void emit_node_attrs(const NodeDecl& node, const std::string& path, const Walk& walk,
-                     Sink& sink, Json& out) {
+                     Sink& sink, Json& out, bool root = false) {
     auto found = walk.scopes.find(path);
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
+    const Authors authors = authors_of(node, root);
+    const std::vector<AttrDecl> owned = owned_attrs(node.attrs, authors, node.id, sink);
     bool folded = false;
     std::string authored;
-    const std::vector<AttrDecl> attrs =
-        shown_attrs(node.attrs, path, walk, folded, authored);
+    const std::vector<AttrDecl> attrs = shown_attrs(owned, path, walk, folded, authored);
     if (!authored.empty())
         sink.record(node.id, authored, compile_template_expr(authored, scope));
     Json row{{"attrs",
               compile_attrs(attrs, scope, node.id, "", sink, folded ? "show" : nullptr)}};
-    Json transitions = compile_transitions(node, node.kind, scope, node.id, sink);
+    Json transitions =
+        compile_transitions(node, node.kind, scope, node.id, sink, authors);
     if (!transitions.empty()) row["transitions"] = std::move(transitions);
     if (node.kind == "path")
         row["anchors"] = compile_anchors(node.anchors, scope, node.id, sink);
@@ -860,7 +919,7 @@ Json compile_component(const ComponentDecl& component, Sink& sink) {
     /* events and behavior are already wire-shaped: DECLARED events as {name, params}
      * signatures (gesture events are never rows here — the primitive brings them) and
      * ordinary flow nodes the document compiler reads as data */
-    Json tmpl = compile_node(component.root, "", walk, sink);
+    Json tmpl = compile_node(component.root, "", walk, sink, true);
 
     /* THE DESIGN FRAME RIDES THE TYPE: a child's x/y/w/h are px of this box, and the
      * view divides by it to fit the instance's own box — so a served template without
@@ -1089,8 +1148,15 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
         TemplateScope scope = outer;
         take_vars(node.locals, scope.vars);
         check_attr_names(node.attrs, node.kind, node.id, sink);
-        Json row{{"attrs", compile_attrs(node.attrs, scope, node.id, "", sink)}};
-        Json transitions = compile_transitions(node, node.kind, scope, node.id, sink);
+        /* AN INSTANCE AUTHORS ITS PLACEMENT ALONE: the component's half (surface, clip,
+           the shadow, its ink) is the root's, and a placement that spelled one is told
+           the way in — expose the field — and has it dropped. A plain element authors
+           both halves, as it always did. */
+        const Authors authors = authors_of(node, false);
+        const std::vector<AttrDecl> owned = owned_attrs(node.attrs, authors, node.id, sink);
+        Json row{{"attrs", compile_attrs(owned, scope, node.id, "", sink)}};
+        Json transitions =
+            compile_transitions(node, node.kind, scope, node.id, sink, authors);
         if (!transitions.empty()) row["transitions"] = std::move(transitions);
         if (node.kind == "path")
             row["anchors"] = compile_anchors(node.anchors, scope, node.id, sink);
@@ -1130,7 +1196,7 @@ Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,
         component_root.addresses = pass.addresses;
         component_root.unknown_help = kIsolatedHelp;
         collect_tree(component.root, "", true, component_root, pass, quiet);
-        emit_node_attrs(component.root, "", pass, quiet, out);
+        emit_node_attrs(component.root, "", pass, quiet, out, true);
     }
     return out;
 }

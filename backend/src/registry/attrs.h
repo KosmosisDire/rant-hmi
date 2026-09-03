@@ -32,6 +32,18 @@
 
 namespace hmi {
 
+/* WHO AUTHORS AN ATTR ON AN INSTANCE. An instance is one node with two owners: the PAGE
+ * places it (where it stands, how big, whether it is shown, enabled or repeated), and
+ * the COMPONENT dresses it (its surface, its clip, its shadow, what its ink says). A
+ * placement attr is authored on the instance node and refused on a component's root — a
+ * component has no place of its own, and hiding or disabling a placement is never the
+ * widget's call. A component attr is authored on the root and never offered on the
+ * instance: a page that wants it per placement gets it EXPOSED as an input, which is the
+ * one way in. Elements INSIDE a component author both halves — a scale hides itself,
+ * a needle rotates. "If questionable, hide it": anything not clearly the page's is the
+ * component's. */
+enum class AttrOwner { Placement, Component };
+
 struct AttrDef {
     const char* name;
     const char* shape;         /* num | bool | text | color | icon | list | map */
@@ -48,6 +60,9 @@ struct AttrDef {
      * `cap`): served as a real column so the inspector's enum picker reads data rather
      * than parsing the note's prose. Empty = free text. */
     std::vector<std::string> variants;
+    /* which of an instance's two owners authors this one (see AttrOwner); served as a
+     * real column so the inspector splits its rows by data, not by a hand-kept list */
+    AttrOwner owner = AttrOwner::Component;
 };
 
 /* The declared list of node kinds: frame, text, icon, path. This is NOT a second
@@ -72,8 +87,14 @@ bool attr_known(const std::string& kind, const std::string& attr_name);
  * property, nothing to transition */
 const char* attr_css(const std::string& kind, const std::string& attr_name);
 
+/* the owner of one attr. Placement is a property of the NAME alone — every placement
+ * attr is common to all kinds — so no kind is asked; an unknown name is the
+ * component's, which is the half that never reaches an instance. */
+AttrOwner attr_owner(const std::string& attr_name);
+
 /* the served wire shape, carried in the snapshot next to `lang` (app.cpp) exactly like
- * `builtins`: {"kinds": [...], "common": [AttrDef...], "perKind": {kind: [AttrDef...]}}.
+ * `builtins`: {"kinds": [...], "common": [AttrDef...], "perKind": {kind: [AttrDef...]}}, every
+ * row carrying its `owner` ("placement" | "component").
  * Never changes at runtime, so served once and cached like builtin_registry(). */
 const Json& attr_table_json();
 

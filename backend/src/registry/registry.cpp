@@ -260,13 +260,6 @@ Json appends_slot(const char* slot, const char* expression, const char* keep) {
  *   textSize
  *   controlRadius  corner rounding of the control's own shape; the root's `radius`
  *                 rounds the box around it */
-Json state_slots() {
-    return Json::array({
-        slot("visible", "Bool", true, "config"),
-        slot("enabled", "Bool", true, "config"),
-    });
-}
-
 Json box_slots() {
     return Json::array({
         slot("surface", "Color", "#00000000", "frame", "color"),
@@ -276,21 +269,15 @@ Json box_slots() {
     });
 }
 
-Json tile_base() {
-    Json out = state_slots();
-    for (const Json& s : box_slots()) out.push_back(s);
-    return out;
-}
+Json tile_base() { return box_slots(); }
 
 /* the root frame's own attrs, reading the box properties above. Every built-in starts
- * from this, so "the box around the content" is one expression set in one place. */
+ * from this, so "the box around the content" is one expression set in one place.
+ * NOTHING OF THE PLACEMENT'S is here (registry/attrs.h AttrOwner): whether an instance
+ * is shown, enabled or repeated, and where it stands, is the page's to author on the
+ * instance node, and a root that spelled `show` would be refused at compile. */
 Json box_attrs() {
-    return Json{{"show", "visible"},
-                /* the fail-safe pair: `visible` decides whether it is drawn at all,
-                   `enabled` whether it may be operated. Both are ordinary slots, so both
-                   bind — an interlock reaches either one through a feed. */
-                {"enabled", "enabled"},
-                {"surface", "surface"},
+    return Json{{"surface", "surface"},
                 {"border", "border"},
                 {"borderW", "borderW"},
                 {"radius", "radius"}};
