@@ -1041,12 +1041,10 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
             sawCell(state, key, JSON.stringify(live ?? null));
             if (live !== undefined && live !== null) return live;
           }
-          const instance = editor.store.nodeAt(node.owner);
-          let at: Json = instance?.slots;
-          for (const segment of name.split(".")) {
-            if (!at || typeof at !== "object" || Array.isArray(at)) { at = undefined; break; }
-            at = at[segment];
-          }
+          /* the authored value: the instance's `slots` is FLAT, keyed by the input */
+          const slots = editor.store.nodeAt(node.owner)?.slots;
+          const at: Json = slots && typeof slots === "object" && !Array.isArray(slots)
+            ? (slots as Record<string, Json>)[name] : undefined;
           if (at !== undefined) return at;
           return node.type?.slots.find((s) => s.name === name)?.default ?? null;
         };

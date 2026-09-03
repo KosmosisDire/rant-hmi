@@ -174,13 +174,13 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 20, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 21, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
-check(snapshot.registry.components.length === 12, "twelve components");
+check(snapshot.registry.components.length === 10, "ten components");
 /* the built-ins' editable document form rides beside the derived registry */
-check(Array.isArray(snapshot.builtins) && snapshot.builtins.length === 12,
-      "the snapshot serves the twelve built-ins' document form");
+check(Array.isArray(snapshot.builtins) && snapshot.builtins.length === 10,
+      "the snapshot serves the ten built-ins' document form");
 /* the closed attr vocabulary: served once, next to `lang`, never changing at runtime —
    the node inspector's Attrs section reads exactly this */
 check(Array.isArray(snapshot.attr_table?.kinds) &&
@@ -236,8 +236,10 @@ check(frameNamed(page, "Main")?.attrs?.surface === "$surface",
 const statusFrame = frameNamed(page, "Status group");
 check(statusFrame !== null, "the default document seeds a demo frame");
 check(
-  statusFrame.children.length === 2 && statusFrame.children.every((c) => c.type),
-  "the frame groups two instances — an instance is a frame that names a component",
+  statusFrame.children.length === 2 &&
+    statusFrame.children.some((c) => c.kind === "text" && !c.type) &&
+    statusFrame.children.some((c) => c.type === "Toggle"),
+  "the frame groups a page text and an instance — an instance is a frame that names a component",
 );
 
 const toggleChild = statusFrame.children.find((c) => c.type === "Toggle");
@@ -345,7 +347,7 @@ ws.send(JSON.stringify({
     op: "insert", parent: 0, list: "components",
     node: {
       name: "Pill",
-      locals: [{ name: "text", type: "Text", init: "go", group: "appearance", public: true }],
+      locals: [{ name: "text", type: "Text", init: "go", public: true }],
       attrs: { surface: "'#222222'" },
       children: [
         { kind: "frame", name: "body",
@@ -432,8 +434,8 @@ const echo = (ops) => {
   store.apply(store.version() + 1, ops);
   draw();
 };
-/* These checks drive two ordinary NUMBER SLOTS (radius and borderW, base frame slots
-   every type carries). Nothing about what is being proved depends on which two: these are
+/* These checks drive two ordinary NUMBER INPUTS (decimals and textSize, two the
+   Readout declares). Nothing about what is being proved depends on which two: these are
    reconciliation rules — same node, new value, no rebuild; focus found by document
    address rather than tree position — and they need any two standing numeric controls.
    Each echo spreads the CURRENT slots so an earlier check's write survives.
@@ -453,18 +455,18 @@ check(sidebar.querySelectorAll("input").length > 0, "the inspector built control
 
 /* 1. a value echo moves the value and nothing else */
 const shapeBefore = inspectorShape(editor);
-const widthField = slotInput("radius");
+const widthField = slotInput("decimals");
 sidebar.scrollTop = 140;
-echoSlot("radius", 321);
+echoSlot("decimals", 321);
 check(inspectorShape(editor) === shapeBefore, "a value echo does not move the inspector's shape");
-check(slotInput("radius") === widthField, "a value echo keeps the very same input node");
+check(slotInput("decimals") === widthField, "a value echo keeps the very same input node");
 check(widthField.value === "321", "a value echo assigns the new value, got " + widthField.value);
 check(sidebar.scrollTop === 140, "a value echo leaves scroll alone, got " + sidebar.scrollTop);
 
 /* 2. the bug the old focus restore caused: a remote change to the field you are standing
       in was overwritten by the stale local copy, so the inspector looked frozen */
 widthField.focus();
-echoSlot("radius", 654);
+echoSlot("decimals", 654);
 check(widthField.value === "654", "a remote change reaches a FOCUSED field, got " + widthField.value);
 check(document.activeElement === widthField, "and the field keeps focus");
 
@@ -473,7 +475,7 @@ check(document.activeElement === widthField, "and the field keeps focus");
       document is legitimately behind the author for one round trip, and repainting
       it would flick every control to pre-edit state. The settle render lands it. */
 syncWhen(() => false);
-echoSlot("radius", 777);
+echoSlot("decimals", 777);
 check(widthField.value === "654",
       "a gated sync leaves every control alone, got " + widthField.value);
 syncWhen(() => true);
@@ -544,7 +546,7 @@ fire(rebuiltLabel, "change");
 
 /* 5. an insert that puts controls ABOVE the focused one must not redirect focus into a
       different control, which is exactly what a numeric DOM path would do */
-const heightField = slotInput("borderW");
+const heightField = slotInput("textSize");
 heightField.focus();
 echo([
   {
@@ -554,8 +556,8 @@ echo([
     node: { id: 9002, name: "tmp2", type: "Num", init: 0, persist: false },
   },
 ]);
-check(slotInput("borderW") !== heightField, "the second insert rebuilt the inspector");
-check(document.activeElement === slotInput("borderW"),
+check(slotInput("textSize") !== heightField, "the second insert rebuilt the inspector");
+check(document.activeElement === slotInput("textSize"),
       "focus follows the key past inserted controls");
 check(
   document.activeElement.closest(".value-box") !== null,
@@ -564,10 +566,10 @@ check(
 
 /* 6. the same batch changes the focused field AND the structure. Restoring the caret must
       not restore the VALUE with it: the field was not dirty, so what the echo carries wins */
-const focusedWidth = slotInput("radius");
+const focusedWidth = slotInput("decimals");
 focusedWidth.focus();
 echo([
-  { op: "set_prop", node: readout.id, key: "slots", value: { ...slotsNow(), radius: 777 } },
+  { op: "set_prop", node: readout.id, key: "slots", value: { ...slotsNow(), decimals: 777 } },
   {
     op: "insert",
     parent: readout.id,
@@ -575,12 +577,12 @@ echo([
     node: { id: 9003, name: "tmp3", type: "Num", init: 0, persist: false },
   },
 ]);
-check(slotInput("radius") !== focusedWidth, "the mixed batch rebuilt the inspector");
+check(slotInput("decimals") !== focusedWidth, "the mixed batch rebuilt the inspector");
 check(
-  slotInput("radius").value === "777",
-  "a rebuild with focus held still shows the echoed value, got " + slotInput("radius").value,
+  slotInput("decimals").value === "777",
+  "a rebuild with focus held still shows the echoed value, got " + slotInput("decimals").value,
 );
-check(document.activeElement === slotInput("radius"), "and the caret is still in that field");
+check(document.activeElement === slotInput("decimals"), "and the caret is still in that field");
 document.activeElement = null;
 
 /* the interpreter's own rules: Nil poisons, division by zero is Nil, not a trap */
@@ -1007,8 +1009,6 @@ check(instanceLabels.includes(humanName("value")) &&
         instanceLabels.join(","));
 check(!instanceLabels.includes(humanName("shown")),
       "and not the synthesized per-element switches");
-check(instanceLabels.includes(humanName("surface")),
-      "the root's frame inputs are inputs like any other");
 const instanceAttrNames = instancePanel.host.querySelectorAll(".attr-row")
   .filter((row) => !row.classList.contains("slot-row"))
   .map((row) => row.querySelector(".attr-name")?.textContent);
@@ -1130,8 +1130,7 @@ store.apply(store.version() + 1, [
       name: "Lamp",
       events: [{ name: "tap", x: "bool" }],
       locals: [
-        { id: 9201, name: "tint", type: "Color", init: "#ff0000", group: "appearance",
-          public: true },
+        { id: 9201, name: "tint", type: "Color", init: "#ff0000", public: true },
       ],
       /* the component IS the root frame: its own layout and attrs, holding its children */
       layout: "free",
@@ -1608,13 +1607,13 @@ stageStore.load({
     name: "Stage",
     children: [
       { id: 901, kind: "frame", name: "Pane", type: "", attrs: {}, children: [
-          { id: 903, kind: "frame", type: "Panel", name: "Lamp", attrs: {},
+          { id: 903, kind: "frame", type: "Button", name: "Lamp", attrs: {},
             slots: { surface: "#123456" }, locals: [], feeds: [], flows: [] },
-          { id: 904, kind: "frame", type: "Label", name: "", attrs: {},
+          { id: 904, kind: "frame", type: "Button", name: "", attrs: {},
             slots: { text: "hi" }, locals: [], feeds: [], flows: [] },
         ] },
       { id: 902, kind: "frame", name: "Deck", type: "", attrs: {}, children: [
-          { id: 905, kind: "frame", type: "Panel", name: "Under", attrs: {},
+          { id: 905, kind: "frame", type: "Button", name: "Under", attrs: {},
             slots: {}, locals: [], feeds: [], flows: [] },
         ] },
     ],
@@ -2026,7 +2025,7 @@ check(row.style.background === "var(--t-accent)",
       "so a $token surface is an ordinary var(), resolved by the browser");
 check(stageNode("leaf", 903).style.background === "#123456",
       "an instance paints the surface it authors, through its component's own attr");
-check(stageNode("leaf", 905).style.background === "var(--t-surface)",
+check(stageNode("leaf", 905).style.background === "var(--t-accent)",
       "and falls back to the served type's own default");
 /* AN INSTANCE RENDERS ITS COMPONENT: the Label's own text leaf is real DOM inside it,
    reading the slot this placement authored */
@@ -2392,8 +2391,7 @@ check(stageNode("frame", 901) === heldAgain &&
      template node's rows reach its element. */
   const sweepType = {
     name: "Sweeper", design_w: 220, design_h: 110, events: [],
-    slots: [{ name: "value", shape: "Num", default: 0.2, group: "value",
-              smooth: 200, profile: "linear" }],
+    slots: [{ name: "value", shape: "Num", default: 0.2, smooth: 200, profile: "linear" }],
     template: { kind: "frame", name: "", attrs: {}, children: [
       /* the width transition's DURATION is an expression over the smoothed slot: what
          it must read is the TRUE value, never the eased picture of it */
@@ -2521,7 +2519,7 @@ check(stageNode("frame", 901) === heldAgain &&
   tEditor.registry = { version: 2, components: [{
     ...sweepType,
     slots: [...sweepType.slots,
-            { name: "raw", shape: "Num", group: "value", smooth: 200, profile: "linear" }],
+            { name: "raw", shape: "Num", smooth: 200, profile: "linear" }],
     template: { ...sweepType.template, children: [
       ...sweepType.template.children,
       { kind: "frame", name: "rawbar", attrs: { left: cell("slot:raw"), w: prog(0.1),
@@ -2692,7 +2690,7 @@ check(stageNode("frame", 901) === heldAgain &&
    ARE, but which parent and which index a drop means is arithmetic, and it is the element that
    makes tree dragging feel right or maddening. */
 {
-  const leaf = (id, name) => ({ id, kind: "frame", type: "Label", name,
+  const leaf = (id, name) => ({ id, kind: "frame", type: "Button", name,
                                  attrs: {}, slots: {}, locals: [], feeds: [], flows: [] });
   const frame = (id, name, children) => ({ id, kind: "frame", name, attrs: {}, children });
   /* Left[ A, Inner[ E ] ], Right[ C ], D */
@@ -2985,7 +2983,7 @@ check(stageNode("frame", 901) === heldAgain &&
               children: [
                 { id: 9810, kind: "frame", name: "body", attrs: {},
                   locals: [{ id: 9812, name: "glow_color", type: "Color", public: true,
-                             init: "#ff0000", group: "appearance" }],
+                             init: "#ff0000" }],
                   interact: { primitive: "press", params: { holdMs: "600" },
                               emits: { tap: "tap" } },
                   children: [{ id: 9811, kind: "text", name: "label",
@@ -3422,18 +3420,18 @@ check(stageNode("frame", 901) === heldAgain &&
         "a bearing in the dead arc belongs to the NEARER end, never wrapped");
 
   const toggleType = snapshot.registry.components.find((t) => t.name === "Toggle");
-  const panelType = snapshot.registry.components.find((t) => t.name === "Panel");
+  const buttonType = snapshot.registry.components.find((t) => t.name === "Button");
   const inst = (type, extra) => ({ id: 1, kind: "frame", type, name: "w", attrs: {},
                                    slots: {}, locals: [], flows: [], ...extra });
   check(operable(inst("Toggle"), toggleType) === true,
         "a Toggle's default behavior writes its unbound value: operable");
   check(operable(inst("Toggle", { slots: { value: "@switch.on" } }), toggleType) === false,
         "the same Toggle BOUND is a pure view of the machine: inert");
-  check(operable(inst("Panel"), panelType) === false,
-        "a Panel with no flows is a picture: inert");
-  check(operable(inst("Panel", { flows: [{ when: [{ kind: "event", name: "tap" }],
-                                           when_mode: "first", do: [] }] }),
-                 panelType) === true,
+  check(operable(inst("Button"), buttonType) === false,
+        "a Button with no flows is a picture: inert");
+  check(operable(inst("Button", { flows: [{ when: [{ kind: "event", name: "tap" }],
+                                            when_mode: "first", do: [] }] }),
+                 buttonType) === true,
         "an authored flow on an event makes any instance operable");
 
   const tStore = new DocStore();
@@ -3445,7 +3443,7 @@ check(stageNode("frame", 901) === heldAgain &&
       { id: 962, kind: "frame", type: "Toggle", name: "tog",
         attrs: { left: "264", top: "22", w: "132", h: "66" },
         slots: {}, locals: [], feeds: [], flows: [] },
-      { id: 963, kind: "frame", type: "Panel", name: "pan",
+      { id: 963, kind: "frame", type: "Button", name: "pan",
         attrs: { left: "440", top: "22", w: "264", h: "176" },
         slots: {}, locals: [], feeds: [], flows: [] },
     ] }],
@@ -3729,20 +3727,42 @@ check(stageNode("frame", 901) === heldAgain &&
         "while a plain number rides RAW, got " +
           JSON.stringify(lastSlots()?.value?.startAngle));
 
-  /* the enum slot's picker writes the QUOTED variant spelling — one rule, every tier */
-  draw4a();
-  fire(row4a("drag").querySelector(".vb-icon"), "click");
+  /* the enum slot's picker writes the QUOTED variant spelling — one rule, every tier.
+     A Button's `align` is the enum input (the Selector's drag mode is the component's
+     own now, not an input). */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: store.pages()[0].id, list: "children", node: {
+      id: 9801, kind: "frame", type: "Button", name: "btn4a", attrs: {},
+      slots: {}, locals: [], flows: [] } },
+  ]);
+  const ops4b = [];
+  const editor4b = {
+    ...editor4a,
+    selectedNode: () => store.nodeAt(9801),
+    selectedInstance: () => store.instance(9801),
+    apply: (ops) => {
+      ops4b.push(...ops);
+      store.apply(store.version() + 1, ops);
+    },
+  };
+  const panel4b = new Panel(new Element("aside"));
+  panel4b.render(inspectorShape(editor4b), (host) => renderInspector(host, editor4b));
+  const alignRow4b = panel4b.host.querySelectorAll(".attr-row.slot-row")
+    .find((r) => namedRow(r, "align")) ?? null;
+  check(alignRow4b !== null, "a Button's align is an enum input");
+  fire(alignRow4b.querySelector(".vb-icon"), "click");
   const ctx4a = document.body.children.find((n) => n.id === "ctx");
   const menu4a = ctx4a.children[0];
   const variant4a = (name) =>
     menu4a.querySelectorAll("button")
       .find((b) => (b.innerHTML ?? "").includes(">" + name + "</span>")) ?? null;
-  check(variant4a("radial") !== null && variant4a("linear") !== null,
+  check(variant4a("start") !== null && variant4a("center") !== null && variant4a("end") !== null,
         "the enum slot's picker lists the served variants");
-  fire(variant4a("radial"), "click");
-  check(lastSlots()?.value?.drag === "'radial'",
+  fire(variant4a("end"), "click");
+  const lastSlots4b = () => ops4b.findLast((o) => o.key === "slots");
+  check(lastSlots4b()?.value?.align === "'end'",
         "picking writes the quoted variant spelling, got " +
-          JSON.stringify(lastSlots()?.value?.drag));
+          JSON.stringify(lastSlots4b()?.value?.align));
 
   /* THE CASES DISCLOSURE arms on a clean top-level ?: chain and round-trips edits */
   echo4a("value", "@cage/plc/IO.temp > 5 ? 'hot' : 'cold'");
@@ -4276,9 +4296,8 @@ check(stageNode("frame", 901) === heldAgain &&
     { op: "insert", parent: 0, list: "components", node: {
       id: 9930, name: "Sweep4b", events: [],
       locals: [
-        { id: 9931, name: "rate", type: "Num", init: 1, group: "value", public: true },
-        { id: 9932, name: "tint", type: "Color", init: "#123456", group: "appearance",
-          public: true },
+        { id: 9931, name: "rate", type: "Num", init: 1, public: true },
+        { id: 9932, name: "tint", type: "Color", init: "#123456", public: true },
       ],
       attrs: {}, children: [], behavior: [] } },
   ]);

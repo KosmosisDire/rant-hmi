@@ -91,7 +91,7 @@ function strayAttrs(editor: Editor, element: Node,
 /* the divider between a kind's own attrs, the placement half that applies and the set
  * every kind shares: the existing row-label idiom (KIND, ADDRESS, DEFAULT, GROUP, ...),
  * not a new visual language */
-function attrGroupHeading(text: string): HTMLElement {
+export function attrGroupHeading(text: string): HTMLElement {
   return el("div", { class: "row" }, [el("span", { class: "row-label", text })]);
 }
 
@@ -203,8 +203,10 @@ function builtinVarRow(variable: Json, prefix: string): HTMLElement {
     el("div", { class: "row" }, [
       el("span", { class: "row-label", text: "INIT" }),
       el("span", { class: "value-static grow", text: literalText(variable?.init) }),
-      el("span", { class: "row-label", text: "SHOWN IN" }),
-      el("span", { class: "kw", text: String(variable?.group ?? "appearance") }),
+      ...(variable?.heading
+        ? [el("span", { class: "row-label", text: "HEADING" }),
+           el("span", { class: "kw", text: String(variable.heading) })]
+        : []),
     ]),
   ]);
 }
@@ -512,8 +514,8 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
   body.append(...interactSection(editor, comp as unknown as Node, "the component's own box"));
 
   /* 3. Variables: the component's own storage, and the PUBLIC ones are its interface —
-   *    what an instance shows while the component itself is selected. A variable that
-   *    belongs to one element is declared on that element. */
+   *    what every instance shows, in this order, under these headings. Only the root's
+   *    variables can be inputs: an element's are its private storage. */
   body.append(
     ...componentVarsSection(editor, comp.id, "comp-vars", () => at().locals ?? [],
                             "no variables yet"),
@@ -551,8 +553,7 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
    *    TYPE and nowhere else. Same numeric idiom the frame inspector's gap/pad fields
    *    use (panel.ts): a hand-built SlotSpec through the ordinary value editor. */
   const designField = (key: "design_w" | "design_h") => {
-    const spec: SlotSpec = { name: key, shape: "Num", default: key === "design_w" ? 240 : 120,
-                             group: "config" };
+    const spec: SlotSpec = { name: key, shape: "Num", default: key === "design_w" ? 240 : 120 };
     return valueEditor(spec, "Num", comp.id + ":" + key, () => at()[key],
                        (v) => editor.apply([{ op: "set_prop", node: comp.id, key, value: v }]),
                        false, editor);

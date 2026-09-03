@@ -49,8 +49,6 @@ export const ICONS: Record<string, string> = {
   Trend: '<path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/>',
   Readout: '<path d="M4 7h4"/><path d="M6 7v10"/><path d="M13 17h7"/><path d="M13 12h7"/>',
   Dropdown: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="m9 11 3 3 3-3"/>',
-  Label: '<path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/>',
-  Panel: '<rect x="3" y="4" width="18" height="16" rx="2"/>',
 
   /* frame layouts, for the layers tree: how this frame places what is inside it */
   "frame-row": '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/>',

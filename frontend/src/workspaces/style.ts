@@ -11,19 +11,15 @@ import { Editor } from "../editor.js";
 import { bindField, bindFlag, bindGroup, bindText } from "../reconcile.js";
 import { Json, Token } from "../types.js";
 
-/* how many authored slot values reference this token, across every page. An instance's
-   slots nest one object per element, so the count walks them. */
+/* how many authored slot values reference this token, across every page: an instance's
+   `slots` is flat, one value per input */
 function usedCount(editor: Editor, name: string): number {
   const ref = "$" + name;
   let count = 0;
-  const walk = (level: Json): void => {
-    for (const value of Object.values(level ?? {})) {
-      if (value && typeof value === "object") walk(value as Json);
-      else if (value === ref) count++;
-    }
-  };
   for (const page of editor.store.pages())
-    for (const instance of editor.store.instancesOn(page)) walk(instance.slots);
+    for (const instance of editor.store.instancesOn(page))
+      for (const value of Object.values((instance.slots ?? {}) as Record<string, Json>))
+        if (value === ref) count++;
   return count;
 }
 

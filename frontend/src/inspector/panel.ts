@@ -18,7 +18,6 @@ import { clear, commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, section, StageContext } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
 import { openMenu } from "../menu.js";
-import { slotLeaf } from "../elements.js";
 import { bindField, bindFlag, bindText } from "../reconcile.js";
 import { authoredSlot, boundSlots, eachAuthoredSlot, ownSlot, slotCell,
          slotText, spellSlotText, typeOf, withSlot, withoutSlot } from "../slots.js";
@@ -27,8 +26,8 @@ import { ComponentDef, Flow, isInstance, Json, Node, SlotSpec, TemplateNode,
          Var } from "../types.js";
 
 import { casesRows, casesSig } from "./casesrow.js";
-import { attrsSection, attrsShape, chassisRow, componentVarsSection, componentViewShape,
-         interactSection, ownedShape, renderBuiltinComponent,
+import { attrGroupHeading, attrsSection, attrsShape, chassisRow, componentVarsSection,
+         componentViewShape, interactSection, ownedShape, renderBuiltinComponent,
          renderComponentView } from "./components.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { constScope, optionsSlotScope, Scope, slotScope } from "./scope.js";
@@ -614,7 +613,7 @@ export function inspectorShape(editor: Editor): string {
     id: instance.id,
     type: instance.type,
     slots: (type?.slots ?? []).map((s) => [
-      s.name, s.shape, s.group, s.editor ?? "", (s.variants ?? []).join("|"),
+      s.name, s.shape, s.heading ?? "", s.editor ?? "", (s.variants ?? []).join("|"),
     ]),
     fed: Array.from(fed).sort(),
     /* which affordances a slot row carries (the cases disclosure, its open rows, the
@@ -668,15 +667,24 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const at = () => editor.store.instance(instance.id) ?? instance;
   const type = typeOf(editor.registry, instance.type ?? "");
   const fed = boundSlots(instance);
-  /* THE INTERFACE, FLAT: every public variable the component serves, in one list —
-     what the component declared for a placement to set, wherever the component keeps
-     it (an element's beside the component's own; the address is the row's tooltip).
-     There is no element selection any more: an input is an input. The one thing held
-     back is the synthesized per-element `shown` switch, until the flat interface lands
-     and it stops being served. */
-  const inputs = (type?.slots ?? [])
-    .filter((s) => s.public !== false && !s.name.endsWith(".shown"))
-    .sort((a, b) => slotRank(a.name) - slotRank(b.name));
+  /* THE INTERFACE, FLAT AND THE COMPONENT'S: its public variables, in the order it
+     declared them, clustered under the headings it gave them. Nothing else is an
+     input — an element's variables are private — so this is the whole of what a
+     placement may set. */
+  const inputs = (type?.slots ?? []).filter((s) => s.public !== false);
+  const inputRows = (): (HTMLElement | null)[] => {
+    const out: (HTMLElement | null)[] = [];
+    let heading = "";
+    for (const spec of inputs) {
+      const next = spec.heading ?? "";
+      if (next !== heading) {
+        heading = next;
+        if (next) out.push(attrGroupHeading(next.toUpperCase()));
+      }
+      out.push(...rowsFor(spec));
+    }
+    return out;
+  };
   /* ONE scope for every slot row: a slot expression's universe is the instance's, not
      the row's; the options slot alone adds the schema's enum types to its browse */
   const scope = slotScope(editor, instance);
@@ -707,7 +715,7 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
    *    empty section is what teaches that exposing happens inside the component. */
   body.append(
     ...section("inputs", "Inputs", String(fed.size), () => [
-      ...inputs.flatMap(rowsFor),
+      ...inputRows(),
       inputs.length
         ? null
         : el("p", { class: "empty",
@@ -749,35 +757,6 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   body.append(...attrsSection(editor, instance, "placement"));
 }
 
-/* the canonical input order (see the Inputs section): clusters of related names,
- * shared across every type so the same property is always found in the same place */
-const SLOT_ORDER = [
-  /* the node's own switch leads: whether it is drawn at all comes before how */
-  "shown",
-  /* the content colors */
-  "fillColor", "trackColor", "handleColor", "bodyColor",
-  /* text */
-  "text", "textColor", "textSize", "align",
-  /* the control's own shape */
-  "controlRadius", "thickness", "startAngle", "sweepAngle",
-  /* range + gesture */
-  "min", "max", "step", "drag",
-  /* the scale */
-  "divisions", "decimals", "labels",
-  /* options */
-  "options",
-  /* sampling (Trend): read by the backend to size the ring, not by any attr */
-  "rate", "window",
-  /* state, last: interlocks, not styling */
-  "visible", "enabled",
-];
-
-/* ranked by the property's own name, not its address: `bar.fillColor` sorts as
-   fillColor, so one element's rows read in the same order as any other's */
-function slotRank(address: string): number {
-  const at = SLOT_ORDER.indexOf(slotLeaf(address));
-  return at < 0 ? SLOT_ORDER.length : at;
-}
 
 /* THE NODE INSPECTOR: a box, a text, an icon or a path on the page — its name, what it
  * is, and its attrs. There is no hand-written field list any more: `attrsSection` (the
@@ -917,8 +896,7 @@ function slotRows(
   const at = () => editor.store.instance(instance.id) ?? instance;
   const text = () => slotText(ownSlot(at(), spec.name));
   const commitText = (raw: string) => {
-    /* the address is the path into the instance's own nesting: an element's value is
-       written under it, beside nothing else the instance holds. Empty unsets. */
+    /* the input's own key in the instance's flat `slots`. Empty unsets. */
     const slots = raw.trim() === ""
       ? withoutSlot(at().slots, spec.name)
       : withSlot(at().slots, spec.name, spellSlotText(spec.shape, raw));
@@ -945,7 +923,7 @@ function slotRows(
   });
 
   const row = chassisRow({
-    name: slotLeaf(spec.name),
+    name: spec.name,
     note: spec.name + ": " + spec.shape,
     box,
   });
@@ -985,7 +963,7 @@ function pollChip(editor: Editor, instance: Node, spec: SlotSpec): HTMLElement |
         type: { shape: "Num" },
         scope: constScope(editor),
       });
-      openMenu(rect.left, rect.bottom + 4, "poll " + slotLeaf(spec.name), [
+      openMenu(rect.left, rect.bottom + 4, "poll " + spec.name, [
         { node: el("div", { class: "menu-field" },
                    [el("span", { class: "row-label", text: "HZ" }), box]) },
       ]);

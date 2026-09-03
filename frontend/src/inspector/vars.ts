@@ -15,7 +15,7 @@ import { makeFolds } from "../fold.js";
 import { openMenu } from "../menu.js";
 import { bind, bindChoice, bindField, bindFlag } from "../reconcile.js";
 import { iconMarkup, kindMark } from "../icons.js";
-import { Json, MeshField, Node, Op, SCALAR_LABEL, Var } from "../types.js";
+import { ComponentDef, Json, MeshField, Node, Op, SCALAR_LABEL, Var } from "../types.js";
 import { valueEditor } from "./editors.js";
 import { refChip } from "./refchip.js";
 import { attrScope } from "./scope.js";
@@ -50,7 +50,10 @@ export function varCard(
   const cell = "v" + variable.id;
   const isStruct = !SCALAR_LABEL[variable.type];
   const inComp = scope === "component";
-  const isPublic = inComp && Boolean(variable.public);
+  /* THE INTERFACE IS THE ROOT'S: only a variable declared on the component record
+     itself may be an input. An element's card offers the way up instead. */
+  const atRoot = inComp && isComponentRecord(editor.store.node(ownerId));
+  const isPublic = atRoot && Boolean(variable.public);
 
   const caret = el("span", {
     class: "icon-mark fold-caret",
@@ -288,11 +291,14 @@ export function varCard(
 
   /* ---- THE INTERFACE ROWS: what makes this variable an input ----
    *
-   * Only inside a component, because only there is there a placement to be an input TO.
-   * INPUT is the switch; everything under it describes how the instance's inspector
-   * should EDIT the value, and is inert until the switch is on. */
+   * Only on the component's own record, because only there is there a placement to be
+   * an input TO. INPUT is the switch; everything under it describes how the instance's
+   * inspector should EDIT the value, and is inert until the switch is on. On an
+   * ELEMENT's card inside a component the row offers the one move that can make it an
+   * input: lifting the declaration up to the component (its readers inside keep
+   * resolving the bare name — the root's variables are in scope everywhere). */
   const publicRows: (HTMLElement | null)[] = [];
-  if (inComp) {
+  if (atRoot) {
     publicRows.push(
       el("span", { class: "row-label", text: "INPUT" }),
       el("div", { class: "var-line" }, [
@@ -306,20 +312,35 @@ export function varCard(
         el("span", { class: "op", text: "every instance can set it" }),
       ]),
     );
+  } else if (inComp) {
+    publicRows.push(
+      el("span", { class: "row-label", text: "INPUT" }),
+      el("div", { class: "var-line" }, [
+        el("button", {
+          class: "dashed-btn",
+          text: "move to the component",
+          title: "an element's variables are private: to make this an input, declare it "
+                 + "on the component itself — this moves it there, keeping its value",
+          onclick: () => liftToComponent(editor, ownerId, at()),
+        }),
+      ]),
+    );
   }
   if (isPublic) {
-    /* WHICH SECTION of the instance inspector it lands in: what the control IS, how it
-       looks, how it is set up, or the pane around it */
-    const group = selectField(
-      GROUPS.map((v) => ({ value: v })),
-      String(variable.group ?? "appearance"),
-      (choice) => setProp("group", choice),
-    );
-    bindChoice(variable.id + ":group", pickerOf(group), () =>
-      String(at().group ?? "appearance"));
+    /* THE HEADING it lists under in the instance's Inputs: free text, and consecutive
+       inputs with one heading cluster; empty = none */
     publicRows.push(
-      el("span", { class: "row-label", text: "SHOWN IN" }),
-      el("div", { class: "var-line" }, [group]),
+      el("span", { class: "row-label", text: "HEADING" }),
+      el("div", { class: "var-line" }, [
+        valueEditor(
+          null,
+          "Text",
+          variable.id + ":heading",
+          () => at().heading ?? "",
+          (value) => setProp("heading", String(value ?? "").trim()),
+        ),
+        el("span", { class: "op", text: "blank = none" }),
+      ]),
     );
 
     /* A BOUNDED NUMBER EDITS AS A SLIDER beside its field, and steps by its own grain
@@ -397,8 +418,34 @@ export function varCard(
   return card;
 }
 
-/* which section of the instance inspector a public variable lands in */
-const GROUPS = ["value", "appearance", "config", "frame"];
+/* the component RECORD, as against one of its nodes: the record carries no `kind`, and
+   unlike a page it declares variables */
+function isComponentRecord(node: Json): boolean {
+  return !!node && typeof node === "object" && typeof (node as Json).kind !== "string" &&
+         Array.isArray((node as Json).locals);
+}
+
+/* the component an element inside one belongs to: up the parent chain to the record */
+function componentOf(editor: Editor, elementId: number): ComponentDef | null {
+  let at: Json = editor.store.node(elementId);
+  while (at && typeof at === "object" && typeof (at as Json).kind === "string")
+    at = editor.store.parentOf((at as Json).id as number) as Json;
+  return isComponentRecord(at) ? (at as ComponentDef) : null;
+}
+
+/* MOVE AN ELEMENT'S VARIABLE UP TO THE COMPONENT, as an input: one apply, the removal
+   and the insertion together, carrying every declared fact but the id (the backend
+   issues one). A name the component already declares gets the compiler's own finding
+   on the root — two variables here are both named — which is where the author looks. */
+function liftToComponent(editor: Editor, elementId: number, variable: Var): void {
+  const comp = componentOf(editor, elementId);
+  if (!comp) return;
+  const { id: _id, ...rest } = variable as Var & { id: number };
+  editor.apply([
+    { op: "remove", node: variable.id },
+    { op: "insert", parent: comp.id, list: "locals", node: { ...rest, public: true } },
+  ]);
+}
 
 /* what ONE VALUE inside a list or a map may be — the OF picker's scalars, and the whole
  * of what a nested variable's ROWS may hold. `list` and `map` join this list on the OF

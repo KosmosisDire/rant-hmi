@@ -109,20 +109,15 @@ function slotSpec(type: ComponentType | null, name: string): SlotSpec | null {
   return type.slots.find((s) => s.name === name) ?? null;
 }
 
-/* every authored slot value on this instance, visited at its dotted address */
+/* every authored slot value on this instance, by name: `slots` is FLAT, one key per
+   public variable of the component (a map or list VALUE is a value, not a level) */
 export function eachAuthoredSlot(
   instance: Node,
   visit: (address: string, value: Json) => void,
 ): void {
-  const walk = (level: Json, prefix: string) => {
-    if (!level || typeof level !== "object" || Array.isArray(level)) return;
-    for (const [key, held] of Object.entries(level)) {
-      const address = prefix ? prefix + "." + key : key;
-      if (held && typeof held === "object" && !Array.isArray(held)) walk(held, address);
-      else visit(address, held);
-    }
-  };
-  walk(instance.slots ?? {}, "");
+  const slots = instance.slots;
+  if (!slots || typeof slots !== "object" || Array.isArray(slots)) return;
+  for (const [key, held] of Object.entries(slots)) visit(key, held);
 }
 
 /* which slots this instance BINDS: the authored value is an expression, so the
@@ -167,38 +162,22 @@ export function slotCell(instance: Node, slot: string): string {
   return instance.id + "." + slot;
 }
 
-/* ---- nested slot values ----
+/* ---- the slot values: FLAT ----
  *
- * A slot's NAME is its address: bare for the component's own properties, prefixed by
- * the owning element's path for the ones an element declares (`bar.fillColor`). An
- * instance stores them the same way it reads them — nested, one object per element —
- * so the shape of an instance's `slots` mirrors the shape of its component. */
+ * THE INTERFACE IS THE ROOT'S: a component's inputs are its own public variables, so
+ * an instance's `slots` is one object keyed by their bare names. Nothing nests — an
+ * element inside a component owns no input — and the wire key is `<instance>.<name>`. */
 
-/* what the document authors at one address, or undefined when it authors nothing there
-   (including when the path runs into a non-object: a stale value is not a value) */
-function slotValue(slots: Json, address: string): Json {
-  let at: Json = slots;
-  for (const segment of address.split(".")) {
-    if (!at || typeof at !== "object" || Array.isArray(at)) return undefined;
-    at = at[segment];
-  }
-  return at;
+/* what the document authors at one name, or undefined when it authors nothing there */
+function slotValue(slots: Json, name: string): Json {
+  if (!slots || typeof slots !== "object" || Array.isArray(slots)) return undefined;
+  return (slots as Record<string, Json>)[name];
 }
 
-/* the same object with one address set, copied down the path it touches: op application
-   replaces the instance's whole `slots` value, and nothing else may be disturbed */
-export function withSlot(slots: Json, address: string, value: Json): Json {
-  const segments = address.split(".");
-  const root: Json = { ...((slots ?? {}) as Record<string, Json>) };
-  let at = root;
-  for (let i = 0; i < segments.length - 1; i++) {
-    const held = at[segments[i]];
-    at[segments[i]] =
-      held && typeof held === "object" && !Array.isArray(held) ? { ...held } : {};
-    at = at[segments[i]];
-  }
-  at[segments[segments.length - 1]] = value;
-  return root;
+/* the same object with one name set: op application replaces the instance's whole
+   `slots` value, and nothing else may be disturbed */
+export function withSlot(slots: Json, name: string, value: Json): Json {
+  return { ...((slots ?? {}) as Record<string, Json>), [name]: value };
 }
 
 /* what the DOCUMENT says a slot is: the instance value, else the type default */
@@ -215,22 +194,10 @@ export function ownSlot(instance: Node, address: string): Json {
   return slotValue(instance.slots, address);
 }
 
-/* the same object with one address REMOVED, element objects emptied along the way pruned:
- * an empty box unsets the slot, and the document keeps only what was authored */
-export function withoutSlot(slots: Json, address: string): Json {
-  const segments = address.split(".");
+/* the same object with one name REMOVED: an empty box unsets the slot, and the document
+ * keeps only what was authored */
+export function withoutSlot(slots: Json, name: string): Json {
   const root: Json = { ...((slots ?? {}) as Record<string, Json>) };
-  const spine: Json[] = [root];
-  let at = root;
-  for (let i = 0; i < segments.length - 1; i++) {
-    const held = at[segments[i]];
-    if (!held || typeof held !== "object" || Array.isArray(held)) return root;
-    at[segments[i]] = { ...held };
-    at = at[segments[i]];
-    spine.push(at);
-  }
-  delete at[segments[segments.length - 1]];
-  for (let i = spine.length - 1; i > 0; i--)
-    if (Object.keys(spine[i]).length === 0) delete spine[i - 1][segments[i - 1]];
+  delete root[name];
   return root;
 }

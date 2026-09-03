@@ -38,7 +38,7 @@ export type Json = any;
  * spelled `this.<slot>` in both tiers.
  * 14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
  * the step kind `notify` broadcasts a notification to every session.) */
-export const PROTO = 20;
+export const PROTO = 21;
 
 /* WHICH COPY of a `repeat` a gesture came from, as it rides the wire and as the renderer
  * holds it. One shape in one place: the stage's binds, the gesture seat and the `input`
@@ -228,8 +228,9 @@ export interface Var {
   leaf?: string;
   /* is this part of the component's interface? Inert on a page element. */
   public?: boolean;
-  /* which inspector section a public one lands in */
-  group?: "value" | "appearance" | "config" | "frame";
+  /* the HEADING an input lists under in the instance's Inputs: free text, consecutive
+     inputs with one heading cluster, "" or absent = none. Public rows only. */
+  heading?: string;
   /* an editor the type alone would not have chosen ("align", "enum-type") */
   editor?: string;
   /* a `text` variable with variants is PICKED from them — which is all the old `enum`
@@ -428,7 +429,8 @@ export interface SlotSpec {
   name: string;
   shape: string;
   default: Json;
-  group: "value" | "appearance" | "config" | "frame";
+  /* the heading it lists under in the instance's Inputs, served only when given */
+  heading?: string;
   /* part of the component's interface? A private one is drawn from but never offered. */
   public?: boolean;
   /* list/map: the declared element type, and for a nested one what its rows hold */
