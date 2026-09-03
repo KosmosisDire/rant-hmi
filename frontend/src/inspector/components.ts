@@ -19,13 +19,13 @@ import { diagIcon, Editor, section } from "../editor.js";
 import { addFlowButton, flowCard, flowShape } from "./flows.js";
 import { highlighted } from "../highlight.js";
 import { openMenu } from "../menu.js";
-import { bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
-import { AttrDef, ComponentDef, EventSpec, Json, Node, PRIMITIVES,
+import { bind, bindChoice, bindField, bindFlag, bindText } from "../reconcile.js";
+import { AttrDef, ComponentDef, EventSpec, Json, Node, Op, PRIMITIVES,
          SlotSpec, TransitionMap, Var, eventKind, primitiveDef,
          signatureText } from "../types.js";
 import { casesRows, casesSig } from "./casesrow.js";
 import { valueEditor } from "./editors.js";
-import { attrScope, Scope } from "./scope.js";
+import { attrScope, owningComponent, Scope } from "./scope.js";
 import { BoxType, valueBox } from "./valuebox.js";
 import { newVariable, varCard, varShape } from "./vars.js";
 /* the shapes an event's PARAMETER may carry. A list or a map is not one (an event
@@ -1053,6 +1053,195 @@ function attrBoxType(def: AttrDef): BoxType {
   return { shape: "Text" };   /* `any` and anything unforeseen: the glyph alone */
 }
 
+/* ---- EXPOSE IS A VERB ON THE FIELD ----
+ *
+ * Every expression field inside a component carries one tail button: click it and the
+ * field becomes an INPUT — a public variable on the component record, named for the
+ * element and the field (`labelColor`; a root field takes the field's own name), seeded
+ * with the field's literal (else the served default, else the type's zero), and the
+ * field reads the bare name. That is the whole of what used to take five steps.
+ *
+ * THE STATE IS LEXICAL: a field whose text is a bare name naming a public root variable
+ * IS exposed (the button lights), whoever typed it, and a second field naming the same
+ * input shows exposed too — one input, many fields, the ordinary expression path. Click
+ * again and the input folds back: the field takes the input's init as its literal, and
+ * the input is deleted iff nothing else in the component still names it. Offered only
+ * where the field holds a literal or is empty; a computed field says so and points at
+ * the inputs it reads. A page element has no component to expose to, so no button. */
+interface ExposeField {
+  key: string;                       /* the bind key of the box this rides */
+  read: () => string;
+  /* the op that rewrites the field's text: exposing writes the input's name, folding
+     writes the literal */
+  write: (text: string) => Op;
+  /* the box's shape; "Any" for an untyped field (a gesture param), whose literal
+     then says its own shape */
+  shape: BoxType["shape"] | "Any";
+  variants?: string[];
+  fallback?: Json;                   /* the served default, where the table has one */
+  field: string;                     /* the auto-name's tail: the attr / param name */
+}
+
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+
+/* "loading bar" -> "loadingBar": the element's name as the auto-name's head */
+function camel(name: string): string {
+  const words = name.replace(/[^A-Za-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  return words.map((w, i) => (i === 0 ? w[0].toLowerCase() : w[0].toUpperCase()) + w.slice(1))
+              .join("");
+}
+
+/* the field's literal, parsed per shape: undefined = not a literal (computed), null =
+   empty (unset: the fallback seeds) */
+function literalOf(shape: ExposeField["shape"], text: string): Json | undefined {
+  const at = text.trim();
+  if (at === "") return null;
+  const quoted = /^'((?:\\.|[^'\\])*)'$/.exec(at) ?? /^"((?:\\.|[^"\\])*)"$/.exec(at);
+  const unquote = (inner: string) => inner.replace(/\\(.)/g, "$1");
+  switch (shape) {
+    case "Num": return NUMBER.test(at) ? Number(at) : undefined;
+    case "Bool": return at === "true" ? true : at === "false" ? false : undefined;
+    case "Color":
+      return /^#[0-9a-fA-F]{3,8}$/.test(at) || /^\$[A-Za-z0-9_-]+$/.test(at) ? at : undefined;
+    case "List":
+    case "Map":
+      if (!at.startsWith("[") && !at.startsWith("{")) return undefined;
+      try { return JSON.parse(at); } catch { return undefined; }
+    case "Text": case "Icon": case "Enum": case "Align":
+      return quoted ? unquote(quoted[1]) : undefined;
+    default:
+      if (NUMBER.test(at)) return Number(at);
+      if (at === "true" || at === "false") return at === "true";
+      return quoted ? unquote(quoted[1]) : undefined;
+  }
+}
+
+/* the variable TYPE an exposed field declares: its box shape, or an untyped field's
+   literal's own */
+function typeFor(shape: ExposeField["shape"], literal: Json | undefined): string {
+  switch (shape) {
+    case "Num": case "Bool": case "Color": case "Icon": case "List": case "Map": return shape;
+    case "Text": case "Enum": case "Align": return "Text";
+    default:
+      return typeof literal === "number" ? "Num" : typeof literal === "boolean" ? "Bool" : "Text";
+  }
+}
+
+const ZERO: Record<string, Json> = { Num: 0, Bool: false, Text: "", Color: "#ffffff", Icon: "",
+                                     List: [], Map: {} };
+
+/* an input's init as the field's literal text: the fold-back spelling */
+function foldText(type: string, init: Json): string {
+  if (init === null || init === undefined) return "";
+  if (type === "Text" || type === "Icon")
+    return "'" + String(init).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+  if (type === "List" || type === "Map") return JSON.stringify(init);
+  return String(init);
+}
+
+/* Does anything ELSE in the component still name this input? A lexical scan of the
+ * component's own expression text — attrs, gesture params, transition times, behavior,
+ * declared sweeps — for the bare identifier. The compile's reference index is not
+ * served to the view, so this is the honest approximation, and it errs toward KEEPING
+ * the input (a name inside quoted text counts). */
+function namedElsewhere(comp: ComponentDef, name: string, exceptKey: string): boolean {
+  const word = new RegExp("(^|[^A-Za-z0-9_.$@])" + name + "(?![A-Za-z0-9_])");
+  let found = false;
+  const see = (key: string, text: unknown) => {
+    if (found || key === exceptKey || typeof text !== "string") return;
+    if (word.test(text)) found = true;
+  };
+  const walk = (n: Json, id: number) => {
+    for (const [k, v] of Object.entries((n.attrs ?? {}) as Record<string, string>))
+      see(id + ":attrs." + k, v);
+    const params = ((n.interact as Json)?.params ?? {}) as Record<string, string>;
+    for (const [k, v] of Object.entries(params)) see(id + ":interact." + k, v);
+    for (const [k, v] of Object.entries((n.transitions ?? {}) as Record<string, Json>)) {
+      see(id + ":transitions." + k + ".ms", (v as Json)?.ms);
+      see(id + ":transitions." + k + ".profile", (v as Json)?.profile);
+    }
+    for (const kid of ((n.children ?? []) as Json[])) walk(kid, kid.id as number);
+  };
+  walk(comp as unknown as Json, comp.id);
+  const steps = (v: Json) => {
+    if (found) return;
+    if (typeof v === "string") see("behavior", v);
+    else if (Array.isArray(v)) v.forEach(steps);
+    else if (v && typeof v === "object") Object.values(v).forEach(steps);
+  };
+  steps(comp.behavior as unknown as Json);
+  for (const v of comp.locals ?? []) {
+    see("var:" + v.id + ".smooth", v.smooth);
+    see("var:" + v.id + ".profile", v.profile);
+  }
+  return found;
+}
+
+function exposeChip(editor: Editor, node: Node, field: ExposeField): HTMLElement | null {
+  const comp = owningComponent(editor, node.id);
+  if (!comp) return null;
+  /* the RECORD, read fresh off the document's own component list each time: its
+     locals are the interface, its children the fields that may still name an input */
+  const compAt = () => editor.store.components().find((c) => c.id === comp.id) ?? comp;
+  const inputOf = (text: string): Var | null =>
+    IDENT.test(text.trim())
+      ? (compAt().locals ?? []).find((v) => v.name === text.trim() && v.public) ?? null
+      : null;
+  const state = (): "exposed" | "offer" | "computed" => {
+    const text = field.read();
+    if (inputOf(text)) return "exposed";
+    return literalOf(field.shape, text) === undefined ? "computed" : "offer";
+  };
+  const chip = iconButton("link", "", () => {
+    const now = state();
+    if (now === "computed") return;
+    if (now === "exposed") {
+      const input = inputOf(field.read())!;
+      const ops: Op[] = [field.write(foldText(input.type, input.init))];
+      if (!namedElsewhere(compAt(), input.name, field.key))
+        ops.push({ op: "remove", node: input.id });
+      editor.apply(ops);
+      return;
+    }
+    const literal = literalOf(field.shape, field.read());
+    const type = typeFor(field.shape, literal);
+    const init = literal !== null && literal !== undefined ? literal
+               : field.fallback !== undefined ? field.fallback
+               : ZERO[type] ?? null;
+    /* elementNameField: the element's name camelCased then the field capitalised; the
+       root has no name segment, so its fields take the field's name alone */
+    const own = node.id === comp.id ? "" : camel(node.name ?? "");
+    const base = own ? own + field.field[0].toUpperCase() + field.field.slice(1) : field.field;
+    const taken = new Set((compAt().locals ?? []).map((v) => v.name));
+    let name = base;
+    for (let n = 2; taken.has(name); n++) name = base + n;
+    const row: Json = { name, type, init, public: true };
+    if (type === "Text" && field.variants?.length) row.variants = field.variants;
+    editor.apply([
+      { op: "insert", parent: comp.id, list: "locals", node: row },
+      field.write(name),
+    ]);
+  });
+  chip.classList.add("expose-chip");
+  /* the state is read off the document every refresh: a rename, a fold or a second
+     field naming the input all move it without a rebuild */
+  const paint = () => {
+    const now = state();
+    chip.classList.toggle("on", now === "exposed");
+    chip.classList.toggle("off", now === "computed");
+    (chip as HTMLButtonElement).disabled = now === "computed";
+    chip.title = now === "exposed"
+      ? "exposed as the input '" + field.read().trim() + "' — click to fold it back into the field"
+      : now === "computed"
+        ? "computed — expose the inputs it reads"
+        : "expose: make this field an input every instance can set";
+  };
+  paint();
+  bind(field.key + ".expose", chip, paint);
+  return chip;
+}
+
 function attrDefRow(
   editor: Editor,
   node: Node,
@@ -1076,6 +1265,21 @@ function attrDefRow(
      disclosure (casesrow.ts) — the chip in the tail, the editor below the row */
   const cases = casesRows(editor, node.id + ":attrs." + def.name, scope,
                           attrBoxType(def), read, commit);
+  /* the expose verb, inside a component only (owningComponent answers) */
+  const expose = exposeChip(editor, node, {
+    key: node.id + ":attrs." + def.name,
+    read,
+    write: (text) => {
+      const next = { ...attrsOf() };
+      if (text === "") delete next[def.name];
+      else next[def.name] = text;
+      return { op: "set_prop", node: node.id, key: "attrs", value: next };
+    },
+    shape: def.shape === "Any" ? "Any" : attrBoxType(def).shape,
+    variants: def.variants,
+    fallback: def.default,
+    field: def.name,
+  });
   const box = valueBox({
     key: node.id + ":attrs." + def.name,
     read,
@@ -1085,7 +1289,7 @@ function attrDefRow(
     title: def.note,
     type: attrBoxType(def),
     scope,
-    trail: [cases?.chip ?? null, transitionChip(editor, node, def),
+    trail: [cases?.chip ?? null, expose, transitionChip(editor, node, def),
             diagIcon(exprDiag.length ? exprDiag : transDiag)],
   });
   const row = chassisRow({
@@ -1273,22 +1477,28 @@ function interactParamRow(
   at: () => Json,
 ): HTMLElement {
   const paramsOf = () => ((at().interact ?? {}).params ?? {}) as Record<string, string>;
+  const write = (text: string): Op => ({
+    op: "set_prop", node: node.id, key: "interact",
+    value: { ...((at().interact ?? {}) as Json), params: { ...paramsOf(), [param]: text } },
+  });
+  /* a gesture's param is a field like any: exposable, its literal saying its shape */
+  const expose = exposeChip(editor, node, {
+    key: node.id + ":interact." + param,
+    read: () => String(paramsOf()[param] ?? ""),
+    write,
+    shape: "Any",
+    field: param,
+  });
   const box = valueBox({
     key: node.id + ":interact." + param,
     read: () => String(paramsOf()[param] ?? ""),
-    commit: (text) => {
-      const held = (at().interact ?? {}) as Json;
-      editor.apply([
-        { op: "set_prop", node: node.id, key: "interact",
-          value: { ...held, params: { ...paramsOf(), [param]: text } } },
-      ]);
-    },
+    commit: (text) => editor.apply([write(text)]),
     emptyMeans: "unset",
     /* a gesture's params are untyped expression slots (their seeds are literals of any
        shape), so the box shows the glyph alone */
     type: { shape: "Text" },
     scope: attrScope(editor, node),
-    trail: [diagIcon(editor.diagAt(node.id, "interact." + param))],
+    trail: [expose, diagIcon(editor.diagAt(node.id, "interact." + param))],
   });
   return chassisRow({
     name: param,

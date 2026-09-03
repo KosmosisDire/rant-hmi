@@ -146,3 +146,9 @@
   line-height: 1.5;
   color: var(--dim-2);
 }
+
+/* the expose button on a COMPUTED field: offered nowhere, but visible with its reason */
+.expose-chip[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}

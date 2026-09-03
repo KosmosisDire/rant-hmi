@@ -628,7 +628,7 @@ export function optionsSlotScope(editor: Editor, instance: Node | null): Scope {
  * Matched by IDENTITY, not by id: this now decides what a whole surface may reference, so
  * "is this record the component" must be the actual record and not a number that happens
  * to agree with one. */
-function owningComponent(editor: Editor, id: number): ComponentDef | null {
+export function owningComponent(editor: Editor, id: number): ComponentDef | null {
   const comps = editor.store.components();
   let at: Json | null = editor.store.node(id);
   while (at && typeof at.id === "number") {

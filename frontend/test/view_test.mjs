@@ -4453,6 +4453,122 @@ check(stageNode("frame", 901) === heldAgain &&
    and they will need re-pinning against the DOM once components render as HTML. */
 
 
+/* ---- EXPOSE IS A VERB ON THE FIELD ----
+   Inside a component every expression field carries one tail button. Click: the field
+   becomes an INPUT — a public variable on the record, named element + field, seeded
+   with the literal (or the served default, or the type's zero) — and the field reads
+   the bare name. The state is lexical (a field naming a public root variable is lit,
+   whoever typed it); folding back writes the init as the literal and deletes the input
+   iff nothing else names it; a computed field is not offered and says why. */
+{
+  /* a component of this block's own — ids no earlier block reused (the store's index is
+     one id space, and a page instance numbered like a component would shadow it) */
+  store.apply(store.version() + 1, [
+    { op: "insert", parent: 0, list: "components",
+      node: { id: 9840, name: "Expo", events: [], locals: [], attrs: {},
+              children: [
+                { id: 9841, kind: "frame", name: "body", attrs: {}, locals: [],
+                  children: [{ id: 9842, kind: "text", name: "label", attrs: { text: "'on'" } }] },
+              ],
+              behavior: [] } },
+  ]);
+  const exOps = [];
+  const exEditor = {
+    ...editor,
+    contexts: [{ component: 9840, builtin: "", from: 9880, w: 220, h: 110, w0: 220, h0: 110 }],
+    root() {
+      const comp = store.node(9840);
+      return { id: comp.id, name: comp.name ?? "", children: comp.children ?? [] };
+    },
+    selectedNode: () => store.nodeAt(9841),
+    selectedInstance: () => null,
+    apply: (batch) => { exOps.push(...batch); },
+  };
+  const exPanel = new Panel(new Element("aside"));
+  const drawEx = () =>
+    exPanel.render(inspectorShape(exEditor), (host) => renderInspector(host, exEditor));
+  const rowOf = (name) =>
+    exPanel.host.querySelectorAll(".attr-row").find((r) => namedRow(r, name)) ?? null;
+  const chipOf = (name) => rowOf(name)?.querySelector(".expose-chip") ?? null;
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9841, key: "attrs", value: {} },
+  ]);
+  drawEx();
+  check(chipOf("surface") !== null, "an attr row inside a component carries the expose button");
+  check(!chipOf("surface").classList.contains("on"), "unlit while the field is a literal (or empty)");
+  fire(chipOf("surface"), "click");
+  const ins = exOps.find((o) => o.op === "insert" && o.list === "locals");
+  const set = exOps.find((o) => o.op === "set_prop" && o.key === "attrs");
+  check(ins && ins.parent === 9840 && ins.node.name === "bodySurface" &&
+          ins.node.type === "Color" && ins.node.public === true && ins.node.init === "#ffffff",
+        "one click declares a public variable on the record, named element + field, seeded " +
+          "with the type's zero where nothing is authored, got " + JSON.stringify(ins?.node));
+  check(set && set.node === 9841 && set.value.surface === "bodySurface",
+        "and the field reads its bare name, got " + JSON.stringify(set?.value));
+  /* what the backend would echo: the same ops with an issued id */
+  store.apply(store.version() + 1, [{ ...ins, node: { ...ins.node, id: 9891 } }, set]);
+  exOps.length = 0;
+  drawEx();
+  check(chipOf("surface").classList.contains("on"),
+        "a field naming a public root variable IS exposed: the button lights");
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9841, key: "attrs", value: { surface: "bodySurface", border: "bodySurface" } },
+  ]);
+  drawEx();
+  check(chipOf("border").classList.contains("on"), "and so does any other field that names it");
+  /* fold one of them back: the input stays, still named by the other */
+  fire(chipOf("border"), "click");
+  check(exOps.some((o) => o.key === "attrs" && o.value.border === "#ffffff" && o.value.surface === "bodySurface") &&
+          !exOps.some((o) => o.op === "remove"),
+        "folding writes the input's init as the literal and KEEPS an input another field " +
+          "still names, got " + JSON.stringify(exOps));
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9841, key: "attrs", value: { surface: "bodySurface" } },
+  ]);
+  exOps.length = 0;
+  drawEx();
+  fire(chipOf("surface"), "click");
+  check(exOps.some((o) => o.op === "remove" && o.node === 9891),
+        "folding the LAST field back deletes the input, got " + JSON.stringify(exOps));
+  /* a computed field is not offered, and says why */
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9841, key: "attrs", value: { surface: "bodySurface.Alpha(0.5)" } },
+  ]);
+  drawEx();
+  check(chipOf("surface").disabled === true && chipOf("surface").title.includes("computed"),
+        "a computed field's button is disabled and points at the inputs it reads, got '" +
+          chipOf("surface").title + "'");
+  /* a quoted text literal seeds the raw text, typed Text */
+  exOps.length = 0;
+  store.apply(store.version() + 1, [
+    { op: "set_prop", node: 9841, key: "attrs", value: {} },
+  ]);
+  const exText = { ...exEditor, selectedNode: () => store.nodeAt(9842) };
+  const textPanel = new Panel(new Element("aside"));
+  textPanel.render(inspectorShape(exText), (host) => renderInspector(host, exText));
+  const textChip = textPanel.host.querySelectorAll(".attr-row").find((r) => namedRow(r, "text"))
+    ?.querySelector(".expose-chip");
+  fire(textChip, "click");
+  const insText = exOps.find((o) => o.op === "insert" && o.list === "locals");
+  check(insText && insText.node.name === "labelText" && insText.node.type === "Text" &&
+          insText.node.init === "on",
+        "a quoted literal seeds the raw text as a Text input, got " + JSON.stringify(insText?.node));
+  /* the record's inputs reorder in place: one move op, from a card's own arrows */
+  const orderOps = [];
+  const orderEditor = { ...editor, contexts: [], selectedNode: () => null, selectedInstance: () => null,
+                        componentSel: { component: 9930, node: 9930 }, apply: (b) => orderOps.push(...b) };
+  const orderPanel = new Panel(new Element("aside"));
+  orderPanel.render(designInspectorShape(orderEditor), (host) => renderDesignInspector(host, orderEditor));
+  const cards = orderPanel.host.querySelectorAll(".card");
+  const downOf = (card) => card.querySelectorAll("button").find((b) => (b.title ?? "").includes("down"));
+  const upOf = (card) => card.querySelectorAll("button").find((b) => (b.title ?? "").includes(" up"));
+  check(cards.length >= 2 && upOf(cards[0]) && downOf(cards[0]) && upOf(cards[0]).disabled === true,
+        "a record's variable card carries up/down, the first one's up disabled");
+  fire(downOf(cards[0]), "click");
+  check(orderOps.some((o) => o.op === "move" && o.node === 9931 && o.index === 1),
+        "down is one move op to the next index, got " + JSON.stringify(orderOps));
+}
+
 ws.close();
 backend.kill();
 if (backend.exitCode === null)
