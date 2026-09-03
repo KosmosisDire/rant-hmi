@@ -408,10 +408,10 @@ export class App implements Editor {
         list: "components",
         node: {
           name,
-          /* one public variable so a fresh component has something to fill in from the
-             moment it is placed — a private one would leave the instance inspector blank
-             and the model unexplained */
-          locals: [{ name: "text", type: "text", init: "new", public: true }],
+          /* A BLANK COMPONENT EXPOSES NOTHING: no variable, no input. The label's text
+             is a literal, and the instance's empty Inputs section teaches the one click
+             that exposes it (the expose button on the field). */
+          locals: [],
           /* no declared events: the press gesture on the root brings the whole family
              (tap, press, release, pressrelease, held) — events here are only what the
              component INVENTS and raises itself */
@@ -419,7 +419,7 @@ export class App implements Editor {
           attrs: {},
           interact: { primitive: "press", params: { ...press?.params } },
           children: [{ kind: "text", name: "label",
-                       attrs: { text: "text", align: "'center'" } }],
+                       attrs: { text: "'new'", align: "'center'" } }],
         },
       },
     ]);
