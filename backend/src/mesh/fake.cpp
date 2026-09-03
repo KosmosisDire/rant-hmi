@@ -16,6 +16,7 @@ std::string print_value(const Value& value, std::string_view text) {
         case ValueTag::Text: out << '"' << text << '"'; break;
         case ValueTag::Enum: out << "enum(" << value.type_id << "," << value.data.integer << ")"; break;
         case ValueTag::Color: out << format_color(value.data.rgba); break;
+        case ValueTag::Token: out << "$token:" << value.ref; break;
         case ValueTag::List: out << "list"; break;
         case ValueTag::Map: out << "map"; break;
     }

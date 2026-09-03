@@ -171,7 +171,12 @@ class Lower {
                    Iterate emission below walks the body itself */
                 return;
             case ExprKind::ThemeRef:
-                /* never survives the checker on this tier */
+                /* A TOKEN BY REFERENCE: the backend has no theme mode, so the constant
+                   carries the NAME and the view that draws the cell resolves it */
+                site("a value", expr.at);
+                emit(OpCode::Const,
+                     module_.add_constant(Value::token(module_.add_token(expr.text))));
+                pushed();
                 return;
         }
     }

@@ -200,10 +200,11 @@ class Sema {
                 break;
             }
             case ExprKind::ThemeRef:
-                /* the one grammar carries $tokens for the view emitter; this tier
-                   never accepted one, and the refusal it always gave stands */
-                fail("expected an expression", expr.at);
-                return Type();
+                /* A TOKEN IS A COLOUR CONSTANT on every tier (spec 2.10): stored,
+                   compared, picked and published by NAME, resolved by the view that
+                   draws it. What it cannot be here is MIXED — see kTokenTeach. */
+                type = Type(Shape::Color);
+                break;
             case ExprKind::Lambda:
                 type = lambda_in_value_position(index);
                 break;
@@ -255,6 +256,17 @@ class Sema {
         fail("unknown name '" + expr.params[0] + "'" + env_.unknown_help,
              expr.name_after ? expr.name_after : expr.after);
         return Type();
+    }
+
+    /* the one thing a token cannot do outside a view: the backend has no theme mode,
+       so a $token has no channels to read, scale, invert or mix here */
+    static constexpr const char* kTokenTeach =
+        "a token has no one colour until a view draws it: the backend has no theme "
+        "mode, so a $token can be stored, compared and picked here but not mixed — do "
+        "the colour arithmetic in an attr, where the view resolves it";
+
+    bool token_literal(uint32_t index) const {
+        return index != kNoExpr && at(index).kind == ExprKind::ThemeRef;
     }
 
     Type binary(uint32_t index, const Type& want) {
@@ -427,6 +439,10 @@ class Sema {
              (left.kind == Shape::Color || right.kind == Shape::Color)) ||
             (expr.op == TokenKind::Slash && left.kind == Shape::Color);
         if (color_scale) {
+            if (token_literal(expr.a) || token_literal(expr.b)) {
+                fail(kTokenTeach, at(expr.b).after);
+                return Type();
+            }
             if (tier_ == ExprTier::Wire) {
                 fail("color arithmetic is display vocabulary; this value is for "
                      "a machine",
@@ -830,9 +846,22 @@ class Sema {
                  expr.name_after);
             return Type();
         }
+        /* a colour method on a LITERAL token (`$accent.Alpha(0.5)`) has nothing to
+           read: the view is where a token becomes channels */
+        if (receiver.kind == Shape::Color && token_literal(expr.a)) {
+            fail(kTokenTeach, expr.name_after);
+            return Type();
+        }
         /* arguments are INDEPENDENT: each one reports its own finding (rule 16) */
         bool args_poisoned = false;
         for (size_t i = 0; i < expr.args.size(); ++i) {
+            if (i < spec->args && spec->params[i] == Shape::Color &&
+                token_literal(expr.args[i])) {
+                fail(kTokenTeach, at(expr.args[i]).after);
+                failed_ = false;
+                args_poisoned = true;
+                continue;
+            }
             const Type argument = argument_check(expr.args[i], "method");
             if (!failed_ && i < spec->args && spec->params[i] != Shape::Unknown)
                 require(argument, spec->params[i], name.c_str(),
@@ -1178,6 +1207,13 @@ class Sema {
         /* arguments are INDEPENDENT: each one reports its own finding (rule 16) */
         bool args_poisoned = false;
         for (size_t i = 0; i < expr.args.size(); ++i) {
+            if (i < spec.max_args && spec.params[i] == Shape::Color &&
+                token_literal(expr.args[i])) {
+                fail(kTokenTeach, at(expr.args[i]).after);
+                failed_ = false;
+                args_poisoned = true;
+                continue;
+            }
             const Type argument = argument_check(expr.args[i], "call");
             if (!failed_) {
                 if (i == 0) first_arg_elem = argument.elem_shape();

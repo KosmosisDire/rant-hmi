@@ -66,6 +66,11 @@ std::string_view scalar_text(const ExecContext& ctx, const Value& v,
             else
                 std::snprintf(buffer, cap, "#%08x", static_cast<unsigned>(v.data.rgba));
             return buffer;
+        case ValueTag::Token:
+            /* by name: the spelling the view resolves in its own mode */
+            if (v.ref >= ctx.program.tokens.size()) return {};
+            std::snprintf(buffer, cap, "$%s", ctx.program.tokens[v.ref].c_str());
+            return buffer;
         default: return {};
     }
 }

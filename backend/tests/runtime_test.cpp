@@ -2438,6 +2438,10 @@ std::string list_dump(const Program& program, const Host& state, int cell) {
                 break;
             case ValueTag::Text: out += state.text(program, view.data[i]); break;
             case ValueTag::Color: out += format_color(view.data[i].data.rgba); break;
+            case ValueTag::Token:
+                out += "$" + (view.data[i].ref < program.tokens.size()
+                                  ? program.tokens[view.data[i].ref] : std::string("?"));
+                break;
             case ValueTag::Nil: out += "?"; break;
             default: out += "!"; break;
         }
@@ -3963,8 +3967,9 @@ void test_color_element_variables() {
     scheduler.tick(fault);
     const Host& state = scheduler.state();
     /* the authored start is COLOURS, not the strings it was written as — alpha kept
-       where it was spelled, and "$accent" resolved to the token's dark value */
-    CHECK_EQ(list_dump(program, state, swatches), "#ff0000,#00ff0080,#334455");
+       where it was spelled, and "$accent" carried by reference (its text is its
+       spelling; the view resolves it) */
+    CHECK_EQ(list_dump(program, state, swatches), "#ff0000,#00ff0080,$accent");
     CHECK_EQ(map_dump(program, state, by_name), "warn=#ffaa00");
 
     const uint64_t instance =
@@ -3976,9 +3981,9 @@ void test_color_element_variables() {
     };
     /* and the two verbs carry colours the same way, a hex literal being wire-legal */
     press("tap");
-    CHECK_EQ(list_dump(program, state, swatches), "#ff0000,#00ff0080,#334455,#0000ff");
+    CHECK_EQ(list_dump(program, state, swatches), "#ff0000,#00ff0080,$accent,#0000ff");
     press("press");
-    CHECK_EQ(list_dump(program, state, swatches), "#ffffff,#00ff0080,#334455,#0000ff");
+    CHECK_EQ(list_dump(program, state, swatches), "#ffffff,#00ff0080,$accent,#0000ff");
     press("pressrelease");
     CHECK_EQ(map_dump(program, state, by_name), "cold=#00ccff,warn=#ffaa00");
 }
@@ -4232,8 +4237,9 @@ void test_document_tolerance() {
 }
 
 /* Theme tokens (spec 2.10): a "$name" color slot value — authored, or a registry
- * default — seeds the token's DARK value (the canonical runtime mode); an unknown
- * token is a warning on the slot and seeds transparent, never a fault. */
+ * default — is carried BY REFERENCE: a Token value naming the token, published as
+ * "$name", resolved by the view that draws it in its own mode. The backend never bakes
+ * one mode's hex. An unknown token is a warning on the slot, never a fault. */
 void test_theme_tokens() {
     Json panel = Json{{"kind", "frame"}, {"type", "Button"},
                       {"name", "lamp"},
@@ -4268,15 +4274,20 @@ void test_theme_tokens() {
         return nullptr;
     };
 
-    /* the authored "$accent" seeds the dark literal */
+    /* the authored "$accent" is a Token naming the token — never a baked hex */
     const Value* surface = slot_initial(lamp, "surface");
     CHECK(surface != nullptr);
-    CHECK(surface && surface->tag == ValueTag::Color);
-    CHECK(surface && surface->data.rgba == 0x4e8ef7ffu);
+    CHECK(surface && surface->tag == ValueTag::Token);
+    CHECK(surface && surface->ref < compiled.program.tokens.size() &&
+          compiled.program.tokens[surface->ref] == "accent");
+    /* the document's tokens are interned FIRST, in document order: a stable ref */
+    CHECK(compiled.program.tokens.size() >= 3 && compiled.program.tokens[0] == "accent" &&
+          compiled.program.tokens[1] == "track" && compiled.program.tokens[2] == "handle");
 
-    /* "$nope" seeds transparent and flags the slot */
+    /* "$nope" is carried too (the view paints it transparent) and flags the slot */
     const Value* border = slot_initial(lamp, "border");
-    CHECK(border && border->tag == ValueTag::Color && border->data.rgba == 0u);
+    CHECK(border && border->tag == ValueTag::Token &&
+          compiled.program.tokens[border->ref] == "nope");
     bool flagged = false;
     for (const Diag& diag : compiled.program.diagnostics)
         if (diag.code == "unknown_token" && diag.node_id == lamp && diag.where == "border" &&
@@ -4286,7 +4297,9 @@ void test_theme_tokens() {
 
     /* a registry DEFAULT may be a token reference too: the untouched Toggle's fill */
     const Value* fill = slot_initial(sw, "fillColor");
-    CHECK(fill && fill->tag == ValueTag::Color && fill->data.rgba == 0x4e8ef7ffu);
+    CHECK(fill && fill->tag == ValueTag::Token &&
+          compiled.program.tokens[fill->ref] == "accent");
+
 }
 
 /* THE CLOCK: `time` reads by field in every scalar scope. `time.now` is the tick

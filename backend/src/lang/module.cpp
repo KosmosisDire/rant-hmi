@@ -106,4 +106,11 @@ Signature Module::infer_signature(const std::vector<Instruction>& code) const {
     return sig;
 }
 
+uint32_t Module::add_token(const std::string& name) {
+    for (uint32_t i = 0; i < tokens.size(); ++i)
+        if (tokens[i] == name) return i;
+    tokens.push_back(name);
+    return static_cast<uint32_t>(tokens.size() - 1);
+}
+
 } // namespace hmi

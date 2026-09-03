@@ -68,7 +68,14 @@ Value json_value(Program& program, Shape shape, const Json& value, bool& ok) {
             return Value::text(program.add_text(value.get<std::string>()));
         case Shape::Color: {
             if (!value.is_string()) return Value::nil();
-            const uint32_t color = parse_color(value.get<std::string>(), ok);
+            const std::string text = value.get<std::string>();
+            /* A TOKEN BY REFERENCE (spec 2.10): "$name" is stored as the NAME, never
+               baked to one mode's hex — the view that draws the cell resolves it */
+            if (!text.empty() && text[0] == '$') {
+                ok = true;
+                return Value::token(program.add_token(text.substr(1)));
+            }
+            const uint32_t color = parse_color(text, ok);
             return ok ? Value::color(color) : Value::nil();
         }
         case Shape::Enum:
@@ -191,11 +198,16 @@ class Compiler {
           mesh_(mesh) {
         program_.document_version = doc_.version;
         program_.add_text("");
-        /* The theme tokens (spec 2.10), name -> DARK value: the backend has no view and
-         * therefore no theme mode, so dark is the canonical runtime resolution; light is
-         * a per-view rendering the frontend applies. */
+        /* The theme tokens (spec 2.10): the backend has no view and therefore no theme
+         * mode, so a token is never resolved here — it is carried BY NAME (a Token
+         * value) and the view resolves it in its own mode. The names are kept to warn
+         * about a reference nothing declares, and interned FIRST, in document order,
+         * so a Token's ref survives the recompiles a migration carries values through. */
         for (const TokenDecl& token : doc_.tokens)
-            if (!token.name.empty()) tokens_[token.name] = token.dark;
+            if (!token.name.empty()) {
+                tokens_[token.name] = token.dark;
+                program_.add_token(token.name);
+            }
     }
 
     CompileResult run() {
@@ -711,9 +723,12 @@ class Compiler {
                                         trimmed(override->get<std::string>());
                                     if (text.empty()) {
                                         /* empty = unset: the default stands */
-                                    } else if (shape == Shape::Color && text[0] == '$') {
-                                        /* a whole-value token reference stays the
-                                           authored literal spelling */
+                                    } else if (shape == Shape::Color &&
+                                               token_literal(text)) {
+                                        /* a BARE token reference is the literal
+                                           spelling (a Token value); anything more —
+                                           `$accent.Alpha(0.5)` — is an expression and
+                                           compiles as one, where the mixing is refused */
                                         initial = Json(text);
                                     } else if (shape == Shape::List && text[0] == '[') {
                                         initial = *override;
@@ -911,21 +926,33 @@ class Compiler {
     }
 
     /* A color slot value may be a token reference, "$<name>" (spec 2.10), authored or a
-     * registry default alike. It compiles to the token's DARK value; an unknown token is
-     * a finding on the slot and falls back to transparent — a stale reference must never
+     * registry default alike. It is carried BY REFERENCE (json_value makes it a Token
+     * value): nothing here bakes a hex, and the view that draws the cell resolves the
+     * name in its own mode. An unknown token is a finding on the slot and falls back to transparent — a stale reference must never
      * fault, it just paints nothing until the token exists again. A WARNING, not an
      * error: a missing styling name degrades the paint, it does not invalidate the
      * program the way an unresolved entity does. */
+    /* a bare "$name" and nothing else: the one spelling that is a value, not code */
+    static bool token_literal(const std::string& text) {
+        if (text.size() < 2 || text[0] != '$') return false;
+        for (size_t i = 1; i < text.size(); ++i) {
+            const char c = text[i];
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-'))
+                return false;
+        }
+        return true;
+    }
+
     Json resolve_token(uint64_t node_id, const std::string& slot, const Json& value) {
         if (!value.is_string()) return value;
         const std::string text = value.get<std::string>();
         if (text.empty() || text[0] != '$') return value;
-        auto found = tokens_.find(text.substr(1));
-        if (found != tokens_.end()) return Json(found->second);
-        diag(node_id, "unknown_token",
-             "unknown token '" + text + "': the slot paints transparent",
-             DiagGrade::Warning, slot);
-        return Json("#00000000");
+        if (tokens_.find(text.substr(1)) == tokens_.end())
+            diag(node_id, "unknown_token",
+                 "unknown token '" + text + "': the view paints it transparent until "
+                 "the token exists",
+                 DiagGrade::Warning, slot);
+        return value;
     }
 
     /* WHERE an authored aggregate is being read, so one set of parsers can serve a slot
@@ -1032,12 +1059,10 @@ class Compiler {
     bool scalar_element(const AggSite& site, Shape elem, const Json& item, Value& out) {
         if (item.is_string()) {
             if (elem == Shape::Color) {
-                const Json resolved = resolve_token(site.node, site.where, item);
+                resolve_token(site.node, site.where, item);   /* the stale-name warning */
                 bool ok = false;
-                const uint32_t rgba = parse_color(resolved.get<std::string>(), ok);
-                if (!ok) return false;
-                out = Value::color(rgba);
-                return true;
+                out = json_value(program_, Shape::Color, item, ok);
+                return ok;
             }
             out = Value::text(program_.add_text(item.get<std::string>()));
         }

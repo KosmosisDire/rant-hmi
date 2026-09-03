@@ -70,7 +70,7 @@ bool elem_fits(Shape elem, ValueTag tag) noexcept {
         case Shape::Num: return tag == ValueTag::Num;
         case Shape::Bool: return tag == ValueTag::Bool;
         case Shape::Text: return tag == ValueTag::Text;
-        case Shape::Color: return tag == ValueTag::Color;
+        case Shape::Color: return tag == ValueTag::Color || tag == ValueTag::Token;
         case Shape::List: return tag == ValueTag::List;
         case Shape::Map: return tag == ValueTag::Map;
         default: return true;
@@ -1077,6 +1077,7 @@ static bool same_element(const Program& program, const Host& state,
         case ValueTag::Enum:
             return a.data.integer == b.data.integer && a.type_id == b.type_id;
         case ValueTag::Color: return a.data.rgba == b.data.rgba;
+        case ValueTag::Token: return a.ref == b.ref;
         case ValueTag::Text: return state.text(program, a) == state.text(program, b);
         case ValueTag::List:
         case ValueTag::Map: {
@@ -1570,6 +1571,16 @@ Host migrate_state(const Program& old_program, const Host& old_state,
             } else if (wanted.shape == Shape::Enum && value.tag == ValueTag::Enum) {
                 /* the type table is rebuilt per program, so the stamp is re-issued */
                 next.store.values[n] = Value::enumeration(value.data.integer, wanted.type_id);
+            } else if (value.tag == ValueTag::Token) {
+                /* a token carries over BY NAME through the new program's own table; a
+                   name the new document no longer declares reads UNKNOWN */
+                next.store.values[n] = Value::nil();
+                if (value.ref < old_program.tokens.size())
+                    for (uint32_t t = 0; t < new_program.tokens.size(); ++t)
+                        if (new_program.tokens[t] == old_program.tokens[value.ref]) {
+                            next.store.values[n] = Value::token(t);
+                            break;
+                        }
             } else {
                 next.store.values[n] = value;
             }

@@ -903,12 +903,13 @@ void test_part_properties() {
                 return &cell;
         return nullptr;
     };
+    /* a $token default is carried BY REFERENCE: a Token value naming it */
     const CellDef* arc = cell_named("gauge.arc.fillColor");
-    CHECK(arc && arc->initial.tag == ValueTag::Color);   /* the $accent default */
+    CHECK(arc && arc->initial.tag == ValueTag::Token);   /* the $accent default */
     const CellDef* shade = cell_named("gauge.shade");
-    CHECK(shade && shade->initial.tag == ValueTag::Color);   /* the $track default */
+    CHECK(shade && shade->initial.tag == ValueTag::Token);   /* the $track default */
     const CellDef* dot = cell_named("gauge.dot.fillColor");
-    CHECK(dot && dot->initial.tag == ValueTag::Color);   /* the $handle default */
+    CHECK(dot && dot->initial.tag == ValueTag::Token);   /* the $handle default */
     const CellDef* value = cell_named("value");
     CHECK(value && value->initial.tag == ValueTag::Num && value->initial.data.num == 3.0);
 }

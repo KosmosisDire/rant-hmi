@@ -110,6 +110,13 @@ Value Value::structure(uint32_t slot, uint16_t type) {
     return out;
 }
 
+Value Value::token(uint32_t ref) {
+    Value out{};
+    out.tag = ValueTag::Token;
+    out.ref = ref;
+    return out;
+}
+
 Shape value_shape(const Value& value) {
     switch (value.tag) {
         case ValueTag::Nil: return Shape::Nil;
@@ -121,6 +128,7 @@ Shape value_shape(const Value& value) {
         case ValueTag::Map: return Shape::Map;
         case ValueTag::Struct: return Shape::Struct;
         case ValueTag::Color: return Shape::Color;
+        case ValueTag::Token: return Shape::Color;
     }
     return Shape::Unknown;
 }
@@ -163,6 +171,7 @@ bool value_same_scalar(const Value& a, const Value& b) {
             return (a.type_id == 0 || b.type_id == 0 || a.type_id == b.type_id) &&
                    a.data.integer == b.data.integer;
         case ValueTag::Color: return a.data.rgba == b.data.rgba;
+        case ValueTag::Token: return a.ref == b.ref;   /* one table per program */
         default: return a.ref == b.ref;
     }
 }

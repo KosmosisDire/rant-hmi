@@ -293,6 +293,10 @@ static Json wire_scalar(const Program& program, const Host& state,
         case ValueTag::Bool: return value.data.boolean;
         case ValueTag::Text: return std::string(state.text(program, value));
         case ValueTag::Color: return format_color(value.data.rgba);
+        /* BY REFERENCE: the string the view already turns into paint in its own mode */
+        case ValueTag::Token:
+            return value.ref < program.tokens.size() ? Json("$" + program.tokens[value.ref])
+                                                     : Json();
         case ValueTag::Enum: {
             if (value.type_id < program.types.size())
                 for (const auto& row : program.types[value.type_id].variants)
@@ -360,6 +364,7 @@ Json App::live(bool full) const {
             case ValueTag::Bool:
             case ValueTag::Text:
             case ValueTag::Color:
+            case ValueTag::Token:
             case ValueTag::Enum:
                 values[key] = wire_scalar(program, state, value);
                 break;
@@ -398,6 +403,7 @@ Json App::live(bool full) const {
                 case ValueTag::Bool:
                 case ValueTag::Text:
                 case ValueTag::Color:
+                case ValueTag::Token:
                 case ValueTag::Enum:
                     values[key] = wire_scalar(program, state, last.fields[i]);
                     break;

@@ -71,6 +71,11 @@ struct Module {
     /* the shared pools every procedure indexes into */
     std::vector<Value> constants;
     std::vector<std::string> texts;
+    /* THE TOKEN TABLE: the names a Token value's `ref` indexes. The document's own
+     * tokens are interned first, in document order, so a ref is stable across the
+     * recompiles a migration carries values through; a name first met in an
+     * expression appends. */
+    std::vector<std::string> tokens;
     /* lambda bodies, indexed by Iterate's `a` operand */
     std::vector<Procedure> subs;
     /* THE FAULT-SITE TABLE (rule 13: a fault names its own site): every runtime
@@ -97,6 +102,8 @@ struct Module {
     /* intern a constant / a text literal, returning its pool index */
     uint32_t add_text(const std::string& text);
     uint32_t add_constant(Value value);
+    /* intern a token NAME (no `$`), returning the index a Token value carries */
+    uint32_t add_token(const std::string& name);
     /* intern a compiled lambda body, returning the index Iterate names */
     uint32_t add_sub(std::vector<Instruction> code, uint32_t max_stack);
     /* register a runtime finding an instruction can fault to (site index = c) */

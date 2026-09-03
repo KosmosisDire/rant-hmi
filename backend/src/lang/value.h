@@ -25,7 +25,12 @@ enum class Shape : uint8_t {
 
 const char* shape_name(Shape shape);
 
-enum class ValueTag : uint8_t { Nil, Num, Bool, Text, Enum, List, Map, Struct, Color };
+/* A TOKEN IS A COLOUR CARRIED BY NAME (spec 2.10): the backend has no theme mode, so a
+ * "$name" is stored, compared, picked and published as the name (`ref` indexes the
+ * program's token table) and the view that draws it resolves the colour in its own
+ * mode. Its shape is Color; what it cannot do here is be MIXED (the compiler refuses a
+ * literal one in colour arithmetic; a stored one comes out Nil). */
+enum class ValueTag : uint8_t { Nil, Num, Bool, Text, Enum, List, Map, Struct, Color, Token };
 
 constexpr uint32_t kConstantRef = 0x80000000u;
 /* A text ref with this bit set names a slot in the active run's FRAME (the fixed
@@ -72,6 +77,8 @@ struct Value {
     static Value text(uint32_t ref);
     static Value enumeration(int64_t value, uint16_t type);
     static Value color(uint32_t rgba);
+    /* a theme token by reference: ref = its index in the program's token table */
+    static Value token(uint32_t ref);
     /* aggregates live in the run's element pool: ref = the pool offset, the integer
      * payload = the count (a map counts PAIRS; entries interleave key,value). flags
      * carries the element ValueTag for a list. */

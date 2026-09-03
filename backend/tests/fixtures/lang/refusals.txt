@@ -96,9 +96,13 @@ error unknown name 'v'
 expr (v => v)
 error unknown name 'v'
 
-== the theme token belongs to the template tier
+== a theme token is a colour here, carried by reference
 expr $accent + 1
-error expected an expression
+error wants Num, got Color
+
+== a theme token cannot be mixed here: the backend has no mode to resolve it in
+expr $accent.Alpha(0.5)
+error a token has no one colour until a view draws it
 
 == keywords do not name methods that do not exist
 env on: Bool = true

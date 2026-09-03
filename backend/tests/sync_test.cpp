@@ -184,7 +184,7 @@ int main() {
        18: A PROPERTY IS A PUBLIC VARIABLE — served slot rows read off `public` locals;
        19: THE VIEW DIALECT DIED INTO THE SERVED IR — a view program is packed
        {"i","k","c","s"} in the generated numeric vocabulary, not named-op rows) */
-    CHECK(kProto == 21);
+    CHECK(kProto == 22);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
