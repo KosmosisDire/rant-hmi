@@ -1,6 +1,6 @@
-/* The two sidebars. Both are generated from the served tables: the section order is fixed
- *, a slot's group decides whether its row lives in Data in or Appearance
- *, and every editor comes from the slot's shape.
+/* The two sidebars. Both are generated from the served tables: the section order is fixed,
+ * an instance's Inputs are its component's public variables and its Placement and State
+ * the page's half of the attr vocabulary, and every editor comes from the served shape.
  *
  * Each sidebar is declared twice, and the split is the point. `*Shape` projects the document
  * down to what decides which controls EXIST; `render*` builds those controls once and binds
@@ -18,13 +18,13 @@ import { clear, commitInput, el, iconButton } from "../dom.js";
 import { diagIcon, Editor, section, StageContext } from "../editor.js";
 import { ICONS, iconMarkup } from "../icons.js";
 import { openMenu } from "../menu.js";
-import { ownedSlots, elementIndex, slotLeaf } from "../elements.js";
+import { slotLeaf } from "../elements.js";
 import { bindField, bindFlag, bindText } from "../reconcile.js";
 import { authoredSlot, boundSlots, eachAuthoredSlot, ownSlot, slotCell,
          slotText, spellSlotText, typeOf, withSlot, withoutSlot } from "../slots.js";
 import { makeFold, treeRow } from "../tree.js";
 import { ComponentDef, Flow, isInstance, Json, Node, SlotSpec, TemplateNode,
-         Var, ComponentType } from "../types.js";
+         Var } from "../types.js";
 
 import { casesRows, casesSig } from "./casesrow.js";
 import { attrsSection, attrsShape, chassisRow, componentVarsSection, componentViewShape,
@@ -104,19 +104,7 @@ export function leftShape(editor: Editor): string {
     nodes: nodes.map((n) => [n.id, n.kind, n.type || n.name]),
     /* the tree highlights the selection and lists rows per expansion state */
     selection: editor.view.selection,
-    element: editor.view.element,
-    /* a switched-off node wears a different icon and a dimmed row, so which ones are
-       hidden decides what the rows ARE */
-    hidden: instances.flatMap((w) => {
-      const type = typeOf(editor.registry, w.type ?? "");
-      return (type?.slots ?? [])
-        .filter((s) => s.name.endsWith(".shown") && authoredSlot(w, type, s.name) === false)
-        .map((s) => w.id + ":" + s.name);
-    }),
     fold: fold.revision(),
-    /* the instance rows list their component's own subtree, so a recompiled registry
-       (a component edited, a built-in forked) is new rows */
-    registry: editor.registry?.version ?? 0,
     /* findings pin icons on rows and cards, so their coming and going is structure */
     wdiag: instances.flatMap((w) =>
       editor.diagFor(w.id).map((d) => w.id + ":" + d.code + ":" + d.message),
@@ -249,21 +237,16 @@ function hoverable(editor: Editor, row: HTMLElement, id: number): HTMLElement {
 /* ONE ROW FOR ONE NODE, whatever it is. An instance shows its type's glyph and its type
  * as the fallback label; a box shows the box glyph; a leaf shows its kind's.
  *
- * AN INSTANCE'S SUBTREE IS SHOWN — the component's own nodes, from the served template —
- * but it is not THIS page's to touch: the rows are dimmed, they select the instance
- * rather than themselves, and editing them means entering the component's own context
- * (which edits every placement at once, and will say so). Showing the whole tree while
- * fencing the selection is the difference between hiding structure and protecting it. */
+ * AN INSTANCE IS A LEAF. What stands inside it is the component's — one definition,
+ * every placement — and is edited by ENTERING the component (a double-click here), where
+ * the context tree lists its nodes. Listing them under every placement offered to edit
+ * all of them while looking at one, and showed internals the page never authors. */
 function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
   const key = "n" + node.id;
   const instance = isInstance(node);
   const kids = instance ? [] : node.children ?? [];
-  const template = instance
-    ? (typeOf(editor.registry, node.type ?? "")?.template?.children ?? [])
-    : [];
   const open = layerOpen(editor, node.id);
-  const current =
-    editor.view.selection.indexOf(node.id) >= 0 && (!editor.view.element || !instance);
+  const current = editor.view.selection.indexOf(node.id) >= 0;
   const label = el("span", { class: "layer-label" });
   bindText(node.id + ":label.layer", label, () => {
     const at = editor.store.nodeAt(node.id) ?? node;
@@ -273,9 +256,7 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
     key,
     depth,
     (instance ? "instance" : node.kind) + (current ? " current" : ""),
-    kids.length || template.length
-      ? { open, toggle: () => toggleLayer(editor, node.id) }
-      : null,
+    kids.length ? { open, toggle: () => toggleLayer(editor, node.id) } : null,
     [
       el("span", { class: "icon-mark layer-glyph", html: iconMarkup(glyphOf(node), 16, 1.5) }),
       label,
@@ -285,37 +266,6 @@ function nodeRows(editor: Editor, node: Node, depth: number): HTMLElement[] {
   ), node.id);
   const rows = [row];
   if (open) for (const child of kids) rows.push(...nodeRows(editor, child, depth + 1));
-  if (open && instance)
-    for (const child of template)
-      rows.push(...templateRows(editor, node.id, child, depth + 1, "t" + node.id));
-  return rows;
-}
-
-/* a component-internal row: real structure, not this page's. It carries no node id — the
- * component owns these — so it selects the INSTANCE, drags nowhere, and wears `.tpl` to
- * say it is being looked at rather than held. Double-clicking one ENTERS the component and
- * lands selected on this very node (armTree below): the fence is an invitation, not only
- * a refusal. The row's KEY carries the whole name path for exactly that. */
-function templateRows(editor: Editor, instanceId: number, node: TemplateNode,
-                      depth: number, prefix: string): HTMLElement[] {
-  const name = node.name || node.kind;
-  const key = prefix + "." + name;
-  const row = hoverable(editor, treeRow(
-    key,
-    depth,
-    "tpl " + node.kind,
-    null,
-    [
-      el("span", { class: "icon-mark layer-glyph",
-                   html: iconMarkup(node.kind === "frame" ? "frame-free" : "node-" + node.kind,
-                                    16, 1.5) }),
-      el("span", { class: "layer-label", text: name }),
-    ],
-    () => editor.select([instanceId]),
-  ), instanceId);
-  const rows = [row];
-  for (const child of node.children ?? [])
-    rows.push(...templateRows(editor, instanceId, child, depth + 1, key));
   return rows;
 }
 
@@ -422,10 +372,9 @@ function armTree(tree: HTMLElement, editor: Editor): void {
     if (at?.closest?.(".layer-caret")) return;   /* the caret owns folding */
     const keyed = at?.closest?.("[data-key]") as HTMLElement | null;
 
-    /* ENTER A COMPONENT on a double press: an instance row from itself, a fenced `.tpl`
-       row from its key — `t<instance>.<name path>` — landing selected on that very
-       node. The click that follows is eaten (`swallow`): it would land on whichever
-       row the fresh context tree put under the pointer. */
+    /* ENTER A COMPONENT on a double press of an instance row. The click that follows
+       is eaten (`swallow`): it would land on whichever row the fresh context tree put
+       under the pointer. */
     const key = keyed?.getAttribute("data-key") ?? "";
     const twice = key !== "" && key === lastPress.key &&
       ev.timeStamp - lastPress.time < DOUBLE_MS &&
@@ -433,15 +382,13 @@ function armTree(tree: HTMLElement, editor: Editor): void {
       Math.abs(ev.clientY - lastPress.y) < DOUBLE_SLOP;
     lastPress = { key, time: ev.timeStamp, x: ev.clientX, y: ev.clientY };
     if (twice) {
-      const fenced = /^t(\d+)\.(.+)$/.exec(key);
       const plain = /^n(\d+)$/.exec(key);
-      const inst = fenced ? Number(fenced[1])
-        : plain && isInstance(editor.store.nodeAt(Number(plain[1]))) ? Number(plain[1])
-        : 0;
+      const inst = plain && isInstance(editor.store.nodeAt(Number(plain[1])))
+        ? Number(plain[1]) : 0;
       if (inst) {
         lastPress = { key: "", time: 0, x: 0, y: 0 };
         swallow = true;
-        editor.enterComponent(inst, fenced ? fenced[2] : undefined);
+        editor.enterComponent(inst);
         return;
       }
     }
@@ -626,25 +573,11 @@ function end(): void {
   window.removeEventListener("keydown", onKey);
 }
 
-/* ELEMENT ROWS have left this tree. Layers is page composition — which frames and
-   instances sit where — and a component's internals belong to the component that defines
-   them, which is the Design workspace's tree, not this one. The per-element eye that hid
-   one went with them; per-instance element visibility comes back as an
-   instance-inspector concern, since
-   that is what it always was: an override on one placement, not a fact about the page.
-
 /* ---- inspector ---- */
 
-/* the selected element, but only when this component can actually name it; anything else
- * (a stale path, an unknown component) falls back to the instance view */
-function selectedElement(editor: Editor, type: ComponentType | null): string {
-  const path = editor.view.element;
-  return path && type && elementIndex(type).byPath.has(path) ? path : "";
-}
-
-/* The CONTENT inspector, routed by WHAT THE NODE IS rather than by which of three kinds
-   it used to be: an instance shows the component's own vocabulary (data in, behavior,
-   locals, appearance), and any other node shows its name, its kind and its attrs. */
+/* The CONTENT inspector, routed by WHAT THE NODE IS: an instance shows its component's
+   interface and the page's half of the attr vocabulary (inputs, behavior, locals,
+   placement, state), and any other node shows its name, its kind and its attrs. */
 export function inspectorShape(editor: Editor): string {
   const node = editor.selectedNode();
   const ctx = editor.contexts[editor.contexts.length - 1];
@@ -680,7 +613,6 @@ export function inspectorShape(editor: Editor): string {
   return JSON.stringify({
     id: instance.id,
     type: instance.type,
-    element: selectedElement(editor, type),
     slots: (type?.slots ?? []).map((s) => [
       s.name, s.shape, s.group, s.editor ?? "", (s.variants ?? []).join("|"),
     ]),
@@ -689,7 +621,7 @@ export function inspectorShape(editor: Editor): string {
        poll button) follows the authored text, so it is structure — and an instance's
        ATTR rows carry the cases disclosure too */
     slotsig: slotRowSig(editor, instance),
-    attrsig: attrsShape(editor, instance),
+    attrsig: attrsShape(editor, instance, "placement"),
     align: template.includes("slot:align"),
     textScale: template.includes("slot:textScale"),
     /* the aspect slot decides whether align has anywhere to apply, so this one VALUE is
@@ -735,19 +667,16 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
 
   const at = () => editor.store.instance(instance.id) ?? instance;
   const type = typeOf(editor.registry, instance.type ?? "");
-  const element = selectedElement(editor, type);
-  if (element && type) {
-    renderElementInspector(host, editor, instance, type, element);
-    return;
-  }
   const fed = boundSlots(instance);
-  /* ONLY the component's own properties: what an element declares is edited by
-     selecting that element, and appears nowhere else. This is the whole point of elements
-     owning properties — a Slider's inspector is its value, its range and its frame,
-     not every colour of every shape inside it. */
-  const own = ownedSlots(type, "");
-  const valueSlots = own.filter((s) => s.group === "value");
-  const otherSlots = own.filter((s) => s.group !== "value");
+  /* THE INTERFACE, FLAT: every public variable the component serves, in one list —
+     what the component declared for a placement to set, wherever the component keeps
+     it (an element's beside the component's own; the address is the row's tooltip).
+     There is no element selection any more: an input is an input. The one thing held
+     back is the synthesized per-element `shown` switch, until the flat interface lands
+     and it stops being served. */
+  const inputs = (type?.slots ?? [])
+    .filter((s) => s.public !== false && !s.name.endsWith(".shown"))
+    .sort((a, b) => slotRank(a.name) - slotRank(b.name));
   /* ONE scope for every slot row: a slot expression's universe is the instance's, not
      the row's; the options slot alone adds the schema's enum types to its browse */
   const scope = slotScope(editor, instance);
@@ -773,16 +702,18 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
   const body = el("div", { class: "inspector-body" }, []);
   host.appendChild(body);
 
-  /* 1. Data in, and ONLY where the component takes values: what an instance consumes is its
-   *    value-group slots, so a Button (which consumes nothing) shows no such section.
-   *    Every value is an expression box; a literal is just a short expression. */
-  if (valueSlots.length)
-    body.append(
-      ...section("data-in", "Data in",
-        String(valueSlots.filter((s) => fed.has(s.name)).length), () =>
-        valueSlots.flatMap(rowsFor),
-      ),
-    );
+  /* 1. Inputs: the component's interface. Every value is an expression box; a literal
+   *    is just a short expression. A component that exposes nothing says so — the
+   *    empty section is what teaches that exposing happens inside the component. */
+  body.append(
+    ...section("inputs", "Inputs", String(fed.size), () => [
+      ...inputs.flatMap(rowsFor),
+      inputs.length
+        ? null
+        : el("p", { class: "empty",
+                    text: "this component exposes nothing — enter it to expose a field" }),
+    ]),
+  );
 
   /* 2. Behavior: what this instance authors. The type's built-in defaults (a Toggle
    *    toggles) are the control working as expected, not authored behavior, so they are
@@ -809,36 +740,16 @@ export function renderInspector(host: HTMLElement, editor: Editor): void {
     ]),
   );
 
-  /* 4. Appearance: the CONTENT's properties (colors, text, per-type config). RELATED
-   *    properties sit together, in ONE canonical order on every type (the semantic
-   *    contract extended to position): colors, text, the control's own shape, range, the
-   *    scale, options, sampling, then state. A name outside the table keeps its
-   *    declaration order at the end. */
-  body.append(
-    ...section("appearance", "Appearance", String(fed.size), () =>
-      otherSlots
-        .filter((s) => s.group === "appearance" || s.group === "config")
-        .sort((a, b) => slotRank(a.name) - slotRank(b.name))
-        .flatMap(rowsFor),
-    ),
-  );
-
-  /* 5. Panel: the box around the content — the frame-group SLOTS the component declares
-   *    (surface, border, radius, pad: bindable, which is what makes a bound surface a
-   *    lamp), and then how this placement is placed.
-   *
-   *    PLACE IS ATTRS, not props: an instance is a node, and a node's fields are
-   *    expression text, so these are the very same rows a plain frame gets and they go
-   *    through the very same commit. There is no instance-shaped copy of them. */
-  body.append(
-    ...section("panel", "Panel", null, () =>
-      otherSlots.filter((s) => s.group === "frame").flatMap(rowsFor),
-    ),
-  );
-  body.append(...attrsSection(editor, instance));
+  /* 4 + 5. Placement and State: THE PAGE'S HALF of the instance (registry/attrs.h
+   *    AttrOwner) — where it stands and how big, then whether it is shown, enabled or
+   *    repeated. ATTRS, not slots: an instance is a node, so these are the very rows a
+   *    plain frame gets, through the very same commit; there is no instance-shaped copy
+   *    of them. The component's half (surface, clip, the shadow, its ink) is never
+   *    offered here: it is the root's, exposed as an input or nothing. */
+  body.append(...attrsSection(editor, instance, "placement"));
 }
 
-/* the canonical property order (see the Appearance section): clusters of related names,
+/* the canonical input order (see the Inputs section): clusters of related names,
  * shared across every type so the same property is always found in the same place */
 const SLOT_ORDER = [
   /* the node's own switch leads: whether it is drawn at all comes before how */
@@ -866,71 +777,6 @@ const SLOT_ORDER = [
 function slotRank(address: string): number {
   const at = SLOT_ORDER.indexOf(slotLeaf(address));
   return at < 0 ? SLOT_ORDER.length : at;
-}
-
-/* The element-scoped inspector: the head reads instance › element (the instance's name
- * is the way back), and ONE section lists exactly the properties THIS element owns — not
- * its children's, which have their own rows in the tree, and not the component's, which are
- * one click up. Ownership is exclusive, so every property is editable in exactly one
- * place. Behavior, variables and placement belong to the instance view. */
-function renderElementInspector(
-  host: HTMLElement,
-  editor: Editor,
-  instance: Node,
-  type: ComponentType,
-  path: string,
-): void {
-  const node = elementIndex(type).byPath.get(path)!;
-  const back = el("button", {
-    class: "element-back",
-    title: "back to the instance",
-    onclick: () => editor.select([instance.id]),
-  });
-  bindText(instance.id + ":label.element", back, () => {
-    const at = editor.store.instance(instance.id);
-    return at ? at.name || at.type || "" : "";
-  });
-  /* the whole path, not just the leaf: elements nest now (a knob's dot lives under its
-     face), and "Knob › dot" would say nothing about where that dot actually is. Every
-     ancestor is a step BACK to itself, so the head navigates as well as it reads. */
-  const segments = path.split(".");
-  const crumbs: (HTMLElement | null)[] = [back];
-  segments.forEach((name, i) => {
-    const upto = segments.slice(0, i + 1).join(".");
-    const last = i === segments.length - 1;
-    crumbs.push(el("span", { class: "element-sep", text: "›" }));
-    crumbs.push(
-      last
-        ? el("span", { class: "element-name", text: name, title: path })
-        : el("button", {
-            class: "element-back",
-            text: name,
-            title: upto,
-            onclick: () => editor.selectElement(instance.id, upto),
-          }),
-    );
-  });
-  host.appendChild(el("div", { class: "inspector-head" }, crumbs));
-
-  const specs = ownedSlots(type, path)
-    .sort((a, b) => slotRank(a.name) - slotRank(b.name));
-  const scope = slotScope(editor, instance);
-  const body = el("div", { class: "inspector-body" }, []);
-  host.appendChild(body);
-  body.append(
-    ...section("element", node.name, String(specs.length), () =>
-      specs.length
-        ? specs.flatMap((spec) =>
-            slotRows(editor, instance, spec,
-                     spec.editor === "enum-type" ? optionsSlotScope(editor, instance) : scope))
-        : [el("p", {
-            class: "empty",
-            text: node.children.length
-              ? "this element lays its children out; their properties are on them"
-              : "this element has no properties of its own",
-          })],
-    ),
-  );
 }
 
 /* THE NODE INSPECTOR: a box, a text, an icon or a path on the page — its name, what it

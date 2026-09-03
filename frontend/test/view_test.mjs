@@ -209,7 +209,7 @@ check(
 
 const store = new DocStore();
 store.load(snapshot.doc);
-const view = { mode: "edit", selection: [], element: "", hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
+const view = { mode: "edit", selection: [], hover: 0, scale: 1, ghost: null, state: {}, faults: {}, themeMode: "dark" };
 const page = store.pages()[0];
 const slider = store.instancesOn(page).find((w) => w.type === "Slider");
 
@@ -949,12 +949,11 @@ check(
   "a slot finding attributes to its instance, so the Layers row badge exists",
 );
 
-/* ---- the Layers tree, element selection and the element-scoped inspector ----
-   The left sidebar's tree lists the CURRENT page's instances and each instance's named
-   template elements from the REGISTRY type (all of them, rendered or not); pages live in
-   the topbar selector, not here. Selecting an element scopes the inspector to exactly the
-   slots the element's subtree consumes, and the overlay rings the element where the last
-   render put it. */
+/* ---- the Layers tree and the instance inspector ----
+   The left sidebar's tree lists the CURRENT page's nodes; pages live in the topbar
+   selector, not here, and an instance is a LEAF — what stands inside it is the
+   component's, reached by entering it. The instance inspector shows the component's
+   interface flat and the page's half of the attr vocabulary, nothing else. */
 
 const left = new Element("aside");
 const leftPanel = new Panel(left);
@@ -981,80 +980,64 @@ const toggleRow = rowByKey("n" + toggle.id);
 check(toggleRow !== null, "the Layers tree lists the current page's instances");
 check(left.querySelectorAll(".layer-row.page").length === 0, "the Layers tree has no page rows");
 check(rowByKey("p" + page.id) === null, "not even the current page's");
-/* an instance row is a LEAF here now: its elements belong to the component that defines them,
-   so they are listed by the Design tree and no longer expand out of this one */
-check(rowByKey("n" + toggle.id + "/pill.knob") === null,
+/* AN INSTANCE IS A LEAF: what stands inside it is the component's — one definition, every
+   placement — reached by entering the component, never listed under each placement */
+check(left.querySelectorAll(".layer-row")
+        .every((r) => !/^t\d+\./.test(r.getAttribute("data-key") ?? "")),
       "an instance's elements are not listed in the Layers tree");
-check(rowByKey("n" + slider.id + "/scale") === null, "not even an element hidden by `show`");
+check(left.querySelectorAll(".layer-row.tpl").length === 0, "no dimmed template rows either");
+check(!toggleRow.className.includes("collapsed") &&
+        toggleRow.querySelector(".layer-caret")?.querySelector("svg") === null,
+      "and the instance row has no caret to open");
 
-/* a selected element scopes the inspector: instance › element head, ONE section, and only the
-   properties that element OWNS — not its siblings', not its children's, not the instance's */
+/* THE INSTANCE INSPECTOR: Inputs (the component's public variables, FLAT — an element's
+   beside the component's own, wherever the component keeps them), Behavior, Local
+   Variables, then the PAGE'S HALF of the attr vocabulary as Placement and State. Nothing
+   of the component's half: an instance never authors surface, clip or a shadow — those
+   are the root's, exposed as an input or nothing. */
 const toggleEditor2 = { ...editor, selectedNode: () => store.nodeAt(toggle.id), selectedInstance: () => store.instance(toggle.id) };
-view.selection = [toggle.id];
-view.element = "pill.knob";
-const instanceShape = (() => { view.element = ""; const s = inspectorShape(toggleEditor2); view.element = "pill.knob"; return s; })();
-check(inspectorShape(toggleEditor2) !== instanceShape, "the selected element moves the inspector's shape");
-const elementPanel = new Panel(new Element("aside"));
-elementPanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
-const elementLabels = elementPanel.host.querySelectorAll(".attr-row.slot-row")
-  .map((row) => row.querySelector(".attr-name")?.textContent);
-check(elementLabels.includes(humanName("handleColor")),
-      "the element view lists the property that element owns");
-check(!elementLabels.includes(humanName("fillColor")) &&
-      !elementLabels.includes(humanName("trackColor")),
-      "and not its siblings' slots, got " + elementLabels.join(","));
-check(elementPanel.host.querySelector(".geom-grid") === null,
-      "the element view carries no Panel/placement section");
-check(elementPanel.host.querySelector(".element-name")?.textContent === "knob",
-      "the head names the element");
-
-/* ...and the INSTANCE view is the other half of the same rule: a property an element owns is
-   editable there and NOWHERE else, so the instance's own inspector holds only its own
-   (its value, its frame, its placement) */
-view.element = "";
 const instancePanel = new Panel(new Element("aside"));
 instancePanel.render(inspectorShape(toggleEditor2), (host) => renderInspector(host, toggleEditor2));
 const instanceLabels = instancePanel.host.querySelectorAll(".attr-row.slot-row")
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(!instanceLabels.includes(humanName("handleColor")) &&
-      !instanceLabels.includes(humanName("fillColor")),
-      "the instance view shows no property an element owns, got " + instanceLabels.join(","));
+check(instanceLabels.includes(humanName("value")) &&
+        instanceLabels.includes(humanName("fillColor")) &&
+        instanceLabels.includes(humanName("handleColor")),
+      "Inputs lists every public variable flat, an element's beside the component's own, got " +
+        instanceLabels.join(","));
+check(!instanceLabels.includes(humanName("shown")),
+      "and not the synthesized per-element switches");
 check(instanceLabels.includes(humanName("surface")),
-      "and keeps the instance's own frame slots");
-/* PLACE IS NOT A SLOT and not a prop: an instance is a node, so its box on the artboard
-   is the same attr row a plain box gets, through the same commit */
+      "the root's frame inputs are inputs like any other");
 const instanceAttrNames = instancePanel.host.querySelectorAll(".attr-row")
   .filter((row) => !row.classList.contains("slot-row"))
   .map((row) => row.querySelector(".attr-name")?.textContent);
-check(instanceAttrNames.includes(humanName("left")) &&
-      instanceAttrNames.includes(humanName("w")),
-      "the instance view places the instance, got " + instanceAttrNames.join(","));
+check(["left", "w", "aspect", "rotate", "show", "enabled", "repeat"]
+        .every((name) => instanceAttrNames.includes(humanName(name))),
+      "Placement and State hold the page's half of the vocabulary, got " +
+        instanceAttrNames.join(","));
+check(["surface", "clip", "shadow", "radius", "scroll"]
+        .every((name) => !instanceAttrNames.includes(humanName(name))),
+      "and nothing of the component's half");
+/* a placement edit is an ATTR edit on the instance node, through the same commit a plain
+   box gets — there is no instance-shaped copy of the box */
 {
-  /* EVERY element carries its own `shown` switch, so an element is turned off by selecting it
-     — and the edit writes NESTED, under the element that owns it. The switch is the bool
-     box now: committing `false` stores the raw bool at the element's address. */
-  check(elementLabels.includes(humanName("shown")),
-        "an element can be switched off from its own view");
   const applied = [];
-  const nested = { ...toggleEditor2, apply: (ops) => applied.push(...ops) };
-  view.element = "pill.knob";
-  const editPanel = new Panel(new Element("aside"));
-  editPanel.render(inspectorShape(nested), (host) => renderInspector(host, nested));
-  const shownRow = slotRowIn(editPanel.host, "shown");
-  check(shownRow !== null, "the knob's own view carries its shown switch");
-  const shownInput = shownRow.querySelector("input");
-  typeInto(shownInput, "false");
-  fire(shownInput, "change");
-  const slotOp = applied.find((op) => op.key === "slots");
-  check(slotOp && slotOp.value?.pill?.knob?.shown === false,
-        "an element's edit writes nested under its element, got " + JSON.stringify(slotOp?.value));
-  check(slotOp && slotOp.value.shown === undefined,
-        "and never at the instance's top level");
-  view.element = "";
+  const placing = { ...toggleEditor2, apply: (ops) => applied.push(...ops) };
+  const placePanel = new Panel(new Element("aside"));
+  placePanel.render(inspectorShape(placing), (host) => renderInspector(host, placing));
+  const leftRow = placePanel.host.querySelectorAll(".attr-row")
+    .find((row) => !row.classList.contains("slot-row") && namedRow(row, "left")) ?? null;
+  check(leftRow !== null, "the Placement section carries the left row");
+  const leftInput = leftRow.querySelector("input");
+  typeInto(leftInput, "44");
+  fire(leftInput, "change");
+  const attrOp = applied.find((op) => op.key === "attrs");
+  check(attrOp && attrOp.value?.left === "44",
+        "and editing it writes the instance's attrs, got " + JSON.stringify(attrOp?.value));
 }
 
 view.selection = [];
-view.element = "";
 
 /* ---- the Components section: browse built-ins, edit doc components ----
    Below Layers, the left sidebar lists the document's components (their ELEMENT trees,
@@ -1654,11 +1637,12 @@ const stageAttrs = {
 };
 
 const stageHost = new Element("section");
-const stageView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+const stageView = { mode: "edit", selection: [], hover: 0, state: {}, faults: {} };
 const stageEditor = {
   store: stageStore,
   registry: snapshot.registry,
   nodeAttrs: stageAttrs,
+  attrTable: snapshot.attr_table,
   live: { epoch: 1, values: {} },
   view: stageView,
   page: () => stageStore.pages()[0],
@@ -1838,11 +1822,13 @@ stageEditor.live = { epoch: 6, values: {} };
 drawStage();
 check(inkOf().style.overflow === "hidden" && inkOf().style.textOverflow === "ellipsis",
       "a one-line text ellipsises by default");
+/* THE OWNER SPLIT: clip is the component's half, so a clip authored on the INSTANCE node
+   is not the instance's to give — the view keeps the root's and drops it */
 stageAttrs["904"].attrs.clip = prog(false);
 stageEditor.live = { epoch: 7, values: {} };
 drawStage();
-check(stageNode("leaf", 904).style.overflow === "visible",
-      "clip:false on the instance stops its box clipping");
+check(inkOf().style.overflow === "hidden",
+      "an instance cannot author clip: the component's half comes from the root alone");
 delete stageAttrs["904"].attrs.clip;
 
 /* ---- A BOX THAT SCROLLS ITS CHILDREN ----
@@ -1954,20 +1940,29 @@ check(row.style.boxShadow === "-0px -4px 8px 0px #000000cc" ||
       "half a turn flips it back the other way, got " + row.style.boxShadow);
 
 /* AND IT COUNTS THE PARENTS TOO: rotation applies to the whole subtree, so a child of a
-   turned box is turned as well and its own shadow has to cancel that too. */
+   turned box is turned as well and its own shadow has to cancel that too. A PLAIN child,
+   inserted for the purpose: an instance cannot author a shadow — that is the component's
+   half, and the owner split drops it. */
+stageStore.apply(stageStore.version() + 1, [
+  { op: "insert", parent: 901, list: "children",
+    node: { id: 907, kind: "frame", name: "Chip", attrs: {} } },
+]);
+stageAttrs["907"] = { attrs: { left: prog(10), top: prog(10), w: prog(40), h: prog(40) } };
 shadowOn(901, { rotate: prog(90) }, 15);
-shadowOn(903, { shadow: prog("#ff0000"), shadowX: prog(0), shadowY: prog(6) }, 16);
-check(stageNode("leaf", 903).style.boxShadow === "6px 0px 0px 0px #ff0000",
+shadowOn(907, { shadow: prog("#ff0000"), shadowX: prog(0), shadowY: prog(6) }, 16);
+check(stageNode("frame", 907).style.boxShadow === "6px 0px 0px 0px #ff0000",
       "a child of a rotated box un-turns by its PARENT's rotation, got " +
-        stageNode("leaf", 903).style.boxShadow);
-shadowOn(903, { rotate: prog(-90) }, 17);
-check(stageNode("leaf", 903).style.boxShadow === "0px 6px 0px 0px #ff0000",
+        stageNode("frame", 907).style.boxShadow);
+shadowOn(907, { rotate: prog(-90) }, 17);
+check(stageNode("frame", 907).style.boxShadow === "0px 6px 0px 0px #ff0000",
       "and by the sum when it turns as well — 90 out, 90 back is no turn at all, got " +
-        stageNode("leaf", 903).style.boxShadow);
+        stageNode("frame", 907).style.boxShadow);
 shadowOn(901, { rotate: prog(0), shadow: prog("") }, 18);
-shadowOn(903, { rotate: prog(0), shadow: prog("") }, 19);
-check(row.style.boxShadow === "" && stageNode("leaf", 903).style.boxShadow === "",
+shadowOn(907, { rotate: prog(0), shadow: prog("") }, 19);
+check(row.style.boxShadow === "" && stageNode("frame", 907).style.boxShadow === "",
       "and a shadow whose COLOUR went away casts nothing, cleared not zeroed");
+stageStore.apply(stageStore.version() + 1, [{ op: "remove", node: 907 }]);
+delete stageAttrs["907"];
 
 /* INK casts a filter. One node, page-level, so its attrs are this rig's to write. */
 stageStore.apply(stageStore.version() + 1, [
@@ -2138,7 +2133,7 @@ check(stageNode("frame", 901) === heldAgain &&
     "520": { attrs: { left: prog(484), top: prog(11), w: prog(220), h: prog(110) } },
   };
   const rHost = new Element("section");
-  const rView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const rView = { mode: "edit", selection: [], hover: 0, state: {}, faults: {} };
   const rEditor = {
     store: rStore, registry: { version: 1, components: [rigType] }, nodeAttrs: rAttrs,
     live: { epoch: 1, values: {} }, view: rView,
@@ -2349,7 +2344,7 @@ check(stageNode("frame", 901) === heldAgain &&
       slots: { value: asm(loadCell("repeat:index"), lit(100), ins(Op.Mul)) },
     },
   };
-  const pView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const pView = { mode: "edit", selection: [], hover: 0, state: {}, faults: {} };
   const pEditor = {
     store: pStore, registry: { version: 1, components: [pcType] }, nodeAttrs: pAttrs,
     /* the cell the standing program WOULD have published, deliberately holding a value:
@@ -2425,7 +2420,7 @@ check(stageNode("frame", 901) === heldAgain &&
                       surface: prog("#333333") } },
     "711": { attrs: { left: prog(11), top: prog(200), w: prog(220), h: prog(110) } },
   };
-  const tView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const tView = { mode: "edit", selection: [], hover: 0, state: {}, faults: {} };
   const tHost = new Element("section");
   const tEditor = {
     store: tStore, registry: { version: 1, components: [sweepType] }, nodeAttrs: tAttrs,
@@ -2568,7 +2563,7 @@ check(stageNode("frame", 901) === heldAgain &&
     "731": { attrs: { top: prog(110), w: prog(110), h: prog(110),
                       left: asm(loadCell("time:now"), lit(100), ins(Op.Mul)) } },
   };
-  const kView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const kView = { mode: "edit", selection: [], hover: 0, state: {}, faults: {} };
   const kHost = new Element("section");
   const kEditor = {
     store: kStore, registry: { version: 1, components: [] }, nodeAttrs: kAttrs,
@@ -3184,7 +3179,7 @@ check(stageNode("frame", 901) === heldAgain &&
     "951": { attrs: { left: prog2(0.25), top: prog2(0.25), w: prog2(0.5), h: prog2(0.5) } },
   };
   const ctxHost = new Element("section");
-  const ctxView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const ctxView = { mode: "edit", selection: [], hover: 0, state: {}, faults: {} };
   const ctxStage = {
     store: ctxStore, registry: snapshot.registry, nodeAttrs: ctxAttrs,
     live: { epoch: 1, values: {} }, view: ctxView,
@@ -3325,7 +3320,7 @@ check(stageNode("frame", 901) === heldAgain &&
   };
   const aggStore = new Map();
   const plotHost = new Element("section");
-  const plotView = { mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const plotView = { mode: "edit", selection: [], hover: 0, state: {}, faults: {} };
   const plotEditor = {
     store: plotStore, registry: { version: 1, components: [plotType] },
     nodeAttrs: { 971: { attrs: {} } },
@@ -3459,7 +3454,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const boxOf = (x, y, w, h) =>
     ({ attrs: { left: prog3(x), top: prog3(y), w: prog3(w), h: prog3(h) } });
   const tHost = new Element("section");
-  const tView = { mode: "test", selection: [], element: "", hover: 0, state: {}, faults: {} };
+  const tView = { mode: "test", selection: [], hover: 0, state: {}, faults: {} };
   const tEditor = {
     store: tStore, registry: snapshot.registry,
     nodeAttrs: { 961: boxOf(22, 22, 220, 110), 962: boxOf(264, 22, 132, 66),
@@ -3865,16 +3860,17 @@ check(stageNode("frame", 901) === heldAgain &&
 
   /* the same instance's ATTR rows carry the disclosure too (one module serves slots
      and attrs): the chip stands on every row and ARMS BY BIND, so authoring a chain
-     into a resting attr grows the affordance without a rebuild */
+     into a resting attr grows the affordance without a rebuild. A PLACEMENT attr,
+     because those are the only attr rows an instance has. */
   const surfaceRow4a = panel4a.host.querySelectorAll(".attr-row")
-    .find((r) => !r.classList.contains("slot-row") && namedRow(r, "surface")) ?? null;
+    .find((r) => !r.classList.contains("slot-row") && namedRow(r, "left")) ?? null;
   const surfaceChip4a = surfaceRow4a?.querySelector(".cases-chip") ?? null;
   check(surfaceChip4a !== null && surfaceChip4a.classList.contains("off"),
         "an unset attr's cases chip rests hidden");
   const preAttrShape4a = inspectorShape(editor4a);
   store.apply(store.version() + 1, [
     { op: "set_prop", node: 9800, key: "attrs",
-      value: { surface: "1 > 2 ? '#f00' : '#0f0'" } },
+      value: { left: "1 > 2 ? 22 : 44" } },
   ]);
   check(inspectorShape(editor4a) === preAttrShape4a,
         "authoring a chain into it moves no shape — an arriving value never rebuilds");

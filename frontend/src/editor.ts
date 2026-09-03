@@ -22,9 +22,6 @@ export type Mode = "edit" | "test" | "operate";
  * drag painted). What is left is selection and presentation. */
 export interface ViewState {
   mode: Mode;
-  /* the selected ELEMENT of the selected instance: an element path into its
-     component's template, "" = none */
-  element: string;
   selection: number[];
   hover: number;
   /* per-SEAT interaction state, the "state:" half of the cell space an attr program
@@ -185,9 +182,8 @@ export interface Editor {
   /* the artboard's current dimensions in artboard px: the fixed canvas on a page, the
      preview size inside a context. Gestures divide the screen by this. */
   artboard(): { w: number; h: number };
-  /* ENTER A COMPONENT: push the instance's component onto the context stack. `path`
-     names an internal element (template names joined with dots) to land selected. */
-  enterComponent(id: number, path?: string): void;
+  /* ENTER A COMPONENT: push the instance's component onto the context stack */
+  enterComponent(id: number): void;
   /* step out to `depth` contexts (0 = the page), selecting the instance stepped out of */
   exitTo(depth: number): void;
   /* resize the current context's preview box: session-local, never written */
@@ -232,9 +228,6 @@ export interface Editor {
      tree is the only place a frame can be right-clicked at all, since on the stage its
      own children cover it. */
   openNodeMenu(x: number, y: number, node: number): void;
-  /* select one instance and narrow to one element of its component's template (an
-     element path); "" steps back to the instance. `select` always clears any element. */
-  selectElement(id: number, path: string): void;
   /* select a document component (or one element node in it) for editing; clears the
      instance selection, as selecting an instance clears this */
   selectComponent(component: number, node: number): void;

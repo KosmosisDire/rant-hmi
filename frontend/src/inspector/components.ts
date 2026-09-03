@@ -57,15 +57,35 @@ function attrPlaceholder(def: AttrDef): string {
   return def.default !== undefined ? literalText(def.default) : "not set";
 }
 
-/* The keys a node carries that its kind's vocabulary does NOT declare. ONE definition,
- * because both the shape string and the render need it and they must not disagree: the
- * declared rows are fixed by `kind` alone, but a stray adds a row, so which strays exist
- * is structure and has to ride the shape. */
-function strayAttrs(editor: Editor, element: Node): string[] {
-  const declared = new Set(
-    [...ownAttrsOf(editor, element.kind), ...commonAttrs(editor)].map((d) => d.name));
-  return Object.keys((element.attrs ?? {}) as Record<string, string>)
-    .filter((key) => !declared.has(key));
+/* ---- WHO AUTHORS WHICH ATTRS: the served `owner` column (registry/attrs.h) ----
+ *
+ * An INSTANCE authors its placement alone (show, enabled, repeat, the box); a component
+ * ROOT authors the component's half alone (its dressing); every other node — an element
+ * inside a component, a box on a page — authors both. The compiler refuses the other
+ * half on each; the inspector simply never offers it. */
+export type AttrAuthors = "both" | "placement" | "component";
+
+function mayAuthor(authors: AttrAuthors, def: AttrDef | undefined): boolean {
+  if (authors === "both") return true;
+  const placement = def?.owner === "placement";
+  return authors === "placement" ? placement : !placement;
+}
+
+/* The keys a node carries that it has no row for: `unknown` is what its kind's
+ * vocabulary does NOT declare, `foreign` what the vocabulary declares but the OTHER
+ * owner authors (a surface on an instance, a `show` on a component root). ONE
+ * definition, because both the shape string and the render need it and they must not
+ * disagree: the declared rows are fixed by kind and authorship alone, but a stray adds
+ * a row, so which strays exist is structure and has to ride the shape. */
+function strayAttrs(editor: Editor, element: Node,
+                    authors: AttrAuthors): { unknown: string[]; foreign: string[] } {
+  const declared = new Map(
+    [...ownAttrsOf(editor, element.kind), ...commonAttrs(editor)].map((d) => [d.name, d]));
+  const keys = Object.keys((element.attrs ?? {}) as Record<string, string>);
+  return {
+    unknown: keys.filter((key) => !declared.has(key)),
+    foreign: keys.filter((key) => declared.has(key) && !mayAuthor(authors, declared.get(key))),
+  };
 }
 
 /* the divider between a kind's own attrs, the placement half that applies and the set
@@ -376,12 +396,22 @@ export function ownedShape(node: Json): Json {
   };
 }
 
+/* THE COMPONENT RECORD IS ITS ROOT NODE — a frame — so the node-level sections
+ * (interact, attrs) are asked of it as one. The record carries no `kind` of its own;
+ * this is the one place that fact is spelled out. */
+function rootNode(comp: ComponentDef): Node {
+  return { ...comp, kind: "frame" } as unknown as Node;
+}
+
 /* the component view's structure, parameterized by the component so the Content
  * inspector can stand on an entered context's component as well as the Design
  * selection */
 export function componentViewShape(editor: Editor, comp: ComponentDef): string {
   return JSON.stringify({
     comp: comp.id,
+    /* the root's own attr rows: fixed by the vocabulary, moved by strays and open
+       cases exactly as an element's are */
+    attrs: attrsShape(editor, rootNode(comp), "component"),
     locals: (comp.locals ?? []).map(varShape),
     /* an event's NAME is its row's identity (there is no id to bind by); the signature
        rides the shape so a parameter added or dropped rebuilds its row */
@@ -508,7 +538,14 @@ export function renderComponentView(host: HTMLElement, editor: Editor, comp: Com
     ]),
   );
 
-  /* 5. Design frame: the component's own authored size — what the future Design
+  /* 5. Attrs: the ROOT BOX's own dressing — the component's half of the vocabulary
+   *    (surface, border, clip, the shadow...), the very rows an element inside gets.
+   *    Nothing of the placement's: a component has no place, and show/enabled/repeat
+   *    are every instance's own (registry/attrs.h AttrOwner). A placement attr that
+   *    reached the record anyway lists under THE INSTANCE'S, removable. */
+  body.append(...attrsSection(editor, rootNode(comp), "component"));
+
+  /* 6. Design frame: the component's own authored size — what the future Design
    *    preview will draw it at. Never an instance size (an instance carries no
    *    geometry of its own; its box comes from layout), so it is edited here on the
    *    TYPE and nowhere else. Same numeric idiom the frame inspector's gap/pad fields
@@ -767,8 +804,14 @@ function renderElementView(host: HTMLElement, editor: Editor, comp: ComponentDef
  * removable rather than an error with nowhere to land.
  *
  * ONE implementation, exported, because a page's frame and a component's frame are the
- * same node: editing them differently would be two vocabularies wearing one name. */
-export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
+ * same node: editing them differently would be two vocabularies wearing one name. What
+ * differs is WHO AUTHORS (`authors`, the served owner column): an element lists both
+ * halves in one Attrs section; a component ROOT lists the component's half alone; an
+ * INSTANCE lists the placement's alone, as two sections — Placement (the box) and State
+ * (show, enabled, repeat). The other owner's keys, should the document carry any, list
+ * under their owner's name, removable, exactly as an unknown key does. */
+export function attrsSection(editor: Editor, node: Node,
+                             authors: AttrAuthors = "both"): HTMLElement[] {
   const at = () => (editor.store.node(node.id) as Node | null) ?? node;
   const attrsOf = () => (at().attrs ?? {}) as Record<string, string>;
   const commitAttrs = (next: Record<string, string>) =>
@@ -776,24 +819,48 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
   /* ONE scope for the whole section: every attr on a node references the same universe */
   const scope = attrScope(editor, node);
   const row = (d: AttrDef) => attrDefRow(editor, node, d, scope, attrsOf, commitAttrs);
+  const strays = strayAttrs(editor, node, authors);
+  const strayRows = (): HTMLElement[] => [
+    ...(strays.foreign.length
+      ? [attrGroupHeading(authors === "placement" ? "THE COMPONENT'S" : "THE INSTANCE'S"),
+         ...strays.foreign.map((key) =>
+           unknownAttrRow(editor, node, key, scope, attrsOf, commitAttrs,
+                          authors === "placement"
+                            ? "'" + key + "' is the component's: expose the field inside "
+                              + "the component to set it per placement"
+                            : "'" + key + "' is the placement's: author it on the "
+                              + "instance"))]
+      : []),
+    ...(strays.unknown.length
+      ? [attrGroupHeading("NOT READ BY THIS KIND"),
+         ...strays.unknown.map((key) =>
+           unknownAttrRow(editor, node, key, scope, attrsOf, commitAttrs))]
+      : []),
+  ];
+
+  if (authors === "placement") {
+    const place = placementAttrs(editor);
+    const state = stateAttrs(editor);
+    return [
+      ...section("node-placement", "Placement", null, () => place.flatMap(row)),
+      ...section("node-state", "State", null, () => [...state.flatMap(row), ...strayRows()]),
+    ];
+  }
+
   const ownDefs = ownAttrsOf(editor, node.kind);
-  const place = placementAttrs(editor);
-  const commonDefs = commonAttrs(editor).filter((d) => !PLACEMENT.has(d.name));
-  const strays = strayAttrs(editor, node);
-  return section("node-attrs", "Attrs",
-                 String(ownDefs.length + place.length + commonDefs.length + strays.length),
-                 () => [
+  const place = authors === "both" ? placementAttrs(editor) : [];
+  const commonDefs = commonAttrs(editor)
+    .filter((d) => !PLACEMENT.has(d.name) && mayAuthor(authors, d));
+  const count = ownDefs.length + place.length + commonDefs.length +
+                strays.foreign.length + strays.unknown.length;
+  return section("node-attrs", "Attrs", String(count), () => [
     ...(ownDefs.length
       ? [attrGroupHeading("THIS " + node.kind.toUpperCase()), ...ownDefs.flatMap(row)]
       : []),
-    attrGroupHeading("THE BOX"),
-    ...place.flatMap(row),
+    ...(place.length ? [attrGroupHeading("THE BOX"), ...place.flatMap(row)] : []),
     attrGroupHeading("COMMON"),
     ...commonDefs.flatMap(row),
-    ...(strays.length
-      ? [attrGroupHeading("NOT READ BY THIS KIND"),
-         ...strays.map((key) => unknownAttrRow(editor, node, key, scope, attrsOf, commitAttrs))]
-      : []),
+    ...strayRows(),
   ]);
 }
 
@@ -802,30 +869,43 @@ export function attrsSection(editor: Editor, node: Node): HTMLElement[] {
  * Everything sits at its own left/top in canvas px (a component's internals in fractions
  * of their parent, same fields); `right`/`bottom` pin the far edges — set, they size the
  * box and `w`/`h` step back — and the min/max rows clamp whatever the axis derives. One
- * box group, the same rows on every node. */
+ * box group, the same rows on every node. The STATE trio — shown, enabled, repeated —
+ * is the rest of the placement's half, kept apart from the box because it is not
+ * geometry. Both lists are ORDER only: which rows they hold is the served owner column. */
 const MEASURED = ["left", "top", "right", "bottom", "w", "h",
                   "minW", "maxW", "minH", "maxH",
                   "aspect", "originX", "originY", "rotate"];
 const PLACEMENT = new Set(MEASURED);
+const STATE = ["show", "enabled", "repeat"];
 
-function placementAttrs(editor: Editor): AttrDef[] {
+function commonNamed(editor: Editor, names: string[]): AttrDef[] {
   const table = commonAttrs(editor);
-  return MEASURED
+  return names
     .map((name) => table.find((d) => d.name === name))
     .filter((d): d is AttrDef => d !== undefined);
 }
 
+function placementAttrs(editor: Editor): AttrDef[] {
+  return commonNamed(editor, MEASURED);
+}
+
+function stateAttrs(editor: Editor): AttrDef[] {
+  return commonNamed(editor, STATE);
+}
+
 /* which attrs a node's inspector will show, as a shape string: the declared set is fixed
- * by kind, so it moves on the kind, the strays — and any OPEN cases disclosure, whose
- * rows exist below its attr row (casesrow.ts; a shut one contributes nothing, so a
- * value echo into a resting row never moves the shape) */
-export function attrsShape(editor: Editor, node: Node): string {
+ * by kind and authorship, so it moves on those, the strays — and any OPEN cases
+ * disclosure, whose rows exist below its attr row (casesrow.ts; a shut one contributes
+ * nothing, so a value echo into a resting row never moves the shape) */
+export function attrsShape(editor: Editor, node: Node, authors: AttrAuthors = "both"): string {
   const attrs = (node.attrs ?? {}) as Record<string, string>;
   const sigs = Object.keys(attrs).sort().flatMap((name) => {
     const cases = casesSig(node.id + ":attrs." + name, String(attrs[name] ?? ""));
     return cases ? [name + ":" + cases] : [];
   });
-  return node.kind + ":" + strayAttrs(editor, node).join(",") + ";" + sigs.join("|");
+  const strays = strayAttrs(editor, node, authors);
+  return node.kind + ":" + authors + ":" + [...strays.foreign, ...strays.unknown].join(",") +
+         ";" + sigs.join("|");
 }
 
 /* THE TRANSITION BUTTON, on exactly the attrs that land on a CSS property the browser
@@ -938,6 +1018,9 @@ export function chassisRow(opts: {
   name: string;
   note?: string;
   unknown?: boolean;
+  /* a marked row's own reason, where the default "no element of this kind reads it"
+     is not the finding (a key the OTHER owner authors) */
+  why?: string;
   box: HTMLElement;
   trail?: (HTMLElement | null)[];
 }): HTMLElement {
@@ -948,7 +1031,7 @@ export function chassisRow(opts: {
       /* the tooltip always holds at least the KEY, verbatim: the display face above
          is not the spelling an expression or a hand edit needs */
       title: opts.unknown
-        ? "no element of this kind reads '" + opts.name + "'"
+        ? opts.why ?? "no element of this kind reads '" + opts.name + "'"
         : opts.note ? opts.name + " — " + opts.note : opts.name,
     }),
     opts.box,
@@ -1012,12 +1095,14 @@ function attrDefRow(
   return cases?.editor ? [row, cases.editor] : [row];
 }
 
-/* A key the document carries that this kind's vocabulary does NOT declare — a hand-edited
- * document, or an attr the table dropped. The compiler flags it (`attr_name`), so without
- * a row of its own the author would be told something is wrong and handed no way to see
- * or remove it: the rows are generated from the vocabulary, and this name is not in it.
- * So it gets an explicit row, marked, carrying its finding and a delete — the standing
- * rule that nothing in the document is invisible in the editor that owns it. */
+/* A key the document carries that this node has no row for — one its kind's vocabulary
+ * does NOT declare (a hand-edited document, or an attr the table dropped), or one the
+ * OTHER owner authors (`why` says which). The compiler flags it (`attr_name`,
+ * `attr_owner`), so without a row of its own the author would be told something is
+ * wrong and handed no way to see or remove it: the rows are generated from the
+ * vocabulary, and this name is not among this node's. So it gets an explicit row,
+ * marked, carrying its finding and a delete — the standing rule that nothing in the
+ * document is invisible in the editor that owns it. */
 function unknownAttrRow(
   editor: Editor,
   node: Node,
@@ -1025,6 +1110,7 @@ function unknownAttrRow(
   scope: Scope,
   attrsOf: () => Record<string, string>,
   commitAttrs: (next: Record<string, string>) => void,
+  why?: string,
 ): HTMLElement {
   const box = valueBox({
     key: node.id + ":attrs." + key,
@@ -1039,6 +1125,7 @@ function unknownAttrRow(
   return chassisRow({
     name: key,
     unknown: true,
+    why,
     box,
     trail: [iconButton("x", "remove " + key, () => {
       const next = { ...attrsOf() };

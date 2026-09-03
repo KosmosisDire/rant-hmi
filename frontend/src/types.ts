@@ -163,6 +163,13 @@ export interface AttrDef {
   /* the closed vocabulary of a constrained-text attr (text `align`, path `cap`): a
      REAL served column now, so the enum picker reads data rather than note prose */
   variants?: string[];
+  /* WHICH OF AN INSTANCE'S TWO OWNERS authors it (registry/attrs.h AttrOwner): the
+     PAGE places an instance (show, enabled, repeat, the box, aspect, origin, rotate —
+     authored on the instance node, refused on a component root), the COMPONENT
+     dresses it (everything else — authored on the root, never offered on the
+     instance; a page that wants one per placement gets it exposed as an input).
+     An element inside a component authors both halves. */
+  owner: "placement" | "component";
 }
 
 /* ---- transitions: metadata on a field, never part of its expression ----

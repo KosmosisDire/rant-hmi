@@ -292,10 +292,11 @@ interface ViewNode {
  * space its numbers live in, and both callers pass their own.
  *
  * AN INSTANCE RESOLVES HERE, once: the component's root node IS the instance's box, so
- * this returns that root wearing the instance's id — the component's layout, attrs and
- * children, with the instance's own attrs overriding per key (that is how one placement
- * is dressed and placed). There is no wrapper box and no second node, which is also why
- * nothing downstream has to know an instance from a frame. */
+ * this returns that root wearing the instance's id — the component's children and its
+ * DRESSING from the root, its BOX and STATE from the instance node (the owner split,
+ * registry/attrs.h AttrOwner: that is how one placement is dressed and placed). There is
+ * no wrapper box and no second node, which is also why nothing downstream has to know
+ * an instance from a frame. */
 function pageNode(editor: Editor, node: Node, owner = 0,
                   type: ComponentType | null = null, frac = false): ViewNode {
   const compiled = editor.nodeAttrs?.[String(node.id)];
@@ -304,15 +305,21 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     const root = instType?.template
       ? templateNode(instType.template, node.id, instType, "")
       : null;
-    /* the instance's own transitions override the component root's per attr, exactly
-       as its attrs do */
-    const transitions = { ...(root?.transitions ?? {}), ...(compiled?.transitions ?? {}) };
+    /* THE OWNER SPLIT: the root brings the component's half — its dressing — and the
+       instance node the placement's — its box, show, enabled, repeat — and neither is
+       let near the other's. The compiler refuses each on the wrong node already, so
+       with a served table the merge IS the split; filtering here as well makes the rule
+       the view's own. A transition rides its attr's owner. */
+    const placed = placementSet(editor);
+    const attrs = splitByOwner(root?.attrs ?? {}, compiled?.attrs ?? {}, placed);
+    const transitions =
+      splitByOwner(root?.transitions ?? {}, compiled?.transitions ?? {}, placed);
     return {
       id: node.id,
       instance: true,
       kind: root?.kind ?? "frame",
       name: node.name || (node.type ?? ""),
-      attrs: { ...(root?.attrs ?? {}), ...(compiled?.attrs ?? {}) },
+      attrs,
       anchors: root?.anchors ?? [],
       closed: root?.closed ?? false,
       children: root?.children ?? [],
@@ -348,6 +355,31 @@ function pageNode(editor: Editor, node: Node, owner = 0,
     interact: compiled?.interact ?? null,
     transitions: compiled?.transitions ?? null,
   };
+}
+
+/* the placement's half of the attr vocabulary, read off the served table once per table
+   object (a snapshot serves a new one); null with no table — an offline view — in which
+   case nothing is filtered and the merge stands as served */
+const placementSets = new WeakMap<object, Set<string>>();
+function placementSet(editor: Editor): Set<string> | null {
+  const table = editor.attrTable;
+  if (!table) return null;
+  let held = placementSets.get(table);
+  if (!held) {
+    held = new Set(table.common.filter((d) => d.owner === "placement").map((d) => d.name));
+    placementSets.set(table, held);
+  }
+  return held;
+}
+
+/* the component's keys from the root, the placement's from the instance node */
+function splitByOwner<T>(component: Record<string, T>, placement: Record<string, T>,
+                         placed: Set<string> | null): Record<string, T> {
+  if (!placed) return { ...component, ...placement };
+  const out: Record<string, T> = {};
+  for (const [key, value] of Object.entries(component)) if (!placed.has(key)) out[key] = value;
+  for (const [key, value] of Object.entries(placement)) if (placed.has(key)) out[key] = value;
+  return out;
 }
 
 /* one node of a component's served template, under the instance whose cells it reads.

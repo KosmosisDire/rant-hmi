@@ -64,7 +64,7 @@ export class App implements Editor {
      and never persisted, like the selection it travels with. */
   contexts: StageContext[] = [];
   view: ViewState = {
-    mode: "edit", selection: [], element: "", hover: 0, state: {}, faults: {},
+    mode: "edit", selection: [], hover: 0, state: {}, faults: {},
     /* the theme preview mode is a local preference, like the sidebar widths */
     themeMode: localStorage.getItem("theme-mode") === "light" ? "light" : "dark",
   };
@@ -180,7 +180,7 @@ export class App implements Editor {
      An unforked built-in enters READ-ONLY (component 0): its nodes carry no ids until
      Override copies it into the document, and the context upgrades itself when that
      echo lands (settleContexts). */
-  enterComponent(id: number, path?: string): void {
+  enterComponent(id: number): void {
     const inst = this.store.instance(id);
     const type = inst?.type ?? "";
     if (!inst || !type) return;
@@ -193,21 +193,7 @@ export class App implements Editor {
     this.contexts.push({ component: comp?.id ?? 0, builtin: comp ? "" : type,
                          from: id, w, h, w0: w, h0: h });
     this.view.selection = [];
-    this.view.element = "";
     this.setHover(0);
-    /* land selected on the internal node the author pointed at (a fenced tree row):
-       the path is template names joined with dots, walked down the component's own
-       children by name */
-    if (path && comp) {
-      let at: Node | undefined;
-      let kids: Node[] = comp.children ?? [];
-      for (const segment of path.split(".")) {
-        at = kids.find((n) => (n.name || n.kind) === segment);
-        if (!at) break;
-        kids = at.children ?? [];
-      }
-      if (at) this.view.selection = [at.id];
-    }
     this.queueSidebars();
   }
 
@@ -218,7 +204,6 @@ export class App implements Editor {
     const dropped = this.contexts[depth];
     this.contexts.length = depth;
     this.view.selection = dropped && this.store.nodeAt(dropped.from) ? [dropped.from] : [];
-    this.view.element = "";
     this.setHover(0);
     this.queueSidebars();
   }
@@ -287,7 +272,6 @@ export class App implements Editor {
        asked for a different page, not that component on it */
     this.contexts = [];
     this.view.selection = [];
-    this.view.element = "";
     this.conn.view(id, true);
     this.renderAll();
   }
@@ -317,7 +301,6 @@ export class App implements Editor {
      lose your place in Design every time you touched the artboard. */
   select(ids: number[]): void {
     this.view.selection = ids;
-    this.view.element = "";
     this.queueSidebars();
   }
 
@@ -341,14 +324,6 @@ export class App implements Editor {
      itself does. Nothing about it touches the document. */
   previewMove(node: number, plan: DropPlan | null): void {
     previewArrangement(this.nodes.stage, this, node, plan);
-  }
-
-  /* element selection: the instance is selected and the focus narrows to one named
-     template node; the inspector scopes to it */
-  selectElement(id: number, path: string): void {
-    this.view.selection = [id];
-    this.view.element = path;
-    this.queueSidebars();
   }
 
   /* the Design workspace's selection: a component, or one element node inside it. The two
@@ -510,7 +485,6 @@ export class App implements Editor {
     this.pageId = page ? page.id : 0;
     this.conn.view(this.pageId, true);
     this.view.selection = this.view.selection.filter((id) => this.selectable(id));
-    if (!this.view.selection.length) this.view.element = "";
     this.settleComponentSel();
     this.settleContexts();
     /* nothing of ours outstanding any more: committed text the snapshot did not carry
@@ -529,7 +503,6 @@ export class App implements Editor {
   private onOps(version: number, ops: Op[]): void {
     this.store.apply(version, ops);
     this.view.selection = this.view.selection.filter((id) => this.selectable(id));
-    if (!this.view.selection.length) this.view.element = "";
     if (!this.page()) this.pageId = this.store.pages()[0]?.id ?? 0;
     /* our "+ New page" echo names the issued id: switch to the fresh page */
     if (this.pendingPage)
@@ -567,7 +540,6 @@ export class App implements Editor {
         this.pendingComponent = null;
         this.componentSel = { component: held.id, node: held.id };
         this.view.selection = [];
-        this.view.element = "";
       }
     }
     if (!this.componentSel) return;
@@ -871,12 +843,10 @@ export class App implements Editor {
     if (ev.key === "Escape") {
       closeMenu();
       /* Escape steps out one level WITHIN the active workspace: in Design, element ->
-         component -> none; in Content, an instance's element -> the instance ->
-         selection -> the entered component's own context, one crumb at a time -> none. */
+         component -> none; in Content, the selection -> the entered component's own
+         context, one crumb at a time -> none. */
       if (this.workspace !== "design") {
-        if (this.view.element && this.view.selection.length)
-          this.selectElement(this.view.selection[0], "");
-        else if (this.view.selection.length) this.select([]);
+        if (this.view.selection.length) this.select([]);
         else if (this.contexts.length) this.exitTo(this.contexts.length - 1);
         return;
       }
