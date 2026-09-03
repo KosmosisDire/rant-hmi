@@ -359,15 +359,15 @@ Json button_component() {
     return component("Button", 176, 66,
                 rows({
                     input("text", "Text", "", "Text"),
-                    /* a literal, not $ink: the label sits on the accent face, which is
-                       the same colour in both modes, so the ink must not flip with them */
-                    input("textColor", "Color", "#0d0d0d", "Text"),
+                    /* the ink token, like every other caption: the accent face is a
+                       token too, so both flip with the mode together */
+                    input("textColor", "Color", "$ink", "Text"),
                     input("textSize", "Num", 14, "Text"),
                     align_input("center", "Text"),
                     /* the glyph beside the caption — or instead of it: an icon-only
                        button is an empty text and a centred icon */
                     input("icon", "Icon", "", "Icon"),
-                    input("iconColor", "Color", "#0d0d0d", "Icon"),
+                    input("iconColor", "Color", "$ink", "Icon"),
                     input_enum("iconAlign", {"left", "center", "right"}, "left", "Icon"),
                     /* the icon's height as a fraction of the face's, so it scales with
                        the button it sits on */
