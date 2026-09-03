@@ -346,6 +346,16 @@ Json rows(std::initializer_list<Json> groups) {
 }
 
 Json button_component() {
+    /* THE ICON'S SEAT. One square, `iconSize` of the face tall, on the face's midline —
+       at the left edge, the right edge or the centre by `iconAlign`. It is placed by its
+       own origin, so the same two expressions seat it whichever way: the point `left`
+       places is the icon's near corner at the left, its far corner at the right, its
+       centre in the middle. An empty icon draws nothing and takes no room. */
+    const Str at_left = "(iconAlign == 'left')";
+    const Str at_right = "(iconAlign == 'right')";
+    /* while an icon sits at an edge the caption keeps clear of BOTH edges by the same
+       inset, so a centred label stays centred on the face rather than on what is left */
+    const Str beside = "(icon != '' && iconAlign != 'center').Pick(0.28, 0)";
     return component("Button", 176, 66,
                 rows({
                     input("text", "Text", "", "Text"),
@@ -354,6 +364,19 @@ Json button_component() {
                     input("textColor", "Color", "#0d0d0d", "Text"),
                     input("textSize", "Num", 14, "Text"),
                     align_input("center", "Text"),
+                    /* the glyph beside the caption — or instead of it: an icon-only
+                       button is an empty text and a centred icon */
+                    input("icon", "Icon", "", "Icon"),
+                    input("iconColor", "Color", "#0d0d0d", "Icon"),
+                    input_enum("iconAlign", {"left", "center", "right"}, "left", "Icon"),
+                    /* the icon's height as a fraction of the face's, so it scales with
+                       the button it sits on */
+                    range(fine(input("iconSize", "Num", 0.6, "Icon"), 0.05), 0.1, 1),
+                    /* THE PROGRESS: a 0..1 fraction that fills the face from its left
+                       edge — a hold-to-confirm's timer, a job's completion, a task's
+                       `.progress` — in a translucent colour laid over the surface */
+                    range(fine(input("progress", "Num", 0, "Progress"), 0.01), 0, 1),
+                    input("progressColor", "Color", "#00000059", "Progress"),
                     /* the button's face IS its root frame: surface, border and radius all
                      * land on the thing the user presses, so they are the one box a
                      * built-in exposes */
@@ -364,15 +387,34 @@ Json button_component() {
                 /* no declared events: the press primitive on its face brings the whole
                    family — tap(), press(), release(), held(), pressrelease(down) */
                 Json::array(),
+                /* the face clips at its own radius: the progress fill is a plain bar and
+                   the corners round it */
                 Json{{"surface", "surface"}, {"border", "border"}, {"borderW", "1"},
-                     {"radius", "radius"}},
+                     {"radius", "radius"}, {"clip", "radius"}},
                 Json::array({
+                    /* the fill goes UNDER the caption and the icon: first in the tree */
+                    frame("progress", Json{{"surface", "progressColor"},
+                                           {"left", "0"}, {"top", "0"},
+                                           {"w", "Clamp01(progress)"}, {"h", "1"}}),
                     /* the caption fills the face — the text block centres its own line */
                     text("label", Json{{"text", "text"},
                                        {"color", "textColor"},
                                        {"size", "textSize"},
                                        {"align", "align"},
-                                       {"bold", "true"}}),
+                                       {"bold", "true"},
+                                       {"left", beside},
+                                       {"right", beside}}),
+                    icon("icon", Json{{"name", "icon"},
+                                      {"color", "iconColor"},
+                                      {"strokeW", "2"},
+                                      {"aspect", "1"},
+                                      {"h", "iconSize"},
+                                      {"top", "0.5"},
+                                      {"originY", "0.5"},
+                                      {"left", at_left + ".Pick(0.06, " + at_right +
+                                                   ".Pick(0.94, 0.5))"},
+                                      {"originX", at_left + ".Pick(0, " + at_right +
+                                                      ".Pick(1, 0.5))"}}),
                 }),
                 Json::array(), press_interact());
 }

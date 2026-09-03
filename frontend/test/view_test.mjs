@@ -1792,8 +1792,14 @@ drawStage();
    attr unable to say the one thing only it can say: a box whose children draw outside it.
    The applier is written, never cleared, for exactly that reason — "" hands the answer
    back to the cascade. Nothing here is layout: an unclipped box is placed identically. */
-check(row.style.overflow === "visible" && stageNode("leaf", 903).style.overflow === "visible",
-      "absent = the box does not clip: a frame AND an instance both let children overflow");
+check(row.style.overflow === "visible",
+      "absent = the box does not clip: a frame lets its children overflow");
+/* an instance clips exactly as its component's ROOT says — the attr is the component's,
+   never the placement's: a Button's face clips at its own radius (the progress fill is
+   a plain bar the corners round), so the instance is hidden-overflow with nothing said */
+check(stageNode("leaf", 903).style.overflow === "hidden",
+      "and an instance clips as its root authors: the Button's face does, got '" +
+        stageNode("leaf", 903).style.overflow + "'");
 const boxBefore = [row.style.left, row.style.top, row.style.width, row.style.height];
 stageAttrs["901"].attrs.clip = prog(true);
 stageEditor.live = { epoch: 3, values: {} };

@@ -237,9 +237,14 @@ int main() {
        of the Button label's `i` stream is a Load of its text slot */
     const Json& button = (*snapshot)["registry"]["components"][0];
     CHECK(button["name"] == "Button");
-    CHECK(button["slots"].size() == 7);   /* text, textColor, textSize, align, surface, border, radius */
-    CHECK(button["template"]["children"][0]["attrs"]["text"]["i"][0] ==
-          static_cast<uint32_t>(OpCode::Load));
+    /* text, textColor, textSize, align, icon, iconColor, iconAlign, iconSize, progress,
+       progressColor, surface, border, radius */
+    CHECK(button["slots"].size() == 13);
+    const Json* label = nullptr;
+    for (const Json& child : button["template"]["children"])
+        if (child.value("name", "") == "label") label = &child;
+    if (CHECK(label != nullptr))
+        CHECK((*label)["attrs"]["text"]["i"][0] == static_cast<uint32_t>(OpCode::Load));
     CHECK(button["template"]["interact"]["primitive"] == "press");
 
     /* a second view sees the first view's edit, and both see the same version */
