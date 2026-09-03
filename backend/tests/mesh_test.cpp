@@ -303,6 +303,44 @@ int main() {
     }
     CHECK_MSG(reflected, "reflection did not settle");
 
+    /* THE PEER'S OWN SUBSCRIPTION STAYS REFLECTED while this node holds the handle it
+       writes through. Consumption creates our Topic handle SubOnly (the pub flips in on
+       the first publish) and the node folds our own records before the peers', so a
+       topic the peer only consumes reads as "from us, nobody provides" the moment we
+       hold it — which the leftover rule (an entity only this node consumes) must not
+       swallow: the peer's subscriber is what made us hold the handle. Live, this was a
+       recompile every 250 ms refusing "T:cage/gp12/jogCmd is not reflected" on the
+       robot's jog command, on exactly the document that wrote it — and never on a
+       blank one. One Button whose press publishes to `cmd` is the whole document. */
+    {
+        Json writer = {
+            {"version", 1}, {"next_id", 1}, {"globals", Json::array()},
+            {"pages", Json::array({Json{
+                {"name", "Main"},
+                {"children", Json::array({Json{
+                    {"kind", "frame"}, {"type", "Button"}, {"name", "Send"},
+                    {"flows", Json::array({Json{
+                        {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
+                        {"when_mode", "any"},
+                        {"do", Json::array({steps::write_field("T", "cmd", "", "5.5")})}}})},
+                }})}}})},
+        };
+        Document writer_doc;
+        CHECK_MSG(writer_doc.adopt(std::move(writer), err), err);
+        CompileResult writer_compiled = compile_document(writer_doc, mesh);
+        CHECK(writer_compiled.ok);
+        mesh.apply(writer_compiled.program, {});
+        bool still = false;
+        for (int i = 0; i < 20 && !still; ++i) {
+            mesh.refresh();
+            for (const EntityDef& entity : mesh.reflection())
+                if (entity.kind == EntityKind::Topic && entity.name == "cmd") still = true;
+            if (!still) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        CHECK_MSG(still, "a topic the peer only consumes vanished from reflection once this "
+                         "node held its SubOnly handle for it");
+    }
+
     const EntityDef* tank_def = nullptr;
     const EntityDef* status_def = nullptr;
     const EntityDef* hist_def = nullptr;

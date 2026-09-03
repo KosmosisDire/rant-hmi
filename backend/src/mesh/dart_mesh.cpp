@@ -497,12 +497,20 @@ bool DartMesh::refresh() {
     /* the mesh as the node folds it: one entity per (kind, name) across every LIVE peer
      * (a dropped peer never counts: down means down), the provider's schemas, and a
      * GENERATION that moves with the provider's identity, any schema, or an attr. An entity
-     * nobody provides and only this node consumes is our own leftover handle, not the mesh. */
+     * nobody provides and ONLY THIS NODE consumes is our own leftover handle, not the mesh.
+     * Only this node: the count is what says so, not the schema's origin. Our Topic handle
+     * is a subscriber first (ensure_consumption creates it SubOnly; the first publish
+     * widens it) and the node folds our own records before the peers', so a topic a peer
+     * only consumes and we only write reads as "from us, nobody provides" the moment we
+     * hold it — with the peer's subscriber counted beside ours. Dropping it there hid the
+     * robot's jog command from every recompile of exactly the document that wrote it. */
     std::map<std::string, dart::Entity> fold;
     for (dart::Entity& entity : impl_->node->mesh()) {
         if (entity.name.empty() || entity.name.compare(0, 2, "0x") == 0)
             continue;   /* details not fetched yet; the next refresh sees them */
-        if (!entity.providers && entity.from == impl_->opts.node_name) continue;
+        if (!entity.providers && entity.from == impl_->opts.node_name &&
+            entity.consumers <= 1)
+            continue;
         fold.emplace(rec_key(kind_of(entity.kind), entity.name), std::move(entity));
     }
 
