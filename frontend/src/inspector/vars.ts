@@ -99,6 +99,10 @@ export function varCard(
     diagIcon(open ? editor.diagAt(variable.id)
                   : editor.diagAt(variable.id)
                       .concat(initDiags, typeDiags, elemDiags, leafDiags)),
+    /* THE INTERFACE IS IN LIST ORDER: a component record's variables reorder in place
+       (the instance's Inputs follow). Both buttons always stand — disabled at the ends
+       — so nothing moves under the pointer. */
+    ...(atRoot ? orderButtons(editor, ownerId, variable) : []),
     iconButton("x", "remove this variable", () =>
       editor.apply([{ op: "remove", node: variable.id }]),
     ),
@@ -420,6 +424,29 @@ export function varCard(
     ]),
   );
   return card;
+}
+
+/* up / down among the record's own variables: one `move` op, the same the tree uses */
+function orderButtons(editor: Editor, ownerId: number, variable: Var): HTMLElement[] {
+  const listAt = () => ((editor.store.node(ownerId) as ComponentDef | null)?.locals ?? []);
+  const indexOf = () => listAt().findIndex((v) => v.id === variable.id);
+  const up = iconButton("arrow-up", "move this variable up", () => {
+    const i = indexOf();
+    if (i > 0) editor.apply([{ op: "move", node: variable.id, index: i - 1 }]);
+  });
+  const down = iconButton("arrow-down", "move this variable down", () => {
+    const i = indexOf();
+    if (i >= 0 && i < listAt().length - 1)
+      editor.apply([{ op: "move", node: variable.id, index: i + 1 }]);
+  });
+  const paint = () => {
+    const i = indexOf();
+    (up as HTMLButtonElement).disabled = i <= 0;
+    (down as HTMLButtonElement).disabled = i < 0 || i >= listAt().length - 1;
+  };
+  paint();
+  bind(variable.id + ":order", up, paint);
+  return [up, down];
 }
 
 /* the component RECORD, as against one of its nodes: the record carries no `kind`, and
