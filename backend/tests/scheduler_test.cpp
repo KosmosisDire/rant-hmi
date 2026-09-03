@@ -38,7 +38,7 @@ Document timed_document() {
     Json button = {
         {"kind", "frame"},
         {"type", "Button"},
-        {"slots", Json{{"text", "Run"}}},
+        {"slots", Json{{"text", "'Run'"}}},
         {"flows",
          Json::array({
              Json{{"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
@@ -183,9 +183,10 @@ void test_timing() {
     Document document = timed_document();
     FakeMesh mesh;
     CompileResult compiled = compile_document(document, mesh);
-    CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
-                               ? "compile failed"
-                               : compiled.program.diagnostics[0].message);
+    std::string all;
+    for (const Diag& d : compiled.program.diagnostics)
+        all += "[" + d.code + " " + d.where + "] " + d.message + " | ";
+    CHECK_MSG(compiled.ok, all);
     const uint64_t instance =
         json_u64_or(document.root["pages"][0]["children"][0]["id"], 0);
     Scheduler scheduler(std::move(compiled.program), mesh);
@@ -507,12 +508,12 @@ Json timer_read_root(const std::string& surface_xf) {
     Json readout = {
         {"kind", "frame"},
         {"type", "Readout"},
-        /* the timer reads by field, named directly — an element's slot nests under it */
+        /* the timer reads by field, named directly */
         {"slots", Json{{"value", "blink.remaining * 1000"},
-                       {"reading", Json{{"decimals", "blink.duration * 1000"},
-                                        /* the fraction finished, 0..1, with no
-                                           knowledge of the total time */
-                                        {"textSize", "blink.progress"}}}}},
+                       {"decimals", "blink.duration * 1000"},
+                       /* the fraction finished, 0..1, with no knowledge of the
+                          total time */
+                       {"textSize", "blink.progress"}}},
         {"flows", Json::array()},
     };
     /* the pressed-recently treatment (the old cased feed, now a ?: chain): the
@@ -520,8 +521,7 @@ Json timer_read_root(const std::string& surface_xf) {
     Json toggle = {
         {"kind", "frame"},
         {"type", "Toggle"},
-        {"slots", Json{{"pill",
-                        Json{{"trackColor", "blink.running ? #885a1f : #2e2e2e"}}}}},
+        {"slots", Json{{"trackColor", "blink.running ? #885a1f : #2e2e2e"}}},
         {"flows", Json::array()},
     };
     return Json{{"version", 1},
@@ -554,11 +554,11 @@ void test_timer_reads() {
     const uint32_t remaining =
         static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "value"));
     const uint32_t duration =
-        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "reading.decimals"));
+        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "decimals"));
     const uint32_t progress =
-        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "reading.textSize"));
+        static_cast<uint32_t>(cell_of(scheduler.program(), readout_id, "textSize"));
     const uint32_t trackColor =
-        static_cast<uint32_t>(cell_of(scheduler.program(), toggle_id, "pill.trackColor"));
+        static_cast<uint32_t>(cell_of(scheduler.program(), toggle_id, "trackColor"));
 
     tick(scheduler, 1);
     CHECK(scheduler.state().store.values[surface].data.rgba == 0x102030ffu);

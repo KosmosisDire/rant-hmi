@@ -691,7 +691,7 @@ void test_enum_names() {
                  {"pages", Json::array()}};
     Json label = {
         {"kind", "frame"},
-        {"type", "Label"},
+        {"type", "Button"},
         {"name", "gear"},
         {"slots", Json{{"text", "@gear.mode"}}},
         /* an ENUM-TYPED variable (spec 2.7): typed by the path to the enum, its
@@ -732,7 +732,7 @@ void test_enum_names() {
     /* a second label formats with text JOINING: enum x rendered as its name */
     Json fmt = {
         {"kind", "frame"},
-        {"type", "Label"},
+        {"type", "Button"},
         {"name", "fmt"},
         {"slots", Json{{"text", "\"Run \" + @gear.mode"}}},
         {"flows", Json::array()},
@@ -850,7 +850,7 @@ void test_enum_names() {
         Json broken_root = {{"version", 1}, {"next_id", 1}, {"globals", Json::array()},
                             {"pages", Json::array()}};
         Json broken_label = {
-            {"kind", "frame"}, {"type", "Label"}, {"name", "gear"},
+            {"kind", "frame"}, {"type", "Button"}, {"name", "gear"},
             {"slots", Json::object()},
             {"flows", Json::array({Json{
                  {"when", Json::array({Json{{"kind", "event"}, {"name", "tap"}}})},
@@ -973,7 +973,7 @@ void test_slot_conditionals() {
                      {"pages", Json::array()}};
         Json label = {
             {"kind", "frame"},
-            {"type", "Label"},
+            {"type", "Button"},
             {"name", "gear"},
             {"slots", withSlotText(Json::object(), slot, value)},
             {"flows", Json::array()},
@@ -1031,7 +1031,7 @@ void test_slot_conditionals() {
 
     /* a conditional COLOR: the same chain, a color slot, the else spelled out */
     Document forgiven = document_with(
-        "line.textColor",
+        "textColor",
         "@gear.mode == .stop ? #888888 : @gear.mode == .run ? #7fc4a0 : #444444");
     CompileResult covered = compile_document(forgiven, mesh);
     CHECK(covered.ok);
@@ -1062,8 +1062,7 @@ void test_standing_slots() {
     FakeMesh mesh(std::vector<EntityDef>{left, right});
 
     Document document = instance_document(
-        "Readout", Json{{"value", "@left.value + @right.value"},
-                        {"reading", Json{{"decimals", 2}}}});
+        "Readout", Json{{"value", "@left.value + @right.value"}, {"decimals", 2}});
     CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
                                ? "compile failed without a diagnostic"
@@ -1075,8 +1074,8 @@ void test_standing_slots() {
     CHECK(sum.body.sig.reads.size() == 2);
     CHECK(!sum.body.sig.every_tick);
     /* the literal slot stayed a CONSTANT: no program, the cell starts at its value */
-    CHECK(slot_program_of(compiled.program, id, "reading.decimals") == nullptr);
-    const int decimals = slot_cell_of(compiled.program, id, "reading.decimals");
+    CHECK(slot_program_of(compiled.program, id, "decimals") == nullptr);
+    const int decimals = slot_cell_of(compiled.program, id, "decimals");
     const int value = slot_cell_of(compiled.program, id, "value");
     if (!CHECK(decimals >= 0 && value >= 0)) return;
 
@@ -1432,8 +1431,7 @@ void test_events_are_calls() {
     Json onoff = {
         {"id", 700}, {"name", "OnOff"},
         {"locals", Json::array({Json{{"id", 701}, {"name", "value"}, {"type", "Bool"},
-                                     {"init", false}, {"group", "value"},
-                                     {"public", true}}})},
+                                     {"init", false}, {"public", true}}})},
         {"events", Json::array({Json{{"name", "changed"},
                                      {"params", Json::array({Json{{"name", "value"},
                                                                   {"shape", "bool"}}})}}})},
@@ -1515,7 +1513,7 @@ void test_value_shape_diagnostics() {
 
     /* an enum slot holds a variant NAME, so it is text (quoted, the D2 spelling)
        and its folded value is checked against the vocabulary */
-    Document aligned = instance_document("Label", Json{{"align", "'center'"}});
+    Document aligned = instance_document("Button", Json{{"align", "'center'"}});
     CompileResult ok = compile_document(aligned, mesh);
     CHECK(!has_diag(ok, "slot_variant"));
     CHECK(!has_diag(ok, "value_shape"));
@@ -1526,7 +1524,7 @@ void test_value_shape_diagnostics() {
             text_align = true;
     CHECK(text_align);
 
-    Document typo = instance_document("Label", Json{{"align", "'middle'"}});
+    Document typo = instance_document("Button", Json{{"align", "'middle'"}});
     CHECK(has_diag(compile_document(typo, mesh), "slot_variant"));
 }
 
@@ -1543,14 +1541,15 @@ void test_colors() {
     sensor.fields = {FieldDef{"value", Shape::Num}};
     FakeMesh mesh(std::vector<EntityDef>{bit, sensor});
 
+    /* a Knob: four colour inputs and a number one, all the root's own */
     Document document = instance_document(
-        "Readout",
-        Json{{"reading", Json{{"textColor", "on.Pick(#7fc4a0, #e0857c)"},
-                              /* a CONSTANT chain folds into the cell's start */
-                              {"decimals", "#ff8040.G() + #ffffff.A()"}}},
-             {"units", Json{{"textColor", "#000000.Mix(#ffffff, n / 100).Alpha(0.5)"}}},
-             {"surface", "Rgb(n / 255, 0, 1 - n / 255)"},
-             {"border", "Hsv(n, 1, 1)"}},
+        "Knob",
+        Json{{"fillColor", "on.Pick(#7fc4a0, #e0857c)"},
+             /* a CONSTANT chain folds into the cell's start */
+             {"decimals", "#ff8040.G() + #ffffff.A()"},
+             {"trackColor", "#000000.Mix(#ffffff, n / 100).Alpha(0.5)"},
+             {"handleColor", "Rgb(n / 255, 0, 1 - n / 255)"},
+             {"textColor", "Hsv(n, 1, 1)"}},
         Json{{"locals", Json::array({
                   Json{{"name", "on"}, {"type", "Bool"}, {"init", false}},
                   Json{{"name", "n"}, {"type", "Num"}, {"init", 0}},
@@ -1570,10 +1569,10 @@ void test_colors() {
     /* five programs: four over the locals, plus the constant CHAIN (the parser folds
        single literals only, so a chain still evaluates once at the seed) */
     if (!CHECK(compiled.program.slot_programs.size() == 5)) return;
-    const SlotProgram* picked = slot_program_of(compiled.program, id, "reading.textColor");
-    const SlotProgram* mixed = slot_program_of(compiled.program, id, "units.textColor");
-    const SlotProgram* built = slot_program_of(compiled.program, id, "surface");
-    const SlotProgram* swept = slot_program_of(compiled.program, id, "border");
+    const SlotProgram* picked = slot_program_of(compiled.program, id, "fillColor");
+    const SlotProgram* mixed = slot_program_of(compiled.program, id, "trackColor");
+    const SlotProgram* built = slot_program_of(compiled.program, id, "handleColor");
+    const SlotProgram* swept = slot_program_of(compiled.program, id, "textColor");
     if (!CHECK(picked && mixed && built && swept)) return;
     /* a variable dep makes each an every-tick program */
     CHECK(picked->body.sig.every_tick && picked->body.sig.reads.empty());
@@ -1626,7 +1625,7 @@ void test_colors() {
 
     /* the constant chain: dep-less, evaluated once (the scheduler's seed pass) */
     const SlotProgram* channels =
-        slot_program_of(compiled.program, id, "reading.decimals");
+        slot_program_of(compiled.program, id, "decimals");
     if (!CHECK(channels != nullptr)) return;
     CHECK(!channels->body.sig.every_tick && channels->body.sig.reads.empty());
     run_slot(compiled.program, *channels, state);
@@ -1635,16 +1634,16 @@ void test_colors() {
 
     /* `*` doubles the channels (alpha kept), `.invert()` / `invert()` flip them */
     Document folded = instance_document(
-        "Readout", Json{{"reading", Json{{"textColor", "(#204060 * 2).Invert()"}}},
-                        {"units", Json{{"textColor", "Invert(#204080 / 2)"}}}});
+        "Readout", Json{{"textColor", "(#204060 * 2).Invert()"},
+                        {"unitsColor", "Invert(#204080 / 2)"}});
     CompileResult folded_compiled = compile_document(folded, mesh);
     CHECK(folded_compiled.ok);
     CHECK(folded_compiled.program.slot_programs.size() == 2);
     Host folded_state(folded_compiled.program);
     const SlotProgram* scaled = slot_program_of(
-        folded_compiled.program, only_instance(folded), "reading.textColor");
+        folded_compiled.program, only_instance(folded), "textColor");
     const SlotProgram* inverted = slot_program_of(
-        folded_compiled.program, only_instance(folded), "units.textColor");
+        folded_compiled.program, only_instance(folded), "unitsColor");
     if (!CHECK(scaled && inverted)) return;
     run_slot(folded_compiled.program, *scaled, folded_state);
     run_slot(folded_compiled.program, *inverted, folded_state);
@@ -1663,8 +1662,7 @@ void test_colors() {
     }
 
     /* a color where the slot wants one is fine; a number there is a shape diagnostic */
-    Document wrong = instance_document(
-        "Readout", Json{{"reading", Json{{"textColor", "@sensor.value"}}}});
+    Document wrong = instance_document("Readout", Json{{"textColor", "@sensor.value"}});
     CHECK(has_diag(compile_document(wrong, mesh), "shape"));
 
     /* the chain type-checks end to end and yields a color */
@@ -1695,13 +1693,13 @@ void test_tonemaps() {
     Json instances = Json::array();
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
-        {"slots", Json{{"reading", Json{{"textColor", "Jet(@sensor.value)"}}},
-                       {"units", Json{{"textColor", "Hot(@sensor.value)"}}},
+        {"slots", Json{{"textColor", "Jet(@sensor.value)"},
+                       {"unitsColor", "Hot(@sensor.value)"}}}});
+    instances.push_back(Json{
+        {"kind", "frame"}, {"type", "Button"}, {"name", "b"},
+        {"slots", Json{{"textColor", "Color(@tag.text)"},
                        {"surface", "CoolWarm(@sensor.value)"},
                        {"border", "Viridis(@sensor.value)"}}}});
-    instances.push_back(Json{
-        {"kind", "frame"}, {"type", "Label"}, {"name", "b"},
-        {"slots", Json{{"line", Json{{"textColor", "Color(@tag.text)"}}}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Button"}, {"name", "c"},
         {"slots", Json{{"surface", "Grayscale(@sensor.value)"}}}});
@@ -1734,13 +1732,19 @@ void test_tonemaps() {
         if (feed) run_slot(program, *feed, state);
         return feed ? rgba_of(feed) : 0u;
     };
-    CHECK_EQ(ramp("reading.textColor", 0.5), 0x80ff80ffu);
-    CHECK_EQ(ramp("units.textColor", 0.4), 0xff3300ffu);
-    CHECK_EQ(ramp("surface", 0.5), 0xddddddffu);
-    CHECK_EQ(ramp("surface", 0), 0x3b4cc0ffu);
-    CHECK_EQ(ramp("border", 0.25), 0x3b528bffu);
+    CHECK_EQ(ramp("textColor", 0.5), 0x80ff80ffu);
+    CHECK_EQ(ramp("unitsColor", 0.4), 0xff3300ffu);
+    auto ramp_b = [&](const char* slot, double n) {
+        seed_entity(state, program, "sensor", 0, Value::number(n));
+        const SlotProgram* feed = slot_program_of(program, b_id, slot);
+        if (feed) run_slot(program, *feed, state);
+        return feed ? rgba_of(feed) : 0u;
+    };
+    CHECK_EQ(ramp_b("surface", 0.5), 0xddddddffu);
+    CHECK_EQ(ramp_b("surface", 0), 0x3b4cc0ffu);
+    CHECK_EQ(ramp_b("border", 0.25), 0x3b528bffu);
 
-    const SlotProgram* parsed = slot_program_of(program, b_id, "line.textColor");
+    const SlotProgram* parsed = slot_program_of(program, b_id, "textColor");
     if (!CHECK(parsed != nullptr)) return;
     seed_entity_text(state, program, "tag", 0, "#ff8040");
     run_slot(program, *parsed, state);
@@ -1784,25 +1788,24 @@ void test_text_and_enums() {
     Json instances = Json::array();
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "a"},
-        {"slots", Json{{"units", Json{{"text", "@machine.mode.Name()"}}},
-                       {"reading",
-                        Json{{"decimals", "@machine.mode.Is(running).Pick(4, 1)"}}},
+        {"slots", Json{{"units", "@machine.mode.Name()"},
+                       {"decimals", "@machine.mode.Is(running).Pick(4, 1)"},
                        {"value", "@machine.mode.Int()"}}}});
     instances.push_back(Json{
         {"kind", "frame"}, {"type", "Readout"}, {"name", "b"},
-        {"slots", Json{{"units", Json{{"text", "@sensor.value.ToFixed(2)"}}},
+        {"slots", Json{{"units", "@sensor.value.ToFixed(2)"},
                        {"value", "Num(@machine.note.Trim())"},
-                       {"reading", Json{{"decimals", "@machine.note.Length()"}}}}}});
+                       {"decimals", "@machine.note.Length()"}}}});
     instances.push_back(Json{
-        {"kind", "frame"}, {"type", "Label"}, {"name", "c"},
+        {"kind", "frame"}, {"type", "Button"}, {"name", "c"},
         {"slots",
          Json{{"text",
                "@machine.note.Trim().Title().Replace(\"Ab\", \"Z\").PadStart(4, \"_\")"}}}});
     instances.push_back(Json{
-        {"kind", "frame"}, {"type", "Label"}, {"name", "d"},
+        {"kind", "frame"}, {"type", "Button"}, {"name", "d"},
         {"slots", Json{{"text", "FmtDuration(@sensor.value)"}}}});
     instances.push_back(Json{
-        {"kind", "frame"}, {"type", "Label"}, {"name", "e"},
+        {"kind", "frame"}, {"type", "Button"}, {"name", "e"},
         {"slots", Json{{"text", "Str(@sensor.value)"}}}});
     Json root = {{"version", 1},
                  {"next_id", 1},
@@ -1850,26 +1853,26 @@ void test_text_and_enums() {
     const Value idle = Value::enumeration(0, mode_field.type_id);
 
     seed_entity(state, program, "machine", 0, running);
-    run_one(sp(0, "units.text"));
-    CHECK_EQ(text_of(sp(0, "units.text")), "running");
-    run_one(sp(0, "reading.decimals"));
-    CHECK_EQ(num_of(sp(0, "reading.decimals")), 4.0);
+    run_one(sp(0, "units"));
+    CHECK_EQ(text_of(sp(0, "units")), "running");
+    run_one(sp(0, "decimals"));
+    CHECK_EQ(num_of(sp(0, "decimals")), 4.0);
     seed_entity(state, program, "machine", 0, idle);
-    run_one(sp(0, "reading.decimals"));
-    CHECK_EQ(num_of(sp(0, "reading.decimals")), 1.0);
+    run_one(sp(0, "decimals"));
+    CHECK_EQ(num_of(sp(0, "decimals")), 1.0);
     seed_entity(state, program, "machine", 0, running);
     run_one(sp(0, "value"));
     CHECK_EQ(num_of(sp(0, "value")), 2.0);
 
     seed_entity(state, program, "sensor", 0, Value::number(3.14159));
-    run_one(sp(1, "units.text"));
-    CHECK_EQ(text_of(sp(1, "units.text")), "3.14");
+    run_one(sp(1, "units"));
+    CHECK_EQ(text_of(sp(1, "units")), "3.14");
     seed_entity_text(state, program, "machine", 1, "  42.5 ");
     run_one(sp(1, "value"));
     CHECK_EQ(num_of(sp(1, "value")), 42.5);
     seed_entity_text(state, program, "machine", 1, "abcd");
-    run_one(sp(1, "reading.decimals"));
-    CHECK_EQ(num_of(sp(1, "reading.decimals")), 4.0);
+    run_one(sp(1, "decimals"));
+    CHECK_EQ(num_of(sp(1, "decimals")), 4.0);
 
     seed_entity_text(state, program, "machine", 1, "  abc ");
     const uint64_t before = allocation_count.load(std::memory_order_relaxed);
@@ -1940,8 +1943,8 @@ void test_lists_and_maps() {
                        const char* units) {
         Json slots = Json::object();
         if (value) slots["value"] = value;
-        if (decimals) slots["reading"] = Json{{"decimals", decimals}};
-        if (units) slots["units"] = Json{{"text", units}};
+        if (decimals) slots["decimals"] = decimals;
+        if (units) slots["units"] = units;
         return Json{{"kind", "frame"}, {"type", "Readout"}, {"name", name},
                     {"slots", std::move(slots)}};
     };
@@ -1956,7 +1959,7 @@ void test_lists_and_maps() {
                                "@plant.config.Keys().Sort().Join(\",\")"));
     instances.push_back(readout3("d", "@plant.names.IndexOf(\"b\")", nullptr,
                                "@plant.config.Has(\"mode\").Pick(\"y\", \"n\")"));
-    instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "e"},
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Button"}, {"name", "e"},
         {"slots",
          Json{{"text", "@plant.csv.Split(\",\").Slice(0, 2).Join(\"+\")"}}}});
     instances.push_back(readout3("f", "Values(@plant.config).Length()", nullptr, nullptr));
@@ -2020,27 +2023,27 @@ void test_lists_and_maps() {
         return std::string(state.text(program, state.store.values[cell]));
     };
     CHECK_EQ(cell_num(0, "value"), 30.0);                  /* max */
-    CHECK_EQ(cell_num(0, "reading.decimals"), 3.0);        /* length */
-    CHECK_EQ(cell_text(0, "units.text"), "b, c, a");       /* join */
+    CHECK_EQ(cell_num(0, "decimals"), 3.0);        /* length */
+    CHECK_EQ(cell_text(0, "units"), "b, c, a");       /* join */
     CHECK_EQ(cell_num(1, "value"), 10.0);                  /* sort()[0] */
-    CHECK_EQ(cell_num(1, "reading.decimals"), 30.0);       /* slice(1,3).sum() = 10+20 */
-    CHECK_EQ(cell_text(1, "units.text"), "a|b|c");         /* sort text, join */
+    CHECK_EQ(cell_num(1, "decimals"), 30.0);       /* slice(1,3).sum() = 10+20 */
+    CHECK_EQ(cell_text(1, "units"), "a|b|c");         /* sort text, join */
     CHECK_EQ(cell_num(2, "value"), 5.0);                   /* num(get("speed")) */
-    CHECK_EQ(cell_num(2, "reading.decimals"), 2.0);        /* map length */
-    CHECK_EQ(cell_text(2, "units.text"), "mode,speed");    /* keys().sort().join */
+    CHECK_EQ(cell_num(2, "decimals"), 2.0);        /* map length */
+    CHECK_EQ(cell_text(2, "units"), "mode,speed");    /* keys().sort().join */
     CHECK_EQ(cell_num(3, "value"), 0.0);                   /* indexOf("b") */
-    CHECK_EQ(cell_text(3, "units.text"), "y");             /* has("mode").pick */
+    CHECK_EQ(cell_text(3, "units"), "y");             /* has("mode").pick */
     CHECK_EQ(cell_text(4, "text"), "a+b");                 /* split.slice.join */
     CHECK_EQ(cell_num(5, "value"), 2.0);                   /* values(x).length() */
     /* lambdas, spec 6.4 */
     CHECK_EQ(cell_num(6, "value"), 120.0);                 /* map(v => v * 2).sum() */
-    CHECK_EQ(cell_num(6, "reading.decimals"), 2.0);        /* filter(v => v > 15) */
-    CHECK_EQ(cell_text(6, "units.text"), "B,C,A");         /* map over TEXT elements */
+    CHECK_EQ(cell_num(6, "decimals"), 2.0);        /* filter(v => v > 15) */
+    CHECK_EQ(cell_text(6, "units"), "B,C,A");         /* map over TEXT elements */
     CHECK_EQ(cell_num(7, "value"), 1.0);                   /* any(v => v > 25) */
-    CHECK_EQ(cell_num(7, "reading.decimals"), 0.0);        /* all(v => v > 25) */
-    CHECK_EQ(cell_text(7, "units.text"), "abc");           /* sortBy ascending */
+    CHECK_EQ(cell_num(7, "decimals"), 0.0);        /* all(v => v > 25) */
+    CHECK_EQ(cell_text(7, "units"), "abc");           /* sortBy ascending */
     CHECK_EQ(cell_num(8, "value"), 30.0);                  /* sortBy(v => -v).first() */
-    CHECK_EQ(cell_num(8, "reading.decimals"), 5.0);        /* filter then map */
+    CHECK_EQ(cell_num(8, "decimals"), 5.0);        /* filter then map */
 
     /* compile-time element checking: sum over a text list names the problem */
     Program scratch;
@@ -2146,8 +2149,8 @@ void test_reduce() {
                       const char* units) {
         return Json{{"kind", "frame"}, {"type", "Readout"}, {"name", name},
                     {"slots", Json{{"value", value},
-                                   {"reading", Json{{"decimals", decimals}}},
-                                   {"units", Json{{"text", units}}}}}};
+                                   {"decimals", decimals},
+                                   {"units", units}}}};
     };
     Json instances = Json::array();
     /* a numeric fold IS the sum, spelled out; the text fold proves each iteration's
@@ -2201,15 +2204,15 @@ void test_reduce() {
         if (cell < 0) return std::string("<no cell>");
         return std::string(state.text(program, state.store.values[cell]));
     };
-    CHECK_EQ(cell_num(0, "value"), cell_num(0, "reading.decimals"));
+    CHECK_EQ(cell_num(0, "value"), cell_num(0, "decimals"));
     CHECK_EQ(cell_num(0, "value"), 60.0);
-    CHECK_EQ(cell_text(0, "units.text"), "301020");
+    CHECK_EQ(cell_text(0, "units"), "301020");
     CHECK_EQ(cell_num(1, "value"), 50.0);              /* 30*0 + 10*1 + 20*2 */
-    CHECK_EQ(cell_num(1, "reading.decimals"), 6003.0); /* (30,10,20)*100 + (0,1,2) */
-    CHECK_EQ(cell_text(1, "units.text"), "0b,1c,2a");  /* map with the index */
+    CHECK_EQ(cell_num(1, "decimals"), 6003.0); /* (30,10,20)*100 + (0,1,2) */
+    CHECK_EQ(cell_text(1, "units"), "0b,1c,2a");  /* map with the index */
     CHECK_EQ(cell_num(2, "value"), 7.0);               /* empty list: start stands */
-    CHECK_EQ(cell_num(2, "reading.decimals"), 3.0);    /* counting fold */
-    CHECK_EQ(cell_text(2, "units.text"), "bca");
+    CHECK_EQ(cell_num(2, "decimals"), 3.0);    /* counting fold */
+    CHECK_EQ(cell_text(2, "units"), "bca");
 
     /* a Nil delivery does not UN-KNOW the mirror: the cache keeps the last known
        value, exactly as a flow's entity read always has (a list that never arrived at
@@ -4232,7 +4235,7 @@ void test_document_tolerance() {
  * default — seeds the token's DARK value (the canonical runtime mode); an unknown
  * token is a warning on the slot and seeds transparent, never a fault. */
 void test_theme_tokens() {
-    Json panel = Json{{"kind", "frame"}, {"type", "Panel"},
+    Json panel = Json{{"kind", "frame"}, {"type", "Button"},
                       {"name", "lamp"},
                       {"slots", Json{{"surface", "$accent"}, {"border", "$nope"}}}};
     Json toggle = Json{{"kind", "frame"}, {"type", "Toggle"}, {"name", "sw"}, {"slots", Json::object()}};
@@ -4282,7 +4285,7 @@ void test_theme_tokens() {
     CHECK(flagged);
 
     /* a registry DEFAULT may be a token reference too: the untouched Toggle's fill */
-    const Value* fill = slot_initial(sw, "pill.fillColor");
+    const Value* fill = slot_initial(sw, "fillColor");
     CHECK(fill && fill->tag == ValueTag::Color && fill->data.rgba == 0x4e8ef7ffu);
 }
 
@@ -4299,9 +4302,9 @@ void test_clock() {
         {"kind", "frame"}, {"type", "Readout"}, {"name", "b"},
         {"slots",
          Json{{"value", "time.hour * 10000 + time.minute * 100 + time.second"}}}});
-    instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "c"},
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Button"}, {"name", "c"},
                            {"slots", Json{{"text", "time.text"}}}});
-    instances.push_back(Json{{"kind", "frame"}, {"type", "Label"}, {"name", "d"},
+    instances.push_back(Json{{"kind", "frame"}, {"type", "Button"}, {"name", "d"},
                            {"slots", Json{{"text", "time.date"}}}});
     instances.push_back(Json{{"kind", "frame"}, {"type", "Readout"}, {"name", "e"},
                            {"slots", Json{{"value", "time.unix"}}}});
@@ -4397,8 +4400,7 @@ void test_icon() {
     Json badge = {
         {"id", 800}, {"name", "Badge"},
         {"locals", Json::array({Json{{"id", 801}, {"name", "symbol"}, {"type", "Icon"},
-                                     {"init", "gauge"}, {"group", "appearance"},
-                                     {"public", true}}})},
+                                     {"init", "gauge"}, {"public", true}}})},
         {"events", Json::array()},
         {"children", Json::array()},
         {"behavior", Json::array()},
@@ -4471,7 +4473,7 @@ void test_icon() {
             {"id", 800}, {"name", "Badge"},
             {"locals", Json::array({Json{{"id", 801}, {"name", "symbol"},
                                          {"type", "Icon"}, {"init", "gauge"},
-                                         {"group", "appearance"}, {"public", true}}})},
+                                         {"public", true}}})},
             {"events", Json::array()}, {"children", Json::array()},
             {"behavior", Json::array()}}})},
         {"globals", Json::array()},

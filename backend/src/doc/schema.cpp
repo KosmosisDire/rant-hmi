@@ -187,21 +187,24 @@ const std::vector<NodeSpec>& table() {
             boolean("persist", false),
             /* ---- WHAT MAKES A VARIABLE AN INPUT ----
              *
-             * A variable declared inside a COMPONENT is that component's own storage, one
+             * A variable declared on a COMPONENT is that component's own storage, one
              * cell per placement. `public` is the whole of what used to be a separate
              * property: it says this variable is part of the component's interface, so
              * every instance shows it in the inspector and may give it a value of its own
              * (an expression there feeds it; the `init` below is what it starts as
              * otherwise). A private one is the component's business and nothing else's.
              *
-             * On a PAGE element there is nothing to be public TO — the element is placed
-             * once and is its own placement — so the flag and every field under it sit
-             * inert, exactly as `elem` does on a scalar. */
+             * THE INTERFACE IS FLAT AND THE ROOT'S: `public` is legal on the component
+             * record's own `locals` alone. An ELEMENT's variable inside a component is
+             * always private (the compiler refuses the flag there, `var_public`), and on
+             * a PAGE element there is nothing to be public TO — the element is placed
+             * once and is its own placement — so the flag sits inert, exactly as `elem`
+             * does on a scalar. */
             boolean("public", false),
-            /* which section of the instance inspector this input lands in: what the
-               control IS (value), how it looks (appearance), how it is set up (config),
-               or the pane around it (frame) */
-            enumer("group", {"value", "appearance", "config", "frame"}, "appearance"),
+            /* the HEADING an input lists under in the instance's Inputs: free text,
+               consecutive inputs with one heading cluster, "" = none. Order is the
+               list's own. */
+            text("heading", ""),
             /* an editor the SHAPE alone would not have chosen: "align" for the 3x3 text
                grid, "enum-type" for the chip that writes variants(Type.field). Empty =
                let the type pick, which is the answer nearly everywhere now that `color`
@@ -348,7 +351,7 @@ const std::vector<NodeSpec>& table() {
 
         /* THERE IS NO PROPERTY SPEC HERE ANY MORE. A component's interface is its public
          * variables, so the row that declared a property and the row that declares a
-         * variable became the one `var` spec above — which is why `public`, `group`,
+         * variable became the one `var` spec above — which is why `public`, `heading`,
          * `editor`, `variants` and the number bounds live there. */
 
         return t;

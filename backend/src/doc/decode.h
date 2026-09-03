@@ -102,7 +102,7 @@ struct VarDecl {
     Json init;                     /* null = a deliberate UNKNOWN start */
     bool persist = false;
     bool is_public = false;
-    std::string group = "appearance";
+    std::string heading;           /* the Inputs cluster an input lists under, "" = none */
     std::string editor;
     std::vector<std::string> variants;   /* constrained text: the picker's vocabulary */
     /* null = unset; a number otherwise. Held as JSON because the served row carries

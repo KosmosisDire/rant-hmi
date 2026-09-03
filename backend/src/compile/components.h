@@ -42,14 +42,13 @@ const Json& builtin_registry();
 /* ---- THE COMPONENT SPECS: the registry as the DOCUMENT COMPILER reads it ----
  *
  * One typed row per component, derived by the SAME walk that builds the served
- * registry — the addressing rules, the synthesized `shown` switches and the
- * text-with-variants ⇒ "enum" translation are stated once and both products read
- * them. This is what killed the two-compiler seam (stage 5b): the wire compiler
+ * registry — the addressing rules and the text-with-variants ⇒ "enum" translation are
+ * stated once and both products read them. This is what killed the two-compiler seam (stage 5b): the wire compiler
  * used to decode these facts back OFF the served JSON rows. */
 struct SlotSpec {
     std::string name;               /* the ADDRESS: bare, or "<element path>.<name>" */
-    /* the DECLARING VarDecl's document id (0 for built-ins and the synthesized
-     * `shown`): what a reference to this slot means to a rename */
+    /* the DECLARING VarDecl's document id (0 for built-ins): what a reference to
+     * this slot means to a rename */
     uint64_t id = 0;
     std::string shape;              /* the served word; the compiler's var_shape reads it */
     bool is_public = false;

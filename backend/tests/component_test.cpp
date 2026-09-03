@@ -13,6 +13,7 @@
 #include "registry/registry.h"
 #include "vm/program.h"
 
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -509,12 +510,13 @@ void test_builtins_compile_clean() {
      * all is most of the test; the rest pins the served shape */
     const Json& registry = builtin_registry();
     CHECK(registry["version"] == 1);
-    CHECK_EQ(registry["components"].size(), size_t(12));
+    CHECK_EQ(registry["components"].size(), size_t(10));
 
+    /* TEN: no Label (a page text) and no Panel (a page frame with a surface) */
     const char* expected[] = {"Button", "Toggle",   "Slider",  "Knob",
                               "RadialSlider", "Gauge", "Selector", "Trend",
-                              "Readout", "Dropdown", "Label",   "Panel"};
-    for (size_t i = 0; i < 12; ++i)
+                              "Readout", "Dropdown"};
+    for (size_t i = 0; i < 10; ++i)
         CHECK_EQ(registry["components"][i].value("name", ""), std::string(expected[i]));
 
     for (const Json& type : registry["components"]) {
@@ -523,8 +525,12 @@ void test_builtins_compile_clean() {
                   name + " has no slots");
         for (const Json& slot : type["slots"]) {
             CHECK_MSG(slot.contains("name") && slot.contains("shape") &&
-                          slot.contains("default") && slot.contains("group"),
+                          slot.contains("default") && slot.contains("public"),
                       name + ": a slot row is missing its core keys");
+            /* THE INTERFACE IS FLAT: every public row is the root's — a bare name */
+            if (slot.value("public", false))
+                CHECK_MSG(slot.value("name", "").find('.') == std::string::npos,
+                          name + "." + slot.value("name", "") + " is an element's input");
         }
         CHECK_MSG(type["events"].is_array(), name + " has no events table");
         /* NO GESTURE EVENT IS EVER DECLARED: the primitive brings the family, so the
@@ -542,23 +548,29 @@ void test_builtins_compile_clean() {
     }
 
     /* THE ROOT IS THE COMPONENT: no wrapper node stands between a type and its content,
-       so the template's own name is the type's and its box is the instance's box */
+       so the template's own name is the type's and its box is the instance's box. A
+       root authors the COMPONENT's half of the vocabulary alone (registry/attrs.h
+       AttrOwner): nothing of the placement's is on any of them. */
     for (const Json& type : registry["components"]) {
         CHECK_EQ(type["template"].value("name", ""), type.value("name", ""));
         CHECK(type["template"]["kind"] == "frame");
-        CHECK_MSG(type["template"]["attrs"].contains("surface"),
-                  type.value("name", "") + ": the root box paints its own surface, so the "
-                  "dressing is ordinary attrs and not a privileged panel");
+        for (const auto& attr : type["template"]["attrs"].items())
+            CHECK_MSG(attr_owner(attr.key()) == AttrOwner::Component,
+                      type.value("name", "") + " root authors '" + attr.key() + "'");
     }
+    /* the few whose box IS part of the picture dress it through ordinary attrs reading
+       their own inputs — a Button's face, a Dropdown's field — and no privileged panel */
+    CHECK(registry["components"][0]["template"]["attrs"].contains("surface"));
+    CHECK(registry["components"][9]["template"]["attrs"].contains("surface"));
+    CHECK(!registry["components"][1]["template"]["attrs"].contains("surface"));
 
     /* pin a few known lowerings end to end, one per vocabulary feature */
     const Json& toggle = registry["components"][1];
     const Json& pill = toggle["template"]["children"][0];
-    /* the pill owns both colours, so they lower to the ADDRESSES under it while `value` —
-       the component's own — stays bare */
+    /* every input is the ROOT's, so every load is a bare name */
     CHECK_EQ(ops_of(pill["attrs"]["surface"]),
-             "LOAD(slot:value) LOAD(slot:pill.fillColor) "
-             "LOAD(slot:pill.trackColor) METHOD(BOOL_PICK,2)");
+             "LOAD(slot:value) LOAD(slot:fillColor) "
+             "LOAD(slot:trackColor) METHOD(BOOL_PICK,2)");
     CHECK(pill["interact"]["primitive"] == "press");
     /* the control pair is DECLARED; gesture events never are (the primitive brings
        them), and the toggle's logic lives in visible behavior, not a derivation */
@@ -578,7 +590,7 @@ void test_builtins_compile_clean() {
        draw every tick of every type */
     const Json& mark = slider["template"]["children"][1]["children"][0];
     CHECK_EQ(ops_of(mark["attrs"]["surface"]), "LOAD(theme:scale)");
-    CHECK_EQ(ops_of(mark["attrs"]["repeat"]), "LOAD(slot:scale.divisions)");
+    CHECK_EQ(ops_of(mark["attrs"]["repeat"]), "LOAD(slot:divisions)");
     CHECK_EQ(ops_of(mark["attrs"]["left"]), "LOAD(repeat:fraction)");
 
     /* A PLOT IS A PATH whose anchors are data: the instance's own history LIST maps to
@@ -588,8 +600,8 @@ void test_builtins_compile_clean() {
              "LOAD(slot:history) ITERATE[MAP]{"
              "ARG(1) LOAD(slot:history) METHOD(TEXT_LENGTH,0) CONST(1.0) SUB "
              "CONST(1.0) CALL(MAX,2) DIV "
-             "CONST(1.0) ARG(0) LOAD(slot:plot.min) SUB "
-             "LOAD(slot:plot.max) LOAD(slot:plot.min) SUB DIV SUB CALL(ANCHOR,2)}");
+             "CONST(1.0) ARG(0) LOAD(slot:min) SUB "
+             "LOAD(slot:max) LOAD(slot:min) SUB DIV SUB CALL(ANCHOR,2)}");
     /* THE PAST IS AUTHORED: `history` is an ordinary list slot and the sampler is an
        ordinary cadence flow, so the whole of what the backend used to do privately is
        readable here, in the served type */
@@ -612,7 +624,7 @@ void test_builtins_compile_clean() {
 
     const Json& readout = registry["components"][8];
     CHECK_EQ(ops_of(readout["template"]["children"][0]["attrs"]["text"]),
-             "LOAD(slot:value) LOAD(slot:reading.decimals) METHOD(NUM_TO_FIXED,1)");
+             "LOAD(slot:value) LOAD(slot:decimals) METHOD(NUM_TO_FIXED,1)");
 
     /* the Selector's detents count the list, the labels index it, and the needle
        rides indexOf — the resolver cells are gone whole */
@@ -635,25 +647,30 @@ void test_builtins_compile_clean() {
     CHECK(track["anchors"][1].contains("arc"));
     CHECK(ops_of(track["anchors"][0]["x"]).find("CALL(SIN,1)") != std::string::npos);
 
-    /* the interface EXTRAS round-trip: fine steps, bounds, editors — and an address that
-       says which element owns what */
+    /* the interface EXTRAS round-trip: fine steps, bounds, editors, headings — and a
+       private row served private */
     const Json& knob = registry["components"][3];
-    bool thickness = false, arc_color = false;
+    bool thickness = false, arc_color = false, body = false;
     for (const Json& slot : knob["slots"]) {
-        if (slot.value("name", "") == "dial.arc.thickness") {
+        if (slot.value("name", "") == "thickness") {
             thickness = true;
             CHECK(slot["step"] == 0.05);
             CHECK(slot["min"] == 0.02);
             CHECK(slot["max"] == 0.6);
+            CHECK(slot["heading"] == "Dial");
         }
-        if (slot.value("name", "") == "dial.arc.fillColor") {
+        if (slot.value("name", "") == "fillColor") {
             arc_color = true;
             /* the SHAPE says colour now, so the editor hint that merely repeated it is
                gone: a redundant word is not served */
             CHECK(slot["shape"] == "Color" && !slot.contains("editor"));
         }
+        if (slot.value("name", "") == "bodyColor") {
+            body = true;
+            CHECK(slot["public"] == false && !slot.contains("heading"));
+        }
     }
-    CHECK(thickness && arc_color);
+    CHECK(thickness && arc_color && body);
 }
 
 /* a document with two components: `Meter` (new, one bad attr) and `Toggle`
@@ -669,9 +686,9 @@ Document component_document() {
                                                                   {"shape", "num"}}})}}})},
         {"locals", Json::array({
             Json{{"id", 101}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
-                 {"group", "value"}, {"public", true}},
+                 {"public", true}},
             Json{{"id", 102}, {"name", "fillColor"}, {"type", "Color"},
-                 {"init", "$accent"}, {"group", "appearance"}, {"public", true}},
+                 {"init", "$accent"}, {"public", true}},
         })},
         /* THE COMPONENT IS THE ROOT FRAME: its own attrs describe the box an
            instance renders as, and its children are what stands inside it */
@@ -688,7 +705,7 @@ Document component_document() {
         {"name", "Toggle"},
         {"locals", Json::array({
             Json{{"id", 201}, {"name", "value"}, {"type", "Bool"}, {"init", false},
-                 {"group", "value"}, {"public", true}},
+                 {"public", true}},
         })},
         {"events", Json::array({Json{{"name", "changed"},
                                      {"params", Json::array({Json{{"name", "value"},
@@ -737,9 +754,9 @@ void test_doc_components() {
     Json registry = derive_registry(document, diags);
 
     /* Meter appends; Toggle shadows IN PLACE, keeping the built-in order */
-    CHECK_EQ(registry["components"].size(), size_t(13));
+    CHECK_EQ(registry["components"].size(), size_t(11));
     CHECK(registry["components"][1]["name"] == "Toggle");
-    CHECK(registry["components"][12]["name"] == "Meter");
+    CHECK(registry["components"][10]["name"] == "Meter");
 
     /* the bad expression is a finding on the ELEMENT node, named by the attr; the good
      * attrs on the same element still compiled */
@@ -750,18 +767,15 @@ void test_doc_components() {
         CHECK_EQ(diags[0].code, std::string("template_expr"));
         CHECK(diags[0].message.find("nope") != std::string::npos);
     }
-    const Json& face = registry["components"][12]["template"]["children"][0];
+    const Json& face = registry["components"][10]["template"]["children"][0];
     CHECK_EQ(ops_of(face["attrs"]["surface"]), "LOAD(slot:fillColor)");
-    /* the node's own `shown` switch is folded into whatever the type computes: it draws
-       when both hold */
-    CHECK_EQ(ops_of(face["attrs"]["show"]),
-             "LOAD(slot:face.shown) LOAD(slot:value) CONST(10.0) GT CONST(false) "
-             "METHOD(BOOL_PICK,2)");
+    /* an element's `show` is exactly what it authored: nothing is folded in */
+    CHECK_EQ(ops_of(face["attrs"]["show"]), "LOAD(slot:value) CONST(10.0) GT");
     CHECK(!face["attrs"].contains("radius"));   /* the broken attr is not served */
 
     /* the shadow really replaced the built-in template and props */
     const Json& toggle = registry["components"][1];
-    CHECK_EQ(toggle["slots"].size(), size_t(2));   /* `value` + the lamp node's `shown` */
+    CHECK_EQ(toggle["slots"].size(), size_t(1));   /* `value` alone */
     CHECK_EQ(ops_of(toggle["template"]["children"][0]["attrs"]["surface"]),
              "CONST(\"#ff0000\")");
 
@@ -783,9 +797,11 @@ void test_doc_components() {
     CHECK(compiled.program.raises.size() == 1);  /* and it SPEAKS changed(value) */
 }
 
-/* ELEMENTS OWN VARIABLES: one declared on an element is addressed under that element's
- * path, is in scope for that element and everything under it and nowhere else, and an
- * instance stores its value nested the same way. */
+/* ELEMENTS OWN PRIVATE VARIABLES: one declared on an element is addressed under that
+ * element's path, is in scope for that element and everything under it and nowhere
+ * else, and is NEVER an input — the interface is the root's alone. `public` on one is
+ * refused with the way up and the row is served private; an instance's `slots` is flat
+ * and reaches the root's inputs only. */
 void test_part_properties() {
     Json comp = {
         {"id", 400},
@@ -793,7 +809,7 @@ void test_part_properties() {
         /* the component's own: read anywhere, addressed bare */
         {"locals", Json::array({
             Json{{"id", 401}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
-                 {"group", "value"}, {"public", true}},
+                 {"public", true}},
         })},
         {"children", Json::array({
             Json{{"id", 420}, {"kind", "frame"}, {"name", "gauge"},
@@ -801,7 +817,6 @@ void test_part_properties() {
                  {"locals", Json::array({Json{{"id", 421}, {"name", "shade"},
                                               {"type", "Color"},
                                               {"init", "$track"},
-                                              {"group", "appearance"},
                                               {"public", true}}})},
                  {"attrs", Json::object()},
                  {"children", Json::array({
@@ -810,7 +825,6 @@ void test_part_properties() {
                                                        {"name", "fillColor"},
                                                        {"type", "Color"},
                                                        {"init", "$accent"},
-                                                       {"group", "appearance"},
                                                        {"public", true}}})},
                           {"attrs", Json{{"surface", "fillColor"},
                                          {"border", "shade"},
@@ -821,7 +835,6 @@ void test_part_properties() {
                                                        {"name", "fillColor"},
                                                        {"type", "Color"},
                                                        {"init", "$handle"},
-                                                       {"group", "appearance"},
                                                        {"public", true}}})},
                           {"attrs", Json{{"surface", "fillColor"}}}},
                  })}},
@@ -834,33 +847,37 @@ void test_part_properties() {
             {"name", "Main"},
             {"children", Json::array({Json{
                 {"kind", "frame"}, {"type", "Dial"}, {"name", "D"},
-                /* the instance's values nest exactly like the elements do */
-                {"slots", Json{{"value", 3.0},
-                               {"gauge", Json{{"shade", "#101010"},
-                                              {"arc", Json{{"fillColor", "#00ff00"}}}}}}}}})}}})},
+                /* FLAT: the root's inputs by name; nothing the elements own */
+                {"slots", Json{{"value", 3.0}}}}})}}})},
     };
     Document document;
     std::string error;
     CHECK_MSG(document.adopt(std::move(root), error), error);
     std::vector<Diag> diags;
     Json registry = derive_registry(document, diags);
-    CHECK_MSG(diags.empty(), diags.empty() ? "" : diags[0].message);
+    /* three elements said `public`: three findings, each on its variable, and each
+       row served private */
+    std::set<uint64_t> refused;
+    for (const Diag& d : diags) {
+        CHECK_EQ(d.code, std::string("var_public"));
+        CHECK_EQ(d.where, std::string("public"));
+        refused.insert(d.node_id);
+    }
+    CHECK_EQ(diags.size(), size_t(3));
+    CHECK(refused.count(421) && refused.count(431) && refused.count(441));
 
-    /* every property is served ONCE, under its owner's path */
-    const Json& dial = registry["components"][12];
-    std::set<std::string> names;
-    for (const Json& slot : dial["slots"]) names.insert(slot.value("name", ""));
-    CHECK(names.count("value") == 1);
-    CHECK(names.count("gauge.shade") == 1);
-    CHECK(names.count("gauge.arc.fillColor") == 1);
-    CHECK(names.count("gauge.dot.fillColor") == 1);
-    CHECK(names.count("fillColor") == 0);   /* never at the component level */
-    /* every named node can be switched off, without anyone declaring it */
-    CHECK(names.count("gauge.shown") == 1);
-    CHECK(names.count("gauge.arc.shown") == 1);
-    CHECK(names.count("gauge.dot.shown") == 1);
-    CHECK(names.count("shown") == 0);   /* the instance has `visible`, not `shown` */
-    CHECK_EQ(dial["slots"].size(), size_t(7));
+    /* every variable is served ONCE, under its owner's path, and NOTHING is synthesized */
+    const Json& dial = registry["components"][10];
+    std::map<std::string, bool> served;
+    for (const Json& slot : dial["slots"])
+        served[slot.value("name", "")] = slot.value("public", false);
+    CHECK_EQ(dial["slots"].size(), size_t(4));
+    CHECK(served.count("value") && served["value"]);
+    CHECK(served.count("gauge.shade") && !served["gauge.shade"]);
+    CHECK(served.count("gauge.arc.fillColor") && !served["gauge.arc.fillColor"]);
+    CHECK(served.count("gauge.dot.fillColor") && !served["gauge.dot.fillColor"]);
+    CHECK(!served.count("fillColor"));   /* never at the component level */
+    CHECK(!served.count("gauge.shown"));
 
     /* the same bare name lowers to a DIFFERENT cell in each node, and an inherited one to
        the frame that declared it */
@@ -872,8 +889,8 @@ void test_part_properties() {
     CHECK_EQ(ops_of(gauge["children"][1]["attrs"]["surface"]),
              "LOAD(slot:gauge.dot.fillColor)");
 
-    /* an instance's nested value reaches the compiled cell; an unauthored one keeps
-       the type's default */
+    /* a private variable still gets its cell per placement — the pictures inside read
+       it — at its DECLARED default; only the root's input takes the instance's value */
     FakeMesh mesh;
     CompileResult compiled = compile_document(document, mesh);
     CHECK_MSG(compiled.ok, compiled.program.diagnostics.empty()
@@ -887,13 +904,13 @@ void test_part_properties() {
         return nullptr;
     };
     const CellDef* arc = cell_named("gauge.arc.fillColor");
-    CHECK(arc && arc->initial.tag == ValueTag::Color &&
-          arc->initial.data.rgba == 0x00ff00ffu);
+    CHECK(arc && arc->initial.tag == ValueTag::Color);   /* the $accent default */
     const CellDef* shade = cell_named("gauge.shade");
-    CHECK(shade && shade->initial.data.rgba == 0x101010ffu);
+    CHECK(shade && shade->initial.tag == ValueTag::Color);   /* the $track default */
     const CellDef* dot = cell_named("gauge.dot.fillColor");
     CHECK(dot && dot->initial.tag == ValueTag::Color);   /* the $handle default */
-    CHECK(cell_named("value") != nullptr);
+    const CellDef* value = cell_named("value");
+    CHECK(value && value->initial.tag == ValueTag::Num && value->initial.data.num == 3.0);
 }
 
 /* the rules that keep an address unambiguous: a name an element cannot carry ONCE IT HAS
@@ -924,8 +941,11 @@ void test_part_property_rules() {
     /* one `tint` variable row; every node in a document carries its own id */
     auto tint = [](int id) {
         return Json::array({Json{{"id", id}, {"name", "tint"}, {"type", "Color"},
-                                 {"init", "#000000"}, {"group", "appearance"},
-                                 {"public", true}}});
+                                 {"init", "#000000"}}});
+    };
+    auto public_tint = [](int id) {
+        return Json::array({Json{{"id", id}, {"name", "tint"}, {"type", "Color"},
+                                 {"init", "#000000"}, {"public", true}}});
     };
 
     /* A NAME IS A LABEL UNTIL SOMETHING NEEDS AN ADDRESS: a hyphen is fine on a node that
@@ -946,6 +966,10 @@ void test_part_property_rules() {
     /* shadowing an enclosing variable is legal and says so */
     CHECK_EQ(findings(Json::array({node_named("dot", tint(521))}), tint(520)),
              std::string("var_shadow"));
+    /* THE INTERFACE IS THE ROOT'S: an element's `public` is refused, the root's is not */
+    CHECK_EQ(findings(Json::array({node_named("dot", public_tint(521))}), Json::array()),
+             std::string("var_public"));
+    CHECK_EQ(findings(Json::array(), public_tint(520)), std::string(""));
 }
 
 /* an empty component (just created in the editor) serves a blank body, not an error */
@@ -962,9 +986,9 @@ void test_empty_component() {
     std::vector<Diag> diags;
     Json registry = derive_registry(document, diags);
     CHECK(diags.empty());
-    CHECK_EQ(registry["components"].size(), size_t(13));
-    CHECK(registry["components"][12]["template"]["kind"] == "frame");
-    CHECK(registry["components"][12]["template"]["children"].empty());
+    CHECK_EQ(registry["components"].size(), size_t(11));
+    CHECK(registry["components"][10]["template"]["kind"] == "frame");
+    CHECK(registry["components"][10]["template"]["children"].empty());
 }
 
 /* The closed attr vocabulary (registry/attrs.h): a name outside the common set and the
@@ -1102,7 +1126,7 @@ void test_attr_owner() {
         }
         CHECK_EQ(diags.size(), size_t(3));
         CHECK(wheres.count("show") && wheres.count("w") && wheres.count("transitions.left"));
-        const Json& tmpl = registry["components"][12]["template"];
+        const Json& tmpl = registry["components"][10]["template"];
         CHECK(tmpl["attrs"].contains("surface"));
         CHECK(!tmpl["attrs"].contains("show") && !tmpl["attrs"].contains("w"));
         CHECK(tmpl["transitions"].contains("surface") && !tmpl["transitions"].contains("left"));
@@ -1420,15 +1444,15 @@ void test_transitions() {
         {"id", 800}, {"name", "Sweep"},
         {"locals", Json::array({
             Json{{"id", 801}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
-                 {"group", "value"}, {"public", true}, {"smooth", 400.0},
+                 {"public", true}, {"smooth", 400.0},
                  {"profile", "ease-out"}},
             Json{{"id", 804}, {"name", "rate"}, {"type", "Num"}, {"init", 1.0},
-                 {"group", "config"}, {"public", true}, {"smooth", 250.0}},
+                 {"public", true}, {"smooth", 250.0}},
             /* the sweep's time is an EXPRESSION over the component's own scope */
             Json{{"id", 805}, {"name", "speed"}, {"type", "Num"}, {"init", 0.0},
-                 {"group", "value"}, {"public", true}, {"smooth", "1000 / rate"}},
+                 {"public", true}, {"smooth", "1000 / rate"}},
             Json{{"id", 803}, {"name", "label"}, {"type", "Text"}, {"init", "hi"},
-                 {"group", "config"}, {"public", true}},
+                 {"public", true}},
         })},
         {"transitions", Json{{"surface", Json{{"ms", 300.0}}}}},
         {"children", Json::array({
@@ -1473,7 +1497,7 @@ void test_transitions() {
     std::vector<Diag> diags;
     Json registry = derive_registry(document, diags);
 
-    const Json& sweep = registry["components"][12];
+    const Json& sweep = registry["components"][10];
     /* the component record is its ROOT node: its transitions ride the template root.
        EVERY VALUE IS A PROGRAM now — a literal is the degenerate CONST. */
     CHECK_EQ(ops_of(sweep["template"]["transitions"]["surface"]["ms"]), "CONST(300.0)");
@@ -1549,12 +1573,12 @@ void test_transitions() {
                 {"id", 820}, {"name", "BadSweep"},
                 {"locals", Json::array({
                     Json{{"id", 821}, {"name", "a"}, {"type", "Num"}, {"init", 0.0},
-                         {"group", "value"}, {"public", true}, {"smooth", -20.0}},
+                         {"public", true}, {"smooth", -20.0}},
                     Json{{"id", 822}, {"name", "b"}, {"type", "Num"}, {"init", 0.0},
-                         {"group", "value"}, {"public", true}, {"smooth", 100.0},
+                         {"public", true}, {"smooth", 100.0},
                          {"profile", "bounce"}},
                     Json{{"id", 823}, {"name", "c"}, {"type", "Color"},
-                         {"init", "#fff"}, {"group", "appearance"}, {"public", true},
+                         {"init", "#fff"}, {"public", true},
                          {"smooth", 100.0}},
                 })}}})},
             {"pages", Json::array()},
@@ -1566,7 +1590,7 @@ void test_transitions() {
         Json registry2 = derive_registry(document2, diags2);
         CHECK_EQ(diags2.size(), size_t(3));
         for (const Diag& d : diags2) CHECK_EQ(d.code, std::string("var_smooth"));
-        const Json& slots = registry2["components"][12]["slots"];
+        const Json& slots = registry2["components"][10]["slots"];
         CHECK(!slots[0].contains("smooth"));
         /* the ms was legal, the profile was not: the sweep serves, the profile does not */
         CHECK(slots[1].contains("smooth") && !slots[1].contains("profile"));
@@ -1627,7 +1651,7 @@ void test_definition_check() {
         {"name", "Lonely"},
         {"locals", Json::array({
             Json{{"id", 301}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
-                 {"group", "value"}, {"public", true}},
+                 {"public", true}},
         })},
         {"interact", Json{{"primitive", "press"}}},
         {"behavior", Json::array({
@@ -1642,7 +1666,7 @@ void test_definition_check() {
         {"name", "Placed"},
         {"locals", Json::array({
             Json{{"id", 401}, {"name", "value"}, {"type", "Num"}, {"init", 0.0},
-                 {"group", "value"}, {"public", true}},
+                 {"public", true}},
         })},
         {"interact", Json{{"primitive", "press"}}},
         {"behavior", Json::array({
@@ -1860,7 +1884,7 @@ void test_display_reference_index() {
     CHECK_EQ(rows_of(960, "flow", 961, "flow"), 1);        /* the shadowing local's own */
     CHECK_EQ(rows_of(960, "flow", 900, "flow"), 0);        /* never the global's */
     CHECK_EQ(rows_of(970, "value", 971, "value"), 1);      /* the component's property */
-    CHECK_EQ(rows_of(975, "value > 1", 971, "value"), 1);  /* folded show, AUTHORED text */
+    CHECK_EQ(rows_of(975, "value > 1", 971, "value"), 1);  /* an element's own read */
 
     int broken = 0;
     for (const RefSite& site : blind)

@@ -49,6 +49,13 @@ Json frame(const char* name, Json children, Json attrs = Json::object()) {
                 {"children", std::move(children)}};
 }
 
+/* a LABEL is a page `text`: there is no Label component — a line of text carries its
+   own gesture and flows already. `text` is the quoted literal, the rest ordinary attrs. */
+Json label(const char* name, const char* quoted, Json attrs) {
+    attrs["text"] = quoted;
+    return Json{{"kind", "text"}, {"name", name}, {"attrs", std::move(attrs)}};
+}
+
 /* every node under one, root-first */
 void walk_from(Json& node, const std::function<void(Json&)>& visit) {
     visit(node);
@@ -294,12 +301,9 @@ Document Document::make_default() {
     /* one bound slot and one flow so the inspector and the rename fan-out have real
        work: the Readout's value IS an expression over the `flow` variable (spec D1) */
     Json readout = instance("Readout", "Flow",
-                            /* a nested node's value nests under its name: the units are
-                               the `units` node's */
-                            Json{{"value", "flow.Round(1)"},
-                                 {"units", Json{{"text", "'l/min'"}}}},
+                            Json{{"value", "flow.Round(1)"}, {"units", "'l/min'"}},
                             at(22, 198, 836, 176));
-    Json reset = instance("Button", "Reset", Json{{"label", Json{{"text", "'Reset'"}}}},
+    Json reset = instance("Button", "Reset", Json{{"text", "'Reset'"}},
                           at(22, 396, 176, 66));
     reset["flows"] = Json::array({Json{
         {"when", Json::array({Json{{"kind", "event"}, {"name", "press"}}})},
@@ -309,8 +313,9 @@ Document Document::make_default() {
                                  {"to", {{"local", "flow"}, {"path", ""}}}}})}}});
 
     Json header_kids = Json::array();
-    header_kids.push_back(instance("Label", "Title", Json{{"text", "'Line 1 Overview'"}},
-                                   at(22, 11, 308, 44)));
+    header_kids.push_back(label("Title", "'Line 1 Overview'",
+                                with(at(22, 11, 308, 44), Json{{"size", "18"},
+                                                                {"bold", "true"}})));
     Json header = frame("Header", std::move(header_kids),
                         with(at(0, 0, 1408, 66), Json{{"surface", "$surface-2"}}));
 
@@ -349,8 +354,8 @@ Document Document::make_default() {
                                 Json{{"surface", "$surface"}, {"radius", "6"}}));
 
     Json status_kids = Json::array();
-    status_kids.push_back(instance("Label", "Status", Json{{"text", "'Status'"}},
-                                   at(22, 22, 176, 44)));
+    status_kids.push_back(label("Status", "'Status'",
+                                with(at(22, 22, 176, 44), Json{{"size", "14"}})));
     status_kids.push_back(instance("Toggle", "Enabled", Json{{"value", false}},
                                    at(286, 22, 154, 44)));
     Json status = frame("Status group", std::move(status_kids),
@@ -358,11 +363,17 @@ Document Document::make_default() {
                              Json{{"surface", "$surface"}, {"radius", "6"}}));
 
     Json lamp_kids = Json::array();
-    lamp_kids.push_back(instance("Panel", "Pump group", Json::object(),
-                                 at(22, 22, 418, 242)));
-    /* the lamp is a Panel with a bound surface: there is no Indicator type */
-    lamp_kids.push_back(instance("Panel", "Fault", Json{{"surface", "#2a2a2a"}},
-                                 at(22, 286, 418, 242)));
+    /* a PANEL is a page frame with a surface: there is no Panel component */
+    lamp_kids.push_back(frame("Pump group", Json::array(),
+                              with(at(22, 22, 418, 242),
+                                   Json{{"surface", "$surface"}, {"border", "$line"},
+                                        {"radius", "6"}})));
+    /* the lamp is a frame whose surface is an expression: bind it to the mesh and it
+       lights up — there is no Indicator type */
+    lamp_kids.push_back(frame("Fault", Json::array(),
+                              with(at(22, 286, 418, 242),
+                                   Json{{"surface", "#2a2a2a"}, {"border", "$line"},
+                                        {"radius", "6"}})));
     Json lamps = frame("Lamps", std::move(lamp_kids),
                        with(at(924, 198, 462, 572),
                             Json{{"surface", "$surface"}, {"radius", "6"}}));

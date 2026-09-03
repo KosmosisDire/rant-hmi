@@ -211,8 +211,8 @@ void rename_site(Pass& pass, uint64_t node, Role role, Json& value) {
         }
         /* every STRING LEAF is an expression (a number or a bool is a degenerate literal
            with nothing to rename), through objects and arrays alike: an instance's
-           `slots` nests one object per element, a node's `attrs` is flat, a path's
-           `anchors` is an array of coordinate rows with an `arc` object inside. */
+           `slots` and a node's `attrs` are flat, a path's `anchors` is an array of
+           coordinate rows with an `arc` object inside. */
         case Role::ExprTree: {
             if (value.is_string()) {
                 rename_expr(pass, node, value);

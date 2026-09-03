@@ -108,13 +108,13 @@ void test_defaults() {
     CHECK(d.root.find("canvas") == d.root.end());
 
     /* every node got an id, and the index resolves each one to its place */
-    Json& w = labelled(d, "Title");
+    Json& w = labelled(d, "Pump");
     CHECK(id_of(w) != 0);
     const NodeEntry* e = d.find(id_of(w));
     CHECK(e != nullptr);
     CHECK(e && e->kind == Kind::Node);
     CHECK(e && e->list == "children");
-    CHECK(e && e->index == 0);       /* first child of the header frame */
+    CHECK(e && e->index == 0);       /* first child of the main pane */
     CHECK(d.find(kDocId) != nullptr);
 
     /* ONE KIND: an instance is a frame carrying a type, and the frame variant's lists are
@@ -126,7 +126,7 @@ void test_defaults() {
     CHECK(w["locals"].is_array());
     CHECK(w["slots"].is_object());
     CHECK(w["kind"] == "frame");
-    CHECK(w["type"] == "Label");
+    CHECK(w["type"] == "Toggle");
     /* and the place pair a container reads off its child is expression text like every
        other field, so it lives in `attrs` and not in a prop of its own */
     CHECK(w["attrs"].is_object());
@@ -162,7 +162,7 @@ void test_round_trip() {
     Document d = Document::make_default();
     std::string err;
 
-    const uint64_t wid = id_of(labelled(d, "Title"));
+    const uint64_t wid = id_of(labelled(d, "Reset"));
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", wid}, {"key", "name"}, {"value", "Head"}}},
                     err),
               err);
@@ -176,7 +176,7 @@ void test_round_trip() {
                                    {"parent", page},
                                    {"list", "children"},
                                    {"index", 0},
-                                   {"node", {{"kind", "frame"}, {"type", "Label"}, {"name", "New"}}}}});
+                                   {"node", {{"kind", "frame"}, {"type", "Button"}, {"name", "New"}}}}});
     CHECK_MSG(apply_batch(d, batch, r, err), err);
     CHECK(r.version == 3);
     CHECK(r.ops.size() == 1);
@@ -225,7 +225,7 @@ void test_round_trip() {
 void test_validation() {
     Document d = Document::make_default();
     std::string err;
-    const uint64_t wid = id_of(labelled(d, "Title"));
+    const uint64_t wid = id_of(labelled(d, "Reset"));
     const uint64_t before = d.version();
 
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", wid}, {"key", "nope"}, {"value", 1}}}, err));
@@ -722,7 +722,7 @@ void test_var_types() {
     CHECK(!names("f64") && !names("str"));
     CHECK(!names("series") && !names("Enum"));
     /* the interface fields PropDef used to own now live on the variable itself */
-    for (const char* key : {"public", "group", "editor", "variants", "min", "max",
+    for (const char* key : {"public", "heading", "editor", "variants", "min", "max",
                             "step", "smooth", "profile"})
         CHECK(find_prop(node_spec(Kind::Var), "", key) != nullptr);
     /* and a component holds its variables in the SAME list every element does */
@@ -768,12 +768,12 @@ void test_tokens() {
 
     /* an authored "$accent" follows a rename; a literal that happens to match the
        token's value does not */
-    const uint64_t wid = id_of(labelled(d, "Title"));
-    Json slots = labelled(d, "Title")["slots"];
+    const uint64_t wid = id_of(labelled(d, "Reset"));
+    Json slots = labelled(d, "Reset")["slots"];
     slots["textColor"] = "$accent";
     slots["surface"] = "#4e8ef7";
-    /* an ELEMENT's colour sits one level in (spec 2.3): the fan-out walks the nesting */
-    slots["bar"] = Json{{"fillColor", "$accent"}};
+    /* a second colour input, the same flat level: the fan-out visits every value */
+    slots["border"] = "$accent";
     CHECK_MSG(apply(d, {Json{{"op", "set_prop"}, {"node", wid}, {"key", "slots"},
                              {"value", slots}}},
                     err),
@@ -783,9 +783,9 @@ void test_tokens() {
     CHECK_MSG(apply_batch(d, rename, rr, err), err);
     CHECK(token_named(d, "brand") != nullptr);
     CHECK(token_named(d, "accent") == nullptr);
-    CHECK(labelled(d, "Title")["slots"]["textColor"] == "$brand");
-    CHECK(labelled(d, "Title")["slots"]["bar"]["fillColor"] == "$brand");
-    CHECK(labelled(d, "Title")["slots"]["surface"] == "#4e8ef7");
+    CHECK(labelled(d, "Reset")["slots"]["textColor"] == "$brand");
+    CHECK(labelled(d, "Reset")["slots"]["border"] == "$brand");
+    CHECK(labelled(d, "Reset")["slots"]["surface"] == "#4e8ef7");
     /* the fan-out is echoed as ONE set_prop of the whole slots object per touched instance */
     int set_props = 0;
     for (const Json& op : rr.ops)
@@ -793,7 +793,7 @@ void test_tokens() {
             ++set_props;
             CHECK(op["key"] == "slots");
             CHECK(op["value"]["textColor"] == "$brand");
-            CHECK(op["value"]["bar"]["fillColor"] == "$brand");
+            CHECK(op["value"]["border"] == "$brand");
         }
     CHECK(set_props == 1);
 
@@ -831,7 +831,7 @@ void test_tokens() {
     CHECK(!apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "$brand"}}}, err));
     CHECK_MSG(apply(d, {Json{{"op", "rename"}, {"node", accent_id}, {"name", "brand-2"}}}, err),
               err);
-    CHECK(labelled(d, "Title")["slots"]["textColor"] == "$brand-2");
+    CHECK(labelled(d, "Reset")["slots"]["textColor"] == "$brand-2");
     /* the name changes only through the rename op, like a variable's */
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", accent_id}, {"key", "name"},
                           {"value", "x"}}},
@@ -841,7 +841,7 @@ void test_tokens() {
        transparent and the compiler flags them (spec 2.10) */
     CHECK_MSG(apply(d, {Json{{"op", "remove"}, {"node", accent_id}}}, err), err);
     CHECK(token_named(d, "brand-2") == nullptr);
-    CHECK(labelled(d, "Title")["slots"]["textColor"] == "$brand-2");
+    CHECK(labelled(d, "Reset")["slots"]["textColor"] == "$brand-2");
 }
 
 /* FRAMES: one kind of child in one ordered list, because z-order and flow order must be
@@ -863,7 +863,7 @@ void test_frames() {
                                  {"node", {{"kind", "frame"},
                                            {"name", "Fresh"},
                                            {"children", Json::array({
-                                               Json{{"kind", "frame"}, {"type", "Label"}}})}}}}});
+                                               Json{{"kind", "frame"}, {"type", "Button"}}})}}}}});
     CHECK_MSG(apply_batch(d, add, r, err), err);
     const uint64_t frame_id = r.ops[0]["node"]["id"].get<uint64_t>();
     const Json& frame = *d.node(frame_id);
@@ -950,10 +950,10 @@ void test_frames() {
 
     /* ...but a flip that would STRAND something is refused: an instance's wiring has
        nowhere to go on a leaf, and neither do a frame's children */
-    const uint64_t an_instance = id_of(labelled(d, "Title"));
+    const uint64_t an_instance = id_of(labelled(d, "Pump"));
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", an_instance},
                           {"key", "kind"}, {"value", "text"}}}, err));
-    CHECK(err.find("Label") != std::string::npos);
+    CHECK(err.find("Toggle") != std::string::npos);
     CHECK((*d.node(an_instance))["kind"] == "frame");
     const uint64_t holder = id_of(named_frame(d, "Main"));
     CHECK(!apply(d, {Json{{"op", "set_prop"}, {"node", holder},
@@ -1020,7 +1020,7 @@ void test_reparent() {
                             {"parent", page_id},
                             {"list", "children"},
                             {"index", 0},
-                            {"node", {{"kind", "frame"}, {"type", "Label"}, {"name", "Loose"}}}}});
+                            {"node", {{"kind", "frame"}, {"type", "Button"}, {"name", "Loose"}}}}});
     CHECK_MSG(apply_batch(d, add, made, err), err);
     const uint64_t loose = made.ops[0]["node"]["id"].get<uint64_t>();
     CHECK(id_of(d.root["pages"][0]["children"][0]) == loose);

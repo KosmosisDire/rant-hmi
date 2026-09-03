@@ -184,12 +184,12 @@ int main() {
        18: A PROPERTY IS A PUBLIC VARIABLE — served slot rows read off `public` locals;
        19: THE VIEW DIALECT DIED INTO THE SERVED IR — a view program is packed
        {"i","k","c","s"} in the generated numeric vocabulary, not named-op rows) */
-    CHECK(kProto == 20);
+    CHECK(kProto == 21);
     CHECK((*snapshot)["version"] == app.document().version());
     /* the page is an arrangement on the artboard: the header band, the main pane and
        the side panes, everything else nested inside them */
     CHECK((*snapshot)["doc"]["pages"][0]["children"].size() == 4);
-    CHECK((*snapshot)["registry"]["components"].size() == 12);
+    CHECK((*snapshot)["registry"]["components"].size() == 10);
     CHECK((*snapshot)["live"]["values"].is_object());
     /* Compile findings ride the snapshot. They are produced once, at startup, so a view
      * that joins later has no other frame to learn them from and would sit looking at a
@@ -201,8 +201,8 @@ int main() {
      * renderer needs both to draw a page and a component through one path */
     CHECK((*snapshot)["node_attrs"].is_object());
     {
-        const Json& header = instance_of((*snapshot)["doc"], "Title");
-        CHECK(header.is_object());
+        const Json& pump = instance_of((*snapshot)["doc"], "Pump");
+        CHECK(pump.is_object());
     }
 
     /* AN AGGREGATE CELL RIDES `aggs`, NOT `values`: the demo's Selector authored its
@@ -227,7 +227,7 @@ int main() {
      * with expression-text attrs, no compiled template, no ids (a fork inserts one
      * into doc.components and the backend issues ids through prepare) */
     CHECK((*snapshot)["builtins"].is_array());
-    CHECK((*snapshot)["builtins"].size() == 12);
+    CHECK((*snapshot)["builtins"].size() == 10);
     CHECK((*snapshot)["builtins"][0]["name"] == "Button");
     CHECK((*snapshot)["builtins"][0]["children"].is_array());
     CHECK(!(*snapshot)["builtins"][0].contains("template"));
@@ -237,7 +237,7 @@ int main() {
        of the Button label's `i` stream is a Load of its text slot */
     const Json& button = (*snapshot)["registry"]["components"][0];
     CHECK(button["name"] == "Button");
-    CHECK(button["slots"].size() > 8);   /* base slots composed in */
+    CHECK(button["slots"].size() == 7);   /* text, textColor, textSize, align, surface, border, radius */
     CHECK(button["template"]["children"][0]["attrs"]["text"]["i"][0] ==
           static_cast<uint32_t>(OpCode::Load));
     CHECK(button["template"]["interact"]["primitive"] == "press");
@@ -249,7 +249,7 @@ int main() {
     a.take();
 
     const uint64_t version = app.document().version();
-    const uint64_t instance = instance_of(app.document().root, "Title")["id"].get<uint64_t>();
+    const uint64_t instance = instance_of(app.document().root, "Pump")["id"].get<uint64_t>();
     b.send(Json{{"type", "apply_ops"},
                 {"base_version", version},
                 {"ops", Json::array({Json{{"op", "set_prop"},
@@ -320,7 +320,8 @@ int main() {
     CHECK_MSG(frame_of(frames, "reject") != nullptr, "same node, stale base: expected a reject");
     a.take();
 
-    const uint64_t other = instance_of(app.document().root, "Pump")["id"].get<uint64_t>();
+    /* a DIFFERENT instance (the Pump was renamed above, so it is Setpoint's turn) */
+    const uint64_t other = instance_of(app.document().root, "Setpoint")["id"].get<uint64_t>();
     a.send(Json{{"type", "apply_ops"},
                 {"base_version", stale},
                 {"ops", Json::array({Json{{"op", "set_prop"},
@@ -565,7 +566,6 @@ int main() {
                    {"locals", Json::array({Json{{"name", "tint"},
                                                 {"type", "Color"},
                                                 {"init", "#ff0000"},
-                                                {"group", "appearance"},
                                                 {"public", true}}})},
                    {"children",
                     Json::array({Json{{"kind", "frame"},
@@ -578,8 +578,8 @@ int main() {
     CHECK_MSG(echo != nullptr, "component insert: expected the op echo");
     CHECK_MSG(pushed != nullptr, "component insert: expected a pushed snapshot");
     if (echo && pushed) {
-        CHECK((*pushed)["registry"]["components"].size() == 13);
-        const Json& lamp = (*pushed)["registry"]["components"][12];
+        CHECK((*pushed)["registry"]["components"].size() == 11);
+        const Json& lamp = (*pushed)["registry"]["components"][10];
         CHECK(lamp["name"] == "Lamp");
         /* the good attr compiled to a packed view program; the bad one is not served */
         const Json& lamp_part = lamp["template"]["children"][0];

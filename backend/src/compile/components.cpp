@@ -87,10 +87,7 @@ bool needs_address(const NodeDecl& node) {
 }
 
 /* The vocabulary is CLOSED (registry/attrs.h): a name that is neither a common attr nor
- * this KIND's own is a mistake, not a typo the renderer quietly shrugs off. Checked
- * against the node's RAW authored attrs (before shown_attrs folds `shown` in below),
- * which only ever matters for the key set — `shown_attrs` never adds a key the table does
- * not already know (`show` is common). */
+ * this KIND's own is a mistake, not a typo the renderer quietly shrugs off. */
 void check_attr_names(const std::vector<AttrDecl>& attrs, const std::string& kind,
                       uint64_t node, Sink& sink) {
     for (const AttrDecl& attr : attrs) {
@@ -187,12 +184,9 @@ void take_vars(const std::vector<VarDecl>& rows, std::vector<TemplateVar>& out) 
 
 /* every attr entry: expression text -> a compiled view program; a bad one is a finding on
  * THIS node, named by the attr, and the attr is simply not served (an absent attr renders
- * its default, so the node degrades instead of vanishing). `unrecorded` names one key
- * whose text is NOT the document's (shown_attrs folded it), so its index rows would key a
- * site that exists nowhere — the caller records the authored text itself. */
+ * its default, so the node degrades instead of vanishing) */
 Json compile_attrs(const std::vector<AttrDecl>& attrs, const TemplateScope& scope,
-                   uint64_t node, const std::string& prefix, Sink& sink,
-                   const char* unrecorded = nullptr) {
+                   uint64_t node, const std::string& prefix, Sink& sink) {
     Json out = Json::object();
     for (const AttrDecl& attr : attrs) {
         if (!attr.is_text) {
@@ -201,8 +195,7 @@ Json compile_attrs(const std::vector<AttrDecl>& attrs, const TemplateScope& scop
             continue;
         }
         TemplateExprResult compiled = compile_template_expr(attr.text, scope);
-        if (!unrecorded || attr.key != unrecorded)
-            sink.record(node, attr.text, compiled);
+        sink.record(node, attr.text, compiled);
         if (!compiled.ok) {
             sink.report(node, "template_expr", compiled.error, prefix + attr.key);
             continue;
@@ -408,7 +401,7 @@ Json compile_anchors(const std::vector<AnchorDecl>& anchors, const TemplateScope
     return out;
 }
 
-Json var_row(const VarDecl& var, const std::string& address);
+Json var_row(const VarDecl& var, const std::string& address, bool is_public);
 
 /* a variable's DECLARED SWEEP, stashed in pass one and compiled in pass two — its ms
  * and profile are expressions over the declaring node's scope, which is not complete
@@ -477,18 +470,20 @@ std::string served_shape(const VarDecl& var) {
  * component's own pictures read, so both need an address, a scope entry and a cell; what
  * `public` decides is only whether an INSTANCE sees it — one flag on the served row,
  * honoured by the inspector that shows it and by the compiler that lets a placement
- * override it.
+ * override it. THE INTERFACE IS THE ROOT'S: only the component's own variables (path
+ * "") may be public — an element's are always private, addressed under the element,
+ * and `public` on one is refused with the way up.
  *
  * A node with no path (an unnamed one) has nowhere to hang an address, so declaring there
  * is refused rather than quietly folded into the parent's namespace. */
 /* the typed slot row the document compiler reads, written from the same declaration
  * the served row is — the two cannot disagree because neither is read back */
-SlotSpec spec_row(const VarDecl& var, const std::string& address) {
+SlotSpec spec_row(const VarDecl& var, const std::string& address, bool is_public) {
     SlotSpec out;
     out.name = address;
     out.id = var.id;
     out.shape = served_shape(var);
-    out.is_public = var.is_public;
+    out.is_public = is_public;
     out.initial = var.init;
     out.variants = var.variants;
     if (out.shape == "list" || out.shape == "map") {
@@ -555,11 +550,22 @@ std::vector<std::pair<std::string, uint64_t>> collect_vars(
                                 : "a leaf type says what the ROWS hold; declare this "
                                   "variable's elements List or Map first",
                         "leaf");
+        /* THE INTERFACE IS THE ROOT'S: an element's variable is private storage,
+           addressed under the element, and a placement sets the component's own public
+           variables and nothing deeper. Saying `public` on one is refused with the way
+           up, and the row is served private so nothing downstream offers it. */
+        bool is_public = var.is_public;
+        if (is_public && !path.empty()) {
+            sink.report(var.id, "var_public",
+                        "'" + name + "' is an element's variable, and those are private: "
+                        "an input is declared on the component itself — move it up to "
+                        "the component's own variables",
+                        "public");
+            is_public = false;
+        }
         /* an inherited name still resolves — to THIS one, from here down — but a
-           variable whose meaning changes with depth is a mistake worth saying out loud.
-           `shown` is the exception and by design: every node has its own, so inside a
-           node the bare word always means that node's own switch. */
-        if (const std::string* above = name == "shown" ? nullptr : outer.find(name))
+           variable whose meaning changes with depth is a mistake worth saying out loud */
+        if (const std::string* above = outer.find(name))
             sink.report(var.id, "var_shadow",
                         "'" + name + "' is already in scope here as '" + *above +
                             "'; the element's own wins below this point",
@@ -585,43 +591,19 @@ std::vector<std::pair<std::string, uint64_t>> collect_vars(
         }
         names.push_back({name, var.id});
         const std::string address = path.empty() ? name : path + "." + name;
-        walk.slots.push_back(var_row(var, address));
-        walk.specs.push_back(spec_row(var, address));
+        walk.slots.push_back(var_row(var, address, is_public));
+        walk.specs.push_back(spec_row(var, address, is_public));
     }
     return names;
 }
 
-/* EVERY addressed node can be switched off: the variable is synthesized where the node
- * does not declare it, so "show the scale" is the scale's own `shown` rather than a
- * `show_scale` on the component, and any node a user adds gets the same switch for free. A
- * node that wants to start hidden simply declares `shown` itself with a default of false. */
-bool declares_shown(const std::vector<VarDecl>& rows) {
-    for (const VarDecl& var : rows)
-        if (var.name == "shown") return true;
-    return false;
-}
-
-/* pass one: the variables, their addresses and each node's scope */
+/* pass one: the variables, their addresses and each node's scope. NOTHING IS
+ * SYNTHESIZED: an element that can be switched off reads a root input in its own
+ * `show` (`scale.show = showScale`), the way every other field is authored. */
 void collect_tree(const NodeDecl& node, const std::string& path, bool addressable,
                   const TemplateScope& outer, Walk& walk, Sink& sink, bool quiet = false) {
     std::vector<std::pair<std::string, uint64_t>> names =
         collect_vars(node.locals, path, addressable, outer, walk, sink, quiet);
-    if (addressable && !path.empty() && !declares_shown(node.locals)) {
-        names.push_back({"shown", 0});
-        walk.slots.push_back(Json{{"name", path + ".shown"},
-                                  {"shape", "Bool"},
-                                  {"default", true},
-                                  {"group", "config"},
-                                  /* the switch is the instance's to throw, so the one
-                                     variable nobody declared is public like the rest */
-                                  {"public", true}});
-        SlotSpec shown;
-        shown.name = path + ".shown";
-        shown.shape = "bool";
-        shown.is_public = true;
-        shown.initial = Json(true);
-        walk.specs.push_back(std::move(shown));
-    }
     for (const auto& [name, decl] : names)
         walk.addresses->insert(path.empty() ? name : path + "." + name);
 
@@ -670,47 +652,14 @@ void collect_tree(const NodeDecl& node, const std::string& path, bool addressabl
     }
 }
 
-/* A node's `show` attr, with its own `shown` variable folded in: the variable is the
- * switch, the attr is whatever the type computes, and the node draws when both hold.
- * The view needs no new opcode — `pick` is the conditional it already runs. */
-/* `folded` comes back true when the `show` entry no longer carries the DOCUMENT's text
- * (the switch got wrapped around it, or synthesized whole): its compile must not record
- * index rows, and `authored` carries the authored expression the caller records instead
- * (empty when nothing was authored — a synthesized switch is nobody's reference). */
-std::vector<AttrDecl> shown_attrs(const std::vector<AttrDecl>& attrs,
-                                  const std::string& path, const Walk& walk,
-                                  bool& folded, std::string& authored) {
-    folded = false;
-    authored.clear();
-    std::vector<AttrDecl> out = attrs;
-    if (path.empty() || !walk.addresses->count(path + ".shown")) return out;
-    const std::string shown = path + ".shown";
-    folded = true;
-    /* the rows ride in key order (that is how the object iterated), so the folded
-       `show` keeps the position an authored one would have compiled at */
-    auto at = std::lower_bound(out.begin(), out.end(), std::string("show"),
-                               [](const AttrDecl& row, const std::string& key) {
-                                   return row.key < key;
-                               });
-    if (at != out.end() && at->key == "show") {
-        if (at->is_text) authored = at->text;
-        at->text = at->is_text ? "(" + shown + ").Pick((" + at->text + "), false)" : shown;
-        at->is_text = true;
-    } else {
-        out.insert(at, AttrDecl{"show", shown, true});
-    }
-    return out;
-}
-
 /* the compiled form of the fields every node carries, whatever its kind: what a template
  * node and a page node have in common, which is nearly all of it */
 Json compile_common(const NodeDecl& node, const std::string& kind,
                     const std::vector<AttrDecl>& attrs, const TemplateScope& scope,
-                    uint64_t node_id, Sink& sink, Authors authors,
-                    const char* unrecorded = nullptr) {
+                    uint64_t node_id, Sink& sink, Authors authors) {
     Json out{{"kind", kind},
              {"name", node.name},
-             {"attrs", compile_attrs(attrs, scope, node_id, "", sink, unrecorded)}};
+             {"attrs", compile_attrs(attrs, scope, node_id, "", sink)}};
     Json transitions = compile_transitions(node, kind, scope, node_id, sink, authors);
     if (!transitions.empty()) out["transitions"] = std::move(transitions);
     if (kind == "path") {
@@ -760,17 +709,8 @@ Json compile_node(const NodeDecl& node, const std::string& path, const Walk& wal
     /* the ROOT authors the component's half alone (a placement attr on it is refused
        and dropped); a nested instance its placement alone; an element both */
     const Authors authors = authors_of(node, root);
-    const std::vector<AttrDecl> owned = owned_attrs(node.attrs, authors, node.id, sink);
-    bool folded = false;
-    std::string authored;
-    const std::vector<AttrDecl> attrs = shown_attrs(owned, path, walk, folded, authored);
-    /* the folded `show` compiles with the switch wrapped in; the index rows must
-       speak the DOCUMENT's text, so the authored expression records separately */
-    if (!authored.empty())
-        sink.record(node.id, authored, compile_template_expr(authored, scope));
-
-    Json out = compile_common(node, node.kind, attrs, scope, node.id, sink, authors,
-                              folded ? "show" : nullptr);
+    const std::vector<AttrDecl> attrs = owned_attrs(node.attrs, authors, node.id, sink);
+    Json out = compile_common(node, node.kind, attrs, scope, node.id, sink, authors);
     if (node.kind != "frame") {
         /* a leaf holds neither children nor a gesture; the schema already refuses to store
            either, so anything here would be a definition built by hand */
@@ -803,14 +743,8 @@ void emit_node_attrs(const NodeDecl& node, const std::string& path, const Walk& 
     const TemplateScope& scope =
         found != walk.scopes.end() ? found->second : walk.scopes.at("");
     const Authors authors = authors_of(node, root);
-    const std::vector<AttrDecl> owned = owned_attrs(node.attrs, authors, node.id, sink);
-    bool folded = false;
-    std::string authored;
-    const std::vector<AttrDecl> attrs = shown_attrs(owned, path, walk, folded, authored);
-    if (!authored.empty())
-        sink.record(node.id, authored, compile_template_expr(authored, scope));
-    Json row{{"attrs",
-              compile_attrs(attrs, scope, node.id, "", sink, folded ? "show" : nullptr)}};
+    const std::vector<AttrDecl> attrs = owned_attrs(node.attrs, authors, node.id, sink);
+    Json row{{"attrs", compile_attrs(attrs, scope, node.id, "", sink)}};
     Json transitions =
         compile_transitions(node, node.kind, scope, node.id, sink, authors);
     if (!transitions.empty()) row["transitions"] = std::move(transitions);
@@ -833,18 +767,20 @@ void emit_node_attrs(const NodeDecl& node, const std::string& path, const Walk& 
  *
  * The document says `type` and `init`; the served row says `shape` and `default`, because
  * what a placement, an editor and a view program need to know is the SHAPE of the value,
- * not which word declared it. name/shape/default/group/public are always present; the
+ * not which word declared it. name/shape/default/public are always present; the
  * optional keys are served only when they say something. */
-Json var_row(const VarDecl& var, const std::string& address) {
+Json var_row(const VarDecl& var, const std::string& address, bool is_public) {
     Json out{{"name", address},
              {"shape", served_shape(var)},
              {"default", var.init},
-             {"group", var.group},
              /* IS THIS PART OF THE COMPONENT'S INTERFACE? A private variable is served
                 all the same — its cell, its address and its scope entry are needed
                 whether or not an instance may see it — and this is the one bit that
                 says so. */
-             {"public", var.is_public}};
+             {"public", is_public}};
+    /* the Inputs cluster an input lists under: the component's own words, served as
+       written; none is the common case and is not served */
+    if (is_public && !var.heading.empty()) out["heading"] = var.heading;
     if (!var.editor.empty()) out["editor"] = var.editor;
     if (!var.variants.empty()) out["variants"] = var.variants;
     /* a list's or map's DECLARED ELEMENT type, enforced on every write exactly as it is
@@ -870,11 +806,10 @@ Json var_row(const VarDecl& var, const std::string& address) {
  * template this produces is one frame node built from the component itself — there is no
  * wrapper, and no "one root element" rule to remember. */
 Json compile_component(const ComponentDecl& component, Sink& sink) {
-    /* The component's own PUBLIC variables are the INSTANCE's vocabulary: the value it
-     * carries, its range, how it is dressed. They address bare, and they are what the
-     * inspector shows while the instance itself is selected; an element's own are
-     * collected as the tree is walked. A private one comes through the same walk and
-     * differs only in who may see it.
+    /* The component's own PUBLIC variables are the INSTANCE's vocabulary — its whole
+     * interface, flat and in this order: the value it carries, its range, how it is
+     * dressed. They address bare. An element's own are collected as the tree is walked
+     * and are always private, addressed under the element.
      *
      * TWO PASSES over the nodes, because a dotted read may name a variable declared
      * anywhere in the component — including on a node compiled later. Pass one learns
@@ -1100,20 +1035,12 @@ std::vector<ComponentSpec> derive_specs(const std::vector<ComponentDecl>& doc_co
 }
 
 const Json* authored_slot(const Json& slots, const std::string& address) {
-    const Json* at = &slots;
-    size_t from = 0;
-    while (from <= address.size()) {
-        if (!at->is_object()) return nullptr;
-        const size_t dot = address.find('.', from);
-        const std::string segment = address.substr(
-            from, dot == std::string::npos ? std::string::npos : dot - from);
-        auto found = at->find(segment);
-        if (found == at->end()) return nullptr;
-        at = &*found;
-        if (dot == std::string::npos) return at;
-        from = dot + 1;
-    }
-    return nullptr;
+    /* FLAT: an instance's `slots` is one object keyed by the component's own public
+       names. A private element variable (`arc.thickness`) is never authored here, so a
+       dotted address simply finds nothing. */
+    if (!slots.is_object()) return nullptr;
+    auto found = slots.find(address);
+    return found == slots.end() ? nullptr : &*found;
 }
 
 Json compile_page_attrs(const Document& document, std::vector<Diag>& diags,

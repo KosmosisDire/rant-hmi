@@ -130,7 +130,7 @@ VarDecl decode_var(const Json& record) {
     if (init != record.end()) out.init = *init;
     out.persist = bool_or(record, "persist", false);
     out.is_public = bool_or(record, "public", false);
-    out.group = text_or(record, "group", "appearance");
+    out.heading = text_or(record, "heading", "");
     out.editor = text_or(record, "editor", "");
     auto variants = record.find("variants");
     if (variants != record.end() && variants->is_array())
