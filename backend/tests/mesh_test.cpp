@@ -392,7 +392,7 @@ int main() {
     };
     Json label_instance = {
         {"kind", "frame"},
-        {"type", "Label"},
+        {"type", "Button"},
         {"name", "Tag"},
         {"slots", Json{{"text", "@tank_level.label"}}},
     };
@@ -442,7 +442,7 @@ int main() {
     };
     Json purge_msg_instance = {
         {"kind", "frame"},
-        {"type", "Label"},
+        {"type", "Button"},
         {"name", "PurgeMsg"},
         {"slots", Json{{"text", "@purge.message"}}},
     };
@@ -459,9 +459,8 @@ int main() {
         /* aggregate mesh fields read off the ENTITY MIRRORS: the delivery lands in a
            retained slot and the expression reduces it like any list or map */
         {"slots", Json{{"value", "@history.temps.Max()"},
-                       {"reading",
-                        Json{{"decimals", "Num(@history.extras.Get(\"speed\"))"}}},
-                       {"units", Json{{"text", "@history.tags.Join(\"/\")"}}}}},
+                       {"decimals", "Num(@history.extras.Get(\"speed\"))"},
+                       {"units", "@history.tags.Join(\"/\")"}}},
     };
 
     /* a BARE-TYPED topic: the anonymous value IS the entity, read bare */
@@ -567,6 +566,7 @@ int main() {
 
     Scheduler sched(std::move(compiled.program), mesh);
     mesh.apply(sched.program(), {});
+
     mesh.set_viewed_pages({page_id});
 
     /* ---- THE FIRST WRITE, immediately: the setpoint accessor was created by the
