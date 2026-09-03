@@ -38,7 +38,7 @@ export type Json = any;
  * spelled `this.<slot>` in both tiers.
  * 14: THE LOG — the snapshot carries `log` and a `log` frame appends live entries;
  * the step kind `notify` broadcasts a notification to every session.) */
-export const PROTO = 21;
+export const PROTO = 22;
 
 /* WHICH COPY of a `repeat` a gesture came from, as it rides the wire and as the renderer
  * holds it. One shape in one place: the stage's binds, the gesture seat and the `input`

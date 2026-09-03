@@ -21,6 +21,7 @@ interface Row {
   signature: string;   /* "(num, num)" or "" */
   result: string;      /* result shape chip, "" for names without one */
   note: string;
+  color?: string;      /* a token row's swatch: its hex in this view's mode */
 }
 
 let pop: HTMLElement | null = null;
@@ -143,6 +144,7 @@ function render(input: HTMLInputElement): void {
     { class: "ac-pop" },
     rows.slice(0, 14).map((row, i) =>
       el("div", { class: "ac-row" + (i === active ? " on" : "") }, [
+        row.color ? el("span", { class: "ac-swatch", style: "background:" + row.color }) : null,
         el("span", { class: "ac-name", text: row.label }),
         row.signature ? el("span", { class: "ac-sig", text: row.signature }) : null,
         row.note ? el("span", { class: "ac-note", text: row.note }) : null,
@@ -385,8 +387,11 @@ function nameRows(ctx: Scope, prefix: string): Row[] {
       signature: "",
       result: name.shape ?? "",
       note: name.note ?? "",
+      color: name.color,
     });
   }
+  /* a `$` prefix is a token being spelled: nothing else starts that way */
+  if (prefix.startsWith("$")) return out;
   for (const entry of lang?.builtins ?? []) {
     if (wire && entry.tier === "display") continue;
     if (ctx.tier === "attr" && !entry.view) continue;
@@ -406,8 +411,9 @@ function refresh(input: HTMLInputElement, ctx: Scope): void {
   const caret = input.selectionStart ?? input.value.length;
   const text = input.value.slice(0, caret);
   /* an '@' opens a mesh reference and consumes the path-spelled entity name (slashes
-     included), so `@pla` completes to `@plant/temp` — the same spelling browse inserts */
-  const prefixMatch = /(@[A-Za-z0-9_/]*|[A-Za-z_][A-Za-z0-9_]*)?$/.exec(text)!;
+     included), so `@pla` completes to `@plant/temp` — the same spelling browse inserts;
+     a '$' opens a style token the same way (`$acc` completes to `$accent`) */
+  const prefixMatch = /(@[A-Za-z0-9_/]*|\$[A-Za-z0-9_-]*|[A-Za-z_][A-Za-z0-9_]*)?$/.exec(text)!;
   const prefix = prefixMatch[1] ?? "";
   prefixStart = caret - prefix.length;
   const beforePrefix = text.slice(0, prefixStart);

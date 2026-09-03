@@ -174,7 +174,7 @@ function next(type, timeout = 3000) {
   });
 }
 
-ws.send(JSON.stringify({ type: "hello", proto: 21, client_name: "view_test" }));
+ws.send(JSON.stringify({ type: "hello", proto: 22, client_name: "view_test" }));
 const snapshot = await next("snapshot");
 check(snapshot.doc.pages.length === 1, "one page in the snapshot");
 check(snapshot.registry.components.length === 10, "ten components");
@@ -1853,9 +1853,9 @@ stageAttrs["901"].attrs.scrollbarColor = prog("$accent");
 stageAttrs["901"].attrs.scrollbarTrack = prog("#00000022");
 stageEditor.live = { epoch: 72, values: {} };
 drawStage();
-check(row.style["--sb-w"] === "14px" && row.style["--sb-thumb"] === "var(--t-accent)" &&
+check(row.style["--sb-w"] === "14px" && row.style["--sb-thumb"] === "#4e8ef7" &&
         row.style["--sb-track"] === "#00000022",
-      "a themed bar rides the attrs: thickness, thumb (a $token like any colour) and track");
+      "a themed bar rides the attrs: thickness, thumb (a $token, resolved by the view) and track");
 stageAttrs["901"].attrs.scrollbar = prog(false);
 stageEditor.live = { epoch: 73, values: {} };
 drawStage();
@@ -2019,14 +2019,32 @@ stageStore.apply(stageStore.version() + 1, [{ op: "remove", node: 906 }]);
 delete stageAttrs["906"];
 stageEditor.live = { epoch: 25, values: {} };
 drawStage();
-check(stagePage.style["--t-accent"] === "#4e8ef7",
-      "the document's tokens are emitted as custom properties on the page");
-check(row.style.background === "var(--t-accent)",
-      "so a $token surface is an ordinary var(), resolved by the browser");
+/* TOKENS ARE RESOLVED BY THE VIEW: a $token surface is this view's hex for it in its own
+   mode — no custom property, no browser var(); and a mode flip re-paints every token
+   through the recorded "theme:" dependency, nothing else rebuilt */
+check(stagePage.style["--t-accent"] === undefined,
+      "the page carries no token custom properties any more");
+check(row.style.background === "#4e8ef7",
+      "a $token surface is the view's hex for the token in its mode");
 check(stageNode("leaf", 903).style.background === "#123456",
       "an instance paints the surface it authors, through its component's own attr");
-check(stageNode("leaf", 905).style.background === "var(--t-accent)",
+check(stageNode("leaf", 905).style.background === "#4e8ef7",
       "and falls back to the served type's own default");
+{
+  const accent = stageStore.tokens().find((t) => t.name === "accent");
+  const heldRowEl = stageNode("frame", 901);
+  stageView.themeMode = "light";
+  drawStage();
+  check(row.style.background === accent.light,
+        "flipping the view's mode re-paints the token in the other mode, got " +
+          row.style.background);
+  check(stageNode("leaf", 905).style.background === accent.light,
+        "every reader of it, the instance's default included");
+  check(stageNode("frame", 901) === heldRowEl, "and patches the standing element");
+  stageView.themeMode = "dark";
+  drawStage();
+  check(row.style.background === "#4e8ef7", "and back");
+}
 /* AN INSTANCE RENDERS ITS COMPONENT: the Label's own text leaf is real DOM inside it,
    reading the slot this placement authored */
 const labelInk = stageNode("leaf", 904).querySelector(".ink-text");

@@ -56,7 +56,7 @@ import { attrText, ViewHost, run } from "./program.js";
 import { operable, typeOf } from "./slots.js";
 import {
   Attrs, CANVAS_H, CANVAS_W, CompiledAnchor, CompiledTransitionMap, Interact, isInstance,
-  Json, Node, Page, Program, RepeatCopy, TemplateNode, Token, ComponentType,
+  Json, Node, Page, Program, RepeatCopy, TemplateNode, ComponentType,
 } from "./types.js";
 
 /* a `repeat` may not run away with the page: the same ceiling the backend names */
@@ -161,9 +161,7 @@ interface StageState {
   /* what a RECONCILE is keyed on: mode, artboard size, document version, compile epoch */
   docSig: string;
   /* the theme vars last emitted on the page, so a token that left is removed */
-  tokenNames: string[];
   /* and the tokens themselves, to seed a filter host created after them */
-  tokens: Token[];
   /* a gesture's state write landed: patch exactly what binds it (set by renderStage,
      which knows the host) */
   flushState: (key: string) => void;
@@ -199,7 +197,7 @@ function stateOf(host: HTMLElement): StageState {
               tweens: new Map(), now: 0, ticking: false, tick: () => undefined,
               turning: new Set(), shadowed: new Set(), turnTicking: false,
               timeTicking: false,
-              docSig: "", tokenNames: [], tokens: [], flushState: () => undefined, rings: [],
+              docSig: "", flushState: () => undefined, rings: [],
               hover: null, handles: null, cam: { x: 0, y: 0, k: 1, manual: false },
               art: { w: CANVAS_W, h: CANVAS_H }, ctxPath: "", artGrips: [],
               defs: null, wired: false };
@@ -457,11 +455,11 @@ function rootView(editor: Editor, page: Page | null): ViewNode {
 
 /* ---- the pure core: a value -> style ---- */
 
-/* a colour value as CSS: "$name" reads the token custom property the page carries, and
-   anything else is used verbatim (the view never resolves a token itself) */
+/* a colour value as CSS: a "$name" is this view's hex for the token (recorded as a
+   dependency), anything else is used verbatim */
 function cssColor(value: Json): string {
   const text = typeof value === "string" ? value : "";
-  return text.startsWith("$") ? "var(--t-" + text.slice(1) + ")" : text;
+  return text.startsWith("$") ? themeColor(text.slice(1)) : text;
 }
 
 /* Is there a colour here to paint at all? Absent means the author asked for no surface,
@@ -987,6 +985,36 @@ function sawCell(state: StageState, key: string, mark: string): void {
   state.marks.set(key, mark);
 }
 
+/* ---- THEME TOKENS ARE RESOLVED BY THE VIEW, AS COLOURS ----
+ *
+ * A "$name" reaching any colour — a `theme:` load in an attr program, a cell the wire
+ * published by reference, a token authored in a slot — becomes THIS view's hex for the
+ * token in its own mode (the mode is per view: a preview toggle, never a truth). The read
+ * is RECORDED under "theme:<name>", so a mode flip or a token edit re-runs exactly the
+ * binds that painted it (markNow answers the key). One representation of a token in the
+ * view — a colour — which is what lets `$accent.Alpha(0.5)` mix in an attr. */
+let theme: { state: StageState | null; hex: (name: string) => string } =
+  { state: null, hex: () => "#00000000" };
+
+function armTheme(state: StageState, editor: Editor): void {
+  const tokens = editor.store.tokens();
+  const mode = editor.view.themeMode ?? "dark";
+  theme = {
+    state,
+    hex: (name) => {
+      const token = tokens.find((t) => t.name === name);
+      /* an unknown token paints nothing, matching the compiler's own warning */
+      return token ? (mode === "light" ? token.light : token.dark) : "#00000000";
+    },
+  };
+}
+
+function themeColor(name: string): string {
+  const hex = theme.hex(name);
+  if (theme.state) sawCell(theme.state, "theme:" + name, hex);
+  return hex;
+}
+
 /* ONE PUBLISHED CELL, read by key the way every published cell is read: an AGGREGATE
  * lives in the standing copies the shell folds the delta lane into, and what gets
  * recorded is that copy's VERSION — comparing a thousand-element list per frame to learn
@@ -1082,10 +1110,10 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
       case "var":
       case "mesh":
         return liveCell(state, editor, kind === "var" ? "v" + name : cell);
-      /* a token is a CSS custom property, not a colour this view resolves: the page root
-         carries the values and the browser swaps them with the theme */
+      /* a token is a COLOUR here: this view's hex for it, recorded so a mode flip
+         re-runs the program (which is what lets an attr mix it) */
       case "theme":
-        return "$" + name;
+        return themeColor(name);
       /* this view's own gesture state (gestures.ts writes it outside edit mode). The
          read is RECORDED so a write patches exactly the pictures that bind it; in edit
          mode nothing writes, and it honestly reads false — never a pressed-looking
@@ -1132,6 +1160,8 @@ function cellsFor(state: StageState, editor: Editor, node: ViewNode,
 
 /* what one cell is worth NOW, in the same spelling a recorded read wrote */
 function markNow(editor: Editor, key: string): string {
+  /* a token's mark is its hex in this view's mode: a mode flip moves every one */
+  if (key.startsWith("theme:")) return theme.hex(key.slice(6));
   const held = editor.agg?.(key) ?? null;
   if (held) return "a" + held.version;
   return JSON.stringify(editor.live?.values?.[key] ?? null);
@@ -1457,9 +1487,6 @@ function shadowDefs(state: StageState): SVGSVGElement {
     svg.setAttribute("height", "0");
     state.host.appendChild(svg);
     state.defs = svg;
-    /* the vars the page carries, mirrored: a filter is not inside the page, and a
-       flood-color of var(--t-accent) has to resolve somewhere */
-    setTokenVars(svg as unknown as HTMLElement, state.tokens, []);
   }
   return state.defs;
 }
@@ -2022,34 +2049,11 @@ function createBind(state: StageState, entry: Desired, parent: Bind | null): Bin
   return bind;
 }
 
-/* Theme tokens become CSS custom properties on the page, so a "$name" value is an ordinary
- * var() the browser resolves — no view-side colour resolution anywhere below this line. A
- * token that LEFT the document is cleared: the page element outlives the edit now. */
-function setTokenVars(el: HTMLElement, tokens: Token[], previous: string[]): string[] {
-  const names: string[] = [];
-  for (const token of tokens)
-    if (token?.name) {
-      el.style.setProperty("--t-" + token.name, token.dark);
-      names.push("--t-" + token.name);
-    }
-  for (const was of previous) if (names.indexOf(was) < 0) el.style.setProperty(was, "");
-  return names;
-}
-
-function emitTokens(state: StageState, page: HTMLElement, tokens: Token[]): void {
-  const was = state.tokenNames;
-  const names = setTokenVars(page, tokens, was);
-  /* the shadow filters hang outside the page and resolve their flood colours themselves */
-  if (state.defs) setTokenVars(state.defs as unknown as HTMLElement, tokens, was);
-  state.tokenNames = names;
-  state.tokens = tokens;
-}
-
-/* the artboard's own properties: its size, its tokens, its dressing */
+/* the artboard's own properties: its size and its dressing (its tokens are not
+   properties of anything: the view resolves each read to a colour) */
 function dressPage(state: StageState, editor: Editor, root: Bind): void {
   root.el.style.width = state.art.w + "px";
   root.el.style.height = state.art.h + "px";
-  emitTokens(state, root.el, editor.store.tokens());
   runAppliers(state, editor, root);
 }
 
@@ -2065,7 +2069,6 @@ function forget(state: StageState): void {
   state.shadowed.clear();
   state.turning.clear();
   state.root = null;
-  state.tokenNames = [];
   /* every bind is gone, so every filter one of them referenced is too */
   state.defs?.remove();
   state.defs = null;
@@ -2364,6 +2367,7 @@ function repaintDocument(host: HTMLElement, editor: Editor): void {
 export function renderStage(host: HTMLElement, editor: Editor): void {
   const state = stateOf(host);
   wire(host, editor);
+  armTheme(state, editor);
 
   const ctx = editor.contexts[editor.contexts.length - 1] ?? null;
   const page = editor.page();

@@ -214,12 +214,16 @@ export function varCard(
         diagIcon(initDiags),
       ]),
       el("div", { class: "var-line" }, [
+        /* the editor, not null: a colour's init speaks tokens ($accent validates
+           against the list, the swatch paints this view's mode) */
         valueEditor(
           null,
           initShape,
           variable.id + ":init",
           () => at().init,
           (value) => setProp("init", value),
+          false,
+          editor,
         ),
         variable.type === "Timer" ? el("span", { class: "op", text: "s" }) : null,
       ]),

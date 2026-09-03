@@ -25,6 +25,7 @@ export interface NameRow {
   label: string;   /* what inserting places: "setpoint", "this.value", "x" */
   shape?: string;  /* its shape, when known: "num" "bool" "text" "list" ... */
   note?: string;   /* a short origin tag: "local", "global", "slot" */
+  color?: string;  /* a token's hex in this view's mode: its swatch */
   elem?: string;   /* aggregate names: the element shape */
   leaf?: string;   /* nested aggregates: what one ROW holds */
   fields?: MeshField[];   /* struct names: the field table behind the dot */
@@ -44,6 +45,7 @@ export interface BrowseRow {
   shape?: string;          /* trailing shape chip */
   note?: string;           /* trailing origin tag */
   insert?: string;         /* what picking places; absent = not pickable */
+  color?: string;          /* a token row's swatch: its hex in this view's mode */
   children?: BrowseRow[];
   /* the mesh field behind a fielded row's child leaf: the projection rebuilds the
      parent's dot table (NameRow.fields) from these, so autocomplete completes with
@@ -84,6 +86,7 @@ function projectNames(rows: BrowseRow[]): NameRow[] {
           shape: row.field ? row.field.shape : row.shape,
           elem: row.field?.elem,
           note: row.flat?.note ?? row.note,
+          color: row.color,
           fields: kids.length ? fields : undefined,
         },
       });
@@ -171,6 +174,26 @@ function objectFields(editor: Editor, name: string): MeshField[] {
 
 /* the standing `time` folder: not itself pickable (time reads by field), its leaves
  * inserting the dotted spellings. `now` is the animation clock. */
+/* ---- THE STYLE FOLDER: tokens are style variables, spelled `$name` ----
+ *
+ * A token is a Color global of the document, in scope on EVERY tier: stored, compared
+ * and picked by reference on the wire (the backend has no theme mode, so mixing one
+ * there is refused), resolved to this view's mode by the view that draws it. Listed
+ * beside the hmi variables, each with its swatch in this view's mode. */
+function styleRoot(editor: Editor): BrowseRow[] {
+  const mode = editor.view.themeMode ?? "dark";
+  const tokens = editor.store.tokens();
+  if (!tokens.length) return [];
+  return [{
+    key: "style", label: "style", icon: "folder",
+    children: tokens.map((t) => ({
+      key: "style/" + t.name, label: "$" + t.name, shape: "Color",
+      note: t.group || "core", insert: "$" + t.name,
+      color: mode === "light" ? t.light : t.dark,
+    })),
+  }];
+}
+
 function timeRow(editor: Editor, prefix: string): BrowseRow {
   return {
     key: prefix + "/time",
@@ -475,16 +498,22 @@ export function flowScope(editor: Editor, instance: Node | null, flow: Flow, ste
       return rows.concat(projectNames(dartRoot(editor)));
     },
     x,
-    roots: () => flowRoot().concat(slotRoots(editor, instance, repeatRow(editor, at()))),
+    roots: () => flowRoot().concat(slotRoots(editor, instance, repeatRow(editor, at())),
+                                   styleRoot(editor)),
+    /* tokens are legal on the wire now — by reference */
+    tokens: () => tokenAccess(editor),
   };
 }
 
-/* a prop default: the language alone, nothing live to reference */
+/* a prop default: the language alone, nothing live to reference — except the style
+   tokens, which are constants of the document */
 export function constScope(editor: Editor): Scope {
   return {
     tier: "const",
     lang: () => editor.lang,
-    names: () => [],
+    names: () => projectNames(styleRoot(editor)),
+    roots: () => styleRoot(editor),
+    tokens: () => tokenAccess(editor),
   };
 }
 
@@ -498,12 +527,11 @@ export function constScope(editor: Editor): Scope {
  * refused there by name, so no x row exists. The tier is "display": that is the
  * ExprTier the backend compiles a slot program at.
  *
- * Color tokens are served with ONE caveat the compiler enforces: `$name` stands as a
- * color slot's WHOLE value (the authored-literal special case); inside a larger
- * expression the scalar parser refuses it. The picker writes whole values, so the
- * Tokens tab is honest here. */
+ * Color tokens are in scope here as they are everywhere: `$name` is a Color constant
+ * carried by reference, legal anywhere a colour is (the one refusal is mixing a
+ * literal one — the backend has no mode to resolve it in). */
 export function slotScope(editor: Editor, instance: Node | null): Scope {
-  const roots = () => slotRoots(editor, instance);
+  const roots = () => slotRoots(editor, instance).concat(styleRoot(editor));
   return {
     tier: "display",
     lang: () => editor.lang,
@@ -651,7 +679,7 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
      way in, and not offering it is how the rule teaches before the refusal has to. */
   if (!comp)
     return rows.concat(variableRows(editor, node, "attr", displayReadable),
-                       dartRoot(editor));
+                       dartRoot(editor), styleRoot(editor));
   /* the served slot table carries every property address in the component — bare for
      the component's own, dotted for an element's — which is exactly the reference universe
      the template compiler resolves */
@@ -664,7 +692,9 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
       note: "prop",
       insert: slot.name,
     });
-  return rows;
+  /* the style tokens: the one thing of the document a component MAY see, because a
+     token is a view input like `state`, not a fact of the page it sits on */
+  return rows.concat(styleRoot(editor));
 }
 
 /* a node's attr expression (and its transition ms/profile, compiled over the same
