@@ -6,7 +6,7 @@
 
 #include "diag.h"
 #include "doc/doc.h"
-#include "mesh/dart_mesh.h"
+#include "mesh/rant_mesh.h"
 #include "mesh/fake.h"
 #include "sched/scheduler.h"
 #include "sync/server.h"
@@ -42,7 +42,7 @@ namespace hmi {
  * `from` is `{expr}` always (plus `{init:true}` reset: the structural entity/local
  * source forms died into the `@name` / bare-name spellings), and flow expressions
  * bind the mesh under `@` exactly as slot expressions do;
- * 14: THE LOG — the snapshot carries `log` (the backlog of @dart/log lines and hmi
+ * 14: THE LOG — the snapshot carries `log` (the backlog of @rant/log lines and hmi
  * notifications, oldest first) and a `log` frame appends live entries {level, node,
  * text, wall_us, ms?}; the step kind `notify` broadcasts a notification to every
  * session as a level "notify" entry;
@@ -88,7 +88,7 @@ struct AppOptions {
     bool persist = true;      /* write the document back on every accepted edit */
     bool verbose = false;
     bool mesh = true;         /* false = offline: a FakeMesh with no entities */
-    DartMeshOptions mesh_opts;
+    RantMeshOptions mesh_opts;
 };
 
 class App {
@@ -124,7 +124,7 @@ class App {
     void compile_runtime();
     void publish_live();
     void update_viewed_pages();
-    /* everything the log gained this pass — the mesh's @dart/log arrivals and the
+    /* everything the log gained this pass — the mesh's @rant/log arrivals and the
      * notify steps' notices — into the ring and out to every session as one frame */
     void publish_log();
     /* the notify steps' records, captured AFTER each tick (the next tick clears
@@ -181,7 +181,7 @@ class App {
     uint64_t edits_ = 0;
     uint64_t epoch_ = 1;
     std::unique_ptr<MeshPort> mesh_;
-    DartMesh* dart_mesh_ = nullptr;   /* set when mesh_ is the real adapter */
+    RantMesh* rant_mesh_ = nullptr;   /* set when mesh_ is the real adapter */
     std::unique_ptr<Scheduler> scheduler_;
     std::chrono::steady_clock::time_point next_tick_;
     std::chrono::steady_clock::time_point next_mesh_refresh_;
@@ -196,7 +196,7 @@ class App {
         uint64_t total = UINT64_MAX;
     };
     std::vector<AggCursor> agg_published_;
-    /* THE LOG RING: what the mesh's @dart/log topics said and what notify steps spoke,
+    /* THE LOG RING: what the mesh's @rant/log topics said and what notify steps spoke,
      * newest at the back, bounded. The snapshot carries the whole ring (a late joiner
      * sees history); a `log` frame carries only what just arrived. */
     std::deque<Json> log_;

@@ -40,7 +40,7 @@ struct EntityDef {
      * gates a flow step's `cancel` mode at compile */
     bool cancellable = false;
     /* the schema's ROOT TYPE NAME and identity, straight off reflection: what the type
-     * table is keyed by, and the only name DART gives a type (spec 2.2). Empty / 0 where
+     * table is keyed by, and the only name RANT gives a type (spec 2.2). Empty / 0 where
      * the owner published none. */
     std::string type_name;
     uint64_t schema_hash = 0;

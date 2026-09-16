@@ -1,5 +1,5 @@
-/* End-to-end over a real mesh: a peer dart::Node hosting a variable, a topic, a
- * function and a task on loopback multicast, against the DartMesh adapter driving
+/* End-to-end over a real mesh: a peer rant::Node hosting a variable, a topic, a
+ * function and a task on loopback multicast, against the RantMesh adapter driving
  * the compiled runtime. Covers reflection (kinds, fields, shapes), feeds from every
  * entity kind (including text, a paced function poll, and a task's running/message/
  * progress/result read table), and effects back out (RMW variable write preserving
@@ -9,12 +9,12 @@
 #include "steps.h"
 #include "compile/compiler.h"
 #include "doc/doc.h"
-#include "mesh/dart_mesh.h"
+#include "mesh/rant_mesh.h"
 #include "compile/components.h"
 #include "sched/scheduler.h"
 #include "vm/state.h"
 
-#include "dart.hpp"
+#include "rant.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -30,7 +30,7 @@ using namespace hmi;
 namespace {
 
 constexpr uint16_t kDomain = 41;
-/* own discovery PORT, not just domain: another DART process on this host (the explorer,
+/* own discovery PORT, not just domain: another RANT process on this host (the explorer,
  * a bridge) shares UDP 7400 via REUSEADDR and swallows the unicast seed announces */
 constexpr uint16_t kDiscoveryPort = 17441;
 constexpr const char* kLoopback = "127.0.0.1";
@@ -88,57 +88,57 @@ int bool_at(const Scheduler& sched, int cell) {
 
 int main() {
     /* ---- the peer: what a small controller node looks like on the mesh ---- */
-    auto tank_schema = dart::Schema::compile("Tank { level: f64, label: string<16> }");
+    auto tank_schema = rant::Schema::compile("Tank { level: f64, label: string<16> }");
     auto hist_schema =
-        dart::Schema::compile("Hist { temps: f64[4] tags: string<8>[] extras: map }");
-    auto belt_schema = dart::Schema::compile("Belt { speed: f64, running: bool }");
-    auto req_schema = dart::Schema::compile("StatusQ { probe: u8 }");
-    auto rsp_schema = dart::Schema::compile("StatusR { temp: f64 }");
-    auto purge_q = dart::Schema::compile("PurgeQ { target: u8 }");
-    auto purge_p = dart::Schema::compile("PurgeP { pct: f64 }");
-    auto purge_r = dart::Schema::compile("PurgeR { done: u8 }");
-    auto cmd_schema = dart::Schema::compile("Cmd { n: f64 }");
+        rant::Schema::compile("Hist { temps: f64[4] tags: string<8>[] extras: map }");
+    auto belt_schema = rant::Schema::compile("Belt { speed: f64, running: bool }");
+    auto req_schema = rant::Schema::compile("StatusQ { probe: u8 }");
+    auto rsp_schema = rant::Schema::compile("StatusR { temp: f64 }");
+    auto purge_q = rant::Schema::compile("PurgeQ { target: u8 }");
+    auto purge_p = rant::Schema::compile("PurgeP { pct: f64 }");
+    auto purge_r = rant::Schema::compile("PurgeR { done: u8 }");
+    auto cmd_schema = rant::Schema::compile("Cmd { n: f64 }");
     CHECK(tank_schema && hist_schema && belt_schema && req_schema && rsp_schema &&
           purge_q && purge_p && purge_r && cmd_schema);
     if (!tank_schema || !hist_schema || !belt_schema || !req_schema || !rsp_schema ||
         !purge_q || !purge_p || !purge_r || !cmd_schema)
         return check::summary("mesh_test");
 
-    dart::NodeOptions peer_options;
+    rant::NodeOptions peer_options;
     peer_options.domain = kDomain;
     peer_options.multicast_interface = kLoopback;
-    /* the dart_test selftest recipe: loopback multicast PLUS a unicast seed, because
+    /* the rant_test selftest recipe: loopback multicast PLUS a unicast seed, because
      * Windows loopback multicast is not reliable on its own (announces also reinforce
      * to known peers' data ports, so one landed announce heals both directions) */
     peer_options.seed_peers = {kLoopback};
     peer_options.discovery_port = kDiscoveryPort;
     peer_options.announce_interval_us = kAnnounceUs;
     peer_options.max_topics = 32;
-    dart::Node peer(
-        "plant", {}, [](const dart::Event& event) {
+    rant::Node peer(
+        "plant", {}, [](const rant::Event& event) {
             if (event.is_error()) std::printf("peer: %s\n", event.to_string().c_str());
         },
         peer_options);
     CHECK(peer.valid());
 
-    dart::MessageBuilder initial(*tank_schema);
+    rant::MessageBuilder initial(*tank_schema);
     initial.set_f64("level", 42.5).set_string("label", "ok");
     CHECK(initial.ok());
-    dart::VariableOptions<> tank_options;
+    rant::VariableOptions<> tank_options;
     tank_options.initial = initial.bytes();
     tank_options.allow_force = true;
-    dart::VariableDefinition<> tank(peer, "tank_level", &*tank_schema, tank_options);
+    rant::VariableDefinition<> tank(peer, "tank_level", &*tank_schema, tank_options);
     CHECK(tank.valid());
 
-    dart::Publisher<> belt(peer, "belt", &*belt_schema,
-                           dart::Qos{dart::Reliability::Reliable});
+    rant::Publisher<> belt(peer, "belt", &*belt_schema,
+                           rant::Qos{rant::Reliability::Reliable});
     CHECK(belt.valid());
 
     /* a variable with every aggregate kind: fixed f64 array, varr of strings, map */
-    dart::MessageBuilder hist_initial(*hist_schema);
+    rant::MessageBuilder hist_initial(*hist_schema);
     {
         const double temps[4] = {1.5, 9.25, 3.0, 0.5};
-        hist_initial.set_array("temps", dart::Bytes(
+        hist_initial.set_array("temps", rant::Bytes(
             reinterpret_cast<const uint8_t*>(temps), sizeof(temps)));
         std::vector<uint8_t> tag_slots;   /* string-array raw slots: [u16 len][cap bytes] */
         auto put_tag = [&](const char* tag) {
@@ -151,52 +151,52 @@ int main() {
         };
         put_tag("hot");
         put_tag("cold");
-        hist_initial.set_array("tags", dart::Bytes(tag_slots.data(), tag_slots.size()));
-        dart::MapWriter extras;
+        hist_initial.set_array("tags", rant::Bytes(tag_slots.data(), tag_slots.size()));
+        rant::MapWriter extras;
         extras.put_uint("speed", 5).put_string("state", "run");
         CHECK(extras.ok());
         hist_initial.set_map("extras", extras);
     }
     CHECK(hist_initial.ok());
-    dart::VariableOptions<> hist_options;
+    rant::VariableOptions<> hist_options;
     hist_options.initial = hist_initial.bytes();
-    dart::VariableDefinition<> hist(peer, "history", &*hist_schema, hist_options);
+    rant::VariableDefinition<> hist(peer, "history", &*hist_schema, hist_options);
     CHECK(hist.valid());
 
     /* a forceable bool the document only reads from FLOWS (no feed names it): the
      * flow-signature subscription is the only thing that can fill its mirror */
-    auto suck_schema = dart::Schema::compile("Suck { on: bool }");
+    auto suck_schema = rant::Schema::compile("Suck { on: bool }");
     CHECK(suck_schema.has_value());
     if (!suck_schema) return check::summary("mesh_test");
-    dart::MessageBuilder suck_initial(*suck_schema);
+    rant::MessageBuilder suck_initial(*suck_schema);
     suck_initial.set_bool("on", false);
     CHECK(suck_initial.ok());
-    dart::VariableOptions<> suction_options;
+    rant::VariableOptions<> suction_options;
     suction_options.initial = suck_initial.bytes();
     suction_options.allow_force = true;
-    dart::VariableDefinition<> suction(peer, "suction", &*suck_schema, suction_options);
+    rant::VariableDefinition<> suction(peer, "suction", &*suck_schema, suction_options);
     CHECK(suction.valid());
 
     /* a variable the document only WRITES (no feed, no flow read anywhere): its
      * accessor exists solely because a flow's signature writes it, and the very
      * first write races the accessor's forming owner match */
-    auto set_schema = dart::Schema::compile("Set { target: f64 }");
+    auto set_schema = rant::Schema::compile("Set { target: f64 }");
     CHECK(set_schema.has_value());
     if (!set_schema) return check::summary("mesh_test");
-    dart::MessageBuilder set_initial(*set_schema);
+    rant::MessageBuilder set_initial(*set_schema);
     set_initial.set_f64("target", 0.0);
     CHECK(set_initial.ok());
-    dart::VariableOptions<> setpoint_options;
+    rant::VariableOptions<> setpoint_options;
     setpoint_options.initial = set_initial.bytes();
-    dart::VariableDefinition<> setpoint(peer, "setpoint", &*set_schema, setpoint_options);
+    rant::VariableDefinition<> setpoint(peer, "setpoint", &*set_schema, setpoint_options);
     CHECK(setpoint.valid());
 
     std::atomic<int> calls{0};
-    dart::FunctionDefinition<> status(
+    rant::FunctionDefinition<> status(
         peer, "status", &*req_schema, &*rsp_schema,
-        [&](dart::Request<>& request) {
+        [&](rant::Request<>& request) {
             ++calls;
-            dart::MessageBuilder reply(*rsp_schema);
+            rant::MessageBuilder reply(*rsp_schema);
             reply.set_f64("temp", 21.25);
             request.reply(reply.bytes());
         });
@@ -208,10 +208,10 @@ int main() {
     std::atomic<int> purge_calls{0};
     std::atomic<int> purge_target{0};
     std::mutex purge_mu;
-    std::optional<dart::PendingTask<>> purge_pending;
-    dart::TaskDefinition<> purge(
+    std::optional<rant::PendingTask<>> purge_pending;
+    rant::TaskDefinition<> purge(
         peer, "purge", &*purge_q, &*purge_p, &*purge_r,
-        [&](dart::TaskRequest<>& request) {
+        [&](rant::TaskRequest<>& request) {
             purge_target = static_cast<int>(request.get_uint("target"));
             ++purge_calls;
             std::lock_guard<std::mutex> hold(purge_mu);
@@ -221,8 +221,8 @@ int main() {
 
     std::atomic<int> cmds_seen{0};
     std::atomic<double> cmd_value{0.0};
-    dart::Subscriber<> cmd(peer, "cmd", &*cmd_schema,
-                           [&](const dart::MessageView& msg) {
+    rant::Subscriber<> cmd(peer, "cmd", &*cmd_schema,
+                           [&](const rant::MessageView& msg) {
                                cmd_value = msg.get_f64("n");
                                ++cmds_seen;
                            });
@@ -230,42 +230,42 @@ int main() {
 
     /* BARE-TYPED topics (the whole schema is one anonymous type, no struct): a bool
      * the HMI publishes to, and an f64 it feeds from; both address the value by "" */
-    auto flag_schema = dart::Schema::compile("bool");
-    auto pressure_schema = dart::Schema::compile("f64");
+    auto flag_schema = rant::Schema::compile("bool");
+    auto pressure_schema = rant::Schema::compile("f64");
     CHECK(flag_schema.has_value() && pressure_schema.has_value());
     if (!flag_schema || !pressure_schema) return check::summary("mesh_test");
     std::atomic<int> flags_seen{0};
     std::atomic<bool> flag_value{false};
-    dart::Subscriber<> flag(peer, "flag", &*flag_schema,
-                            [&](const dart::MessageView& msg) {
+    rant::Subscriber<> flag(peer, "flag", &*flag_schema,
+                            [&](const rant::MessageView& msg) {
                                 flag_value = msg.get_uint("") != 0;
                                 ++flags_seen;
                             });
     CHECK(flag.valid());
-    dart::Publisher<> pressure(peer, "pressure", &*pressure_schema,
-                               dart::Qos{dart::Reliability::Reliable});
+    rant::Publisher<> pressure(peer, "pressure", &*pressure_schema,
+                               rant::Qos{rant::Reliability::Reliable});
     CHECK(pressure.valid());
     CHECK(peer.start());
 
     /* a SECOND provider node the retype section below restarts with a new schema */
-    auto gauge_v1 = dart::Schema::compile("Gauge { value: f64, unit: string<8> }");
+    auto gauge_v1 = rant::Schema::compile("Gauge { value: f64, unit: string<8> }");
     CHECK(gauge_v1.has_value());
     if (!gauge_v1) return check::summary("mesh_test");
-    std::optional<dart::Node> prov;
-    std::optional<dart::Publisher<>> gauge_pub;
+    std::optional<rant::Node> prov;
+    std::optional<rant::Publisher<>> gauge_pub;
     prov.emplace(
-        "plant2", dart::Node::MessageHandler{},
-        [](const dart::Event& event) {
+        "plant2", rant::Node::MessageHandler{},
+        [](const rant::Event& event) {
             if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
         },
         peer_options);
     CHECK(prov->valid());
-    gauge_pub.emplace(*prov, "gauge", &*gauge_v1, dart::Qos{dart::Reliability::Reliable});
+    gauge_pub.emplace(*prov, "gauge", &*gauge_v1, rant::Qos{rant::Reliability::Reliable});
     CHECK(gauge_pub->valid());
     CHECK(prov->start());
 
     /* ---- the adapter ---- */
-    DartMeshOptions mesh_options;
+    RantMeshOptions mesh_options;
     mesh_options.node_name = "hmi-under-test";
     mesh_options.domain = kDomain;
     mesh_options.interface_ip = kLoopback;
@@ -273,7 +273,7 @@ int main() {
     mesh_options.discovery_port = kDiscoveryPort;
     mesh_options.announce_interval_us = kAnnounceUs;
     mesh_options.verbose = true;
-    DartMesh mesh(mesh_options);
+    RantMesh mesh(mesh_options);
     std::string err;
     CHECK_MSG(mesh.start(err), err);
 
@@ -620,9 +620,9 @@ int main() {
             [&] {
                 auto bytes = setpoint.get();
                 if (!bytes) return false;
-                const dart::detail::DartBytes data =
-                    dart::detail::dart_bytes(bytes->data(), bytes->size());
-                return dart::detail::dart_get_f64(data, set_schema->raw(), "target") == 5.5;
+                const rant::detail::RantBytes data =
+                    rant::detail::rant_bytes(bytes->data(), bytes->size());
+                return rant::detail::rant_get_f64(data, set_schema->raw(), "target") == 5.5;
             },
             2000);
         CHECK_MSG(landed, "the FIRST write to a write-only variable never landed");
@@ -649,8 +649,8 @@ int main() {
     /* aggregate fields decode into list/map values and reduce through transforms */
     {
         const int hist_max = cell_of(sched.program(), hist_id, "value");
-        const int hist_speed = cell_of(sched.program(), hist_id, "reading.decimals");
-        const int hist_tags = cell_of(sched.program(), hist_id, "units.text");
+        const int hist_speed = cell_of(sched.program(), hist_id, "decimals");
+        const int hist_tags = cell_of(sched.program(), hist_id, "units");
         CHECK(hist_max >= 0 && hist_speed >= 0 && hist_tags >= 0);
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, hist_max) == 9.25; }),
                   "temps.Max() never arrived");
@@ -662,7 +662,7 @@ int main() {
 
     /* a topic binding: publish from the peer until the cell shows it */
     {
-        dart::MessageBuilder msg(*belt_schema);
+        rant::MessageBuilder msg(*belt_schema);
         msg.set_f64("speed", 3.5).set_bool("running", true);
         CHECK(msg.ok());
         bool seen = false;
@@ -677,7 +677,7 @@ int main() {
     {
         const int pressure_cell = cell_of(sched.program(), pressure_id, "value");
         CHECK(pressure_cell >= 0);
-        dart::MessageBuilder msg(*pressure_schema);
+        rant::MessageBuilder msg(*pressure_schema);
         msg.set_f64("", 3.25);
         CHECK(msg.ok());
         bool seen = false;
@@ -705,9 +705,9 @@ int main() {
                 [&] {
                     auto bytes = tank.get();
                     if (!bytes) return false;
-                    const dart::detail::DartBytes data =
-                        dart::detail::dart_bytes(bytes->data(), bytes->size());
-                    return dart::detail::dart_get_f64(data, tank_schema->raw(), "level") ==
+                    const rant::detail::RantBytes data =
+                        rant::detail::rant_bytes(bytes->data(), bytes->size());
+                    return rant::detail::rant_get_f64(data, tank_schema->raw(), "level") ==
                            77.75;
                 },
                 200);
@@ -716,11 +716,11 @@ int main() {
         auto bytes = tank.get();
         CHECK(bytes.has_value());
         if (bytes) {
-            const dart::detail::DartBytes data =
-                dart::detail::dart_bytes(bytes->data(), bytes->size());
-            CHECK_EQ(dart::detail::dart_get_f64(data, tank_schema->raw(), "level"), 77.75);
-            const dart::detail::DartString label =
-                dart::detail::dart_get_string(data, tank_schema->raw(), "label");
+            const rant::detail::RantBytes data =
+                rant::detail::rant_bytes(bytes->data(), bytes->size());
+            CHECK_EQ(rant::detail::rant_get_f64(data, tank_schema->raw(), "level"), 77.75);
+            const rant::detail::RantString label =
+                rant::detail::rant_get_string(data, tank_schema->raw(), "label");
             CHECK_EQ(std::string(label.data ? label.data : "", label.len), std::string("ok"));
         }
         /* and the binding loops the write back into the cell */
@@ -752,23 +752,23 @@ int main() {
         CHECK_MSG(run_until(sched, [&] { return bool_at(sched, purge_run_cell) == 1; }),
                   "running never flipped true");
 
-        dart::MessageBuilder step(*purge_p);
+        rant::MessageBuilder step(*purge_p);
         step.set_f64("pct", 40.0);
         CHECK(step.ok());
         {
             std::lock_guard<std::mutex> hold(purge_mu);
             CHECK(purge_pending && purge_pending->valid());
-            CHECK(purge_pending->progress(step.bytes()) == dart::SendStatus::Ok);
+            CHECK(purge_pending->progress(step.bytes()) == rant::SendStatus::Ok);
         }
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, purge_pct_cell) == 40.0; }),
                   "the progress update never arrived");
 
-        dart::MessageBuilder done(*purge_r);
+        rant::MessageBuilder done(*purge_r);
         done.set_uint("done", 1);
         CHECK(done.ok());
         {
             std::lock_guard<std::mutex> hold(purge_mu);
-            CHECK(purge_pending->complete(done.bytes(), "swept") == dart::SendStatus::Ok);
+            CHECK(purge_pending->complete(done.bytes(), "swept") == rant::SendStatus::Ok);
         }
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, purge_done_cell) == 1.0; }),
                   "the task result never arrived");
@@ -805,7 +805,7 @@ int main() {
         CHECK_MSG(cancel_seen, "the cancel never reached the peer");
         {
             std::lock_guard<std::mutex> hold(purge_mu);
-            CHECK(purge_pending->complete_cancelled("stopped") == dart::SendStatus::Ok);
+            CHECK(purge_pending->complete_cancelled("stopped") == rant::SendStatus::Ok);
         }
         CHECK_MSG(run_until(sched, [&] { return bool_at(sched, purge_run_cell) == 0; }),
                   "running never dropped after the cancel");
@@ -854,7 +854,7 @@ int main() {
         CHECK(gauge_cell >= 0);
 
         /* baseline: the v1 subscription feeds the cell */
-        dart::MessageBuilder v1_msg(*gauge_v1);
+        rant::MessageBuilder v1_msg(*gauge_v1);
         v1_msg.set_f64("value", 6.5).set_string("unit", "bar");
         CHECK(v1_msg.ok());
         bool seen = false;
@@ -865,19 +865,19 @@ int main() {
         CHECK_MSG(seen, "gauge v1 value never arrived");
 
         /* the provider restarts with a CHANGED schema (value survives, unit -> extra) */
-        auto gauge_v2 = dart::Schema::compile("Gauge { value: f64, extra: u8 }");
+        auto gauge_v2 = rant::Schema::compile("Gauge { value: f64, extra: u8 }");
         CHECK(gauge_v2.has_value());
         if (!gauge_v2) return check::summary("mesh_test");
         gauge_pub.reset();
         prov.reset();
         prov.emplace(
-            "plant2", dart::Node::MessageHandler{},
-            [](const dart::Event& event) {
+            "plant2", rant::Node::MessageHandler{},
+            [](const rant::Event& event) {
                 if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
             },
             peer_options);
         CHECK(prov->valid());
-        gauge_pub.emplace(*prov, "gauge", &*gauge_v2, dart::Qos{dart::Reliability::Reliable});
+        gauge_pub.emplace(*prov, "gauge", &*gauge_v2, rant::Qos{rant::Reliability::Reliable});
         CHECK(gauge_pub->valid());
         CHECK(prov->start());
 
@@ -906,7 +906,7 @@ int main() {
 
         const int swapped_cell = cell_of(swapped_sched.program(), gauge_id, "value");
         CHECK(swapped_cell >= 0);
-        dart::MessageBuilder v2_msg(*gauge_v2);
+        rant::MessageBuilder v2_msg(*gauge_v2);
         v2_msg.set_f64("value", 8.25).set_uint("extra", 3);
         CHECK(v2_msg.ok());
         seen = false;
@@ -926,40 +926,40 @@ int main() {
      * Its RETURN — same-typed first, then retyped — must resume every feed, every
      * write and the beat flow, and values that survived the outage keep going. */
     {
-        auto cycle_v2 = dart::Schema::compile("Gauge { value: f64, extra: u8 }");
-        auto dial_v1 = dart::Schema::compile("Dial { setting: f64 }");
-        auto meter_q = dart::Schema::compile("MeterQ { q: u8 }");
-        auto meter_r1 = dart::Schema::compile("MeterR { r: f64 }");
+        auto cycle_v2 = rant::Schema::compile("Gauge { value: f64, extra: u8 }");
+        auto dial_v1 = rant::Schema::compile("Dial { setting: f64 }");
+        auto meter_q = rant::Schema::compile("MeterQ { q: u8 }");
+        auto meter_r1 = rant::Schema::compile("MeterR { r: f64 }");
         CHECK(cycle_v2 && dial_v1 && meter_q && meter_r1);
         if (!cycle_v2 || !dial_v1 || !meter_q || !meter_r1)
             return check::summary("mesh_test");
 
-        std::optional<dart::VariableDefinition<>> dial_def;
-        std::optional<dart::FunctionDefinition<>> meter_def;
+        std::optional<rant::VariableDefinition<>> dial_def;
+        std::optional<rant::FunctionDefinition<>> meter_def;
         double meter_reply = 21.5;
-        auto host_plant2 = [&](const dart::Schema* gauge_schema,
-                               const dart::Schema* dial_schema, double dial_setting,
-                               const dart::Schema* meter_rsp) {
+        auto host_plant2 = [&](const rant::Schema* gauge_schema,
+                               const rant::Schema* dial_schema, double dial_setting,
+                               const rant::Schema* meter_rsp) {
             prov.emplace(
-                "plant2", dart::Node::MessageHandler{},
-                [](const dart::Event& event) {
+                "plant2", rant::Node::MessageHandler{},
+                [](const rant::Event& event) {
                     if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
                 },
                 peer_options);
             CHECK(prov->valid());
             gauge_pub.emplace(*prov, "gauge", gauge_schema,
-                              dart::Qos{dart::Reliability::Reliable});
+                              rant::Qos{rant::Reliability::Reliable});
             CHECK(gauge_pub->valid());
-            dart::MessageBuilder seed(*dial_schema);
+            rant::MessageBuilder seed(*dial_schema);
             seed.set_f64("setting", dial_setting);
             CHECK(seed.ok());
-            dart::VariableOptions<> dial_opts;
+            rant::VariableOptions<> dial_opts;
             dial_opts.initial = seed.bytes();
             dial_def.emplace(*prov, "dial", dial_schema, dial_opts);
             CHECK(dial_def->valid());
             meter_def.emplace(*prov, "meter", &*meter_q, meter_rsp,
-                              [&meter_reply, meter_rsp](dart::Request<>& request) {
-                                  dart::MessageBuilder reply(*meter_rsp);
+                              [&meter_reply, meter_rsp](rant::Request<>& request) {
+                                  rant::MessageBuilder reply(*meter_rsp);
                                   reply.set_f64("r", meter_reply);
                                   request.reply(reply.bytes());
                               });
@@ -1100,17 +1100,17 @@ int main() {
             }
             return false;
         };
-        auto dial_setting_is = [&](const dart::Schema& schema, double want) {
+        auto dial_setting_is = [&](const rant::Schema& schema, double want) {
             auto bytes = dial_def->get();
             if (!bytes) return false;
-            const dart::detail::DartBytes data =
-                dart::detail::dart_bytes(bytes->data(), bytes->size());
-            return dart::detail::dart_get_f64(data, schema.raw(), "setting") == want;
+            const rant::detail::RantBytes data =
+                rant::detail::rant_bytes(bytes->data(), bytes->size());
+            return rant::detail::rant_get_f64(data, schema.raw(), "setting") == want;
         };
         uint64_t cy_seq = 1;
         /* tap the dial instance until its write lands at the owner (a human re-taps;
          * each round is one tap, not a blind retry of a dropped effect) */
-        auto write_dial = [&](const dart::Schema& schema, int rounds) {
+        auto write_dial = [&](const rant::Schema& schema, int rounds) {
             for (int i = 0; i < rounds; ++i) {
                 if (mesh.refresh()) recompile();
                 cur->post(InputEvent{3, cy_dial_id, "tap", Value::number(0), cy_seq++});
@@ -1128,7 +1128,7 @@ int main() {
         dump_diags("at baseline");
 
         /* baseline: all three feed, the beat flow mirrors, the write lands */
-        dart::MessageBuilder base_msg(*cycle_v2);
+        rant::MessageBuilder base_msg(*cycle_v2);
         base_msg.set_f64("value", 8.5).set_uint("extra", 1);
         CHECK(base_msg.ok());
         CHECK_MSG(wait_cell(cy_gauge_id, "value", 8.5, 80,
@@ -1158,10 +1158,10 @@ int main() {
         CHECK_MSG(vanished, "cycle: the dead provider's entities never left reflection");
         dump_diags("while down");
 
-        dart::MessageBuilder tank_new(*tank_schema);
+        rant::MessageBuilder tank_new(*tank_schema);
         tank_new.set_f64("level", 55.25).set_string("label", "up");
         CHECK(tank_new.ok());
-        CHECK(tank.set(tank_new.bytes()) == dart::SendStatus::Ok);
+        CHECK(tank.set(tank_new.bytes()) == rant::SendStatus::Ok);
         CHECK_MSG(wait_cell(cy_tank_id, "value", 55.25, 30, {}),
                   "cycle: a healthy entity stopped feeding while another node was down");
         CHECK_MSG(num_at(*cur, global_cell_of(cur->program(), "hold")) == 8.5,
@@ -1175,7 +1175,7 @@ int main() {
         CHECK_MSG(reflect_trio(cycle_v2->hash(), 1, 1),
                   "cycle: the same-typed return never reflected");
         dump_diags("after same-typed return");
-        dart::MessageBuilder back_msg(*cycle_v2);
+        rant::MessageBuilder back_msg(*cycle_v2);
         back_msg.set_f64("value", 9.75).set_uint("extra", 2);
         CHECK(back_msg.ok());
         CHECK_MSG(wait_cell(cy_gauge_id, "value", 9.75, 80,
@@ -1206,9 +1206,9 @@ int main() {
         }
         CHECK_MSG(vanished, "cycle: the provider never left before the retyped return");
 
-        auto cycle_v3 = dart::Schema::compile("Gauge { value: f64, mode: u16 }");
-        auto dial_v2 = dart::Schema::compile("Dial { setting: f64, span: u8 }");
-        auto meter_r2 = dart::Schema::compile("MeterR { r: f64, ok: bool }");
+        auto cycle_v3 = rant::Schema::compile("Gauge { value: f64, mode: u16 }");
+        auto dial_v2 = rant::Schema::compile("Dial { setting: f64, span: u8 }");
+        auto meter_r2 = rant::Schema::compile("MeterR { r: f64, ok: bool }");
         CHECK(cycle_v3 && dial_v2 && meter_r2);
         if (!cycle_v3 || !dial_v2 || !meter_r2) return check::summary("mesh_test");
         meter_reply = 64.25;
@@ -1216,7 +1216,7 @@ int main() {
         CHECK_MSG(reflect_trio(cycle_v3->hash(), 2, 2),
                   "cycle: the retyped return never reflected");
         dump_diags("after retyped return");
-        dart::MessageBuilder v3_msg(*cycle_v3);
+        rant::MessageBuilder v3_msg(*cycle_v3);
         v3_msg.set_f64("value", 11.5).set_uint("mode", 2);
         CHECK(v3_msg.ok());
         CHECK_MSG(wait_cell(cy_gauge_id, "value", 11.5, 80,
@@ -1233,11 +1233,11 @@ int main() {
         dump_faults("after retyped return");
     }
 
-    /* ---- the built-in @dart/log stream: a peer's log lines reach take_logs, decoded
+    /* ---- the built-in @rant/log stream: a peer's log lines reach take_logs, decoded
      * with the publisher's name, the level and a comparable wall stamp ---- */
     {
-        CHECK(peer.log_error("boiler overtemp") == dart::SendStatus::Ok);
-        CHECK(peer.log_info("shift change") == dart::SendStatus::Ok);
+        CHECK(peer.log_error("boiler overtemp") == rant::SendStatus::Ok);
+        CHECK(peer.log_info("shift change") == rant::SendStatus::Ok);
         std::vector<MeshLogLine> lines;
         bool got_error = false;
         bool got_info = false;

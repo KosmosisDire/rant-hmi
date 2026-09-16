@@ -24,7 +24,7 @@ void usage() {
         "  --statics DIR  serve the frontend from DIR on the same port as the sync\n"
         "                 channel, so http://host:port/ is the whole application\n"
         "  --bind 0.0.0.0 expose the HMI beyond this host (no authentication yet)\n"
-        "  --no-mesh      run offline: no DART node, no reflected entities\n"
+        "  --no-mesh      run offline: no RANT node, no reflected entities\n"
         "  --mesh-if IP   the multicast interface (multihomed hosts: this LAN's IP)\n"
         "  --peer IP      seed discovery over unicast (repeatable; where multicast\n"
         "                 is broken)\n");

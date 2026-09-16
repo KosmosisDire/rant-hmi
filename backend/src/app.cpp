@@ -75,8 +75,8 @@ App::App(AppOptions opts, std::unique_ptr<MeshPort> mesh)
     if (mesh) {
         mesh_ = std::move(mesh);
     } else if (opts_.mesh) {
-        auto mesh = std::make_unique<DartMesh>(opts_.mesh_opts);
-        dart_mesh_ = mesh.get();
+        auto mesh = std::make_unique<RantMesh>(opts_.mesh_opts);
+        rant_mesh_ = mesh.get();
         mesh_ = std::move(mesh);
     } else {
         mesh_ = std::make_unique<FakeMesh>();
@@ -90,8 +90,8 @@ bool App::start(std::string& err) {
         doc_ = Document::make_default();
         if (opts_.persist && !doc_.to_file(opts_.doc_path, err)) return false;
     }
-    if (dart_mesh_ && !dart_mesh_->start(err)) return false;
-    if (dart_mesh_) mesh_->refresh();   /* whatever the mesh already knows, before the
+    if (rant_mesh_ && !rant_mesh_->start(err)) return false;
+    if (rant_mesh_) mesh_->refresh();   /* whatever the mesh already knows, before the
                                            first compile; the rest lands via refresh */
     compile_runtime();
     next_tick_ = std::chrono::steady_clock::now();
@@ -774,7 +774,7 @@ void App::drain_faults() {
 }
 
 /* the log's one exit: whatever this poll gathered — notify records and the mesh's
- * @dart/log lines — lands in the ring (the snapshot's backlog) and broadcasts as ONE
+ * @rant/log lines — lands in the ring (the snapshot's backlog) and broadcasts as ONE
  * `log` frame, so every session pops the same notifications at the same moment */
 void App::publish_log() {
     mesh_logs_.clear();
@@ -836,7 +836,7 @@ Json App::snapshot() const {
                  * (registry/attrs.h), never changes at runtime, so — exactly like
                  * `builtins` above — the snapshot is its only carrier */
                 {"attr_table", attr_table_json()},
-                /* the log backlog, oldest first: what the mesh's @dart/log topics said
+                /* the log backlog, oldest first: what the mesh's @rant/log topics said
                  * and what notify steps spoke before this client joined. History only —
                  * a snapshot never pops notifications; the `log` frame does that. */
                 {"log", std::move(log_rows)},

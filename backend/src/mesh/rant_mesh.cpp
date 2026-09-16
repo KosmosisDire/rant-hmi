@@ -1,22 +1,22 @@
-/* DartMesh: MeshPort over a real dart::Node (see dart_mesh.h). Layout of the file:
+/* RantMesh: MeshPort over a real rant::Node (see rant_mesh.h). Layout of the file:
  * reflection (entity fold + field tables + the DSL rebuild), the per-entity record,
  * consumption (subscribe / observe / listen / poll), drain (decode into the sink),
  * and effects (encode by the owner's reflected layout).
  *
- * Codec note: encode/decode go through the embedded C serialize API (dart::detail::
- * dart_get_* / dart_set_* on raw buffers) rather than a re-implementation; the public
+ * Codec note: encode/decode go through the embedded C serialize API (rant::detail::
+ * rant_get_* / rant_set_* on raw buffers) rather than a re-implementation; the public
  * Schema::raw() is the sanctioned bridge to it. Write-side handles are TYPED with the
- * provider's own schema, copied off the node's reflection (dart::Entity carries owned
+ * provider's own schema, copied off the node's reflection (rant::Entity carries owned
  * Schema values), so the mesh's schema gate sees the owner's type and never a foreign one.
  *
  * Threading: every MeshPort entry runs on the logic thread. The node's service thread
  * only touches per-record slots behind their own mutex (variable on_change, task
- * progress and outcomes, async call completions); topics queue inside DART and are
+ * progress and outcomes, async call completions); topics queue inside RANT and are
  * taken here.
  * Records are never destroyed while the node lives, so handler captures stay valid. */
-#include "dart_mesh.h"
+#include "rant_mesh.h"
 
-#include "dart.hpp"
+#include "rant.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -32,7 +32,7 @@
 namespace hmi {
 namespace {
 
-namespace dc = dart::detail;
+namespace dc = rant::detail;
 
 using Clock = std::chrono::steady_clock;
 
@@ -40,14 +40,14 @@ constexpr int kTakeBudget = 256;         /* topic messages decoded per entity pe
 constexpr uint32_t kEffectWaitUs = 20000;   /* bounded backpressure for effect sends */
 constexpr int kOwnerWaitMs = 50;      /* one write's bounded wait on a still-forming owner match */
 constexpr int kOwnerFormingMs = 2000; /* how long a fresh accessor is credited a forming match */
-constexpr size_t kLogPendCap = 512;      /* undrained @dart/log lines before oldest drops */
+constexpr size_t kLogPendCap = 512;      /* undrained @rant/log lines before oldest drops */
 
-EntityKind kind_of(dart::EntityKind kind) {
+EntityKind kind_of(rant::EntityKind kind) {
     switch (kind) {
-        case dart::EntityKind::Variable: return EntityKind::Variable;
-        case dart::EntityKind::Function: return EntityKind::Function;
-        case dart::EntityKind::Task: return EntityKind::Task;
-        case dart::EntityKind::Topic: default: return EntityKind::Topic;
+        case rant::EntityKind::Variable: return EntityKind::Variable;
+        case rant::EntityKind::Function: return EntityKind::Function;
+        case rant::EntityKind::Task: return EntityKind::Task;
+        case rant::EntityKind::Topic: default: return EntityKind::Topic;
     }
 }
 
@@ -71,8 +71,8 @@ std::string rec_key(EntityKind kind, std::string_view name) {
 /* how one presented field encodes on the wire (aligned 1:1 with the FieldDef table) */
 struct EncField {
     std::string path;
-    dart::FieldType kind = dart::FieldType::U8;
-    dart::FieldType elem = dart::FieldType::U8;   /* enum backing */
+    rant::FieldType kind = rant::FieldType::U8;
+    rant::FieldType elem = rant::FieldType::U8;   /* enum backing */
     uint16_t str_cap = 0;   /* string elements: the slot cap ([u16 len][cap] each) */
 };
 
@@ -82,10 +82,10 @@ struct EncField {
  * write side never builds them (a wire value is one scalar), so encode skips them and
  * the RMW base preserves the owner's aggregate bytes untouched. `prefix` roots every
  * path under one presented segment (a task's `progress.` / `result.` groups). */
-void build_fields(const dart::Schema& schema, std::vector<FieldDef>& out,
+void build_fields(const rant::Schema& schema, std::vector<FieldDef>& out,
                   std::vector<EncField>* enc, const char* prefix = "") {
     std::vector<std::string> stack;
-    dart::Schema::Field field;
+    rant::Schema::Field field;
     for (uint16_t i = 0; schema.field_at(i, field); ++i) {
         stack.resize(field.depth);
         std::string path = prefix;
@@ -94,34 +94,34 @@ void build_fields(const dart::Schema& schema, std::vector<FieldDef>& out,
         /* a BARE schema's one anonymous field under a prefix presents as the prefix
            itself (a bare-f64 progress reads `@task.progress`) */
         if (!path.empty() && path.back() == '.') path.pop_back();
-        if (field.kind == dart::FieldType::Struct) {
+        if (field.kind == rant::FieldType::Struct) {
             stack.emplace_back(field.name);
             continue;
         }
         FieldDef def;
         def.path = path;
         switch (field.kind) {
-            case dart::FieldType::Bool: def.shape = Shape::Bool; break;
-            case dart::FieldType::String:
-            case dart::FieldType::VString: def.shape = Shape::Text; break;
-            case dart::FieldType::Enum: {
+            case rant::FieldType::Bool: def.shape = Shape::Bool; break;
+            case rant::FieldType::String:
+            case rant::FieldType::VString: def.shape = Shape::Text; break;
+            case rant::FieldType::Enum: {
                 def.shape = Shape::Enum;
-                dart::Schema::EnumVariant option;
+                rant::Schema::EnumVariant option;
                 for (uint16_t k = 0; schema.enum_variant(i, k, option); ++k)
                     def.variants.push_back({std::string(option.name), option.value});
                 break;
             }
-            case dart::FieldType::Array:
-            case dart::FieldType::VArray:
+            case rant::FieldType::Array:
+            case rant::FieldType::VArray:
                 def.shape = Shape::List;
-                def.elem = field.elem == dart::FieldType::String ? Shape::Text
-                           : field.elem == dart::FieldType::Bool ? Shape::Bool
+                def.elem = field.elem == rant::FieldType::String ? Shape::Text
+                           : field.elem == rant::FieldType::Bool ? Shape::Bool
                                                                  : Shape::Num;
-                def.bound = field.kind == dart::FieldType::Array
+                def.bound = field.kind == rant::FieldType::Array
                                 ? field.count
                                 : kVarrCeiling;
                 break;
-            case dart::FieldType::Map:
+            case rant::FieldType::Map:
                 def.shape = Shape::Map;
                 def.bound = kVarrCeiling;
                 break;
@@ -137,10 +137,10 @@ void build_fields(const dart::Schema& schema, std::vector<FieldDef>& out,
  * ONE table like any entity's, delivered piecewise (the adapter Nil-pads around
  * whichever part arrived, and on_update skips Nil). The two leading facts are the
  * adapter's own: whether ITS call is outstanding, and the last outcome's human story
- * (DartResponse.message — the one field a generic consumer displays on failure). */
+ * (RantResponse.message — the one field a generic consumer displays on failure). */
 constexpr uint32_t kTaskLeadFields = 2;   /* running, message */
 
-void build_task_read_fields(const dart::Entity& entity, std::vector<FieldDef>& out) {
+void build_task_read_fields(const rant::Entity& entity, std::vector<FieldDef>& out) {
     FieldDef running;
     running.path = "running";
     running.shape = Shape::Bool;
@@ -154,39 +154,39 @@ void build_task_read_fields(const dart::Entity& entity, std::vector<FieldDef>& o
 }
 
 /* scalar element sizes on the wire (little-endian; LE host assumed per PLAN.md) */
-size_t elem_size_of(dart::FieldType kind) {
+size_t elem_size_of(rant::FieldType kind) {
     switch (kind) {
-        case dart::FieldType::U8:
-        case dart::FieldType::I8:
-        case dart::FieldType::Bool: return 1;
-        case dart::FieldType::U16:
-        case dart::FieldType::I16: return 2;
-        case dart::FieldType::U32:
-        case dart::FieldType::I32:
-        case dart::FieldType::F32: return 4;
+        case rant::FieldType::U8:
+        case rant::FieldType::I8:
+        case rant::FieldType::Bool: return 1;
+        case rant::FieldType::U16:
+        case rant::FieldType::I16: return 2;
+        case rant::FieldType::U32:
+        case rant::FieldType::I32:
+        case rant::FieldType::F32: return 4;
         default: return 8;   /* U64 I64 F64 */
     }
 }
 
 /* one scalar element's wire bytes at `at` (little-endian, narrowing like a C cast —
  * the same rules the whole-field setters apply); the inverse of scalar_elem */
-void pack_scalar_elem(dart::FieldType kind, const Value& value, uint8_t* at) {
+void pack_scalar_elem(rant::FieldType kind, const Value& value, uint8_t* at) {
     switch (kind) {
-        case dart::FieldType::Bool:
+        case rant::FieldType::Bool:
             at[0] = value_truth(value) ? 1 : 0;
             return;
-        case dart::FieldType::F32: {
+        case rant::FieldType::F32: {
             const float f = static_cast<float>(value.data.num);
             std::memcpy(at, &f, sizeof(f));
             return;
         }
-        case dart::FieldType::F64:
+        case rant::FieldType::F64:
             std::memcpy(at, &value.data.num, sizeof(double));
             return;
         default: {
             const bool unsigned_kind =
-                kind == dart::FieldType::U8 || kind == dart::FieldType::U16 ||
-                kind == dart::FieldType::U32 || kind == dart::FieldType::U64;
+                kind == rant::FieldType::U8 || kind == rant::FieldType::U16 ||
+                kind == rant::FieldType::U32 || kind == rant::FieldType::U64;
             const uint64_t raw =
                 unsigned_kind
                     ? static_cast<uint64_t>(std::llround(std::max(0.0, value.data.num)))
@@ -199,23 +199,23 @@ void pack_scalar_elem(dart::FieldType kind, const Value& value, uint8_t* at) {
     }
 }
 
-Value scalar_elem(dart::FieldType kind, const uint8_t* at) {
+Value scalar_elem(rant::FieldType kind, const uint8_t* at) {
     uint64_t raw = 0;
     const size_t size = elem_size_of(kind);
     for (size_t i = 0; i < size; ++i) raw |= static_cast<uint64_t>(at[i]) << (8 * i);
     switch (kind) {
-        case dart::FieldType::Bool: return Value::boolean(raw != 0);
-        case dart::FieldType::I8: return Value::number(static_cast<int8_t>(raw));
-        case dart::FieldType::I16: return Value::number(static_cast<int16_t>(raw));
-        case dart::FieldType::I32: return Value::number(static_cast<int32_t>(raw));
-        case dart::FieldType::I64:
+        case rant::FieldType::Bool: return Value::boolean(raw != 0);
+        case rant::FieldType::I8: return Value::number(static_cast<int8_t>(raw));
+        case rant::FieldType::I16: return Value::number(static_cast<int16_t>(raw));
+        case rant::FieldType::I32: return Value::number(static_cast<int32_t>(raw));
+        case rant::FieldType::I64:
             return Value::number(static_cast<double>(static_cast<int64_t>(raw)));
-        case dart::FieldType::F32: {
+        case rant::FieldType::F32: {
             float value = 0;
             std::memcpy(&value, at, sizeof(value));
             return Value::number(value);
         }
-        case dart::FieldType::F64: {
+        case rant::FieldType::F64: {
             double value = 0;
             std::memcpy(&value, at, sizeof(value));
             return Value::number(value);
@@ -225,35 +225,35 @@ Value scalar_elem(dart::FieldType kind, const uint8_t* at) {
 }
 
 /* one decoded field by the SENDER's layout (the schema the payload arrived with) */
-Value decode_field(dc::DartBytes data, const dc::DartSchema* schema, const char* path,
+Value decode_field(dc::RantBytes data, const dc::RantSchema* schema, const char* path,
                    std::string& text_out) {
-    const int index = dc::dart_schema_field_index(schema, path);
+    const int index = dc::rant_schema_field_index(schema, path);
     if (index < 0) return Value::nil();
-    dc::DartSchemaFieldInfo info;
-    if (!dc::dart_schema_field_at(schema, static_cast<uint16_t>(index), &info))
+    dc::RantSchemaFieldInfo info;
+    if (!dc::rant_schema_field_at(schema, static_cast<uint16_t>(index), &info))
         return Value::nil();
-    switch (static_cast<dart::FieldType>(info.kind)) {
-        case dart::FieldType::U8:
-        case dart::FieldType::U16:
-        case dart::FieldType::U32:
-        case dart::FieldType::U64:
-            return Value::number(static_cast<double>(dc::dart_get_uint(data, schema, path)));
-        case dart::FieldType::I8:
-        case dart::FieldType::I16:
-        case dart::FieldType::I32:
-        case dart::FieldType::I64:
-            return Value::number(static_cast<double>(dc::dart_get_int(data, schema, path)));
-        case dart::FieldType::F32:
-            return Value::number(static_cast<double>(dc::dart_get_f32(data, schema, path)));
-        case dart::FieldType::F64:
-            return Value::number(dc::dart_get_f64(data, schema, path));
-        case dart::FieldType::Bool:
-            return Value::boolean(dc::dart_get_uint(data, schema, path) != 0);
-        case dart::FieldType::Enum:
-            return Value::enumeration(dc::dart_get_int(data, schema, path), 0);
-        case dart::FieldType::String:
-        case dart::FieldType::VString: {
-            const dc::DartString s = dc::dart_get_string(data, schema, path);
+    switch (static_cast<rant::FieldType>(info.kind)) {
+        case rant::FieldType::U8:
+        case rant::FieldType::U16:
+        case rant::FieldType::U32:
+        case rant::FieldType::U64:
+            return Value::number(static_cast<double>(dc::rant_get_uint(data, schema, path)));
+        case rant::FieldType::I8:
+        case rant::FieldType::I16:
+        case rant::FieldType::I32:
+        case rant::FieldType::I64:
+            return Value::number(static_cast<double>(dc::rant_get_int(data, schema, path)));
+        case rant::FieldType::F32:
+            return Value::number(static_cast<double>(dc::rant_get_f32(data, schema, path)));
+        case rant::FieldType::F64:
+            return Value::number(dc::rant_get_f64(data, schema, path));
+        case rant::FieldType::Bool:
+            return Value::boolean(dc::rant_get_uint(data, schema, path) != 0);
+        case rant::FieldType::Enum:
+            return Value::enumeration(dc::rant_get_int(data, schema, path), 0);
+        case rant::FieldType::String:
+        case rant::FieldType::VString: {
+            const dc::RantString s = dc::rant_get_string(data, schema, path);
             text_out.assign(s.data ? s.data : "", s.len);
             return Value::text(0);   /* the view rides beside the value, not the ref */
         }
@@ -271,9 +271,9 @@ struct Rec {
     std::string name;
 
     /* the provider's schemas, owned copies off the reflection (nullopt = untyped) */
-    std::optional<dart::Schema> compiled;       /* value / payload / request */
-    std::optional<dart::Schema> rsp_compiled;   /* FUNCTION / TASK: response */
-    std::optional<dart::Schema> prg_compiled;   /* TASK: progress */
+    std::optional<rant::Schema> compiled;       /* value / payload / request */
+    std::optional<rant::Schema> rsp_compiled;   /* FUNCTION / TASK: response */
+    std::optional<rant::Schema> prg_compiled;   /* TASK: progress */
     /* the entity's mesh generation the handles were created at (0 = none yet): it moves
      * with the provider's identity, any schema, or an attr, and refresh() retires the
      * handles when it does */
@@ -290,11 +290,11 @@ struct Rec {
 
     /* handles, created on first need, cached until the entity re-types (refresh
      * retires them and the next apply() recreates them with the new schema) */
-    std::optional<dart::Topic> topic;           /* Topic entity: sub + (role-flipped) pub */
+    std::optional<rant::Topic> topic;           /* Topic entity: sub + (role-flipped) pub */
     bool topic_pub = false;
-    std::optional<dart::RemoteVariable<>> var;
-    std::optional<dart::RemoteTask<>> task;
-    std::optional<dart::RemoteFunction<>> fn;
+    std::optional<rant::RemoteVariable<>> var;
+    std::optional<rant::RemoteTask<>> task;
+    std::optional<rant::RemoteFunction<>> fn;
 
     /* the owner-match story for writes through the variable accessor: var_created
      * bounds how long a FORMING match is worth waiting on; owner_seen flips the first
@@ -307,7 +307,7 @@ struct Rec {
      * in, logic thread out) */
     std::mutex slot_mu;
     std::vector<uint8_t> slot;
-    const dc::DartSchema* slot_schema = nullptr;
+    const dc::RantSchema* slot_schema = nullptr;
     bool slot_dirty = false;
 
     /* TASK call state, behind the same mutex: ONE outstanding call per task from this
@@ -319,13 +319,13 @@ struct Rec {
     std::string task_message;
     bool task_flags_dirty = false;
     std::vector<uint8_t> prg_slot;
-    const dc::DartSchema* prg_slot_schema = nullptr;
+    const dc::RantSchema* prg_slot_schema = nullptr;
     bool prg_dirty = false;
 
     /* RMW base: the owner's exact last payload bytes (logic thread only) */
     std::vector<uint8_t> last_payload;
     uint64_t last_payload_hash = 0;
-    const dc::DartSchema* last_schema = nullptr;   /* interned in the node, safe to keep */
+    const dc::RantSchema* last_schema = nullptr;   /* interned in the node, safe to keep */
 
     /* function polling (logic thread; inflight also cleared by the async callback) */
     uint32_t poll_ms = 0;
@@ -353,34 +353,34 @@ struct Rec {
 
     /* encode scratch */
     std::vector<uint8_t> out;
-    /* whole-array packing scratch: elements' wire bytes before dart_set_array */
+    /* whole-array packing scratch: elements' wire bytes before rant_set_array */
     std::vector<uint8_t> pack;
 };
 
-struct DartMesh::Impl {
-    DartMeshOptions opts;
+struct RantMesh::Impl {
+    RantMeshOptions opts;
 
     /* recs before node: the node tears down first (joining its service thread), after
      * which no handler can touch a rec. Handles are non-owning, safe to outlive. */
     std::map<std::string, std::unique_ptr<Rec>> recs;
-    std::optional<dart::Node> node;
+    std::optional<rant::Node> node;
 
     std::atomic<bool> dirty{true};
     std::vector<EntityDef> entities;
     std::string signature;
     /* the mesh's entities from the last refresh, keyed like recs */
-    std::map<std::string, dart::Entity> folded;
+    std::map<std::string, rant::Entity> folded;
 
     std::vector<uint64_t> viewed_pages;
 
-    /* the mesh-wide @dart/log stream: on_log callbacks (polling thread) append here,
+    /* the mesh-wide @rant/log stream: on_log callbacks (polling thread) append here,
      * take_logs (logic thread) empties it; bounded drop-oldest so a deaf consumer can
      * never grow it */
     std::mutex log_mu;
     std::deque<MeshLogLine> log_pending;
 
     Rec* ensure_rec(const EntityDef& def);
-    void fill_rec_schema(Rec& rec, const dart::Entity& folded_entity) const;
+    void fill_rec_schema(Rec& rec, const rant::Entity& folded_entity) const;
     bool ensure_consumption(Rec& rec, std::string& err);
     void retire_rec_patterns(Rec& rec);
     bool encode(Rec& rec, const EffectView& effect, std::string& fault);
@@ -390,7 +390,7 @@ struct DartMesh::Impl {
      * [running, message, progress.*, result.*], so its progress payload delivers at
      * lead 2 and its response past the progress block. */
     void deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDef>& fields,
-                 dc::DartBytes data, const dc::DartSchema* schema, uint32_t lead = 0);
+                 dc::RantBytes data, const dc::RantSchema* schema, uint32_t lead = 0);
     void deliver_task_flags(MeshSink& sink, Rec& rec, bool running,
                             const std::string& message);
     bool page_viewed(const Rec& rec) const;
@@ -399,11 +399,11 @@ struct DartMesh::Impl {
     }
 };
 
-DartMesh::DartMesh(DartMeshOptions opts) : impl_(new Impl()) { impl_->opts = std::move(opts); }
-DartMesh::~DartMesh() = default;
+RantMesh::RantMesh(RantMeshOptions opts) : impl_(new Impl()) { impl_->opts = std::move(opts); }
+RantMesh::~RantMesh() = default;
 
-bool DartMesh::start(std::string& err) {
-    dart::NodeOptions options;
+bool RantMesh::start(std::string& err) {
+    rant::NodeOptions options;
     options.domain = impl_->opts.domain;
     options.max_topics = impl_->opts.max_topics;
     options.fetch_details = true;   /* every peer entity's name + schema, observer style */
@@ -417,12 +417,12 @@ bool DartMesh::start(std::string& err) {
     try {
 #endif
         impl_->node.emplace(
-            impl_->opts.node_name, dart::Node::MessageHandler{},
-            [impl](const dart::Event& event) {
+            impl_->opts.node_name, rant::Node::MessageHandler{},
+            [impl](const rant::Event& event) {
                 switch (event.kind()) {
-                    case dart::EventKind::PeerUp:
-                    case dart::EventKind::PeerDown:
-                    case dart::EventKind::PeerInterest:
+                    case rant::EventKind::PeerUp:
+                    case rant::EventKind::PeerDown:
+                    case rant::EventKind::PeerInterest:
                         impl->dirty.store(true, std::memory_order_relaxed);
                         break;
                     default: break;
@@ -438,18 +438,18 @@ bool DartMesh::start(std::string& err) {
     }
 #endif
     if (!impl_->node || !impl_->node->valid()) {
-        err = dart::Node::last_open_error();
+        err = rant::Node::last_open_error();
         return false;
     }
     /* The mesh-wide log stream, one subscription per level, registered BEFORE the
      * service thread starts (on_log widens the node's own log handle, which is setup
-     * work). A widened @dart/log topic is a CONSUMER-QUEUE topic — lines queue inside
-     * DART and nobody fires the handler until someone dispatches that queue — so
+     * work). A widened @rant/log topic is a CONSUMER-QUEUE topic — lines queue inside
+     * RANT and nobody fires the handler until someone dispatches that queue — so
      * take_logs pumps the three queues on the logic thread; the handler then runs
      * there, copying the line into the pending ring and nothing else. */
-    for (const dart::LogLevel level :
-         {dart::LogLevel::Error, dart::LogLevel::Warn, dart::LogLevel::Info}) {
-        impl_->node->on_log(level, [impl, level](const dart::LogLine& line) {
+    for (const rant::LogLevel level :
+         {rant::LogLevel::Error, rant::LogLevel::Warn, rant::LogLevel::Info}) {
+        impl_->node->on_log(level, [impl, level](const rant::LogLine& line) {
             MeshLogLine copy;
             copy.level = static_cast<int>(level);
             copy.node = std::string(line.node);
@@ -467,14 +467,14 @@ bool DartMesh::start(std::string& err) {
     return true;
 }
 
-void DartMesh::take_logs(std::vector<MeshLogLine>& out) {
-    /* drain exactly the three log queues — never dart_node_dispatch, which would pull
+void RantMesh::take_logs(std::vector<MeshLogLine>& out) {
+    /* drain exactly the three log queues — never rant_node_dispatch, which would pull
      * the ENTITY topics' queued messages through the (empty) node handler and eat them
      * out from under drain()'s take path */
     if (impl_->node && impl_->node->valid())
-        for (const dart::LogLevel level :
-             {dart::LogLevel::Error, dart::LogLevel::Warn, dart::LogLevel::Info}) {
-            dart::Topic channel = impl_->node->log_topic(level);
+        for (const rant::LogLevel level :
+             {rant::LogLevel::Error, rant::LogLevel::Warn, rant::LogLevel::Info}) {
+            rant::Topic channel = impl_->node->log_topic(level);
             if (channel.valid()) channel.dispatch(/*max_msgs=*/64, /*timeout_ms=*/0);
         }
     std::lock_guard<std::mutex> hold(impl_->log_mu);
@@ -482,15 +482,15 @@ void DartMesh::take_logs(std::vector<MeshLogLine>& out) {
     impl_->log_pending.clear();
 }
 
-const std::vector<EntityDef>& DartMesh::reflection() const noexcept { return impl_->entities; }
+const std::vector<EntityDef>& RantMesh::reflection() const noexcept { return impl_->entities; }
 
-void DartMesh::set_viewed_pages(const std::vector<uint64_t>& pages) {
+void RantMesh::set_viewed_pages(const std::vector<uint64_t>& pages) {
     impl_->viewed_pages = pages;
 }
 
 /* ============================ reflection ==================================== */
 
-bool DartMesh::refresh() {
+bool RantMesh::refresh() {
     if (!impl_->node || !impl_->node->valid()) return false;
     impl_->dirty.store(false, std::memory_order_relaxed);
 
@@ -504,8 +504,8 @@ bool DartMesh::refresh() {
      * only consumes and we only write reads as "from us, nobody provides" the moment we
      * hold it — with the peer's subscriber counted beside ours. Dropping it there hid the
      * robot's jog command from every recompile of exactly the document that wrote it. */
-    std::map<std::string, dart::Entity> fold;
-    for (dart::Entity& entity : impl_->node->mesh()) {
+    std::map<std::string, rant::Entity> fold;
+    for (rant::Entity& entity : impl_->node->mesh()) {
         if (entity.name.empty() || entity.name.compare(0, 2, "0x") == 0)
             continue;   /* details not fetched yet; the next refresh sees them */
         if (!entity.providers && entity.from == impl_->opts.node_name &&
@@ -517,7 +517,7 @@ bool DartMesh::refresh() {
     std::vector<EntityDef> next;
     std::string signature;
     for (const auto& item : fold) {
-        const dart::Entity& entity = item.second;
+        const rant::Entity& entity = item.second;
         EntityDef def;
         def.kind = kind_of(entity.kind);
         def.name = entity.name;
@@ -591,7 +591,7 @@ bool DartMesh::refresh() {
 
 /* ====================== records and consumption ============================= */
 
-Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
+Rec* RantMesh::Impl::ensure_rec(const EntityDef& def) {
     const std::string key = rec_key(def.kind, def.name);
     auto folded_it = folded.find(key);
     auto it = recs.find(key);
@@ -616,7 +616,7 @@ Rec* DartMesh::Impl::ensure_rec(const EntityDef& def) {
 /* Take a record's schemas + encode table from the latest reflection. Runs at creation
  * and again after refresh() retired a changed entity's handles (the next apply() lands
  * here with the current type). */
-void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& entity) const {
+void RantMesh::Impl::fill_rec_schema(Rec& rec, const rant::Entity& entity) const {
     rec.generation = entity.generation;
     rec.compiled.reset();
     rec.rsp_compiled.reset();
@@ -638,8 +638,8 @@ void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& entity) const
         build_fields(*rec.compiled, unused, &rec.enc);
         /* the default request a function poll sends */
         if (rec.kind == EntityKind::Function) {
-            rec.default_request.resize(dc::dart_schema_msg_min(rec.compiled->raw()));
-            dc::dart_schema_message_default(rec.compiled->raw(), rec.default_request.data(),
+            rec.default_request.resize(dc::rant_schema_msg_min(rec.compiled->raw()));
+            dc::rant_schema_message_default(rec.compiled->raw(), rec.default_request.data(),
                                             rec.default_request.size());
         }
     }
@@ -649,14 +649,14 @@ void DartMesh::Impl::fill_rec_schema(Rec& rec, const dart::Entity& entity) const
  * lanes go DEAF across a provider incarnation change — a fresh accessor provably
  * receives where the standing one does not — and a live old-typed channel would
  * shadow a same-name successor on every peer, refusing each match with
- * schema-mismatch. retire() (the vendored HMI patch 2) parks the underlying
+ * schema-mismatch. retire() parks the underlying
  * channels Inactive so the successor owns the name outright. A task retire answers
  * its outstanding call Cancelled through the ordinary response callback, so the
  * read table's `running` goes false honestly. The plain TOPIC
  * handle STAYS: topic subscriptions rematch a returning provider by themselves,
  * and the C++ topic cache would hand a parked channel straight back on a
  * same-schema re-create. */
-void DartMesh::Impl::retire_rec_patterns(Rec& rec) {
+void RantMesh::Impl::retire_rec_patterns(Rec& rec) {
     if (rec.var) rec.var->retire();
     rec.var.reset();
     rec.owner_seen.store(false, std::memory_order_relaxed);
@@ -666,36 +666,36 @@ void DartMesh::Impl::retire_rec_patterns(Rec& rec) {
     rec.fn.reset();
 }
 
-bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
-    const dart::Schema* schema = rec.compiled ? &*rec.compiled : nullptr;
+bool RantMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
+    const rant::Schema* schema = rec.compiled ? &*rec.compiled : nullptr;
 #if defined(__cpp_exceptions)
     try {
 #endif
         switch (rec.kind) {
             case EntityKind::Topic: {
                 if (rec.topic) break;
-                dart::Qos qos;
+                rant::Qos qos;
                 /* request what the provider offers, so the match can never be refused
                  * by the RxO rule; a reliable provider then repairs into our queue */
                 auto it = folded.find(rec_key(rec.kind, rec.name));
                 qos.reliability = it != folded.end() && it->second.reliable
-                                      ? dart::Reliability::Reliable
-                                      : dart::Reliability::BestEffort;
-                rec.topic.emplace(*node, rec.name, dart::Role::SubOnly, schema, qos);
+                                      ? rant::Reliability::Reliable
+                                      : rant::Reliability::BestEffort;
+                rec.topic.emplace(*node, rec.name, rant::Role::SubOnly, schema, qos);
                 rec.topic->take(0);   /* switch to QUEUED delivery from the start */
                 break;
             }
             case EntityKind::Variable: {
                 if (rec.var) break;
-                dart::VariableOptions<> options;
+                rant::VariableOptions<> options;
                 options.backpressure_wait_us = kEffectWaitUs;
                 rec.var.emplace(*node, rec.name, schema, options);
                 rec.var_created = Clock::now();
                 Rec* self = &rec;
-                rec.var->on_change([self](const dart::VariableUpdate& update) {
+                rec.var->on_change([self](const rant::VariableUpdate& update) {
                     /* an update can only come from the owner: the match has formed */
                     self->owner_seen.store(true, std::memory_order_relaxed);
-                    const dart::Bytes value = update.value();
+                    const rant::Bytes value = update.value();
                     std::lock_guard<std::mutex> hold(self->slot_mu);
                     self->slot.assign(value.begin(), value.end());
                     self->slot_schema = update.raw_schema();
@@ -705,7 +705,7 @@ bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
             }
             case EntityKind::Task: {
                 if (rec.task) break;
-                dart::TaskOptions options;
+                rant::TaskOptions options;
                 options.backpressure_wait_us = kEffectWaitUs;
                 rec.task.emplace(*node, rec.name, schema,
                                  rec.prg_compiled ? &*rec.prg_compiled : nullptr,
@@ -714,7 +714,7 @@ bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
             }
             case EntityKind::Function: {
                 if (rec.fn) break;
-                dart::FunctionOptions options;
+                rant::FunctionOptions options;
                 options.backpressure_wait_us = kEffectWaitUs;
                 rec.fn.emplace(*node, rec.name, schema,
                                rec.rsp_compiled ? &*rec.rsp_compiled : nullptr, options);
@@ -730,7 +730,7 @@ bool DartMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
     return true;
 }
 
-void DartMesh::apply(const Program& program,
+void RantMesh::apply(const Program& program,
                      const std::set<std::string>& display_reads) {
     if (!impl_->node || !impl_->node->valid()) return;
     for (auto& item : impl_->recs) {
@@ -808,7 +808,7 @@ void DartMesh::apply(const Program& program,
 
 /* ============================== drain ======================================= */
 
-bool DartMesh::Impl::page_viewed(const Rec& rec) const {
+bool RantMesh::Impl::page_viewed(const Rec& rec) const {
     if (rec.pages.empty()) return true;
     for (uint64_t page : rec.pages) {
         if (page == 0) return true;
@@ -818,8 +818,8 @@ bool DartMesh::Impl::page_viewed(const Rec& rec) const {
     return false;
 }
 
-void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDef>& fields,
-                             dc::DartBytes data, const dc::DartSchema* schema,
+void RantMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDef>& fields,
+                             dc::RantBytes data, const dc::RantSchema* schema,
                              uint32_t lead) {
     if (!schema || fields.empty()) return;
     const uint32_t total = lead + static_cast<uint32_t>(fields.size());
@@ -830,24 +830,24 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
     rec.elem_strings.clear();
     rec.elem_meta.clear();
 
-    auto map_scalar = [&](const dc::DartValue& entry) -> Value {
-        switch (static_cast<dart::FieldType>(entry.kind)) {
-            case dart::FieldType::U8:
-            case dart::FieldType::U16:
-            case dart::FieldType::U32:
-            case dart::FieldType::U64:
+    auto map_scalar = [&](const dc::RantValue& entry) -> Value {
+        switch (static_cast<rant::FieldType>(entry.kind)) {
+            case rant::FieldType::U8:
+            case rant::FieldType::U16:
+            case rant::FieldType::U32:
+            case rant::FieldType::U64:
                 return Value::number(static_cast<double>(entry.v.u));
-            case dart::FieldType::I8:
-            case dart::FieldType::I16:
-            case dart::FieldType::I32:
-            case dart::FieldType::I64:
+            case rant::FieldType::I8:
+            case rant::FieldType::I16:
+            case rant::FieldType::I32:
+            case rant::FieldType::I64:
                 return Value::number(static_cast<double>(entry.v.i));
-            case dart::FieldType::F32:
-            case dart::FieldType::F64:
+            case rant::FieldType::F32:
+            case rant::FieldType::F64:
                 return Value::number(entry.v.f);
-            case dart::FieldType::Bool:
+            case rant::FieldType::Bool:
                 return Value::boolean(entry.v.u != 0);
-            case dart::FieldType::VString: {
+            case rant::FieldType::VString: {
                 const Value out = Value::text(static_cast<uint32_t>(rec.elem_strings.size()));
                 rec.elem_strings.emplace_back(
                     entry.bytes.data ? reinterpret_cast<const char*>(entry.bytes.data) : "",
@@ -859,22 +859,22 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
     };
 
     auto decode_agg = [&](const FieldDef& def, uint32_t field_index) -> Value {
-        const int index = dc::dart_schema_field_index(schema, def.path.c_str());
+        const int index = dc::rant_schema_field_index(schema, def.path.c_str());
         if (index < 0) return Value::nil();
-        dc::DartValue raw;
-        if (!dc::dart_get_value(data, schema, static_cast<uint16_t>(index), &raw))
+        dc::RantValue raw;
+        if (!dc::rant_get_value(data, schema, static_cast<uint16_t>(index), &raw))
             return Value::nil();
         const uint32_t offset = static_cast<uint32_t>(rec.elem_pool.size());
-        const dart::FieldType kind = static_cast<dart::FieldType>(raw.kind);
+        const rant::FieldType kind = static_cast<rant::FieldType>(raw.kind);
         const uint32_t limit = def.bound ? def.bound : kVarrCeiling;
-        if (kind == dart::FieldType::Map) {
-            const dc::DartBytes body = raw.bytes;
-            uint32_t pairs = std::min<uint32_t>(dc::dart_map_count(body), limit);
+        if (kind == rant::FieldType::Map) {
+            const dc::RantBytes body = raw.bytes;
+            uint32_t pairs = std::min<uint32_t>(dc::rant_map_count(body), limit);
             uint32_t kept = 0;
             for (uint32_t e = 0; e < pairs; ++e) {
-                dc::DartString key{};
-                dc::DartValue entry{};
-                if (!dc::dart_map_at(body, static_cast<uint16_t>(e), &key, &entry)) break;
+                dc::RantString key{};
+                dc::RantValue entry{};
+                if (!dc::rant_map_at(body, static_cast<uint16_t>(e), &key, &entry)) break;
                 rec.elem_pool.push_back(
                     Value::text(static_cast<uint32_t>(rec.elem_strings.size())));
                 rec.elem_strings.emplace_back(key.data ? key.data : "", key.len);
@@ -885,13 +885,13 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
                 {field_index, offset, static_cast<uint32_t>(rec.elem_pool.size()) - offset});
             return Value::map(0, kept);
         }
-        if (kind != dart::FieldType::Array && kind != dart::FieldType::VArray)
+        if (kind != rant::FieldType::Array && kind != rant::FieldType::VArray)
             return Value::nil();
-        const dart::FieldType elem = static_cast<dart::FieldType>(raw.elem);
-        if (elem == dart::FieldType::String) {
+        const rant::FieldType elem = static_cast<rant::FieldType>(raw.elem);
+        if (elem == rant::FieldType::String) {
             uint32_t count = 0;
             while (count < limit) {
-                const dc::DartString s = dc::dart_get_string_at(
+                const dc::RantString s = dc::rant_get_string_at(
                     data, schema, def.path.c_str(), static_cast<uint16_t>(count));
                 if (!s.data) break;
                 rec.elem_pool.push_back(
@@ -909,7 +909,7 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
             rec.elem_pool.push_back(scalar_elem(elem, raw.bytes.data + k * size));
         rec.elem_meta.push_back({field_index, offset, count});
         return Value::list(0, count,
-                           elem == dart::FieldType::Bool ? ValueTag::Bool : ValueTag::Num);
+                           elem == rant::FieldType::Bool ? ValueTag::Bool : ValueTag::Num);
     };
 
     for (size_t i = 0; i < fields.size(); ++i) {
@@ -949,7 +949,7 @@ void DartMesh::Impl::deliver(MeshSink& sink, Rec& rec, const std::vector<FieldDe
 
 /* the task read table's two leading facts, delivered as a two-field update: position
  * 0 = running, 1 = message (on_update touches only the positions an update carries) */
-void DartMesh::Impl::deliver_task_flags(MeshSink& sink, Rec& rec, bool running,
+void RantMesh::Impl::deliver_task_flags(MeshSink& sink, Rec& rec, bool running,
                                         const std::string& message) {
     const Value fields[kTaskLeadFields] = {Value::boolean(running), Value::text(0)};
     const std::string_view texts[kTaskLeadFields] = {std::string_view{}, message};
@@ -962,7 +962,7 @@ void DartMesh::Impl::deliver_task_flags(MeshSink& sink, Rec& rec, bool running,
     sink.on_update(update);
 }
 
-void DartMesh::drain(MeshSink& sink) {
+void RantMesh::drain(MeshSink& sink) {
     Impl& impl = *impl_;
     if (!impl.node || !impl.node->valid()) return;
     const Clock::time_point now = Clock::now();
@@ -971,27 +971,27 @@ void DartMesh::drain(MeshSink& sink) {
 
         if (rec.topic) {
             for (int budget = 0; budget < kTakeBudget; ++budget) {
-                std::optional<dart::Message<>> msg = rec.topic->take(0);
+                std::optional<rant::Message<>> msg = rec.topic->take(0);
                 if (!msg) break;
-                const dart::Bytes data = msg->data();
+                const rant::Bytes data = msg->data();
                 if (msg->raw_schema()) {
                     rec.last_payload.assign(data.begin(), data.end());
-                    rec.last_payload_hash = dc::dart_schema_hash(msg->raw_schema());
+                    rec.last_payload_hash = dc::rant_schema_hash(msg->raw_schema());
                     rec.last_schema = msg->raw_schema();
                 }
                 impl.deliver(sink, rec, rec.fields,
-                             dc::dart_bytes(data.data(), data.size()), msg->raw_schema());
+                             dc::rant_bytes(data.data(), data.size()), msg->raw_schema());
             }
         }
 
         bool slot_dirty = false;
-        const dc::DartSchema* schema = nullptr;
+        const dc::RantSchema* schema = nullptr;
         bool flags_dirty = false;
         bool running = false;
         std::string message;
         bool prg_dirty = false;
         std::vector<uint8_t> prg_payload;
-        const dc::DartSchema* prg_schema = nullptr;
+        const dc::RantSchema* prg_schema = nullptr;
         {
             std::lock_guard<std::mutex> hold(rec.slot_mu);
             slot_dirty = rec.slot_dirty;
@@ -1018,18 +1018,18 @@ void DartMesh::drain(MeshSink& sink) {
         if (flags_dirty) impl.deliver_task_flags(sink, rec, running, message);
         if (prg_dirty)
             impl.deliver(sink, rec, rec.prg_raw,
-                         dc::dart_bytes(prg_payload.data(), prg_payload.size()),
+                         dc::rant_bytes(prg_payload.data(), prg_payload.size()),
                          prg_schema, kTaskLeadFields);
         if (slot_dirty) {
             if (rec.kind == EntityKind::Variable && schema) {
                 rec.last_payload = rec.out;
-                rec.last_payload_hash = dc::dart_schema_hash(schema);
+                rec.last_payload_hash = dc::rant_schema_hash(schema);
                 rec.last_schema = schema;
             }
             const bool response =
                 rec.kind == EntityKind::Function || rec.kind == EntityKind::Task;
             impl.deliver(sink, rec, response ? rec.rsp_raw : rec.fields,
-                         dc::dart_bytes(rec.out.data(), rec.out.size()), schema,
+                         dc::rant_bytes(rec.out.data(), rec.out.size()), schema,
                          rec.kind == EntityKind::Task
                              ? kTaskLeadFields + static_cast<uint32_t>(rec.prg_raw.size())
                              : 0);
@@ -1040,11 +1040,11 @@ void DartMesh::drain(MeshSink& sink) {
             rec.next_poll = now + std::chrono::milliseconds(rec.poll_ms);
             rec.inflight.store(true, std::memory_order_relaxed);
             Rec* self = &rec;
-            const dart::SendStatus status = rec.fn->call_async(
-                dart::Bytes(rec.default_request.data(), rec.default_request.size()),
-                [self](const dart::ResponseView<>& response) {
+            const rant::SendStatus status = rec.fn->call_async(
+                rant::Bytes(rec.default_request.data(), rec.default_request.size()),
+                [self](const rant::ResponseView<>& response) {
                     if (response.ok() && response.raw_schema()) {
-                        const dart::Bytes data = response.data();
+                        const rant::Bytes data = response.data();
                         std::lock_guard<std::mutex> hold(self->slot_mu);
                         self->slot.assign(data.begin(), data.end());
                         self->slot_schema = response.raw_schema();
@@ -1052,7 +1052,7 @@ void DartMesh::drain(MeshSink& sink) {
                     }
                     self->inflight.store(false, std::memory_order_relaxed);
                 });
-            if (status != dart::SendStatus::Ok)
+            if (status != rant::SendStatus::Ok)
                 rec.inflight.store(false, std::memory_order_relaxed);
         }
     }
@@ -1060,7 +1060,7 @@ void DartMesh::drain(MeshSink& sink) {
 
 /* ============================== effects ===================================== */
 
-bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fault) {
+bool RantMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fault) {
     /* a PARAMETERLESS send (bare, field UINT32_MAX: a no-argument call or a
        payload-less emit) has nothing to encode: an untyped target gets an empty
        payload, a typed one its schema's default message */
@@ -1073,8 +1073,8 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
         fault = "entity '" + rec.name + "' has no reflected schema to encode with";
         return false;
     }
-    const dc::DartSchema* schema = rec.compiled->raw();
-    const size_t base_size = dc::dart_schema_msg_min(schema);
+    const dc::RantSchema* schema = rec.compiled->raw();
+    const size_t base_size = dc::rant_schema_msg_min(schema);
 
     /* the RMW base: the owner's exact last payload when its layout matches ours,
      * else the schema's defaults (a write before any read starts from defaults) */
@@ -1095,7 +1095,7 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
     }
     if (!seeded) {
         rec.out.assign(base_size, 0);
-        dc::dart_schema_message_default(schema, rec.out.data(), rec.out.size());
+        dc::rant_schema_message_default(schema, rec.out.data(), rec.out.size());
     }
 
     auto set_one = [&](uint32_t index, const Value& value, std::string_view text) -> bool {
@@ -1107,57 +1107,57 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
         const char* path = enc.path.c_str();
         auto grow_for = [&](size_t extra) {
             const size_t used =
-                dc::dart_schema_msg_len(schema, rec.out.data(), rec.out.size());
+                dc::rant_schema_msg_len(schema, rec.out.data(), rec.out.size());
             if (rec.out.size() < used + extra) rec.out.resize(used + extra);
         };
         int ok = 0;
         switch (enc.kind) {
-            case dart::FieldType::U8:
-            case dart::FieldType::U16:
-            case dart::FieldType::U32:
-            case dart::FieldType::U64:
-                ok = dc::dart_set_uint(rec.out.data(), rec.out.size(), schema, path,
+            case rant::FieldType::U8:
+            case rant::FieldType::U16:
+            case rant::FieldType::U32:
+            case rant::FieldType::U64:
+                ok = dc::rant_set_uint(rec.out.data(), rec.out.size(), schema, path,
                                        value.tag == ValueTag::Bool
                                            ? (value.data.boolean ? 1u : 0u)
                                            : static_cast<uint64_t>(std::llround(
                                                  std::max(0.0, value.data.num))));
                 break;
-            case dart::FieldType::I8:
-            case dart::FieldType::I16:
-            case dart::FieldType::I32:
-            case dart::FieldType::I64:
-                ok = dc::dart_set_int(rec.out.data(), rec.out.size(), schema, path,
+            case rant::FieldType::I8:
+            case rant::FieldType::I16:
+            case rant::FieldType::I32:
+            case rant::FieldType::I64:
+                ok = dc::rant_set_int(rec.out.data(), rec.out.size(), schema, path,
                                       static_cast<int64_t>(std::llround(value.data.num)));
                 break;
-            case dart::FieldType::F32:
-                ok = dc::dart_set_f32(rec.out.data(), rec.out.size(), schema, path,
+            case rant::FieldType::F32:
+                ok = dc::rant_set_f32(rec.out.data(), rec.out.size(), schema, path,
                                       static_cast<float>(value.data.num));
                 break;
-            case dart::FieldType::F64:
-                ok = dc::dart_set_f64(rec.out.data(), rec.out.size(), schema, path,
+            case rant::FieldType::F64:
+                ok = dc::rant_set_f64(rec.out.data(), rec.out.size(), schema, path,
                                       value.data.num);
                 break;
-            case dart::FieldType::Bool:
-                ok = dc::dart_set_uint(rec.out.data(), rec.out.size(), schema, path,
+            case rant::FieldType::Bool:
+                ok = dc::rant_set_uint(rec.out.data(), rec.out.size(), schema, path,
                                        value_truth(value) ? 1u : 0u);
                 break;
-            case dart::FieldType::Enum:
-                ok = dc::dart_set_int(rec.out.data(), rec.out.size(), schema, path,
+            case rant::FieldType::Enum:
+                ok = dc::rant_set_int(rec.out.data(), rec.out.size(), schema, path,
                                       value.tag == ValueTag::Enum
                                           ? value.data.integer
                                           : static_cast<int64_t>(std::llround(value.data.num)));
                 break;
-            case dart::FieldType::String:
-            case dart::FieldType::VString:
+            case rant::FieldType::String:
+            case rant::FieldType::VString:
                 grow_for(text.size() + 8);
-                ok = dc::dart_set_string(rec.out.data(), rec.out.size(), schema, path,
-                                         dc::dart_string(text.data(), text.size()));
+                ok = dc::rant_set_string(rec.out.data(), rec.out.size(), schema, path,
+                                         dc::rant_string(text.data(), text.size()));
                 break;
-            case dart::FieldType::Array:
-            case dart::FieldType::VArray: {
+            case rant::FieldType::Array:
+            case rant::FieldType::VArray: {
                 /* THE WHOLE ARRAY (no index): when this effect carries elements for
                    the field and the field was actually GIVEN, they pack and land via
-                   dart_set_array — a fixed array takes at most its schema's count
+                   rant_set_array — a fixed array takes at most its schema's count
                    (the rest zeroes), a variable one becomes exactly the list.
                    Ungiven, the RMW base keeps the owner's bytes untouched.
                    ONE ELEMENT (an index) rewrites in place over that base, so the
@@ -1173,7 +1173,7 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                             : nullptr;
                     if (!given || !span || !span->data) return true;
                     const uint32_t entries = span->count;
-                    if (enc.elem == dart::FieldType::String) {
+                    if (enc.elem == rant::FieldType::String) {
                         const size_t slot = 2u + enc.str_cap;
                         rec.pack.assign(static_cast<size_t>(entries) * slot, 0);
                         for (uint32_t k = 0; k < entries; ++k) {
@@ -1207,7 +1207,7 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                                         "; a send of UNKNOWN is refused";
                                 return false;
                             }
-                            if (enc.elem != dart::FieldType::Bool &&
+                            if (enc.elem != rant::FieldType::Bool &&
                                 element.tag != ValueTag::Num) {
                                 fault = "field '" + enc.path +
                                         "' holds numbers; element " +
@@ -1219,9 +1219,9 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                         }
                     }
                     grow_for(rec.pack.size() + 16);
-                    if (!dc::dart_set_array(
+                    if (!dc::rant_set_array(
                             rec.out.data(), rec.out.size(), schema, path,
-                            dc::dart_bytes(rec.pack.data(), rec.pack.size()))) {
+                            dc::rant_bytes(rec.pack.data(), rec.pack.size()))) {
                         fault = "field '" + enc.path + "' did not take " +
                                 std::to_string(entries) +
                                 " elements (a fixed array holds its schema's count)";
@@ -1229,23 +1229,23 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                     }
                     return true;
                 }
-                if (enc.elem == dart::FieldType::String) {
-                    if (!dc::dart_set_string_at(
+                if (enc.elem == rant::FieldType::String) {
+                    if (!dc::rant_set_string_at(
                             rec.out.data(), rec.out.size(), schema, path,
                             static_cast<uint16_t>(effect.elem_index),
-                            dc::dart_string(text.data(), text.size()))) {
+                            dc::rant_string(text.data(), text.size()))) {
                         fault = "field '" + enc.path + "' has no element " +
                                 std::to_string(effect.elem_index) + " to write";
                         return false;
                     }
                     return true;
                 }
-                if (enc.elem != dart::FieldType::Bool && value.tag != ValueTag::Num) {
+                if (enc.elem != rant::FieldType::Bool && value.tag != ValueTag::Num) {
                     fault = "field '" + enc.path + "' holds numbers; the element is not one";
                     return false;
                 }
-                const dc::DartBytes view = dc::dart_get_array(
-                    dc::dart_bytes(rec.out.data(), rec.out.size()), schema, path);
+                const dc::RantBytes view = dc::rant_get_array(
+                    dc::rant_bytes(rec.out.data(), rec.out.size()), schema, path);
                 const size_t size = elem_size_of(enc.elem);
                 const uint32_t count =
                     view.data && size ? static_cast<uint32_t>(view.len / size) : 0;
@@ -1260,7 +1260,7 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
                 pack_scalar_elem(enc.elem, value, at);
                 return true;
             }
-            case dart::FieldType::Map: {
+            case rant::FieldType::Map: {
                 /* the HMI has no map encode. A map field the author actually GAVE
                    refuses loudly — a value dropped without a trace is the one
                    unforgivable outcome; ungiven, the RMW base keeps the owner's
@@ -1305,22 +1305,22 @@ bool DartMesh::Impl::encode(Rec& rec, const EffectView& effect, std::string& fau
             if (!set_one(i, effect.fields[i], text)) return false;
         }
     }
-    const size_t live = dc::dart_schema_msg_len(schema, rec.out.data(), rec.out.size());
+    const size_t live = dc::rant_schema_msg_len(schema, rec.out.data(), rec.out.size());
     rec.out.resize(live ? live : base_size);
     return true;
 }
 
 /* what a failed send status MEANS, in the author's language; the raw number only
  * where no story is known */
-static std::string send_status_story(dart::SendStatus status) {
+static std::string send_status_story(rant::SendStatus status) {
     switch (status) {
-        case dart::SendStatus::NoTopic:
+        case rant::SendStatus::NoTopic:
             return "found no provider on the mesh (its node may be down)";
-        case dart::SendStatus::BadRole:
+        case rant::SendStatus::BadRole:
             return "was refused: the provider is read-only";
-        case dart::SendStatus::TooBig:
+        case rant::SendStatus::TooBig:
             return "exceeds the message size bound";
-        case dart::SendStatus::OutOfMemory:
+        case rant::SendStatus::OutOfMemory:
             return "failed: the mesh node is out of memory";
         default:
             return "failed (send status " +
@@ -1328,7 +1328,7 @@ static std::string send_status_story(dart::SendStatus status) {
     }
 }
 
-bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
+bool RantMesh::execute(const EffectView& effect, std::string& fault) noexcept {
     Impl& impl = *impl_;
     if (!effect.entity) {
         fault = "effect has no entity";
@@ -1350,8 +1350,8 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             fault = "unforce needs a variable";
             return false;
         }
-        const dart::SendStatus status = rec->var->unforce();
-        if (status != dart::SendStatus::Ok) {
+        const rant::SendStatus status = rec->var->unforce();
+        if (status != rant::SendStatus::Ok) {
             fault = "unforce of '" + rec->name + "' was refused";
             return false;
         }
@@ -1373,12 +1373,12 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             if (!rec->call_live) return true;
             call_id = rec->call_id;
         }
-        const dart::SendStatus status = rec->task->cancel(call_id);
-        if (status == dart::SendStatus::BadRole) {
+        const rant::SendStatus status = rec->task->cancel(call_id);
+        if (status == rant::SendStatus::BadRole) {
             fault = "task '" + rec->name + "' declares no cancel";
             return false;
         }
-        if (status != dart::SendStatus::Ok && status != dart::SendStatus::State) {
+        if (status != rant::SendStatus::Ok && status != rant::SendStatus::State) {
             fault = "cancel of '" + rec->name + "' " + send_status_story(status);
             return false;
         }
@@ -1386,15 +1386,15 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
     }
 
     if (!impl.encode(*rec, effect, fault)) return false;
-    const dart::Bytes payload(rec->out.data(), rec->out.size());
+    const rant::Bytes payload(rec->out.data(), rec->out.size());
 
-    dart::SendStatus status = dart::SendStatus::Ok;
+    rant::SendStatus status = rant::SendStatus::Ok;
     switch (effect.verb) {
         case Verb::Write:
-            status = rec->var ? rec->var->set(payload) : dart::SendStatus::NoTopic;
+            status = rec->var ? rec->var->set(payload) : rant::SendStatus::NoTopic;
             break;
         case Verb::Force:
-            status = rec->var ? rec->var->force(payload) : dart::SendStatus::NoTopic;
+            status = rec->var ? rec->var->force(payload) : rant::SendStatus::NoTopic;
             break;
         case Verb::Publish: {
             if (!rec->topic) {
@@ -1403,7 +1403,7 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             }
             if (!rec->topic_pub) {
                 /* consumption created the topic SubOnly; the first publish widens it */
-                rec->topic->set_role(dart::Role::PubSub);
+                rec->topic->set_role(rant::Role::PubSub);
                 rec->topic_pub = true;
             }
             status = rec->topic->send(payload);
@@ -1432,9 +1432,9 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
                     rec->task_flags_dirty = true;
                 }
                 Rec* self = rec;
-                const dart::TaskCall call = rec->task->call_async(
+                const rant::TaskCall call = rec->task->call_async(
                     payload,
-                    [self](const dart::ProgressView<>& progress) {
+                    [self](const rant::ProgressView<>& progress) {
                         /* the RUNNING ack arrives empty; either way the call provably
                          * runs. Progress is latest-wins: an HMI paints the newest. */
                         std::lock_guard<std::mutex> hold(self->slot_mu);
@@ -1443,20 +1443,20 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
                             self->task_flags_dirty = true;
                         }
                         if (progress.has_value() && progress.raw_schema()) {
-                            const dart::Bytes data = progress.data();
+                            const rant::Bytes data = progress.data();
                             self->prg_slot.assign(data.begin(), data.end());
                             self->prg_slot_schema = progress.raw_schema();
                             self->prg_dirty = true;
                         }
                     },
-                    [self](const dart::ResponseView<>& response) {
+                    [self](const rant::ResponseView<>& response) {
                         std::lock_guard<std::mutex> hold(self->slot_mu);
                         self->call_live = false;
                         self->task_running = false;
                         self->task_message.assign(response.message());
                         self->task_flags_dirty = true;
                         if (response.ok() && response.raw_schema()) {
-                            const dart::Bytes data = response.data();
+                            const rant::Bytes data = response.data();
                             self->slot.assign(data.begin(), data.end());
                             self->slot_schema = response.raw_schema();
                             self->slot_dirty = true;
@@ -1465,7 +1465,7 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
                 status = call.status;
                 {
                     std::lock_guard<std::mutex> hold(rec->slot_mu);
-                    if (status == dart::SendStatus::Ok) {
+                    if (status == rant::SendStatus::Ok) {
                         rec->call_id = call.id;
                     } else {
                         rec->call_live = false;
@@ -1481,9 +1481,9 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             }
             Rec* self = rec;
             status = rec->fn->call_async(
-                payload, [self](const dart::ResponseView<>& response) {
+                payload, [self](const rant::ResponseView<>& response) {
                     if (response.ok() && response.raw_schema()) {
-                        const dart::Bytes data = response.data();
+                        const rant::Bytes data = response.data();
                         std::lock_guard<std::mutex> hold(self->slot_mu);
                         self->slot.assign(data.begin(), data.end());
                         self->slot_schema = response.raw_schema();
@@ -1503,21 +1503,21 @@ bool DartMesh::execute(const EffectView& effect, std::string& fault) noexcept {
      * LEFT, and failing fast is honest) and only while the accessor is young enough
      * for "still forming" to be the likely story, so a write to a genuinely absent
      * owner never stalls the tick loop at steady state. */
-    if (status == dart::SendStatus::NoTopic && rec->var &&
+    if (status == rant::SendStatus::NoTopic && rec->var &&
         (effect.verb == Verb::Write || effect.verb == Verb::Force) &&
         !rec->owner_seen.load(std::memory_order_relaxed)) {
         const Clock::time_point deadline =
             std::min(Clock::now() + std::chrono::milliseconds(kOwnerWaitMs),
                      rec->var_created + std::chrono::milliseconds(kOwnerFormingMs));
-        while (status == dart::SendStatus::NoTopic && Clock::now() < deadline) {
+        while (status == rant::SendStatus::NoTopic && Clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             status = effect.verb == Verb::Force ? rec->var->force(payload)
                                                 : rec->var->set(payload);
         }
     }
-    if (status == dart::SendStatus::Ok && rec->kind == EntityKind::Variable)
+    if (status == rant::SendStatus::Ok && rec->kind == EntityKind::Variable)
         rec->owner_seen.store(true, std::memory_order_relaxed);
-    if (status != dart::SendStatus::Ok) {
+    if (status != rant::SendStatus::Ok) {
         fault = std::string(verb_name(effect.verb)) + " of '" + rec->name + "' " +
                 send_status_story(status);
         return false;

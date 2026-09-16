@@ -3228,7 +3228,7 @@ void test_struct_agg_fields() {
  * And an UNCHANGED whole store is not a change: the generation holds still, which is
  * what keeps a per-tick computed binding off the wire. */
 /* A BARE-schema topic (`bool`, `f64`, `string`: one anonymous field) IS its scalar.
- * The dart bool and the hmi bool meet as ONE primitive: reading the topic fills a bool
+ * The rant bool and the hmi bool meet as ONE primitive: reading the topic fills a bool
  * variable (or types a fresh temporary bool), writing the variable back out fills the
  * anonymous value, and no one-field struct type is interned in between. Mismatched
  * scalars still refuse. */

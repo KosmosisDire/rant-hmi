@@ -2,7 +2,7 @@
  * variable, a flow temporary, one of this instance's own slots - picks it from ONE
  * hierarchical tree, rendered like a folder listing (the explorer's idiom). Two roots:
  * `hmi` (this instance's names: the flow's locals in scope, then the variables, then the
- * instance's own slots, then a fresh name) and `dart` (the reflected mesh, foldered by the
+ * instance's own slots, then a fresh name) and `rant` (the reflected mesh, foldered by the
  * / segments of entity names). Picking a node carries its family, kind, name, field path
  * AND value type in one act, so the user never states where a thing lives: the pick
  * already knows, and the caller maps it onto the document's key-discriminated side forms.
@@ -95,7 +95,7 @@ function sideKey(side: Json | undefined): string | null {
 function revealCurrent(side: Json | undefined): void {
   if (!side || typeof side !== "object") return;
   if (typeof side.kind === "string" && side.kind !== "L" && side.name) {
-    expanded.add("dart");
+    expanded.add("rant");
     const segments = String(side.name).split("/");
     let prefix = "";
     for (let i = 0; i + 1 < segments.length; ++i) {
@@ -116,7 +116,7 @@ function revealCurrent(side: Json | undefined): void {
   }
 }
 
-const expanded = new Set<string>(["dart", "hmi", "hmi/local", "hmi/global"]);
+const expanded = new Set<string>(["rant", "hmi", "hmi/local", "hmi/global"]);
 
 let shell: Shell | null = null;
 let active: (() => void) | null = null;
@@ -305,7 +305,7 @@ function build_rows(editor: Editor, instance: Node | null, opts: SourceTreeOptio
     }
   }
 
-  /* ---- dart: the mesh ---- */
+  /* ---- rant: the mesh ---- */
   const entity_rows = (entity: MeshEntity, depth: number) => {
     /* a write-target tree (writableOnly) fills what it picks, so a function shows its
        ARGUMENTS; everywhere else a function is read and shows its response */
@@ -380,8 +380,8 @@ function build_rows(editor: Editor, instance: Node | null, opts: SourceTreeOptio
       (!opts.writableOnly || entity.kind !== "V" || entity.writable),
   );
   /* searching flattens to matching leaves; the root folders only frame a browse */
-  if (!searching) rows.push({ depth: 0, key: "dart", label: "dart", expandable: true });
-  if (openOr("dart")) folder_rows(foldEntities(mesh_entities), "", depth0);
+  if (!searching) rows.push({ depth: 0, key: "rant", label: "rant", expandable: true });
+  if (openOr("rant")) folder_rows(foldEntities(mesh_entities), "", depth0);
 
   return rows;
 }
@@ -402,7 +402,7 @@ export function openSourceTree(
   /* every open starts COLLAPSED to the two worlds' top level; the one exception is
      the path to what the chip already holds, revealed and landed on */
   expanded.clear();
-  expanded.add("dart");
+  expanded.add("rant");
   expanded.add("hmi");
   expanded.add("hmi/local");
   expanded.add("hmi/global");

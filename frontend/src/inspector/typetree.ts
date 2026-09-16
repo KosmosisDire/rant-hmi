@@ -1,7 +1,7 @@
 /* The TYPE picker: a tree over the served type table, shaped like the
  * entity tree. Root struct types by name; every root BROWSES into its full field table
  * (so an unfamiliar name can be verified against what it carries), and an enum field is
- * itself pickable as `Root.path.to.field` (DART names only the root, so everything under
+ * itself pickable as `Root.path.to.field` (RANT names only the root, so everything under
  * it is addressed by the path to where it is used) and expands once more to show its
  * variants, name = value. An UNNAMED root is still in the tree, labeled by the entity
  * carrying it, browsable but not pickable: no name, no TypeRef.
@@ -65,7 +65,7 @@ interface Row {
   pick?: TypePick;
 }
 
-const expanded = new Set<string>(["hmi", "dart"]);
+const expanded = new Set<string>(["hmi", "rant"]);
 
 /* its own shell instance: #ttree stacks ABOVE #stree, because it opens on top of it */
 let shell: Shell | null = null;
@@ -92,7 +92,7 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
   const depth0 = searching ? 0 : 1;
 
   /* the same two roots the entity tree has: `hmi` owns the four built-in scalars,
-     `dart` owns everything the mesh serves */
+     `rant` owns everything the mesh serves */
   if (opts.scalars) {
     if (!searching)
       rows.push({ depth: 0, key: "hmi", label: "hmi", icon: "folder", expandable: true });
@@ -109,8 +109,8 @@ function build_rows(editor: Editor, opts: TypeTreeOptions, filter: string): Row[
   }
 
   if (!searching)
-    rows.push({ depth: 0, key: "dart", label: "dart", icon: "folder", expandable: true });
-  if (!openOr("dart")) return rows;
+    rows.push({ depth: 0, key: "rant", label: "rant", icon: "folder", expandable: true });
+  if (!openOr("rant")) return rows;
   for (const type of editor.mesh.types) {
     /* an unnamed root has no TypeRef: it stays in the tree, labeled by the
        entity carrying it, so its fields can be browsed, but nothing under it picks */
@@ -179,7 +179,7 @@ export function openTypeTree(
      what the row already holds, revealed and landed on */
   expanded.clear();
   expanded.add("hmi");
-  expanded.add("dart");
+  expanded.add("rant");
   if (current) {
     const dot = current.indexOf(".");
     if (dot > 0) expanded.add("t:" + current.slice(0, dot));

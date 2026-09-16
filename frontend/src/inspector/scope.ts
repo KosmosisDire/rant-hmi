@@ -298,7 +298,7 @@ function hmiRoot(editor: Editor, instance: Node | null,
   return rows.length ? [{ key: "hmi", label: "hmi", icon: "folder", children: rows }] : [];
 }
 
-/* ---- the dart universe: the mesh, foldered by the / segments of entity names ---- */
+/* ---- the rant universe: the mesh, foldered by the / segments of entity names ---- */
 
 /* THE fields a read sees OFF an entity (the backend's feed_fields, mirrored): the
  * served `returns` table where one exists (a function's response, a task's
@@ -332,7 +332,7 @@ export function foldEntities(entities: MeshEntity[]): EntityFolder {
   return root;
 }
 
-function dartRows(editor: Editor): BrowseRow[] {
+function meshRows(editor: Editor): BrowseRow[] {
   /* the reflection ordinal rides every leaf: the tree sorts for browsing, the flat
      projection restores the mesh's own order by it */
   const ordOf = new Map(editor.mesh.entities.map((entity, i) => [entity, i]));
@@ -374,13 +374,13 @@ function dartRows(editor: Editor): BrowseRow[] {
   return folderRows(foldEntities(readable), "");
 }
 
-function dartRoot(editor: Editor): BrowseRow[] {
-  const rows = dartRows(editor);
-  return rows.length ? [{ key: "dart", label: "dart", icon: "folder", children: rows }] : [];
+function meshRoot(editor: Editor): BrowseRow[] {
+  const rows = meshRows(editor);
+  return rows.length ? [{ key: "rant", label: "rant", icon: "folder", children: rows }] : [];
 }
 
 /* the standing roots a surface shares — and the ONE place isolation shows in the UI: a
- * surface INSIDE a component offers no dart universe at all, because nothing in there may
+ * surface INSIDE a component offers no rant universe at all, because nothing in there may
  * name the mesh. The compiler refuses it either way; not offering it is how the rule
  * teaches before the refusal has to. `extra` is what one surface binds on top of the
  * shared universe (a flow's `repeat`). */
@@ -388,7 +388,7 @@ function slotRoots(editor: Editor, element: Node | null,
                    extra: BrowseRow[] = []): BrowseRow[] {
   const rows = hmiRoot(editor, element, extra);
   if (element && inComponent(editor, element.id)) return rows;
-  return rows.concat(dartRoot(editor));
+  return rows.concat(meshRoot(editor));
 }
 
 /* ---- the factories: one per surface ---- */
@@ -433,7 +433,7 @@ function flowX(editor: Editor, instance: Node | null, flow: () => Flow, stepId: 
  * standing hierarchy with the flow's own names (x, the event's parameter, the
  * temporaries) leading under a "this flow" root.
  *
- * names() projects the same hmi and dart trees the browse draws; between them rides
+ * names() projects the same hmi and rant trees the browse draws; between them rides
  * the flow's own section — the temporaries and parameters standing at this row, and
  * every struct local's fields as dotted rows so one field can be computed from
  * another. That section's order is POSITIONAL (scopeAt's walk of the rows above),
@@ -495,7 +495,7 @@ export function flowScope(editor: Editor, instance: Node | null, flow: Flow, ste
             note: local.type || "field",
           });
       }
-      return rows.concat(projectNames(dartRoot(editor)));
+      return rows.concat(projectNames(meshRoot(editor)));
     },
     x,
     roots: () => flowRoot().concat(slotRoots(editor, instance, repeatRow(editor, at())),
@@ -679,7 +679,7 @@ function attrRoots(editor: Editor, node: Node): BrowseRow[] {
      way in, and not offering it is how the rule teaches before the refusal has to. */
   if (!comp)
     return rows.concat(variableRows(editor, node, "attr", displayReadable),
-                       dartRoot(editor), styleRoot(editor));
+                       meshRoot(editor), styleRoot(editor));
   /* the served slot table carries every property address in the component — bare for
      the component's own, dotted for an element's — which is exactly the reference universe
      the template compiler resolves */

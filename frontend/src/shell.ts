@@ -39,7 +39,7 @@ export class App implements Editor {
   /* every PAGE node's compiled attrs, keyed by node id: the other half of the compile
      product, and what lets the renderer run one interpreter over a page and a component */
   nodeAttrs: Record<string, NodeAttrs> = {};
-  /* the reflected entity tree, served by the backend: the "dart" root of the coming
+  /* the reflected entity tree, served by the backend: the "rant" root of the coming
      source picker (stage 6); the "hmi" root is the document's own variables */
   mesh: Mesh = { entities: [], types: [] };
   /* the served expression vocabulary: autocomplete reads exactly what compiles */
@@ -741,7 +741,7 @@ export class App implements Editor {
 
       shellMain.appendChild(
         el("header", { class: "topbar" }, [
-          el("div", { class: "wordmark", text: "DART HMI" }),
+          el("div", { class: "wordmark", text: "RANT HMI" }),
           tabs,
           pageHost,
           el("div", { class: "status" }, [modes, play, problems, pill]),

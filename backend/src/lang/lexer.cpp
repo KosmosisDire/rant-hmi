@@ -152,7 +152,7 @@ Token Lexer::theme() {
 }
 
 /* A mesh entity reference: `@` consumes identifier characters INCLUDING slashes
- * (@cage/plc/IO/wDistanceSensorD), because DART entity names are path-spelled and a
+ * (@cage/plc/IO/wDistanceSensorD), because RANT entity names are path-spelled and a
  * bare '/' is division. It stops at '.', which stays ordinary field access — an
  * entity's name never contains a dot, its fields are reached through one. */
 Token Lexer::entity() {

@@ -621,7 +621,7 @@ class ViewLower {
     /* ONE MESH REFERENCE, resolved the scalar tier's way spelling for spelling: a
      * single-field entity reads whole under its bare `@name` (and a dot after that is
      * an ordinary method on the value), a fielded one reads `@name.path`, walking the
-     * field map a member at a time so a dotted DART path resolves at its longest
+     * field map a member at a time so a dotted RANT path resolves at its longest
      * match. A read lands on a `mesh:` cell the backend publishes from the same
      * last-value mirror a flow reads, so the two tiers cannot disagree about what the
      * field is worth. */

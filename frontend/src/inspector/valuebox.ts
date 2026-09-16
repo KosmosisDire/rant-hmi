@@ -105,7 +105,7 @@ let browseShell: Shell | null = null;
 /* expansion state, shared across boxes and openings; the roots start open */
 const browseExpanded = new Set<string>(["hmi", "hmi/local", "hmi/outer", "hmi/global",
                                         "attr/local", "attr/outer", "attr/global",
-                                        "dart", "enums", "flow"]);
+                                        "rant", "enums", "flow"]);
 
 /* THE DETOUR RULE: opening the browse popover mid-edit is part of the edit, not the
  * end of it. The popover takes focus (its search must type), which blurs the box —

@@ -652,7 +652,7 @@ Json trend_component() {
                     local("history", "List", Json::array()),
                 }),
                 Json::array(),
-                Json{{"surface", "$surface-2"}, {"radius", "4"}},
+                Json{{"surface", "$surface-2"}, {"radius", "4"}, {"clip", "4"}},
                 Json::array({
                     path("plot", Json{{"points",
                                        "history.Map((v, i) => Anchor("

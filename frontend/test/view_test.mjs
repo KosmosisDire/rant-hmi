@@ -3976,7 +3976,7 @@ check(stageNode("frame", 901) === heldAgain &&
   const streeRow4a = (label) =>
     vbrowse.querySelectorAll(".stree-row")
       .find((r) => r.textContent.startsWith(label)) ?? null;
-  check(streeRow4a("hmi") !== null && streeRow4a("dart") !== null,
+  check(streeRow4a("hmi") !== null && streeRow4a("rant") !== null,
         "the slot scope browses as the two-root source tree");
   /* the `this` folder: slots are ITS leaves, never flat rows at the hmi level */
   check(streeRow4a("this.value") === null,
@@ -4025,7 +4025,7 @@ check(stageNode("frame", 901) === heldAgain &&
         streeRow4a("duration") !== null && streeRow4a("progress") !== null,
         "a timer variable folders over running/remaining/duration/progress");
 
-  /* the dart root: entities folder by the / segments of their names */
+  /* the rant root: entities folder by the / segments of their names */
   check(streeRow4a("cage") !== null,
         "a path-spelled entity folders by its / segments");
   check(streeRow4a("IO") === null, "a shut folder hides what is under it");
@@ -4206,7 +4206,7 @@ check(stageNode("frame", 901) === heldAgain &&
         "committing writes the expression side form, got " + JSON.stringify(fromOp?.value));
 
   /* THE ENTITY ROOTS IN A FLOW: with a mesh reflected, the same rvalue box browses
-     the dart hierarchy the slot tier serves, and a pick inserts the @ spelling */
+     the rant hierarchy the slot tier serves, and a pick inserts the @ spelling */
   const editor4c = {
     ...editor4b,
     mesh: {
@@ -4229,9 +4229,9 @@ check(stageNode("frame", 901) === heldAgain &&
   const row4c = (label) =>
     vb4c.querySelectorAll(".stree-row")
       .find((r) => r.textContent.startsWith(label)) ?? null;
-  check(row4c("dart") !== null,
+  check(row4c("rant") !== null,
         "a flow box's browse offers the mesh root — the entity vocabulary reached flows");
-  /* dart starts expanded: its folders already stand */
+  /* rant starts expanded: its folders already stand */
   fire(row4c("plant"), "click", { detail: 0 });
   fire(row4c("temp"), "click", { detail: 0 });
   const leaf4c = row4c("alarm");

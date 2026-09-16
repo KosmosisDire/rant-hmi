@@ -48,7 +48,7 @@ export interface RepeatCopy {
   count: number;
 }
 
-/* one line of the log: what a mesh node said on @dart/log/<level>, or what a notify
+/* one line of the log: what a mesh node said on @rant/log/<level>, or what a notify
  * step spoke (level "notify", node "hmi"). `ms` rides only where the author set an
  * explicit showing time; absent, the view scales it with the text's length. */
 export interface LogEntry {
@@ -68,7 +68,7 @@ export const CANVAS_W = 1408;
 export const CANVAS_H = 792;
 export const CELL = 11;
 
-/* ---- the reflected mesh (the "dart" root of the source picker tree) ---- */
+/* ---- the reflected mesh (the "rant" root of the source picker tree) ---- */
 
 export interface MeshField {
   path: string;
@@ -80,7 +80,7 @@ export interface MeshField {
 export interface MeshEntity {
   kind: "V" | "T" | "F" | "K";
   name: string;
-  /* the schema's ROOT type name, "" where the schema names none. DART names only the
+  /* the schema's ROOT type name, "" where the schema names none. RANT names only the
      root, so this is the whole of what an entity says about its type. */
   type: string;
   writable: boolean;

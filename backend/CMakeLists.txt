@@ -1,8 +1,8 @@
 # The HMI designer backend: one process that owns the document, the compiled program
-# and all mesh I/O. Dependencies are fetched exactly as ../../bridge does.
+# and all mesh I/O.
 
 cmake_minimum_required(VERSION 3.19)
-project(hmi_designer CXX)
+project(hmi_designer C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,17 @@ foreach(_cfg ${CMAKE_CONFIGURATION_TYPES})
   string(TOUPPER "${_cfg}" _CFG)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_CFG} "${HMI_ROOT}/bin")
 endforeach()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/get_cpm.cmake")
+
+# Rant at a pinned release. Pass -DCPM_rant_SOURCE=<path to Rant> to build against a working tree.
+CPMAddPackage(NAME rant
+  GITHUB_REPOSITORY KosmosisDire/Rant
+  VERSION 0.0.14
+  EXCLUDE_FROM_ALL YES)
+
+# Static CRT to match rant_host. Before any other dependency so every object agrees.
+include("${rant_SOURCE_DIR}/tools/static_runtime.cmake")
 
 include(FetchContent)
 
@@ -71,8 +82,7 @@ add_library(hmi_core STATIC
   src/vm/vm.cpp
   src/mesh/port.cpp
   src/mesh/fake.cpp
-  src/mesh/dart_mesh.cpp
-  src/mesh/dart_impl.cpp
+  src/mesh/rant_mesh.cpp
   src/compile/components.cpp
   src/compile/compiler.cpp
   src/sched/scheduler.cpp
@@ -81,24 +91,11 @@ add_library(hmi_core STATIC
   src/sync/server.cpp
   src/app.cpp
 )
-# DART: the vendored single-header C++ wrapper (vendor/dart.hpp); refresh it by
-# copying a newer dist/dart.hpp over it. Override HMI_DART_DIST to build against
-# an un-vendored copy.
-set(HMI_DART_DIST "${HMI_ROOT}/vendor" CACHE PATH "directory holding dart.hpp")
-if(NOT EXISTS "${HMI_DART_DIST}/dart.hpp")
-  message(FATAL_ERROR "dart.hpp not found in ${HMI_DART_DIST} (set HMI_DART_DIST)")
-endif()
-
-target_include_directories(hmi_core PUBLIC src "${HMI_DART_DIST}")
-target_link_libraries(hmi_core PUBLIC nlohmann_json::nlohmann_json ixwebsocket::ixwebsocket)
-
+target_include_directories(hmi_core PUBLIC src)
+target_link_libraries(hmi_core PUBLIC nlohmann_json::nlohmann_json ixwebsocket::ixwebsocket
+                      rant::rant_host)
 find_package(Threads REQUIRED)
 target_link_libraries(hmi_core PUBLIC Threads::Threads)
-if(WIN32)
-  target_link_libraries(hmi_core PUBLIC ws2_32 bcrypt winmm)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_libraries(hmi_core PUBLIC rt)   # shm_open for DART's SHM fast path
-endif()
 
 # pinned float behaviour: replay compares effects bit for bit within one build
 if(MSVC)

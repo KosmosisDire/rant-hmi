@@ -142,7 +142,7 @@ export interface Editor {
   store: DocStore;
   registry: Registry | null;
   live: Live | null;
-  /* the reflected mesh (the "dart" root of the source picker); empty when offline */
+  /* the reflected mesh (the "rant" root of the source picker); empty when offline */
   mesh: Mesh;
   /* the served expression vocabulary (builtins + shape-scoped methods) */
   lang: Lang | null;

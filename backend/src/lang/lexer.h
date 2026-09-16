@@ -19,7 +19,7 @@ enum class TokenKind {
                   emitter; the scalar checker refuses it the way its grammar always
                   did. */
     Entity,    /* @<path>: a MESH ENTITY reference (`@cage/plc/gSafety`). The `@`
-                  consumes identifier characters plus '/', because DART names are
+                  consumes identifier characters plus '/', because RANT names are
                   path-spelled and '/' is otherwise division; the dot that follows is
                   ordinary field access. Only scopes that BIND entities (a slot
                   expression's) resolve it; everywhere else it is an unknown name. */

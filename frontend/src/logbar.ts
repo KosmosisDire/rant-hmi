@@ -1,6 +1,6 @@
 /* THE LOG AND ITS NOTIFICATIONS. One sidebar on the right edge of the window, beside
  * whatever workspace (or the operate view) is showing: every line the mesh's built-in
- * @dart/log/{error,warn,info} topics carried, every notification a flow's `notify`
+ * @rant/log/{error,warn,info} topics carried, every notification a flow's `notify`
  * step spoke, and the backend's own runtime faults (coalesced per site before they
  * ever reach the wire). The bar is closable (the L key toggles it) and drag-resizable
  * by its own gutter; open state and width are local preferences, like the sidebar
