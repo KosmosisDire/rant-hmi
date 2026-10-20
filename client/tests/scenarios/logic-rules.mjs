@@ -13,9 +13,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Logic");
   const boxes = page.locator(".rules .handler");
   const add = async () => {
+    const before = hmi.state.rules.length;
     await page.locator("button", { hasText: "Add a handler" }).click();
-    await eventually(async () => (await boxes.count()) === hmi.state.rules?.length && hmi.state.rules.length > 0, "a new handler");
-    return boxes.last();
+    await eventually(async () => hmi.state.rules.length === before + 1 && (await boxes.count()) === before + 1, "a new handler");
+    return boxes.nth(before);
   };
   const commit = async (locator, text) => {
     await locator.fill(text);
