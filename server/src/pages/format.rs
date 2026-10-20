@@ -16,6 +16,9 @@ const VALUE: &str = "value";
 const VIEWBOX: &str = "viewbox";
 const SRC: &str = "src";
 const FIT: &str = "fit";
+/// A drawing's code, which gives SVG markup to draw under its shapes. Code is kept as a block
+/// of its own, as a handler's is.
+const DRAW: &str = "draw";
 
 /// What a tag keeps as attributes of its own, besides `ATTRS`.
 fn own_attrs(tag: Tag) -> &'static [&'static str] {
@@ -76,7 +79,9 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             }
         }
         // a text input is an instance's like any other, while a span's text is its body
-        let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()));
+        let rest = e.props.iter().filter(|(k, _)| {
+            !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()) && !(e.tag == Tag::Svg && k.as_str() == DRAW)
+        });
         if e.tag == Tag::Use {
             // an instance's inputs are attributes of their own
             for (k, v) in rest {
@@ -90,22 +95,19 @@ fn element(out: &mut String, e: &Element, depth: usize) {
         }
     }
     let text = e.props.get(TEXT).filter(|_| body);
+    let draw = e.props.get(DRAW).filter(|_| e.tag == Tag::Svg);
     match text {
         Some(text) if e.handlers.is_empty() => out.push_str(&format!(">{text}</{tag}>\n")),
-        _ if e.handlers.is_empty() && e.children.is_empty() => out.push_str("/>\n"),
+        _ if e.handlers.is_empty() && e.children.is_empty() && draw.is_none() => out.push_str("/>\n"),
         _ => {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
+            if let Some(code) = draw {
+                block(out, &inner, "<draw>", code, "</draw>");
+            }
             for h in &e.handlers {
                 let after = if h.after.is_empty() { String::new() } else { format!(" after={}", quote(&h.after)) };
-                out.push_str(&format!("{inner}<on event=\"{}\"{after}>\n", h.event));
-                for line in h.code.lines() {
-                    if !line.trim().is_empty() {
-                        out.push_str(&format!("{inner}  {line}"));
-                    }
-                    out.push('\n');
-                }
-                out.push_str(&format!("{inner}</on>\n"));
+                block(out, &inner, &format!("<on event=\"{}\"{after}>", h.event), &h.code, "</on>");
             }
             if let Some(text) = text {
                 out.push_str(&format!("{inner}{text}\n"));
@@ -117,6 +119,18 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             out.push_str(&format!("</{tag}>\n"));
         }
     }
+}
+
+/// Code between its opening and closing tags, a step further in, blank lines left bare.
+fn block(out: &mut String, inner: &str, open: &str, code: &str, close: &str) {
+    out.push_str(&format!("{inner}{open}\n"));
+    for line in code.lines() {
+        if !line.trim().is_empty() {
+            out.push_str(&format!("{inner}  {line}"));
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!("{inner}{close}\n"));
 }
 
 /// Code with its common indent and its blank first and last lines taken off, as it is kept.
@@ -427,6 +441,15 @@ impl Reader<'_> {
         let mut handlers = Vec::new();
         if !self.eat("/>") {
             self.expect(">")?;
+            if tag == Tag::Svg {
+                self.gap();
+                if self.eat("<draw>") {
+                    let n = outside(self.rest(), "</draw>").ok_or_else(|| self.error("<draw> never closes"))?;
+                    props.insert(DRAW.to_owned(), dedent(&self.rest()[..n]));
+                    self.at += n;
+                    self.expect("</draw>")?;
+                }
+            }
             handlers = self.handlers()?;
             match tag {
                 Tag::Div | Tag::Svg | Tag::Group => children = self.children(&word)?,
@@ -507,6 +530,17 @@ mod tests {
         assert_eq!((svg.children[0].tag, svg.children[0].props["r"].as_str()), (Tag::Circle, "40"));
         assert_eq!(svg.children[1].children[0].handlers[0].code, "log(1);");
         assert_eq!((svg.children[2].tag, svg.children[2].props["text"].as_str()), (Tag::SvgText, "Speed.toFixed(1)"));
+        assert_eq!(write(&page), text);
+    }
+
+    #[test]
+    fn a_drawing_keeps_its_code_as_a_block() {
+        let text = "<page name=\"A\" size=\"1408x792\">\n  <svg id=\"e1\" x=\"44\" viewbox='\"0 0 100 100\"'>\n    <draw>\n      Array.from({ length: 12 }, (_, i) =>\n        `<line x1=\"50\" y1=\"4\" x2=\"50\" y2=\"12\" transform=\"rotate(${i * 30} 50 50)\"/>`).join(\"\") // never \"</draw>\"\n    </draw>\n    <on event=\"tap\">\n      log(1);\n    </on>\n    <circle id=\"e2\" r=\"40\"/>\n  </svg>\n</page>\n";
+        let page = parse(text, "a").unwrap();
+        let svg = &page.children[0];
+        assert!(svg.props["draw"].starts_with("Array.from({ length: 12 }, (_, i) =>\n  `<line"));
+        assert!(svg.props["draw"].ends_with("// never \"</draw>\""));
+        assert_eq!((svg.handlers[0].code.as_str(), svg.children[0].tag), ("log(1);", Tag::Circle));
         assert_eq!(write(&page), text);
     }
 

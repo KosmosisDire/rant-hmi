@@ -9,7 +9,7 @@ import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, pageScope } from "../../state/bind";
-import { componentNames, REPEAT } from "../../state/complete";
+import { complete, componentNames, REPEAT } from "../../state/complete";
 import { component, page as pageOf, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
@@ -322,6 +322,17 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <Field {...prop("viewbox")} label="View box" placeholder="its size" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
           <div class="field-hint">Shapes are drawn in the view box's units, by default its size in pixels. Each value is an expression, so a shape can follow a live value.</div>
+          <div class="section">Drawn by code</div>
+          <DraftInput
+            multiline
+            code
+            class="editor code"
+            value={p.element.props.draw ?? ""}
+            placeholder={'Array.from({ length: 12 }, (_, i) => `<line x1="50" y1="4" x2="50" y2="12" stroke="#9aa0a6" transform="rotate(${i * 30} 50 50)"/>`).join("")'}
+            onCommit={(t) => setProps(p.page, p.element.id, { draw: t.trim() === "" ? null : t })}
+            complete={(t, c) => complete(t, c, "expression", where().names, where().also)}
+          />
+          <div class="field-hint">Code that gives SVG markup as text, drawn under the shapes above and redrawn as the values it reads change.</div>
         </Show>
         <Show when={shape()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>

@@ -14,6 +14,7 @@ import { component, notify, state } from "../state/store";
 import { Image, Video } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { componentAct, type Act } from "./act";
+import { svgNodes } from "./markup";
 
 export interface Box {
   x: number;
@@ -32,7 +33,7 @@ export interface Room {
 }
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value", "viewbox", "src", "fit"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value", "viewbox", "src", "fit", "draw"]);
 
 /** What a drawing holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
@@ -267,7 +268,7 @@ function ElementView(p: ElementProps & { at?: At }) {
     style.height = `${at("h")}px`;
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
-    const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
+    const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit"), nodes: drawn(take("draw"), faults) } : undefined;
     const image = p.element.tag === "img" ? { src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
     const video = p.element.tag === "video" ? { alias: playable(p.element.props.src, () => take("src")), fit: String(take("fit") ?? "meet") } : undefined;
     return { style, unknown, faults, text, value, drawing, image, video, w: at("w"), h: at("h") };
@@ -296,6 +297,7 @@ function ElementView(p: ElementProps & { at?: At }) {
           {(d) => (
             // its own units by default are its box's pixels
             <svg class="drawing" viewBox={d().box ? String(d().box) : `0 0 ${look().w} ${look().h}`} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
+              <Drawn nodes={d().nodes} />
               <For each={p.element.children}>{inner}</For>
             </svg>
           )}
@@ -311,6 +313,26 @@ function ElementView(p: ElementProps & { at?: At }) {
       </Switch>
     </div>
   );
+}
+
+/** What a drawing's code gives, SVG markup as text or a list of it, as nodes to draw. Why it
+ *  cannot be drawn joins `faults`. */
+function drawn(code: unknown, faults: string[]): Node[] {
+  if (code === undefined || code === null || code === "") return [];
+  if (typeof code !== "string" && !Array.isArray(code)) {
+    faults.push("draw: the code gives no SVG markup, which is text");
+    return [];
+  }
+  const { nodes, error } = svgNodes(Array.isArray(code) ? code.join("") : code);
+  if (error) faults.push(`draw: ${error}`);
+  return nodes;
+}
+
+/** The SVG a drawing's code makes, under the drawing's own shapes. */
+function Drawn(p: { nodes: Node[] }) {
+  let g!: SVGGElement;
+  createEffect(() => g.replaceChildren(...p.nodes));
+  return <g ref={g} class="drawn" />;
 }
 
 /** A shape in a drawing: each property an SVG attribute, its value an expression. */
