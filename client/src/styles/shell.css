@@ -59,9 +59,11 @@
   overflow-wrap: anywhere;
 }
 
+/* Zero minimums keep the frame inside the window, so the middle shrinks and scrolls. */
 .app {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
 }
 
