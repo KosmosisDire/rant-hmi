@@ -170,6 +170,24 @@ impl Pages {
         self.get(page).and_then(|p| find(&p.children, id))
     }
 
+    /// Each page's name as handler code spells it, `Pages.RobotCell` for "Robot cell", and
+    /// its id. A name spelled like an earlier one gets a number.
+    pub fn keys(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for p in &self.list {
+            let words: String = p.name.split(|c: char| !c.is_ascii_alphanumeric()).map(capital).collect();
+            let base = if words.starts_with(|c: char| c.is_ascii_alphabetic()) { words } else { format!("Page{words}") };
+            let mut key = base.clone();
+            let mut n = 2;
+            while out.iter().any(|(k, _)| *k == key) {
+                key = format!("{base}{n}");
+                n += 1;
+            }
+            out.push((key, p.id.clone()));
+        }
+        out
+    }
+
     /// Applies an edit and saves what it touched. The error is for the user.
     pub fn apply(&mut self, edit: Edit) -> Result<Applied, String> {
         let mut pages = Vec::new();
@@ -362,6 +380,11 @@ impl Pages {
     }
 }
 
+fn capital(word: &str) -> String {
+    let mut c = word.chars();
+    c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
+}
+
 fn named(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() { Err("a page needs a name".into()) } else { Ok(name.to_owned()) }
@@ -523,6 +546,18 @@ mod tests {
         assert_eq!(pages.apply(Edit::AddPage { name: "Overview".into() }).unwrap().made.unwrap().1, "overview2");
         assert_eq!(pages.apply(Edit::RemovePage { page: "overview2".into() }).unwrap().pages, ["overview2"]);
         assert_eq!(pages.apply(Edit::RemovePage { page: o() }).err().unwrap(), "a project keeps at least one page");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn handler_code_names_pages_by_their_names() {
+        let dir = scratch("keys");
+        let mut pages = Pages::open(&dir).unwrap();
+        for name in ["Robot cell", "robot-cell", "2nd line"] {
+            pages.apply(Edit::AddPage { name: name.into() }).unwrap();
+        }
+        let keys: Vec<String> = pages.keys().into_iter().map(|(k, id)| format!("{k}={id}")).collect();
+        assert_eq!(keys, ["Page2ndLine=2nd-line", "Overview=overview", "RobotCell=robot-cell", "RobotCell2=robot-cell2"]);
         fs::remove_dir_all(&dir).unwrap();
     }
 

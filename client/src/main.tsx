@@ -13,6 +13,9 @@ import "./styles/design.css";
 import { render } from "solid-js/web";
 import { connect } from "./net/connection";
 import { App } from "./shell/App";
+import { Operator } from "./shell/Operator";
 
+// /run is the operator's screen, every other path the editor
+const operator = location.pathname.replace(/\/+$/, "") === "/run";
 connect();
-render(() => <App />, document.getElementById("root")!);
+render(() => (operator ? <Operator /> : <App />), document.getElementById("root")!);

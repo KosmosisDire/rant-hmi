@@ -1,4 +1,4 @@
-import { Code, Database, Moon, PenTool, Play, Sun } from "../ui/icons";
+import { Code, Database, ExternalLink, Moon, PenTool, Play, Sun } from "../ui/icons";
 import { For, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { state } from "../state/store";
@@ -32,6 +32,9 @@ export function TopBar(p: { tab: Tab; onTab: (t: Tab) => void }) {
           )}
         </For>
       </nav>
+      <a class="bar-btn" href="/run" target="_blank" title="Open the operator's screen, as a phone or panel shows it">
+        <ExternalLink size={16} />
+      </a>
       <button class="bar-btn" title="Switch the theme" onClick={toggleTheme}>
         <Show when={theme() === "dark"} fallback={<Moon size={16} />}>
           <Sun size={16} />

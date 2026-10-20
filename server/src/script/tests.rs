@@ -13,6 +13,7 @@ fn import(alias: &str, kind: Kind, intent: Intent) -> Import {
 fn engine() -> (Script, UnboundedReceiver<FromScript>) {
     let (tx, rx) = unbounded_channel();
     let script = Script::start(tx);
+    script.send(ToScript::Pages(vec![("Overview".into(), "overview".into()), ("RobotCell".into(), "robot-cell".into())]));
     script.send(ToScript::Imports(vec![
         import("Speed", Kind::Variable, Intent::Write),
         import("Running", Kind::Variable, Intent::Write),
@@ -142,6 +143,22 @@ fn sleep_waits_and_writes_go_out_at_each_await() {
     let said = until_done(&mut rx, 1);
     assert!(start.elapsed() >= Duration::from_millis(60));
     assert_eq!(writes(&said), [("Speed".to_string(), json!(6))]);
+}
+
+#[test]
+fn pages_open_and_close_by_name() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, code: "open(Pages.RobotCell);\nopen(Pages.Overview, { replace: true });\nclose();".into() });
+    let said = until_done(&mut rx, 1);
+    let moves: Vec<String> = said
+        .iter()
+        .filter_map(|m| match m {
+            FromScript::Open { page, replace, .. } => Some(format!("open {page} {replace}")),
+            FromScript::Close { .. } => Some("close".into()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(moves, ["open robot-cell false", "open overview true", "close"]);
 }
 
 #[test]

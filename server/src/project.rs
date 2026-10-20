@@ -12,6 +12,10 @@ use ts_rs::TS;
 #[ts(export)]
 pub struct ProjectInfo {
     pub name: String,
+    /// The page an operator's screen opens on, else the first page.
+    #[serde(default)]
+    #[ts(optional)]
+    pub start: Option<String>,
 }
 
 /// The four kinds of Rant entity.
@@ -66,7 +70,7 @@ impl Project {
                 .ok()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| "HMI".to_owned());
-            fs::write(&hmi, toml::to_string(&ProjectInfo { name })?).with_context(|| format!("writing {}", hmi.display()))?;
+            fs::write(&hmi, toml::to_string(&ProjectInfo { name, start: None })?).with_context(|| format!("writing {}", hmi.display()))?;
         }
         let info = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", hmi.display()))?;
         let file = imports_file(root);
@@ -89,6 +93,14 @@ impl Project {
         }
         self.imports.push(import);
         self.save()
+    }
+
+    /// Makes `page` the one operators' screens open on, and saves.
+    pub fn set_start(&mut self, page: String) -> Result<(), String> {
+        self.info.start = Some(page);
+        let file = self.root.join("hmi.toml");
+        let text = toml::to_string(&self.info).map_err(|e| e.to_string())?;
+        fs::write(&file, text).map_err(|e| format!("could not save {}: {e}", file.display()))
     }
 
     /// Removes an import and saves. The error is for the user.
@@ -148,6 +160,16 @@ mod tests {
         let again = Project::open(&dir).unwrap();
         assert_eq!(again.imports, vec![speed()]);
         assert!(fs::read_to_string(dir.join("data/imports.toml")).unwrap().contains("[[import]]"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_start_page_survives_a_reopen() {
+        let dir = scratch("start");
+        let mut p = Project::open(&dir).unwrap();
+        assert_eq!(p.info.start, None);
+        p.set_start("robot-cell".into()).unwrap();
+        assert_eq!(Project::open(&dir).unwrap().info.start.as_deref(), Some("robot-cell"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

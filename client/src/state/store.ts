@@ -10,6 +10,7 @@ import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { ServerMsg } from "../protocol/ServerMsg";
+import { back, push } from "./stack";
 
 export interface Live {
   value: JsonValue | null;
@@ -83,6 +84,9 @@ export function receive(msg: ServerMsg) {
     case "hello":
       setState({ project: msg.project, node: msg.node, version: msg.version });
       break;
+    case "project":
+      setState("project", msg.project);
+      break;
     case "imports":
       setState("imports", reconcile(msg.imports, { key: "alias" }));
       break;
@@ -116,6 +120,12 @@ export function receive(msg: ServerMsg) {
       break;
     case "notice":
       notify(msg.text, msg.level);
+      break;
+    case "open":
+      push(msg.page, msg.replace);
+      break;
+    case "close":
+      back();
       break;
     case "pong":
       break;

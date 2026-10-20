@@ -1,7 +1,8 @@
 // What handler code sees, set up in each run's own context. The host gives the `__` functions,
 // this turns them into plain names: an import reads as its value and takes assignment, a
-// function import is called and awaited, and notify, log and sleep are there.
-(imports) => {
+// function import is called and awaited, `Pages` names every page for open and close, and
+// notify, log and sleep are there.
+(imports, pages) => {
   class Unknown extends Error {
     constructor(alias) {
       super(`${alias} is unknown`);
@@ -57,6 +58,9 @@
   globalThis.notify = (v) => __notify(text(v));
   globalThis.log = (...values) => __log(values.map(text).join(" "));
   globalThis.sleep = (ms) => __sleep(Number(ms) || 0);
+  globalThis.Pages = Object.freeze(Object.fromEntries(pages.map(({ key, id }) => [key, id])));
+  globalThis.open = (page, options) => __open(String(page), options?.replace === true);
+  globalThis.close = () => __close();
 
   // How a run ended, in words for the person who wrote it. A call's failure comes from
   // another realm, so its message tells it apart, not its class.

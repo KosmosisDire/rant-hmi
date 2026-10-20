@@ -15,6 +15,8 @@ use crate::project::{Import, Kind, ProjectInfo};
 pub enum ServerMsg {
     /// The first message on a connection.
     Hello { session: u32, project: ProjectInfo, version: String, node: String },
+    /// The project's settings, whole, after a change.
+    Project { project: ProjectInfo },
     /// Every import, whole, after any change.
     Imports { imports: Vec<Import> },
     /// Every entity on the mesh, whole, after the mesh changed.
@@ -36,6 +38,10 @@ pub enum ServerMsg {
     Refused { text: String, alias: Option<String> },
     /// Something for the person at this screen: what a handler said, or why it stopped.
     Notice { text: String, level: Level },
+    /// A handler started from this screen opens a page, in place of the top one when `replace`.
+    Open { page: String, replace: bool },
+    /// A handler started from this screen closes the top page.
+    Close,
 }
 
 #[derive(Serialize, TS, Clone, Copy, Debug)]
@@ -63,6 +69,8 @@ pub enum ClientMsg {
     /// Takes back this screen's last edit, or puts back the last one it took back.
     Undo,
     Redo,
+    /// Makes a page the one operators' screens open on.
+    SetStart { page: String },
     /// A pointer did `event` to an element of a running page.
     Fire { page: String, id: String, event: Event },
 }

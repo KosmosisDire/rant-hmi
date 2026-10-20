@@ -7,4 +7,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * From a screen to the backend.
  */
-export type ClientMsg = { "type": "ping", t: number, } | { "type": "import", import: Import, } | { "type": "unimport", alias: string, } | { "type": "set", alias: string, path: string, value: JsonValue, } | { "type": "edit", edit: Edit, } | { "type": "undo" } | { "type": "redo" } | { "type": "fire", page: string, id: string, event: Event, };
+export type ClientMsg = { "type": "ping", t: number, } | { "type": "import", import: Import, } | { "type": "unimport", alias: string, } | { "type": "set", alias: string, path: string, value: JsonValue, } | { "type": "edit", edit: Edit, } | { "type": "undo" } | { "type": "redo" } | { "type": "set_start", page: string, } | { "type": "fire", page: string, id: string, event: Event, };

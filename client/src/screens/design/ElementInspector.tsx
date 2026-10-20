@@ -68,6 +68,17 @@ function PageInspector(p: { page: Page }) {
             <DraftInput value={String(p.page.height)} accept={side} onCommit={(t) => resize(p.page.width, Number(t))} />
           </div>
         </div>
+        <div class="section">Operators</div>
+        <Show
+          when={(state.project?.start ?? state.pages[0]?.id) === p.page.id}
+          fallback={
+            <button class="button" onClick={() => send({ type: "set_start", page: p.page.id })}>
+              Start operators here
+            </button>
+          }
+        >
+          <div class="field-hint">Operators' screens open on this page.</div>
+        </Show>
         <div class="placeholder">
           Select an element to change it. Every value is an expression: text goes in quotes, like <code>"Running"</code>, and <code>Speed.toFixed(1)</code> shows a live
           value.

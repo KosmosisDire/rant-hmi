@@ -81,6 +81,7 @@ pub struct App {
 impl App {
     pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, node: String) -> App {
         script.send(ToScript::Imports(project.imports.clone()));
+        script.send(ToScript::Pages(pages.keys()));
         App {
             project,
             pages,
@@ -204,6 +205,15 @@ impl App {
                 }
             }
             ClientMsg::Fire { page, id, event } => self.fire(session, page, id, event),
+            ClientMsg::SetStart { page } => {
+                if self.pages.get(&page).is_none() {
+                    return self.refuse(session, format!("there is no page {page}"), None);
+                }
+                match self.project.set_start(page) {
+                    Ok(()) => self.broadcast(&ServerMsg::Project { project: self.project.info.clone() }),
+                    Err(text) => self.refuse(session, text, None),
+                }
+            }
         }
     }
 
@@ -242,6 +252,16 @@ impl App {
             }
             FromScript::Notify { run, text } => self.tell(run, Level::Info, text),
             FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
+            FromScript::Open { run, page, replace } => match (self.pages.get(&page), self.runs.get(&run)) {
+                (None, _) => self.tell(run, Level::Fault, format!("there is no page {page}")),
+                (Some(_), Some(r)) => self.send(r.session, &ServerMsg::Open { page, replace }),
+                (Some(_), None) => {}
+            },
+            FromScript::Close { run } => {
+                if let Some(r) = self.runs.get(&run) {
+                    self.send(r.session, &ServerMsg::Close);
+                }
+            }
             FromScript::Done { run, end } => {
                 let text = match &end {
                     End::Ok => None,
@@ -301,6 +321,7 @@ impl App {
         if let Some((page, id)) = applied.made {
             self.send(session, &ServerMsg::Made { page, id });
         }
+        self.script.send(ToScript::Pages(self.pages.keys()));
     }
 
     fn set(&mut self, alias: &str, path: &str, value: Value) -> Result<(), String> {

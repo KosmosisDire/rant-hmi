@@ -6,6 +6,7 @@ export { default as ChevronRight } from "lucide-solid/icons/chevron-right";
 export { default as Code } from "lucide-solid/icons/code";
 export { default as Database } from "lucide-solid/icons/database";
 export { default as CircleX } from "lucide-solid/icons/circle-x";
+export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as File } from "lucide-solid/icons/file";
 export { default as Info } from "lucide-solid/icons/info";
 export { default as ListClock } from "lucide-solid/icons/list-clock";

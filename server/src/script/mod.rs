@@ -28,6 +28,8 @@ pub enum ToScript {
     Imports(Vec<Import>),
     /// Datapoints whose value changed, None while unknown.
     Values(Vec<(String, Option<Value>)>),
+    /// Every page as code names it, and its id, whole, after any change.
+    Pages(Vec<(String, String)>),
     Run { run: u64, code: String },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
@@ -45,6 +47,10 @@ pub enum FromScript {
     Call { run: u64, call: u64, alias: String, request: Value },
     Notify { run: u64, text: String },
     Log { run: u64, text: String },
+    /// Opens a page on the screen that started the run, in place of the top one when `replace`.
+    Open { run: u64, page: String, replace: bool },
+    /// Closes the top page on the screen that started the run.
+    Close { run: u64 },
     Done { run: u64, end: End },
 }
 
@@ -83,6 +89,7 @@ struct Shared {
     out: UnboundedSender<FromScript>,
     imports: HashMap<String, Import>,
     values: HashMap<String, Value>,
+    pages: Vec<(String, String)>,
     /// Runs not ended yet.
     live: HashSet<u64>,
     /// Each run's writes not sent yet, one per datapoint, in the order first made. Code a run
@@ -155,6 +162,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         out,
         imports: HashMap::new(),
         values: HashMap::new(),
+        pages: Vec::new(),
         live: HashSet::new(),
         pending: HashMap::new(),
         waiters: HashMap::new(),
@@ -205,6 +213,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
 fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, msg: ToScript) {
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
+        ToScript::Pages(list) => shared.borrow_mut().pages = list,
         ToScript::Values(list) => {
             let mut s = shared.borrow_mut();
             for (alias, value) in list {
@@ -335,6 +344,10 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>) -> rquic
     g.set("__notify", Function::new(ctx.clone(), move |text: String| s.borrow().send(FromScript::Notify { run, text }))?)?;
     let s = shared.clone();
     g.set("__log", Function::new(ctx.clone(), move |text: String| s.borrow().send(FromScript::Log { run, text }))?)?;
+    let s = shared.clone();
+    g.set("__open", Function::new(ctx.clone(), move |page: String, replace: bool| s.borrow().send(FromScript::Open { run, page, replace }))?)?;
+    let s = shared.clone();
+    g.set("__close", Function::new(ctx.clone(), move || s.borrow().send(FromScript::Close { run }))?)?;
     g.set("__budget", Function::new(ctx.clone(), || BUDGET.as_millis() as f64)?)?;
 
     let s = shared.clone();
@@ -355,8 +368,9 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>) -> rquic
         .values()
         .map(|i| serde_json::json!({ "alias": i.alias, "kind": format!("{:?}", i.kind).to_lowercase() }))
         .collect();
+    let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| serde_json::json!({ "key": key, "id": id })).collect();
     let prelude: Function = ctx.eval(PRELUDE)?;
-    prelude.call::<_, ()>((ctx.json_parse(Value::Array(imports).to_string())?,))
+    prelude.call::<_, ()>((ctx.json_parse(Value::Array(imports).to_string())?, ctx.json_parse(Value::Array(pages).to_string())?))
 }
 
 #[cfg(test)]

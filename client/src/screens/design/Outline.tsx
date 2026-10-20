@@ -41,6 +41,9 @@ export function Outline(p: { page: Page | undefined; selected: string | null; on
             <button class="list-row" classList={{ selected: pg.id === p.page?.id }} onClick={() => openPage(pg.id)}>
               <File size={14} />
               <span class="list-label">{pg.name}</span>
+              <Show when={(state.project?.start ?? state.pages[0]?.id) === pg.id}>
+                <span class="tag" title="Operators' screens open on this page">start</span>
+              </Show>
               <span class="list-trail mono">
                 {pg.width}x{pg.height}
               </span>
