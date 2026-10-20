@@ -1,11 +1,14 @@
 // The page on its artboard: the wheel zooms, a drag on empty space pans, elements move and
 // resize on the grid (Alt slips it), and a drag writes when it ends.
 
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { type Box, PageView, pageGround } from "../../page/PageView";
+import type { Edit } from "../../protocol/Edit";
+import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { number } from "../../state/bind";
-import { absolute, boxOf, find, literal, setProps } from "./tree";
+import type { Pick } from "./DesignScreen";
+import { absolute, boxOf, find, literal, sendEdits, tops } from "./tree";
 
 export const GRID = 11;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
@@ -18,9 +21,10 @@ const LEVELS = [
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 type Handle = (typeof HANDLES)[number];
 
+/** A pan, or a move or resize of `ids` led by the one under the pointer. */
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
-  | { kind: "move" | Handle; id: string; sx: number; sy: number; base: Box; box: Box; n: number };
+  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number };
 
 /** A box shown in place of an element's own until the page carries it. `n` names the drag
  *  that made it, so a finished drag never clears a newer one's box. */
@@ -59,7 +63,7 @@ function ink(g: CanvasRenderingContext2D, ground: string): string {
   return 0.2126 * r + 0.7152 * gr + 0.0722 * b > 128 ? "0, 0, 0" : "255, 255, 255";
 }
 
-export function Artboard(p: { page: Page; selected: string | null; onSelect: (id: string | null) => void }) {
+export function Artboard(p: { page: Page; selected: string[]; onPick: Pick }) {
   let host!: HTMLDivElement;
   let grid!: HTMLCanvasElement;
   const [view, setView] = createSignal({ k: 0.5, x: 0, y: 0 });
@@ -140,7 +144,7 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
   createEffect(() => {
     const h = held();
     for (const id of Object.keys(h)) {
-      if (drag && drag.kind !== "pan" && drag.id === id) continue;
+      if (drag && drag.kind !== "pan" && drag.ids.includes(id)) continue;
       const e = find(p.page.children, id);
       if (!e || ["x", "y", "w", "h"].every((k) => number(e.props[k]) === h[id].box[k as keyof Box])) release(id);
     }
@@ -156,17 +160,23 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
     } else if (e.button === 0) {
       const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
       const hit = target.closest(".el[data-id]")?.getAttribute("data-id") ?? null;
-      const id = handle ? p.selected : hit;
-      const e2 = id ? find(p.page.children, id) : undefined;
-      if (id && e2) {
-        p.onSelect(id);
-        const kind = handle ?? "move";
-        if (literal(e2, keysFor(kind))) {
-          const base = boxOf(e2);
-          drag = { kind, id, sx: e.clientX, sy: e.clientY, base, box: base, n: ++drags };
-        }
+      const start = (kind: "move" | Handle, lead: string, group: Element[]) => {
+        const bases = Object.fromEntries(group.map((g) => [g.id, boxOf(g)]));
+        drag = { kind, lead, ids: group.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags };
+      };
+      if (handle && p.selected.length === 1) {
+        const one = find(p.page.children, p.selected[0]);
+        if (one && literal(one, keysFor(handle))) start(handle, one.id, [one]);
+      } else if (hit && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+        return p.onPick(hit, true);
+      } else if (hit) {
+        // a press on one of several selected moves them all, any other picks it alone
+        const keep = p.selected.length > 1 && p.selected.includes(hit);
+        if (!keep) p.onPick(hit);
+        const group = (keep ? tops(p.page, p.selected) : [find(p.page.children, hit)!]).filter((g) => literal(g, ["x", "y"]));
+        if (group.some((g) => g.id === hit)) start("move", hit, group);
       } else {
-        p.onSelect(null);
+        p.onPick(null);
         drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
       }
     }
@@ -180,23 +190,34 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
       setView({ ...view(), x: drag.vx + dx, y: drag.vy + dy });
       return;
     }
+    const d = drag;
     const k = view().k;
-    drag.box = dragged(drag.kind, drag.base, dx / k, dy / k, e.altKey);
-    setHeld({ ...held(), [drag.id]: { box: drag.box, n: drag.n } });
+    const lead = d.bases[d.lead];
+    const moved = dragged(d.kind, lead, dx / k, dy / k, e.altKey);
+    // the others keep their places against the one under the pointer
+    for (const id of d.ids) {
+      const b = d.bases[id];
+      d.boxes[id] = id === d.lead ? moved : { ...b, x: b.x + moved.x - lead.x, y: b.y + moved.y - lead.y };
+    }
+    setHeld({ ...held(), ...Object.fromEntries(d.ids.map((id) => [id, { box: d.boxes[id], n: d.n }])) });
   };
 
   const up = () => {
     const d = drag;
     drag = null;
     if (!d || d.kind === "pan") return;
-    const props: Record<string, string> = {};
-    for (const k of ["x", "y", "w", "h"] as (keyof Box)[]) {
-      if (d.box[k] !== d.base[k]) props[k] = String(d.box[k]);
+    const edits: Edit[] = [];
+    for (const id of d.ids) {
+      const props: Record<string, string> = {};
+      for (const k of ["x", "y", "w", "h"] as (keyof Box)[]) {
+        if (d.boxes[id][k] !== d.bases[id][k]) props[k] = String(d.boxes[id][k]);
+      }
+      if (Object.keys(props).length > 0) edits.push({ kind: "set_props", page: p.page.id, id, props });
+      else release(id, d.n);
     }
-    if (Object.keys(props).length === 0) return release(d.id, d.n);
-    setProps(p.page.id, d.id, props);
-    // a refused write must not hold its box forever
-    window.setTimeout(() => release(d.id, d.n), 3000);
+    sendEdits(edits);
+    // a refused write must not hold its boxes forever
+    window.setTimeout(() => d.ids.forEach((id) => release(id, d.n)), 3000);
   };
 
   const sheet = () => {
@@ -204,12 +225,15 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
     return { left: `${v.x}px`, top: `${v.y}px`, width: `${p.page.width * v.k}px`, height: `${p.page.height * v.k}px` };
   };
 
-  const ring = createMemo(() => {
-    const b = p.selected ? absolute(p.page, p.selected, overrides) : undefined;
+  /** Where an element's ring goes on screen, on whole pixels so its thin line stays crisp. */
+  const ring = (id: string) => {
+    const b = absolute(p.page, id, overrides);
     if (!b) return undefined;
     const v = view();
-    return { left: v.x + b.x * v.k, top: v.y + b.y * v.k, width: b.w * v.k, height: b.h * v.k };
-  });
+    const [left, top] = [Math.round(v.x + b.x * v.k), Math.round(v.y + b.y * v.k)];
+    const [right, bottom] = [Math.round(v.x + (b.x + b.w) * v.k), Math.round(v.y + (b.y + b.h) * v.k)];
+    return { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px` };
+  };
 
   return (
     <div class="artboard" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
@@ -218,13 +242,20 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
         <PageView page={p.page} overrides={overrides} design />
       </div>
       <div class="veil" style={sheet()} />
-      <Show when={ring()}>
-        {(r) => (
-          <div class="ring" style={{ left: `${r().left}px`, top: `${r().top}px`, width: `${r().width}px`, height: `${r().height}px` }}>
-            <For each={HANDLES}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
-          </div>
+      {/* a ring for each selected element, its grips only when it is the one */}
+      <For each={p.selected}>
+        {(id) => (
+          <Show when={ring(id)}>
+            {(r) => (
+              <div class="ring" style={r()}>
+                <Show when={p.selected.length === 1}>
+                  <For each={HANDLES}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
+                </Show>
+              </div>
+            )}
+          </Show>
         )}
-      </Show>
+      </For>
       <div class="zoom">
         <span class="mono">{Math.round(view().k * 100)}%</span>
         <button class="icon-btn" title="Fit the page" onClick={fit} onPointerDown={(e) => e.stopPropagation()}>

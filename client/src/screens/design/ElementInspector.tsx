@@ -13,7 +13,7 @@ import { component, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, Plus, Square, TextCursorInput, Trash, Type, X } from "../../ui/icons";
-import { find, setProps } from "./tree";
+import { find, sendEdits, setProps, tops } from "./tree";
 
 /** The CSS a field offers by name, with an example of what it takes. Anything else lives
  *  in the free CSS box. */
@@ -42,9 +42,10 @@ interface Where {
 
 const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, place: "handler" }));
 
-/** The right sidebar: the selected element's properties, or the page's when none is. */
-export function ElementInspector(p: { page: Page | undefined; selected: string | null }) {
-  const element = createMemo(() => (p.page && p.selected ? find(p.page.children, p.selected) : undefined));
+/** The right sidebar: the selected element's properties, a word on several, or the page's
+ *  when none is selected. */
+export function ElementInspector(p: { page: Page | undefined; selected: string[] }) {
+  const element = createMemo(() => (p.page && p.selected.length === 1 ? find(p.page.children, p.selected[0]) : undefined));
   const where = createMemo((): Where => {
     const doc = p.page;
     if (!doc?.interface) return { scope: pageScope, place: "handler" };
@@ -55,12 +56,34 @@ export function ElementInspector(p: { page: Page | undefined; selected: string |
     <Show when={p.page}>
       {(page) => (
         <WhereContext.Provider value={where}>
-          <Show when={element()} fallback={<PageInspector page={page()} />}>
+          <Show when={element()} fallback={p.selected.length > 1 ? <Several page={page()} ids={p.selected} /> : <PageInspector page={page()} />}>
             {(e) => <Properties page={page().id} element={e()} />}
           </Show>
         </WhereContext.Provider>
       )}
     </Show>
+  );
+}
+
+/** Several selected elements: how many, what works on all of them, and removing them. */
+function Several(p: { page: Page; ids: string[] }) {
+  const remove = () => sendEdits(tops(p.page, p.ids).map((e) => ({ kind: "remove_element", page: p.page.id, id: e.id })));
+  return (
+    <>
+      <div class="pane-head">
+        <span class="head-title">{p.ids.length} elements</span>
+        <span class="tag">selection</span>
+      </div>
+      <div class="pane-body pad">
+        <div class="placeholder">Drag one to move them all, or nudge them with the arrows. Shift click adds an element or takes it away.</div>
+      </div>
+      <div class="pane-foot">
+        <button class="button" onClick={remove}>
+          <Trash size={12} />
+          Delete all
+        </button>
+      </div>
+    </>
   );
 }
 

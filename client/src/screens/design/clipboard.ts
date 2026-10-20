@@ -1,13 +1,12 @@
 // Copy, cut, paste and duplicate through the browser's clipboard events, since the async API
 // needs https. An element travels as JSON marked as ours.
 
-import { send } from "../../net/connection";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { isNumber } from "../../state/bind";
 import { GRID } from "./Artboard";
-import { childrenOf, find, parentOf } from "./tree";
+import { childrenOf, find, parentOf, sendEdits } from "./tree";
 
 const MARK = "rant-hmi elements";
 
@@ -18,10 +17,9 @@ interface Clip {
   elements: Element[];
 }
 
-export function copy(e: ClipboardEvent, page: Page, id: string) {
-  const element = find(page.children, id);
-  if (!element || !e.clipboardData) return;
-  const clip: Clip = { mark: MARK, page: page.id, elements: [element] };
+export function copy(e: ClipboardEvent, page: Page, elements: Element[]) {
+  if (elements.length === 0 || !e.clipboardData) return;
+  const clip: Clip = { mark: MARK, page: page.id, elements };
   e.clipboardData.setData("text/plain", JSON.stringify(clip, null, 2));
   e.preventDefault();
 }
@@ -50,19 +48,24 @@ export function paste(e: ClipboardEvent, page: Page, selected: string | null) {
   add(page, parent, index, clip.elements);
 }
 
-/** A copy of the element just in front of it, one grid step down and right. */
-export function duplicate(page: Page, id: string) {
-  const element = find(page.children, id);
-  if (!element) return;
-  const parent = parentOf(page, id);
-  const copy: Element = JSON.parse(JSON.stringify(element));
-  for (const k of ["x", "y"]) {
-    if (isNumber(copy.props[k])) copy.props[k] = String(Number(copy.props[k]) + GRID);
-  }
-  add(page, parent, childrenOf(page, parent).findIndex((c) => c.id === id) + 1, [copy]);
+/** A copy of each element just in front of it, one grid step down and right. */
+export function duplicate(page: Page, elements: Element[]) {
+  // each copy before this one in the same frame moves the places after it on by one
+  const before = new Map<string | null, number>();
+  const edits: Edit[] = elements.map((element) => {
+    const parent = parentOf(page, element.id);
+    const copy: Element = JSON.parse(JSON.stringify(element));
+    for (const k of ["x", "y"]) {
+      if (isNumber(copy.props[k])) copy.props[k] = String(Number(copy.props[k]) + GRID);
+    }
+    const shift = before.get(parent) ?? 0;
+    before.set(parent, shift + 1);
+    const index = childrenOf(page, parent).findIndex((c) => c.id === element.id) + 1 + shift;
+    return { kind: "add_element", page: page.id, parent, index, element: copy };
+  });
+  sendEdits(edits);
 }
 
 function add(page: Page, parent: string | null, index: number | null, elements: Element[]) {
-  const edits: Edit[] = elements.map((element, n) => ({ kind: "add_element", page: page.id, parent, index: index === null ? null : index + n, element }));
-  send({ type: "edit", edit: edits.length === 1 ? edits[0] : { kind: "batch", edits } });
+  sendEdits(elements.map((element, n) => ({ kind: "add_element", page: page.id, parent, index: index === null ? null : index + n, element })));
 }

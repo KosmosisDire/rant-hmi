@@ -21,6 +21,20 @@ export function find(elements: Element[], id: string): Element | undefined {
   return chain(elements, id)?.at(-1);
 }
 
+/** The selected elements no other selected one holds, in page order, so a move or a removal
+ *  takes each once. */
+export function tops(page: Page, ids: string[]): Element[] {
+  const out: Element[] = [];
+  const walk = (elements: Element[]) => {
+    for (const e of elements) {
+      if (ids.includes(e.id)) out.push(e);
+      else walk(e.children);
+    }
+  };
+  walk(page.children);
+  return out;
+}
+
 /** The frame an element sits in, null for the page. */
 export function parentOf(page: Page, id: string): string | null {
   const path = chain(page.children, id);
@@ -66,7 +80,12 @@ export function moveTo(page: Page, id: string, parent: string | null, index: num
     const [a, b] = [origin(from), origin(parent)];
     edits.push({ kind: "set_props", page: page.id, id, props: { x: String(number(e.props.x) + a.x - b.x), y: String(number(e.props.y) + a.y - b.y) } });
   }
-  send({ type: "edit", edit: edits.length === 1 ? edits[0] : { kind: "batch", edits } });
+  sendEdits(edits);
+}
+
+/** Sends edits as one, so one undo takes them all back. */
+export function sendEdits(edits: Edit[]) {
+  if (edits.length > 0) send({ type: "edit", edit: edits.length === 1 ? edits[0] : { kind: "batch", edits } });
 }
 
 export function setProps(page: string, id: string, props: Record<string, string | null>) {

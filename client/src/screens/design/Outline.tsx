@@ -7,6 +7,7 @@ import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { Component, File, Plus, Square, TextCursorInput, Type } from "../../ui/icons";
+import type { Pick } from "./DesignScreen";
 import { chain, childrenOf, find, moveTo, parentOf } from "./tree";
 
 /** What a new frame or text starts as: visible, on the grid, and plainly named. */
@@ -17,13 +18,14 @@ const STARTS: Record<Exclude<Tag, "use">, Record<string, string>> = {
 };
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
-export function Outline(p: { page: Page | undefined; selected: string | null; onSelect: (id: string | null) => void }) {
+export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick }) {
   const [picking, setPicking] = createSignal(false);
-  // into the selected frame, at its top left, else onto the page
+  // into the frame picked last, at its top left, else onto the page
   const place = (tag: Tag, props: Record<string, string>, component: string | null = null) => {
     const page = p.page;
     if (!page) return;
-    const holder = p.selected ? find(page.children, p.selected) : undefined;
+    const last = p.selected.at(-1);
+    const holder = last ? find(page.children, last) : undefined;
     const inside = holder?.tag === "div";
     // step past what already sits there, so a new element never hides behind an old one
     const siblings = inside ? holder.children : page.children;
@@ -125,7 +127,7 @@ export function Outline(p: { page: Page | undefined; selected: string | null; on
         </div>
       </Show>
       <Show when={p.page && p.page.children.length > 0} fallback={<div class="pane-body placeholder">Add a frame or a text.</div>}>
-        <LayerList page={p.page!} selected={p.selected} onSelect={p.onSelect} />
+        <LayerList page={p.page!} selected={p.selected} onPick={p.onPick} />
       </Show>
     </>
   );
@@ -136,7 +138,7 @@ type Spot = { id: string; where: "front" | "behind" | "inside" };
 
 /** The layers, front first as they stack. A row dragged onto another's edge goes in front of
  *  or behind it, onto a frame's middle into that frame. */
-function LayerList(p: { page: Page; selected: string | null; onSelect: (id: string) => void }) {
+function LayerList(p: { page: Page; selected: string[]; onPick: Pick }) {
   let host!: HTMLDivElement;
   let press: { id: string; y: number } | null = null;
   const [dragging, setDragging] = createSignal<string | null>(null);
@@ -193,12 +195,12 @@ function LayerList(p: { page: Page; selected: string | null; onSelect: (id: stri
 
   return (
     <div class="pane-body" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      <Layers elements={p.page.children} depth={0} selected={p.selected} dragging={dragging()} spot={spot()} onSelect={p.onSelect} />
+      <Layers elements={p.page.children} depth={0} selected={p.selected} dragging={dragging()} spot={spot()} onPick={p.onPick} />
     </div>
   );
 }
 
-function Layers(p: { elements: Element[]; depth: number; selected: string | null; dragging: string | null; spot: Spot | null; onSelect: (id: string) => void }) {
+function Layers(p: { elements: Element[]; depth: number; selected: string[]; dragging: string | null; spot: Spot | null; onPick: Pick }) {
   const at = (id: string) => (p.spot?.id === id ? p.spot.where : undefined);
   return (
     <For each={[...p.elements].reverse()}>
@@ -206,11 +208,11 @@ function Layers(p: { elements: Element[]; depth: number; selected: string | null
         <>
           <button
             class="list-row"
-            classList={{ selected: e.id === p.selected, dragged: e.id === p.dragging, "drop-front": at(e.id) === "front", "drop-behind": at(e.id) === "behind", "drop-inside": at(e.id) === "inside" }}
+            classList={{ selected: p.selected.includes(e.id), dragged: e.id === p.dragging, "drop-front": at(e.id) === "front", "drop-behind": at(e.id) === "behind", "drop-inside": at(e.id) === "inside" }}
             data-id={e.id}
             data-frame={e.tag === "div" ? "" : undefined}
             data-open={e.children.length > 0 ? "" : undefined}
-            onClick={() => p.onSelect(e.id)}
+            onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
           >
             <span style={{ width: `${p.depth * 14}px` }} />
             <span class="layer-icon">
@@ -230,7 +232,7 @@ function Layers(p: { elements: Element[]; depth: number; selected: string | null
             <span class="list-trail mono faint">{e.id}</span>
           </button>
           <Show when={e.children.length > 0}>
-            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onSelect={p.onSelect} />
+            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onPick={p.onPick} />
           </Show>
         </>
       )}

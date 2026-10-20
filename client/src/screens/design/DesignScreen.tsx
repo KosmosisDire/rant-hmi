@@ -6,10 +6,18 @@ import { Artboard, GRID } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
-import { boxOf, childrenOf, find, literal, moveTo, parentOf, setProps } from "./tree";
+import { boxOf, childrenOf, find, literal, moveTo, parentOf, sendEdits, tops } from "./tree";
+
+/** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
+export type Pick = (id: string | null, add?: boolean) => void;
 
 export function DesignScreen(p: { shown: boolean }) {
-  const [selected, setSelected] = createSignal<string | null>(null);
+  const [selection, setSelection] = createSignal<string[]>([]);
+  const pick: Pick = (id, add = false) => {
+    if (!id) setSelection([]);
+    else if (!add) setSelection([id]);
+    else setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  };
 
   // what this screen just made: a new page opens, a new element is selected
   createEffect(
@@ -20,9 +28,9 @@ export function DesignScreen(p: { shown: boolean }) {
         if (!m) return;
         if (m.id === m.page) {
           openPage(m.page);
-          setSelected(null);
+          setSelection([]);
         } else if (m.page === currentPage()?.id) {
-          setSelected(m.id);
+          setSelection([m.id]);
         }
       },
       { defer: true },
@@ -30,17 +38,17 @@ export function DesignScreen(p: { shown: boolean }) {
   );
 
   // another page opened starts with nothing selected, since ids repeat across pages
-  createEffect(on(() => currentPage()?.id, () => setSelected(null), { defer: true }));
+  createEffect(on(() => currentPage()?.id, () => setSelection([]), { defer: true }));
 
-  // a selection whose element went away drops
+  // an element that went away leaves the selection
   createEffect(() => {
-    const id = selected();
     const page = currentPage();
-    if (id && (!page || !find(page.children, id))) setSelected(null);
+    const kept = selection().filter((id) => page && find(page.children, id));
+    if (kept.length !== selection().length) setSelection(kept);
   });
 
-  // Ctrl Z undoes, Ctrl Shift Z or Ctrl Y redoes, Delete removes, Escape lets go, arrows nudge,
-  // Ctrl [ and ] restack (Shift all the way), Ctrl D duplicates. A field keeps its own keys.
+  // Ctrl Z undoes, Ctrl Shift Z or Ctrl Y redoes, Ctrl A selects all, Delete removes, Escape
+  // lets go, arrows nudge, Ctrl [ and ] restack one, Ctrl D duplicates. A field keeps its keys.
   onMount(() => {
     const key = (e: KeyboardEvent) => {
       if (!p.shown || (e.target as HTMLElement).closest("input, textarea, select")) return;
@@ -52,43 +60,54 @@ export function DesignScreen(p: { shown: boolean }) {
         return;
       }
       const page = currentPage();
-      const id = selected();
-      if (!page || !id) return;
-      const e2 = find(page.children, id);
-      if (!e2) return;
+      if (!page) return;
+      if (mod && letter === "a") {
+        e.preventDefault();
+        setSelection(page.children.map((c) => c.id));
+        return;
+      }
+      const picked = tops(page, selection());
+      if (picked.length === 0) return;
       if (mod && letter === "d") {
         e.preventDefault();
-        duplicate(page, id);
-      } else if (mod && ["[", "]", "{", "}"].includes(e.key)) {
+        duplicate(page, picked);
+      } else if (mod && ["[", "]", "{", "}"].includes(e.key) && picked.length === 1) {
         e.preventDefault();
+        const id = picked[0].id;
         const siblings = childrenOf(page, parentOf(page, id));
         const at = siblings.findIndex((c) => c.id === id);
         const forward = e.key === "]" || e.key === "}";
         const last = siblings.length - 1;
         moveTo(page, id, parentOf(page, id), e.shiftKey ? (forward ? last : 0) : Math.min(last, Math.max(0, at + (forward ? 1 : -1))));
       } else if (e.key === "Delete" || e.key === "Backspace") {
-        send({ type: "edit", edit: { kind: "remove_element", page: page.id, id } });
+        sendEdits(picked.map((el) => ({ kind: "remove_element", page: page.id, id: el.id })));
       } else if (e.key === "Escape") {
-        setSelected(null);
-      } else if (e.key.startsWith("Arrow") && literal(e2, ["x", "y"])) {
+        setSelection([]);
+      } else if (e.key.startsWith("Arrow")) {
+        const movable = picked.filter((el) => literal(el, ["x", "y"]));
+        if (movable.length === 0) return;
         e.preventDefault();
         const step = GRID * (e.shiftKey ? 4 : 1);
-        const b = boxOf(e2);
         const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
         const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-        setProps(page.id, id, { x: String(b.x + dx), y: String(b.y + dy) });
+        sendEdits(
+          movable.map((el) => {
+            const b = boxOf(el);
+            return { kind: "set_props", page: page.id, id: el.id, props: { x: String(b.x + dx), y: String(b.y + dy) } };
+          }),
+        );
       }
     };
-    // copy and cut take the selected element, paste puts ours down, unless a field or some
-    // selected text has the clipboard
+    // copy and cut take the selection, paste puts ours down, unless a field or some selected
+    // text has the clipboard
     const clip = (e: ClipboardEvent) => {
       const page = currentPage();
-      const id = selected();
       if (!p.shown || !page || (e.target as HTMLElement).closest?.("input, textarea, select")) return;
-      if (e.type === "paste") return paste(e, page, id);
-      if (!id || !window.getSelection()?.isCollapsed) return;
-      copy(e, page, id);
-      if (e.type === "cut") send({ type: "edit", edit: { kind: "remove_element", page: page.id, id } });
+      if (e.type === "paste") return paste(e, page, selection().at(-1) ?? null);
+      const picked = tops(page, selection());
+      if (picked.length === 0 || !window.getSelection()?.isCollapsed) return;
+      copy(e, page, picked);
+      if (e.type === "cut") sendEdits(picked.map((el) => ({ kind: "remove_element", page: page.id, id: el.id })));
     };
     window.addEventListener("keydown", key);
     for (const kind of ["copy", "cut", "paste"] as const) document.addEventListener(kind, clip);
@@ -101,15 +120,15 @@ export function DesignScreen(p: { shown: boolean }) {
   return (
     <div class="screen" hidden={!p.shown}>
       <aside class="sidebar left">
-        <Outline page={currentPage()} selected={selected()} onSelect={setSelected} />
+        <Outline page={currentPage()} selected={selection()} onPick={pick} />
       </aside>
       <section class="detail">
         <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
-          {(page) => <Artboard page={page()} selected={selected()} onSelect={setSelected} />}
+          {(page) => <Artboard page={page()} selected={selection()} onPick={pick} />}
         </Show>
       </section>
       <aside class="sidebar right">
-        <ElementInspector page={currentPage()} selected={selected()} />
+        <ElementInspector page={currentPage()} selected={selection()} />
       </aside>
     </div>
   );
