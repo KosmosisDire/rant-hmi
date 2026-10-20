@@ -42,6 +42,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const fault = page.locator(".notice.fault");
   await fault.waitFor({ timeout: 4000 });
   const text = await fault.textContent();
-  check(text.includes("Broken tap") && text.includes("Sped names no datapoint (line 1)"), `the fault says ${text}`);
+  check(text.includes("Broken tap") && text.includes("Sped names no mesh import or variable (line 1)"), `the fault says ${text}`);
   check(speed() === 0.25, "the broken handler wrote something");
 }

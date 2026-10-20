@@ -745,7 +745,7 @@ impl App {
         }
     }
 
-    /// A datapoint is known while its entity is live and, for one with a value, once that
+    /// A mesh import is known while its entity is live and, for one with a value, once that
     /// value arrived. The last value stays when it goes unknown.
     fn refresh_known(&mut self) {
         for import in &self.project.imports {

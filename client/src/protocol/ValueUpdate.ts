@@ -2,7 +2,7 @@
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * A datapoint's latest value. `known` is false while its entity is off the mesh, and the
- * last value stays for reference.
+ * A mesh import's or variable's latest value. `known` is false while its entity is off the
+ * mesh, and the last value stays for reference.
  */
 export type ValueUpdate = { alias: string, value: JsonValue | null, known: boolean, };

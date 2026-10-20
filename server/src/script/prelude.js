@@ -82,7 +82,7 @@
     if (e.message === "interrupted") return `it ran ${__budget()} ms without waiting, so it was stopped`;
     if (e.name === "CallError") return `${e.message} (${e.status.replaceAll("_", " ")})`;
     const line = /handler:(\d+)/.exec(e.stack ?? "");
-    const message = e.message.replace(/^'?([\w$]+)'? is not defined$/, "$1 names no datapoint");
+    const message = e.message.replace(/^'?([\w$]+)'? is not defined$/, "$1 names no mesh import or variable");
     return line ? `${message} (line ${Number(line[1]) - 1})` : message;
   };
   globalThis.__finish = (e) => (e instanceof Unknown ? __end("unknown", e.alias) : __end("fault", describe(e)));

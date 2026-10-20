@@ -1,4 +1,4 @@
-// A new user opens the Data tab: the datapoints table sits under its title, one short row per
+// A new user opens the Data tab: the mesh imports table sits under its title, one short row per
 // import, and nothing from another screen's styles bends it.
 
 export default async function ({ page, d, check, eventually }) {

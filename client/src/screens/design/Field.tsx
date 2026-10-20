@@ -14,7 +14,7 @@ import { Braces, ChevronsUpDown, Hash, Link, ToggleLeft, ToggleRight, Type, X } 
 import { Popover } from "../../ui/Popover";
 
 /** Where the fields stand: the names their code reads, and what completion offers instead
- *  of the datapoints, as a component offers its inputs. */
+ *  of the mesh imports, as a component offers its own names. */
 export interface Where {
   scope: Scope;
   names?: Suggestion[];

@@ -4,12 +4,12 @@ import { KindIcon } from "../../ui/marks";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
 
-/** Every import with its live value. Pages and handlers will see only these. */
-export function Datapoints(p: Picking) {
+/** Every mesh import with its live value. Pages and handlers see only these. */
+export function MeshImports(p: Picking) {
   return (
     <>
       <div class="detail-head">
-        <span class="hero">Datapoints</span>
+        <span class="hero">Mesh imports</span>
         <span class="tag">{state.imports.length}</span>
       </div>
       <div class="hint">Pages and handlers see only these. Pick an entity in the mesh to import it.</div>

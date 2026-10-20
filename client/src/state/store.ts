@@ -167,7 +167,7 @@ export function receive(msg: ServerMsg) {
       break;
     case "refused":
       setState("refused", { text: msg.text, alias: msg.alias });
-      // one about a datapoint shows beside it, any other here
+      // one about a mesh import shows beside it, any other here
       if (msg.alias === null) notify(msg.text, "fault");
       break;
     case "notice":
@@ -184,7 +184,7 @@ export function receive(msg: ServerMsg) {
   }
 }
 
-/** A datapoint is shown as known only while the backend link is up too. */
+/** A mesh import is shown as known only while the backend link is up too. */
 export function live(alias: string): Live {
   const v = state.values[alias];
   return { value: v?.value ?? null, known: state.link === "open" && !!v?.known };

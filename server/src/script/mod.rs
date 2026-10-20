@@ -26,7 +26,7 @@ pub enum ToScript {
     Imports(Vec<Import>),
     /// Every variable, whole, after any change.
     Variables(Vec<Variable>),
-    /// Datapoints and shared variables whose value changed, None while unknown.
+    /// Mesh imports and shared variables whose value changed, None while unknown.
     Values(Vec<(String, Option<Value>)>),
     /// A screen's own variables that changed.
     Screen { session: u32, values: Vec<(String, Value)> },
@@ -71,7 +71,7 @@ pub enum FromScript {
 #[derive(Debug, PartialEq)]
 pub enum End {
     Ok,
-    /// Stopped by reading this datapoint while it was unknown.
+    /// Stopped by reading this mesh import or variable while it was unknown.
     Unknown(String),
     Fault(String),
 }
@@ -111,7 +111,7 @@ struct Shared {
     pages: Vec<(String, String)>,
     /// Runs not ended yet.
     live: HashSet<u64>,
-    /// Each run's writes not sent yet, one per datapoint, in the order first made. Code a run
+    /// Each run's writes not sent yet, one per name written, in the order first made. Code a run
     /// left going without awaiting it may still write after the run ended.
     pending: HashMap<u64, Vec<(String, Value)>>,
     waiters: HashMap<u64, Waiter>,
@@ -406,7 +406,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
                 return Err(Exception::throw_type(&ctx, &format!("{alias} is each screen's own, and this handler runs for no screen")));
             }
         } else {
-            let import = st.imports.get(&alias).ok_or_else(|| Exception::throw_reference(&ctx, &format!("{alias} names no datapoint")))?;
+            let import = st.imports.get(&alias).ok_or_else(|| Exception::throw_reference(&ctx, &format!("{alias} names no mesh import or variable")))?;
             if import.kind != Kind::Variable {
                 return Err(Exception::throw_type(&ctx, &format!("{alias} is not a variable, so it cannot be set")));
             }

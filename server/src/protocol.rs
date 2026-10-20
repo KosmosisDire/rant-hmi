@@ -84,7 +84,7 @@ pub enum ClientMsg {
     /// Adds, changes or with null removes the theme token called `name`. A rename is followed
     /// everywhere it is used, components too.
     SetToken { name: String, token: Option<Token> },
-    /// Writes a datapoint or a variable, or one of its fields when `path` names one.
+    /// Writes a mesh import or a variable, or one of its fields when `path` names one.
     Set { alias: String, path: String, value: Value },
     /// Changes the pages.
     Edit { edit: Edit },
@@ -172,8 +172,8 @@ pub enum FieldKind {
     Unknown,
 }
 
-/// A datapoint's latest value. `known` is false while its entity is off the mesh, and the
-/// last value stays for reference.
+/// A mesh import's or variable's latest value. `known` is false while its entity is off the
+/// mesh, and the last value stays for reference.
 #[derive(Serialize, TS, Clone, Debug)]
 #[ts(export)]
 pub struct ValueUpdate {

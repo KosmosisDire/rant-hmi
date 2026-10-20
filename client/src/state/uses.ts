@@ -1,5 +1,5 @@
 // What handler code reads and writes, found from its names without running it: what it sets,
-// calls, sends, opens and emits, and the datapoints it only reads. The Logic tab lists these
+// calls, sends, opens and emits, and the mesh imports it only reads. The Logic tab lists these
 // and a handler's box sums them up.
 
 import { paint } from "../ui/highlight";

@@ -50,7 +50,7 @@ export function Inspector(p: Picking) {
   });
 
   return (
-    <Switch fallback={<div class="placeholder">Pick an entity in the mesh, or a datapoint.</div>}>
+    <Switch fallback={<div class="placeholder">Pick an entity in the mesh, or a mesh import.</div>}>
       <Match when={imported()}>{(i) => <ImportView imp={i()} />}</Match>
       {/* keyed, so another entity starts its import form over */}
       <Match when={onMesh()} keyed>

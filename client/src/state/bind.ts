@@ -40,6 +40,8 @@ export interface Scope {
   set(name: string, path: string, value: unknown): void;
   /** True when `set` may write the name. */
   writes(name: string): boolean;
+  /** What to say of a name it does not have. */
+  missing(name: string): string;
 }
 
 /** A theme token by the name code gives it, `$accent`. */
@@ -60,10 +62,11 @@ function themed(s: Scope): Scope {
       s.set(name, path, value);
     },
     writes: (name) => !token(name) && s.writes(name),
+    missing: (name) => s.missing(name),
   };
 }
 
-/** A page reads its imports and variables, live, and writes those it may on the backend. */
+/** A page reads its mesh imports and variables, live, and writes those it may on the backend. */
 export const pageScope: Scope = themed({
   has: (name) => state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name),
   get: (name) => {
@@ -74,13 +77,14 @@ export const pageScope: Scope = themed({
   set: (name, path, value) => {
     const imp = state.imports.find((i) => i.alias === name);
     if (imp && (imp.kind !== "variable" || imp.intent !== "write")) throw new TypeError(`${name} cannot be set from here`);
-    if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(`${name} names no datapoint`);
+    if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(pageScope.missing(name));
     send({ type: "set", alias: name, path, value: value as JsonValue });
   },
   writes: (name) => {
     const imp = state.imports.find((i) => i.alias === name);
     return imp ? imp.kind === "variable" && imp.intent === "write" : state.variables.some((v) => v.name === name);
   },
+  missing: (name) => `${name} names no mesh import or variable`,
 });
 
 /** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */
@@ -92,7 +96,7 @@ export function bareRef(value: string | undefined): { name: string; fields: stri
   return ref ? { name: ref[1], fields: ref[2].slice(1) } : null;
 }
 
-const nothing: Scope = { has: () => false, get: () => undefined, set: () => {}, writes: () => false };
+const nothing: Scope = { has: () => false, get: () => undefined, set: () => {}, writes: () => false, missing: (name) => `${name} cannot be read here` };
 
 /** What an instance shows of its own while held, over what its bindings say. */
 export interface Own {
@@ -174,6 +178,7 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
       const ref = bareRef(instance?.props[name]);
       return !!input(name)?.bindable && !!ref && !!instance?.outer.writes(ref.name);
     },
+    missing: (name) => `${name} is no input, variable or part of ${c.name}`,
   });
 }
 
@@ -309,7 +314,7 @@ export function resolve(value: string | undefined, scope: Scope = pageScope): Re
     return { ok: true, value: fn(proxy(scope)) };
   } catch (e) {
     if (e instanceof Unknown) return { ok: false, unknown: e.alias };
-    if (e instanceof ReferenceError) return { ok: false, error: e.message.replace(/ is not defined$/, " names no datapoint") };
+    if (e instanceof ReferenceError) return { ok: false, error: e.message.replace(/^(\S+) is not defined$/, (_, name: string) => scope.missing(name)) };
     return { ok: false, error: (e as Error).message ?? String(e) };
   }
 }

@@ -58,7 +58,7 @@ const API: Record<Place, Suggestion[]> = {
 };
 
 /** The completion at `caret`, or null where none fits, such as inside a string. `names` stand
- *  for the page's datapoints where code reads something else, as a component reads its inputs. */
+ *  for the mesh imports where code reads something else, as a component reads its own. */
 export function complete(text: string, caret: number, place: Place, names?: Suggestion[]): Completion | null {
   const before = text.slice(0, caret);
   if (inString(before)) return null;

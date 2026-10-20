@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { Datapoints } from "./Datapoints";
+import { MeshImports } from "./MeshImports";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";
 import { ThemeTable } from "./Theme";
@@ -32,7 +32,7 @@ export function DataScreen() {
         <MeshTree {...picking} />
       </aside>
       <section class="detail data-detail">
-        <Datapoints {...picking} />
+        <MeshImports {...picking} />
         <VariablesTable {...picking} />
         <ThemeTable {...picking} />
       </section>

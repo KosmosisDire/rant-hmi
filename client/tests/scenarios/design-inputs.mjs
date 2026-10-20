@@ -31,7 +31,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await d.el(label).textContent()) === "50%", "the component to read its default");
 
   await d.setField("Text", "Speed");
-  await page.locator(".field-note", { hasText: "Speed names no datapoint" }).waitFor();
+  await page.locator(".field-note", { hasText: "Speed is no input, variable or part of Meter" }).waitFor();
   await d.setField("Text", 'level + "%"');
 
   const pageId = await hmi.addPage("Meters");

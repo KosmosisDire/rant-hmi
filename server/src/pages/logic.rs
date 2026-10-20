@@ -27,7 +27,7 @@ pub enum When {
     Every { ms: u32 },
     /// When `condition` turns true and stays true for `ms`. An unknown value never fires it.
     Turns { condition: String, ms: u32 },
-    /// When a datapoint or variable changes. `p.value` and `p.previous`.
+    /// When a mesh import or variable changes. `p.value` and `p.previous`.
     Changes { name: String },
     /// Once, when the HMI starts.
     Starts,
