@@ -2,6 +2,7 @@ import { createSignal, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { Intent } from "../../protocol/Intent";
+import { intentWords } from "../../state/format";
 import { setState, state } from "../../state/store";
 
 /** The alias an entity gets unless the user types another: its last segment in
@@ -22,7 +23,6 @@ export function ImportForm(p: { entity: EntityInfo }) {
   const [intent, setIntent] = createSignal<Intent>("read");
   // a variable whose owner takes no sets can only be read
   const canWrite = () => p.entity.kind !== "variable" || p.entity.writable;
-  const writeWord = () => ({ topic: "send", variable: "set", function: "call", task: "call" })[p.entity.kind];
   const submit = () => {
     setState("refused", null);
     send({ type: "import", import: { alias: alias().trim(), entity: p.entity.name, kind: p.entity.kind, intent: intent() } });
@@ -43,16 +43,10 @@ export function ImportForm(p: { entity: EntityInfo }) {
         <span class="dim">Intent</span>
         <div class="choice">
           <button type="button" classList={{ on: intent() === "read" }} onClick={() => setIntent("read")}>
-            Read
+            {cap(intentWords(p.entity.kind, "read"))}
           </button>
-          <button
-            type="button"
-            classList={{ on: intent() === "write" }}
-            disabled={!canWrite()}
-            title={canWrite() ? `Read and ${writeWord()}` : "Its owner takes no sets"}
-            onClick={() => setIntent("write")}
-          >
-            Write
+          <button type="button" classList={{ on: intent() === "write" }} disabled={!canWrite()} title={canWrite() ? undefined : "Its owner takes no sets"} onClick={() => setIntent("write")}>
+            {cap(intentWords(p.entity.kind, "write"))}
           </button>
         </div>
         <button type="submit" class="button primary">
@@ -65,3 +59,5 @@ export function ImportForm(p: { entity: EntityInfo }) {
     </form>
   );
 }
+
+const cap = (t: string) => t[0].toUpperCase() + t.slice(1);

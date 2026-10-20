@@ -1,12 +1,20 @@
 // Values as short text for tables and value boxes.
 
 import type { FieldInfo } from "../protocol/FieldInfo";
+import type { Intent } from "../protocol/Intent";
+import type { Kind } from "../protocol/Kind";
 import type { Value } from "../protocol/Value";
 
 export function number(n: number): string {
   if (Number.isInteger(n)) return String(n);
   if (Math.abs(n) >= 1000) return n.toFixed(1);
   return String(Number(n.toPrecision(4)));
+}
+
+/** What an import's intent allows, in words: reading is always allowed, and write adds what
+ *  its kind takes, a set, a send or a call. */
+export function intentWords(kind: Kind, intent: Intent): string {
+  return intent === "read" ? "read only" : `read and ${{ topic: "send", variable: "set", function: "call", task: "call" }[kind]}`;
 }
 
 /** A struct's fields by name, or null for any other value. */

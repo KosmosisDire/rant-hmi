@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import { intentWords } from "../../state/format";
 import { live, state } from "../../state/store";
 import { KindIcon } from "../../ui/marks";
 import { Preview } from "../../ui/Preview";
@@ -40,7 +41,7 @@ export function MeshImports(p: Picking) {
                       <td class="mono">{i.entity}</td>
                       <td>
                         <span class="tag" classList={{ write: i.intent === "write" }}>
-                          {i.intent}
+                          {intentWords(i.kind, i.intent)}
                         </span>
                       </td>
                       <td class="cell-value">

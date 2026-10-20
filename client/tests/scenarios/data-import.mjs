@@ -23,7 +23,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(e.handlers[0].code === 'log(RobotPose.position.x, "Pose");', `the handler reads ${e.handlers[0].code}`);
   await eventually(() => hmi.state.values.RobotPose?.known, "the value to carry on under the new name");
 
-  await page.locator(".screen:not([hidden]) .sidebar.right .choice button", { hasText: "Write" }).click();
+  await page.locator(".screen:not([hidden]) .sidebar.right .choice button", { hasText: /^Read and / }).click();
   await eventually(() => hmi.state.imports.find((i) => i.alias === "RobotPose")?.intent === "write", "the intent change");
 
   await alias.fill("Math");

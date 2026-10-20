@@ -6,7 +6,7 @@ import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
 import type { Value } from "../../protocol/Value";
-import { typeLabel } from "../../state/format";
+import { intentWords, typeLabel } from "../../state/format";
 import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { KindIcon } from "../../ui/marks";
@@ -123,7 +123,7 @@ function ImportView(p: { imp: Import }) {
           <span class="mono">{p.imp.alias}</span>
         </span>
         <span class="tag" classList={{ write: p.imp.intent === "write" }}>
-          {p.imp.intent}
+          {intentWords(p.imp.kind, p.imp.intent)}
         </span>
       </div>
       <div class="pane-body pad">
@@ -143,7 +143,7 @@ function ImportView(p: { imp: Import }) {
                   title={intent === "write" && !canWrite() ? "Its owner takes no sets" : undefined}
                   onClick={() => p.imp.intent !== intent && change({ intent })}
                 >
-                  {intent === "read" ? "Read" : "Write"}
+                  {cap(intentWords(p.imp.kind, intent))}
                 </button>
               )}
             </For>
@@ -225,3 +225,5 @@ function Fields(p: { fields: FieldInfo[]; depth: number }) {
     </For>
   );
 }
+
+const cap = (t: string) => t[0].toUpperCase() + t.slice(1);
