@@ -2,6 +2,7 @@
 
 import { send } from "../../net/connection";
 import type { Box, Overrides } from "../../page/PageView";
+import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { isNumber, number } from "../../state/bind";
@@ -18,6 +19,17 @@ export function chain(elements: Element[], id: string): Element[] | undefined {
 
 export function find(elements: Element[], id: string): Element | undefined {
   return chain(elements, id)?.at(-1);
+}
+
+/** The frame an element sits in, null for the page. */
+export function parentOf(page: Page, id: string): string | null {
+  const path = chain(page.children, id);
+  return path && path.length > 1 ? path[path.length - 2].id : null;
+}
+
+/** What a frame holds, or the page for null, back to front. */
+export function childrenOf(page: Page, parent: string | null): Element[] {
+  return parent ? (find(page.children, parent)?.children ?? []) : page.children;
 }
 
 export function boxOf(e: Element, overrides?: Overrides): Box {
@@ -39,6 +51,22 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
 /** True when each of `keys` is a plain number or unset, so a drag may write them. */
 export function literal(e: Element, keys: (keyof Box)[]): boolean {
   return keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]));
+}
+
+/** Moves an element to `index` of `parent`, counted without it. Into another frame it keeps
+ *  its place on the page when its x and y are plain numbers. One undo takes it all back. */
+export function moveTo(page: Page, id: string, parent: string | null, index: number) {
+  const e = find(page.children, id);
+  if (!e) return;
+  const from = parentOf(page, id);
+  if (from === parent && childrenOf(page, from).findIndex((c) => c.id === id) === index) return;
+  const edits: Edit[] = [{ kind: "move_element", page: page.id, id, parent, index }];
+  if (from !== parent && literal(e, ["x", "y"])) {
+    const origin = (f: string | null) => (f ? absolute(page, f) : undefined) ?? { x: 0, y: 0 };
+    const [a, b] = [origin(from), origin(parent)];
+    edits.push({ kind: "set_props", page: page.id, id, props: { x: String(number(e.props.x) + a.x - b.x), y: String(number(e.props.y) + a.y - b.y) } });
+  }
+  send({ type: "edit", edit: edits.length === 1 ? edits[0] : { kind: "batch", edits } });
 }
 
 export function setProps(page: string, id: string, props: Record<string, string | null>) {

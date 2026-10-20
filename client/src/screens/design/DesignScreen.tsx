@@ -5,7 +5,7 @@ import { currentPage, openPage } from "../../state/view";
 import { Artboard, GRID } from "./Artboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
-import { boxOf, find, literal, setProps } from "./tree";
+import { boxOf, childrenOf, find, literal, moveTo, parentOf, setProps } from "./tree";
 
 export function DesignScreen(p: { shown: boolean }) {
   const [selected, setSelected] = createSignal<string | null>(null);
@@ -36,7 +36,8 @@ export function DesignScreen(p: { shown: boolean }) {
   });
 
   // Ctrl Z undoes this screen's last edit, Ctrl Shift Z or Ctrl Y redoes it. Delete removes,
-  // Escape lets go, the arrows nudge by the grid (Shift by four). A field keeps its own keys.
+  // Escape lets go, the arrows nudge by the grid (Shift by four), Ctrl ] and Ctrl [ bring
+  // forward and send back (Shift all the way). A field keeps its own keys.
   onMount(() => {
     const key = (e: KeyboardEvent) => {
       if (!p.shown || (e.target as HTMLElement).closest("input, textarea, select")) return;
@@ -52,7 +53,14 @@ export function DesignScreen(p: { shown: boolean }) {
       if (!page || !id) return;
       const e2 = find(page.children, id);
       if (!e2) return;
-      if (e.key === "Delete" || e.key === "Backspace") {
+      if (mod && ["[", "]", "{", "}"].includes(e.key)) {
+        e.preventDefault();
+        const siblings = childrenOf(page, parentOf(page, id));
+        const at = siblings.findIndex((c) => c.id === id);
+        const forward = e.key === "]" || e.key === "}";
+        const last = siblings.length - 1;
+        moveTo(page, id, parentOf(page, id), e.shiftKey ? (forward ? last : 0) : Math.min(last, Math.max(0, at + (forward ? 1 : -1))));
+      } else if (e.key === "Delete" || e.key === "Backspace") {
         send({ type: "edit", edit: { kind: "remove_element", page: page.id, id } });
       } else if (e.key === "Escape") {
         setSelected(null);
