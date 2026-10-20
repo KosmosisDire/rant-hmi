@@ -945,3 +945,18 @@ table.grid td.name > span {
 .cp-token:hover {
   border-color: var(--dim);
 }
+
+/* A picture in a value's preview: a thumbnail and its size. */
+.pv-picture {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pv-picture-canvas {
+  width: 40px;
+  height: 30px;
+  object-fit: contain;
+  background: var(--ground);
+  border-radius: 2px;
+}

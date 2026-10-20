@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch } from "solid-js";
 import type { Value } from "../protocol/Value";
 import { fields, number } from "../state/format";
+import { picture, PictureView } from "./Picture";
 
 /** How many bars a list of numbers draws, and fields a struct shows. */
 const BARS = 24;
@@ -33,6 +34,16 @@ export function Preview(p: { value: Value | null; known: boolean; depth?: number
       </Match>
       <Match when={typeof p.value === "bigint"}>
         <span class="pv-num">{String(p.value)}</span>
+      </Match>
+      <Match when={picture(p.value)}>
+        {(pic) => (
+          <span class="pv-picture" title={`${pic().width} by ${pic().height}, ${pic().format}`}>
+            <PictureView picture={pic()} class="pv-picture-canvas" />
+            <span class="pv-none">
+              {pic().width}x{pic().height}
+            </span>
+          </span>
+        )}
       </Match>
       <Match when={p.value instanceof Uint8Array && p.value}>{(bytes) => <span class="pv-none">{bytes().length} bytes</span>}</Match>
       <Match when={Array.isArray(p.value) && p.value}>{(list) => <List items={list() as Value[]} />}</Match>
