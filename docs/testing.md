@@ -11,7 +11,7 @@ This also writes `client/src/protocol` from the Rust types.
 ## Scenarios
 
 Each scenario in `client/tests/scenarios` is a new user's task, driven in headless Chrome
-against the demo line and a backend on loopback, domain 153 and port 6761.
+against the demo line, rant-transcoder and a backend on loopback, domain 153 and port 6761.
 
 ```sh
 cargo build -p rant-hmi --bin rant-hmi --example demo
@@ -23,6 +23,8 @@ node tests/run.mjs drag     # those whose file name holds "drag"
 - `HMI_BUILD` and `HMI_CLIENT` name another build and client to run, as ones made with
   `CARGO_TARGET_DIR=target/work` and `vite build --outDir ../target/work/client`, so the
   scenarios run while a backend from `target/debug` stays open on `client/dist`.
+- The transcoder is `transcoder-rant/bin` in the RANT folder above, or what
+  `HMI_TRANSCODER` names. Without it the video scenarios fail and say so.
 - A console error fails a scenario, as does a check.
 - A failure names the scenario line that threw and prints the backend's last words.
 - Screenshots and the backend's whole log land in `client/tests/out`.

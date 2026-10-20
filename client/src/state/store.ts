@@ -60,6 +60,8 @@ export interface State {
   refused: Refusal | null;
   /** What this screen should tell the person, newest last. */
   notices: Notice[];
+  /** The backend's answers to this screen's offers to play video, by import, until taken. */
+  answers: Record<string, string | undefined>;
 }
 
 export const [state, setState] = createStore<State>({
@@ -80,6 +82,7 @@ export const [state, setState] = createStore<State>({
   made: null,
   refused: null,
   notices: [],
+  answers: {},
 });
 
 /** The lists a screen changes a record of at a time, by the field that names a record. */
@@ -208,6 +211,9 @@ export function receive(msg: ServerMsg) {
       break;
     case "close":
       closeWith(msg.answer);
+      break;
+    case "play":
+      setState("answers", msg.alias, msg.answer);
       break;
     case "pong":
       break;

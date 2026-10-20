@@ -98,7 +98,7 @@
   pointer-events: none;
 }
 
-/* An image with nothing to show yet, in the editor only. */
+/* An image or video with nothing to show yet, in the editor only. */
 .el-picture-none {
   display: flex;
   align-items: center;
@@ -108,6 +108,12 @@
   color: #9aa0a6;
   outline: 1px dashed #5f656b;
   outline-offset: -1px;
+}
+
+/* Over a video, which keeps playing beneath so its first frame can arrive. */
+.el-picture-none.over {
+  position: absolute;
+  inset: 0;
 }
 
 /* A drawing's shapes fill its box, and may draw past it as a frame's children do. */

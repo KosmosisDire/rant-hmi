@@ -9,8 +9,9 @@ import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Kept, number, pageScope, repeatScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
-import { component, notify } from "../state/store";
-import { Image } from "../ui/icons";
+import { play, stopPlaying } from "../net/video";
+import { component, notify, state } from "../state/store";
+import { Image, Video } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { componentAct, type Act } from "./act";
 
@@ -253,7 +254,8 @@ function ElementView(p: ElementProps & { at?: At }) {
     const value = p.element.tag === "input" ? take("value") : undefined;
     const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
     const image = p.element.tag === "img" ? { src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
-    return { style, unknown, faults, text, value, drawing, image, w: at("w"), h: at("h") };
+    const video = p.element.tag === "video" ? { alias: playable(p.element.props.src, () => take("src")), fit: String(take("fit") ?? "meet") } : undefined;
+    return { style, unknown, faults, text, value, drawing, image, video, w: at("w"), h: at("h") };
   });
   const press = usePress(p);
   const inner = (c: Element) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
@@ -284,6 +286,7 @@ function ElementView(p: ElementProps & { at?: At }) {
           )}
         </Match>
         <Match when={look().image}>{(i) => <ImageView src={i().src} fit={i().fit} design={p.design} />}</Match>
+        <Match when={look().video}>{(v) => <VideoView alias={v().alias} fit={v().fit} design={p.design} />}</Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
         </Match>
@@ -348,6 +351,47 @@ function ImageView(p: { src: unknown; fit: string; design?: boolean }) {
       <Match when={url()}>{(u) => <img class="el-picture" src={u()} alt="" draggable={false} style={{ "object-fit": FIT[p.fit] ?? "contain" }} />}</Match>
       <Match when={pic()}>{(x) => <PictureView picture={x()} fit={p.fit} />}</Match>
     </Switch>
+  );
+}
+
+/** The import a video plays: its source as a bare import name, or the name its expression
+ *  gives as text, as a component's input passes it on. */
+function playable(src: string | undefined, value: () => unknown): string | null {
+  const imported = (name: unknown): name is string => typeof name === "string" && state.imports.some((i) => i.alias === name);
+  const raw = (src ?? "").trim();
+  if (imported(raw)) return raw;
+  const v = value();
+  return imported(v) ? v : null;
+}
+
+/** A video: an import's stream over WebRTC, fitted as a picture is. The editor marks it until
+ *  its first frame shows. */
+function VideoView(p: { alias: string | null; fit: string; design?: boolean }) {
+  const [shows, setShows] = createSignal(false);
+  let el!: HTMLVideoElement;
+  createEffect(() => {
+    const alias = p.alias;
+    setShows(false);
+    if (!alias) return;
+    const stream = play(alias);
+    createEffect(() => {
+      el.srcObject = stream();
+      void el.play().catch(() => {});
+    });
+    onCleanup(() => {
+      el.srcObject = null;
+      stopPlaying(alias);
+    });
+  });
+  return (
+    <>
+      <video ref={el} class="el-picture" style={{ "object-fit": FIT[p.fit] ?? "contain" }} autoplay muted playsinline onLoadedData={() => setShows(true)} />
+      <Show when={p.design && !shows()}>
+        <div class="el-picture-none over">
+          <Video size={20} />
+        </div>
+      </Show>
+    </>
   );
 }
 

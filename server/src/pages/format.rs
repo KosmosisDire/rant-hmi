@@ -22,7 +22,7 @@ fn own_attrs(tag: Tag) -> &'static [&'static str] {
     match tag {
         Tag::Input => &[VALUE],
         Tag::Svg => &[VIEWBOX, FIT],
-        Tag::Img => &[SRC, FIT],
+        Tag::Img | Tag::Video => &[SRC, FIT],
         _ => &[],
     }
 }
@@ -516,6 +516,18 @@ mod tests {
         let page = parse(text, "a").unwrap();
         let e = &page.children[0];
         assert_eq!((e.tag, e.props["src"].as_str(), e.props["fit"].as_str()), (Tag::Img, "Camera", "\"meet\""));
+        assert_eq!(write(&page), text);
+    }
+
+    #[test]
+    fn a_video_keeps_its_source_and_fit() {
+        let text = "<page name=\"A\" size=\"1408x792\">
+  <video id=\"e1\" x=\"44\" src=\"Camera\" fit='\"slice\"'/>
+</page>
+";
+        let page = parse(text, "a").unwrap();
+        let e = &page.children[0];
+        assert_eq!((e.tag, e.props["src"].as_str(), e.props["fit"].as_str()), (Tag::Video, "Camera", "\"slice\""));
         assert_eq!(write(&page), text);
     }
 

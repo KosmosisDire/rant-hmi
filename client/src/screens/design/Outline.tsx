@@ -6,7 +6,7 @@ import type { Tag } from "../../protocol/Tag";
 import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
-import { Component, File, Image, Plus, Shapes, Square, TextCursorInput, Type } from "../../ui/icons";
+import { Component, File, Image, Plus, Shapes, Square, TextCursorInput, Type, Video } from "../../ui/icons";
 import { Popover } from "../../ui/Popover";
 import type { Pick } from "./DesignScreen";
 import { TagIcon } from "./TagIcon";
@@ -14,7 +14,7 @@ import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
 
 /** What a new element starts as: visible, on the grid, and plainly named. A drawing starts
  *  empty, its shapes added from the inspector. */
-const STARTS: Record<"div" | "span" | "input" | "img" | "svg", Record<string, string>> = {
+const STARTS: Record<"div" | "span" | "input" | "img" | "video" | "svg", Record<string, string>> = {
   div: { name: "Frame", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35", "border-radius": "8" },
   span: { name: "Text", x: "44", y: "44", w: "176", h: "44", text: '"Text"', color: "#e4e6e8", "font-size": "18" },
   input: {
@@ -33,6 +33,7 @@ const STARTS: Record<"div" | "span" | "input" | "img" | "svg", Record<string, st
     "font-size": "18",
   },
   img: { name: "Image", x: "44", y: "44", w: "352", h: "264", fit: '"meet"' },
+  video: { name: "Video", x: "44", y: "44", w: "352", h: "264", fit: '"meet"' },
   svg: { name: "Drawing", x: "44", y: "44", w: "176", h: "176" },
 };
 
@@ -130,6 +131,9 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
         </button>
         <button class="icon-btn" title="Add an image" onClick={() => add("img")}>
           <Image size={14} />
+        </button>
+        <button class="icon-btn" title="Add a video" onClick={() => add("video")}>
+          <Video size={14} />
         </button>
         <button class="icon-btn" title="Add a drawing" onClick={() => add("svg")}>
           <Shapes size={14} />

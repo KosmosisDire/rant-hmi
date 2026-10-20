@@ -2,6 +2,7 @@
 //! nothing is shared and nothing locks.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
@@ -17,6 +18,7 @@ use crate::pages::{Edit, Pages};
 use crate::project::{Import, Intent, Kind, Per, Project, Record, Variable};
 use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, FromScript, Script, ToScript};
+use crate::video::{FromVideo, ToVideo};
 
 /// How often changed values go out and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
@@ -36,8 +38,8 @@ const ONCE: [&str; 5] = ["tap", "press", "release", "hold", "outside"];
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {
-    /// `out` takes the screen's encoded messages.
-    Open { session: u32, out: UnboundedSender<Bytes> },
+    /// `out` takes the screen's encoded messages. `local` is the address it reached the HMI on.
+    Open { session: u32, out: UnboundedSender<Bytes>, local: IpAddr },
     Message { session: u32, msg: ClientMsg },
     /// The screen answered the socket's ping.
     Heard { session: u32 },
@@ -46,6 +48,7 @@ pub enum Inbound {
 
 struct Session {
     out: UnboundedSender<Bytes>,
+    local: IpAddr,
     heard: Instant,
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
     undo: Vec<Edit>,
@@ -98,6 +101,9 @@ pub struct App {
     pages: Pages,
     mesh: Mesh,
     script: Script,
+    video: UnboundedSender<ToVideo>,
+    /// The screens playing each import's video.
+    playing: HashMap<String, HashSet<u32>>,
     runs: HashMap<u64, Running>,
     next_run: u64,
     /// Pages opened to wait for an answer: the waiting call, and the screen that shows them.
@@ -130,7 +136,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, node: String, build: String) -> App {
+    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, video: UnboundedSender<ToVideo>, node: String, build: String) -> App {
         script.send(ToScript::Imports(project.imports.clone()));
         script.send(ToScript::Pages(pages.keys()));
         script.send(ToScript::Variables(project.variables.clone()));
@@ -142,6 +148,8 @@ impl App {
             pages,
             mesh,
             script,
+            video,
+            playing: HashMap::new(),
             runs: HashMap::new(),
             next_run: 0,
             asks: HashMap::new(),
@@ -171,6 +179,7 @@ impl App {
         mut inbound: UnboundedReceiver<Inbound>,
         mut heard: UnboundedReceiver<FromScript>,
         mut changed: UnboundedReceiver<()>,
+        mut answered: UnboundedReceiver<FromVideo>,
     ) {
         let mut tick = tokio::time::interval(TICK);
         self.rules_changed();
@@ -183,6 +192,7 @@ impl App {
                 Some(i) = inbound.recv() => self.inbound(i),
                 Some(s) = heard.recv() => self.scripted(s),
                 Some(()) = changed.recv() => self.edited = Some(Instant::now()),
+                Some(v) = answered.recv() => self.answered(v),
                 _ = tick.tick() => self.tick(),
                 _ = &mut shutdown => break,
             }
@@ -202,10 +212,10 @@ impl App {
 
     fn inbound(&mut self, i: Inbound) {
         match i {
-            Inbound::Open { session, out } => {
+            Inbound::Open { session, out, local } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -262,6 +272,16 @@ impl App {
         }
         match msg {
             ClientMsg::Ping { t } => self.send(session, &ServerMsg::Pong { t }),
+            ClientMsg::Play { alias, offer } => {
+                let Some(import) = self.project.find(&alias).cloned() else {
+                    return self.refuse(session, format!("{alias} is not a mesh import, so it has no video"), None);
+                };
+                let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
+                self.playing.entry(alias.clone()).or_default().insert(session);
+                self.mesh.play(&import);
+                let _ = self.video.send(ToVideo::Offer { session, alias, sdp: offer, local });
+            }
+            ClientMsg::StopPlaying { alias } => self.stop_playing(session, &alias),
             ClientMsg::Import { import } => match self.project.import(import.clone()) {
                 Ok(()) => {
                     info!("imported {} as {}", import.entity, import.alias);
@@ -830,6 +850,12 @@ impl App {
                 self.mesh.attach(&import);
             }
             self.refresh_known();
+            // a camera's Video child can come or go, which changes where its video comes from
+            for alias in self.playing.keys().cloned().collect::<Vec<_>>() {
+                if let Some(import) = self.project.find(&alias).cloned() {
+                    self.mesh.play(&import);
+                }
+            }
             self.broadcast(&ServerMsg::Mesh { entities: self.mesh.entities() });
         }
         let now = Instant::now();
@@ -902,6 +928,10 @@ impl App {
         if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");
             self.script.send(ToScript::Gone(session));
+            for alias in self.playing.keys().cloned().collect::<Vec<_>>() {
+                self.stop_playing(session, &alias);
+            }
+            let _ = self.video.send(ToVideo::Gone { session });
             // a page the screen showed answers nothing, so no handler waits on it for ever
             let asked: Vec<u64> = self.asks.iter().filter(|(_, s)| **s == session).map(|(ask, _)| *ask).collect();
             for ask in asked {
@@ -921,6 +951,29 @@ impl App {
             let (_, page, id, index) = key;
             warn!("screen {session} {why} holding {id} on {page}, so its release runs");
             self.fire(session, page, id, "release".into(), Value::map([("lost", true.into())]), index.map(|i| (i, Value::Null)));
+        }
+    }
+
+    /// The screen no longer plays the import's video, and nothing watches a source no screen plays.
+    fn stop_playing(&mut self, session: u32, alias: &str) {
+        let Some(screens) = self.playing.get_mut(alias) else { return };
+        if !screens.remove(&session) {
+            return;
+        }
+        let _ = self.video.send(ToVideo::Stop { session, alias: alias.to_owned() });
+        if screens.is_empty() {
+            self.playing.remove(alias);
+            self.mesh.stop_playing(alias);
+        }
+    }
+
+    fn answered(&mut self, v: FromVideo) {
+        match v {
+            FromVideo::Answer { session, alias, sdp } => self.send(session, &ServerMsg::Play { alias, answer: sdp }),
+            FromVideo::Failed { session, alias, text } => {
+                self.stop_playing(session, &alias);
+                self.refuse(session, text, None);
+            }
         }
     }
 

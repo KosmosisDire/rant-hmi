@@ -143,6 +143,8 @@ pub enum Tag {
     Input,
     /// A picture: a URL, or a mesh import's Image.
     Img,
+    /// A mesh import's video, played over WebRTC.
+    Video,
     /// A drawing: placed like a frame, holding shapes drawn in its own units.
     Svg,
     Path,
@@ -161,11 +163,12 @@ pub enum Tag {
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-const WORDS: [(Tag, &str); 14] = [
+const WORDS: [(Tag, &str); 15] = [
     (Tag::Div, "div"),
     (Tag::Span, "span"),
     (Tag::Input, "input"),
     (Tag::Img, "img"),
+    (Tag::Video, "video"),
     (Tag::Svg, "svg"),
     (Tag::Path, "path"),
     (Tag::Circle, "circle"),

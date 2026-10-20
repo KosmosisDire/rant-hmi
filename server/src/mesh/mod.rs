@@ -6,8 +6,10 @@ use std::collections::HashMap;
 
 use std::future::Future;
 
+use rant::types::{VideoCodec, VideoFrame};
 use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableOptions};
 use crate::value::Value;
+use crate::video::{Frame, ToVideo};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
@@ -34,6 +36,9 @@ pub struct Mesh {
     node: Node,
     deliveries: UnboundedSender<Delivery>,
     attached: HashMap<String, Attached>,
+    frames: UnboundedSender<ToVideo>,
+    /// The video each played import comes from, and its subscription.
+    videos: HashMap<String, (String, Subscriber<VideoFrame>)>,
 }
 
 struct Attached {
@@ -54,13 +59,13 @@ enum Handle {
 }
 
 impl Mesh {
-    pub fn open(options: &MeshOptions, deliveries: UnboundedSender<Delivery>) -> Result<Mesh, rant::Error> {
+    pub fn open(options: &MeshOptions, deliveries: UnboundedSender<Delivery>, frames: UnboundedSender<ToVideo>) -> Result<Mesh, rant::Error> {
         // fetch_details lists every entity with its schema, as an observer tool needs
         let mut o = NodeOptions::new().domain(options.domain).max_topics(256).fetch_details(true);
         if options.loopback {
             o = o.multicast_interface("127.0.0.1");
         }
-        Ok(Mesh { node: Node::new(&options.name, o)?, deliveries, attached: HashMap::new() })
+        Ok(Mesh { node: Node::new(&options.name, o)?, deliveries, attached: HashMap::new(), frames, videos: HashMap::new() })
     }
 
     /// Changes whenever anything on the mesh does.
@@ -168,6 +173,39 @@ impl Mesh {
             Kind::Task => Handle::Task,
         };
         Ok(Attached { generation: entity.generation, schema, shapes, handle })
+    }
+
+    /// Plays an import's video: the entity itself when it carries video frames, else its
+    /// `Video` child, which rant-transcoder makes. Keeps the subscription while the source stays.
+    pub fn play(&mut self, import: &Import) {
+        let reflection = self.node.reflection();
+        let child = format!("{}/Video", import.entity);
+        let frames = |name: &str| reflection.find(EntityKind::Topic, name).filter(|e| e.schema.as_ref().is_some_and(|s| s.name() == "VideoFrame"));
+        let Some(source) = frames(&child).or_else(|| frames(&import.entity)) else {
+            self.videos.remove(&import.alias);
+            return;
+        };
+        if self.videos.get(&import.alias).is_some_and(|(name, _)| *name == source.name) {
+            return;
+        }
+        self.videos.remove(&import.alias);
+        let (alias, tx) = (import.alias.clone(), self.frames.clone());
+        let sub = self.node.subscriber::<VideoFrame>(&source.name, Qos::new().reliable(source.reliable), move |m| {
+            if m.codec == VideoCodec::H264 {
+                let f = m.into_inner();
+                let _ = tx.send(ToVideo::Frame(Frame { alias: alias.clone(), keyframe: f.keyframe, pts: f.pts.us, data: f.data }));
+            }
+        });
+        match sub {
+            Ok(sub) => {
+                self.videos.insert(import.alias.clone(), (source.name.clone(), sub));
+            }
+            Err(e) => warn!("could not play {} ({}): {e}", import.alias, source.name),
+        }
+    }
+
+    pub fn stop_playing(&mut self, alias: &str) {
+        self.videos.remove(alias);
     }
 
     fn attached(&self, alias: &str) -> Result<&Attached, String> {

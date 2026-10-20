@@ -46,6 +46,8 @@ pub enum ServerMsg {
     Made { page: String, id: String },
     /// The answer to a ping, for the round trip.
     Pong { t: f64 },
+    /// The answer to a screen's offer to play an import's video.
+    Play { alias: String, answer: String },
     /// An action that was not done, and why, for the screen that asked.
     Refused { text: String, alias: Option<String> },
     /// Something for the person at this screen: what a handler said, or why it stopped.
@@ -78,6 +80,9 @@ pub enum Level {
 pub enum ClientMsg {
     /// Asks for a pong, to time the round trip.
     Ping { t: f64 },
+    /// Plays an import's video: the screen's WebRTC offer, which the backend answers.
+    Play { alias: String, offer: String },
+    StopPlaying { alias: String },
     Import { import: Import },
     Unimport { alias: String },
     /// Renames an import or changes its intent. Every use of the old alias follows.

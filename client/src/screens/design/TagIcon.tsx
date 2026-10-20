@@ -2,7 +2,7 @@
 
 import { Match, Switch } from "solid-js";
 import type { Tag } from "../../protocol/Tag";
-import { ChartSpline, Circle, Component, Group, Image, Minus, Pentagon, RectangleHorizontal, Shapes, Spline, Square, TextCursorInput, Type } from "../../ui/icons";
+import { ChartSpline, Circle, Component, Group, Image, Minus, Pentagon, RectangleHorizontal, Shapes, Spline, Square, TextCursorInput, Type, Video } from "../../ui/icons";
 
 /** What each tag is called in the editor. */
 export const TAG_WORDS: Record<Tag, string> = {
@@ -11,6 +11,7 @@ export const TAG_WORDS: Record<Tag, string> = {
   use: "instance",
   input: "input",
   img: "image",
+  video: "video",
   svg: "drawing",
   path: "path",
   circle: "circle",
@@ -40,6 +41,9 @@ export function TagIcon(p: { tag: Tag; size: number }) {
       </Match>
       <Match when={p.tag === "img"}>
         <Image size={p.size} />
+      </Match>
+      <Match when={p.tag === "video"}>
+        <Video size={p.size} />
       </Match>
       <Match when={p.tag === "path"}>
         <Spline size={p.size} />

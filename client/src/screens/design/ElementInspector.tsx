@@ -328,6 +328,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
           <div class="field-hint">A mesh import of a Rant Image, or a URL in quotes. A drawing over it with the same fit and the picture's size as its view box lines its shapes up with the pixels.</div>
         </Show>
+        <Show when={p.element.tag === "video"}>
+          <div class="section">Video</div>
+          <Field {...prop("src")} label="Source" placeholder="Camera" />
+          <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
+          <div class="field-hint">A mesh import of a camera, by name. An H264 topic plays as it is, any other through its Video child, which rant-transcoder makes on the camera's host. A drawing over it lines up as over an image.</div>
+        </Show>
         <Show when={drawing()}>
           <div class="section">Drawing</div>
           <Field {...prop("viewbox")} label="View box" placeholder="its size" />

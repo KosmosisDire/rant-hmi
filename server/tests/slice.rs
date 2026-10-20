@@ -60,7 +60,8 @@ fn import_watch_and_set() {
 
     let (tx, rx) = unbounded_channel();
     let mut inbox = Inbox { rx, kept: VecDeque::new() };
-    let mut mesh = Mesh::open(&MeshOptions { name: "hmi_test".into(), domain: DOMAIN, loopback: true }, tx).unwrap();
+    let (frames, _) = unbounded_channel();
+    let mut mesh = Mesh::open(&MeshOptions { name: "hmi_test".into(), domain: DOMAIN, loopback: true }, tx, frames).unwrap();
     let watch = import("Conveyor", "Line1/Conveyor", Kind::Topic, Intent::Read);
     let set = import("Speed", "Line1/Speed", Kind::Variable, Intent::Write);
     let start = Instant::now();

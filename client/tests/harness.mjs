@@ -1,8 +1,8 @@
-// Starts what a test needs: the demo line and a backend on their own loopback domain and
-// port, with a fresh copy of the demo project, and a headless Chrome to drive.
+// Starts what a test needs: the demo line, the transcoder and a backend on their own loopback
+// domain and port, with a fresh copy of the demo project, and a headless Chrome to drive.
 
 import { spawn } from "node:child_process";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,17 @@ const exe = process.platform === "win32" ? ".exe" : "";
  *  so they can run while a backend from target/debug is open, serving client/dist. */
 const BUILD = resolve(process.env.HMI_BUILD ?? join(ROOT, "target", "debug"));
 const CLIENT = resolve(process.env.HMI_CLIENT ?? join(ROOT, "client", "dist"));
+
+/** rant-transcoder, which makes the H264 a video plays, from the RANT folder this sits in.
+ *  HMI_TRANSCODER names another. Without one the video scenarios fail and say so. */
+function transcoder() {
+  if (process.env.HMI_TRANSCODER) return resolve(process.env.HMI_TRANSCODER);
+  for (let d = ROOT; d !== dirname(d); d = dirname(d)) {
+    const path = join(d, "transcoder-rant", "bin", `rant-transcoder${exe}`);
+    if (existsSync(path)) return path;
+  }
+  return null;
+}
 
 /** Kept apart from the cargo tests' domain and from a running backend's port. */
 export const DOMAIN = 153;
@@ -33,6 +44,8 @@ export async function startSystem() {
   const project = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
   cpSync(join(ROOT, "examples", "demo"), project, { recursive: true, filter: (p) => !p.includes("pages") });
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
+  const transcoding = transcoder();
+  const video = transcoding && run(transcoding, ["--domain", String(DOMAIN), "--interface", "127.0.0.1"]);
   await new Promise((r) => setTimeout(r, 300));
   const backend = run(join(BUILD, `rant-hmi${exe}`), [
     project,
@@ -57,8 +70,10 @@ export async function startSystem() {
     ws: `ws://127.0.0.1:${PORT}/ws`,
     project,
     backend,
+    transcoder: video,
     stop() {
       backend.kill();
+      video?.kill();
       line.kill();
       rmSync(project, { recursive: true, force: true });
     },

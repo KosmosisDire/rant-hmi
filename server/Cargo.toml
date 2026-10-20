@@ -19,6 +19,8 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 notify = "8"
 rquickjs = "=0.14.0"
 serde = { version = "1", features = ["derive"] }
+# pure Rust crypto, so no OpenSSL to find on Windows or a target
+str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
 toml = "0.8"
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
