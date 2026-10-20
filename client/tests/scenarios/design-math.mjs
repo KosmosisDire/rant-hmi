@@ -35,6 +35,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const note = page.locator(".screen:not([hidden]) .sidebar.right .field-note");
   await eventually(async () => (await note.textContent())?.includes("a 2D vector and a 3D vector cannot be added"), "the sum of a 2D and a 3D vector to say why it fails");
   await d.setField("Text", "Speed +");
-  await eventually(async () => /^Unexpected token\b/.test((await note.textContent()) ?? ""), "code that does not parse to say so");
+  let said = "";
+  await eventually(async () => (said = (await note.allTextContents()).join(" | ")).startsWith("Unexpected token"), () => `code that does not parse to say so, not ${said}`);
   check(!/\(\d+:\d+\)/.test(await note.textContent()), `the note gives the wrapper's position: ${await note.textContent()}`);
 }

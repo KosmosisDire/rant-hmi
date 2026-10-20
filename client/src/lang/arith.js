@@ -8,14 +8,19 @@ import { METHOD_NAMES } from "./math.js";
 const OPS = { "+": "__add", "-": "__sub", "*": "__mul", "/": "__div" };
 const METHODS = new Set(METHOD_NAMES);
 
-/** Text that may hold something to route. Text without one skips the parse. */
-const ROUTED = new RegExp(`[-+*/]|\\.\\s*(?:${METHOD_NAMES.join("|")})\\s*\\(`);
-
 /** The script `src` with its arithmetic and math method calls routed through math.js, line for
- *  line as it was. Throws acorn's SyntaxError where it does not parse. */
-export function arith(src) {
-  if (!ROUTED.test(src)) return src;
-  const ast = parse(src, { ecmaVersion: "latest", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true });
+ *  line as it was. Where it does not parse, a SyntaxError says why. Code given `before`, the
+ *  lines that wrap it ahead, with one more closing it, also says on which of its lines. */
+export function arith(src, before) {
+  let ast;
+  try {
+    ast = parse(src, { ecmaVersion: "latest", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true });
+  } catch (e) {
+    if (!(e instanceof SyntaxError) || !e.loc) throw e;
+    const lines = src.split("\n").length - 1 - (before ?? 0);
+    const where = before === undefined ? "" : ` (line ${Math.min(Math.max(e.loc.line - before, 1), lines)})`;
+    throw new SyntaxError(`${e.message.replace(/ \(\d+:\d+\)$/, "")}${where}`);
+  }
   return emit(src, ast) + src.slice(ast.end);
 }
 
@@ -64,7 +69,7 @@ function emit(src, node) {
     case "CallExpression": {
       const c = node.callee;
       if (!node.optional && c.type === "MemberExpression" && !c.computed && !optional(c) && c.object.type !== "Super" && METHODS.has(c.property.name)) {
-        return `__call(${at(c.object)}, "${c.property.name}"${rest(c, node.arguments)})`;
+        return `__method(${at(c.object)}, "${c.property.name}"${rest(c, node.arguments)})`;
       }
       break;
     }

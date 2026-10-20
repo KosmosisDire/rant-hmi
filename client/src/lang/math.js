@@ -129,7 +129,7 @@ const POSE = {
 
 const METHODS = { vec2: VECTOR, vec3: VECTOR, quat: QUATERNION, pose: POSE };
 
-/** Every method name, which arith.js routes through `__call`. */
+/** Every method name, which arith.js routes through `__method`. */
 export const METHOD_NAMES = [...new Set(Object.values(METHODS).flatMap((m) => Object.keys(m)))];
 
 // ------------------------------------------------------------------ the operators
@@ -184,7 +184,7 @@ function __neg(a) {
 }
 
 /** A method call on `target`: a vector's, quaternion's or pose's from here, any other its own. */
-function __call(target, name, ...args) {
+function __method(target, name, ...args) {
   const own = METHODS[kind(target)]?.[name];
   if (own) return own(target, ...args);
   if (target === null || target === undefined) throw new TypeError(`${name} cannot be called on ${target}`);
@@ -240,5 +240,5 @@ export const LIBRARY = {
   __mul,
   __div,
   __neg,
-  __call,
+  __method,
 };

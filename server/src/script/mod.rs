@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use rquickjs::context::EvalOptions;
 use rquickjs::function::Opt;
-use rquickjs::{Context, Ctx, Exception, Function, Persistent, Promise, Runtime};
+use rquickjs::{Context, Ctx, Exception, Function, Module, Object, Persistent, Promise, Runtime};
 use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -94,6 +94,78 @@ pub enum FromScript {
 /// Expressions read together in a context of their own that reads but never writes, each a
 /// function by name.
 type Reader = (Context, Vec<(String, Persistent<Function<'static>>)>);
+
+/// The math library and the operator rewrite, the client's own files, so pages and code here
+/// do the same math. Each module is named as its importers name it.
+const ACORN: (&str, &str) = ("acorn/acorn.mjs", include_str!("../../../client/src/lang/acorn/acorn.mjs"));
+const MATH: (&str, &str) = ("math.js", include_str!("../../../client/src/lang/math.js"));
+const ARITH: (&str, &str) = ("arith.js", include_str!("../../../client/src/lang/arith.js"));
+
+/// Runs a module in `ctx` and gives its exports. One it imports must have run there first.
+fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquickjs::Result<Object<'js>> {
+    let (module, done) = Module::declare(ctx.clone(), name, source)?.eval()?;
+    done.finish::<()>()?;
+    module.namespace()
+}
+
+/// The math library's names code reads, which no import or variable may take.
+pub fn library_names() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let rt = Runtime::new().expect("QuickJS starts");
+        let ctx = Context::full(&rt).expect("QuickJS makes a context");
+        ctx.with(|ctx| {
+            let library: Object = module(&ctx, MATH)?.get("LIBRARY")?;
+            library.keys::<String>().filter(|k| !k.as_ref().is_ok_and(|k| k.starts_with("__"))).collect::<rquickjs::Result<Vec<_>>>()
+        })
+        .expect("the math library loads")
+    })
+}
+
+/// The operator rewrite, in a context of its own, the only one that holds acorn. Each text is
+/// rewritten once.
+struct Rewriter {
+    ctx: Context,
+    arith: Persistent<Function<'static>>,
+    done: RefCell<HashMap<String, Result<String, String>>>,
+}
+
+impl Rewriter {
+    fn new(rt: &Runtime) -> Rewriter {
+        let ctx = Context::full(rt).expect("QuickJS makes a context");
+        let arith = ctx
+            .with(|ctx| {
+                module(&ctx, ACORN)?;
+                module(&ctx, MATH)?;
+                let arith: Function = module(&ctx, ARITH)?.get("arith")?;
+                Ok::<_, rquickjs::Error>(Persistent::save(&ctx, arith))
+            })
+            .expect("the operator rewrite loads");
+        Rewriter { ctx, arith, done: RefCell::new(HashMap::new()) }
+    }
+
+    /// `src` with its arithmetic routed through the math library, or why it does not parse.
+    /// Code given `before`, the lines that wrap it ahead, also says on which of its lines.
+    fn rewrite(&self, src: &str, before: Option<u32>) -> Result<String, String> {
+        if let Some(done) = self.done.borrow().get(src) {
+            return done.clone();
+        }
+        let r = self.ctx.with(|ctx| {
+            let arith = self.arith.clone().restore(&ctx).map_err(|e| e.to_string())?;
+            arith.call::<_, String>((src, before)).map_err(|_| {
+                let e = ctx.catch();
+                e.as_object().and_then(|o| o.get::<_, String>("message").ok()).unwrap_or_else(|| "the code does not parse".to_owned())
+            })
+        });
+        let mut done = self.done.borrow_mut();
+        // each edit is a new text, so old ones are let go now and then
+        if done.len() > 4096 {
+            done.clear();
+        }
+        done.insert(src.to_owned(), r.clone());
+        r
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum End {
@@ -209,6 +281,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     })));
     // calls and sleeps settle from here, whichever run made them
     let home = Context::full(&rt).expect("QuickJS makes a context");
+    let rw = Rewriter::new(&rt);
     home.with(|ctx| {
         let failure: Function = ctx.eval("(status, message) => Object.assign(new Error(message), { name: 'CallError', status })").expect("the failure maker compiles");
         ctx.globals().set("__failure", failure).expect("globals take a function");
@@ -252,7 +325,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
             Ok(ToScript::Judge) => {
                 if judge.is_none() {
                     let sources = conditions.iter().map(|(id, c)| (id.clone(), format!("() => !!({c}\n)"))).collect::<Vec<_>>();
-                    judge = Some(make_reader(&rt, &shared, &sources, 0));
+                    judge = Some(make_reader(&rt, &rw, &shared, &sources, 0));
                 }
                 let (ctx, fns) = judge.as_ref().expect("made above");
                 let truths = ctx.with(|ctx| {
@@ -277,7 +350,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
             Ok(ToScript::Sample(names)) => {
                 if sampler.is_none() {
                     let sources = records.iter().map(|(name, s)| (name.clone(), format!("() => ({s}\n)"))).collect::<Vec<_>>();
-                    sampler = Some(make_reader(&rt, &shared, &sources, 0));
+                    sampler = Some(make_reader(&rt, &rw, &shared, &sources, 0));
                 }
                 let (ctx, fns) = sampler.as_ref().expect("made above");
                 let read = ctx.with(|ctx| {
@@ -308,7 +381,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 (judge, sampler, computer, inverter) = (None, None, None, None);
             }
             Ok(ToScript::Compute) => {
-                let (ctx, fns) = computer.get_or_insert_with(|| make_reader(&rt, &shared, &getters, 0));
+                let (ctx, fns) = computer.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &getters, 0));
                 // in order, each seen by those after it, and again while any moves, since one
                 // may read one later in the list
                 let mut out = Vec::new();
@@ -346,7 +419,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
             }
             Ok(ToScript::Invert { session, name, v }) => {
                 let target = shared.borrow().computed.get(&name).and_then(|c| c.set.as_ref()).map(|s| s.target.clone());
-                let (ctx, fns) = inverter.get_or_insert_with(|| make_reader(&rt, &shared, &setters, 0));
+                let (ctx, fns) = inverter.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &setters, 0));
                 let f = fns.iter().find(|(n, _)| *n == name).map(|(_, f)| f.clone());
                 let value = match (&target, f) {
                     (Some(_), Some(f)) => ctx.with(|ctx| {
@@ -366,15 +439,15 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 shared.borrow().send(FromScript::Inverted { session, name, target: target.unwrap_or_default(), value });
             }
             Ok(ToScript::Try { session, name }) => {
-                if let Some(warning) = try_setter(&rt, &shared, &deadline, &name) {
+                if let Some(warning) = try_setter(&rt, &rw, &shared, &deadline, &name) {
                     shared.borrow().send(FromScript::Tried { session, warning });
                 }
             }
             Ok(msg @ (ToScript::Imports(_) | ToScript::Variables(_))) => {
                 (judge, sampler, computer, inverter) = (None, None, None, None);
-                handle(&rt, &home, &shared, &deadline, msg);
+                handle(&rt, &rw, &home, &shared, &deadline, msg);
             }
-            Ok(msg) => handle(&rt, &home, &shared, &deadline, msg),
+            Ok(msg) => handle(&rt, &rw, &home, &shared, &deadline, msg),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -414,7 +487,7 @@ const TRIAL: u64 = u64::MAX;
 
 /// Writes `v` through a computed value's setter and reads it back through its getter, for a
 /// few values like the one it has now. Why one does not come back, else None.
-fn try_setter(rt: &Runtime, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, name: &str) -> Option<String> {
+fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, name: &str) -> Option<String> {
     let c = shared.borrow().computed.get(name).cloned()?;
     let set = c.set.clone()?;
     let samples: Vec<Value> = match shared.borrow().values.get(name) {
@@ -423,7 +496,7 @@ fn try_setter(rt: &Runtime, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option
         _ => Vec::new(),
     };
     let sources = [("get".to_owned(), format!("() => ({}\n)", c.get)), ("set".to_owned(), format!("(v) => ({}\n)", set.value))];
-    let (ctx, fns) = make_reader(rt, shared, &sources, TRIAL);
+    let (ctx, fns) = make_reader(rt, rw, shared, &sources, TRIAL);
     let [(_, get), (_, put)] = fns.as_slice() else { return None };
     let wrong = ctx.with(|ctx| {
         samples.into_iter().find_map(|v| {
@@ -466,7 +539,8 @@ fn same(a: &Value, b: &Value) -> bool {
 /// A reader of each `source`, a function's text, by name, in a context of its own that reads
 /// every name, as `run` when it is one, and refuses writes, calls and sends. One that does not
 /// compile is left out.
-fn make_reader(rt: &Runtime, shared: &Rc<RefCell<Shared>>, sources: &[(String, String)], run: u64) -> Reader {
+fn make_reader(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, sources: &[(String, String)], run: u64) -> Reader {
+    let sources: Vec<(&String, String)> = sources.iter().filter_map(|(id, source)| rw.rewrite(source, None).ok().map(|s| (id, s))).collect();
     let ctx = Context::full(rt).expect("QuickJS makes a context");
     let fns = ctx.with(|ctx| {
         if install(&ctx, run, shared, &Value::Null, None).is_err() {
@@ -482,7 +556,7 @@ fn make_reader(rt: &Runtime, shared: &Rc<RefCell<Shared>>, sources: &[(String, S
         sources
             .iter()
             .filter_map(|(id, source)| match ctx.eval::<Function, _>(source.as_str()) {
-                Ok(f) => Some((id.clone(), Persistent::save(&ctx, f))),
+                Ok(f) => Some(((*id).clone(), Persistent::save(&ctx, f))),
                 Err(_) => {
                     ctx.catch();
                     None
@@ -493,7 +567,7 @@ fn make_reader(rt: &Runtime, shared: &Rc<RefCell<Shared>>, sources: &[(String, S
     (ctx, fns)
 }
 
-fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, msg: ToScript) {
+fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, msg: ToScript) {
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
         // the loop takes these itself, since they need the readers it keeps
@@ -518,6 +592,11 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
             s.live.insert(run);
             s.sessions.insert(run, session);
             drop(s);
+            // rewritten first, since the rewrite runs in a context of its own and one runs at a time
+            let source = match rw.rewrite(&format!("(async () => {{\n{code}\n}})().then(() => __end(\"ok\"), __finish);"), Some(1)) {
+                Ok(source) => source,
+                Err(why) => return finish(shared, run, End::Fault(why)),
+            };
             let ctx = match Context::full(rt) {
                 Ok(ctx) => ctx,
                 Err(e) => return finish(shared, run, End::Fault(format!("could not start: {e}"))),
@@ -527,7 +606,6 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
                     return Some(format!("could not start: {e}"));
                 }
                 deadline.set(Some(Instant::now() + BUDGET));
-                let source = format!("(async () => {{\n{code}\n}})().then(() => __end(\"ok\"), __finish);");
                 let mut options = EvalOptions::default();
                 options.strict = true;
                 options.filename = Some("handler".into());
@@ -587,6 +665,12 @@ fn settle(home: &Context, w: Waiter, outcome: Result<Value, CallFailure>) {
 /// The host side of what `prelude.js` builds on, bound to one run, then the prelude itself.
 fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Value, at: Option<&(u32, Value)>) -> rquickjs::Result<()> {
     let g = ctx.globals();
+    // the math library first, so a name of the project's own set after it wins
+    let library: Object = module(ctx, MATH)?.get("LIBRARY")?;
+    for name in library.keys::<String>() {
+        let name = name?;
+        g.set(name.as_str(), library.get::<_, rquickjs::Value>(name.as_str())?)?;
+    }
     g.set("p", to_js(ctx, p)?)?;
     if let Some((index, item)) = at {
         g.set("index", *index)?;

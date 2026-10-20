@@ -482,9 +482,14 @@ const TAKEN_LOCAL: [&str; 47] = [
     "until", "while",
 ];
 
+/// A name of the math library's, such as sqrt or PI, which a variable or import would hide.
+fn taken_by_math(name: &str) -> bool {
+    crate::script::library_names().iter().any(|n| n == name)
+}
+
 /// Local names are camelCase, which is what tells them from imports.
 fn check_local(name: &str) -> Result<(), String> {
-    if TAKEN_LOCAL.contains(&name) {
+    if TAKEN_LOCAL.contains(&name) || taken_by_math(name) {
         return Err(format!("{name} is a name code already uses, so pick another"));
     }
     let mut chars = name.chars();
@@ -506,7 +511,7 @@ const TAKEN: [&str; 22] = [
 
 /// An import is named in PascalCase, which is what tells mesh names from local ones.
 fn check_alias(alias: &str) -> Result<(), String> {
-    if TAKEN.contains(&alias) {
+    if TAKEN.contains(&alias) || taken_by_math(alias) {
         return Err(format!("{alias} is a name code already uses, so pick another"));
     }
     let mut chars = alias.chars();
@@ -597,6 +602,7 @@ mod tests {
         assert_eq!(Project::open(&dir).unwrap().variables, [mode.clone(), limits]);
         assert!(p.set_variable("Speed", Some(Variable { name: "Speed".into(), ..mode.clone() })).unwrap_err().contains("small letter"));
         assert!(p.set_variable("open", Some(Variable { name: "open".into(), ..mode.clone() })).unwrap_err().contains("already uses"));
+        assert!(p.set_variable("sqrt", Some(Variable { name: "sqrt".into(), ..mode.clone() })).unwrap_err().contains("already uses"));
         assert!(p.set_variable("x", Some(Variable { name: "x".into(), start: Value::Null, per: Per::Hmi })).unwrap_err().contains("start value"));
         p.set_variable("jogMode", Some(Variable { name: "mode".into(), ..mode })).unwrap();
         p.set_variable("limits", None).unwrap();

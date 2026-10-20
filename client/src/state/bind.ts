@@ -254,16 +254,12 @@ const MATH_NAMES = Object.keys(LIBRARY);
 const MATH = Object.values(LIBRARY);
 
 /** `body` as a function of the scope with math's arithmetic and names, or why it does not
- *  compile. `lines` is how many lines the body adds before the code, which a place leaves out. */
-function make<T>(body: string, lines: number): T | string {
+ *  compile. Code says on which line, past the `lines` the body adds before it. */
+function make<T>(body: string, lines?: number): T | string {
   try {
-    return new Function("scope", ...MATH_NAMES, arith(body)) as T;
+    return new Function("scope", ...MATH_NAMES, arith(body, lines)) as T;
   } catch (e) {
-    const message = (e as Error).message ?? String(e);
-    const at = / \((\d+):\d+\)$/.exec(message);
-    if (!at) return message;
-    const line = Number(at[1]) - lines;
-    return line > 1 ? `${message.slice(0, at.index)} (line ${line})` : message.slice(0, at.index);
+    return (e as Error).message ?? String(e);
   }
 }
 
@@ -359,7 +355,7 @@ function compile(src: string): ((scope: object, ...math: unknown[]) => unknown) 
   let fn = compiled.get(src);
   if (fn === undefined) {
     // `with` routes bare names through the scope, which needs sloppy mode, as new Function gives
-    fn = make<(scope: object, ...math: unknown[]) => unknown>(`with (scope) { return (${colours(src)[0]}\n); }`, 0);
+    fn = make<(scope: object, ...math: unknown[]) => unknown>(`with (scope) { return (${colours(src)[0]}\n); }`);
     compiled.set(src, fn);
   }
   return fn;
