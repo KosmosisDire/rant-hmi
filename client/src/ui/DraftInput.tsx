@@ -1,9 +1,17 @@
-import { createEffect, createSignal, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Completion, Suggestion } from "../state/complete";
+import { painted } from "./highlight";
 import { Suggestions } from "./Suggestions";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
+
+/** What the colours copy from their field, so each line up with its letters. */
+const BOX = [
+  "padding-top", "padding-right", "padding-bottom", "padding-left",
+  "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+  "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align", "tab-size",
+];
 
 /** A field that shows the live value until typed in, so a live update never erases an edit
  *  and a field only focused never writes. Enter or leaving commits, Escape puts it back. */
@@ -91,6 +99,36 @@ export function DraftInput(p: {
   // moving the caret while the list is open changes what fits there
   const moved = (e: KeyboardEvent) => {
     if (offer() && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) look();
+    follow();
+  };
+
+  // A field with completion holds code, shown in colour by a layer over it, which copies its
+  // box and scroll. The field's own letters are clear, so its caret and selection still show.
+  let colours: HTMLPreElement | undefined;
+  const follow = () => {
+    if (!colours) return;
+    colours.scrollTop = field.scrollTop;
+    colours.scrollLeft = field.scrollLeft;
+  };
+  const fit = () => {
+    if (!colours) return;
+    const css = getComputedStyle(field);
+    for (const k of BOX) colours.style.setProperty(k, css.getPropertyValue(k));
+    Object.assign(colours.style, { left: `${field.offsetLeft}px`, top: `${field.offsetTop}px`, width: `${field.offsetWidth}px`, height: `${field.offsetHeight}px` });
+    // one line stands in the middle of its field, as a line its full height does
+    if (!p.multiline) colours.style.lineHeight = `${field.clientHeight}px`;
+    follow();
+  };
+  onMount(() => {
+    if (!colours) return;
+    const watch = new ResizeObserver(fit);
+    watch.observe(field);
+    onCleanup(() => watch.disconnect());
+  });
+  // a last empty line still takes its height, as it does in the field
+  const shown = () => {
+    const text = draft() ?? p.value;
+    return painted(p.multiline && text.endsWith("\n") ? `${text} ` : text);
   };
 
   const input = (
@@ -98,7 +136,7 @@ export function DraftInput(p: {
       component={p.multiline ? "textarea" : "input"}
       ref={(el: Field) => (field = el)}
       class={p.class ?? "editor"}
-      classList={{ bad: bad() }}
+      classList={{ bad: bad(), "hl-field": !!p.complete }}
       value={draft() ?? p.value}
       placeholder={p.placeholder}
       title={p.title}
@@ -107,7 +145,9 @@ export function DraftInput(p: {
       onInput={(e: InputEvent & { currentTarget: Field }) => {
         setDraft(e.currentTarget.value);
         look();
+        queueMicrotask(follow);
       }}
+      onScroll={follow}
       onFocus={enter}
       onClick={enter}
       onKeyUp={moved}
@@ -119,6 +159,7 @@ export function DraftInput(p: {
     <Show when={p.complete} fallback={input}>
       <span class="draft">
         {input}
+        <pre class="hl" classList={{ wrap: p.multiline }} ref={colours} aria-hidden="true" innerHTML={shown()} />
         <Show when={offer()}>{(o) => <Suggestions items={o().items} chosen={chosen()} onTake={take} />}</Show>
       </span>
     </Show>

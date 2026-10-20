@@ -383,6 +383,65 @@
   min-width: 0;
 }
 
+/* Code in colour over its field, whose own letters are clear so its caret and selection show. */
+.hl {
+  position: absolute;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+  white-space: pre;
+  border-style: solid;
+  border-color: transparent;
+}
+
+.hl.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.draft .hl-field {
+  color: transparent;
+  caret-color: var(--text);
+}
+
+.draft .hl-field::placeholder {
+  color: var(--faint);
+}
+
+.hl-kw {
+  color: var(--purple);
+}
+
+.hl-str {
+  color: var(--green-hi);
+}
+
+.hl-com {
+  color: var(--faint);
+  font-style: italic;
+}
+
+.hl-topic {
+  color: var(--dim);
+}
+
+.hl-function {
+  color: var(--accent);
+}
+
+.hl-variable {
+  color: var(--amber);
+}
+
+.hl-task {
+  color: var(--green);
+}
+
+.hl-local {
+  color: var(--blue);
+}
+
 .suggest {
   position: absolute;
   left: 0;
