@@ -7,8 +7,9 @@ import type { Variable } from "../../protocol/Variable";
 import type { Value } from "../../protocol/Value";
 import { live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
-import { Plus, Trash } from "../../ui/icons";
+import { Copy, Plus, RotateCcw, Trash } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
+import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
 
@@ -29,6 +30,16 @@ function literal(text: string): Value | undefined {
 
 function setVariable(name: string, variable: Variable | null) {
   if (send({ type: "set_variable", name, variable })) putLocal("variables", name, variable);
+}
+
+/** A variable's right click menu: back to its start, its name to copy, and deleting it. */
+function variableMenu(e: MouseEvent, v: Variable) {
+  openMenu(e, [
+    { label: "Reset to its start", icon: <RotateCcw size={13} />, run: () => send({ type: "set", alias: v.name, path: "", value: v.start }) },
+    { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(v.name) },
+    "-",
+    { label: "Delete", icon: <Trash size={13} />, run: () => setVariable(v.name, null) },
+  ]);
 }
 
 export function VariablesTable(p: Picking) {
@@ -66,7 +77,15 @@ export function VariablesTable(p: Picking) {
                   const now = () => live(v.name);
                   const picked = () => p.selection?.kind === "variable" && p.selection.name === v.name;
                   return (
-                    <tr class="row" classList={{ selected: picked() }} onClick={() => p.onSelect({ kind: "variable", name: v.name })}>
+                    <tr
+                      class="row"
+                      classList={{ selected: picked() }}
+                      onClick={() => p.onSelect({ kind: "variable", name: v.name })}
+                      onContextMenu={(e) => {
+                        p.onSelect({ kind: "variable", name: v.name });
+                        variableMenu(e, v);
+                      }}
+                    >
                       <td class="name">
                         <span>
                           <LocalIcon />

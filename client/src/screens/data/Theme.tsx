@@ -6,7 +6,8 @@ import { send } from "../../net/connection";
 import type { Token } from "../../protocol/Token";
 import { putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
-import { Plus, Trash } from "../../ui/icons";
+import { Copy, Plus, Trash } from "../../ui/icons";
+import { copyText, openMenu } from "../../ui/Menu";
 import type { Picking } from "./DataScreen";
 
 /** A value as its text, with a swatch beside one that is a colour. */
@@ -56,7 +57,15 @@ export function ThemeTable(p: Picking) {
             <tbody>
               <For each={state.tokens}>
                 {(t) => (
-                  <tr class="row" classList={{ selected: p.selection?.kind === "token" && p.selection.name === t.name }} onClick={() => p.onSelect({ kind: "token", name: t.name })}>
+                  <tr
+                    class="row"
+                    classList={{ selected: p.selection?.kind === "token" && p.selection.name === t.name }}
+                    onClick={() => p.onSelect({ kind: "token", name: t.name })}
+                    onContextMenu={(e) => {
+                      p.onSelect({ kind: "token", name: t.name });
+                      openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(`$${t.name}`) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setToken(t.name, null) }]);
+                    }}
+                  >
                     <td class="name mono">${t.name}</td>
                     <td>
                       <Swatch value={t.dark} />

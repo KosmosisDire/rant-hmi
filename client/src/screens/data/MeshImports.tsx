@@ -1,9 +1,26 @@
 import { For, Show } from "solid-js";
-import { intentWords } from "../../state/format";
+import type { Import } from "../../protocol/Import";
+import type { Intent } from "../../protocol/Intent";
+import { capital, intentWords } from "../../state/format";
 import { live, state } from "../../state/store";
+import { Copy, Trash } from "../../ui/icons";
 import { KindIcon } from "../../ui/marks";
+import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
+import { canWrite, changeImport, unimport } from "./Inspector";
+
+/** An import's right click menu: what it may do, its alias to copy, and removing it. */
+function importMenu(e: MouseEvent, i: Import) {
+  const intents: Intent[] = ["read", "write"];
+  openMenu(e, [
+    ...intents.map((intent) => ({ label: capital(intentWords(i.kind, intent)), disabled: i.intent === intent || (intent === "write" && !canWrite(i)), run: () => changeImport(i, { intent }) })),
+    "-",
+    { label: "Copy the alias", icon: <Copy size={13} />, run: () => copyText(i.alias) },
+    "-",
+    { label: "Remove", icon: <Trash size={13} />, run: () => unimport(i.alias) },
+  ]);
+}
 
 /** Every mesh import with its live value. Pages and handlers see only these. */
 export function MeshImports(p: Picking) {
@@ -31,7 +48,15 @@ export function MeshImports(p: Picking) {
                   const v = () => live(i.alias);
                   const picked = () => p.selection?.kind === "import" && p.selection.alias === i.alias;
                   return (
-                    <tr class="row" classList={{ selected: picked() }} onClick={() => p.onSelect({ kind: "import", alias: i.alias })}>
+                    <tr
+                      class="row"
+                      classList={{ selected: picked() }}
+                      onClick={() => p.onSelect({ kind: "import", alias: i.alias })}
+                      onContextMenu={(e) => {
+                        p.onSelect({ kind: "import", alias: i.alias });
+                        importMenu(e, i);
+                      }}
+                    >
                       <td class="name">
                         <span>
                           <KindIcon kind={i.kind} />

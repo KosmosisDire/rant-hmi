@@ -84,6 +84,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.menu(page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${badge}"]`), "Select what holds it");
   await eventually(async () => (await page.locator(".screen:not([hidden]) .sidebar.left .list-row.selected[data-id]").getAttribute("data-id")) === box, "the box to be picked");
 
+  // a field's label copies its value and resets it to the default
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await d.select("Box");
+  const fill = page.locator(".screen:not([hidden]) .sidebar.right .field", { has: page.locator("label", { hasText: /^Fill$/ }) }).locator("label");
+  await d.menu(fill, "Copy the value");
+  check((await page.evaluate(() => navigator.clipboard.readText())) === "#2a2f35", "the fill did not reach the clipboard");
+  await d.menu(fill, "Reset to default");
+  await eventually(() => hmi.page(pageId).children.find((e) => e.id === box)?.props.background === undefined, "the fill to go back to its default");
+
   await onBox("Delete");
   await eventually(() => !top().some((e) => e.id === box), "the box to go");
 }

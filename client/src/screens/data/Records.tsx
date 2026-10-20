@@ -8,7 +8,8 @@ import type { Value } from "../../protocol/Value";
 import { complete } from "../../state/complete";
 import { live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
-import { ChartSpline, Plus, Trash } from "../../ui/icons";
+import { ChartSpline, Copy, Plus, Trash } from "../../ui/icons";
+import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
 
@@ -62,7 +63,15 @@ export function RecordsTable(p: Picking) {
                 {(r) => {
                   const picked = () => p.selection?.kind === "record" && p.selection.name === r.name;
                   return (
-                    <tr class="row" classList={{ selected: picked() }} onClick={() => p.onSelect({ kind: "record", name: r.name })}>
+                    <tr
+                      class="row"
+                      classList={{ selected: picked() }}
+                      onClick={() => p.onSelect({ kind: "record", name: r.name })}
+                      onContextMenu={(e) => {
+                        p.onSelect({ kind: "record", name: r.name });
+                        openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(r.name) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setRecord(r.name, null) }]);
+                      }}
+                    >
                       <td class="name">
                         <span>
                           <span class="kind kind-local">

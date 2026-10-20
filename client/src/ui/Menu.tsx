@@ -31,6 +31,19 @@ export function openMenu(e: MouseEvent, entries: MenuEntry[]) {
 
 export const closeMenu = () => setShown(null);
 
+/** Copies text from a row's click. Plain http has no clipboard API, but a copy event the
+ *  click asks for may carry text, and nothing else hears this one. */
+export function copyText(text: string) {
+  const put = (e: ClipboardEvent) => {
+    e.clipboardData?.setData("text/plain", text);
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+  document.addEventListener("copy", put, true);
+  document.execCommand("copy");
+  document.removeEventListener("copy", put, true);
+}
+
 /** Where the open menu draws, once in the app's frame. */
 export function MenuHost() {
   return <Show when={shown()}>{(m) => <List anchor={{ x: m().x, y: m().y }} entries={m().entries} onClose={closeMenu} />}</Show>;

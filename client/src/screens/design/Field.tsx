@@ -10,7 +10,8 @@ import { mode } from "../../state/mode";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
-import { Braces, ChevronsUpDown, Hash, Link, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
+import { Braces, ChevronsUpDown, Copy, Hash, Link, RotateCcw, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
+import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 
 /** Where the fields stand: the names their code reads, and what completion offers instead
@@ -76,7 +77,18 @@ export function Field(p: FieldProps) {
     return { text: r.error, words: !/["'`]/.test(p.value) };
   });
   return (
-    <div class="field" classList={{ bound: !p.plain && !isConstant(p.value) && !(p.percent && isPercent(p.value)), inside: p.inside }}>
+    <div
+      class="field"
+      classList={{ bound: !p.plain && !isConstant(p.value) && !(p.percent && isPercent(p.value)), inside: p.inside }}
+      onContextMenu={(e) => {
+        // in the text the browser's own menu stays, for its cut, copy and paste
+        if ((e.target as HTMLElement).closest("input, textarea")) return;
+        openMenu(e, [
+          { label: "Reset to default", icon: <RotateCcw size={13} />, disabled: p.value.trim() === "", run: () => write("") },
+          { label: "Copy the value", icon: <Copy size={13} />, disabled: p.value.trim() === "", run: () => copyText(p.value) },
+        ]);
+      }}
+    >
       <Show when={!p.inside}>
         <label>{p.label}</label>
       </Show>

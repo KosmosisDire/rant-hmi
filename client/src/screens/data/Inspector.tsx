@@ -6,7 +6,7 @@ import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
 import type { Value } from "../../protocol/Value";
-import { intentWords, typeLabel } from "../../state/format";
+import { capital, intentWords, typeLabel } from "../../state/format";
 import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { KindIcon } from "../../ui/marks";
@@ -100,6 +100,18 @@ function EntityView(p: { entity: EntityInfo }) {
   );
 }
 
+/** Changes an import's alias or intent, here at once too. */
+export function changeImport(imp: Import, to: Partial<Import>) {
+  setState("refused", null);
+  const next = { ...imp, ...to };
+  if (send({ type: "change_import", alias: imp.alias, import: next })) putLocal("imports", imp.alias, next);
+}
+
+/** A variable whose owner takes no sets can only be read. */
+export const canWrite = (imp: Import) => imp.kind !== "variable" || (entity(imp.entity)?.writable ?? true);
+
+export const unimport = (alias: string) => send({ type: "unimport", alias });
+
 function ImportView(p: { imp: Import }) {
   const e = () => entity(p.imp.entity);
   const v = () => live(p.imp.alias);
@@ -108,13 +120,7 @@ function ImportView(p: { imp: Import }) {
     setState("refused", null);
     send({ type: "set", alias: p.imp.alias, path, value });
   };
-  const change = (to: Partial<Import>) => {
-    setState("refused", null);
-    const next = { ...p.imp, ...to };
-    if (send({ type: "change_import", alias: p.imp.alias, import: next })) putLocal("imports", p.imp.alias, next);
-  };
-  // a variable whose owner takes no sets can only be read
-  const canWrite = () => p.imp.kind !== "variable" || (e()?.writable ?? true);
+  const change = (to: Partial<Import>) => changeImport(p.imp, to);
   return (
     <>
       <div class="pane-head">
@@ -139,11 +145,11 @@ function ImportView(p: { imp: Import }) {
               {(intent) => (
                 <button
                   classList={{ on: p.imp.intent === intent }}
-                  disabled={intent === "write" && !canWrite()}
-                  title={intent === "write" && !canWrite() ? "Its owner takes no sets" : undefined}
+                  disabled={intent === "write" && !canWrite(p.imp)}
+                  title={intent === "write" && !canWrite(p.imp) ? "Its owner takes no sets" : undefined}
                   onClick={() => p.imp.intent !== intent && change({ intent })}
                 >
-                  {cap(intentWords(p.imp.kind, intent))}
+                  {capital(intentWords(p.imp.kind, intent))}
                 </button>
               )}
             </For>
@@ -177,7 +183,7 @@ function ImportView(p: { imp: Import }) {
         </Show>
       </div>
       <div class="pane-foot">
-        <button class="button" onClick={() => send({ type: "unimport", alias: p.imp.alias })}>
+        <button class="button" onClick={() => unimport(p.imp.alias)}>
           <Trash size={12} />
           Remove
         </button>
@@ -225,5 +231,3 @@ function Fields(p: { fields: FieldInfo[]; depth: number }) {
     </For>
   );
 }
-
-const cap = (t: string) => t[0].toUpperCase() + t.slice(1);

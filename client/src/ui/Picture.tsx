@@ -4,6 +4,7 @@
 import { createEffect, onCleanup } from "solid-js";
 import type { Value } from "../protocol/Value";
 import { fields } from "../state/format";
+import { notify } from "../state/store";
 
 export interface Picture {
   width: number;
@@ -138,3 +139,28 @@ export function PictureView(p: { picture: Picture; fit?: string; class?: string;
   createEffect(() => draw(p.picture));
   return <canvas ref={canvas} class={p.class ?? "el-picture"} style={{ "object-fit": FIT[p.fit ?? "meet"] ?? "contain" }} />;
 }
+
+/** An element's own picture or video, not one of a frame inside it. */
+const SHOWN = ":scope > canvas.el-picture, :scope > video, :scope > img.el-picture";
+
+/** Saves what an element's picture or video shows now as a PNG on this device. */
+export function savePicture(el: Element, name: string) {
+  const media = el.querySelector<HTMLCanvasElement | HTMLVideoElement | HTMLImageElement>(SHOWN);
+  const [w, h] = media instanceof HTMLVideoElement ? [media.videoWidth, media.videoHeight] : media instanceof HTMLImageElement ? [media.naturalWidth, media.naturalHeight] : [media?.width ?? 0, media?.height ?? 0];
+  if (!media || !w || !h) return notify("Nothing shows there yet to save.", "warn");
+  const canvas = Object.assign(document.createElement("canvas"), { width: w, height: h });
+  canvas.getContext("2d")!.drawImage(media, 0, 0);
+  try {
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `${name}.png` });
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    });
+  } catch {
+    notify("That picture comes from another site, which does not let a page save it.", "warn");
+  }
+}
+
+/** Whether an element shows a picture or a video that can be saved. */
+export const showsPicture = (el: Element) => !!el.querySelector(SHOWN);

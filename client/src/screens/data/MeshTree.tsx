@@ -2,10 +2,12 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import { importOf, setState, state } from "../../state/store";
-import { ChevronDown, ChevronRight, Plus, Search, X } from "../../ui/icons";
+import { ChevronDown, ChevronRight, Copy, Plus, Search, Trash, X } from "../../ui/icons";
 import { KindIcon } from "../../ui/marks";
+import { copyText, openMenu } from "../../ui/Menu";
 import type { Picking } from "./DataScreen";
 import { suggest } from "./ImportForm";
+import { unimport } from "./Inspector";
 
 interface Folder {
   name: string;
@@ -57,6 +59,14 @@ export function MeshTree(p: Picking) {
     setState("refused", null);
     send({ type: "import", import: { alias: suggest(e.name), entity: e.name, kind: e.kind, intent: "read" } });
   };
+  const menu = (ev: MouseEvent, e: EntityInfo) => {
+    pick(e);
+    const imported = importOf(e.name);
+    openMenu(ev, [
+      imported ? { label: `Remove ${imported.alias}`, icon: <Trash size={13} />, run: () => unimport(imported.alias) } : { label: "Import to read", icon: <Plus size={13} />, run: () => quick(e) },
+      { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(e.name) },
+    ]);
+  };
   const picked = (e: EntityInfo) => {
     const s = p.selection;
     if (s?.kind === "entity") return s.name === e.name;
@@ -85,7 +95,16 @@ export function MeshTree(p: Picking) {
       </For>
       <For each={l.folder.entities}>
         {(e) => (
-          <div class="list-row" role="button" tabIndex={0} classList={{ selected: picked(e) }} onClick={() => pick(e)} onKeyDown={(k) => k.key === "Enter" && pick(e)} title={e.name}>
+          <div
+            class="list-row"
+            role="button"
+            tabIndex={0}
+            classList={{ selected: picked(e) }}
+            onClick={() => pick(e)}
+            onContextMenu={(ev) => menu(ev, e)}
+            onKeyDown={(k) => k.key === "Enter" && pick(e)}
+            title={e.name}
+          >
             <span style={{ width: `${l.depth * INDENT}px` }} />
             <span class="caret" />
             <KindIcon kind={e.kind} />

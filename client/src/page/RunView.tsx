@@ -5,6 +5,9 @@ import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid
 import type { Page } from "../protocol/Page";
 import { back, prune, stack } from "../state/stack";
 import { page } from "../state/store";
+import { Download } from "../ui/icons";
+import { openMenu } from "../ui/Menu";
+import { savePicture, showsPicture } from "../ui/Picture";
 import { pageAct } from "./act";
 import { PageView, stacked } from "./PageView";
 
@@ -54,7 +57,15 @@ export function RunView(p: { active: boolean }) {
   });
 
   return (
-    <div class="run-view" ref={host}>
+    <div
+      class="run-view"
+      ref={host}
+      onContextMenu={(e) => {
+        // a picture saves to the device, the rest keeps the browser's own menu
+        const el = (e.target as HTMLElement).closest<HTMLElement>(".el[data-id]");
+        if (el && showsPicture(el)) openMenu(e, [{ label: "Save picture", icon: <Download size={13} />, run: () => savePicture(el, el.dataset.name ?? "picture") }]);
+      }}
+    >
       <For each={pages()}>
         {(pg, n) => {
           const shown = () => layout(pg, n());

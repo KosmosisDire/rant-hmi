@@ -11,6 +11,9 @@ export function number(n: number): string {
   return String(Number(n.toPrecision(4)));
 }
 
+/** Text with its first letter a capital, as a row or a button starts. */
+export const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
 /** What an import's intent allows, in words: reading is always allowed, and write adds what
  *  its kind takes, a set, a send or a call. */
 export function intentWords(kind: Kind, intent: Intent): string {

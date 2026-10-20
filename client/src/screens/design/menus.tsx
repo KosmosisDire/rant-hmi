@@ -6,7 +6,8 @@ import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { state } from "../../state/store";
 import { type MenuEntry, openMenu } from "../../ui/Menu";
-import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Plus, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash } from "../../ui/icons";
+import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Plus, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash } from "../../ui/icons";
+import { savePicture, showsPicture } from "../../ui/Picture";
 import { addElement, KINDS, STARTS } from "./add";
 import { duplicate, pasteHere } from "./clipboard";
 import { makeComponent } from "./component";
@@ -79,6 +80,8 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
     );
   }
   if (holder) entries.push("-", { label: "Select what holds it", icon: <SquareDashedMousePointer size={13} />, run: () => pick(holder) });
+  const drawn = (e.target as HTMLElement).closest(".el[data-id]");
+  if (one === id && drawn && showsPicture(drawn)) entries.push("-", { label: "Save picture", icon: <Download size={13} />, run: () => savePicture(drawn, element?.props.name ?? "picture") });
   entries.push("-", { label: picked.length > 1 ? `Delete ${picked.length}` : "Delete", keys: "Del", icon: <Trash size={13} />, run: () => remove(page, picked) });
   openMenu(e, entries);
 }

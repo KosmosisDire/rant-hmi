@@ -2,7 +2,7 @@ import { createSignal, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { Intent } from "../../protocol/Intent";
-import { intentWords } from "../../state/format";
+import { capital, intentWords } from "../../state/format";
 import { setState, state } from "../../state/store";
 
 /** The alias an entity gets unless the user types another: its last segment in
@@ -43,10 +43,10 @@ export function ImportForm(p: { entity: EntityInfo }) {
         <span class="dim">Intent</span>
         <div class="choice">
           <button type="button" classList={{ on: intent() === "read" }} onClick={() => setIntent("read")}>
-            {cap(intentWords(p.entity.kind, "read"))}
+            {capital(intentWords(p.entity.kind, "read"))}
           </button>
           <button type="button" classList={{ on: intent() === "write" }} disabled={!canWrite()} title={canWrite() ? undefined : "Its owner takes no sets"} onClick={() => setIntent("write")}>
-            {cap(intentWords(p.entity.kind, "write"))}
+            {capital(intentWords(p.entity.kind, "write"))}
           </button>
         </div>
         <button type="submit" class="button primary">
@@ -59,5 +59,3 @@ export function ImportForm(p: { entity: EntityInfo }) {
     </form>
   );
 }
-
-const cap = (t: string) => t[0].toUpperCase() + t.slice(1);
