@@ -56,6 +56,8 @@ pub enum FromScript {
     /// A variable's whole new value.
     Write { run: u64, alias: String, value: Value },
     Call { run: u64, call: u64, alias: String, request: Value },
+    /// A message to send on a topic.
+    Send { run: u64, alias: String, value: Value },
     Notify { run: u64, text: String },
     Log { run: u64, text: String },
     /// Opens a page on the screen that started the run, in place of the top one when `replace`.
@@ -437,6 +439,22 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         Ok(promise)
     };
     g.set("__call", Function::new(ctx.clone(), call)?)?;
+
+    let s = shared.clone();
+    let send = move |ctx: Ctx<'js>, alias: String, json: String| -> rquickjs::Result<()> {
+        let mut st = s.borrow_mut();
+        let import = st.imports.get(&alias).filter(|i| i.kind == Kind::Topic);
+        let import = import.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a topic, so it cannot send")))?;
+        if import.intent != Intent::Write {
+            return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to send on it.")));
+        }
+        let value = serde_json::from_str(&json).map_err(|e| Exception::throw_type(&ctx, &e.to_string()))?;
+        // what the run wrote before goes out before the message
+        st.flush(run);
+        st.send(FromScript::Send { run, alias, value });
+        Ok(())
+    };
+    g.set("__send", Function::new(ctx.clone(), send)?)?;
 
     let s = shared.clone();
     let sleep = move |ctx: Ctx<'js>, ms: f64| -> rquickjs::Result<Promise<'js>> {

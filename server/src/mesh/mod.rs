@@ -6,12 +6,12 @@ use std::collections::HashMap;
 
 use std::future::Future;
 
-use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableOptions};
+use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableOptions};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
-use crate::project::{Import, Kind};
+use crate::project::{Import, Intent, Kind};
 use crate::protocol::{EntityInfo, PeerInfo};
 use crate::script::CallFailure;
 use codec::Shape;
@@ -44,8 +44,8 @@ struct Attached {
 }
 
 enum Handle {
-    /// Held only so its subscription lives. Dropping it ends the subscription.
-    Topic { _subscription: Subscriber<Bytes> },
+    /// The subscription is held only so it lives. A topic imported to write publishes too.
+    Topic { _subscription: Subscriber<Bytes>, publisher: Option<Publisher<Bytes>> },
     Variable(RemoteVariable<Bytes>),
     /// A function: its request goes by the import's schema, its answer by `answer`'s.
     Function { remote: RemoteFunction<Bytes, Bytes>, answer: Option<(Schema, Vec<Shape>)> },
@@ -138,8 +138,12 @@ impl Mesh {
         let handle = match import.kind {
             Kind::Topic => {
                 let qos = Qos::new().schema(&schema).reliable(entity.reliable);
-                let sub = self.node.subscriber::<Bytes>(&import.entity, qos, move |m| deliver(codec::decode(&m, &tree)));
-                Handle::Topic { _subscription: sub.map_err(|e| e.to_string())? }
+                let sub = self.node.subscriber::<Bytes>(&import.entity, qos.clone(), move |m| deliver(codec::decode(&m, &tree)));
+                let publisher = match import.intent {
+                    Intent::Write => Some(self.node.publisher::<Bytes>(&import.entity, qos).map_err(|e| e.to_string())?),
+                    Intent::Read => None,
+                };
+                Handle::Topic { _subscription: sub.map_err(|e| e.to_string())?, publisher }
             }
             Kind::Variable => {
                 let var = self
@@ -183,6 +187,16 @@ impl Mesh {
         };
         let bytes = codec::encode(&a.schema, &a.shapes, &whole)?;
         var.set(&bytes).map_err(|e| format!("{alias} refused the write: {e}"))
+    }
+
+    /// Sends a message on a topic imported to write.
+    pub fn send(&self, alias: &str, value: &Value) -> Result<(), String> {
+        let a = self.attached.get(alias).ok_or_else(|| format!("{alias} is not on the mesh right now"))?;
+        let Handle::Topic { publisher: Some(publisher), .. } = &a.handle else {
+            return Err(format!("{alias} is not a topic imported to write, so it cannot send"));
+        };
+        let bytes = codec::encode(&a.schema, &a.shapes, value)?;
+        publisher.send(&bytes).map_err(|e| format!("{alias} could not send: {e}"))
     }
 
     /// Calls a function import. The call leaves at once, the answer comes when awaited.

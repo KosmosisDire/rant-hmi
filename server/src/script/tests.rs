@@ -19,6 +19,7 @@ fn engine() -> (Script, UnboundedReceiver<FromScript>) {
         import("Running", Kind::Variable, Intent::Write),
         import("Settings", Kind::Variable, Intent::Write),
         import("Joints", Kind::Topic, Intent::Read),
+        import("Jog", Kind::Topic, Intent::Write),
         import("Target", Kind::Variable, Intent::Read),
         import("Peek", Kind::Function, Intent::Read),
         import("Reset", Kind::Function, Intent::Write),
@@ -206,6 +207,25 @@ fn conditions_are_judged_and_an_unknown_one_is_false() {
     script.send(ToScript::Judge);
     let FromScript::Judged(truths) = rx.blocking_recv().unwrap() else { panic!("no judgement") };
     assert_eq!(truths[0..2], [("fast".to_string(), false), ("slow".to_string(), true)]);
+}
+
+#[test]
+fn a_topic_sends_after_the_writes_before_it_and_reads_its_latest() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 2;\nJog.send(1.75);\nlog(Joints.position[1]);".into(), p: Value::Null });
+    let said = until_done(&mut rx, 1);
+    let order: Vec<String> = said
+        .iter()
+        .filter_map(|m| match m {
+            FromScript::Write { alias, .. } => Some(format!("write {alias}")),
+            FromScript::Send { alias, value, .. } => Some(format!("send {alias} {value}")),
+            FromScript::Log { text, .. } => Some(format!("log {text}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["write Speed", "send Jog 1.75", "log 1.5"]);
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "Joints.send({});".into(), p: Value::Null });
+    assert_eq!(end(&until_done(&mut rx, 2)), &End::Fault("Joints is imported to read. Import it to write to send on it. (line 1)".into()));
 }
 
 #[test]

@@ -441,6 +441,12 @@ impl App {
                     Err(message) => self.script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "no_provider".into(), message }) }),
                 }
             }
+            FromScript::Send { run, alias, value } => {
+                info!("{} sends {value} on {alias}", self.label(run));
+                if let Err(text) = self.mesh.send(&alias, &value) {
+                    self.tell(run, Level::Fault, text);
+                }
+            }
             FromScript::Notify { run, text } => self.tell(run, Level::Info, text),
             FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
             FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run).and_then(|r| r.session)) {

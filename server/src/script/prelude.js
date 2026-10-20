@@ -40,8 +40,22 @@
     });
   };
 
+  // A topic reads as its latest message, and `send` publishes one, read or not.
+  const topic = (alias) =>
+    new Proxy(
+      {},
+      {
+        get: (_, key) => (key === "send" ? (msg) => __send(alias, JSON.stringify(msg ?? null)) : wrap(alias, read(alias), [])[key]),
+        has: (_, key) => key in read(alias),
+        ownKeys: () => Reflect.ownKeys(read(alias)),
+        getOwnPropertyDescriptor: (_, key) => ({ value: read(alias)[key], enumerable: true, configurable: true }),
+      },
+    );
+
   for (const { alias, kind } of imports) {
-    if (kind === "function") {
+    if (kind === "topic") {
+      Object.defineProperty(globalThis, alias, { get: () => topic(alias), set: (v) => write(alias, v), enumerable: true });
+    } else if (kind === "function") {
       // one value is sent bare, none as an empty request
       const call = (...args) => __call(alias, JSON.stringify(args.length === 0 ? {} : args[0]));
       Object.defineProperty(globalThis, alias, { value: call, enumerable: true });
