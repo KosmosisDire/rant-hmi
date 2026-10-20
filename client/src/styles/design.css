@@ -51,6 +51,28 @@
   outline-offset: -1px;
 }
 
+/* The keys list, above the zoom in the artboard's corner. */
+.keys {
+  position: absolute;
+  right: 12px;
+  bottom: 48px;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 14px;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--float);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+}
+
+.keys .key {
+  font-family: var(--mono);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
 /* A row of tool buttons in the inspector, such as the ways to line elements up. */
 .tool-row {
   display: flex;

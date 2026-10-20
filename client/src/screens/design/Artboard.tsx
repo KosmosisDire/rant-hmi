@@ -8,6 +8,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { number } from "../../state/bind";
 import type { Pick } from "./DesignScreen";
+import { Keyboard } from "../../ui/icons";
 import { absolute, boxOf, find, literal, sendEdits, tops } from "./tree";
 
 export const GRID = 11;
@@ -20,6 +21,24 @@ const LEVELS = [
 ] as const;
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 type Handle = (typeof HANDLES)[number];
+
+/** What each key and gesture does here, as the keys list shows it. */
+const KEYS: [string, string][] = [
+  ["Wheel", "zoom about the pointer"],
+  ["Drag on empty space", "pan, as the middle button does"],
+  ["Click", "select"],
+  ["Shift or Ctrl click", "add to the selection or take away"],
+  ["Ctrl A", "select everything on the page"],
+  ["Drag", "move on the grid, Alt off it"],
+  ["Arrows", "nudge a grid step, Shift four"],
+  ["Double click", "type into the element's field"],
+  ["Delete", "remove"],
+  ["Ctrl D", "duplicate"],
+  ["Ctrl C, X, V", "copy, cut and paste"],
+  ["Ctrl [ and ]", "send back, bring forward, Shift all the way"],
+  ["Ctrl Z", "undo, Ctrl Shift Z or Ctrl Y redoes"],
+  ["Escape", "let go"],
+];
 
 /** A pan, or a move or resize of `ids` led by the one under the pointer. */
 type Drag =
@@ -63,7 +82,15 @@ function ink(g: CanvasRenderingContext2D, ground: string): string {
   return 0.2126 * r + 0.7152 * gr + 0.0722 * b > 128 ? "0, 0, 0" : "255, 255, 255";
 }
 
-export function Artboard(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (id: string) => void }) {
+export function Artboard(p: {
+  page: Page;
+  selected: string[];
+  onPick: Pick;
+  onEdit: (id: string) => void;
+  /** Whether the keys list shows. */
+  keys: boolean;
+  onKeys: (shown: boolean) => void;
+}) {
   let host!: HTMLDivElement;
   let grid!: HTMLCanvasElement;
   const [view, setView] = createSignal({ k: 0.5, x: 0, y: 0 });
@@ -283,7 +310,22 @@ export function Artboard(p: { page: Page; selected: string[]; onPick: Pick; onEd
         <button class="icon-btn" title="Fit the page" onClick={fit} onPointerDown={(e) => e.stopPropagation()}>
           Fit
         </button>
+        <button class="icon-btn" classList={{ on: p.keys }} title="Keys (?)" onClick={() => p.onKeys(!p.keys)} onPointerDown={(e) => e.stopPropagation()}>
+          <Keyboard size={14} />
+        </button>
       </div>
+      <Show when={p.keys}>
+        <div class="keys" onPointerDown={(e) => e.stopPropagation()}>
+          <For each={KEYS}>
+            {([key, does]) => (
+              <>
+                <span class="key">{key}</span>
+                <span>{does}</span>
+              </>
+            )}
+          </For>
+        </div>
+      </Show>
     </div>
   );
 }

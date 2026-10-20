@@ -1,5 +1,5 @@
 // A user scrolls the wheel over the page to look closer: it zooms about the pointer, so the
-// spot under it stays put. A click on the percent shows the page at its true size.
+// spot under it stays put. The percent shows the true size, and ? lists the keys.
 
 export default async function ({ page, d, check }) {
   await d.tab("Design");
@@ -23,4 +23,13 @@ export default async function ({ page, d, check }) {
   await page.locator('button[title="Show at 100%"]').click();
   check((await zoom()) === "100%", "the percent did not show the page at its true size");
   check(Math.abs((await sheet()).width - 1408) < 1, "the page is not drawn at its true size");
+
+  const keys = page.locator(".artboard .keys");
+  await page.keyboard.press("Shift+Slash");
+  await keys.waitFor();
+  check((await keys.textContent()).includes("Double click"), "the keys list misses double click");
+  await page.keyboard.press("Escape");
+  await keys.waitFor({ state: "detached" });
+  await page.locator('button[title="Keys (?)"]').click();
+  await keys.waitFor();
 }

@@ -25,6 +25,7 @@ export function DesignScreen(p: { shown: boolean }) {
     else if (!add) setSelection([id]);
     else setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   };
+  const [keys, setKeys] = createSignal(false);
   const [typing, setTyping] = createSignal<Typing | null>(null);
   let typed = 0;
   /** Picks an element alone and puts the caret in its field, as a double click does. */
@@ -68,8 +69,8 @@ export function DesignScreen(p: { shown: boolean }) {
     if (kept.length !== selection().length) setSelection(kept);
   });
 
-  // Ctrl Z undoes, Ctrl Shift Z or Ctrl Y redoes, Ctrl A selects all, Delete removes, Escape
-  // lets go, arrows nudge, Ctrl [ and ] restack one, Ctrl D duplicates. A field keeps its keys.
+  // the keys the artboard's list shows, and ? for the list. A field keeps its own keys.
+  // Escape closes the list first, then lets go.
   onMount(() => {
     const key = (e: KeyboardEvent) => {
       if (!p.shown || (e.target as HTMLElement).closest("input, textarea, select")) return;
@@ -78,6 +79,14 @@ export function DesignScreen(p: { shown: boolean }) {
       if (mod && (letter === "z" || letter === "y")) {
         e.preventDefault();
         send({ type: letter === "z" && !e.shiftKey ? "undo" : "redo" });
+        return;
+      }
+      if (e.key === "?") {
+        setKeys(!keys());
+        return;
+      }
+      if (e.key === "Escape" && keys()) {
+        setKeys(false);
         return;
       }
       const page = currentPage();
@@ -145,7 +154,7 @@ export function DesignScreen(p: { shown: boolean }) {
       </aside>
       <section class="detail">
         <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
-          {(page) => <Artboard page={page()} selected={selection()} onPick={pick} onEdit={edit} />}
+          {(page) => <Artboard page={page()} selected={selection()} onPick={pick} onEdit={edit} keys={keys()} onKeys={setKeys} />}
         </Show>
       </section>
       <aside class="sidebar right">

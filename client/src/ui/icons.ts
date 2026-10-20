@@ -21,6 +21,7 @@ export { default as CircleX } from "lucide-solid/icons/circle-x";
 export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as File } from "lucide-solid/icons/file";
 export { default as Info } from "lucide-solid/icons/info";
+export { default as Keyboard } from "lucide-solid/icons/keyboard";
 export { default as ListClock } from "lucide-solid/icons/list-clock";
 export { default as Moon } from "lucide-solid/icons/moon";
 export { default as Parentheses } from "lucide-solid/icons/parentheses";
