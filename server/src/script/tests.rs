@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use serde_json::json;
+use crate::value::value;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::*;
@@ -25,17 +25,17 @@ fn engine() -> (Script, UnboundedReceiver<FromScript>) {
         import("Reset", Kind::Function, Intent::Write),
     ]));
     script.send(ToScript::Variables(vec![
-        Variable { name: "jogMode".into(), start: json!("Joint"), per: Per::Screen },
-        Variable { name: "count".into(), start: json!(0), per: Per::Hmi },
+        Variable { name: "jogMode".into(), start: value!("Joint"), per: Per::Screen },
+        Variable { name: "count".into(), start: value!(0), per: Per::Hmi },
     ]));
-    script.send(ToScript::Screen { session: 7, values: vec![("jogMode".into(), json!("Joint"))] });
+    script.send(ToScript::Screen { session: 7, values: vec![("jogMode".into(), value!("Joint"))] });
     script.send(ToScript::Values(vec![
-        ("count".into(), Some(json!(0))),
-        ("Speed".into(), Some(json!(1.0))),
+        ("count".into(), Some(value!(0))),
+        ("Speed".into(), Some(value!(1.0))),
         ("Running".into(), None),
-        ("Settings".into(), Some(json!({ "mode": "Auto", "target": 120 }))),
-        ("Joints".into(), Some(json!({ "position": [0.5, 1.5] }))),
-        ("Target".into(), Some(json!(3))),
+        ("Settings".into(), Some(value!({ "mode": "Auto", "target": 120 }))),
+        ("Joints".into(), Some(value!({ "position": [0.5, 1.5] }))),
+        ("Target".into(), Some(value!(3))),
     ]));
     (script, rx)
 }
@@ -72,7 +72,7 @@ fn a_run_writes_what_it_sets_when_it_ends() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = Speed + 1;\nSpeed = Speed * 2;".into(), p: Value::Null, at: None });
     let said = until_done(&mut rx, 1);
-    assert_eq!(writes(&said), [("Speed".to_string(), json!(4))]);
+    assert_eq!(writes(&said), [("Speed".to_string(), value!(4))]);
     assert_eq!(end(&said), &End::Ok);
 }
 
@@ -81,7 +81,7 @@ fn fields_set_together_go_out_as_one_value() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "Settings.target = 5;\nconst s = Settings;\ns.mode = \"Manual\";".into(), p: Value::Null, at: None });
     let said = until_done(&mut rx, 1);
-    assert_eq!(writes(&said), [("Settings".to_string(), json!({ "mode": "Manual", "target": 5 }))]);
+    assert_eq!(writes(&said), [("Settings".to_string(), value!({ "mode": "Manual", "target": 5 }))]);
 }
 
 #[test]
@@ -118,17 +118,17 @@ fn a_call_goes_out_after_the_writes_before_it_and_its_answer_comes_back() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 3;\nconst r = await Reset();\nlog(\"answer\", r);\nSpeed = 4;".into(), p: Value::Null, at: None });
     let first = rx.blocking_recv().unwrap();
-    assert!(matches!(&first, FromScript::Write { alias, value, .. } if alias == "Speed" && *value == json!(3)));
+    assert!(matches!(&first, FromScript::Write { alias, value, .. } if alias == "Speed" && *value == value!(3)));
     let FromScript::Call { call, alias, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
-    assert_eq!((alias.as_str(), request), ("Reset", json!({})));
-    script.send(ToScript::Answer { call, outcome: Ok(json!({ "ok": true })) });
+    assert_eq!((alias.as_str(), request), ("Reset", value!({})));
+    script.send(ToScript::Answer { call, outcome: Ok(value!({ "ok": true })) });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "answer {\"ok\":true}")));
-    assert_eq!(writes(&said), [("Speed".to_string(), json!(4))]);
+    assert_eq!(writes(&said), [("Speed".to_string(), value!(4))]);
 
     script.send(ToScript::Run { run: 2, session: Some(7), code: "try { await Reset(true); } catch (e) { log(e.status, e.message); }".into(), p: Value::Null, at: None });
     let FromScript::Call { call, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
-    assert_eq!(request, json!(true));
+    assert_eq!(request, value!(true));
     script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "timeout".into(), message: "no answer".into() }) });
     let said = until_done(&mut rx, 2);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "timeout no answer")));
@@ -146,10 +146,10 @@ fn sleep_waits_and_writes_go_out_at_each_await() {
     let start = std::time::Instant::now();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 5;\nawait sleep(60);\nSpeed = 6;".into(), p: Value::Null, at: None });
     let first = rx.blocking_recv().unwrap();
-    assert!(matches!(&first, FromScript::Write { value, .. } if *value == json!(5)));
+    assert!(matches!(&first, FromScript::Write { value, .. } if *value == value!(5)));
     let said = until_done(&mut rx, 1);
     assert!(start.elapsed() >= Duration::from_millis(60));
-    assert_eq!(writes(&said), [("Speed".to_string(), json!(6))]);
+    assert_eq!(writes(&said), [("Speed".to_string(), value!(6))]);
 }
 
 #[test]
@@ -165,11 +165,11 @@ fn pages_open_and_close_by_name() {
             _ => None,
         })
         .collect();
-    assert_eq!(moves, ["open robot-cell false", "open overview true", "close null", "close {\"ok\":true}"]);
+    assert_eq!(moves, ["open robot-cell false", "open overview true", "close null", "close { ok: true }"]);
 
     script.send(ToScript::Run { run: 2, session: Some(7), code: "if (await open(Pages.RobotCell)) log(\"yes\");".into(), p: Value::Null, at: None });
     let FromScript::Open { call, .. } = rx.blocking_recv().unwrap() else { panic!("no open") };
-    script.send(ToScript::Answer { call, outcome: Ok(json!(true)) });
+    script.send(ToScript::Answer { call, outcome: Ok(value!(true)) });
     let said = until_done(&mut rx, 2);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "yes")));
 }
@@ -179,7 +179,7 @@ fn variables_read_and_write_as_their_screen_sees_them() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "count = count + 1;\njogMode = jogMode + \"!\";".into(), p: Value::Null, at: None });
     let said = until_done(&mut rx, 1);
-    assert_eq!(writes(&said), [("count".to_string(), json!(1)), ("jogMode".to_string(), json!("Joint!"))]);
+    assert_eq!(writes(&said), [("count".to_string(), value!(1)), ("jogMode".to_string(), value!("Joint!"))]);
     script.send(ToScript::Run { run: 2, session: None, code: "jogMode = \"Cartesian\";".into(), p: Value::Null, at: None });
     let said = until_done(&mut rx, 2);
     assert_eq!(end(&said), &End::Fault("jogMode is each screen's own, and this handler runs for no screen (line 1)".into()));
@@ -190,7 +190,7 @@ fn variables_read_and_write_as_their_screen_sees_them() {
 #[test]
 fn a_handler_reads_what_its_event_brought_as_p() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(p.on, p.value);".into(), p: json!({ "on": "knob", "value": 3 }), at: None });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(p.on, p.value);".into(), p: value!({ "on": "knob", "value": 3 }), at: None });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "knob 3")));
 }
@@ -198,7 +198,7 @@ fn a_handler_reads_what_its_event_brought_as_p() {
 #[test]
 fn a_repeated_elements_handler_reads_its_copy_as_index_and_item() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(index, item.name);".into(), p: Value::Null, at: Some((2, json!({ "name": "J3" }))) });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(index, item.name);".into(), p: Value::Null, at: Some((2, value!({ "name": "J3" }))) });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "2 J3")));
 }
@@ -211,7 +211,7 @@ fn conditions_are_judged_and_an_unknown_one_is_false() {
     script.send(ToScript::Judge);
     let FromScript::Judged(truths) = rx.blocking_recv().unwrap() else { panic!("no judgement") };
     assert_eq!(truths, [("fast".to_string(), true), ("slow".to_string(), false), ("running".to_string(), false), ("writes".to_string(), false)]);
-    script.send(ToScript::Values(vec![("Speed".into(), Some(json!(0.2)))]));
+    script.send(ToScript::Values(vec![("Speed".into(), Some(value!(0.2)))]));
     script.send(ToScript::Judge);
     let FromScript::Judged(truths) = rx.blocking_recv().unwrap() else { panic!("no judgement") };
     assert_eq!(truths[0..2], [("fast".to_string(), false), ("slow".to_string(), true)]);

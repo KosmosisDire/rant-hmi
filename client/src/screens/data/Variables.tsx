@@ -4,7 +4,7 @@ import { batch, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
-import type { JsonValue } from "../../protocol/serde_json/JsonValue";
+import type { Value } from "../../protocol/Value";
 import { live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Plus, Trash } from "../../ui/icons";
@@ -18,7 +18,7 @@ const PER: [Per, string][] = [
 ];
 
 /** A JSON literal that is not null, as a start value or a value typed in. */
-function literal(text: string): JsonValue | undefined {
+function literal(text: string): Value | undefined {
   try {
     const v = JSON.parse(text);
     return v === null ? undefined : v;

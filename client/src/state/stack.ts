@@ -2,7 +2,7 @@
 // A page a handler waits on answers when it closes, null when the person closed it.
 
 import { createSignal } from "solid-js";
-import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import type { Value } from "../protocol/Value";
 
 export interface Open {
   id: string;
@@ -12,7 +12,7 @@ export interface Open {
 
 const [stack, setStack] = createSignal<Open[]>([]);
 let history = false;
-let answer: (ask: number, value: JsonValue) => void = () => {};
+let answer: (ask: number, value: Value) => void = () => {};
 
 export { stack };
 
@@ -63,7 +63,7 @@ export function back(n = 1) {
 }
 
 /** Closes the top page with an answer for whoever waits on it. */
-export function closeWith(value: JsonValue) {
+export function closeWith(value: Value) {
   const top = stack().at(-1);
   if (stack().length < 2 || !top) return;
   if (top.ask !== null) answer(top.ask, value);

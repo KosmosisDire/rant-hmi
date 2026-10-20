@@ -4,7 +4,7 @@
 import { send } from "../net/connection";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
-import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import type { Value } from "../protocol/Value";
 import { type At, repeatScope, runHandler, type Scope } from "../state/bind";
 
 export interface Act {
@@ -19,7 +19,7 @@ export function pageAct(page: string): Act {
     fire: (e, event, payload, at) => {
       const held = (event === "press" || event === "release") && e.handlers.length > 0;
       if (held || e.handlers.some((h) => h.event === event)) {
-        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as JsonValue, index: at?.index, item: at?.item as JsonValue });
+        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, index: at?.index, item: at?.item as Value });
       }
     },
   };

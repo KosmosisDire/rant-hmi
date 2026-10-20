@@ -3,7 +3,7 @@
 
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
-import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import type { Value } from "../protocol/Value";
 import { mode } from "./mode";
 import { live, notify, state } from "./store";
 
@@ -80,7 +80,7 @@ export const pageScope: Scope = themed({
     if (imp && (imp.kind !== "variable" || imp.intent !== "write")) throw new TypeError(`${name} cannot be set from here`);
     if (state.records.some((r) => r.name === name)) throw new TypeError(`${name} is a record, which only its source fills`);
     if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(pageScope.missing(name));
-    send({ type: "set", alias: name, path, value: value as JsonValue });
+    send({ type: "set", alias: name, path, value: value as Value });
   },
   writes: (name) => {
     const imp = state.imports.find((i) => i.alias === name);

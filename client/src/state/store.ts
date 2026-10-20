@@ -6,7 +6,7 @@ import type { EntityInfo } from "../protocol/EntityInfo";
 import type { Import } from "../protocol/Import";
 import type { Page } from "../protocol/Page";
 import type { Level } from "../protocol/Level";
-import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import type { Value } from "../protocol/Value";
 import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { Record as History } from "../protocol/Record";
@@ -18,7 +18,7 @@ import type { Variable } from "../protocol/Variable";
 import { closeWith, push } from "./stack";
 
 export interface Live {
-  value: JsonValue | null;
+  value: Value | null;
   known: boolean;
 }
 
@@ -154,7 +154,7 @@ export function receive(msg: ServerMsg) {
       // a record's value is its samples, appended and pruned here as the backend keeps them
       const keep = (state.records.find((r) => r.name === msg.name)?.keep_s ?? 0) * 1000;
       if (msg.whole || !Array.isArray(state.values[msg.name]?.value)) {
-        setState("values", msg.name, { value: msg.samples as unknown as JsonValue, known: true });
+        setState("values", msg.name, { value: msg.samples as unknown as Value, known: true });
         break;
       }
       setState(

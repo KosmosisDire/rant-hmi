@@ -1,0 +1,387 @@
+//! A value as the HMI holds it, in CBOR's data model: bytes stay bytes and whole numbers stay
+//! whole. It goes to screens as CBOR and into the project's files as TOML, never as JSON.
+
+use std::collections::HashMap;
+use std::fmt;
+
+use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::ser::{Serialize, Serializer};
+use ts_rs::TS;
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum Value {
+    #[default]
+    Null,
+    Bool(bool),
+    /// A whole number, from i64's least to u64's most, as far as Rant's integers reach.
+    Int(i128),
+    Float(f64),
+    Text(String),
+    Bytes(Vec<u8>),
+    List(Vec<Value>),
+    /// Fields in the order they were written, as a schema orders them.
+    Map(Vec<(String, Value)>),
+}
+
+impl Value {
+    /// A map from its fields, in this order.
+    pub fn map<K: Into<String>>(fields: impl IntoIterator<Item = (K, Value)>) -> Value {
+        Value::Map(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    }
+
+    pub fn is_null(&self) -> bool {
+        matches!(self, Value::Null)
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// A number of either kind as a float.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Value::Int(n) => Some(*n as f64),
+            Value::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    /// A whole number, from an integer or a float with nothing after the point.
+    pub fn whole(&self) -> Option<i128> {
+        match self {
+            Value::Int(n) => Some(*n),
+            Value::Float(f) if f.fract() == 0.0 && f.abs() < 2f64.powi(64) => Some(*f as i128),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<&[Value]> {
+        match self {
+            Value::List(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub fn as_map(&self) -> Option<&[(String, Value)]> {
+        match self {
+            Value::Map(fields) => Some(fields),
+            _ => None,
+        }
+    }
+
+    /// A map's field.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.as_map()?.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        match self {
+            Value::Map(fields) => fields.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Value {
+        Value::Bool(b)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(f: f64) -> Value {
+        Value::Float(f)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(t: &str) -> Value {
+        Value::Text(t.to_owned())
+    }
+}
+
+impl From<String> for Value {
+    fn from(t: String) -> Value {
+        Value::Text(t)
+    }
+}
+
+macro_rules! from_int {
+    ($($t:ty),*) => {$(
+        impl From<$t> for Value {
+            fn from(n: $t) -> Value {
+                Value::Int(n.into())
+            }
+        }
+    )*};
+}
+from_int!(u8, u16, u32, u64, i8, i16, i32, i64);
+
+impl Serialize for Value {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Value::Null => s.serialize_unit(),
+            Value::Bool(b) => s.serialize_bool(*b),
+            // what fits an i64 goes as one, so TOML, which has no wider integer, takes it
+            Value::Int(n) => match i64::try_from(*n) {
+                Ok(n) => s.serialize_i64(n),
+                Err(_) => s.serialize_u64(u64::try_from(*n).map_err(serde::ser::Error::custom)?),
+            },
+            Value::Float(f) => s.serialize_f64(*f),
+            Value::Text(t) => s.serialize_str(t),
+            Value::Bytes(b) => s.serialize_bytes(b),
+            Value::List(items) => s.collect_seq(items),
+            Value::Map(fields) => s.collect_map(fields.iter().map(|(k, v)| (k, v))),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Value {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
+        d.deserialize_any(ValueVisitor)
+    }
+}
+
+struct ValueVisitor;
+
+impl<'de> Visitor<'de> for ValueVisitor {
+    type Value = Value;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a value")
+    }
+
+    fn visit_bool<E>(self, b: bool) -> Result<Value, E> {
+        Ok(Value::Bool(b))
+    }
+
+    fn visit_i64<E>(self, n: i64) -> Result<Value, E> {
+        Ok(Value::Int(n.into()))
+    }
+
+    fn visit_u64<E>(self, n: u64) -> Result<Value, E> {
+        Ok(Value::Int(n.into()))
+    }
+
+    fn visit_i128<E>(self, n: i128) -> Result<Value, E> {
+        Ok(Value::Int(n))
+    }
+
+    fn visit_u128<E: de::Error>(self, n: u128) -> Result<Value, E> {
+        i128::try_from(n).map(Value::Int).map_err(E::custom)
+    }
+
+    fn visit_f64<E>(self, f: f64) -> Result<Value, E> {
+        Ok(Value::Float(f))
+    }
+
+    fn visit_str<E>(self, t: &str) -> Result<Value, E> {
+        Ok(Value::Text(t.to_owned()))
+    }
+
+    fn visit_string<E>(self, t: String) -> Result<Value, E> {
+        Ok(Value::Text(t))
+    }
+
+    fn visit_bytes<E>(self, b: &[u8]) -> Result<Value, E> {
+        Ok(Value::Bytes(b.to_vec()))
+    }
+
+    fn visit_byte_buf<E>(self, b: Vec<u8>) -> Result<Value, E> {
+        Ok(Value::Bytes(b))
+    }
+
+    fn visit_none<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_unit<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
+        Value::deserialize(d)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+        let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(v) = seq.next_element()? {
+            items.push(v);
+        }
+        Ok(Value::List(items))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+        let mut fields = Vec::with_capacity(map.size_hint().unwrap_or(0));
+        while let Some((k, v)) = map.next_entry::<String, Value>()? {
+            fields.push((k, v));
+        }
+        Ok(Value::Map(fields))
+    }
+}
+
+/// For logs: a value written briefly, as code would write it.
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::Null => f.write_str("null"),
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::Int(n) => write!(f, "{n}"),
+            Value::Float(x) => write!(f, "{x}"),
+            Value::Text(t) => write!(f, "{t:?}"),
+            Value::Bytes(b) => write!(f, "{} bytes", b.len()),
+            Value::List(items) => {
+                f.write_str("[")?;
+                for (i, v) in items.iter().enumerate() {
+                    write!(f, "{}{v}", if i > 0 { ", " } else { "" })?;
+                }
+                f.write_str("]")
+            }
+            Value::Map(fields) => {
+                f.write_str("{")?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    write!(f, "{}{k}: {v}", if i > 0 { ", " } else { " " })?;
+                }
+                f.write_str(if fields.is_empty() { "}" } else { " }" })
+            }
+        }
+    }
+}
+
+/// What screens see a value as, declared for TypeScript only: bytes arrive as a Uint8Array and
+/// a whole number past JS's safe ones as a bigint.
+#[derive(TS)]
+#[ts(rename = "Value", untagged, export)]
+#[allow(dead_code)]
+enum ValueShape {
+    Null(()),
+    Boolean(bool),
+    Number(f64),
+    #[ts(type = "bigint")]
+    Big(i64),
+    Text(String),
+    #[ts(type = "Uint8Array")]
+    Bytes(Vec<u8>),
+    List(Vec<ValueShape>),
+    Map(HashMap<String, ValueShape>),
+}
+
+impl TS for Value {
+    type WithoutGenerics = Value;
+
+    fn ident() -> String {
+        ValueShape::ident()
+    }
+
+    fn name() -> String {
+        ValueShape::name()
+    }
+
+    fn inline() -> String {
+        ValueShape::inline()
+    }
+
+    fn inline_flattened() -> String {
+        ValueShape::inline_flattened()
+    }
+
+    fn visit_dependencies(v: &mut impl ts_rs::TypeVisitor)
+    where
+        Self: 'static,
+    {
+        ValueShape::visit_dependencies(v);
+    }
+
+    fn decl() -> String {
+        ValueShape::decl()
+    }
+
+    fn decl_concrete() -> String {
+        ValueShape::decl_concrete()
+    }
+
+    fn output_path() -> Option<&'static std::path::Path> {
+        ValueShape::output_path()
+    }
+}
+
+/// Tests write values as JSON literals, which this makes ours: `value!({ "speed": 0.5 })`.
+#[cfg(test)]
+macro_rules! value {
+    ($($literal:tt)+) => {
+        $crate::value::Value::from(serde_json::json!($($literal)+))
+    };
+}
+#[cfg(test)]
+pub(crate) use value;
+
+#[cfg(test)]
+impl From<serde_json::Value> for Value {
+    fn from(v: serde_json::Value) -> Value {
+        match v {
+            serde_json::Value::Null => Value::Null,
+            serde_json::Value::Bool(b) => Value::Bool(b),
+            serde_json::Value::Number(n) => match (n.as_i64(), n.as_u64()) {
+                (Some(i), _) => Value::Int(i.into()),
+                (_, Some(u)) => Value::Int(u.into()),
+                _ => Value::Float(n.as_f64().unwrap_or(f64::NAN)),
+            },
+            serde_json::Value::String(t) => Value::Text(t),
+            serde_json::Value::Array(items) => Value::List(items.into_iter().map(Value::from).collect()),
+            serde_json::Value::Object(fields) => Value::Map(fields.into_iter().map(|(k, v)| (k, Value::from(v))).collect()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cbor(v: &Value) -> Vec<u8> {
+        let mut out = Vec::new();
+        ciborium::into_writer(v, &mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn a_value_goes_through_cbor_whole() {
+        let v = Value::map([
+            ("image", Value::Bytes(vec![0, 255, 7])),
+            ("count", Value::Int(u64::MAX.into())),
+            ("delta", Value::Int(-3)),
+            ("ratio", Value::Float(0.25)),
+            ("names", Value::List(vec!["a".into(), Value::Null, true.into()])),
+        ]);
+        assert_eq!(ciborium::from_reader::<Value, _>(&cbor(&v)[..]).unwrap(), v);
+        // bytes are one CBOR byte string, not a list of numbers
+        assert!(cbor(&Value::Bytes(vec![1; 300])).len() < 310);
+    }
+
+    #[test]
+    fn a_value_goes_through_toml() {
+        let v = Value::map([("low", Value::Float(0.5)), ("high", Value::List(vec![1.into(), 2.into()])), ("mode", "Auto".into())]);
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct File {
+            start: Value,
+        }
+        let text = toml::to_string(&File { start: v.clone() }).unwrap();
+        assert_eq!(toml::from_str::<File>(&text).unwrap().start, v);
+    }
+
+    #[test]
+    fn whole_numbers_read_from_either_kind() {
+        assert_eq!(Value::Float(3.0).whole(), Some(3));
+        assert_eq!(Value::Float(3.5).whole(), None);
+        assert_eq!(Value::Int(-2).as_f64(), Some(-2.0));
+    }
+}

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableOptions};
-use serde_json::Value;
+use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 

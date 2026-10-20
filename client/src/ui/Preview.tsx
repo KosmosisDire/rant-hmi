@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch } from "solid-js";
-import type { JsonValue } from "../protocol/serde_json/JsonValue";
-import { number } from "../state/format";
+import type { Value } from "../protocol/Value";
+import { fields, number } from "../state/format";
 
 /** How many bars a list of numbers draws, and fields a struct shows. */
 const BARS = 24;
@@ -8,7 +8,7 @@ const FIELDS = 3;
 
 /** A value at a glance, never as JSON: a number, a word, a dot for a flag, bars for a list
  *  of numbers, and a struct's first fields by name. */
-export function Preview(p: { value: JsonValue | null; known: boolean; depth?: number }) {
+export function Preview(p: { value: Value | null; known: boolean; depth?: number }) {
   const depth = () => p.depth ?? 0;
   return (
     <Switch>
@@ -31,7 +31,11 @@ export function Preview(p: { value: JsonValue | null; known: boolean; depth?: nu
           <span class="pv-text">{p.value as string}</span>
         </Show>
       </Match>
-      <Match when={Array.isArray(p.value) && p.value}>{(list) => <List items={list() as JsonValue[]} />}</Match>
+      <Match when={typeof p.value === "bigint"}>
+        <span class="pv-num">{String(p.value)}</span>
+      </Match>
+      <Match when={p.value instanceof Uint8Array && p.value}>{(bytes) => <span class="pv-none">{bytes().length} bytes</span>}</Match>
+      <Match when={Array.isArray(p.value) && p.value}>{(list) => <List items={list() as Value[]} />}</Match>
       <Match when={depth() > 0}>
         <Show when={numbers(p.value)} fallback={<span class="pv-none">...</span>}>
           {(xs) => (
@@ -43,7 +47,7 @@ export function Preview(p: { value: JsonValue | null; known: boolean; depth?: nu
       </Match>
       <Match when={p.value}>
         {(v) => {
-          const entries = () => Object.entries(v() as Record<string, JsonValue>);
+          const entries = () => Object.entries(v() as Record<string, Value>);
           return (
             <span class="pv-fields">
               <For each={entries().slice(0, FIELDS)}>
@@ -66,12 +70,12 @@ export function Preview(p: { value: JsonValue | null; known: boolean; depth?: nu
 }
 
 /** A small struct's values when every one is a number, like a position's x, y and z. */
-function numbers(v: JsonValue | null): number[] | undefined {
-  const xs = v !== null && typeof v === "object" && !Array.isArray(v) ? Object.values(v) : [];
+function numbers(v: Value | null): number[] | undefined {
+  const xs = Object.values(fields(v) ?? {});
   return xs.length > 0 && xs.length <= 4 && xs.every((x) => typeof x === "number") ? (xs as number[]) : undefined;
 }
 
-function List(p: { items: JsonValue[] }) {
+function List(p: { items: Value[] }) {
   const plain = () => p.items.every((x) => typeof x === "number");
   const peak = () => Math.max(1e-9, ...p.items.slice(0, BARS).map((x) => Math.abs(x as number)));
   return (

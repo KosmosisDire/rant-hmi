@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use rant::{Node, NodeOptions, Qos, VariableOptions};
 use rant_hmi::mesh::{Delivery, Mesh, MeshOptions};
 use rant_hmi::project::{Import, Intent, Kind};
-use serde_json::{Value, json};
+use rant_hmi::value::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 /// Kept apart from other tests on this host.
@@ -73,13 +73,13 @@ fn import_watch_and_set() {
     let got = inbox.next("Conveyor", || {
         conveyor.send(&sent).unwrap();
     });
-    assert_eq!(got, json!({ "speed": 0.75, "running": true, "part": "A7" }));
+    assert_eq!(got, Value::map([("speed", 0.75.into()), ("running", true.into()), ("part", "A7".into())]));
 
-    assert_eq!(inbox.next("Speed", || {}), json!(0.5));
-    mesh.set("Speed", "", json!(1.25), None).unwrap();
+    assert_eq!(inbox.next("Speed", || {}), Value::Float(0.5));
+    mesh.set("Speed", "", Value::Float(1.25), None).unwrap();
     let start = Instant::now();
     while speed.get().unwrap() != Some(1.25) {
         within("the owner to take the write", start);
     }
-    assert_eq!(inbox.next("Speed", || {}), json!(1.25));
+    assert_eq!(inbox.next("Speed", || {}), Value::Float(1.25));
 }

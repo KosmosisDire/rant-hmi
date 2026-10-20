@@ -5,9 +5,9 @@ import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
 import type { Page } from "../protocol/Page";
-import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import type { Value } from "../protocol/Value";
 import { partNames } from "./bind";
-import { typeLabel } from "./format";
+import { fields, typeLabel } from "./format";
 import { mode } from "./mode";
 import { entity, live, state } from "./store";
 
@@ -17,7 +17,7 @@ export interface Suggestion {
   insert: string;
   icon: Kind | "local" | "api" | "member" | "token";
   type?: string;
-  value?: JsonValue | null;
+  value?: Value | null;
   known?: boolean;
   /** What a dot after it offers, for a name completion knows no schema for. */
   members?: Suggestion[];
@@ -128,7 +128,7 @@ function top(place: Place): Suggestion[] {
   // a record shows its latest value, the list being too long to preview
   const records = state.records.map((r): Suggestion => {
     const list = live(r.name).value;
-    const last = Array.isArray(list) ? (list.at(-1) as { v?: JsonValue } | undefined)?.v : undefined;
+    const last = Array.isArray(list) ? (list.at(-1) as { v?: Value } | undefined)?.v : undefined;
     return { label: r.name, insert: r.name, icon: "local", type: `record of ${r.source}`, value: last ?? null, known: last !== undefined };
   });
   return [...imports, ...variables, ...records];
@@ -184,7 +184,7 @@ function members(path: string[], place: Place): Suggestion[] {
   const [root, ...rest] = path;
   const imp = state.imports.find((i) => i.alias === root);
   if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...members(path, "expression")];
-  let value: JsonValue | null = live(root).value;
+  let value: Value | null = live(root).value;
   const known = live(root).known;
   for (const step of rest) value = at(value, step);
   if (imp) {
@@ -206,20 +206,19 @@ function members(path: string[], place: Place): Suggestion[] {
     if (field?.kind === "array") return [{ label: "length", insert: "length", icon: "member", type: "number", value: Array.isArray(value) ? value.length : null, known }];
     return methods(value, known);
   }
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-    return Object.keys(value).map((k) => ({ label: k, insert: k, icon: "member", value: at(value, k), known }));
-  }
+  const named = fields(value);
+  if (named) return Object.keys(named).map((k) => ({ label: k, insert: k, icon: "member", value: at(value, k), known }));
   return methods(value, known);
 }
 
 /** What a plain value offers: a number its format, a list or text its length. */
-function methods(value: JsonValue | null, known: boolean): Suggestion[] {
+function methods(value: Value | null, known: boolean): Suggestion[] {
   if (typeof value === "number") return [{ label: "toFixed", insert: "toFixed(1)", icon: "member", type: "digits after the point", value: Number(value.toFixed(1)), known }];
-  if (typeof value === "string" || Array.isArray(value)) return [{ label: "length", insert: "length", icon: "member", type: "number", value: value.length, known }];
+  if (typeof value === "string" || Array.isArray(value) || value instanceof Uint8Array) return [{ label: "length", insert: "length", icon: "member", type: "number", value: value.length, known }];
   return [];
 }
 
-function at(v: JsonValue | null, step: string): JsonValue | null {
-  if (v === null || typeof v !== "object") return null;
-  return Array.isArray(v) ? (v[Number(step)] ?? null) : (v[step] ?? null);
+function at(v: Value | null, step: string): Value | null {
+  if (Array.isArray(v) || v instanceof Uint8Array) return v[Number(step)] ?? null;
+  return fields(v)?.[step] ?? null;
 }

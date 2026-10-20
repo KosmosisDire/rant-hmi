@@ -4,7 +4,7 @@ import { batch, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Record } from "../../protocol/Record";
 import type { Sample } from "../../protocol/Sample";
-import type { JsonValue } from "../../protocol/serde_json/JsonValue";
+import type { Value } from "../../protocol/Value";
 import { complete } from "../../state/complete";
 import { live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
@@ -22,7 +22,7 @@ function samples(name: string): Sample[] {
 }
 
 /** The latest values, as a list the preview draws as bars when they are numbers. */
-const recent = (name: string) => samples(name).slice(-24).map((s) => s.v) as JsonValue[];
+const recent = (name: string) => samples(name).slice(-24).map((s) => s.v) as Value[];
 
 /** Seconds or minutes, as a person says them. */
 const span = (s: number) => (s >= 120 && s % 60 === 0 ? `${s / 60} min` : `${s} s`);

@@ -1,15 +1,15 @@
 import { For, Match, Show, Switch } from "solid-js";
 import type { FieldInfo } from "../../protocol/FieldInfo";
-import type { JsonValue } from "../../protocol/serde_json/JsonValue";
-import { INTEGERS, SCALARS, typeLabel } from "../../state/format";
+import type { Value } from "../../protocol/Value";
+import { fields, INTEGERS, SCALARS, typeLabel } from "../../state/format";
 import { DraftInput } from "../../ui/DraftInput";
 import { Preview } from "../../ui/Preview";
 
-type Commit = (path: string, value: JsonValue) => void;
+type Commit = (path: string, value: Value) => void;
 
 interface Props {
   fields: FieldInfo[];
-  value: JsonValue | null;
+  value: Value | null;
   known: boolean;
   /** Set when the import may be written: scalar fields become editors. */
   onSet?: Commit;
@@ -20,10 +20,9 @@ export function ValueTree(p: Props) {
   return <Rows fields={p.fields} value={p.value} known={p.known} onSet={p.onSet} prefix="" depth={0} />;
 }
 
-function member(v: JsonValue | null, name: string): JsonValue | null {
+function member(v: Value | null, name: string): Value | null {
   if (name === "") return v;
-  if (v !== null && typeof v === "object" && !Array.isArray(v)) return v[name] ?? null;
-  return null;
+  return fields(v)?.[name] ?? null;
 }
 
 function Rows(p: Props & { prefix: string; depth: number }) {
@@ -54,10 +53,10 @@ function Rows(p: Props & { prefix: string; depth: number }) {
   );
 }
 
-function Cell(p: { field: FieldInfo; value: JsonValue | null; known: boolean; path: string; onSet?: Commit }) {
+function Cell(p: { field: FieldInfo; value: Value | null; known: boolean; path: string; onSet?: Commit }) {
   const editable = () => !!p.onSet && p.known && SCALARS.has(p.field.kind);
-  const set = (v: JsonValue) => p.onSet?.(p.path, v);
-  const parse = (text: string): JsonValue | undefined => (p.field.kind === "string" ? text : parseNumber(text, INTEGERS.has(p.field.kind)));
+  const set = (v: Value) => p.onSet?.(p.path, v);
+  const parse = (text: string): Value | undefined => (p.field.kind === "string" ? text : parseNumber(text, INTEGERS.has(p.field.kind)));
   return (
     <Show
       when={editable()}

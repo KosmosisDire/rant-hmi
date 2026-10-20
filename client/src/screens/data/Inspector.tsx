@@ -5,7 +5,7 @@ import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
-import type { JsonValue } from "../../protocol/serde_json/JsonValue";
+import type { Value } from "../../protocol/Value";
 import { typeLabel } from "../../state/format";
 import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
@@ -104,7 +104,7 @@ function ImportView(p: { imp: Import }) {
   const e = () => entity(p.imp.entity);
   const v = () => live(p.imp.alias);
   const writable = () => p.imp.intent === "write" && p.imp.kind === "variable";
-  const set = (path: string, value: JsonValue) => {
+  const set = (path: string, value: Value) => {
     setState("refused", null);
     send({ type: "set", alias: p.imp.alias, path, value });
   };

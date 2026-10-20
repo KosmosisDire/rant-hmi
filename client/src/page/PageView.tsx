@@ -6,7 +6,7 @@ import { createStore, produce } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
-import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Kept, number, pageScope, repeatScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
 import { component, notify } from "../state/store";
@@ -103,7 +103,7 @@ function css(key: string, v: unknown): string {
 
 function words(v: unknown): string {
   if (v === undefined || v === null) return "";
-  return typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : short(v as JsonValue);
+  return typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : short(v as Value);
 }
 
 interface ElementProps {

@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
-use serde_json::Value;
+use crate::value::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{info, warn};
 
@@ -203,7 +203,7 @@ impl App {
                 self.sessions.insert(session, Session { out, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
-                self.run_rules(|r| matches!(r.when, When::Connects), serde_json::json!({ "screen": session }));
+                self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
             }
             Inbound::Message { session, msg } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -841,7 +841,7 @@ impl App {
         // its value already with the engine
         let moved = std::mem::take(&mut self.moved);
         for (name, previous, value) in &moved {
-            let p = serde_json::json!({ "value": value, "previous": previous });
+            let p = Value::map([("value", value.clone()), ("previous", previous.clone().unwrap_or_default())]);
             self.run_rules(|r| matches!(&r.when, When::Changes { name: n } if n == name), p);
         }
         if moved.iter().any(|(name, _, _)| self.project.variable(name).is_some()) {
@@ -901,9 +901,9 @@ impl App {
                 self.pressed.remove(&key);
                 let (_, page, id, index) = key;
                 warn!("screen {session} was lost holding {id} on {page}, so its release runs");
-                self.fire(session, page, id, "release".into(), serde_json::json!({ "lost": true }), index.map(|i| (i, Value::Null)));
+                self.fire(session, page, id, "release".into(), Value::map([("lost", true.into())]), index.map(|i| (i, Value::Null)));
             }
-            self.run_rules(|r| matches!(r.when, When::Leaves), serde_json::json!({ "screen": session }));
+            self.run_rules(|r| matches!(r.when, When::Leaves), Value::map([("screen", session.into())]));
         }
     }
 

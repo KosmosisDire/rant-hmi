@@ -2,7 +2,7 @@
 //! writes their TypeScript twins into client/src/protocol, so the two sides never drift.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::value::Value;
 use ts_rs::TS;
 
 use crate::pages::logic::Rule;
@@ -223,7 +223,7 @@ pub struct PeerInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::value::value;
 
     fn cbor(v: &impl Serialize) -> Vec<u8> {
         let mut out = Vec::new();
@@ -233,11 +233,11 @@ mod tests {
 
     #[test]
     fn a_screen_message_reads_from_cbor() {
-        let sent = json!({ "type": "set", "alias": "Speed", "path": "", "value": { "mode": "Auto", "target": 120 } });
+        let sent = value!({ "type": "set", "alias": "Speed", "path": "", "value": { "mode": "Auto", "target": 120 } });
         let ClientMsg::Set { alias, path, value } = ciborium::from_reader(&cbor(&sent)[..]).unwrap() else {
             panic!("not a set");
         };
-        assert_eq!((alias.as_str(), path.as_str(), value), ("Speed", "", json!({ "mode": "Auto", "target": 120 })));
+        assert_eq!((alias.as_str(), path.as_str(), value), ("Speed", "", value!({ "mode": "Auto", "target": 120 })));
     }
 
     /// The exact bytes the client's cbor-x writes for a set, so a change on either side that
@@ -249,15 +249,15 @@ mod tests {
         let ClientMsg::Set { alias, value, .. } = ciborium::from_reader(&bytes[..]).unwrap() else {
             panic!("not a set");
         };
-        assert_eq!((alias.as_str(), value), ("Speed", json!({ "mode": "Auto", "target": 120, "gain": 1.5 })));
+        assert_eq!((alias.as_str(), value), ("Speed", value!({ "mode": "Auto", "target": 120, "gain": 1.5 })));
     }
 
     #[test]
     fn a_backend_message_writes_as_cbor() {
         let msg = ServerMsg::Values {
-            values: vec![ValueUpdate { alias: "Joints".into(), value: Some(json!([0.5, -1, "x"])), known: true }],
+            values: vec![ValueUpdate { alias: "Joints".into(), value: Some(value!([0.5, -1, "x"])), known: true }],
         };
         let back: Value = ciborium::from_reader(&cbor(&msg)[..]).unwrap();
-        assert_eq!(back, json!({ "type": "values", "values": [{ "alias": "Joints", "value": [0.5, -1, "x"], "known": true }] }));
+        assert_eq!(back, value!({ "type": "values", "values": [{ "alias": "Joints", "value": [0.5, -1, "x"], "known": true }] }));
     }
 }

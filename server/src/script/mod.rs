@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use rquickjs::context::EvalOptions;
 use rquickjs::function::Opt;
 use rquickjs::{Context, Ctx, Exception, Function, Persistent, Promise, Runtime};
-use serde_json::Value;
+use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::project::{Import, Intent, Kind, Per, Variable};
@@ -265,7 +265,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                             deadline.set(Some(Instant::now() + BUDGET));
                             let got = f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(|v| ctx.json_stringify(v));
                             let value = match got {
-                                Ok(Some(text)) => text.to_string().ok().and_then(|t| serde_json::from_str(&t).ok()),
+                                Ok(Some(text)) => text.to_string().ok().and_then(|t| from_js(&t).ok()),
                                 Ok(None) => None,
                                 Err(_) => {
                                     ctx.catch();
@@ -425,7 +425,7 @@ fn finish(shared: &Rc<RefCell<Shared>>, run: u64, end: End) {
 fn settle(home: &Context, w: Waiter, outcome: Result<Value, CallFailure>) {
     home.with(|ctx| {
         let settled = match outcome {
-            Ok(value) => w.resolve.restore(&ctx).and_then(|f| f.call::<_, ()>((ctx.json_parse(value.to_string())?,))),
+            Ok(value) => w.resolve.restore(&ctx).and_then(|f| f.call::<_, ()>((to_js(&ctx, &value)?,))),
             Err(fail) => {
                 let failure: rquickjs::Result<Function> = ctx.globals().get("__failure");
                 let error = failure.and_then(|f| f.call::<_, rquickjs::Value>((fail.status, fail.message)));
@@ -441,13 +441,13 @@ fn settle(home: &Context, w: Waiter, outcome: Result<Value, CallFailure>) {
 /// The host side of what `prelude.js` builds on, bound to one run, then the prelude itself.
 fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Value, at: Option<&(u32, Value)>) -> rquickjs::Result<()> {
     let g = ctx.globals();
-    g.set("p", ctx.json_parse(p.to_string())?)?;
+    g.set("p", to_js(ctx, p)?)?;
     if let Some((index, item)) = at {
         g.set("index", *index)?;
-        g.set("item", ctx.json_parse(item.to_string())?)?;
+        g.set("item", to_js(ctx, item)?)?;
     }
     let s = shared.clone();
-    g.set("__read", Function::new(ctx.clone(), move |alias: String| s.borrow().read(run, &alias).map(Value::to_string))?)?;
+    g.set("__read", Function::new(ctx.clone(), move |alias: String| s.borrow().read(run, &alias).map(text))?)?;
 
     let s = shared.clone();
     let write = move |ctx: Ctx<'js>, alias: String, json: String| -> rquickjs::Result<()> {
@@ -551,12 +551,27 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
 
     // a variable reads and takes assignment as a variable import does
     let st = shared.borrow();
-    let mut imports: Vec<Value> = st.imports.values().map(|i| serde_json::json!({ "alias": i.alias, "kind": format!("{:?}", i.kind).to_lowercase() })).collect();
-    imports.extend(st.variables.keys().map(|name| serde_json::json!({ "alias": name, "kind": "variable" })));
+    let entry = |alias: &str, kind: String| Value::map([("alias", alias.into()), ("kind", kind.into())]);
+    let mut imports: Vec<Value> = st.imports.values().map(|i| entry(&i.alias, format!("{:?}", i.kind).to_lowercase())).collect();
+    imports.extend(st.variables.keys().map(|name| entry(name, "variable".into())));
     drop(st);
-    let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| serde_json::json!({ "key": key, "id": id })).collect();
+    let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| Value::map([("key", key.as_str().into()), ("id", id.as_str().into())])).collect();
     let prelude: Function = ctx.eval(PRELUDE)?;
-    prelude.call::<_, ()>((ctx.json_parse(Value::Array(imports).to_string())?, ctx.json_parse(Value::Array(pages).to_string())?))
+    prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &Value::List(pages))?))
+}
+
+/// A value as JS reads it.
+fn to_js<'js>(ctx: &Ctx<'js>, v: &Value) -> rquickjs::Result<rquickjs::Value<'js>> {
+    ctx.json_parse(text(v))
+}
+
+fn text(v: &Value) -> String {
+    serde_json::to_string(v).expect("a value writes")
+}
+
+/// A value JS gave.
+fn from_js(text: &str) -> Result<Value, String> {
+    serde_json::from_str(text).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

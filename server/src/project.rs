@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::value::Value;
 use ts_rs::TS;
 
 use crate::files;
@@ -368,6 +368,7 @@ fn check_alias(alias: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::value;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("rant-hmi-test-{name}-{}", std::process::id()));
@@ -395,9 +396,9 @@ mod tests {
     fn variables_survive_a_reopen_and_keep_to_their_names() {
         let dir = scratch("variables");
         let mut p = Project::open(&dir).unwrap();
-        let mode = Variable { name: "jogMode".into(), start: serde_json::json!("Joint"), per: Per::Screen };
+        let mode = Variable { name: "jogMode".into(), start: value!("Joint"), per: Per::Screen };
         p.set_variable("jogMode", Some(mode.clone())).unwrap();
-        let limits = Variable { name: "limits".into(), start: serde_json::json!({ "low": 0.5, "high": [1, 2] }), per: Per::Hmi };
+        let limits = Variable { name: "limits".into(), start: value!({ "low": 0.5, "high": [1, 2] }), per: Per::Hmi };
         p.set_variable("limits", Some(limits.clone())).unwrap();
         assert_eq!(Project::open(&dir).unwrap().variables, [mode.clone(), limits]);
         assert!(p.set_variable("Speed", Some(Variable { name: "Speed".into(), ..mode.clone() })).unwrap_err().contains("small letter"));
@@ -417,9 +418,9 @@ mod tests {
         p.set_record("speedHistory", Some(record("speedHistory", 100))).unwrap();
         assert_eq!(Project::open(&dir).unwrap().records, [record("speedHistory", 100)]);
         assert!(p.set_record("fast", Some(record("fast", 10))).unwrap_err().contains("50 ms or more"));
-        p.set_variable("mode", Some(Variable { name: "mode".into(), start: serde_json::json!("Auto"), per: Per::Hmi })).unwrap();
+        p.set_variable("mode", Some(Variable { name: "mode".into(), start: value!("Auto"), per: Per::Hmi })).unwrap();
         assert!(p.set_record("mode", Some(record("mode", 100))).unwrap_err().contains("already a record or a variable"));
-        assert!(p.set_variable("speedHistory", Some(Variable { name: "speedHistory".into(), start: serde_json::json!(0), per: Per::Hmi })).unwrap_err().contains("already a record"));
+        assert!(p.set_variable("speedHistory", Some(Variable { name: "speedHistory".into(), start: value!(0), per: Per::Hmi })).unwrap_err().contains("already a record"));
         p.set_record("speedHistory", None).unwrap();
         assert!(Project::open(&dir).unwrap().records.is_empty());
         fs::remove_dir_all(&dir).unwrap();

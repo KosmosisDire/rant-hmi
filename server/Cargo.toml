@@ -25,4 +25,4 @@ toml = "0.8"
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-ts-rs = { version = "10", features = ["serde-json-impl"] }
+ts-rs = "10"
