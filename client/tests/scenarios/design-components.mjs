@@ -25,7 +25,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.openPage("Lamps");
   const place = async () => {
     await side("left").locator('button[title="Place a component"]').click();
-    await page.locator(".add-menu .list-row", { hasText: "Lamp" }).click();
+    await page.locator(".popover.add-menu .menu-item", { hasText: "Lamp" }).click();
   };
   await place();
   await eventually(() => hmi.page(lamps).children.length === 1, "the first instance");

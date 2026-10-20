@@ -7,6 +7,7 @@ import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { Component, File, Image, Plus, Shapes, Square, TextCursorInput, Type } from "../../ui/icons";
+import { Popover } from "../../ui/Popover";
 import type { Pick } from "./DesignScreen";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
@@ -38,6 +39,7 @@ const STARTS: Record<"div" | "span" | "input" | "img" | "svg", Record<string, st
 /** The left sidebar: the pages, and the open page's elements as layers. */
 export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
   const [picking, setPicking] = createSignal(false);
+  let placer!: HTMLButtonElement;
   // into the frame picked last, at its top left, else onto the page
   const place = (tag: Tag, props: Record<string, string>, component: string | null = null) => {
     const page = p.page;
@@ -132,23 +134,23 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
         <button class="icon-btn" title="Add a drawing" onClick={() => add("svg")}>
           <Shapes size={14} />
         </button>
-        <button class="icon-btn" classList={{ on: picking() }} title="Place a component" onClick={() => setPicking(!picking())}>
+        <button ref={placer} class="icon-btn" classList={{ on: picking() }} title="Place a component" onClick={() => setPicking(!picking())}>
           <Component size={14} />
         </button>
       </div>
       <Show when={picking()}>
-        <div class="add-menu">
+        <Popover anchor={placer} onClose={() => setPicking(false)} class="choice-list add-menu">
           <For each={components().filter((c) => c.id !== p.page?.id)} fallback={<div class="field-hint">Add a component first, under Components.</div>}>
             {(c) => (
-              <button class="list-row" onClick={() => addInstance(c)}>
+              <button class="menu-item" onClick={() => addInstance(c)}>
                 <span class="kind kind-local">
-                  <Component size={14} />
+                  <Component size={13} />
                 </span>
-                <span class="list-label">{c.name}</span>
+                <span>{c.name}</span>
               </button>
             )}
           </For>
-        </div>
+        </Popover>
       </Show>
       <Show when={p.page && p.page.children.length > 0} fallback={<div class="pane-body placeholder">Add a frame or a text.</div>}>
         <LayerList page={p.page!} selected={p.selected} onPick={p.onPick} onEdit={p.onEdit} />

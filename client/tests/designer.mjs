@@ -163,7 +163,7 @@ export function designer(page) {
     async place(component, fields = {}) {
       const before = await selected();
       await left().locator('button[title="Place a component"]').click();
-      await left().locator(".add-menu .list-row", { has: page.getByText(component, { exact: true }) }).click();
+      await page.locator(".popover.add-menu .menu-item", { has: page.getByText(component, { exact: true }) }).click();
       const id = await made(before, `an instance of ${component}`);
       await d.set(fields);
       return id;
