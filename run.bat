@@ -1,1 +1,0 @@
-bin\hmi_designer.exe  --bind 0.0.0.0 --statics frontend/dist --verbose        
