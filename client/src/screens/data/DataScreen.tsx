@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { Edge } from "../../ui/Edge";
+import { Edge } from "../../ui/Sidebars";
 import { MeshImports } from "./MeshImports";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";

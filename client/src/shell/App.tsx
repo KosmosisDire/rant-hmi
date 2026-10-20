@@ -4,7 +4,7 @@ import { LogicScreen } from "../screens/logic/LogicScreen";
 import { RunScreen } from "../screens/run/RunScreen";
 import { remembered } from "../state/remember";
 import { openPage } from "../state/view";
-import { sidebarWidths } from "../ui/Edge";
+import { sidebarsClosed, sidebarWidths } from "../ui/Sidebars";
 import { MenuHost } from "../ui/Menu";
 import { Notices } from "../ui/Notices";
 import { StatusBar } from "./StatusBar";
@@ -14,7 +14,7 @@ export function App() {
   const [tab, setTab] = remembered<Tab>("tab", "data", TABS);
   // every screen stays mounted, so a tab switch keeps what each one was showing
   return (
-    <div class="app" style={sidebarWidths()}>
+    <div class="app" classList={sidebarsClosed()} style={sidebarWidths()}>
       <TopBar tab={tab()} onTab={setTab} />
       <main class="content">
         <div class="screen" hidden={tab() !== "data"}>

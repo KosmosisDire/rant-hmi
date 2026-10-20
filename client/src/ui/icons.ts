@@ -42,6 +42,8 @@ export { default as Minus } from "lucide-solid/icons/minus";
 export { default as Monitor } from "lucide-solid/icons/monitor";
 export { default as MonitorOff } from "lucide-solid/icons/monitor-off";
 export { default as Moon } from "lucide-solid/icons/moon";
+export { default as PanelLeft } from "lucide-solid/icons/panel-left";
+export { default as PanelRight } from "lucide-solid/icons/panel-right";
 export { default as Parentheses } from "lucide-solid/icons/parentheses";
 export { default as PenTool } from "lucide-solid/icons/pen-tool";
 export { default as Pentagon } from "lucide-solid/icons/pentagon";

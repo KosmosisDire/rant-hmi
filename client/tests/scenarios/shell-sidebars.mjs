@@ -1,5 +1,6 @@
 // A user widens a sidebar by dragging its edge. The width holds on every tab and after a
-// reload, a sidebar never gets narrower than 160, and the middle keeps 320.
+// reload, a sidebar never gets narrower than 160, and the middle keeps 320. The top bar
+// closes and opens each sidebar, which a reload remembers, at the width it had.
 
 export default async function ({ page, d, check, eventually }) {
   const width = (side) => page.locator(`.screen:not([hidden]) .sidebar.${side}`).evaluate((e) => Math.round(e.getBoundingClientRect().width));
@@ -35,4 +36,21 @@ export default async function ({ page, d, check, eventually }) {
   check(middle === 320, `the middle kept ${middle}, not 320`);
   await drag("left", start - (await width("left")));
   await drag("right", right - (await width("right")));
+  const [wasLeft, wasRight] = [await width("left"), await width("right")];
+
+  const toggle = (side) => page.locator(`.topbar button[title$="the ${side} sidebar"]`).click();
+  await toggle("left");
+  await toggle("right");
+  await eventually(async () => (await width("left")) === 0 && (await width("right")) === 0, "both sidebars to close");
+  check((await page.locator('.topbar button[title="Open the left sidebar"]').count()) === 1, "the left button does not offer to open it");
+  await page.reload();
+  await page.locator(".statusbar", { hasText: "System" }).waitFor();
+  check((await width("left")) === 0, "a reload opened the closed sidebar");
+  await toggle("left");
+  await toggle("right");
+  let seen = [];
+  await eventually(
+    async () => (seen = [await width("left"), await width("right")]) && seen[0] === wasLeft && seen[1] === wasRight,
+    () => `both to open at ${wasLeft} and ${wasRight}, not ${seen.join(" and ")}`,
+  );
 }

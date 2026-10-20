@@ -12,7 +12,7 @@ import { complete, componentNames, REPEAT } from "../../state/complete";
 import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { DraftInput } from "../../ui/DraftInput";
-import { Edge } from "../../ui/Edge";
+import { Edge } from "../../ui/Sidebars";
 import { painted } from "../../ui/highlight";
 import { Activity, Monitor, MonitorOff, Plus, Power, Search, Timer, X, Zap } from "../../ui/icons";
 import { setHandler } from "../design/tree";

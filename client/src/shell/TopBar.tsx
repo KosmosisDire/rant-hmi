@@ -4,6 +4,7 @@ import { Dynamic } from "solid-js/web";
 import { state } from "../state/store";
 import { theme, toggleTheme } from "../state/theme";
 import { Logo } from "../ui/marks";
+import { SidebarToggle } from "../ui/Sidebars";
 
 export const TABS = ["data", "design", "logic", "run"] as const;
 export type Tab = (typeof TABS)[number];
@@ -18,6 +19,7 @@ const LOOK = {
 export function TopBar(p: { tab: Tab; onTab: (t: Tab) => void }) {
   return (
     <header class="topbar">
+      <SidebarToggle side="left" />
       <Logo />
       <nav class="tabs">
         <For each={TABS}>
@@ -40,6 +42,7 @@ export function TopBar(p: { tab: Tab; onTab: (t: Tab) => void }) {
           <Sun size={16} />
         </Show>
       </button>
+      <SidebarToggle side="right" />
     </header>
   );
 }

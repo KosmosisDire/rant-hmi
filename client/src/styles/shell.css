@@ -194,6 +194,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
+  transition: width 0.2s ease-out;
   background: var(--surface);
   box-shadow: 0 0 15px var(--shadow);
   position: relative;
@@ -208,6 +210,23 @@
 .sidebar.right {
   width: var(--sidebar-right, 360px);
   border-left: 1px solid var(--border);
+}
+
+/* A closed sidebar slides to nothing, and its edge goes with it. */
+.app.left-closed .sidebar.left,
+.app.right-closed .sidebar.right {
+  width: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.app.left-closed .edge[data-side="left"],
+.app.right-closed .edge[data-side="right"] {
+  display: none;
+}
+
+:root.resizing .sidebar {
+  transition: none;
 }
 
 /* The edge between a sidebar and the detail pane takes no room. Its grip reaches 3 px past
@@ -330,7 +349,9 @@
     min-height: 40vh;
   }
 
-  .edge {
+  .edge,
+  .app.left-closed .sidebar.left,
+  .app.right-closed .sidebar.right {
     display: none;
   }
 }

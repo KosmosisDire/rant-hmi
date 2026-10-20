@@ -2,7 +2,7 @@ import { batch, createEffect, createSignal, on, onCleanup, onMount, Show } from 
 import { send } from "../../net/connection";
 import { state } from "../../state/store";
 import { currentPage, openPage } from "../../state/view";
-import { Edge } from "../../ui/Edge";
+import { Edge } from "../../ui/Sidebars";
 import { Artboard, GRID } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
