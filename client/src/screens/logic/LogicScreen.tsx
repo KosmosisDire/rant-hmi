@@ -30,16 +30,6 @@ const KINDS: [When["kind"], string, When][] = [
   ["leaves", "When a screen is lost", { kind: "leaves" }],
 ];
 
-/** What a rule's code reads as `p`, said under its trigger. */
-const RECEIVES: Record<When["kind"], string> = {
-  every: "",
-  turns: "",
-  changes: "p.value and p.previous",
-  starts: "",
-  connects: "p.screen",
-  leaves: "p.screen",
-};
-
 /** A trigger as the list says it. */
 function phrase(w: When): string {
   switch (w.kind) {
@@ -363,9 +353,6 @@ function RuleDetail(p: { rule: Rule }) {
                 )}
               </Match>
             </Switch>
-            <Show when={RECEIVES[p.rule.when.kind]}>
-              <div class="field-hint">The code reads {RECEIVES[p.rule.when.kind]}.</div>
-            </Show>
           </div>
         </EventCard>
       </div>

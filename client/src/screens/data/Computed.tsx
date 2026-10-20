@@ -137,7 +137,6 @@ export function ComputedView(p: { computed: Computed; onRenamed: (name: string) 
           <label>Note</label>
           <DraftInput value={p.computed.note ?? ""} placeholder="What it means" onCommit={(t) => change({ note: words(t) })} />
         </div>
-        <div class="field-hint">Worked out on the system whenever what it reads changes. It reads, and never writes, calls or waits.</div>
 
         <div class="section">Setter</div>
         <div class="field">
@@ -168,7 +167,6 @@ export function ComputedView(p: { computed: Computed; onRenamed: (name: string) 
             </div>
           )}
         </Show>
-        <div class="field-hint">A write of v sets what it writes to the value given as, so a control can bind to it both ways: Duty / 40 * 100 is set as v * 0.4.</div>
 
         <div class="section">Now</div>
         <div class="field">

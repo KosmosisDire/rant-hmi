@@ -170,9 +170,6 @@ function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
           ]}
         />
         <Switch>
-          <Match when={p.imp.kind === "function" || p.imp.kind === "task"}>
-            <div class="field-hint">Handlers call it: {`await ${p.imp.alias}()`}</div>
-          </Match>
           <Match when={e()?.schema}>
             {(t) => (
               <>

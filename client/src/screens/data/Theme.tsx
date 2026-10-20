@@ -116,7 +116,6 @@ export function TokenView(p: { token: Token; onRenamed: (name: string) => void }
           <label>Light</label>
           <DraftInput value={p.token.light} accept={(t) => t.trim() !== ""} onCommit={(light) => change({ light: light.trim() })} />
         </div>
-        <div class="field-hint">Any CSS value: a colour such as #4a8fd6, or a size such as 12px. Code reads it as text.</div>
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => setToken(p.token.name, null)}>

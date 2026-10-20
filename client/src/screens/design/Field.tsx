@@ -342,7 +342,6 @@ export function BorderField(p: { props: Record<string, string | undefined>; writ
               <Field label={label} kind={kind} {...more} value={part(key)} onWrite={(t) => write(key, t)} onShow={(t) => p.show({ [key]: t })} />
             )}
           </For>
-          <div class="field-hint">Each part is its own expression, so one can follow a value while the rest stay put.</div>
         </Popover>
       </Show>
     </div>

@@ -152,7 +152,6 @@ export function VariableView(p: { variable: Variable; onRenamed: (name: string) 
           <label>Starts</label>
           <DraftInput value={JSON.stringify(p.variable.start)} accept={(t) => literal(t) !== undefined} onCommit={(t) => change({ start: literal(t)! })} />
         </div>
-        <div class="field-hint">A number, true or false, "text" in quotes, or a list or object as JSON.</div>
         <div class="section">Value now</div>
         <div class="field">
           <label>{p.variable.per === "screen" ? "This screen" : "Shared"}</label>

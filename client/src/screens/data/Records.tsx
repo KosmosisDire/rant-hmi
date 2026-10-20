@@ -138,7 +138,6 @@ export function RecordView(p: { record: Record; onRenamed: (name: string) => voi
           <label>Keeps s</label>
           <DraftInput value={String(p.record.keep_s)} accept={(t) => whole(t) && Number(t) >= 1 && Number(t) <= 86400} onCommit={(t) => change({ keep_s: Number(t) })} />
         </div>
-        <div class="field-hint">Each sample is an object of t, the time in ms, and v, the value then. A new expression starts the history over.</div>
         <div class="section">Now</div>
         <div class="field">
           <label>Samples</label>

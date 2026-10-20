@@ -200,7 +200,6 @@ function PageInspector(p: { page: Page }) {
               </For>
             </div>
           </div>
-          <div class="field-hint">{p.page.shows === "over" ? "Opened over another page, as a dialog: the page beneath stays in sight." : "Covers the screen when opened."}</div>
           <div class="section">Operators</div>
           <Show
             when={startPage() === p.page.id}
@@ -294,34 +293,27 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <div class="section">Element</div>
         <Field {...prop("name")} label="Name" plain focus={typed("name")} />
         <Field {...prop("repeat")} label="Repeat" placeholder="a list, or a count" />
-        <Show when={p.element.props.repeat}>
-          <div class="field-hint">Drawn once for each item. It and all inside it read index, from 0, and item.</div>
-        </Show>
         <Show when={!shape()}>
           <div class="section">Placement</div>
           <div class="placement">
             <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
           </div>
-          <div class="field-hint">Pixels, or a share of what holds it: 50% of its width for x and w, of its height for y and h.</div>
           <Turn prop={prop} />
         </Show>
         <Show when={p.element.tag === "img"}>
           <div class="section">Image</div>
           <Field {...prop("src")} label="Source" placeholder="Camera" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
-          <div class="field-hint">A mesh import of a Rant Image, or a URL in quotes. A drawing over it with the same fit and the picture's size as its view box lines its shapes up with the pixels.</div>
         </Show>
         <Show when={p.element.tag === "video"}>
           <div class="section">Video</div>
           <Field {...prop("src")} label="Source" placeholder="Camera" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
-          <div class="field-hint">A mesh import of a camera, by name. An H264 topic plays as it is, any other through its Video child, which rant-transcoder makes on the camera's host. A drawing over it lines up as over an image.</div>
         </Show>
         <Show when={drawing()}>
           <div class="section">Drawing</div>
           <Field {...prop("viewbox")} label="View box" placeholder="its size" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
-          <div class="field-hint">Shapes are drawn in the view box's units, by default its size in pixels. Each value is an expression, so a shape can follow a live value.</div>
           <div class="section">Drawn by code</div>
           <DraftInput
             multiline
@@ -332,7 +324,6 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             onCommit={(t) => setProps(p.page, p.element.id, { draw: t.trim() === "" ? null : t })}
             complete={(t, c) => complete(t, c, "expression", where().names, where().also)}
           />
-          <div class="field-hint">Code that gives SVG markup as text, drawn under the shapes above and redrawn as the values it reads change.</div>
         </Show>
         <Show when={shape()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
@@ -360,14 +351,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             </span>
           </div>
         </Show>
-        <Show when={instance() && component(p.element.component ?? "")}>
-          {(c) => (
-            <>
+        <Show when={instance() && component(p.element.component ?? "")?.interface?.inputs}>
+          {(inputs) => (
+            <Show when={inputs().length > 0}>
               <div class="section">Inputs</div>
-              <For each={c().interface?.inputs} fallback={<div class="field-hint">{c().name} takes no inputs yet. Add them on the component.</div>}>
-                {(i) => <Field {...prop(i.name)} label={i.name} kind={kindOf(i.default)} placeholder={i.default} />}
-              </For>
-            </>
+              <For each={inputs()}>{(i) => <Field {...prop(i.name)} label={i.name} kind={kindOf(i.default)} placeholder={i.default} />}</For>
+            </Show>
           )}
         </Show>
         <Show when={text()}>
@@ -377,7 +366,6 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={input()}>
           <div class="section">Input</div>
           <Field {...prop("value")} label="Value" placeholder="Speed" focus={typed("value")} />
-          <div class="field-hint">A name such as Speed takes what an operator enters. Anything else only shows.</div>
         </Show>
         <Show when={text() || input()}>
           <For each={TEXT_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
@@ -408,7 +396,6 @@ function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" |
     <>
       <div class="section">Turn</div>
       <For each={TURN}>{([label, key, more]) => <Field {...p.prop(key)} {...more} label={label} />}</For>
-      <div class="field-hint">Degrees, clockwise, about a point of its own box: "50% 100%" is the middle of its bottom edge. The canvas marks the point.</div>
     </>
   );
 }
@@ -477,13 +464,6 @@ function Events(p: { page: string; element: Element }) {
           </For>
         </Popover>
       </Show>
-      <Show when={p.element.handlers.length === 0}>
-        <div class="field-hint">
-          {p.element.tag === "input"
-            ? "Add one to run code when an operator enters a value. The code reads it as p.value."
-            : "Add one to run code when this is tapped, pressed, let go, held or dragged, or a press lands outside it. The code reads where as p.x and p.y."}
-        </div>
-      </Show>
     </>
   );
 }
@@ -523,7 +503,7 @@ function Inputs(p: { page: string; inputs: Input[] }) {
           <Plus size={13} />
         </button>
       </div>
-      <For each={p.inputs} fallback={<div class="field-hint">What each instance fills in, read here by name.</div>}>
+      <For each={p.inputs}>
         {(i) => (
           <div class="handler" data-input={i.name}>
             <div class="handler-head">
@@ -576,7 +556,7 @@ function Variables(p: { page: string; variables: Local[] }) {
           <Plus size={13} />
         </button>
       </div>
-      <For each={p.variables} fallback={<div class="field-hint">What each instance keeps of its own on each screen, read and set by name in its code.</div>}>
+      <For each={p.variables}>
         {(v) => (
           <div class="handler" data-var={v.name}>
             <div class="handler-head">
@@ -625,7 +605,7 @@ function Sends(p: { page: string; events: string[] }) {
           <Plus size={13} />
         </button>
       </div>
-      <For each={p.events} fallback={<div class="field-hint">Events its code sends with emit, for instances to handle.</div>}>
+      <For each={p.events}>
         {(e) => (
           <div class="handler-head sends-row" data-sends={e}>
             <DraftInput class="editor input-name" value={e} accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())} onCommit={(to) => write(e, to.trim())} />
