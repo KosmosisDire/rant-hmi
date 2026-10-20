@@ -7,6 +7,7 @@ import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
 import { boxOf, childrenOf, find, literal, moveTo, parentOf, sendEdits, tops } from "./tree";
+import { Edge } from "../../ui/Edge";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
@@ -152,11 +153,13 @@ export function DesignScreen(p: { shown: boolean }) {
       <aside class="sidebar left">
         <Outline page={currentPage()} selected={selection()} onPick={pick} onEdit={edit} />
       </aside>
+      <Edge side="left" />
       <section class="detail">
         <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
           {(page) => <Artboard page={page()} selected={selection()} onPick={pick} onEdit={edit} keys={keys()} onKeys={setKeys} />}
         </Show>
       </section>
+      <Edge side="right" />
       <aside class="sidebar right">
         <ElementInspector page={currentPage()} selected={selection()} typing={typing()} />
       </aside>

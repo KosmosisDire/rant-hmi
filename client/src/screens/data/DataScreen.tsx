@@ -5,6 +5,7 @@ import { MeshTree } from "./MeshTree";
 import { RecordsTable } from "./Records";
 import { ThemeTable } from "./Theme";
 import { VariablesTable } from "./Variables";
+import { Edge } from "../../ui/Edge";
 
 /** What the Data screen has picked: an entity on the mesh, an import, a variable, a record or
  *  a token. */
@@ -34,12 +35,14 @@ export function DataScreen() {
       <aside class="sidebar left">
         <MeshTree {...picking} />
       </aside>
+      <Edge side="left" />
       <section class="detail data-detail">
         <MeshImports {...picking} />
         <VariablesTable {...picking} />
         <RecordsTable {...picking} />
         <ThemeTable {...picking} />
       </section>
+      <Edge side="right" />
       <aside class="sidebar right">
         <Inspector {...picking} />
       </aside>

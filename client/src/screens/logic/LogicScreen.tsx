@@ -15,6 +15,7 @@ import { DraftInput } from "../../ui/DraftInput";
 import { painted } from "../../ui/highlight";
 import { Activity, Monitor, MonitorOff, Plus, Power, Search, Timer, X, Zap } from "../../ui/icons";
 import { EventCard } from "./EventCard";
+import { Edge } from "../../ui/Edge";
 
 /** Each kind of trigger, as the picker names it, and what it starts from. */
 const KINDS: [When["kind"], string, When][] = [
@@ -211,6 +212,7 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
           </Show>
         </div>
       </aside>
+      <Edge side="left" />
       <section class="detail">
         <Switch fallback={<div class="later">Pick a handler on the left.</div>}>
           <Match when={rule()}>{(r) => <RuleDetail rule={r()} />}</Match>
@@ -245,6 +247,7 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
           </Match>
         </Switch>
       </section>
+      <Edge side="right" />
       <aside class="sidebar right">
         <div class="pane-head">
           <span class="head-title">Uses</span>
